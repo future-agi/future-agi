@@ -514,6 +514,16 @@ def _end_state_url(
     url = end.get("url") if isinstance(end, dict) else None
     if isinstance(url, str) and url:
         return url
+    kept = end_state_artifact(call, metadata, state)
+    return get_object_url(UPLOAD_BUCKET_NAME, kept.object_key) if kept else None
+
+
+def end_state_artifact(
+    call: CallExecution, metadata: Mapping[str, Any], state: Mapping[str, Any]
+) -> HostedHarnessArtifact | None:
+    """The stored world_state file this trial's sealed record names by digest, kept by the job that sent the trial's
+    receipt, in the run's organisation and workspace; None when the record names none or it is not stored. Never
+    found by scenario key: a key spans attempts, and a digest a job already holds keeps its first trial's key."""
     sealed = state.get("end_state_artifact")
     if not (isinstance(sealed, str) and sealed.startswith("sha256:")):
         return None
@@ -531,16 +541,15 @@ def _end_state_url(
         job__organization_id=run_test.organization_id,
     )
     # In the run's own workspace; a run kept without one matches only artifacts kept without one.
-    kept = (
+    return (
         (
             artifacts_of_run.filter(job__workspace_id=run_test.workspace_id)
             if run_test.workspace_id is not None
             else artifacts_of_run.filter(job__workspace_id__isnull=True)
         )
-        .values_list("object_key", flat=True)
+        .select_related("job")
         .first()
     )
-    return get_object_url(UPLOAD_BUCKET_NAME, kept) if kept else None
 
 
 def _usage(

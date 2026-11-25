@@ -1,0 +1,230 @@
+"""What a trial's browser did, as run detail shows it when its entry is opened.
+
+The list is the trial's own world_state file: the one its sealed record names by digest, read whatever the record
+says of the world's records. Never found by scenario key. Each picture is a stored screenshot of the same job whose
+digest a row names. The file came from a sandbox that ran the customer's code, so its size is decided from the stored
+row before any read, its rows are capped, its schema is checked, and nothing of a row is passed through whole.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections.abc import Mapping
+from typing import Any, Literal, TypedDict
+from urllib.parse import urlsplit
+
+import structlog
+
+from simulate.constants.hosted_harness import TRIAL_STATE_KEY
+from simulate.models import CallExecution, HostedHarnessArtifact
+from simulate.selectors.call_detail import end_state_artifact
+from simulate.services.hosted_harness_ingestion import artifact_kind_kept
+from tfc.settings.settings import UPLOAD_BUCKET_NAME
+from tfc.utils.storage_client import get_object_url, get_storage_client
+
+logger = structlog.get_logger(__name__)
+
+# A file larger than this is not read. A door world's file also holds its tables and action log.
+FILE_BYTES = 16 * 1024 * 1024
+# The kit keeps at most 20 screenshots and 500 rows for a trial; the page shows this many and says how many more.
+SCREENSHOT_ROWS = 50
+BLOCKED_ROWS = 200
+TEXT = 2048
+SCHEMAS = frozenset({"futureagi.world-state.v1", "futureagi.browser-world-state.v1"})
+SCREENSHOT = "screenshot"
+_DIGEST = re.compile(r"sha256:([0-9a-f]{64})")
+_IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+_NO_BROWSER = frozenset({"not_started"})
+
+BrowserState = Literal["listed", "not_kept", "unreadable", "no_browser"]
+BlockedSource = Literal["record", "file", "unreadable"]
+
+
+class BrowserScreenshot(TypedDict):
+    when: str
+    url: str
+    link: bool
+    tab: int | None
+    at: float | None
+    kept: bool
+    picture_url: str | None
+
+
+class BrowserEvidence(TypedDict, total=False):
+    state: BrowserState
+    complete: bool
+    capped: bool
+    level_keeps_none: bool
+    screenshots: list[BrowserScreenshot]
+    more: int
+    blocked_source: BlockedSource
+    blocked: list[dict[str, Any]]
+    blocked_truncated: bool
+
+
+class _Unreadable(Exception):
+    """The file is stored but could not be read as a world_state file."""
+
+
+def browser_evidence(call: CallExecution) -> BrowserEvidence:
+    """The trial's browser, every state said: its screenshots in the file's order, each with its stored picture when
+    kept; and, for a trial with no world door, its blocked list from the same file."""
+    metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+    state = metadata.get(TRIAL_STATE_KEY)
+    state = state if isinstance(state, Mapping) else {}
+    # A door trial's blocked lists are kept on its record and shown with its changes; never from both.
+    from_record = state.get("recorded") is not False
+    shown: BrowserEvidence = {
+        "state": "not_kept",
+        "capped": False,
+        "level_keeps_none": False,
+        "screenshots": [],
+        "more": 0,
+        "blocked_source": "record" if from_record else "unreadable",
+    }
+    stored = end_state_artifact(call, metadata, state)
+    if stored is None:
+        return shown
+    try:
+        body = _read(stored)
+    except _Unreadable as why:
+        logger.warning(
+            "browser_evidence_unreadable", call_execution_id=str(call.id), why=str(why)
+        )
+        shown["state"] = "unreadable"
+        return shown
+    if not from_record:
+        shown.update(_blocked(body))
+    browser = body.get("browser")
+    if not isinstance(browser, Mapping) or browser.get("state") in _NO_BROWSER:
+        shown["state"] = "no_browser"
+        return shown
+    rows = browser.get("screenshots")
+    if rows is None and browser.get("state") == "not_used":
+        rows = []
+    if not isinstance(rows, list):
+        shown["state"] = "unreadable"
+        return shown
+    shown["state"] = "listed"
+    if browser.get("complete") is False:
+        shown["complete"] = False
+    shown["capped"] = browser.get("screenshots_capped") is True
+    shown["more"] = max(len(rows) - SCREENSHOT_ROWS, 0)
+    rows = [row for row in rows[:SCREENSHOT_ROWS] if isinstance(row, Mapping)]
+    pictures = _pictures(stored, rows)
+    shown["level_keeps_none"] = not artifact_kind_kept(
+        stored.job.artifact_level, SCREENSHOT
+    )
+    shown["screenshots"] = [_screenshot(row, pictures) for row in rows]
+    return shown
+
+
+def _read(stored: HostedHarnessArtifact) -> dict[str, Any]:
+    if stored.size > FILE_BYTES:
+        raise _Unreadable("too_large")
+    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, stored.object_key)
+    try:
+        data = response.read(FILE_BYTES + 1)
+    finally:
+        response.close()
+        release = getattr(response, "release_conn", None)
+        if callable(release):
+            release()
+    if len(data) > FILE_BYTES:
+        raise _Unreadable("too_large")
+    try:
+        body = json.loads(data)
+    except (ValueError, RecursionError) as error:
+        raise _Unreadable("not_json") from error
+    if not isinstance(body, dict) or body.get("schema") not in SCHEMAS:
+        raise _Unreadable("unknown_schema")
+    return body
+
+
+def _digest(row: Mapping[str, Any]) -> str | None:
+    named = row.get("artifact_id")
+    match = _DIGEST.fullmatch(named) if isinstance(named, str) else None
+    return match.group(1) if match else None
+
+
+def _pictures(
+    stored: HostedHarnessArtifact, rows: list[Mapping[str, Any]]
+) -> dict[str, str]:
+    """Each named picture's link: a stored screenshot image of the file's own job."""
+    digests = {digest for row in rows if (digest := _digest(row))}
+    if not digests:
+        return {}
+    kept = HostedHarnessArtifact.no_workspace_objects.filter(
+        job_id=stored.job_id,
+        kind=SCREENSHOT,
+        sha256__in=digests,
+        content_type__in=_IMAGE_TYPES,
+    ).values_list("sha256", "object_key")
+    return {digest: _link(object_key) for digest, object_key in kept}
+
+
+def _link(object_key: str) -> str:
+    # The one place a picture is linked, as a recording is.
+    return get_object_url(UPLOAD_BUCKET_NAME, object_key)
+
+
+def _text(value: Any, limit: int = TEXT) -> str:
+    return value[:limit] if isinstance(value, str) else ""
+
+
+def _screenshot(
+    row: Mapping[str, Any], pictures: Mapping[str, str]
+) -> BrowserScreenshot:
+    url = _text(row.get("url"))
+    digest = _digest(row)
+    picture = pictures.get(digest) if digest else None
+    tab, at = row.get("tab"), row.get("at")
+    return {
+        "when": _text(row.get("when"), 32),
+        "url": url,
+        "link": urlsplit(url).scheme.lower() in {"http", "https"} if url else False,
+        "tab": tab if isinstance(tab, int) and not isinstance(tab, bool) else None,
+        "at": float(at)
+        if isinstance(at, int | float) and not isinstance(at, bool)
+        else None,
+        "kept": picture is not None,
+        "picture_url": picture,
+    }
+
+
+def _blocked(body: Mapping[str, Any]) -> BrowserEvidence:
+    """A no-door trial's blocked list from its file, shaped as a trial's own blocked list is: no address is served,
+    and each page the agent tried to open counts one."""
+    entries = body.get("blocked")
+    if body.get("blocked_unreadable") is True or not isinstance(entries, list):
+        return {"blocked_source": "unreadable"}
+    truncated = any(
+        isinstance(one, Mapping) and one.get("truncated") is True for one in entries
+    )
+    rows = [
+        _blocked_row(one)
+        for one in entries
+        if isinstance(one, Mapping) and isinstance(one.get("host"), str)
+    ]
+    return {
+        "blocked_source": "file",
+        "blocked": rows[:BLOCKED_ROWS],
+        "blocked_truncated": truncated or len(rows) > BLOCKED_ROWS,
+    }
+
+
+def _blocked_row(entry: Mapping[str, Any]) -> dict[str, Any]:
+    row: dict[str, Any] = {"host": _text(entry.get("host"), 253)}
+    for key in ("method", "tool", "via"):
+        if isinstance(entry.get(key), str) and entry[key]:
+            row[key] = _text(entry[key], 64)
+    if entry.get("what") in {"navigation", "page_request"}:
+        row["what"] = entry["what"]
+    count = entry.get("count")
+    row["count"] = (
+        count
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0
+        else 1
+    )
+    return row

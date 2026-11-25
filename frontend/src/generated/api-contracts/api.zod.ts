@@ -65085,6 +65085,98 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
 });
 
 /**
+ * What the trial's browser did: its screenshots and, with no world door, its blocked list, read from the trial's
+own world_state file when the entry is opened.
+ */
+export const SimulateV3CallExecutionBrowserParams = zod.object({
+  call_execution_id: zod.string(),
+});
+
+export const SimulateV3CallExecutionBrowserResponse = zod.object({
+  state: zod
+    .enum(["listed", "not_kept", "unreadable", "no_browser"])
+    .describe(
+      "`listed`: the file was read. `not_kept`: the trial names no file, or it is not stored. `unreadable`: the file could not be read. `no_browser`: no browser was started in this trial.",
+    ),
+  complete: zod
+    .boolean()
+    .optional()
+    .describe("False when the browser's record was not finished."),
+  capped: zod
+    .boolean()
+    .describe(
+      "The trial's screenshots reached their limit; the last one is kept.",
+    ),
+  level_keeps_none: zod
+    .boolean()
+    .describe("The run's artifact level keeps no screenshots."),
+  screenshots: zod.array(
+    zod.object({
+      when: zod
+        .string()
+        .describe("When it was taken, as the record says (`load` or `end`)."),
+      url: zod
+        .string()
+        .describe(
+          "The page's address as the record wrote it; text, not a link.",
+        ),
+      link: zod
+        .boolean()
+        .describe(
+          "Whether the address may be shown as a link: http or https only.",
+        ),
+      tab: zod.number(),
+      at: zod.number(),
+      kept: zod
+        .boolean()
+        .describe("Whether the picture is stored; false when it was not kept."),
+      picture_url: zod.string().min(1),
+    }),
+  ),
+  more: zod.number().describe("Screenshot rows past the ones shown."),
+  blocked_source: zod
+    .enum(["record", "file", "unreadable"])
+    .describe(
+      "Where this trial's blocked list is: `record`, kept with the trial's changes; `file`, in `blocked` here; `unreadable`, not known.",
+    ),
+  blocked: zod
+    .array(
+      zod
+        .object({
+          host: zod.string().min(1),
+          method: zod.string().optional(),
+          tool: zod
+            .string()
+            .optional()
+            .describe("The tool that made it, when known."),
+          count: zod
+            .number()
+            .optional()
+            .describe(
+              "How many calls to this host were refused; absent on older trials (one).",
+            ),
+          via: zod
+            .string()
+            .optional()
+            .describe(
+              "`browser` when the environment's browser made the request; absent for the agent's own calls.",
+            ),
+          what: zod
+            .enum(["navigation", "page_request"])
+            .optional()
+            .describe(
+              "For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart.",
+            ),
+        })
+        .describe(
+          "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+        ),
+    )
+    .optional(),
+  blocked_truncated: zod.boolean().optional(),
+});
+
+/**
  * Which of a multi-agent app's participants did what in this trial, read from the traces the app sent.
  */
 export const SimulateV3CallExecutionWorkersParams = zod.object({

@@ -135,6 +135,11 @@ _ALLOWED_ARTIFACTS = {
 _GAP_TIMEOUT = timedelta(seconds=60)
 
 
+def artifact_kind_kept(level: str, kind: str) -> bool:
+    """Whether a job at this artifact level keeps artifacts of this kind."""
+    return kind in _ALLOWED_ARTIFACTS.get(level, ())
+
+
 _RECORDING_ARTIFACT_KINDS = {
     "recording_combined",
     "recording_stereo",

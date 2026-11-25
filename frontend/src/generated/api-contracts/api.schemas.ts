@@ -29398,6 +29398,64 @@ export interface CallExecutionV3DetailResponseApi {
   csat_reason: string;
 }
 
+/**
+ * `listed`: the file was read. `not_kept`: the trial names no file, or it is not stored. `unreadable`: the file could not be read. `no_browser`: no browser was started in this trial.
+ */
+export type CallBrowserEvidenceApiState =
+  (typeof CallBrowserEvidenceApiState)[keyof typeof CallBrowserEvidenceApiState];
+
+export const CallBrowserEvidenceApiState = {
+  listed: "listed",
+  not_kept: "not_kept",
+  unreadable: "unreadable",
+  no_browser: "no_browser",
+} as const;
+
+/**
+ * Where this trial's blocked list is: `record`, kept with the trial's changes; `file`, in `blocked` here; `unreadable`, not known.
+ */
+export type CallBrowserEvidenceApiBlockedSource =
+  (typeof CallBrowserEvidenceApiBlockedSource)[keyof typeof CallBrowserEvidenceApiBlockedSource];
+
+export const CallBrowserEvidenceApiBlockedSource = {
+  record: "record",
+  file: "file",
+  unreadable: "unreadable",
+} as const;
+
+export interface BrowserScreenshotApi {
+  /** When it was taken, as the record says (`load` or `end`). */
+  when: string;
+  /** The page's address as the record wrote it; text, not a link. */
+  url: string;
+  /** Whether the address may be shown as a link: http or https only. */
+  link: boolean;
+  tab: number;
+  at: number;
+  /** Whether the picture is stored; false when it was not kept. */
+  kept: boolean;
+  /** @minLength 1 */
+  picture_url: string;
+}
+
+export interface CallBrowserEvidenceApi {
+  /** `listed`: the file was read. `not_kept`: the trial names no file, or it is not stored. `unreadable`: the file could not be read. `no_browser`: no browser was started in this trial. */
+  state: CallBrowserEvidenceApiState;
+  /** False when the browser's record was not finished. */
+  complete?: boolean;
+  /** The trial's screenshots reached their limit; the last one is kept. */
+  capped: boolean;
+  /** The run's artifact level keeps no screenshots. */
+  level_keeps_none: boolean;
+  screenshots: BrowserScreenshotApi[];
+  /** Screenshot rows past the ones shown. */
+  more: number;
+  /** Where this trial's blocked list is: `record`, kept with the trial's changes; `file`, in `blocked` here; `unreadable`, not known. */
+  blocked_source: CallBrowserEvidenceApiBlockedSource;
+  blocked?: BlockedCallApi[];
+  blocked_truncated?: boolean;
+}
+
 export type CallWorkersResponseApiCollection =
   (typeof CallWorkersResponseApiCollection)[keyof typeof CallWorkersResponseApiCollection];
 

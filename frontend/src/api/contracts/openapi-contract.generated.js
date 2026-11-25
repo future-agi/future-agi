@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1206,
+  endpointCount: 1207,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -34409,6 +34409,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/v3/call-executions/{call_execution_id}/browser/": {
+      get: {
+        operationId: "simulate_v3_call_execution_browser",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/CallBrowserEvidence",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/v3/call-executions/{call_execution_id}/workers/": {
       get: {
         operationId: "simulate_v3_call_execution_workers",
@@ -59076,6 +59093,70 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
           minLength: 1,
+        },
+      },
+    },
+    CallBrowserEvidence: {
+      required: [
+        "state",
+        "capped",
+        "level_keeps_none",
+        "screenshots",
+        "more",
+        "blocked_source",
+      ],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          description:
+            "`listed`: the file was read. `not_kept`: the trial names no file, or it is not stored. `unreadable`: the file could not be read. `no_browser`: no browser was started in this trial.",
+          type: "string",
+          enum: ["listed", "not_kept", "unreadable", "no_browser"],
+        },
+        complete: {
+          title: "Complete",
+          description: "False when the browser's record was not finished.",
+          type: "boolean",
+        },
+        capped: {
+          title: "Capped",
+          description:
+            "The trial's screenshots reached their limit; the last one is kept.",
+          type: "boolean",
+        },
+        level_keeps_none: {
+          title: "Level keeps none",
+          description: "The run's artifact level keeps no screenshots.",
+          type: "boolean",
+        },
+        screenshots: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/BrowserScreenshot",
+          },
+        },
+        more: {
+          title: "More",
+          description: "Screenshot rows past the ones shown.",
+          type: "integer",
+        },
+        blocked_source: {
+          title: "Blocked source",
+          description:
+            "Where this trial's blocked list is: `record`, kept with the trial's changes; `file`, in `blocked` here; `unreadable`, not known.",
+          type: "string",
+          enum: ["record", "file", "unreadable"],
+        },
+        blocked: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/BlockedCall",
+          },
+        },
+        blocked_truncated: {
+          title: "Blocked truncated",
+          type: "boolean",
         },
       },
     },
@@ -103517,6 +103598,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    BlockedCall: {
+      description:
+        "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
+      required: ["host"],
+      type: "object",
+      properties: {
+        host: {
+          title: "Host",
+          type: "string",
+          minLength: 1,
+        },
+        method: {
+          title: "Method",
+          type: "string",
+        },
+        tool: {
+          title: "Tool",
+          description: "The tool that made it, when known.",
+          type: "string",
+        },
+        count: {
+          title: "Count",
+          description:
+            "How many calls to this host were refused; absent on older trials (one).",
+          type: "integer",
+        },
+        via: {
+          title: "Via",
+          description:
+            "`browser` when the environment's browser made the request; absent for the agent's own calls.",
+          type: "string",
+        },
+        what: {
+          title: "What",
+          description:
+            "For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart.",
+          type: "string",
+          enum: ["navigation", "page_request"],
+        },
+      },
+    },
+    BrowserScreenshot: {
+      required: ["when", "url", "link", "tab", "at", "kept", "picture_url"],
+      type: "object",
+      properties: {
+        when: {
+          title: "When",
+          description:
+            "When it was taken, as the record says (`load` or `end`).",
+          type: "string",
+        },
+        url: {
+          title: "Url",
+          description:
+            "The page's address as the record wrote it; text, not a link.",
+          type: "string",
+        },
+        link: {
+          title: "Link",
+          description:
+            "Whether the address may be shown as a link: http or https only.",
+          type: "boolean",
+        },
+        tab: {
+          title: "Tab",
+          type: "integer",
+          "x-nullable": true,
+        },
+        at: {
+          title: "At",
+          type: "number",
+          "x-nullable": true,
+        },
+        kept: {
+          title: "Kept",
+          description:
+            "Whether the picture is stored; false when it was not kept.",
+          type: "boolean",
+        },
+        picture_url: {
+          title: "Picture url",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     CallExecutionErrorLocalizerTask: {
       required: ["task_id", "eval_config_id", "status", "eval_result"],
       type: "object",
@@ -147769,47 +147937,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
-        },
-      },
-    },
-    BlockedCall: {
-      description:
-        "Calls to hosts outside the test world, refused before they left: counted in refused, never a change.",
-      required: ["host"],
-      type: "object",
-      properties: {
-        host: {
-          title: "Host",
-          type: "string",
-          minLength: 1,
-        },
-        method: {
-          title: "Method",
-          type: "string",
-        },
-        tool: {
-          title: "Tool",
-          description: "The tool that made it, when known.",
-          type: "string",
-        },
-        count: {
-          title: "Count",
-          description:
-            "How many calls to this host were refused; absent on older trials (one).",
-          type: "integer",
-        },
-        via: {
-          title: "Via",
-          description:
-            "`browser` when the environment's browser made the request; absent for the agent's own calls.",
-          type: "string",
-        },
-        what: {
-          title: "What",
-          description:
-            "For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart.",
-          type: "string",
-          enum: ["navigation", "page_request"],
         },
       },
     },
