@@ -17,6 +17,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from simulate.constants.hosted_harness import VALIDATION_SETTLES
 from simulate.models import (
     AgentVersion,
     HarnessEnvironmentVersion,
@@ -170,18 +171,11 @@ class ValidationStatus(TypedDict):
 
 # A case held for one of these has no proof of its own on the pair yet: never proved, not reached, or proved with
 # another agent version. Validate proves these; a case whose proof ran keeps it until its content or versions change.
-UNPROVED_REASONS = frozenset(
-    {
-        "not_validated",
-        "validation_incomplete",
-        "proved_on_other_agent",
-        "tools_unread",
-        "validation_failed",
-        "validation_ended_on_our_side",
-        "proofs_unread",
-        "validation_unavailable",
-    }
-)
+UNPROVED_REASONS = VALIDATION_SETTLES | {
+    "tools_unread",
+    "proofs_unread",
+    "validation_unavailable",
+}
 # How long a validation's progress counts are kept between polls of a large suite.
 PROGRESS_CACHE_SECONDS = 10
 
@@ -915,15 +909,75 @@ def _replaced_by(
     return next((rule for rule in new_rules if f"rule-{rule_key(rule)}" == now), None)
 
 
+def _records(documents: Mapping[str, Any]) -> Any:
+    return (documents.get("contract") or {}).get("amendment_records")
+
+
+def _rule_pair(
+    quote: str,
+    old_rules: list[str],
+    new_rules: list[str],
+    documents: Mapping[str, Any],
+    parent_documents: Mapping[str, Any],
+) -> tuple[str | None, str | None]:
+    """The rule a quote names in the parent version and in this one: the rule holding its words, else the rule the
+    recorded rewordings put in its place, so a case citing words older than both still reads the rule it became."""
+    from simulate.services.harness_scenario_lifecycle import matched_rule
+    from simulate.services.harness_scenario_sources import replacement
+
+    def held(rules: list[str], side: Mapping[str, Any]) -> str | None:
+        at = replacement(quote, rules, _records(side))
+        return matched_rule(quote, rules) or (rules[at] if at is not None else None)
+
+    before = held(old_rules, parent_documents)
+    # A cited rule this version no longer holds reads its replacement only as the harness declared it.
+    after = held(new_rules, documents) or _replaced_by(
+        before, new_rules, documents, parent_documents
+    )
+    if before is None and after is not None:
+        # Words only this version holds: the parent's rule is the one this version recorded it replaced.
+        before = _replaced(after, old_rules, documents)
+    return before, after
+
+
+def _replaced(
+    rule: str, old_rules: list[str], documents: Mapping[str, Any]
+) -> str | None:
+    """The parent's rule that ``rule`` replaced, followed back through the rewordings this version recorded."""
+    from simulate.services.harness_versioning.review_items import rule_key
+
+    held = {f"rule-{rule_key(one)}": one for one in old_rules}
+    records = [
+        one
+        for one in (_records(documents) or [])
+        if isinstance(one, Mapping) and one.get("kind") == "rule"
+    ]
+    key, seen = f"rule-{rule_key(rule)}", set()
+    while key and key not in seen:
+        seen.add(key)
+        key = next(
+            (
+                str(one["previous"])
+                for one in records
+                if one.get("key") == key and one.get("previous")
+            ),
+            "",
+        )
+        if key in held:
+            return held[key]
+    return None
+
+
 def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChanges:
     """What changed between an environment version and its parent in the rules and files the
     default suite cites, each with the cases that cite it."""
     from simulate.services.harness_scenario_lifecycle import (
         changed_refs,
-        matched_rule,
         parent_version_documents,
         rules_of,
     )
+    from simulate.services.harness_scenario_sources import normalise
+    from simulate.services.harness_versioning.review_items import rule_key
 
     version = HarnessEnvironmentVersion._base_manager.filter(
         id=version_id, job_id=environment.id, deleted=False
@@ -960,24 +1014,30 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChan
             ):
                 continue
             kind, ref = str(source.get("kind")), str(source.get("ref") or "")
-            entry = by_change.setdefault(
-                (kind, ref),
-                SourceChange(kind=kind, ref=ref, before=None, after=None, cited_by=[]),
-            )
-            if key not in entry["cited_by"]:
-                entry["cited_by"].append(key)
             if kind == "rule":
-                quote = str(source.get("quote") or "")
-                entry["before"] = matched_rule(quote, old_rules)
-                # A cited rule this version no longer holds reads its replacement only as the harness declared it.
-                entry["after"] = matched_rule(quote, new_rules) or _replaced_by(
-                    entry["before"],
+                # A case's `rule:<n>` numbers its own sources, so one rule is grouped by the texts it reads in the
+                # two versions, followed through the rewordings the harness recorded.
+                before, after = _rule_pair(
+                    str(source.get("quote") or ""),
+                    old_rules,
                     new_rules,
                     version.documents or {},
                     parent_documents,
                 )
+                ref = f"rule-{rule_key(after or before or normalise(source.get('quote')))}"
+                group = (kind, ref)
             else:
+                before = after = None
+                group = (kind, ref)
                 files.add(file_path(ref))
+            entry = by_change.setdefault(
+                group,
+                SourceChange(
+                    kind=kind, ref=ref, before=before, after=after, cited_by=[]
+                ),
+            )
+            if key not in entry["cited_by"]:
+                entry["cited_by"].append(key)
     before_texts = _file_texts(parent, files) if parent else {}
     after_texts = _file_texts(version, files)
     for (kind, ref), entry in by_change.items():

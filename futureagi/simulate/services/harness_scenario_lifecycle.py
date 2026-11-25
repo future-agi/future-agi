@@ -16,7 +16,7 @@ from typing import Any, Literal, NotRequired, TypedDict, cast
 import structlog
 from django.db.models import F
 
-from simulate.constants.hosted_harness import SCENARIO_KEY
+from simulate.constants.hosted_harness import SCENARIO_KEY, VALIDATION_SETTLES
 from simulate.models import (
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
@@ -799,6 +799,20 @@ def scenario_lifecycle(
                         "tool_not_on_agent", tool=", ".join(lacking), agent=label
                     ),
                 )
+        elif (
+            agent_tools is not None
+            and agent_tools[0] is not None
+            and view["reason"] in _VALIDATION_SETTLES
+            and (lacking := sorted(needed.get(key, frozenset()) - agent_tools[0]))
+        ):
+            # Validating with this agent version would not run it: the tool it lacks is the reason, not validation.
+            _demote(
+                view,
+                "tool_not_on_agent",
+                reason_text(
+                    "tool_not_on_agent", tool=", ".join(lacking), agent=agent_tools[1]
+                ),
+            )
         if default and key in failed and view["state"] != "archived":
             _demote(
                 view,
@@ -1168,6 +1182,10 @@ def archived_view(archived_at: datetime | None, archive_reason: str) -> Lifecycl
         archive_reason=archive_reason or "no reason given",
     )
     return view
+
+
+# A validation that cannot run here would not run a case its agent lacks a tool for either: the tool is its reason.
+_VALIDATION_SETTLES = VALIDATION_SETTLES | {"validation_unavailable"}
 
 
 def parent_version_documents(

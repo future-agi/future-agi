@@ -68,7 +68,7 @@ def test_changes_with_cited_by(user, workspace, storage, auth_client):
         child.version_number,
     )
     by_ref = {(one["kind"], one["ref"]): one for one in body["changes"]}
-    rule = by_ref[("rule", "rule:0")]
+    [rule] = [one for one in body["changes"] if one["kind"] == "rule"]
     # The cited rule is gone; no new rule is guessed in its place from how it reads.
     assert (rule["before"], rule["after"]) == ("Never refund after 14 days.", None)
     assert sorted(rule["cited_by"]) == sorted(REFUND_KEYS[:2])
@@ -119,6 +119,73 @@ def test_a_rewritten_rule_compares_with_the_rule_the_harness_recorded_in_its_pla
 
     rule = next(one for one in body["changes"] if one["kind"] == "rule")
     assert (rule["before"], rule["after"]) == (old, new)
+
+
+def test_one_entry_per_rule_whatever_number_each_case_gave_it(
+    user, workspace, storage, auth_client
+):
+    """A case's `rule:<n>` numbers its own sources: two cases' `rule:1` can be two rules. Each rule is one entry with
+    the cases that cite it, and a case citing words older than both versions reads the rule they became."""
+    from simulate.services.harness_versioning.review_items import rule_key
+
+    environment = _environment(user, workspace, storage, "sc-group")
+    _suite(environment, _ten())
+    lookup = "Look up an order before answering."
+    oldest, was, now = (
+        "Refund within 14 days.",
+        "Refund within 10 days.",
+        "Refund within 7 days.",
+    )
+    parent = _with_rules_and_files(environment.environment_version, [lookup, was], {})
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, [lookup, now], {})
+
+    def record(action, text, **link):
+        return {
+            "kind": "rule",
+            "action": action,
+            "key": f"rule-{rule_key(text)}",
+            "text": text,
+            **link,
+        }
+
+    history = [
+        record("removed", oldest, replaced_by=f"rule-{rule_key(was)}"),
+        record("added", was, previous=f"rule-{rule_key(oldest)}"),
+    ]
+    for version, records in (
+        (parent, history),
+        (
+            child,
+            history
+            + [
+                record("removed", was, replaced_by=f"rule-{rule_key(now)}"),
+                record("added", now, previous=f"rule-{rule_key(was)}"),
+            ],
+        ),
+    ):
+        documents = dict(version.documents)
+        documents["contract"] = {**documents["contract"], "amendment_records": records}
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents=documents
+        )
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: [{"kind": "rule", "ref": "rule:1", "quote": oldest}],
+            REFUND_KEYS[1]: [{"kind": "rule", "ref": "rule:1", "quote": now}],
+            REFUND_KEYS[2]: [{"kind": "rule", "ref": "rule:1", "quote": lookup}],
+        },
+    )
+
+    with patch.object(
+        harness_scenario_actions, "_file_texts", lambda version, paths: {}
+    ):
+        body = harness_scenario_actions.source_changes(environment, child.id)
+
+    rules = [one for one in body["changes"] if one["kind"] == "rule"]
+    assert [(one["before"], one["after"]) for one in rules] == [(was, now)]
+    assert sorted(rules[0]["cited_by"]) == sorted(REFUND_KEYS[:2])
 
 
 def test_changes_are_capped(user, workspace, storage):
