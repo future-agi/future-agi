@@ -156,7 +156,15 @@ class TestVersionsList:
         response = _get(auth_client, f"{BASE}/{environment.id}/versions/")
 
         assert response.status_code == 200
-        assert response.json() == {"agent": [], "environment": [], "suite": []}
+        body = response.json()
+        assert {piece: body[piece] for piece in ("agent", "environment", "suite")} == {
+            "agent": [],
+            "environment": [],
+            "suite": [],
+        }
+        assert body["releases"] == []
+        assert body["lock"]["can_lock"] is False
+        assert body["lock"]["refusal"]["code"] == "release_not_ready"
 
     def test_versioning_off_is_not_found(
         self, auth_client, user, workspace, storage, settings

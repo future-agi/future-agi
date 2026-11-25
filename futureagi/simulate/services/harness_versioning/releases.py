@@ -16,13 +16,13 @@ from typing import Any
 
 import structlog
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 
 from simulate.models.harness_versioning import (
     HarnessRelease,
     HarnessSuiteMember,
     HarnessSuiteValidation,
-    HarnessSuiteVersion,
     HarnessTaskSplit,
     TaskSplit,
 )
@@ -73,11 +73,11 @@ def _category(use_case: Any) -> str:
     return str(use_case or "").strip().casefold()
 
 
-def scorable_tasks(suite_version: HarnessSuiteVersion) -> list[Task]:
+def scorable_tasks(suite_version_id: Any) -> list[Task]:
     """The suite version's scenarios that have checks to score them. A member's content
     never changes, so neither does this list."""
     members = HarnessSuiteMember.no_workspace_objects.filter(
-        suite_version=suite_version
+        suite_version_id=suite_version_id
     ).values_list("scenario_id", "scenario_key", "content")
     return [
         Task(scenario_id, key, _category((content or {}).get("use_case")))
@@ -208,7 +208,7 @@ def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
             f"Release {current.label} already locks these versions.",
             status_code=409,
         )
-    tasks = scorable_tasks(job.suite_version)
+    tasks = scorable_tasks(job.suite_version_id)
     plan = plan_splits(tasks, _assigned(tasks), str(job.id))
     if plan.test < MIN_TEST_TASKS:
         raise HostedHarnessError(
@@ -345,7 +345,7 @@ def require_no_locked_release(environment: HostedHarnessJob) -> None:
 
 
 def _counts(release: HarnessRelease, assigned: Mapping[Any, str]) -> dict[str, int]:
-    tasks = scorable_tasks(release.suite_version)
+    tasks = scorable_tasks(release.suite_version_id)
     splits = [assigned.get(task.scenario_id) for task in tasks]
     return {
         "train": splits.count(TaskSplit.TRAIN),
@@ -361,8 +361,11 @@ def release_items(job: HostedHarnessJob) -> list[dict[str, Any]]:
 
     releases = list(
         HarnessRelease.no_workspace_objects.filter(environment=job)
-        .select_related(
-            "environment_version", "suite_version", "locked_by", "unlocked_by"
+        # Labels only: a version row carries large documents the read never needs.
+        .select_related("locked_by", "unlocked_by")
+        .annotate(
+            environment_number=F("environment_version__version_number"),
+            suite_number=F("suite_version__version_number"),
         )
         .order_by("-locked_at")
     )
@@ -376,9 +379,9 @@ def release_items(job: HostedHarnessJob) -> list[dict[str, Any]]:
             "id": str(release.id),
             "label": release.label,
             "environment_version_id": str(release.environment_version_id),
-            "environment_label": _label(release.environment_version.version_number),
+            "environment_label": _label(release.environment_number),
             "suite_version_id": str(release.suite_version_id),
-            "suite_label": _label(release.suite_version.version_number),
+            "suite_label": _label(release.suite_number),
             "locked_at": release.locked_at,
             "locked_by": _person(release.locked_by),
             "unlocked_at": release.unlocked_at,
