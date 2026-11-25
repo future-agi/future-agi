@@ -553,6 +553,10 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
     # The protected scenarios the fix could not be held to, word for word as its pull
     # request says them.
     flaky_protected_text = serializers.SerializerMethodField()
+    # Each scenario's stored name by its key, the name the words above use; a scenario
+    # with no name is left out, so its key is never shown.
+    # The map names held-back scenarios too.
+    scenario_names = serializers.SerializerMethodField()
 
     def to_representation(self, instance: AgentFixRun) -> dict:
         self._review = eval_review(instance)
@@ -576,6 +580,12 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
         return flaky_protected(fix_run.report or {}, self.context["fix_names"])
 
     @swagger_serializer_method(
+        serializer_or_field=serializers.DictField(child=serializers.CharField())
+    )
+    def get_scenario_names(self, fix_run: AgentFixRun) -> dict[str, str]:
+        return self.context["fix_names"].scenarios
+
+    @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(
             choices=[one.value for one in EvalGrading]
         )
@@ -589,6 +599,7 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
             "eval_warnings",
             "eval_grading",
             "flaky_protected_text",
+            "scenario_names",
         ]
 
 

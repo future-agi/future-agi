@@ -5,6 +5,15 @@
 
 const BASE_VERSION_ID = "agv-8";
 
+// The fix's scenarios: the key a call carries and the name the read stores.
+const SCENARIOS = [
+  { key: "late-cancel", name: "Late cancellation" },
+  { key: "late-cancel-2", name: "Late cancellation, repeat caller" },
+  { key: "late-cancel-3", name: "Late cancellation, angry caller" },
+  { key: "on-time-cancel", name: "Cancellation with notice" },
+  { key: "refund-window", name: "Refund window" },
+];
+
 const tiers = (overrides = {}) => [
   { name: "static", status: "passed", detail: "1 file changed, 6 lines" },
   {
@@ -143,6 +152,7 @@ const fix = (id, order, overrides = {}) => ({
   retryable: false,
   limited_validation: false,
   eval_warnings: [],
+  scenario_names: Object.fromEntries(SCENARIOS.map((s) => [s.key, s.name])),
   check_runs: [
     {
       run_id: `rt-${id}`,
@@ -402,13 +412,6 @@ export function fixturePatch(candidateId) {
 
 // Per-scenario results of each check run (GET /simulate/v3/test-executions/
 // {id}/calls/ mapped by mapCallRow), for the Per scenario tab.
-const SCENARIOS = [
-  { key: "late-cancel", name: "Late cancellation" },
-  { key: "late-cancel-2", name: "Late cancellation, repeat caller" },
-  { key: "late-cancel-3", name: "Late cancellation, angry caller" },
-  { key: "on-time-cancel", name: "Cancellation with notice" },
-  { key: "refund-window", name: "Refund window" },
-];
 
 const BASELINE = {
   "late-cancel": "failed",

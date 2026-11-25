@@ -39614,6 +39614,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     .optional(),
   eval_grading: zod.enum(["none", "pending", "done", "incomplete"]).optional(),
   flaky_protected_text: zod.array(zod.string().min(1)).optional(),
+  scenario_names: zod.record(zod.string(), zod.string().min(1)).optional(),
 });
 
 /**

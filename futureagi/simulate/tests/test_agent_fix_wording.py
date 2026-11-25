@@ -512,6 +512,34 @@ class TestFlakyProtectedOnThePage:
         assert "flaky_protected_text" not in response.json()["results"][0]
 
 
+class TestScenarioNamesOnThePage:
+    def test_the_read_names_each_scenario_as_the_words_do(
+        self, auth_client, source_run, storage, named
+    ):
+        fix_run, _ = _winner(source_run, storage)
+        scenarios, _ = named
+
+        with patch("simulate.serializers.agent_fix.eval_review", return_value=_DONE):
+            read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+
+        # A key that is not its name reads by the name; one with no name is left out.
+        assert read["scenario_names"] == {
+            _SLUG: "Reschedule out of hours",
+            "late-booking": "Late booking",
+        }
+        # The words and the names come from one lookup.
+        assert scenarios.call_count == 1
+
+    def test_a_list_names_no_scenarios(self, auth_client, source_run, storage):
+        fix_run, _ = _winner(source_run, storage)
+
+        response = auth_client.get(
+            f"{BASE}/", {"environment_id": str(fix_run.environment_id)}
+        )
+
+        assert "scenario_names" not in response.json()["results"][0]
+
+
 class TestMustPassWords:
     _PASSED = [VerdictTier(name="must-pass", status="passed")]
     _FAILED = [VerdictTier(name="must-pass", status="failed")]

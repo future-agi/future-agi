@@ -1471,6 +1471,7 @@ class TestUserApi:
             read.pop("eval_warnings")
             read.pop("eval_grading")
             read.pop("flaky_protected_text")
+            read.pop("scenario_names")
             for candidate in read["candidates"]:
                 candidate.pop("wording")
             assert listed["results"] == [read]

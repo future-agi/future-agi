@@ -54699,6 +54699,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           readOnly: true,
         },
+        scenario_names: {
+          title: "Scenario names",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
       },
     },
     AgentFixRunList: {

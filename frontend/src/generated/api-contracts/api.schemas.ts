@@ -19784,6 +19784,8 @@ export const AgentFixRunDetailApiEvalGrading = {
   incomplete: "incomplete",
 } as const;
 
+export type AgentFixRunDetailApiScenarioNames = { [key: string]: string };
+
 export type AgentFixCandidateDetailApiOutcome =
   (typeof AgentFixCandidateDetailApiOutcome)[keyof typeof AgentFixCandidateDetailApiOutcome];
 
@@ -19866,6 +19868,7 @@ export interface AgentFixRunDetailApi {
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
   readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
   readonly flaky_protected_text?: readonly string[];
+  readonly scenario_names?: AgentFixRunDetailApiScenarioNames;
 }
 
 export interface AgentFixShipApi {
