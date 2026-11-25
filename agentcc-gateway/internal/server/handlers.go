@@ -2558,7 +2558,7 @@ func enrichModel(db *modeldb.ModelDB, m models.ModelObject, table string) models
 func (h *Handlers) priceTableName(orgID, providerID string) string {
 	if orgID != "" && h.orgProviderCache != nil && h.tenantStore != nil {
 		if cfg := h.tenantStore.Get(orgID); cfg != nil {
-			if pc := cfg.Providers[providerID]; pc != nil && pc.Enabled && pc.HasCredentials() {
+			if pc := cfg.Providers[providerID]; pc != nil && pc.Enabled {
 				return h.orgProviderCache.PriceTableName(providerID, pc)
 			}
 		}
@@ -2579,13 +2579,18 @@ func (h *Handlers) discoveryQuote(r *http.Request) func(models.ModelObject) stri
 		orgID, keyType = key.Metadata["org_id"], key.KeyType
 		cfg = h.tenantStore.Get(orgID)
 	}
+	orgOnly := h.orgProvidersOnlyForKeyType(r.Context(), keyType)
 	type instance struct{ org, provider string }
 	tables := make(map[instance]string)
 	return func(m models.ModelObject) string {
 		id := instance{provider: m.OwnedBy}
-		if cfg != nil && cfg.Providers[m.OwnedBy] != nil && (allowsImplicitOrgOverride(keyType) ||
-			len(orgModelMatches(cfg, []string{m.OwnedBy}, m.ID)) != 0) {
-			id.org = orgID
+		if cfg != nil {
+			pc := cfg.Providers[m.OwnedBy]
+			// Org-only discovery still lists configured models before credentials are added.
+			if pc != nil && pc.Enabled && (orgOnly || pc.HasCredentials() && (allowsImplicitOrgOverride(keyType) ||
+				len(orgModelMatches(cfg, []string{m.OwnedBy}, m.ID)) != 0)) {
+				id.org = orgID
+			}
 		}
 		if table, ok := tables[id]; ok {
 			return table

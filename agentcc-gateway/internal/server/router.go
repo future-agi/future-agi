@@ -35,7 +35,7 @@ type remainderRoute struct {
 }
 
 func (rr remainderRoute) match(path string) (string, bool) {
-	value, ok := strings.CutPrefix("/"+strings.Trim(path, "/"), rr.prefix)
+	value, ok := strings.CutPrefix("/"+strings.TrimLeft(path, "/"), rr.prefix)
 	return value, ok && value != ""
 }
 

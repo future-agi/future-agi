@@ -424,7 +424,7 @@ func BenchmarkRouterNotFound(b *testing.B) {
 func TestRouterModelDetailRemainder(t *testing.T) {
 	rt := NewRouter()
 	rt.Handle("GET", "/v1/models/{model...}", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("model") != "vendor/item" {
+		if id := r.URL.Query().Get("model"); id != "vendor/item" && id != "vendor/trailing/" {
 			http.NotFound(w, r)
 		}
 	})
@@ -436,6 +436,10 @@ func TestRouterModelDetailRemainder(t *testing.T) {
 	}{
 		{"GET", "/v1/models/vendor/item", 200, true},
 		{"GET", "/v1/models/vendor%2Fitem", 200, true},
+		{"GET", "/v1/models/vendor/item/", 404, true},
+		{"GET", "/v1/models/vendor/item%2F", 404, true},
+		{"GET", "/v1/models/vendor/trailing/", 200, true},
+		{"GET", "/v1/models/vendor/trailing%2F", 200, true},
 		{"POST", "/v1/models/vendor/item", 405, true},
 		{"GET", "/v1/models/vendor/unknown", 404, true},
 		{"GET", "/v1/files/vendor/item", 404, false},

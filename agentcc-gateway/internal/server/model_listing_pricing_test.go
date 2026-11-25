@@ -333,7 +333,7 @@ func TestListModels_QuoteUsesEligibleInstance(t *testing.T) {
 			var list models.EnrichedModelListResponse
 			get("/v1/models", &list)
 			want := map[string]float64{"explicit": 1}
-			if tc.credential != "" {
+			if tc.keyType == "byok" || tc.credential != "" {
 				want["explicit"] = 5
 			}
 			if tc.keyType == "internal" {
