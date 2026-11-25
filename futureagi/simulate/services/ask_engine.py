@@ -35,7 +35,7 @@ import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -48,6 +48,7 @@ from simulate.models import CallExecution, SimulateAsk, SimulateEvalResult
 from simulate.services.ask_selection import (
     FrozenSelection,
     LaunchRefused,
+    Question,
     check_before_launch,
     launch_gate,
 )
@@ -386,7 +387,7 @@ def _name_taken(model, name, organization) -> bool:
     system's."""
     from model_hub.models.choices import OwnerChoices
 
-    return (
+    return bool(
         model.no_workspace_objects.filter(
             name=name, organization=organization, deleted=False
         ).exists()
@@ -422,13 +423,17 @@ def launch_ask(
     definitions = list(definitions)
     if len({definition.key for definition in definitions}) != len(definitions):
         raise LaunchRefused("questions", "Each question needs its own key.")
+    checked = [
+        Question(definition.name, definition.kinds, definition.decision_model)
+        for definition in definitions
+    ]
     shown = check_before_launch(
-        selection, definitions, organization=organization, workspace_id=workspace_id
+        selection, checked, organization=organization, workspace_id=workspace_id
     )
     launch_gate(
         organization=organization,
         workspace_id=workspace_id,
-        questions=definitions,
+        questions=checked,
         answers=shown["answers"],
     )
     if shown["credits_estimate"] != accepted_credits:
@@ -622,7 +627,7 @@ def grade_row(row_id: str) -> str:
         )
         return "done"
     claimed = _claim(row)
-    if not isinstance(claimed, type(timezone.now())):
+    if isinstance(claimed, str):
         return claimed
     try:
         fields = _grade(row)
@@ -654,7 +659,7 @@ def _refused_for_credits(failed: Exception) -> bool:
     # usage log row is not created as processing.
     from tfc.constants.api_calls import APICallStatusChoices
 
-    args = getattr(failed, "args", ())
+    args: tuple[Any, ...] = getattr(failed, "args", ())
     return (
         isinstance(failed, ValueError)
         and len(args) == 2
@@ -668,7 +673,7 @@ def _refused_for_credits(failed: Exception) -> bool:
     )
 
 
-def _claim(row):
+def _claim(row) -> datetime | str:
     """Take the row, committed, before anything is called: the organisation's
     gradings in flight are counted under a lock, so the limit holds across asks."""
     now = timezone.now()
@@ -784,7 +789,7 @@ def _grade(row) -> dict[str, Any]:
     output = output if isinstance(output, dict) else {}
     label = output.get("choice")
     score = output.get("score")
-    if not isinstance(label, str) or label not in template.choice_scores:
+    if not isinstance(label, str) or label not in (template.choice_scores or {}):
         return {
             "state": RESULT.GRADING_ERROR,
             "cause": "answer_unreadable",
