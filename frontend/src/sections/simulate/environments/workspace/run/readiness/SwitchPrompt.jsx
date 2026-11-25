@@ -14,13 +14,14 @@ export default function SwitchPrompt({
   saved,
   keys,
   trials,
+  enabled,
   onSwitch,
   onKeep,
 }) {
   const selection = useReadiness(
     envId,
     { ...picks, [piece]: saved.id },
-    { keys, trials },
+    { keys, trials, enabled },
   ).data?.selection;
   return (
     <RunPlanNote
@@ -50,6 +51,8 @@ SwitchPrompt.propTypes = {
   saved: PropTypes.shape({ id: PropTypes.string }).isRequired,
   keys: PropTypes.arrayOf(PropTypes.string),
   trials: PropTypes.number,
+  // False until the selection has settled, as the plan's own read.
+  enabled: PropTypes.bool,
   onSwitch: PropTypes.func.isRequired,
   onKeep: PropTypes.func.isRequired,
 };

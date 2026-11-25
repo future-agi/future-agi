@@ -14,8 +14,9 @@ import {
 } from "./versions";
 
 /**
- * The builder chat's fix run for an environment: Fix all starts it, the
- * server saves and re-checks, and the popup follows its state.
+ * The builder chat's fix run for an environment: the run plan starts it with
+ * the ticked lines, the server saves and re-checks, and the page follows its
+ * state.
  */
 
 const POLL_MS = 5000;
@@ -28,8 +29,6 @@ const fixPath = (envId) =>
 // The server says whether a run is still working.
 export const fixIsActive = (run) => Boolean(run?.active);
 
-const fixRunKey = readinessFixKey;
-
 export const getFixRun = async (envId) => {
   return (await axios.get(fixPath(envId))).data?.fix ?? null;
 };
@@ -39,8 +38,7 @@ export const startGroupFix = async (envId, vars) => {
   return (
     await axios.post(fixPath(envId), {
       group,
-      // Leaving rows out fixes the whole group.
-      ...(rows?.length ? { rows } : {}),
+      rows,
       idempotency_key: idempotencyKey,
       ...versionPickFields(picks),
     })
@@ -50,7 +48,7 @@ export const startGroupFix = async (envId, vars) => {
 // The environment's latest fix run. Polls every 5 s while it is active.
 export function useFixRun(envId, { enabled = true } = {}) {
   return useQuery({
-    queryKey: fixRunKey(envId),
+    queryKey: readinessFixKey(envId),
     queryFn: () => getFixRun(envId),
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
@@ -60,7 +58,7 @@ export function useFixRun(envId, { enabled = true } = {}) {
   });
 }
 
-// Call as mutate({ group: "builder", picks }). The server posts the group's
+// Call as mutate({ group: "builder", rows, picks }). The server posts the group's
 // message to the chat itself, so the chat's job is read again.
 export function useStartGroupFix(envId) {
   const queryClient = useQueryClient();
@@ -71,14 +69,14 @@ export function useStartGroupFix(envId) {
         idempotencyKey: harnessIdempotencyKey(),
       }),
     onSuccess: (data) => {
-      queryClient.setQueryData(fixRunKey(envId), data.fix);
+      queryClient.setQueryData(readinessFixKey(envId), data.fix);
       queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
       refreshReadiness(queryClient, envId);
     },
     onError: (error) => {
       const code = error?.error;
       if (code === "fix_running") {
-        queryClient.invalidateQueries({ queryKey: fixRunKey(envId) });
+        queryClient.invalidateQueries({ queryKey: readinessFixKey(envId) });
       } else if (code === "unsaved_changes") {
         queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
       } else if (code === "nothing_to_fix") {

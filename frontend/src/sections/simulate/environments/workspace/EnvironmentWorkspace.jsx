@@ -139,8 +139,9 @@ export default function EnvironmentWorkspace() {
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
-  // { ids, trials, initialPicks, seed, collapsed } of the run awaiting version picks.
+  // { ids, trials, initialPicks, seed, request, collapsed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
+  const runRequests = useRef(0);
   // Where runs go through the run plan.
   const planned = source === "harness" && Boolean(env?.versioning?.enabled);
   // The review of the unsaved changes, opened from the unsaved-changes bar.
@@ -215,16 +216,33 @@ export default function EnvironmentWorkspace() {
     }
     if (env?.versioning?.enabled) {
       runMutation.reset();
-      setRunDialog({ ids, trials, initialPicks, seed });
+      runRequests.current += 1;
+      setRunDialog({
+        ids,
+        trials,
+        initialPicks,
+        seed,
+        request: runRequests.current,
+      });
       return;
     }
     runMutation.mutate({ ids, trials, seed });
   };
   // Opens the run plan, or expands it when collapsed; never starts a run.
-  const openRunPlan = () =>
-    runDialog
-      ? setRunDialog((open) => open && { ...open, collapsed: false })
-      : startRun(undefined, 1);
+  const openRunPlan = () => {
+    if (!runDialog) {
+      startRun(undefined, 1);
+      return;
+    }
+    runRequests.current += 1;
+    const request = runRequests.current;
+    setRunDialog((open) => open && { ...open, request, collapsed: false });
+  };
+  // Only one drawer shows at a time: the run plan waits as its tab.
+  const openReview = () => {
+    setRunDialog((open) => open && { ...open, collapsed: true });
+    setReviewOpen(true);
+  };
   const fixChat = useFixInChat(env?.id, {
     enabled: planned,
     turns: chat.turns,
@@ -252,7 +270,9 @@ export default function EnvironmentWorkspace() {
           ? () => navigate(paths.dashboard.simulate.environments.detail(env.id))
           : undefined
       }
-      onReviewChanges={executionMatch ? undefined : () => setReviewOpen(true)}
+      onReviewChanges={executionMatch ? undefined : openReview}
+      request={runDialog.request}
+      overBeside={reviewOpen}
       collapsed={Boolean(runDialog.collapsed)}
       onCollapsedChange={(collapsed) =>
         setRunDialog((open) => open && { ...open, collapsed })
@@ -653,7 +673,7 @@ export default function EnvironmentWorkspace() {
         env={env}
         busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
         rebuilding={chat.rebuildHold}
-        onReview={() => setReviewOpen(true)}
+        onReview={openReview}
       />
 
       {/* A template-seeded env is read-only until forked — the banner states the
@@ -720,7 +740,7 @@ export default function EnvironmentWorkspace() {
               overviewWorld={overviewWorld}
               graphData={graphData}
               onStartRun={startRun}
-              runDialogOpen={Boolean(runDialog)}
+              runDialogOpen={Boolean(runDialog) && !runDialog.collapsed}
               canRun={runnable && !runMutation.isPending}
               runBlockedReason={runReason(
                 blockedReason(

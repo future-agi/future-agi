@@ -34,6 +34,7 @@ describe("startGroupFix", () => {
     axios.post.mockResolvedValue({ data: { fix: { id: "f1" } } });
     await startGroupFix("e1", {
       group: "builder",
+      rows: ["state"],
       picks: { environment: "ev2" },
       idempotencyKey: "k1",
     });
@@ -41,6 +42,7 @@ describe("startGroupFix", () => {
       "/simulate/api/harness-environments/e1/capabilities/fix/",
       {
         group: "builder",
+        rows: ["state"],
         idempotency_key: "k1",
         environment_version_id: "ev2",
       },

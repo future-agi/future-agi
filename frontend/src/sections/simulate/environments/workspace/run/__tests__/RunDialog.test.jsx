@@ -766,12 +766,45 @@ describe("RunDialog", () => {
     ).toHaveTextContent("v1");
   });
 
+  it("gives focus back when closed, and stays when asked for again as it slides shut", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const plan = (request) => (
+      <>
+        <button type="button">Run simulation</button>
+        {request && (
+          <RunDialog
+            open
+            env={ENV}
+            scenarioIds={["k1"]}
+            onClose={onClose}
+            request={request}
+          />
+        )}
+      </>
+    );
+    const { rerender } = render(plan());
+    const opener = screen.getByRole("button", { name: "Run simulation" });
+    await user.click(opener);
+    rerender(plan(1));
+    await waitFor(() => expect(opener).not.toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(opener).toHaveFocus();
+    rerender(plan(2));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 400);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeVisible();
+  });
+
   it("closes on Escape from inside the plan, not from the rest of the page", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
     render(
       <>
         <input aria-label="Reply to the builder" />
+        <p>An earlier message</p>
         <RunDialog open env={ENV} scenarioIds={["k1"]} onClose={onClose} />
       </>,
     );
@@ -782,6 +815,8 @@ describe("RunDialog", () => {
       ),
     );
     await user.click(screen.getByLabelText("Reply to the builder"));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByText("An earlier message"));
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("combobox", { name: "Environment" }));
     // The first Escape is the open list's.

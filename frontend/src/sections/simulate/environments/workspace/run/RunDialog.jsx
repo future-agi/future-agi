@@ -82,8 +82,10 @@ export default function RunDialog({
   onSubmit,
   submitting = false,
   error = null,
+  request,
   collapsed = false,
   onCollapsedChange,
+  overBeside = false,
 }) {
   const versions = useEnvironmentVersions(env?.id, { enabled: open });
   const { data } = versions;
@@ -170,14 +172,12 @@ export default function RunDialog({
   const selectionKeys = runIds ?? null;
   // A selection is asked about only once settled: the suite's scenarios loaded and at least one picked, else the
   // server refuses the keys.
+  const selectionSettled =
+    runAll || (!(membersWanted && !memberKeys) && selectionKeys.length > 0);
   const readiness = useReadiness(env?.id, picks, {
     keys: selectionKeys,
     trials,
-    enabled:
-      open &&
-      versioned &&
-      Boolean(data) &&
-      (runAll || (!(membersWanted && !memberKeys) && selectionKeys.length > 0)),
+    enabled: open && versioned && Boolean(data) && selectionSettled,
   });
   const selection = readiness.data?.selection;
   const readyView = useMemo(
@@ -445,8 +445,10 @@ export default function RunDialog({
             piece={piece}
             picks={picks}
             saved={saved}
-            keys={selectionKeys}
+            // Another suite may hold scenarios this one lacks.
+            keys={piece === "suite" ? scenarioIds ?? null : selectionKeys}
             trials={trials}
+            enabled={selectionSettled}
             onSwitch={() => pick(piece, saved.id)}
             onKeep={() => setKept((all) => ({ ...all, [piece]: saved.id }))}
           />
@@ -506,7 +508,7 @@ export default function RunDialog({
           <RunPlanNote
             data-testid="run-drafts-note"
             action={
-              fixOffered && onReviewChanges ? (
+              fixOffered && onReviewChanges && !drafts.stale ? (
                 <Button size="small" onClick={onReviewChanges}>
                   {RUN_PLAN_COPY.reviewChanges}
                 </Button>
@@ -580,6 +582,7 @@ export default function RunDialog({
   return (
     <RunPlanDrawer
       open={open}
+      request={request}
       subtitle={RUN_PLAN_COPY.subtitle(
         env?.name,
         environment && named(environment),
@@ -588,6 +591,7 @@ export default function RunDialog({
       locked={submitting}
       collapsed={collapsed}
       onCollapsedChange={onCollapsedChange}
+      overBeside={overBeside}
       onClose={onClose}
       footer={(close) => (
         <>
@@ -653,6 +657,9 @@ RunDialog.propTypes = {
   submitting: PropTypes.bool,
   error: PropTypes.object,
   // Only the edge tab shows; the body stays mounted.
+  // Changes each time the run plan is asked for.
+  request: PropTypes.number,
   collapsed: PropTypes.bool,
   onCollapsedChange: PropTypes.func,
+  overBeside: PropTypes.bool,
 };

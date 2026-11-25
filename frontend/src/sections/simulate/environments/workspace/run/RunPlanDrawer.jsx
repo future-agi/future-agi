@@ -23,12 +23,14 @@ const PANEL_WIDTH = "min(640px, calc(100vw - 40px))";
  */
 export default function RunPlanDrawer({
   open,
+  request,
   subtitle,
   footer,
   busy = false,
   locked = false,
   collapsed = false,
   onCollapsedChange,
+  overBeside = false,
   onClose,
   children,
 }) {
@@ -39,47 +41,57 @@ export default function RunPlanDrawer({
   const [leaving, setLeaving] = useState(false);
   const closing = useRef(null);
   const bodyRef = useRef(null);
-  // Another drawer opened over the plan folds it to its tab, so both stay reachable.
-  const covered = useDrawerCovered(open);
-  const [shownOver, setShownOver] = useState(false);
+  // Another drawer opened over the plan folds it to its tab until that one closes. Collapsed, it leaves the one drawer
+  // on screen to the others.
+  const folded = useDrawerCovered(open && !collapsed) || collapsed;
+  // Keyboard focus starts in the plan; closing it gives focus back.
+  const opener = useRef(null);
   useEffect(() => {
-    if (!covered) setShownOver(false);
-  }, [covered]);
-  // Keyboard focus starts in the plan, and goes back where it came from.
-  useEffect(() => {
-    const before = document.activeElement;
-    const body = bodyRef.current;
+    opener.current = document.activeElement;
     const frame = requestAnimationFrame(() => {
       setEntered(true);
-      body?.focus({ preventScroll: true });
+      bodyRef.current?.focus({ preventScroll: true });
     });
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(closing.current);
-      if (body?.contains(document.activeElement)) before?.focus?.();
     };
   }, []);
+  // Asked for again while it was sliding shut, it stays.
+  useEffect(() => {
+    clearTimeout(closing.current);
+    setLeaving(false);
+  }, [request]);
   const close = () => {
+    const body = bodyRef.current;
+    if (body?.contains(document.activeElement)) opener.current?.focus?.();
     setLeaving(true);
     closing.current = setTimeout(onClose, slideMs);
   };
-  const folded = collapsed || (covered && !shownOver);
-  const toggle = () => {
-    setShownOver(folded && covered);
-    onCollapsedChange?.(!folded);
-  };
-  // Escape closes it from inside, or when a button that disabled itself left focus nowhere; never from the chat.
+  // Escape closes it from inside, or when a button of its own that disabled itself left focus nowhere; never from the
+  // rest of the page.
   const closeRef = useRef(null);
   closeRef.current = folded || locked || leaving ? null : close;
   useEffect(() => {
+    let lastInside = true;
+    const isInside = (node) => Boolean(bodyRef.current?.contains(node));
+    const onReach = (event) => {
+      lastInside = isInside(event.target);
+    };
     const onKeyDown = (event) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       const at = document.activeElement;
-      if (at === document.body || bodyRef.current?.contains(at))
+      if (isInside(at) || (at === document.body && lastInside))
         closeRef.current?.();
     };
+    document.addEventListener("focusin", onReach);
+    document.addEventListener("pointerdown", onReach);
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("focusin", onReach);
+      document.removeEventListener("pointerdown", onReach);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, []);
 
   const toggleLabel = folded ? COPY.expand : COPY.collapse;
@@ -99,8 +111,8 @@ export default function RunPlanDrawer({
         sx: {
           height: "100vh",
           position: "fixed",
-          // Another drawer slides over the same edge: the tab, and the plan shown again, sit above it.
-          zIndex: covered ? theme.zIndex.drawer + 1 : 110,
+          // A drawer beside the page leaves the tab in reach, so it sits above that one; below the modal ones.
+          zIndex: overBeside ? theme.zIndex.drawer + 1 : 110,
           boxShadow: "none",
           borderRadius: 0,
           borderLeft: "1px solid",
@@ -128,7 +140,7 @@ export default function RunPlanDrawer({
           size="small"
           aria-label={toggleLabel}
           aria-expanded={!folded}
-          onClick={toggle}
+          onClick={() => onCollapsedChange?.(!folded)}
           // right: 100% puts its right edge on the paper's padding edge, so it covers the paper's 1px left border and
           // the two read as one.
           sx={{
@@ -249,6 +261,8 @@ export default function RunPlanDrawer({
 
 RunPlanDrawer.propTypes = {
   open: PropTypes.bool,
+  // Changes each time the plan is asked for.
+  request: PropTypes.number,
   subtitle: PropTypes.string,
   // (close) -> the buttons, and the body; close slides it shut first.
   footer: PropTypes.func.isRequired,
@@ -258,6 +272,8 @@ RunPlanDrawer.propTypes = {
   locked: PropTypes.bool,
   collapsed: PropTypes.bool,
   onCollapsedChange: PropTypes.func,
+  // A drawer that leaves the page usable (Review changes) is open too.
+  overBeside: PropTypes.bool,
   onClose: PropTypes.func,
   children: PropTypes.func.isRequired,
 };
