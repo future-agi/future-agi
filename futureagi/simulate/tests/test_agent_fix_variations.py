@@ -351,7 +351,9 @@ class TestThePrivateSuite:
             },
         }
         files = archives.read_archive(
-            _builder_save(environment, numbers=(), extra=[f"{key}-var1" for key in keys])
+            _builder_save(
+                environment, numbers=(), extra=[f"{key}-var1" for key in keys]
+            )
         )
         env_files = drafts._piece_files(
             environment, "environment", fix_run.source_run.environment_version
