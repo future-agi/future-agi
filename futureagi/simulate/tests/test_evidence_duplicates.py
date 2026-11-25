@@ -13,6 +13,7 @@ import pytest
 from django.db import IntegrityError, connection, transaction
 from rest_framework import status
 
+from model_hub.models.develop_dataset import Cell
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from simulate.selectors.evidence_import import RETRIED_LATER
 from simulate.services import evidence_import as evidence_import_service
@@ -21,6 +22,7 @@ from simulate.services.evidence_import import (
     create_transcript_import,
     discard_evidence_import,
 )
+from tracer.models.project import Project
 from tracer.selectors.observe_evidence import Turn
 
 from .test_evidence_datasets import CHAT, EXPECTED, _column, _mapping, _row
@@ -67,6 +69,35 @@ def _stored(made):
 
 
 class TestObserve:
+    @pytest.mark.parametrize("same_content", [False, True])
+    def test_same_session_id_in_another_project_matches_only_by_content(
+        self, client, environment, project, same_content
+    ):
+        other = Project.objects.create(
+            organization=project.organization,
+            workspace=project.workspace,
+            model_type=project.model_type,
+            trace_type=project.trace_type,
+            name="Other agent",
+        )
+        first = _evidence()
+        second = (
+            first
+            if same_content
+            else _evidence(turns=(Turn("user", "Another conversation", False, "trace", T0),))
+        )
+        _sessions(client, environment, project, {SESSION: first}, [SESSION])
+        with patch(
+            "simulate.selectors.evidence_import.observe_evidence",
+            side_effect=lambda owner, kind, ids: {
+                SESSION: first if owner == project else second
+            },
+        ):
+            response = _create_sessions(client, environment, other, ids=[SESSION])
+        assert response.status_code == status.HTTP_201_CREATED, response.data
+        [case] = response.json()["cases"]
+        assert case["status"] == ("duplicate" if same_content else "pending")
+
     def test_a_session_imported_again_is_no_second_case_and_counts_as_a_source(
         self, client, environment, project
     ):
@@ -163,6 +194,28 @@ class TestTranscripts:
 
 
 class TestDataset:
+    @pytest.mark.parametrize(
+        "next_source", ["edited_original", "old_content", "removed_original"]
+    )
+    def test_changed_or_removed_original_no_longer_holds_a_case(
+        self, client, environment, dataset, columns, next_source
+    ):
+        values = {columns["chat"]: CHAT, columns["expected"]: EXPECTED}
+        original = _row(dataset, 0, values)
+        first = _create_rows(client, environment, dataset, [original], columns)
+        assert first.status_code == status.HTTP_201_CREATED, first.data
+        if next_source == "removed_original":
+            original.delete()
+        else:
+            Cell.objects.filter(row=original, column=columns["expected"]).update(
+                value="Refuse."
+            )
+        row = original if next_source == "edited_original" else _row(dataset, 1, values)
+        again = _create_rows(client, environment, dataset, [row], columns)
+        assert again.status_code == status.HTTP_201_CREATED, again.data
+        [case] = again.json()["cases"]
+        assert case["status"] == "pending"
+
     def test_a_row_imported_again_is_already_imported(
         self, client, environment, dataset, columns
     ):

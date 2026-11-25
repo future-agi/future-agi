@@ -8,6 +8,7 @@ Nothing here drafts a scenario or starts a run.
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 
 from django.db import transaction
@@ -29,6 +30,7 @@ from simulate.selectors.evidence_import import (
     ROW_NOT_FOUND,
     SOURCE_NOT_FOUND,
     content_digest,
+    current_evidence,
     evidence_digest,
     import_evidence,
     import_rows,
@@ -318,10 +320,15 @@ def _gone_from_suite(environment: HostedHarnessJob) -> Q:
 
 def _source_key(evidence_import: EvidenceImport, source_id: str) -> tuple | None:
     """What names one source across imports: an Observe session or call by its
-    id, a dataset row by its dataset and id. A transcript has no source to name."""
+    project and id, a dataset row by its dataset and id. A transcript has no source to name."""
     if evidence_import.source_kind == EvidenceImport.SourceKind.TRANSCRIPT:
         return None
-    return (evidence_import.source_kind, evidence_import.dataset_id, source_id)
+    scope = (
+        evidence_import.dataset_id
+        if evidence_import.source_kind == EvidenceImport.SourceKind.DATASET
+        else evidence_import.project_id
+    )
+    return (evidence_import.source_kind, scope, source_id)
 
 
 @dataclass
@@ -357,11 +364,16 @@ def _held(
     if not digests and not keyed:
         return held
     same_source = Q()
-    for kind, dataset_id, source_id in keyed:
+    for kind, scope, source_id in keyed:
+        scope_field = (
+            "evidence_import__dataset_id"
+            if kind == EvidenceImport.SourceKind.DATASET
+            else "evidence_import__project_id"
+        )
         same_source |= Q(
             evidence_import__source_kind=kind,
-            evidence_import__dataset_id=dataset_id,
             source_id=source_id,
+            **{scope_field: scope},
         )
     found = (
         EvidenceImportCase.objects.filter(
@@ -376,7 +388,27 @@ def _held(
         .select_related("evidence_import")
         .order_by("evidence_import__created_at", "position")
     )
+    # A blocked case is superseded by a retry even if the source was repaired.
+    # Only originals that would hold a new case need a fresh fingerprint.
+    stale = set()
+    if statuses == _REPEATED_STATUSES:
+        by_import = defaultdict(list)
+        for case in found:
+            if case.evidence_import.source_kind != EvidenceImport.SourceKind.TRANSCRIPT:
+                by_import[case.evidence_import_id].append(case)
+        for originals in by_import.values():
+            current = current_evidence(originals[0].evidence_import, originals)
+            for original in originals:
+                source = current.get(original.source_id)
+                if source is None or not (
+                    content_digest(source) == original.content_digest
+                    if original.content_digest
+                    else original.digest and evidence_digest(source) == original.digest
+                ):
+                    stale.add(original.id)
     for case in found:
+        if case.id in stale:
+            continue
         if key := _source_key(case.evidence_import, case.source_id):
             held.by_source.setdefault(key, []).append(case)
         if case.content_digest:
