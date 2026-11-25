@@ -235,6 +235,35 @@ export function useStoredAgent(agentId, versionId, { enabled = true } = {}) {
   });
 }
 
+// The names of a version's env values, never a value: each with whether the
+// reading lists it as required and whether the test environment makes it
+// itself, and the required names it has no value for.
+export const toVersionValues = (d) => ({
+  names: (d?.names ?? []).map((one) => ({
+    name: one.name,
+    required: !!one.required,
+    madeByEnvironment: !!one.made_by_environment,
+  })),
+  missingRequired: d?.missing_required_names ?? [],
+  madeByEnvironment: d?.made_by_environment ?? [],
+});
+
+export function useAgentVersionValues(agentId, versionId) {
+  return useQuery({
+    queryKey: ["agents", "version", agentId, versionId, "values"],
+    queryFn: async () =>
+      unwrap(
+        (
+          await axios.get(
+            endpoints.agentDefinitions.versionValues(agentId, versionId),
+          )
+        ).data,
+      ),
+    select: toVersionValues,
+    enabled: !!agentId && !!versionId,
+  });
+}
+
 export function useAgentEnvironments(agentId) {
   return useQuery({
     queryKey: ["agents", "environments", agentId],

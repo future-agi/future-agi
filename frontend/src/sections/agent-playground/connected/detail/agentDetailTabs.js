@@ -3,6 +3,7 @@ import { CONNECTED_AGENTS_PATH } from "../../agentsTabs";
 export const DETAIL_TABS = [
   { id: "overview", label: "Overview" },
   { id: "definition", label: "Definition" },
+  { id: "values", label: "Values" },
   { id: "versions", label: "Versions" },
   { id: "environments", label: "Environments" },
 ];

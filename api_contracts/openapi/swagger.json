@@ -50806,6 +50806,51 @@
                 }
             ]
         },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/values/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_values_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/values/: the version's value names.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentVersionValuesResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/agents/connect/": {
             "post": {
                 "operationId": "simulate_agents_connect_create",
@@ -140563,6 +140608,16 @@
                         "maxLength": 65536,
                         "minLength": 1
                     }
+                },
+                "remove_names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                        "maxLength": 128,
+                        "minLength": 1
+                    },
+                    "maxItems": 200
                 }
             }
         },
@@ -140773,6 +140828,14 @@
                 "up_to_date": {
                     "title": "Up to date",
                     "type": "boolean",
+                    "readOnly": true
+                },
+                "missing_required_names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
                     "readOnly": true
                 }
             }
@@ -142655,6 +142718,55 @@
                 },
                 "version": {
                     "$ref": "#/definitions/AgentVersionResponse"
+                }
+            }
+        },
+        "AgentValueName": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "made_by_environment": {
+                    "title": "Made by environment",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentVersionValuesResponse": {
+            "type": "object",
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentValueName"
+                    },
+                    "readOnly": true
+                },
+                "missing_required_names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "made_by_environment": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
                 }
             }
         },

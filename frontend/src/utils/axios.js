@@ -1628,6 +1628,11 @@ export const endpoints = {
       apiPath("/simulate/agent-definitions/{agent_id}/versions/change/", {
         agent_id: id,
       }),
+    versionValues: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/values/",
+        { agent_id: id, version_id: version },
+      ),
     productionVersion: (id, version) =>
       apiPath(
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/",

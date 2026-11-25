@@ -146,6 +146,7 @@ import type {
   AgentVersionListResponseApi,
   AgentVersionProductionResponseApi,
   AgentVersionRestoreResponseApi,
+  AgentVersionValuesResponseApi,
   AgentccAPIKeyApi,
   AgentccAnalyticsCostBreakdown200,
   AgentccAnalyticsCostBreakdownParams,
@@ -58895,6 +58896,60 @@ export const simulateAgentDefinitionsVersionsRetryCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsValuesListResponse200 = {
+  data: AgentVersionValuesResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsValuesListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsValuesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentDefinitionsVersionsValuesListResponseSuccess =
+  simulateAgentDefinitionsVersionsValuesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateAgentDefinitionsVersionsValuesListResponseError = (
+  | simulateAgentDefinitionsVersionsValuesListResponse404
+  | simulateAgentDefinitionsVersionsValuesListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateAgentDefinitionsVersionsValuesListResponse =
+  | simulateAgentDefinitionsVersionsValuesListResponseSuccess
+  | simulateAgentDefinitionsVersionsValuesListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsValuesListUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/values/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/values/: the version's value names.
+ */
+export const simulateAgentDefinitionsVersionsValuesList = async (
+  agentId: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsValuesListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsValuesListResponse>(
+    getSimulateAgentDefinitionsVersionsValuesListUrl(agentId, versionId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

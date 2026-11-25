@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1206,
+  endpointCount: 1207,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -839,6 +839,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": [
         "post",
+      ],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/values/": [
+        "get",
       ],
       "/simulate/agents/connect/": ["post"],
       "/simulate/agents/connect/availability/": ["get"],
@@ -2309,6 +2312,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": [
     "post",
+  ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/values/": [
+    "get",
   ],
   "/simulate/agents/connect/": ["post"],
   "/simulate/agents/connect/availability/": ["get"],
