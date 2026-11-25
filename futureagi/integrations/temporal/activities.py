@@ -3,6 +3,7 @@ import traceback as tb_module
 from datetime import datetime, timedelta, timezone
 
 import structlog
+from django.db import DatabaseError
 from django.db.models import F, Q
 
 from tfc.temporal.drop_in.decorator import temporal_activity
@@ -949,16 +950,51 @@ def check_integration_error_alerts():
     )
 
     for conn in connections_in_error:
+        # Stamp the connection before sending. A pass that outlives its time
+        # limit keeps working through the list it read while the next pass
+        # lists the connections it has not reached yet; only the pass whose
+        # update stamps the connection sends its email.
+        notified_at = datetime.now(timezone.utc)
+        claimed = False
         try:
+            claimed = bool(
+                IntegrationConnection.no_workspace_objects.filter(id=conn.id)
+                .filter(
+                    Q(last_error_notified_at__isnull=True)
+                    | Q(last_error_notified_at__lte=twenty_four_hours_ago)
+                )
+                .update(last_error_notified_at=notified_at)
+            )
+            if not claimed:
+                continue
             _send_error_notification(conn)
-            conn.last_error_notified_at = datetime.now(timezone.utc)
-            conn.save(update_fields=["last_error_notified_at"])
         except Exception as e:
             logger.warning(
                 "Failed to send error notification",
                 connection_id=str(conn.id),
                 error=str(e),
             )
+            if claimed:
+                _release_error_notified_at(conn, notified_at)
+
+
+def _release_error_notified_at(conn, notified_at):
+    """Give back a stamp whose email was not sent, so a later pass retries.
+
+    Left alone if another pass has stamped the connection since.
+    """
+    from integrations.models import IntegrationConnection
+
+    try:
+        IntegrationConnection.no_workspace_objects.filter(
+            id=conn.id, last_error_notified_at=notified_at
+        ).update(last_error_notified_at=conn.last_error_notified_at)
+    except DatabaseError:
+        logger.warning(
+            "Failed to release error notification stamp",
+            connection_id=str(conn.id),
+            exc_info=True,
+        )
 
 
 def _send_error_notification(connection):

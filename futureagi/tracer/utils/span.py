@@ -1,4 +1,5 @@
 import structlog
+from django.utils import timezone
 
 logger = structlog.get_logger(__name__)
 from model_hub.models.choices import StatusType
@@ -29,12 +30,25 @@ def run_evals_on_spans():
             eval_tags = project_version.eval_tags
 
             if eval_tags is not None and len(eval_tags) > 0:
-                span.eval_status = StatusType.RUNNING.value
-                span.save()
-                eval_observation_span_runner.delay(span.id, eval_tags)
+                if _take_span(span, StatusType.RUNNING.value):
+                    eval_observation_span_runner.delay(span.id, eval_tags)
             else:
-                span.eval_status = StatusType.COMPLETED.value
-                span.save()
+                _take_span(span, StatusType.COMPLETED.value)
 
     except Exception as e:
         logger.exception(f"Error in running evals task on spans: {str(e)}")
+
+
+def _take_span(span, eval_status):
+    """Move ``span`` out of NOT_STARTED; return whether this pass did it.
+
+    A pass that outlives its time limit keeps working through the list it read
+    while the next pass lists the spans it has not reached yet. Only the pass
+    whose update moves the span acts on it, and a span another pass already
+    took is not written back from this pass's stale copy.
+    """
+    return bool(
+        ObservationSpan.objects.using("default")
+        .filter(pk=span.pk, eval_status=StatusType.NOT_STARTED.value)
+        .update(eval_status=eval_status, updated_at=timezone.now())
+    )

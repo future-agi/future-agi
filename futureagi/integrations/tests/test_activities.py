@@ -574,3 +574,48 @@ class TestCheckIntegrationErrorAlerts:
 
         # Should not raise
         check_integration_error_alerts()
+
+    @patch("integrations.temporal.activities._send_error_notification")
+    def test_overlapping_pass_sends_alert_once(self, mock_send, error_connection):
+        """A pass that starts while an earlier one is still sending does not
+        send the same alert again, and neither does the earlier pass."""
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+
+        def send(connection):
+            if mock_send.call_count == 1:
+                # The next pass starts beside this one, mid-send.
+                check_integration_error_alerts._original_func()
+
+        mock_send.side_effect = send
+
+        check_integration_error_alerts()
+
+        assert mock_send.call_count == 1
+
+    @patch("integrations.temporal.activities._send_error_notification")
+    def test_failed_send_is_retried_by_next_pass(self, mock_send, error_connection):
+        """A send that fails leaves the connection due, as before the claim."""
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+        mock_send.side_effect = RuntimeError("SMTP down")
+
+        check_integration_error_alerts()
+
+        error_connection.refresh_from_db()
+        assert error_connection.last_error_notified_at is None
+
+        mock_send.side_effect = None
+        check_integration_error_alerts()
+
+        assert mock_send.call_count == 2
+        error_connection.refresh_from_db()
+        assert error_connection.last_error_notified_at is not None
