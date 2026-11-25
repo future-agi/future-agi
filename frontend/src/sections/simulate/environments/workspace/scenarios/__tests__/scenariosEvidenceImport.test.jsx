@@ -65,7 +65,7 @@ const { default: axios } = await import("src/utils/axios");
 
 const IMPORT = "22222222-2222-2222-2222-222222222222";
 const SUBTITLE = /Add the ones it couldn't work out from your agent/;
-// The sources Vel's panel has that have no working path yet.
+// The design's sources that have no working path yet.
 const HIDDEN = [
   "Generate",
   "From chat",

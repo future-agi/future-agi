@@ -10,7 +10,7 @@ import ImportTranscriptDialog from "../../evidence/ImportTranscriptDialog";
 import { focusRing } from "../../buildDrawer/drawerStyles";
 import { SCENARIOS_COPY } from "./scenarios.constants";
 
-// The sources that work today. Vel's panel also has Generate, From chat, Write
+// The sources that work today. The design also has Generate, From chat, Write
 // one, From a script, From an Error Feed issue and From failing cases; each
 // joins this list once it has a working path.
 const SOURCES = [
