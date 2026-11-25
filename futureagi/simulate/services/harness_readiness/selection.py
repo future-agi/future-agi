@@ -791,7 +791,9 @@ def changed_since_last_run(
 
 
 def _supported(row: SelectionRowView) -> SelectionRowView:
-    supported: SelectionRowView = {**row, "status": "supported"}
+    """The row as the selected cases read it when none uses the tools it fails on: its stale or untested evidence
+    still counts."""
+    supported: SelectionRowView = {**row, "status": _status_unused(row)}
     return supported
 
 
@@ -999,13 +1001,19 @@ def _status_for(row: RowView, case: CaseNeeds) -> Status:
             for target in row["targets"]
         )
     ):
-        if (
-            row["stale_because"] in ("built_with_unknown", "saved_without_check")
-            or row["blocked_by"]
-        ):
-            return "untested"
-        return "stale" if row["stale_because"] else "supported"
+        return _status_unused(row)
     return row["status"]
+
+
+def _status_unused(row: Any) -> Status:
+    """A tool row's status for a case that uses none of the tools it fails on: Supported, unless its evidence is
+    Stale or waits on its gate."""
+    if (
+        row["stale_because"] in ("built_with_unknown", "saved_without_check")
+        or row["blocked_by"]
+    ):
+        return "untested"
+    return "stale" if row["stale_because"] else "supported"
 
 
 def _place(

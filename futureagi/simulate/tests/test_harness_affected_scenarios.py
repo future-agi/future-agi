@@ -875,6 +875,36 @@ def test_cases_held_for_something_to_fix_are_listed_before_those_only_awaiting_v
     assert keys == ["refund-1", "refund-2", "lookup-1", "lookup-2"]
 
 
+@pytest.mark.parametrize(
+    ("stale_because", "blocked_by", "kind"),
+    [(None, None, "ready"), ("agent_version", None, "stale"), (None, "start", "unchecked")],
+)
+def test_a_missing_tool_no_selected_case_uses_keeps_its_evidence_s_own_standing(stale_because, blocked_by, kind):
+    """The cases do not use the tool the agent lacks, so the row no longer blocks them; evidence measured with
+    another version or behind a gate still reads stale or unchecked, never ready."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _selected_answer
+
+    row = {
+        "id": "tool_discovery",
+        "status": "blocked",
+        "measured": True,
+        "reason_code": "tool_not_in_agent",
+        "targets": [{"kind": "tool", "name": "issue_refund", "result": "failed"}],
+        "affected": {"count": 0},
+        "stale_because": stale_because,
+        "blocked_by": blocked_by,
+    }
+    placed = [SimpleNamespace(case=SimpleNamespace(recorded=True, unknown=False))]
+
+    found = _selected_answer(
+        {"kind": "blocked", "worst": "blocked", "reason_code": None}, [row], placed, blocked_workers=0
+    )
+
+    assert found["kind"] == kind
+
+
 def test_each_listed_held_case_names_the_row_it_is_counted_under():
     """The run plan's list says which case is held for which reason, the same row its counts use; a dropped case
     reads dropped, and a case past the list's cap is counted but not listed."""
