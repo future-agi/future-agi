@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import {
   Box,
@@ -15,6 +16,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { paths } from "src/routes/paths";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
@@ -26,6 +28,7 @@ import {
   useAddDesignEdit,
   useApproveDesign,
   useDesignReview,
+  useDiscardDesign,
   useUndoDesignEdit,
 } from "src/api/simulate-environments/designReview";
 import ViewerLock from "../../components/ViewerLock";
@@ -134,12 +137,15 @@ export default function DesignReviewStage({ envId }) {
   const addEdit = useAddDesignEdit(envId);
   const undoEdit = useUndoDesignEdit(envId);
   const approve = useApproveDesign(envId);
+  const discard = useDiscardDesign(envId);
+  const navigate = useNavigate();
   const now = useMinuteClock();
   const [editingRule, setEditingRule] = useState(null);
   const [undo, setUndo] = useState(null);
   const [continuedAt, setContinuedAt] = useState(null);
   const [checking, setChecking] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   if (isLoading)
     return <ContentSkeleton variant="page" sx={{ px: 3, py: 2.5 }} />;
@@ -155,7 +161,11 @@ export default function DesignReviewStage({ envId }) {
 
   const waiting = review.status === REVIEW_STATUS.AWAITING;
   const busy =
-    addEdit.isPending || undoEdit.isPending || approve.isPending || checking;
+    addEdit.isPending ||
+    undoEdit.isPending ||
+    approve.isPending ||
+    discard.isPending ||
+    checking;
   const editable = canEdit && waiting;
   const tables = kept(review.tables);
   const tools = kept(review.tools);
@@ -246,6 +256,17 @@ export default function DesignReviewStage({ envId }) {
   const onApprove = () =>
     approve.mutate(review.revision, { onError: showError });
   const onContinue = () => setContinuedAt(Date.now());
+  const onDiscard = () =>
+    discard.mutate(undefined, {
+      onSuccess: () => navigate(paths.dashboard.simulate.environments.root),
+      onError: (error) => {
+        setConfirmDiscard(false);
+        showError(error);
+      },
+    });
+  const discardCta = canEdit
+    ? { cta: REVIEW_COPY.discard, onClick: () => setConfirmDiscard(true) }
+    : {};
 
   const blocker = !waiting
     ? null
@@ -258,9 +279,9 @@ export default function DesignReviewStage({ envId }) {
           onClick: onContinue,
         }
       : review.agent_changed
-        ? { text: REVIEW_COPY.agentChanged }
+        ? { text: REVIEW_COPY.agentChanged, ...discardCta }
         : emptyWorld
-          ? { text: REVIEW_COPY.emptyWorld }
+          ? { text: REVIEW_COPY.emptyWorld, ...discardCta }
           : null;
 
   const editingOpen = editingRule !== null;
@@ -691,6 +712,23 @@ export default function DesignReviewStage({ envId }) {
             }}
           >
             {REVIEW_COPY.removeAnyway}
+          </Button>
+        }
+      />
+
+      <ConfirmDialog
+        open={confirmDiscard}
+        onClose={() => setConfirmDiscard(false)}
+        title={REVIEW_COPY.discardTitle}
+        content={REVIEW_COPY.discardContent}
+        action={
+          <Button
+            variant="contained"
+            color="error"
+            disabled={discard.isPending}
+            onClick={onDiscard}
+          >
+            {REVIEW_COPY.discardConfirm}
           </Button>
         }
       />

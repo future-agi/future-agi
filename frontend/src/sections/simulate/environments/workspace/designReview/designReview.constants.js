@@ -38,11 +38,16 @@ export const REVIEW_COPY = {
   approved: "Approved. The build is running from this design.",
   finishEditing: "Save or cancel the rule you're changing first.",
   emptyWorldTip:
-    "Tell the builder what the agent works with first. There is nothing to build yet.",
+    "There is nothing to build yet. Discard this design and create the environment again.",
   emptyWorld:
-    "There's nothing to build yet. Say what the agent does and works with, for example “customers and their orders; it can look up an order and refund up to $200”.",
+    "There's nothing to build yet. Discard this design, then create the environment again with a description of what the agent does and works with, for example “customers and their orders; it can look up an order and refund up to $200”.",
   agentChanged:
-    "The agent changed after this design was made. Build again from the agent to use the new version.",
+    "The agent changed after this design was made. Discard this design, then create the environment again from the agent to use the new version.",
+  discard: "Discard",
+  discardTitle: "Discard this design?",
+  discardContent:
+    "The environment is removed with it and nothing is built. You can create it again from My Environments.",
+  discardConfirm: "Discard design",
   parked: (since) =>
     `Waiting on you since ${new Date(since).toLocaleTimeString(undefined, {
       hour: "numeric",

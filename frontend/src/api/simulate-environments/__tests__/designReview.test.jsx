@@ -8,7 +8,9 @@ vi.mock("src/utils/axios", async (importOriginal) => ({
 }));
 
 const axios = (await import("src/utils/axios")).default;
-const { designReviewKey, useApproveDesign } = await import("../designReview");
+const { designReviewKey, useApproveDesign, useDiscardDesign } = await import(
+  "../designReview"
+);
 
 const REVISION = "a".repeat(64);
 
@@ -63,5 +65,29 @@ describe("useApproveDesign", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("useDiscardDesign", () => {
+  beforeEach(() => {
+    axios.post.mockReset();
+  });
+
+  it("discards through the design review and refreshes My Environments", async () => {
+    axios.post.mockResolvedValue({ data: { status: "discarded" } });
+    const { client, wrapper } = makeWrapper();
+    const spy = vi.spyOn(client, "invalidateQueries");
+
+    const { result } = renderHook(() => useDiscardDesign("env-1"), { wrapper });
+    result.current.mutate();
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/design-review/discard/",
+      {},
+    );
+    expect(spy).toHaveBeenCalledWith({
+      queryKey: ["simulate-environments", "list"],
+    });
   });
 });

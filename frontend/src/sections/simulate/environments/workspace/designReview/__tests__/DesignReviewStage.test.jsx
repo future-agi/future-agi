@@ -17,6 +17,7 @@ const review = {
 };
 
 const mutation = { mutate: vi.fn(), isPending: false };
+const discard = { mutate: vi.fn(), isPending: false };
 let current = review;
 
 vi.mock("src/api/simulate-environments/designReview", () => ({
@@ -30,6 +31,7 @@ vi.mock("src/api/simulate-environments/designReview", () => ({
   useAddDesignEdit: () => mutation,
   useUndoDesignEdit: () => mutation,
   useApproveDesign: () => mutation,
+  useDiscardDesign: () => discard,
 }));
 
 vi.mock("../../../hooks/useSimulationAccess", () => ({
@@ -65,5 +67,30 @@ describe("DesignReviewStage with no tools or records", () => {
     expect(
       screen.getByRole("button", { name: "Approve and build" }),
     ).toBeDisabled();
+  });
+});
+
+describe("DesignReviewStage with a design that cannot be approved", () => {
+  it.each([
+    ["an empty design", { rules: [], use_cases: [] }],
+    ["a design whose agent changed", { agent_changed: true }],
+  ])("offers to discard %s and start again", (_label, change) => {
+    current = { ...review, ...change };
+    discard.mutate.mockClear();
+    render(<DesignReviewStage envId="e1" />);
+    expect(
+      screen.getByText(/create the environment again/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard design" }));
+
+    expect(discard.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no discard on a design that can be approved", () => {
+    current = review;
+    render(<DesignReviewStage envId="e1" />);
+    expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
   });
 });
