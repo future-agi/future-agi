@@ -8,13 +8,19 @@ __all__ = ["forget_evidence_drafting", "sweep_stale_evidence_drafts"]
 
 
 @temporal_activity(time_limit=300, max_retries=3, queue="default")
-def forget_evidence_drafting(evidence_import_id: str) -> str:
-    """Delete a settled evidence drafting chat: its sandbox, checkpoints, rows."""
+def forget_evidence_drafting(evidence_import_id: str, job_id: str = "") -> str:
+    """Delete a settled evidence drafting chat: its sandbox, checkpoints, rows.
+
+    One queued before cleanup named its job carries no ``job_id``. It does nothing,
+    since the import's current job may be a newer drafting; the sweep deletes the
+    settled one on its next pass."""
     from simulate.services.evidence_drafts import forget
 
+    if not job_id:
+        return "deferred"
     close_old_connections()
     try:
-        forget(evidence_import_id)
+        forget(evidence_import_id, job_id=job_id)
         return "forgotten"
     finally:
         close_old_connections()
@@ -34,11 +40,11 @@ def sweep_stale_evidence_drafts() -> dict[str, int]:
         close_old_connections()
 
 
-def schedule_forget(evidence_import_id: str):
+def schedule_forget(evidence_import_id: str, *, job_id: str):
     from temporalio.common import WorkflowIDConflictPolicy
 
     return forget_evidence_drafting.apply_async(
-        args=[str(evidence_import_id)],
-        task_id=f"evidence-forget-{evidence_import_id}",
+        args=[str(evidence_import_id), str(job_id)],
+        task_id=f"evidence-forget-{evidence_import_id}-{job_id}",
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )

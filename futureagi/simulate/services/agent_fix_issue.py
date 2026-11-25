@@ -21,6 +21,7 @@ from django.utils import timezone
 from simulate.models import (
     AgentFixIssueJob,
     AgentFixRun,
+    EvidenceImport,
     EvidenceImportCase,
     HarnessSuiteMember,
     HostedHarnessJob,
@@ -595,7 +596,14 @@ def stop_issue_job(job: AgentFixIssueJob) -> AgentFixIssueJob:
         IssueJobPhase.BLOCKED,
     ):
         # Drafting first: an import is not discarded while its builder drafts.
-        forget(str(job.evidence_import_id))
+        # A stop forgets whichever drafting the import holds now.
+        drafting_job_id = (
+            EvidenceImport._base_manager.filter(id=job.evidence_import_id)
+            .values_list("drafting_job_id", flat=True)
+            .first()
+        )
+        if drafting_job_id is not None:
+            forget(str(job.evidence_import_id), job_id=str(drafting_job_id))
     with transaction.atomic():
         locked = (
             AgentFixIssueJob.no_workspace_objects.select_for_update(of=("self",))

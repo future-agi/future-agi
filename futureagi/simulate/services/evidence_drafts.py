@@ -254,7 +254,7 @@ def land(
             from simulate.services.harness_versioning.rebuild import _expire_chat_lease
 
             _expire_chat_lease(conversation)
-            forget_later(import_id)
+            forget_later(import_id, job_id=str(conversation.job_id))
 
         transaction.on_commit(close)
 
@@ -679,37 +679,45 @@ def turn_ended(conversation_id: str, command_id: str, outcome: str) -> None:
         last_words = _last_words(command.conversation, command)
         _block(cases, _with_reply(TURN_FAILED, last_words))
         import_id = str(payload.get("_evidence_import_id") or "")
-        transaction.on_commit(lambda: forget_later(import_id))
+        job_id = str(command.conversation.job_id)
+        transaction.on_commit(lambda: forget_later(import_id, job_id=job_id))
 
 
-def forget_later(evidence_import_id: str) -> None:
-    """Delete the drafting job now; the sweep finishes it if this cannot."""
+def forget_later(evidence_import_id: str, *, job_id: str) -> None:
+    """Delete the drafting job ``job_id`` now; the sweep finishes it if this cannot."""
     from simulate.tasks.evidence_drafts import schedule_forget
 
     if not evidence_import_id:
         return
     try:
-        schedule_forget(evidence_import_id)
+        schedule_forget(evidence_import_id, job_id=job_id)
     except Exception:  # noqa: BLE001 - the sweep deletes it on its next pass
         logger.exception(
             "evidence_forget_schedule_failed", evidence_import=evidence_import_id
         )
 
 
-def forget(evidence_import_id: str) -> None:
-    """Delete an import's drafting job and everything its chat left: the sandbox,
-    the checkpoints, the chat's rows (messages, events, transcripts, lease) and the
-    job. Each step is safe to repeat, so a pass that stops part way is finished by
-    the next."""
+def forget(evidence_import_id: str, *, job_id: str) -> None:
+    """Delete an import's drafting job ``job_id`` and everything its chat left: the
+    sandbox, the checkpoints, the chat's rows (messages, events, transcripts, lease)
+    and the job. Each step is safe to repeat, so a pass that stops part way is
+    finished by the next. Nothing happens unless ``job_id`` is still the import's
+    drafting job: a late or repeated cleanup never deletes a newer drafting."""
     from simulate.services.hosted_harness_gateway import HostedHarnessGateway
     from tfc.settings.settings import UPLOAD_BUCKET_NAME
     from tfc.utils.storage_client import get_storage_client
 
     # A deleted import too: its environment's deletion leaves its drafting here.
-    evidence_import = EvidenceImport._base_manager.filter(id=evidence_import_id).first()
-    if evidence_import is None or evidence_import.drafting_job_id is None:
+    with transaction.atomic():
+        evidence_import = (
+            EvidenceImport._base_manager.select_for_update()
+            .filter(id=evidence_import_id, drafting_job_id=job_id)
+            .first()
+        )
+    if evidence_import is None:
         return
-    job_id = evidence_import.drafting_job_id
+    # A new drafting starts only once this job is deleted, so every delete below
+    # targets this job and its chat alone.
     conversation = HostedHarnessConversation._base_manager.filter(job_id=job_id).first()
     if conversation is not None:
         lease = HostedHarnessConversationLease._base_manager.filter(
@@ -792,7 +800,7 @@ def _forgotten(evidence_import: EvidenceImport) -> int:
     """1 once the import's drafting is forgotten, 0 when that failed and the next
     sweep tries again. One import's failure never stops the rest."""
     try:
-        forget(str(evidence_import.id))
+        forget(str(evidence_import.id), job_id=str(evidence_import.drafting_job_id))
     except Exception:  # noqa: BLE001 - logged; the next sweep tries again
         logger.exception(
             "evidence_forget_failed", evidence_import=str(evidence_import.id)
