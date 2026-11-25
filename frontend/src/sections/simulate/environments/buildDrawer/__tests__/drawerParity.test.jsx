@@ -168,7 +168,6 @@ describe("the drawer sends what the Build tab sent", () => {
     });
     expect(drawer.preflight).toEqual(BUILD_TAB.upload.preflight);
   });
-
 });
 
 describe("a browser environment's sites", () => {
@@ -178,7 +177,7 @@ describe("a browser environment's sites", () => {
       () => {
         change(box("Repository link"), "https://github.com/acme/agent");
         change(box("Additional egress domains"), "api.example.com");
-        change(box("Browser sites"), "shop.example.com, *.docs.example.org");
+        change(box("Browser sites"), "shop.example.com, login.example.com");
       },
       { build: true },
     );
@@ -186,19 +185,22 @@ describe("a browser environment's sites", () => {
     const [created] = drawer.create;
     for (const body of [preflight, created]) {
       expect(body.browser).toEqual({
-        allowed_sites: ["shop.example.com", "*.docs.example.org"],
+        allowed_sites: ["shop.example.com", "login.example.com"],
       });
       expect(body.security.allowed_egress_domains).toEqual(["api.example.com"]);
     }
   });
 
-  it("asks for every host the site needs, with *. for the hosts under a name", () => {
+  it("asks for every host the site needs, as host names alone", () => {
     render(<RepoForm />);
-    expect(
-      screen.getByText(
-        /List every host the site needs \(sign-in, API, files\): host names, or \*\.example\.com for the hosts under a name\. At most 10\./,
-      ),
-    ).toBeInTheDocument();
+    const helper = screen.getByText(
+      /List every host the site needs: its sign-in, its API, its files\. Host names such as shop\.example\.com, at most 10\./,
+    );
+    expect(helper).toBeInTheDocument();
+    expect(helper.textContent).not.toContain("*.");
+    expect(box("Browser sites").getAttribute("placeholder")).not.toContain(
+      "*.",
+    );
   });
 
   it("are left out when the field is empty", async () => {
