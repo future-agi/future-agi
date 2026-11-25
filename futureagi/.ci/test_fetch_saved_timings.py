@@ -37,6 +37,8 @@ def run_row(day, **overrides):
         "event": "push",
         "head_branch": "dev",
         "conclusion": "success",
+        "repository": {"full_name": "owner/repo"},
+        "head_repository": {"full_name": "owner/repo"},
         **overrides,
     }
 
@@ -103,6 +105,8 @@ class FetchTest(unittest.TestCase):
                         run_row(4, event="pull_request"),
                         run_row(1),
                         run_row(5, conclusion="failure"),
+                        run_row(6, head_repository={"full_name": "fork/repo"}),
+                        run_row(7, repository={"full_name": "other/repo"}),
                         run_row(2),
                     ]
                 }

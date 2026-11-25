@@ -21,13 +21,17 @@ class TimingsError(ValueError):
     """A diagnostic safe to include in a workflow annotation."""
 
 
-def newest_run_id(runs):
+def newest_run_id(runs, repository):
+    # Only this repository's own dev pushes: never a fork, a pull request or
+    # another branch, even if the API filter were ignored.
     eligible = (
         run
         for run in runs
         if run["event"] == "push"
         and run["head_branch"] == "dev"
         and run["conclusion"] == "success"
+        and (run.get("head_repository") or {}).get("full_name") == repository
+        and (run.get("repository") or {}).get("full_name") == repository
     )
     run = max(eligible, key=lambda r: (r["created_at"], r["id"]), default=None)
     if run is None:
@@ -72,8 +76,9 @@ def api(endpoint):
 
 
 def fetch(destination):
-    root = f"repos/{os.environ['GITHUB_REPOSITORY']}/actions"
-    run = newest_run_id(json.loads(api(f"{root}/{RUNS}"))["workflow_runs"])
+    repository = os.environ["GITHUB_REPOSITORY"]
+    root = f"repos/{repository}/actions"
+    run = newest_run_id(json.loads(api(f"{root}/{RUNS}"))["workflow_runs"], repository)
     # Ask for this name server-side; a dev run produces many shard artifacts.
     listing = json.loads(api(f"{root}/runs/{run}/artifacts?name={ARTIFACT}"))
     matches = [
