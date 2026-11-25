@@ -1655,6 +1655,25 @@ def test_a_case_validated_with_another_agent_version_names_the_tool_this_one_lac
     assert "Needs issue_refund" in plan.view["held_back"]["reason_by_key"][REFUND_KEYS[0]]
 
 
+def test_a_case_not_validated_yet_names_the_tool_this_agent_version_lacks(
+    user, workspace, storage, monkeypatch
+):
+    """Validating would not run a case that uses a tool this agent version lacks, so the tool is its reason, not
+    "not validated yet"; a case this version can run still reads not validated."""
+    environment = _environment(user, workspace, storage, "tool-not-validated")
+    _suite(environment, _ten())
+    _proofs(environment, {})
+    agent = _on_agent(environment, monkeypatch, ["lookup_order"])
+
+    views = _views_with(environment, agent)
+
+    assert views[REFUND_KEYS[0]]["reason"] == "tool_not_on_agent"
+    assert views[REFUND_KEYS[0]]["reason_text"] == (
+        f"Needs issue_refund, which agent version v{agent.version_number} doesn't have."
+    )
+    assert views[LOOKUP_KEYS[0]]["reason"] == "not_validated"
+
+
 def test_a_case_proved_by_a_check_that_never_read_the_agent_is_not_active(
     user, workspace, storage, monkeypatch
 ):

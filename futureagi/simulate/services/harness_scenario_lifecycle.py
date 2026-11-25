@@ -802,10 +802,10 @@ def scenario_lifecycle(
         elif (
             agent_tools is not None
             and agent_tools[0] is not None
-            and view["reason"] == "proved_on_other_agent"
+            and view["reason"] in _VALIDATION_SETTLES
             and (lacking := sorted(needed.get(key, frozenset()) - agent_tools[0]))
         ):
-            # Validating with this agent version would not run it: the tool it lacks is the reason, not the version.
+            # Validating with this agent version would not run it: the tool it lacks is the reason, not validation.
             _demote(
                 view,
                 "tool_not_on_agent",
@@ -1182,6 +1182,19 @@ def archived_view(archived_at: datetime | None, archive_reason: str) -> Lifecycl
         archive_reason=archive_reason or "no reason given",
     )
     return view
+
+
+# Draft reasons a validation with the pairing's agent version would settle, unless that version lacks a tool the case
+# uses: then the tool is the reason.
+_VALIDATION_SETTLES = frozenset(
+    {
+        "not_validated",
+        "validation_incomplete",
+        "validation_failed",
+        "validation_ended_on_our_side",
+        "proved_on_other_agent",
+    }
+)
 
 
 def parent_version_documents(
