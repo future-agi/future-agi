@@ -220,9 +220,10 @@ def test_usage_limit_shows_its_fixed_reason(
         **USAGE_LIMIT_REASON,
         "request_id": ANY,
     }
-    assert internal_reason not in _table_response(
-        auth_client, synthetic_dataset
-    ).content.decode()
+    assert (
+        internal_reason
+        not in _table_response(auth_client, synthetic_dataset).content.decode()
+    )
 
 
 @pytest.mark.django_db
@@ -315,7 +316,9 @@ def test_regenerating_clears_a_reason_the_replaced_run_wrote_while_starting(
         )
         return start_task(self, dataset_id)
 
-    monkeypatch.setattr(SyntheticTaskManager, "start_task", replaced_run_writes_then_start)
+    monkeypatch.setattr(
+        SyntheticTaskManager, "start_task", replaced_run_writes_then_start
+    )
     monkeypatch.setattr(
         "model_hub.views.datasets.create.synthetic.create_synthetic_dataset.delay",
         lambda *args, **kwargs: None,

@@ -431,7 +431,11 @@ def _set_synthetic_generation_error(dataset_id, request_uuid, failure):
     write over the newer run's state.
     """
     with transaction.atomic():
-        dataset = Dataset.objects.select_for_update().get(id=dataset_id)
+        # The workspace-scoped manager can join nullable relations, which
+        # Postgres cannot lock; the id already names the dataset.
+        dataset = Dataset.no_workspace_objects.select_for_update(of=("self",)).get(
+            id=dataset_id
+        )
         if request_uuid and not SyntheticTaskManager().is_latest_request(
             str(dataset_id), request_uuid
         ):

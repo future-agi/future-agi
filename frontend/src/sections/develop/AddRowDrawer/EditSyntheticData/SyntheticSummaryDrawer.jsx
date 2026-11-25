@@ -259,11 +259,7 @@ export default function SyntheticSummaryDrawer() {
     useSyntheticGenerationFailure(dataset);
 
   const { data, isLoading } = useQuery({
-    queryKey: [
-      dataset,
-      tableResult?.synthetic_dataset,
-      openSummaryDrawer,
-    ],
+    queryKey: [dataset, tableResult?.synthetic_dataset, openSummaryDrawer],
     queryFn: () => axios.get(endpoints.develop.getSyntheticConfig(dataset)),
     enabled: !!dataset && !!tableResult?.synthetic_dataset,
     select: (d) => d.data?.result?.data,
