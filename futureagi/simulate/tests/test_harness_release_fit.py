@@ -29,6 +29,7 @@ from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
     create_hosted_job,
+    register_attempt,
 )
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
@@ -419,8 +420,9 @@ def _adaptation(organization, **adaptation):
     return job
 
 
-def _ask(job, prompt):
-    """The builder asks `prompt` with yes/no options, as the chat process sends it."""
+def _ask(job, prompt, *, after=0, question=None):
+    """The builder asks `prompt` with yes/no options, as the chat process sends it. A later
+    question follows the events already sent (`after`); one asked again keeps its id."""
     conversation, _command, _ = enqueue_message(
         job, content="Bind this agent", client_request_id="bind"
     )
@@ -431,7 +433,7 @@ def _ask(job, prompt):
         attempt=None,
         ttl_seconds=600,
     )
-    question = str(uuid.uuid4())
+    question = question or str(uuid.uuid4())
     for sequence, (kind, message_id, payload) in enumerate(
         [
             ("turn_started", None, {}),
@@ -441,7 +443,7 @@ def _ask(job, prompt):
                 {"prompt": prompt, "options": ["yes", "no"]},
             ),
         ],
-        start=1,
+        start=after + 1,
     ):
         event = {
             "schema_version": "futureagi.harness-conversation-event.v1",
@@ -541,6 +543,7 @@ class TestApproveAndBuild:
         response = auth_client.post(f"{ADAPTATIONS}/{job.id}/approve/")
 
         assert response.status_code == 202, response.content
+        assert response.json() == {"id": str(job.id)}
         answer = conversation.messages.get(reply_to=question)
         assert answer.content == "yes"
         job.refresh_from_db()
@@ -638,6 +641,95 @@ class TestApproveAndBuild:
         job.refresh_from_db()
         assert "approved_at" not in job.payload["metadata"]["adaptation"]
         assert not conversation.messages.filter(reply_to=question).exists()
+
+
+def _retried(job):
+    """The sandbox was lost and a new attempt registered."""
+    for _ in range(2):
+        register_attempt(job.id, endpoint_base_url="https://x")
+    job.refresh_from_db()
+    return job
+
+
+def _stands(auth_client, job):
+    """Where the design, the environment's status and the list say the adaptation stands."""
+    design = auth_client.get(f"{ADAPTATIONS}/{job.id}/design/")
+    assert design.status_code == 200, design.content
+    awaiting = str(job.id) in _listed(auth_client, "awaiting_approval")[0]
+    return design.json()["state"], status_for(job), awaiting
+
+
+@pytest.mark.django_db(transaction=True)
+class TestApprovalOfANewAttempt:
+    @pytest.fixture
+    def job(self, auth_client, organization, retail, shopmate, fitted):
+        return _reviewed(organization, retail, shopmate, pairing={})
+
+    def test_what_an_earlier_attempt_approved_is_asked_again(self, auth_client, job):
+        conversation, _first = _ask(job, APPROVAL)
+        assert auth_client.post(f"{ADAPTATIONS}/{job.id}/approve/").status_code == 202
+
+        job = _retried(job)
+        assert "approved_at" not in job.payload["metadata"]["adaptation"]
+        assert _stands(auth_client, job) == ("checking", "building", False)
+
+        _conversation, second = _ask(job, APPROVAL, after=2)
+        assert _stands(auth_client, job) == (
+            "awaiting_approval",
+            "awaiting_approval",
+            True,
+        )
+        assert auth_client.post(f"{ADAPTATIONS}/{job.id}/approve/").status_code == 202
+        assert conversation.messages.get(reply_to=second).content == "yes"
+        assert _stands(auth_client, job) == ("building", "building", False)
+
+    def test_an_open_question_outranks_an_approval_kept_before_it(
+        self, auth_client, job
+    ):
+        job.payload["metadata"]["adaptation"]["approved_at"] = "2026-11-01T00:00:00Z"
+        job.save(update_fields=["payload"])
+        _ask(job, APPROVAL)
+
+        assert _stands(auth_client, job) == (
+            "awaiting_approval",
+            "awaiting_approval",
+            True,
+        )
+
+    def test_a_question_left_open_by_a_lost_attempt_is_closed(self, auth_client, job):
+        _ask(job, APPROVAL)
+
+        assert _stands(auth_client, _retried(job)) == ("checking", "building", False)
+
+    def test_a_no_to_the_next_question_withdraws_the_approval(self, auth_client, job):
+        _ask(job, APPROVAL)
+        auth_client.post(f"{ADAPTATIONS}/{job.id}/approve/")
+        _conversation, second = _ask(job, APPROVAL, after=2)
+
+        enqueue_message(
+            job,
+            content="no, cancel takes a reason",
+            client_request_id="typed",
+            kind="user_response",
+            reply_to=uuid.UUID(second),
+        )
+
+        job.refresh_from_db()
+        assert "approved_at" not in job.payload["metadata"]["adaptation"]
+
+    def test_an_answer_given_before_the_attempt_was_lost_approves_the_same_question(
+        self, auth_client, job
+    ):
+        """The builder never took the yes: asked again under its id, it takes it now."""
+        _conversation, question = _ask(job, APPROVAL)
+        auth_client.post(f"{ADAPTATIONS}/{job.id}/approve/")
+        job = _retried(job)
+
+        _ask(job, APPROVAL, after=2, question=question)
+
+        job.refresh_from_db()
+        assert job.payload["metadata"]["adaptation"]["approved_at"]
+        assert _stands(auth_client, job) == ("building", "building", False)
 
 
 @pytest.fixture
@@ -761,6 +853,81 @@ class TestAdaptationReplay:
         )
         assert secrets.count() == 1
         assert submit.started == [str(job.id), str(job.id)]
+
+    def test_versioning_gives_it_no_agent_and_its_composition_the_same_secrets(
+        self, submit, organization, workspace, shopmate, retail, settings, monkeypatch
+    ):
+        from simulate.services import harness_agent_versions, harness_releases
+        from simulate.services.hosted_harness import create_selected_harness_run
+        from simulate.services.hosted_harness_gateway import PlatformSecretResolver
+        from simulate.tests.test_harness_compositions import _personas, _targz
+
+        settings.HARNESS_VERSIONING_ENABLED = True
+        checked = []
+
+        def check(organization, payload, submitted, analysis):
+            checked.append(submitted.provider_secrets)
+            return harness_agent_versions.CreationCheck(
+                report={}, required_variable_names=None
+            )
+
+        monkeypatch.setattr(harness_agent_versions, "check_creation_credentials", check)
+        agents = AgentDefinition.no_workspace_objects.filter(organization=organization)
+        before = agents.count()
+
+        response = submit()
+
+        assert response.status_code == 202, response.content
+        assert checked == [{"RETELL_API_KEY": "test-key"}]
+        assert agents.count() == before
+        job = HostedHarnessJob.no_workspace_objects.get(idempotency_key="adapt-once")
+        assert PlatformSecretResolver().resolve(job) == {"RETELL_API_KEY": "test-key"}
+
+        retail.manifest = {
+            "scenarios": [{"key": "a", "path": "scenarios/a", "origin": "base"}]
+        }
+        retail.personas = _personas(["a"])
+        retail.save(update_fields=["manifest", "personas"])
+        archive = _targz({"scenarios/a/scenario.json": b'{"name": "a"}'})
+        monkeypatch.setattr(harness_releases, "_download", lambda key: archive)
+        agent = job.payload["agent"]
+        binding = harness_releases._with_digest(
+            {
+                **{
+                    key: value
+                    for key, value in harness_releases.hosted_agent_binding(
+                        shopmate, {}, retail.environment.digest
+                    ).items()
+                    if key != "digest"
+                },
+                "agent": {
+                    **harness_releases.agent_reference(
+                        shopmate, agent["connector"], agent["config"]
+                    ),
+                    "provider_target_id": agent["config"]["agent_id"],
+                    "provider_digest": SHA,
+                },
+            }
+        )
+        composition = harness_releases.create_composition(
+            organization,
+            workspace,
+            suite=retail,
+            agent=agent,
+            agent_version=shopmate,
+            name="Retail",
+            idempotency_key=f"adaptation:{job.id}",
+            binding=binding,
+        )
+        run, _ = create_selected_harness_run(
+            composition, scenario_keys=["a"], trials=1, idempotency_key="run"
+        )
+
+        for one in (composition, run):
+            assert PlatformSecretResolver().resolve(one) == {
+                "RETELL_API_KEY": "test-key"
+            }
+        assert agents.count() == before
 
     def test_another_request_under_the_same_key_is_refused(self, submit):
         assert submit().status_code == 202
@@ -923,6 +1090,7 @@ def test_a_sealed_run_mode_adaptation_runs_its_measurable_cases(
         (),
         {
             "id": "run-1",
+            "state": HostedHarnessJob.State.QUEUED,
             "run_test_id": "rt-1",
             "test_execution_id": "te-1",
             "payload": {"retry": _payload()["retry"]},
@@ -1412,6 +1580,52 @@ def test_a_routed_binding_with_no_verified_record_is_refused(
     assert refused.value.code == "binding_unproved"
     assert "recorded no verified proof" in str(refused.value)
     assert composed == {}
+
+
+@pytest.mark.parametrize(
+    "mode, approved, question, refused",
+    [
+        ("review", True, None, False),
+        ("review", False, None, True),
+        ("review", True, {"prompt": "Use this binding for ShopMate?"}, True),
+        ("run", False, None, False),
+    ],
+    ids=["approved", "never-approved", "asked-again", "run-mode"],
+)
+def test_a_review_is_composed_only_once_it_is_approved(
+    tmp_path, monkeypatch, mode, approved, question, refused
+):
+    from simulate.services import harness_releases
+
+    binding = _routed_binding()
+    proof = _proof(binding, a="proved", b="unscorable")
+    job, composed = _left_in_the_output(tmp_path, binding, proof, monkeypatch)
+    job.payload["metadata"]["adaptation"].update(
+        mode=mode, **({"approved_at": "2026-11-01T00:00:00Z"} if approved else {})
+    )
+    monkeypatch.setattr(harness_releases, "open_approval", lambda job: question)
+
+    if refused:
+        with pytest.raises(HostedHarnessError) as error:
+            harness_releases._adapt(job, tmp_path, _verified(binding, proof))
+        assert error.value.code == "adaptation_not_approved"
+        assert composed == {}
+        return
+    result, failure = harness_releases._adapt(job, tmp_path, _verified(binding, proof))
+    assert failure is None and result["composition_id"] == "composition-1"
+
+
+def test_an_agent_that_reaches_no_tool_needs_no_approval(tmp_path, monkeypatch):
+    from simulate.services import harness_releases
+
+    binding = {**_routed_binding(), "mode": "conversation_only"}
+    job, composed = _left_in_the_output(tmp_path, binding, {}, monkeypatch)
+    job.payload["metadata"]["adaptation"]["mode"] = "review"
+
+    result, failure = harness_releases._adapt(job, tmp_path, None)
+
+    assert failure is None and composed == {}
+    assert result["compose"]["code"] == "compose_unsupported"
 
 
 def test_another_binding_than_the_one_verified_is_refused(tmp_path, monkeypatch):
