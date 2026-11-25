@@ -93,6 +93,7 @@ from simulate.services.hosted_harness import (
 from simulate.services.hosted_harness_gateway import _source_object_key
 from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.run_traces_v3 import CallUsage
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
@@ -166,8 +167,13 @@ def temporal():
 
 @pytest.fixture
 def environment(user, workspace, storage):
-    """Backfilled to A1/E1/S1: a GitHub agent with two scenarios."""
-    return _environment(user, workspace, "fix-env", storage)
+    """Backfilled to A1/E1/S1: a GitHub agent with two scenarios, proved on that pair
+    so a run sends them."""
+    from simulate.tests.test_harness_affected_scenarios import _proved_on
+
+    built = _environment(user, workspace, "fix-env", storage)
+    _proved_on(built, built.environment_version)
+    return built
 
 
 @pytest.fixture
@@ -1521,7 +1527,7 @@ class TestCheckRunStatus:
                     "sub_goals": [{"name": "refunded", "held": None}],
                 },
                 "error",
-                "the judge decided nothing on refunded",
+                "the trial ended errored",
                 {},
             ),
         ],
@@ -2378,9 +2384,11 @@ class TestMakeDefault:
         candidate.refresh_from_db()
 
         outcome = make_candidate_default(candidate, user=user)
+        # Its pairing with the defaults validates before it moves.
+        settle_validations(environment)
 
         environment.refresh_from_db()
-        assert outcome == "activated"
+        assert outcome == "validating"
         assert environment.agent_version_id == candidate.agent_version_id
         assert make_candidate_default(candidate, user=user) == "already_default"
 
@@ -2426,7 +2434,9 @@ class TestMakeDefault:
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             payload=payload
         )
-        assert make_candidate_default(first, user=user) == "activated"
+        # Its pairing with the defaults validates before it moves.
+        assert make_candidate_default(first, user=user) == "validating"
+        settle_validations(environment)
         retry_deferred_activations(second.agent_version_id)
         environment.refresh_from_db()
         assert environment.agent_version_id == first.agent_version_id
@@ -2441,7 +2451,9 @@ class TestMakeDefault:
         first = self._winner(source_run)
         second = self._winner(source_run)
 
-        assert make_candidate_default(first, user=user) == "activated"
+        # Its pairing with the defaults validates before it moves.
+        assert make_candidate_default(first, user=user) == "validating"
+        settle_validations(environment)
         with pytest.raises(HostedHarnessError) as refused:
             make_candidate_default(second, user=user)
 
@@ -4217,3 +4229,25 @@ class TestCheckRunReceipts:
             call.call_metadata.get("eval_started"),
             call.call_metadata.get("eval_completed"),
         ) == (True, True)
+
+
+def test_a_suite_private_to_a_fix_is_never_reused_as_a_saved_twin(source_run):
+    """Save and Validate reuse an active version with the same content; never one only a fix's check runs see."""
+    from simulate.models import HarnessSuiteVersion
+    from simulate.services.harness_versioning.draft_pieces import active_twin
+
+    environment = source_run.environment
+    suite = environment.suite_version
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(
+        fix_run=_fix_run(source_run)
+    )
+
+    assert (
+        active_twin(HarnessSuiteVersion, environment, suite.hash, suite.hash_kind)
+        is None
+    )
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(fix_run=None)
+    assert (
+        active_twin(HarnessSuiteVersion, environment, suite.hash, suite.hash_kind).id
+        == suite.id
+    )

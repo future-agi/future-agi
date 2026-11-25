@@ -27,6 +27,7 @@ from simulate.services.hosted_harness_gateway import (
     UNKNOWN_FAILURE_CAUSE,
     closed_failure_cause,
 )
+from simulate.services.hosted_harness_ingestion import graded_call_receipt
 from simulate.services.run_compare import trial_passed, wilson_interval
 
 # The environment payload metadata key; never copied to a run's payload.
@@ -66,6 +67,15 @@ def held_back(environment: HostedHarnessJob) -> HeldBack | None:
 def coding_agent_key(request: Any) -> OrgApiKey | None:
     """The coding agent API key the request authenticated with, else ``None``."""
     return request.org_api_key if is_coding_agent_key(request) else None
+
+
+def refusal_body(exc: Any, request: Any) -> dict[str, Any]:
+    """A refusal as the caller may read it: a coding agent never gets the readiness
+    selection, which names every requested case, held-back ones included."""
+    body: dict[str, Any] = exc.as_dict()
+    if coding_agent_key(request) is not None:
+        body.pop("selection", None)
+    return body
 
 
 def detail_without(detail: dict[str, Any], keys: Collection[str]) -> dict[str, Any]:
@@ -301,10 +311,12 @@ def verify_result(run: HostedHarnessJob) -> dict[str, Any]:
         job=run
     ).values_list("call_execution__call_metadata", flat=True):
         total += 1
-        receipt = (call_metadata or {}).get("hosted_harness_receipt")
+        receipt = graded_call_receipt(call_metadata)
         if not isinstance(receipt, Mapping):
             continue
-        verdict = trial_passed(receipt.get("sub_goals"), receipt.get("status"))
+        verdict = trial_passed(
+            receipt.get("sub_goals"), receipt.get("status"), receipt.get("failure")
+        )
         passed += verdict is True
         failed += verdict is False
     rate = None
