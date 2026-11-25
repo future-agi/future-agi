@@ -2357,14 +2357,14 @@ class TestBrowserSites:
     ):
         environment = _with_browser_sites(
             _legacy(user, workspace, f"bf-sites-{body}", storage, body=body),
-            ["Shop.Example.com", "*.docs.example.org"],
+            ["Shop.Example.com", "docs.example.org"],
         )
 
         backfill_environment(environment.id)
 
         environment.refresh_from_db()
         assert environment.environment_version.browser_allowed_sites == [
-            "*.docs.example.org",
+            "docs.example.org",
             "shop.example.com",
         ]
 

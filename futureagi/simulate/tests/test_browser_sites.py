@@ -31,20 +31,40 @@ def test_host_names_are_kept_in_one_form_sorted_without_repeats():
 
 def test_a_trailing_dot_names_the_same_host():
     assert browser_sites(["example.com."]) == ["example.com"]
-    assert browser_sites(["*.example.com."]) == ["*.example.com"]
 
 
 def test_a_name_outside_ascii_is_kept_in_its_ascii_form():
     # The form a browser sends, so the list matches the host the page is on.
     assert browser_sites(["Exämple.com"]) == ["xn--exmple-cua.com"]
-    assert browser_sites(["*.exämple.com"]) == ["*.xn--exmple-cua.com"]
     assert browser_sites(["exämple.com", "xn--exmple-cua.com"]) == [
         "xn--exmple-cua.com"
     ]
 
 
-def test_a_wildcard_names_every_host_under_a_domain():
-    assert browser_sites(["*.example.com"]) == ["*.example.com"]
+@pytest.mark.parametrize(
+    "site", ["*.example.com", "*.example.com.", "*.exämple.com", "*.docs.example.org"]
+)
+def test_a_wildcard_is_refused_until_the_kit_reads_it(site):
+    # Not yet: the merged kit reads *. more widely than the sandbox does.
+    refusal = _refusal(["example.com", site])
+    assert refusal.code == "browser_sites_invalid"
+    assert refusal.details == {"positions": [2]}
+
+
+def test_a_wildcard_names_every_host_under_a_name_once_the_kit_reads_it(monkeypatch):
+    monkeypatch.setattr("simulate.services.browser_sites.TAKES_WILDCARDS", True)
+    assert browser_sites(["*.Example.com.", "*.exämple.com"]) == [
+        "*.example.com",
+        "*.xn--exmple-cua.com",
+    ]
+    # One wildcard, in front, before a name with a dot.
+    for wrong in ("*.com", "*.*.example.com", "a.*.example.com", "*example.com"):
+        assert _refusal(["example.com", wrong]).details == {"positions": [2]}
+    # Kept as written: a host a wildcard covers stays in the list.
+    assert browser_sites(["*.example.com", "shop.example.com"]) == [
+        "*.example.com",
+        "shop.example.com",
+    ]
 
 
 def test_a_browser_environment_names_at_least_one_site():
@@ -101,8 +121,8 @@ def test_a_value_that_is_not_a_public_host_name_is_refused(site):
     assert refusal.details == {"positions": [2]}
     # The same words whatever the value was: none of it is echoed.
     assert refusal.message == (
-        "Allowed sites must be public host names, such as example.com or "
-        "*.example.com, with no scheme, port, path or address. Check site 2."
+        "Allowed sites must be public host names, such as example.com, "
+        "with no scheme, port, path or address. Check site 2."
     )
 
 

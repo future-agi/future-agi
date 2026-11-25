@@ -52476,7 +52476,7 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
         )
         .max(simulateApiHarnessJobsCreateBodyBrowserAllowedSitesMax)
         .describe(
-          "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs (sign-in, API, files): host names such as example.com, or *.example.com for the hosts under a name. No scheme, port, path or address. At least one, at most 10.",
+          "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs: its sign-in, its API, its files. Host names such as example.com, with no scheme, port, path or address. At least one, at most 10.",
         ),
     })
     .optional(),
@@ -52860,7 +52860,7 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
         )
         .max(simulateApiHarnessJobsPreflightBodyBrowserAllowedSitesMax)
         .describe(
-          "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs (sign-in, API, files): host names such as example.com, or *.example.com for the hosts under a name. No scheme, port, path or address. At least one, at most 10.",
+          "The sites the environment's browser may open, apart from the additional egress domains. List every host the site needs: its sign-in, its API, its files. Host names such as example.com, with no scheme, port, path or address. At least one, at most 10.",
         ),
     })
     .optional(),

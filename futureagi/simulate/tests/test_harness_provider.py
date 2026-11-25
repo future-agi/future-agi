@@ -1325,7 +1325,7 @@ def test_a_browser_environment_is_created_with_its_sites_apart_from_egress(
         }
 
     payload = _v1_payload()
-    payload["browser"] = {"allowed_sites": ["shop.example.com", "*.docs.example.org"]}
+    payload["browser"] = {"allowed_sites": ["shop.example.com", "docs.example.org"]}
     with (
         patch(
             "simulate.services.hosted_harness.create_hosted_job",
@@ -1350,7 +1350,7 @@ def test_a_browser_environment_is_created_with_its_sites_apart_from_egress(
     assert response.status_code == 202, response.content
     stored = create.call_args.args[1]
     assert stored["browser"] == {
-        "allowed_sites": ["shop.example.com", "*.docs.example.org"]
+        "allowed_sites": ["shop.example.com", "docs.example.org"]
     }
     assert "shop.example.com" not in stored["security"]["allowed_egress_domains"]
 
@@ -1366,6 +1366,7 @@ def test_a_browser_environment_is_created_with_its_sites_apart_from_egress(
             "browser_sites_invalid",
         ),
         (["localhost"], "browser_sites_invalid"),
+        (["*.example.com"], "browser_sites_invalid"),
         (
             [f"site{index}.example.com" for index in range(11)],
             "browser_sites_limit_exceeded",

@@ -4,8 +4,11 @@ An environment for an agent that drives a web browser names the sites that brows
 list is the environment's own, apart from its additional egress domains: the browser is held to
 these sites alone, while the sandbox as a whole reaches the wider egress list.
 
-Each site is a host name, or ``*.example.com`` for the hosts under a domain: no scheme, port, path
-or address. Each joins the sandbox's egress list, so a page on a host the list doesn't name is
+Each site is a host name, such as ``example.com``: that host only, with no scheme, port, path or
+address. ``*.example.com`` names every host under it (not ``example.com`` itself), as the additional
+egress domains do; it is taken only once the kit reads it the same way (``TAKES_WILDCARDS``).
+
+Each site joins the sandbox's egress list as written, so a page on a host the list doesn't name is
 blocked there even where the browser's own bound would let it through. A site must pass the egress
 list's own rules first, so a list saved here is never refused when the run starts.
 
@@ -22,6 +25,10 @@ from typing import Any
 # Every site also joins the sandbox's egress list, which is finite on some providers. Ten leaves
 # room for the hosts every run needs; the provider's own limit is checked on the whole list.
 MAX_BROWSER_SITES = 10
+
+# Whether a site may be ``*.`` and a host name. Off until the kit on the stack reads ``*.example.com``
+# as the hosts under it and a bare name as that host only, as the sandbox's firewall does.
+TAKES_WILDCARDS = False
 
 _LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 # ASCII only: with IGNORECASE alone, [a-z] also takes letters a browser reads as others.
@@ -58,6 +65,8 @@ def _one_form(value: Any) -> str | None:
         return None
     if len(site) > _LONGEST_HOST or _HOST.fullmatch(site) is None:
         return None
+    if site.startswith("*.") and not TAKES_WILDCARDS:
+        return None
     last = site.rsplit(".", 1)[-1]
     if _NUMBER_LABEL.fullmatch(last) is not None or last in _LOCAL_SUFFIXES:
         return None
@@ -84,8 +93,8 @@ def _in_one_form(value: Any) -> list[str]:
         named = ", ".join(str(index) for index in wrong)
         raise HostedHarnessError(
             "browser_sites_invalid",
-            "Allowed sites must be public host names, such as example.com or "
-            "*.example.com, with no scheme, port, path or address. "
+            "Allowed sites must be public host names, such as example.com, "
+            "with no scheme, port, path or address. "
             f"Check {'site' if len(wrong) == 1 else 'sites'} {named}.",
             status_code=400,
             details={"positions": wrong},

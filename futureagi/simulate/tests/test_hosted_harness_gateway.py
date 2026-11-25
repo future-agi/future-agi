@@ -810,8 +810,8 @@ def test_a_browser_environment_s_sites_join_the_sandbox_list(settings):
         {},
         {},
         None,
-        browser_sites=["*.docs.example.org", "shop.example.com"],
-    ) == {"api.agent.example", "shop.example.com", "*.docs.example.org"}
+        browser_sites=["docs.example.org", "shop.example.com"],
+    ) == {"api.agent.example", "shop.example.com", "docs.example.org"}
 
 
 def test_the_union_can_t_be_built_without_saying_which_sites():
@@ -843,12 +843,12 @@ def test_the_sites_count_against_the_sandbox_provider_s_list(settings):
 
 def test_the_dispatched_job_names_the_sites_at_its_pin():
     payload = _payload()
-    payload["browser"] = {"allowed_sites": ["Shop.Example.com", "*.docs.example.org"]}
+    payload["browser"] = {"allowed_sites": ["Shop.Example.com", "docs.example.org"]}
     payload["metadata"] = {"browser_allowed_sites": ["sent.example.com"]}
 
     unpinned = prepare_dispatch_payload(payload, {}, job=None)
     assert unpinned["metadata"]["browser_allowed_sites"] == [
-        "*.docs.example.org",
+        "docs.example.org",
         "shop.example.com",
     ]
     pinned = prepare_dispatch_payload(
@@ -875,11 +875,11 @@ def test_a_dispatched_job_without_a_browser_carries_no_sites():
 
 def test_the_job_names_the_browser_s_sites_for_the_kit():
     document = _with_browser_allowed_sites(
-        {"metadata": {"other": 1}}, ["shop.example.com", "*.docs.example.org"]
+        {"metadata": {"other": 1}}, ["shop.example.com", "docs.example.org"]
     )
     assert document["metadata"] == {
         "other": 1,
-        "browser_allowed_sites": ["shop.example.com", "*.docs.example.org"],
+        "browser_allowed_sites": ["shop.example.com", "docs.example.org"],
     }
 
 
@@ -2212,7 +2212,7 @@ def test_a_browser_environment_s_launch_hands_the_kit_its_sites(
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    payload["browser"] = {"allowed_sites": ["shop.example.com", "*.docs.example.org"]}
+    payload["browser"] = {"allowed_sites": ["shop.example.com", "docs.example.org"]}
     job, _ = create_hosted_job(organization, payload, idempotency_key="launch-browser")
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
@@ -2241,16 +2241,16 @@ def test_a_browser_environment_s_launch_hands_the_kit_its_sites(
     dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
     # The kit holds its browser to these sites, whether or not the sandbox's egress is enforced.
     assert dispatched["metadata"]["browser_allowed_sites"] == [
-        "*.docs.example.org",
+        "docs.example.org",
         "shop.example.com",
     ]
     if unrestricted:
         assert client.params.unrestricted_egress is True
     else:
-        assert {"shop.example.com", "*.docs.example.org"} <= set(
+        assert {"shop.example.com", "docs.example.org"} <= set(
             client.params.allowed_domains
         )
-        assert {"shop.example.com", "*.docs.example.org"} <= set(
+        assert {"shop.example.com", "docs.example.org"} <= set(
             dispatched["metadata"]["egress_allowed_hosts"]
         )
 
@@ -5387,7 +5387,7 @@ def _browser_job(monkeypatch, sites):
 
 
 def test_a_build_s_job_names_the_sites_for_the_kit_s_check(monkeypatch):
-    _browser_job(monkeypatch, ["Shop.Example.com", "*.docs.example.org"])
+    _browser_job(monkeypatch, ["Shop.Example.com", "docs.example.org"])
     client_params = {}
     original = _Daytona.create
 
@@ -5400,7 +5400,7 @@ def test_a_build_s_job_names_the_sites_for_the_kit_s_check(monkeypatch):
 
     # The kit refuses a browser agent's build without sites, so the build's job names them.
     assert document["metadata"]["browser_allowed_sites"] == [
-        "*.docs.example.org",
+        "docs.example.org",
         "shop.example.com",
     ]
     # The browser starts only at a run: the build's own egress list does not take the sites.
@@ -5408,7 +5408,7 @@ def test_a_build_s_job_names_the_sites_for_the_kit_s_check(monkeypatch):
 
 
 def test_a_chat_sandbox_s_job_names_the_sites_and_its_list_takes_them(monkeypatch):
-    _browser_job(monkeypatch, ["Shop.Example.com", "*.docs.example.org"])
+    _browser_job(monkeypatch, ["Shop.Example.com", "docs.example.org"])
     client_params = {}
     original = _Daytona.create
 
@@ -5420,10 +5420,10 @@ def test_a_chat_sandbox_s_job_names_the_sites_and_its_list_takes_them(monkeypatc
     document, _job = _chat_document(monkeypatch)
 
     assert document["metadata"]["browser_allowed_sites"] == [
-        "*.docs.example.org",
+        "docs.example.org",
         "shop.example.com",
     ]
-    assert {"shop.example.com", "*.docs.example.org"} <= set(
+    assert {"shop.example.com", "docs.example.org"} <= set(
         client_params["allowed_domains"]
     )
 
