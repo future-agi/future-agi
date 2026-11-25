@@ -1,6 +1,15 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
-import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  IconButton,
+  Link,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
 import Iconify from "src/components/iconify";
 import { useConnectedAgents } from "../store";
 import { improverSessionFor, useIntegrations } from "../_mock/integrations";
@@ -56,6 +65,7 @@ export default function CodingAgentImprovementView({
     [simState, agents, prs, now, env.id, record.id],
   );
   const accepted = coder.attempt || null;
+  const navigate = useNavigate();
   const issueId = record.trigger?.issueId || null;
 
   return (
@@ -68,36 +78,99 @@ export default function CodingAgentImprovementView({
         flexDirection: "column",
       }}
     >
+      {/* The same header as every Epoch page (25 Nov): back, crumb, name,
+          state; under it only the versions — the rest on hover. */}
       <Box sx={{ mb: 2, flexShrink: 0 }}>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={onBack}
-          startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-          sx={{ ml: -0.75, mb: 0.75, minWidth: 0 }}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ minWidth: 0 }}
         >
-          {`Back to ${backLabel}`}
-        </Button>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography noWrap sx={{ typography: "m3", fontWeight: 600 }}>
+          <Tooltip arrow title={`Back to ${backLabel}`}>
+            <IconButton
+              size="small"
+              onClick={onBack}
+              aria-label={`Back to ${backLabel}`}
+              sx={{ ml: -0.75 }}
+            >
+              <Iconify icon="solar:arrow-left-linear" width={16} />
+            </IconButton>
+          </Tooltip>
+          {[
+            {
+              label: env.name,
+              to: paths.dashboard.simulate.environmentDetail(env.id),
+            },
+            {
+              label: "Epochs",
+              to: `${paths.dashboard.simulate.environmentDetail(env.id)}/improvements`,
+            },
+          ].map((c) => (
+            <Stack
+              key={c.label}
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ minWidth: 0 }}
+            >
+              <Link
+                component="button"
+                type="button"
+                underline="hover"
+                onClick={() => navigate(c.to)}
+                noWrap
+                sx={{
+                  typography: "s2",
+                  color: "text.tertiary",
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                {c.label}
+              </Link>
+              <Typography
+                component="span"
+                sx={{ typography: "s2", color: "text.disabled" }}
+              >
+                /
+              </Typography>
+            </Stack>
+          ))}
+          <Typography
+            noWrap
+            sx={{ fontSize: 16, lineHeight: "24px", fontWeight: 600 }}
+          >
             {row?.name || record.name}
           </Typography>
           <StatusPill ending={row?.status} headline={row?.headline} />
         </Stack>
-        <Tooltip arrow placement="bottom-start" title={record.id}>
+        <Tooltip
+          arrow
+          placement="bottom-start"
+          title={[
+            row?.identity?.match(/scenarios v\d+$/)?.[0],
+            (issueId || row?.trigger?.label) &&
+              `From ${issueId || row?.trigger?.label}`,
+            `${record.id}, the same in the CLI and API`,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        >
           <Typography
             noWrap
             sx={{
               typography: "s2",
               color: "text.subtitle",
-              mt: 0.25,
+              pl: 4.5,
               width: "fit-content",
               maxWidth: "100%",
             }}
           >
-            {[row?.identity, env.name, issueId || row?.trigger?.label]
-              .filter(Boolean)
-              .join(" · ")}
+            {row?.identity
+              ? row.identity
+                  .replace(" × ", " · ")
+                  .replace(/ · scenarios v\d+$/, "")
+              : record.id}
           </Typography>
         </Tooltip>
       </Box>

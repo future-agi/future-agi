@@ -8,7 +8,10 @@ import { VERDICT_TONE } from "../components/primitives";
   dot, so a flaky scenario's passing and failing attempts are both a click
   away. Shown only when the scenario ran more than once.
 */
-const toneOf = (s) => VERDICT_TONE[s] || VERDICT_TONE.unmeasured;
+const toneOf = (s) => {
+  const t = VERDICT_TONE[s] || VERDICT_TONE.unmeasured;
+  return t === VERDICT_TONE.unmeasured ? { ...t, label: "Not scored" } : t;
+};
 
 export default function TrialSwitcher({ samples, index, onPick }) {
   if (!Array.isArray(samples) || samples.length < 2) return null;

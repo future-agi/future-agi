@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 /*
@@ -107,12 +107,15 @@ export function MetricCell({
   quiet,
   tone,
   delta,
+  against,
 }) {
   return (
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: deltaWidth ? `1fr ${deltaWidth}px` : "1fr",
+        gridTemplateColumns: deltaWidth
+          ? `minmax(max-content, 1fr) ${deltaWidth}px`
+          : "1fr",
         alignItems: "center",
         columnGap: 0.75,
         minWidth: 0,
@@ -132,7 +135,7 @@ export function MetricCell({
       >
         {text}
       </Typography>
-      {!!deltaWidth && <Delta delta={delta} />}
+      {!!deltaWidth && <Delta delta={delta} against={against} />}
     </Box>
   );
 }
@@ -143,6 +146,7 @@ MetricCell.propTypes = {
   quiet: PropTypes.bool,
   tone: PropTypes.string,
   delta: PropTypes.object,
+  against: PropTypes.string,
 };
 
 /**
@@ -161,18 +165,24 @@ MetricCell.propTypes = {
  * read as alarm rather than as information. A metric that did not move renders
  * nothing: a dash in every unchanged cell is ink spent saying "no news".
  */
-function Delta({ delta }) {
+function Delta({ delta, against }) {
   if (!delta || delta.flat) return <Box />;
   /* The arrow says which way the number moved; the colour says whether that
      was good — so a cheaper run shows a green down arrow. A change inside
      the noise two runs carry is grey: it moved, but it says nothing. */
   const up = delta.up ?? delta.better;
+  /* A rate moves in points and says so with its sign: "+18 pts", never a
+     percent of the old value. Other metrics keep their own words. */
+  const shown = /pts$/.test(String(delta.text))
+    ? `${up ? "+" : "−"}${delta.text}`
+    : delta.text;
+  const vs = against || delta.vs || null;
   const color = delta.muted
     ? "text.tertiary"
     : delta.better
       ? "status.success.fg"
       : "status.danger.fg";
-  return (
+  const body = (
     <Stack
       direction="row"
       alignItems="center"
@@ -193,12 +203,22 @@ function Delta({ delta }) {
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        {delta.text}
+        {shown}
       </Typography>
     </Stack>
   );
+  /* The reference point is on the cell, not left to be guessed: the list reads
+     each run against the one before it (or the baseline), compare against the
+     baseline, and both say which. */
+  return vs ? (
+    <Tooltip arrow title={`${shown} vs ${vs}`}>
+      {body}
+    </Tooltip>
+  ) : (
+    body
+  );
 }
-Delta.propTypes = { delta: PropTypes.object };
+Delta.propTypes = { delta: PropTypes.object, against: PropTypes.string };
 
 /**
  * A grader's result for one run.
@@ -207,12 +227,21 @@ Delta.propTypes = { delta: PropTypes.object };
  * down: a run where one grader collapsed should be findable without reading
  * every number.
  */
-export function ScoreCell({ value, deltaWidth = 0, delta, divider, last }) {
+export function ScoreCell({
+  value,
+  deltaWidth = 0,
+  delta,
+  against,
+  divider,
+  last,
+}) {
   return (
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: deltaWidth ? `1fr ${deltaWidth}px` : "1fr",
+        gridTemplateColumns: deltaWidth
+          ? `minmax(max-content, 1fr) ${deltaWidth}px`
+          : "1fr",
         alignItems: "center",
         alignContent: "center",
         columnGap: 0.75,
@@ -243,7 +272,7 @@ export function ScoreCell({ value, deltaWidth = 0, delta, divider, last }) {
       >
         {value == null ? "—" : `${value}%`}
       </Typography>
-      {!!deltaWidth && <Delta delta={delta} />}
+      {!!deltaWidth && <Delta delta={delta} against={against} />}
     </Box>
   );
 }
@@ -251,6 +280,7 @@ ScoreCell.propTypes = {
   value: PropTypes.number,
   deltaWidth: PropTypes.number,
   delta: PropTypes.object,
+  against: PropTypes.string,
   divider: PropTypes.bool,
   last: PropTypes.bool,
 };

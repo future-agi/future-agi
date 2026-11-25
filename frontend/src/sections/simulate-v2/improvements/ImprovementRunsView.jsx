@@ -870,7 +870,20 @@ export default function ImprovementRunsView({
             <Tooltip
               arrow
               placement="bottom-start"
-              title="The epoch's ID — the same in the CLI and API. Starting the same epoch again opens this one."
+              title={
+                /* Where it started and its ID, on hover — the line keeps
+                   only what was measured (25 Nov: too much text). The ID
+                   is also under ⋯ → Copy epoch ID. */
+                [
+                  record.trigger?.issueId
+                    ? `From ${`${record.trigger.issueId} ${mockCluster(record.trigger.issueId)?.error?.name || ""}`.trim()}`
+                    : row?.trigger?.label && `From ${row.trigger.label}`,
+                  row?.identity?.match(/scenarios v\d+$/)?.[0],
+                  `${record.id}, the same in the CLI and API`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              }
             >
               <Typography
                 noWrap
@@ -882,17 +895,13 @@ export default function ImprovementRunsView({
                   maxWidth: "100%",
                 }}
               >
-                {[
-                  /* The environment is in the crumb above. */
-                  row?.identity,
-                  /* The issue it fixes, by name — not just its ID. */
-                  record.trigger?.issueId
-                    ? `${record.trigger.issueId} ${mockCluster(record.trigger.issueId)?.error?.name || ""}`.trim()
-                    : row?.trigger?.label,
-                  record.id,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
+                {/* The environment is in the crumb above; the scenarios
+                    version is on hover, as on the run header. */}
+                {row?.identity
+                  ? row.identity
+                      .replace(" × ", " · ")
+                      .replace(/ · scenarios v\d+$/, "")
+                  : record.id}
               </Typography>
             </Tooltip>
           </Box>

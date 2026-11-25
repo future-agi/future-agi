@@ -154,6 +154,9 @@ const triggerOnly = (trigger) => {
       label: `Insights · ${trigger.issueTitle || trigger.issueId || "issue"}`,
     };
   }
+  /* Run Epoch straight from a run's header — no Debug failures first. */
+  if (trigger?.kind === "run" && trigger.source === "run-direct")
+    return { kind: "run", group: "Run Epoch", label: "Run Epoch" };
   if (trigger?.kind === "run")
     return { kind: "run", group: "Debug failures", label: "Debug failures" };
   /* Started on its own, by the agent's automatic-improvement schedule. */
@@ -368,4 +371,24 @@ const improvementRowsRaw = ({
         (Date.parse(b.createdAt || 0) || 0) -
         (Date.parse(a.createdAt || 0) || 0),
     );
+};
+
+/*
+  The simulation run an epoch started from, or null. Only a run that existed
+  when the epoch was created counts: the one it records, else the env's latest
+  run finished before then. An Error Feed issue is its own source — no run.
+*/
+export const sourceRunOf = ({ kind, fromRunId, createdAt }, runs = []) => {
+  if (kind === "error-feed" || kind === "dataset") return null;
+  const at = Date.parse(createdAt || "");
+  if (!Number.isFinite(at)) return null;
+  const doneAt = (r) => Date.parse(r?.finishedAt || r?.startedAt || "");
+  const before = (r) => doneAt(r) <= at;
+  const own = fromRunId ? runs.find((r) => r.id === fromRunId) : null;
+  if (own) return before(own) ? own : null;
+  return (
+    runs
+      .filter((r) => r.finishedAt && before(r))
+      .sort((a, b) => doneAt(b) - doneAt(a))[0] || null
+  );
 };

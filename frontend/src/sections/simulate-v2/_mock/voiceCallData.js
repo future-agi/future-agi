@@ -1,4 +1,6 @@
 import { localizeEval } from "./errorLocalization";
+import { turnsOf } from "./runStream";
+import { latencyOf } from "../run/traceTableHelpers";
 import { endedReasonFor } from "./endedReason";
 import { voiceFlowOf } from "./voiceFlow";
 import { callerCastOf, subActorsInTrial } from "./subActors";
@@ -540,6 +542,10 @@ export function taskToVoiceData(
         : null,
   });
 
+  /* One number for the average reply latency — the run table's. */
+  const replyMs =
+    voice && !textRehearsal ? latencyOf(task) ?? undefined : undefined;
+
   return {
     module: "simulate",
     status: "completed",
@@ -558,7 +564,7 @@ export function taskToVoiceData(
       call_direction: direction,
     },
     duration_seconds: durationSec,
-    turn_count: steps.length,
+    turn_count: turnsOf(steps),
     phone_number: voice ? "+1 (415) 555-0182" : undefined,
     timestamp:
       task?.finishedAt || task?.startedAt || task?.timestamp || undefined,
@@ -587,19 +593,19 @@ export function taskToVoiceData(
     scenario_summary: summary,
     agent_talk_percentage: talkAgent,
     talk_ratio: `${talkAgent}/${100 - talkAgent}`,
-    avg_agent_latency_ms: voice && !textRehearsal ? 500 : undefined,
+    avg_agent_latency_ms: replyMs,
     user_wpm: voice && !textRehearsal ? 168 : undefined,
     bot_wpm: voice && !textRehearsal ? 214 : undefined,
     user_interruption_count: textRehearsal ? undefined : 0,
     ai_interruption_count: textRehearsal ? undefined : 0,
     customer_latency_metrics:
-      voice && !textRehearsal
+      replyMs != null
         ? {
             system_metrics: {
-              endpointing: 120,
-              transcriber: 90,
-              model: 260,
-              voice: 140,
+              endpointing: Math.round(replyMs * 0.2),
+              transcriber: Math.round(replyMs * 0.15),
+              model: Math.round(replyMs * 0.42),
+              voice: Math.round(replyMs * 0.23),
             },
           }
         : undefined,

@@ -33,10 +33,26 @@ export const csatOf = (t) => {
   const spread = (hash(`${t.id}:csat`) % 5) - 2;
   return Math.max(0, Math.min(10, base + mood + spread));
 };
-/* A run that records response times (new runs) carries its own — null when
-   the agent's side didn't report one, which reads as unverified, not as fast. */
-export const latencyOf = (t) =>
-  "responseMs" in (t || {}) ? t.responseMs : 280 + (hash(t.id) % 320);
+/*
+  The one average reply latency, in ms — the run table, the compare view and
+  the transcript drawer all read this. Reply times on a call run ~1-2.5s
+  (endpointing, transcription, model, voice). A run that records response
+  times (new runs) marks the ones the agent's side didn't report as null,
+  which reads as unverified, not as fast.
+*/
+export const latencyOf = (t) => {
+  if (!t) return null;
+  if ("responseMs" in t && t.responseMs == null) return null;
+  /* An epoch's call keeps its scenario but not its speed. */
+  /* Seeded per run and per trial: each call is its own. */
+  const h = hash(
+    `${t.id}${t.runSeed ? `:${t.runSeed}` : ""}${t.trialIndex ? `:t${t.trialIndex}` : ""}`,
+  );
+  return Math.round((900 + (h % 1700)) * (t.latencyScale || 1));
+};
+/* "840ms" under a second, "2.1s" from there. */
+export const formatLatency = (ms) =>
+  ms == null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`;
 
 /*
   Column definitions live outside the picker so both the picker and the
@@ -253,3 +269,60 @@ export function variantLabel(id) {
   if (lastNum > 0) return humanize(parts[lastNum - 1]);
   return humanize(parts.slice(-1)[0] || "Run");
 }
+
+/*
+  What a group row of repeated scenarios says about its results (24 Nov
+  review). Several scenarios: how many passed / were flaky / failed, zeros
+  left out, so the counts add up to the group. One scenario (grouped by
+  persona, say): that scenario's trials — "1 of 3 trials passed".
+*/
+export const groupOutcomeParts = (group) => {
+  const rows = group?.rows || [];
+  /* One scenario that wasn't scored: say so — never a blank. */
+  if (rows.length === 1 && ["unmeasured", "error"].includes(rows[0].status))
+    return [
+      {
+        key: "not scored",
+        n: "",
+        word: "Not scored",
+        dot: "text.disabled",
+        text: "Not scored",
+      },
+    ];
+  if (rows.length === 1 && (rows[0].samples?.length || 0) > 1) {
+    const samples = rows[0].samples;
+    const passed = samples.filter((s) => s === "passed").length;
+    const status = rows[0].status;
+    const dot =
+      status === "passed"
+        ? "status.success.solid"
+        : status === "flaky"
+          ? "status.warning.solid"
+          : "status.danger.solid";
+    return [
+      {
+        key: "trials",
+        n: `${passed} of ${samples.length}`,
+        word: "trials passed",
+        dot,
+        text: `${passed} of ${samples.length} trials passed`,
+      },
+    ];
+  }
+  const o = group?.outcomes || {};
+  return [
+    ["passed", o.passed || 0, "status.success.solid"],
+    ["flaky", o.mixed || 0, "status.warning.solid"],
+    ["failed", o.failing || 0, "status.danger.solid"],
+    /* So the counts add up to the group's scenarios. */
+    ["not scored", o.unmeasured || 0, "text.disabled"],
+  ]
+    .filter(([, n]) => n > 0)
+    .map(([word, n, dot]) => ({
+      key: word,
+      n,
+      word,
+      dot,
+      text: `${n} ${word}`,
+    }));
+};

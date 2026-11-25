@@ -63,6 +63,23 @@ const evalsOf = (envState) =>
  * ids, and anything since deleted simply cannot be rebuilt — reported as
  * `dropped` rather than quietly skipped.
  */
+/*
+  A finished run keeps the results it had. A scenario whose proof broke after
+  the run started (the Scenarios tab re-checks proofs) is not replayed as
+  broken in that run: otherwise opening Scenarios rewrote old runs' pass rates
+  in the runs list (57% 34/60 became 65% 36/55) while the run page kept 34/60.
+*/
+const provedAsOfRun = (sc, run) => {
+  /* Seeded runs carry only a finish time. */
+  const started = Date.parse(
+    run?.startedAt || run?.finishedAt || run?.createdAt || "",
+  );
+  const broke = Date.parse(sc?.brokeAt || "");
+  return sc?.provedBroke && started && broke && broke > started
+    ? { ...sc, provedBroke: false }
+    : sc;
+};
+
 export const runScenarios = (envState, run) => {
   /* Each at the version the run pinned (§4.10.8): an edit since — a major
      bump to its caller instruction, say — doesn't change what an old run
@@ -72,7 +89,7 @@ export const runScenarios = (envState, run) => {
   const all = pinnedScenarios(
     [...(envState?.scenarios || []), ...(run?.fixScenarios || [])],
     run,
-  );
+  ).map((sc) => provedAsOfRun(sc, run));
   if (!run?.scenarioIds?.length) return { scenarios: all, dropped: 0 };
   const byId = new Map(all.map((sc) => [sc.id, sc]));
   /* Rows of the removed cheat checks aren't "dropped" — they're gone by design. */
@@ -450,7 +467,9 @@ export const trialSummaries = (env, envState) => {
         baseScore: opt.result.base,
         /* Each run its own colour, so two runs of one improvement read apart. */
         color: SI_TRIAL_COLORS[(trial.n - 1) % SI_TRIAL_COLORS.length],
-        letter: `T${trial.n}`,
+        /* C for the epoch's candidate — not T: "trials" already means a
+           scenario's repeats. */
+        letter: `C${trial.n}`,
         finishedAt,
         agentVersion: baseVersion || "trial",
         envVersion: sourceRun?.envVersion,
@@ -656,7 +675,7 @@ export const decidingMoment = (task) => {
   if (task.status === "flaky") {
     return {
       kind: "flaky",
-      text: `Passed ${task.passes} of ${task.repeats} samples — this scenario does not decide the same way twice.`,
+      text: `Passed ${task.passes} of ${task.repeats} trials — this scenario does not decide the same way twice.`,
     };
   }
 
@@ -720,6 +739,28 @@ export const chipIdentity = (env, envState) => {
   return map;
 };
 
+/* An overlaid trial task gets its own metrics: the baseline's numbers with a
+   deterministic wobble from the task id and the trial run id, so a different
+   result never reads byte-identical. */
+const ownMetrics = (task, runId) => {
+  const h = hashSeed(`${task.id}:${runId}:metrics`) >>> 0;
+  const f = (salt) => 0.86 + ((h >>> salt) % 29) / 100;
+  return {
+    durationMs: task.durationMs
+      ? Math.round(task.durationMs * f(0))
+      : task.durationMs,
+    tokens: task.tokens ? Math.round(task.tokens * f(3)) : task.tokens,
+    cost:
+      typeof task.cost === "number"
+        ? Math.round(task.cost * f(5) * 1000) / 1000
+        : task.cost,
+    latencyScale: f(7),
+    ...(task.latencyMs != null && {
+      latencyMs: Math.round(task.latencyMs * f(7)),
+    }),
+  };
+};
+
 /* `foreign` (optional): run summaries from another environment, keyed by the
    id used in `runIds` — a fork's runs compare on carried scenario ids
    (PRD v7 AC-14.14). */
@@ -731,7 +772,7 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
      carry a `tasks: []` stub — hydrate on demand from the trial's source
      run + perScenario overlay so the comparison grid has scenarios to
      render. */
-  const runs = runIds
+  let runs = runIds
     .map((id) => {
       const run = runsByRow.find((r) => r.id === id) || foreign?.get(id);
       if (run) return run;
@@ -754,13 +795,34 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
           /* Only what the trial changed moves: a fix passes, a break fails,
              and a scenario that stayed the same keeps its own outcome —
              passing, flaky or failing — rather than being flattened. */
-          if (!outcome || !TRIAL_CHANGES[outcome]) return task;
+          /* An epoch runs a changed agent, so every call is new: a scenario
+             whose verdict held still gets its own numbers and scores, never
+             the source run's copied over. */
+          if (!outcome || !TRIAL_CHANGES[outcome]) {
+            const h = hashSeed(`${task.id}:${id}:scores`) >>> 0;
+            return {
+              ...task,
+              evalResults: (task.evalResults || []).map((r, k) => ({
+                ...r,
+                score: Math.max(
+                  0,
+                  Math.min(1, r.score + (((h >>> (k * 3)) % 7) - 3) / 100),
+                ),
+              })),
+              ...ownMetrics(task, id),
+            };
+          }
           const passed = TRIAL_CHANGES[outcome] === "passed";
           const score = passed ? 0.95 : 0.2;
           const evalResults = (task.evalResults || []).map((r) => ({
             ...r,
             score,
             passed,
+            /* The reason follows the overlaid verdict — a failed score never
+               keeps the source run's "met the threshold" text. */
+            reason: passed
+              ? "Met the configured threshold with no violations detected."
+              : `Scored ${Math.round(score * 100)} against a threshold of ${Math.round((r.threshold ?? 0.8) * 100)}.`,
           }));
           /* When the trial's outcome differs from the source run's, the
              source's callLog (which reports what the source agent said)
@@ -777,8 +839,20 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
             status: passed ? "passed" : "failed",
             verdict: passed ? "passed" : "failed",
             passShare: passed ? 1 : 0,
+            /* The trials follow the overlaid verdict — a failed row never
+               shows three passing trial dots. */
+            passes:
+              task.passes == null
+                ? task.passes
+                : passed
+                  ? task.repeats ?? task.samples?.length ?? task.passes
+                  : 0,
+            samples: Array.isArray(task.samples)
+              ? task.samples.map(() => (passed ? "passed" : "failed"))
+              : task.samples,
             evalResults,
             callLog,
+            ...ownMetrics(task, id),
           };
         });
         return { ...t, tasks };
@@ -816,13 +890,28 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
           ...r,
           score,
           passed,
+          /* The reason follows the overlaid verdict — a failed score never
+             keeps the source run's "met the threshold" text. */
+          reason: passed
+            ? "Met the configured threshold with no violations detected."
+            : `Scored ${Math.round(score * 100)} against a threshold of ${Math.round((r.threshold ?? 0.8) * 100)}.`,
         }));
         return {
           ...task,
           status: passed ? "passed" : "failed",
           verdict: passed ? "passed" : "failed",
           passShare: passed ? 1 : 0,
+          passes:
+            task.passes == null
+              ? task.passes
+              : passed
+                ? task.repeats ?? task.samples?.length ?? task.passes
+                : 0,
+          samples: Array.isArray(task.samples)
+            ? task.samples.map(() => (passed ? "passed" : "failed"))
+            : task.samples,
           evalResults,
+          ...ownMetrics(task, id),
         };
       });
       return { ...t, tasks };
@@ -836,6 +925,27 @@ export const buildComparison = (env, envState, runIds, { foreign } = {}) => {
       const chip = r._env ? null : chips.get(r.id);
       return chip ? { ...r, letter: chip.letter, color: chip.color } : r;
     });
+  /* Two runs in one comparison never share a colour: a trial (T1 purple) next
+     to Run 1 (purple) read as the same run. Runs keep their stamped colour;
+     a trial whose colour is already taken moves to the first palette hue
+     nobody in the comparison uses. */
+  {
+    const taken = new Set(
+      runs.filter((r) => r.kind !== "trial").map((r) => r.color),
+    );
+    runs = runs.map((r) => {
+      if (r.kind !== "trial") return r;
+      let color = r.color;
+      if (taken.has(color)) {
+        color =
+          SI_TRIAL_COLORS.find((c) => !taken.has(c)) ||
+          RUN_COLORS.find((c) => !taken.has(c)) ||
+          color;
+      }
+      taken.add(color);
+      return color === r.color ? r : { ...r, color };
+    });
+  }
 
   if (runs.length === 0)
     return { runs: [], rows: [], evals: [], coverage: null };

@@ -267,6 +267,7 @@ function LiveRun() {
      fix's own, never written into the environment. */
   const fixScenarios =
     pendingMember?.fixScenarios || watchTrial?.sourceRun?.fixScenarios || null;
+  const rerunParam = !!params.get("rerun");
   const plan = useMemo(
     () =>
       runPlan(
@@ -280,12 +281,13 @@ function LiveRun() {
         {
           only: only ? only.split(",") : null,
           envVersion: runEnv,
+          keepUnproved: rerunParam,
         },
       ),
     /* Keyed on the scenario list, not the whole env state — recording the run
        itself updates the env state, and must not rebuild the run mid-flight. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [only, envState.scenarios, runEnv, fixScenarios],
+    [only, envState.scenarios, runEnv, fixScenarios, rerunParam],
   );
   const { run: planned, skipped, poolSize } = plan;
   /* An exact snapshot plays each scenario at the version its source pinned —

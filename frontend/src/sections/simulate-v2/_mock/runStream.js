@@ -1112,6 +1112,8 @@ export function buildRun({
          screens name the same buckets differently. */
       useCase: sc.useCase,
       actor: actor ? { id: actor.id, name: actor.name } : null,
+      /* Which run played it, so per-call numbers differ run to run. */
+      runSeed: seed,
       worker: i % concurrency,
       steps,
       failStep: cutOff ? cutOff.at : failStep,
@@ -1167,7 +1169,11 @@ export function buildRun({
       /* Latency is the agent's responsiveness, not the call's length —
          Analytics keeps reading what it always did. */
       if (t.latencyMs == null) t.latencyMs = t.durationMs;
-      t.durationMs = Math.round(callMinutesOf(t) * 60000);
+      /* Each run's call is its own length: nudged by a run-seeded factor
+         so two runs of one scenario aren't identical — set here, once, so
+         every screen reads the same duration. */
+      const nudge = 0.92 + ((hashSeed(`${t.id}:${seed}:dur`) >>> 0) % 17) / 100;
+      t.durationMs = Math.round(callMinutesOf(t) * 60000 * nudge);
     });
   }
   return { tasks, stage, concurrency, repeats };

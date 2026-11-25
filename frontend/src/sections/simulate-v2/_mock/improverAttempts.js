@@ -139,11 +139,9 @@ export const attemptsOf = (
   const agent = codingAgentById(session.agentId) || {
     label: "Your coding agent",
   };
-  const visible = (r.trainMeasuredTasks || []).filter((t) => !t.critical);
-  const mustPass = [
-    ...(r.trainMeasuredTasks || []),
-    ...(r.heldTasks || []),
-  ].filter((t) => t.critical);
+  /* Targets are visible even when marked must-pass (see attemptsV2). */
+  const visible = r.trainMeasuredTasks || [];
+  const mustPass = (r.heldTasks || []).filter((t) => t.critical);
   const per = PER_CONVERSATION[surface === "voice" ? "voice" : "chat"];
   /* Today's agent on the visible scenarios — what every attempt's change is measured from. */
   const before = visible.length
@@ -271,11 +269,16 @@ const attemptsV2 = (record, session, { now, surface, budgetLeft, tier }) => {
     ...(r.heldTasks || []),
     ...(r.mustPassTasks || []),
   ];
+  /* A failing target stays a target even when it's marked must-pass: the
+     agent sees it in full. Must-pass is the rest it has to keep passing.
+     (25 Nov: an environment marked all must-pass left nothing visible, and
+     every attempt scored 0%.) */
+  const targetIds = new Set((r.trainMeasuredTasks || []).map((t) => t.id));
   const mustPass = all.filter(
-    (t) => mustIds.has(t.id) || t.critical || t.remembered,
+    (t) =>
+      !targetIds.has(t.id) && (mustIds.has(t.id) || t.critical || t.remembered),
   );
-  const isMust = new Set(mustPass.map((t) => t.id));
-  const visible = (r.trainMeasuredTasks || []).filter((t) => !isMust.has(t.id));
+  const visible = r.trainMeasuredTasks || [];
   const before = visible.length
     ? clampPct(
         (100 * visible.filter((t) => t.flakyToday).length * 0.5) /

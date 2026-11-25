@@ -2,13 +2,10 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
-import {
-  previousRunOf,
-  runStatsOf,
-  sharedDeltaOf,
-  sameEnvVersion,
-} from "../_mock/runCompare";
+import { previousRunOf, runStatsOf, sameEnvVersion } from "../_mock/runCompare";
 import { clickable } from "../components/clickable";
+import { signedPoints } from "../_mock/scoreDelta";
+import { statsDeltaOf } from "../_mock/winner";
 
 const num = { fontVariantNumeric: "tabular-nums" };
 /* A run that carries its own numbers (an improvement's run, scored on
@@ -56,7 +53,8 @@ export default function RunsOverview({
           ) || null
       : null;
   const base = refRun || previousRunOf(finished, latest, versionOf);
-  const delta = latest && base ? sharedDeltaOf(latest, base) : null;
+  const delta =
+    latest && base ? statsDeltaOf(statsOf(latest), statsOf(base)) : null;
   const stats = latest ? statsOf(latest) : null;
   /* A caller can headline a run other than the latest — an improvement's
      winner, against the run it started from — with its own comparison. */
@@ -122,7 +120,7 @@ export default function RunsOverview({
                   >
                     {headline.delta.up ? "▲" : "▼"}
                   </Box>
-                  {`${headline.delta.text} vs ${headline.against}`}
+                  {`${/pts$/.test(String(headline.delta.text)) ? `${headline.delta.up ? "+" : "−"}` : ""}${headline.delta.text} vs ${headline.against}`}
                 </Box>
               )}
             </Typography>
@@ -158,7 +156,7 @@ export default function RunsOverview({
               {delta && (
                 <Tooltip
                   arrow
-                  title={`On the ${delta.shared} scenarios both runs scored. Chance alone moves it up to ±${delta.noise} pts (95%).`}
+                  title={`On scored scenarios. Chance alone moves it up to ±${delta.noise} pts (95%).`}
                 >
                   <Box
                     component="span"
@@ -185,7 +183,7 @@ export default function RunsOverview({
                         >
                           {delta.pts < 0 ? "▼" : "▲"}
                         </Box>
-                        {`${Math.abs(delta.pts)} pts vs ${refRun ? `reference ${referenceVersion}` : nameOf(base)}`}
+                        {`${signedPoints(delta.pts)} pts vs ${refRun ? `reference ${referenceVersion}` : nameOf(base)}`}
                       </>
                     )}
                   </Box>

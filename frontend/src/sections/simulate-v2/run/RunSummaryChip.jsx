@@ -15,7 +15,6 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { VERDICT_CAUSES } from "../_mock/decoupled";
 import { CAUSE_ORDER } from "../_mock/runCauses";
-import { causeCountsLine } from "../_mock/runRollup";
 
 const colHead = {
   typography: "s3",
@@ -52,7 +51,11 @@ const chipSx = (below) =>
    for says so (runs §4) — never a whole-suite rate from a subset. */
 export default function RunSummaryChip({ summary, subset = null }) {
   if (!summary) return null;
-  const causes = causeCountsLine(summary);
+  const flakyN = summary.flaky || 0;
+  const notScoredN = ["inconclusive", "test-invalid", "error"].reduce(
+    (a, k) => a + (summary.outcomes?.[k] || 0),
+    0,
+  );
   return (
     <Tooltip
       classes={{ tooltip: "ds-hovercard" }}
@@ -60,13 +63,27 @@ export default function RunSummaryChip({ summary, subset = null }) {
       title={
         <Stack spacing={0.5} sx={{ py: 0.25 }}>
           <b>Run summary</b>
-          <span>{`${summary.passed} passed · ${summary.failed} failed of ${summary.scored} scored${summary.k > 1 ? `, ${summary.k} repeats each` : ""}`}</span>
-          {summary.k > 1 && !summary.lowVolume && summary.scored > 0 && (
-            <span>{`${summary.pass1Pct}% of all conversations passed; ${summary.passKPct}% of scenarios passed all ${summary.k} times — the gap is flakiness.`}</span>
+          {/* The chip shows only the rate; the count it comes from is here. */}
+          <span>
+            {summary.k > 1
+              ? `${summary.passedAll} of ${summary.scored} passed all ${summary.k} trials`
+              : `${summary.passed} passed · ${summary.failed} failed of ${summary.scored} scored`}
+          </span>
+          {/* The same counts as the status chips: flaky apart from failed
+              (24 Nov — "Failed · agent 26" counted the flaky too). */}
+          {summary.scored > 0 && (
+            <span>
+              {[
+                `${Math.max(0, summary.scored - summary.passedAll - flakyN)} failed`,
+                flakyN > 0 && `${flakyN} flaky`,
+                notScoredN > 0 && `${notScoredN} not scored`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
           )}
-          {causes && <span>{causes}</span>}
-          {!summary.lowVolume && summary.scored > 0 && (
-            <span>{`Your bar: ${Math.round(summary.bar.pass1 * 100)}% passed — it colours this report, nothing more.`}</span>
+          {summary.k > 1 && !summary.lowVolume && summary.scored > 0 && (
+            <span>{`${summary.pass1Pct}% of conversations passed`}</span>
           )}
           {summary.unreliable && (
             <span>{`Unreliable: ${Math.round(summary.simulatorShare * 100)}% test invalid · simulator (over 10%).`}</span>
@@ -75,7 +92,7 @@ export default function RunSummaryChip({ summary, subset = null }) {
             <span>{`${summary.pulled.count} pulled for review after testing invalid twice — outside every count.`}</span>
           )}
           {summary.stale?.line && <span>{`${summary.stale.line}.`}</span>}
-          {summary.caveat && <span>{summary.caveat}</span>}
+          {/* The not-scored caveat is the "Not scored N" count above. */}
         </Stack>
       }
     >
@@ -89,7 +106,8 @@ export default function RunSummaryChip({ summary, subset = null }) {
           borderRadius: "4px",
           flexShrink: 0,
           cursor: "default",
-          ...chipSx(summary.belowBar),
+          /* Neutral (24 Nov): one figure, not a red pair of rates. */
+          ...chipSx(false),
         }}
       >
         <Typography
@@ -102,10 +120,12 @@ export default function RunSummaryChip({ summary, subset = null }) {
             summary.line
           ) : (
             <>
-              {/* Plain words: the pass rate, then how many passed every repeat. */}
-              {`${summary.pass1Pct}% passed`}
-              {summary.k > 1 &&
-                ` · ${summary.passKPct}% all ${summary.k} repeats`}
+              {/* One figure that matches the status chips: with repeats, a
+                  scenario passes only when every trial passed (flaky isn't
+                  a pass). The per-conversation rate is in the tooltip. */}
+              {summary.k > 1
+                ? `${summary.passKPct}% passed`
+                : `${summary.pass1Pct}% passed`}
               {subset &&
                 ` · ${subset.ran.toLocaleString()} of ${subset.requested.toLocaleString()} requested`}
             </>

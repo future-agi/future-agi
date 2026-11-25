@@ -4,6 +4,7 @@
  * Lifted out of store.jsx so the store file exports components and hooks
  * only, and so the seed's migrations can be checked outside the app.
  */
+import { withScenarioHistoryDemo } from "./scenarioHistoryDemo";
 import { seededState, AIRLINE_AGENT_KEY } from "./seedState";
 import { getEnvironment } from "./environments";
 import { envAgentKey, repairAgentRecord } from "./agentRegistry";
@@ -300,7 +301,7 @@ export const withRsiSeed = (state) => {
       console.warn("[store] epoch scenarios skipped", id, err);
     }
   });
-  return { ...state, byEnv };
+  return withScenarioHistoryDemo({ ...state, byEnv });
 };
 
 const MOVED_DEMO_FIXES = { "ef-code": "ISS-4453", "ef-retell": "ISS-4471" };
@@ -428,7 +429,7 @@ const withoutRetiredConcepts = (state) => {
 };
 
 export const topUpSeed = (stored) =>
-  withoutRetiredConcepts(topUpSeedVersions(stored));
+  withScenarioHistoryDemo(withoutRetiredConcepts(topUpSeedVersions(stored)));
 
 /* How a seeded environment's first version was worded, before and after the seed history. */
 const SEEDED_FIRST_BUILD_NOTES = [

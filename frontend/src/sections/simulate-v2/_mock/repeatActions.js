@@ -48,7 +48,9 @@ export const repeatActionsOf = ({
   const failing = [
     ...new Set(
       tasks
-        .filter((t) => t.status === "failed" || t.status === "flaky")
+        /* Failed only — flaky has its own re-run with more trials, and the
+           Failing chip counts the same scenarios. */
+        .filter((t) => t.status === "failed")
         .map((t) => t.scenarioId || t.id),
     ),
   ];
@@ -68,6 +70,7 @@ export const repeatActionsOf = ({
     : `${agentName} runs on its own platform, so its conversation memory can't be restored. Resume interrupted work restarts unfinished trials from their seed — a restart, not a restore.`;
   return {
     replay: {
+      hint: "Watch the recorded calls. Nothing runs again.",
       label: "View saved evidence",
       detail:
         "Play the recorded conversations, tool calls and state changes. Nothing runs again.",
@@ -75,6 +78,7 @@ export const repeatActionsOf = ({
       disabled: !tasks.length ? "Nothing was recorded." : null,
     },
     reeval: {
+      hint: "Score the stored calls again. Nothing runs again.",
       label: "Re-evaluate",
       detail: `${
         regrade
@@ -86,18 +90,21 @@ export const repeatActionsOf = ({
       meta: `No new agent calls · ${SHOW_RUN_COST && regrade ? `≈ ${regrade.credits.toLocaleString()} credits` : "judges only"}`,
     },
     failures: {
-      label: `Re-run ${failing.length} failing`,
+      hint: "Only the scenarios that failed",
+      label: `Re-run ${failing.length} failed`,
       detail: `A new run of the scenarios that failed here, resolved from this run.${notCounted ? ` The ${notCounted} that weren't counted (inconclusive, test invalid or error) can be added in the run plan.` : ""}`,
       meta: `New agent calls · world reset${costTail(env, envState, run, failing.length)}`,
       disabled: !failing.length ? "Nothing failed in this run." : null,
       ids: failing,
     },
     recorded: {
-      label: "Recorded-tool replay",
+      hint: "Tools answer from this run's recording",
+      label: "Replay with recorded tools",
       detail:
         "Run the agent again, with every tool answering what it returned in this run. It can't show how the agent does against a world that changes.",
       meta: `New agent calls · tools from the recording${costTail(env, envState, run, total)}`,
-      disabled: "Coming later.",
+      /* Built: the run plan replays tools from this run's recording. */
+      disabled: null,
     },
     resume: {
       label: notStarted.length

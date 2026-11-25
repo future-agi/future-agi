@@ -183,6 +183,8 @@ export const runRollupOf = (run, { env, envState, scenarioCount } = {}) => {
     passed: counts.pass,
     failed: outcomes.failed,
     passedAll,
+    /* Scored scenarios whose trials disagreed — the Flaky chip's count. */
+    flaky: scoredTasks.filter((t) => { const s = shareOf(t); return s > 0 && s < 1; }).length,
     pass1,
     passK,
     pass1Pct: pct(pass1),

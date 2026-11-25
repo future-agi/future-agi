@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { currentAgentVersion } from "../../_mock/versions";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import {
@@ -175,6 +176,8 @@ export default function TraceReviewDrawer({
 }) {
   /* Each draft titled for what its record shows — a session that passed
      is kept as a regression, never titled as reproducing a failure. */
+  /* The agent version this environment tests, for the evidence rows. */
+  const envAgentV = currentAgentVersion(envState)?.label || null;
   const drafts = useMemo(
     () =>
       waitingDraftsOf(envState, importId).map((d) =>
@@ -638,7 +641,11 @@ export default function TraceReviewDrawer({
                           </Box>
                           {[
                             s.sourceName && s.sourceKind ? s.sourceName : null,
-                            s.agentVersion ? `agent ${s.agentVersion}` : null,
+                            /* The version production ran; when the
+                               environment tests another, say so (25 Nov). */
+                            s.agentVersion
+                              ? `agent ${s.agentVersion}${envAgentV && envAgentV !== s.agentVersion ? ` · env tests ${envAgentV}` : ""}`
+                              : null,
                             s.outcome === "failed"
                               ? "failed"
                               : s.outcome === "passed"

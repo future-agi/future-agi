@@ -16,6 +16,8 @@
 import { FAILURE_MODES, modeOf } from "./coverage";
 import { PAIR_CLASSES, PAIR_ORDER } from "./pairs";
 import { goalLabel } from "./scenarios";
+import { readDelta } from "./scoreDelta";
+import { turnsOf } from "./runStream";
 
 /* ── pair class + flip (PRD v7 §4.10.7) ──────────────────────────────────── */
 
@@ -311,7 +313,7 @@ export const behaviourDiff = (baseTask, task) => {
     (n) => !(baseTask.callLog?.missing || []).includes(n),
   );
 
-  const turnDelta = (task.steps?.length || 0) - (baseTask.steps?.length || 0);
+  const turnDelta = turnsOf(task.steps || []) - turnsOf(baseTask.steps || []);
 
   const firstDivergence = (() => {
     const a = baseTask.steps || [];
@@ -432,7 +434,7 @@ export const QUICK_FILTERS = [
   /* Not a regression and not a pass — scenarios whose own samples disagreed.
      They belong to whoever wrote the scenario, not to whoever changed the
      agent, and they are the rows most likely to be misread as movement. */
-  { id: "flaky", label: "Flaky", icon: "solar:refresh-circle-linear" },
+  { id: "flaky", label: "Flaky only", icon: "solar:refresh-circle-linear" },
   /* The rows that are ours to fix rather than the agent's. */
   {
     id: "unmeasured",
@@ -727,7 +729,7 @@ export const bandRows = (rows, { group, regressionsFirst, groupFn }) => {
           {
             id: "band-regressions",
             label: "Regressions",
-            note: "Passed on the baseline, fail now — exact pairs first",
+            note: "Passed on the baseline, fail now",
             tone: "bad",
             rows: top.filter((r) => !becameFlaky(r)),
           },
@@ -738,7 +740,7 @@ export const bandRows = (rows, { group, regressionsFirst, groupFn }) => {
           {
             id: "band-became-flaky",
             label: "Now fails some trials",
-            note: "Passed every trial in the earlier run; now some trials fail",
+            note: "Passed every trial on the baseline, only some now",
             tone: "bad",
             rows: top.filter(becameFlaky),
           },
@@ -773,6 +775,7 @@ export const summaryRows = (comparison, evals) => {
       format: (v) => (v == null ? "—" : `${Math.round(v)}%`),
       get: (r) => (comparison.coverage?.common ? r.sharedPassRate : r.passRate),
       lowerIsBetter: false,
+      unit: "pts",
     },
     /* Scenarios that could not decide. A rate that improves while this climbs
        has not improved — it has got noisier. */
@@ -782,6 +785,7 @@ export const summaryRows = (comparison, evals) => {
       format: (v) => `${v}`,
       get: (r) => r.flaky || 0,
       lowerIsBetter: true,
+      unit: "count",
     },
     {
       id: "saidNotDone",
@@ -789,6 +793,7 @@ export const summaryRows = (comparison, evals) => {
       format: (v) => `${v}`,
       get: (r) => r.saidNotDone,
       lowerIsBetter: true,
+      unit: "count",
     },
     {
       id: "duration",
@@ -817,6 +822,7 @@ export const summaryRows = (comparison, evals) => {
       format: (v) => `${Math.round(v)}%`,
       get: (r) => r.scores?.[e.id] ?? 0,
       lowerIsBetter: false,
+      unit: "pts",
     })),
   ];
 
@@ -831,6 +837,13 @@ export const summaryRows = (comparison, evals) => {
         value: now,
         text: line.format(now),
         moved,
+        /* Scores and counts move by an absolute amount — "+18" points, never
+           a percent of the old value. */
+        delta:
+          moved && line.unit
+            ? readDelta(now, before, { lowerIsBetter: line.lowerIsBetter })
+            : null,
+        unit: line.unit || null,
         better: moved
           ? line.lowerIsBetter
             ? now < before

@@ -59,6 +59,7 @@ import { estimateRun, evalCreditsPerRun, creditsLabel } from "./metering";
 import { resolveEval } from "./evals";
 import { isMeasured } from "./failures";
 import { runSummary } from "./comparison";
+import { chipStatsOf, scoredSharesOf } from "./runCompare";
 import { scenarioTitle } from "./scenarios";
 
 /* ── vocabulary ──────────────────────────────────────────────────────────── */
@@ -754,17 +755,35 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
   const inClasses = opts.excludeRechecked
     ? ["exact", "regraded"]
     : ["exact", "regraded", "rechecked"];
+  /* Shared = scored in BOTH runs, as each run's own page counts it. */
+  const scoredA = scoredSharesOf(a, { env: envOfRun(a, env), envState });
+  const scoredB = scoredSharesOf(b, { env: envOfRun(b, env), envState });
   const usable = pairs.filter(
-    (p) => inClasses.includes(p.cls) && p.shareA != null && p.shareB != null,
+    (p) =>
+      inClasses.includes(p.cls) &&
+      p.shareA != null &&
+      p.shareB != null &&
+      (!scoredA || scoredA.has(p.id)) &&
+      (!scoredB || scoredB.has(p.id)),
   );
   const iv = pairedInterval(
     usable.map((p) => ({
-      a: p.shareA,
-      b: p.shareB,
+      a: scoredA ? scoredA.get(p.id) : p.shareA,
+      b: scoredB ? scoredB.get(p.id) : p.shareB,
       ka: a._key.repeats,
       kb: b._key.repeats,
     })),
   );
+  /* The headline change is the difference of the pass rates the run chips
+     show (scenarios that passed every trial), not a mean of trial shares. */
+  const statsA = chipStatsOf(a, { env: envOfRun(a, env), envState });
+  const statsB = chipStatsOf(b, { env: envOfRun(b, env), envState });
+  if (iv.n && statsA?.scenarioRate != null && statsB?.scenarioRate != null) {
+    const shift = statsB.scenarioRate - statsA.scenarioRate - iv.delta;
+    iv.delta = statsB.scenarioRate - statsA.scenarioRate;
+    iv.lo = Math.round((iv.lo + shift) * 10) / 10;
+    iv.hi = Math.round((iv.hi + shift) * 10) / 10;
+  }
   /* RSI PRD: "two runs are comparable only when the environment version
      matches." Across versions — or environments — the runs sit side by side
      with no verdict; re-running one agent on the other's version makes them
@@ -908,8 +927,8 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
         line: !bridge.can
           ? bridge.why
           : iv.n >= PAIR_FLOOR
-            ? `${changedIds.length ? "Bridging" : "Backfilling"} the ${what} costs ${p.calls} calls at k=${k} and narrows ±${half} to ±${after}`
-            : `${changedIds.length ? "Bridging" : "Backfilling"} the ${what} costs ${p.calls} calls at k=${k} and gives a verdict to about ±${after}`,
+            ? `${changedIds.length ? "Bridging" : "Backfilling"} the ${what} costs ${p.calls} calls at ${k} trials and narrows ±${half} to ±${after}`
+            : `${changedIds.length ? "Bridging" : "Backfilling"} the ${what} costs ${p.calls} calls at ${k} trials and gives a verdict to about ±${after}`,
         calls: p.calls,
         usd: p.usd,
         half: after,
@@ -935,8 +954,8 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
         id: "raise-k",
         kind: "raise-k",
         can: true,
-        label: `Raise k to ${kNext}`,
-        line: `Topping both runs up to ${kNext} repeats on the ${iv.n} comparable costs ${p.calls} calls and narrows ±${half} to ±${after}`,
+        label: `Raise to ${kNext} trials`,
+        line: `Topping both runs up to ${kNext} trials on the ${iv.n} comparable costs ${p.calls} calls and narrows ±${half} to ±${after}`,
         calls: p.calls,
         usd: p.usd,
         half: after,
@@ -974,14 +993,15 @@ export const comparisonOf = (runs, env, envState, opts = {}) => {
     );
     trend = {
       n: allIds.length,
+      /* The chips' own pass rates, per run. */
       points: keyed.map((r) => ({
         runId: r.id,
         letter: r.letter,
         color: r.color,
-        agent: r._key.agent,
-        rate: allIds.length
-          ? Math.round(mean(allIds.map((id) => shareOf(taskOf(r, id)))) * 100)
-          : null,
+        agent: r.kind === "trial" ? `${r._key.agent} + change` : r._key.agent,
+        rate:
+          chipStatsOf(r, { env: envOfRun(r, env), envState })?.scenarioRate ??
+          null,
       })),
     };
   }
@@ -1066,10 +1086,25 @@ export const selfNoiseOf = (env, envState, key, skipId = null) => {
   };
 };
 
-/** Pair info per comparison row, baseline against the newest run. */
+/** Pair info per comparison row, baseline against the compared run. */
 export const withPairs = (comparison, env, envState, opts) => {
-  const read = comparisonOf(comparison?.runs, env, envState, opts);
+  /* One compared run for the page: the baseline against `opts.targetId`
+     (default the second run), not the newest. */
+  const all = comparison?.runs || [];
+  const target =
+    all.slice(1).find((r) => r.id === opts?.targetId) || all[1] || null;
+  const read = comparisonOf(
+    target ? [all[0], target] : all,
+    env,
+    envState,
+    opts,
+  );
   if (!read) return { comparison, read: null };
+  /* The trend spans every run on the page, not just the compared pair. */
+  if (target && all.length >= 3) {
+    const full = comparisonOf(all, env, envState, opts);
+    if (full?.trend) read.trend = full.trend;
+  }
   const rows = comparison.rows.map((row) => ({
     ...row,
     pair: read.byId.get(row.id) || null,
@@ -1316,7 +1351,7 @@ export const previewOf = (
     const kNext = k < 5 ? 5 : 10;
     options.push({
       id: "raise-k",
-      label: `Raise k to ${kNext}`,
+      label: `Raise to ${kNext} trials`,
       line: `${priceLine(priceOf(env, envState, ids.length, kNext))} · verdict to ±${halfAt(comparable, summary.repeats, kNext)} points`,
       repeats: kNext,
     });

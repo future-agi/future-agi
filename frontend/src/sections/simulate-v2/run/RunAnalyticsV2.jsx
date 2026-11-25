@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { turnsOf } from "../_mock/runStream";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { comparisonOf, PAIR_CLASSES } from "../_mock/pairs";
 import { runIdentityOf } from "../_mock/runIdentity";
@@ -3123,7 +3124,7 @@ function KpiStrip({ tasks, biz, trend, env }) {
     ? latencies.reduce((a, v) => a + v, 0) / latencies.length / 1000
     : 0;
   const turnCounts = measured
-    .map((t) => t.steps?.length || 0)
+    .map((t) => turnsOf(t.steps || []))
     .filter((n) => n > 0);
   const avgTurns = turnCounts.length
     ? turnCounts.reduce((a, v) => a + v, 0) / turnCounts.length

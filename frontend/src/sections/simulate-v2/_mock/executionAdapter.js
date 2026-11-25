@@ -22,6 +22,8 @@ import axiosInstance from "src/utils/axios";
 import { getEnvironment } from "./environments";
 import { resolveEval } from "./evals";
 import { generatedPool } from "./scenarios";
+import { turnsOf } from "./runStream";
+import { latencyOf } from "../run/traceTableHelpers";
 
 /** Ids the revamped flow mints. Nothing else may start with this. */
 export const PROTO_RUN_PREFIX = "sim2run-";
@@ -173,7 +175,7 @@ function kpisPayload(runId) {
   const passed = tasks.filter((t) => t.status === "passed").length;
 
   const avg = (fn) => (tasks.length ? tasks.reduce((a, t) => a + fn(t), 0) / tasks.length : 0);
-  const turns = avg((t) => t.steps?.length || 0);
+  const turns = avg((t) => turnsOf(t.steps));
 
   const base = {
     agent_type: voice ? "voice" : "text",
@@ -301,9 +303,9 @@ function listPayload(runId, params = {}) {
       status: t.status === "failed" ? "completed" : t.status === "error" ? "failed" : "completed",
       duration: 40 + (h % 120),
       overall_score: Math.max(1, Math.round((t.evalResults?.[0]?.score ?? 0.5) * 10) - 4),
-      turn_count: t.steps?.length || 0,
+      turn_count: turnsOf(t.steps),
       /* The latency column reads avg_agent_latency, not `latency`. */
-      avg_agent_latency: voice ? 300 + (h % 400) : undefined,
+      avg_agent_latency: voice ? (latencyOf(t) ?? undefined) : undefined,
       total_tokens: voice ? undefined : 700 + (h % 900),
       scenario: t.title,
       persona: t.persona?.name || "—",
@@ -353,7 +355,7 @@ function callDetailPayload(callId, runId) {
     agent_type: voice ? "voice" : "text",
     provider: "future-agi-sandbox",
     duration: 40 + (hash(callId) % 120),
-    turn_count: task.steps?.length || 0,
+    turn_count: turnsOf(task.steps),
     scenario: task.title,
     persona: task.persona,
     messages: (task.steps || []).map((s, i) => ({

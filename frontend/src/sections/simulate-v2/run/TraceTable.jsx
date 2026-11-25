@@ -43,6 +43,7 @@ import { STALE_LABEL, causeShort, verdictLineOf } from "../_mock/runCauses";
 import {
   csatOf,
   latencyOf,
+  formatLatency,
   TRACE_COLUMNS,
   HIDDEN_EVAL,
   visibleEvals,
@@ -52,7 +53,9 @@ import {
   variantLabel,
   deriveUseCaseLabel,
   ruleOf,
+  groupOutcomeParts,
 } from "./traceTableHelpers";
+import { turnsOf } from "../_mock/runStream";
 import { clickable, focusRing } from "../components/clickable";
 import { scenarioTitle } from "../_mock/scenarios";
 import { packOf } from "../workspace/scenarios/redTeamPacks";
@@ -91,8 +94,10 @@ const notCountedLabel = (t) =>
 */
 const METRIC_THRESHOLDS = {
   csat: { direction: "lowIsBad", bad: 4 },
-  turns: { direction: "highIsBad", bad: 12 },
-  latency: { direction: "highIsBad", bad: 550 },
+  /* Turns have no threshold: a row is flagged only when its conversation hit
+     the turn limit (task.turnLimit), never by a count. Latency is pitched at
+     the top ~12% of the 0.9–2.6s reply range. */
+  latency: { direction: "highIsBad", bad: 2400 },
   tokens: { direction: "highIsBad", bad: 6000 },
 };
 
@@ -561,7 +566,10 @@ export default function TraceTable({
   /* If the parent didn't pass column state, fall back to defaults so the
      table is usable in older callers that don't wire a picker. */
   const visible = columns || defaultTraceColumns();
-  const show = (key) => visible.has(key);
+  /* Grouped by actor, each group row already names the actor: the Actor
+     column would only repeat it ("1 actor"), so it steps aside. */
+  const show = (key) =>
+    visible.has(key) && !(key === "persona" && groupBy === "persona");
   /* Which evals to render, in order. Any not explicitly hidden shows. */
   /* Required evaluations are marked on their column (header and a failing
      cell), not listed again inside the row. */
@@ -599,7 +607,7 @@ export default function TraceTable({
       const avg = (vals) =>
         vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
       const csatVals = rows.map(csatOf).filter((v) => Number.isFinite(v));
-      const turnVals = rows.map((r) => r.steps?.length || 0);
+      const turnVals = rows.map((r) => turnsOf(r.steps));
       const latVals = rows.map(latencyOf).filter((v) => typeof v === "number");
       const tokTotal = rows.reduce((a, r) => a + (r.tokens || 0), 0);
       const evalAgg = {};
@@ -621,7 +629,12 @@ export default function TraceTable({
       rows.forEach((r) => {
         if (r.status === "passed") outcomes.passed += 1;
         else if (r.status === "flaky") outcomes.mixed += 1;
-        else if (r.status === "unmeasured") outcomes.unmeasured += 1;
+        /* Error and not measured are "not scored", as in the run header —
+           never counted as failed. */ else if (
+          r.status === "unmeasured" ||
+          r.status === "error"
+        )
+          outcomes.unmeasured += 1;
         else outcomes.failing += 1;
       });
       const blockers = rows.filter(
@@ -843,7 +856,7 @@ export default function TraceTable({
                   <Typography
                     title={t.summary || undefined}
                     sx={{
-                      typography: "s2",
+                      typography: "m3",
                       fontWeight: 600,
                       maxWidth: 440,
                       display: "-webkit-box",
@@ -1068,7 +1081,11 @@ export default function TraceTable({
       )}
       {show("turns") && (
         <TableCell sx={num} onClick={() => onOpen(t)}>
-          <MetricValue metric="turns" value={t.steps?.length || 0} />
+          <MetricValue
+            metric="turns"
+            value={turnsOf(t.steps)}
+            limit={t.turnLimit?.limit ?? null}
+          />
         </TableCell>
       )}
       {show("latency") && (
@@ -1086,7 +1103,7 @@ export default function TraceTable({
               </Typography>
             </Tooltip>
           ) : (
-            <MetricValue metric="latency" value={latencyOf(t)} suffix="ms" />
+            <MetricValue metric="latency" value={latencyOf(t)} />
           )}
         </TableCell>
       )}
@@ -1287,11 +1304,13 @@ export default function TraceTable({
                     zIndex: 2,
                     height: BAND_H,
                     py: 0,
-                    bgcolor: "background.paper",
+                    /* The section band reads as its own strip, so where
+                       Scenario details end and Evaluations begin is plain. */
+                    bgcolor: "background.neutral",
                     whiteSpace: "nowrap",
-                    typography: "s3",
+                    typography: "s1",
                     fontWeight: 600,
-                    color: "text.tertiary",
+                    color: "text.secondary",
                     textTransform: "none",
                     letterSpacing: 0.4,
                     borderBottom: "1px solid",
@@ -1323,7 +1342,13 @@ export default function TraceTable({
               {show("callDetails") && (
                 <TableCell sx={headCell}>
                   {/* A floor the table can't shrink — a cell's own width is only a hint. */}
-                  <Box sx={{ minWidth: RUN_DETAILS_MIN }}>Run details</Box>
+                  <Box sx={{ minWidth: RUN_DETAILS_MIN }}>
+                    {/* What the rows are: the Group by axis (Goal, Actor…),
+                        or Scenario when nothing groups them. */}
+                    {!axis || axis.id === "none"
+                      ? "Scenario"
+                      : `${axis.label} · scenarios`}
+                  </Box>
                 </TableCell>
               )}
               {/* Shrink to its content (the 1% trick) so it sits next to CSAT;
@@ -1496,48 +1521,74 @@ function GroupHeaderRow({
      out of the scenarios that were scored. */
   /* Repeated scenarios: a scenario counts as passed only when every one of
      its trials passed, and the flaky ones (some trials passed) are said. */
-  const flakyN = group.repeated ? group.outcomes?.mixed || 0 : 0;
-  const passText =
-    group.measured > 0
+  const notScored =
+    group.count > 0 && group.outcomes.unmeasured === group.count;
+  const passText = notScored
+    ? ` · ${groupOutcomeParts(group)
+        .map((p) => p.text)
+        .join(" · ")}`
+    : group.measured > 0
       ? group.repeated
-        ? ` · ${group.passed}/${group.measured} passed every trial${flakyN ? ` · ${flakyN} flaky` : ""}`
+        ? ` · ${groupOutcomeParts(group)
+            .map((p) => p.text)
+            .join(" · ")}`
         : ` · ${group.pct}% passed ${group.passed}/${group.measured}`
       : "";
-  const passMark = group.measured > 0 && (
+  const passMark = (group.measured > 0 || notScored) && (
     <Typography
       sx={{
-        typography: "s3",
+        typography: "s1",
         color: "text.tertiary",
         whiteSpace: "nowrap",
         flexShrink: 0,
         fontVariantNumeric: "tabular-nums",
       }}
     >
-      {"· "}
-      <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
-        {group.repeated ? `${group.passed}/${group.measured}` : `${group.pct}%`}
-      </Box>
-      {group.repeated
-        ? " passed every trial"
-        : ` passed ${group.passed}/${group.measured}`}
-      {/* Flaky carries the Flaky chip's dot, so it reads at a glance. */}
-      {group.repeated && flakyN > 0 && (
+      {group.repeated || notScored ? (
+        /* Scenario counts that add up, zeros left out (24 Nov review):
+           "2 flaky · 1 failed" of the group's 3 scenarios. A group of one
+           scenario (a persona, say) is that scenario's trials instead. */
         <>
-          {" · "}
-          <Box
-            component="span"
-            sx={{
-              display: "inline-block",
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              bgcolor: "status.warning.solid",
-              verticalAlign: "middle",
-              mr: 0.5,
-              mb: "1px",
-            }}
-          />
-          {`${flakyN} flaky`}
+          {groupOutcomeParts(group).map((p) => (
+            <React.Fragment key={p.key}>
+              {/* Counts only: they add up to the group's scenarios (the
+                  total is on the name's hover). */}
+              <Box
+                component="span"
+                sx={{ display: "inline-block", width: 10 }}
+              />
+              <Box
+                component="span"
+                sx={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  bgcolor: p.dot,
+                  verticalAlign: "middle",
+                  mr: 0.5,
+                  mb: "1px",
+                }}
+              />
+              {p.n !== "" && (
+                <Box
+                  component="span"
+                  sx={{ color: "text.primary", fontWeight: 600 }}
+                >
+                  {p.n}
+                </Box>
+              )}
+              {p.n !== "" ? ` ${p.word}` : p.word}
+            </React.Fragment>
+          ))}
+        </>
+      ) : (
+        <>
+          {"· "}
+          <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
+            {`${group.pct}%`}
+          </Box>
+          {` passed ${group.passed}/${group.measured}`}
         </>
       )}
     </Typography>
@@ -1626,7 +1677,7 @@ function GroupHeaderRow({
   };
   /* Aggregate cell — right-aligned tabular numbers with the same
      bad-value warning treatment data rows use. Group averages that
-     cross the threshold (CSAT ≤4, Turns ≥12, Latency ≥550ms) turn
+     cross the threshold (CSAT ≤4, Latency ≥2.4s) turn
      red with a warning glyph so an unhealthy use case reads even
      before the group is expanded. Tokens is a group total, not an
      average, so no threshold applies. */
@@ -1665,7 +1716,11 @@ function GroupHeaderRow({
                 color: bad ? "status.danger.fg" : "text.primary",
               }}
             >
-              {typeof value === "number" ? value.toLocaleString() : value}
+              {metric === "latency" && typeof value === "number"
+                ? formatLatency(value)
+                : typeof value === "number"
+                  ? value.toLocaleString()
+                  : value}
               {suffix}
             </Typography>
           </Stack>
@@ -1753,34 +1808,24 @@ function GroupHeaderRow({
             />
             <Typography
               noWrap
-              title={group.label}
+              title={`${group.label} · ${group.count} scenario${group.count === 1 ? "" : "s"}`}
               sx={{
-                typography: "s2",
+                typography: "m3",
                 fontWeight: 600,
                 color: "text.primary",
                 minWidth: 0,
-                flex: "0 1 auto",
+                /* The name keeps its room; the counts give way first. */
+                flex: "0 0 auto",
+                maxWidth: "68%",
               }}
             >
               {group.label}
-            </Typography>
-            <Typography
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-              }}
-            >
-              · {group.count} scenario{group.count === 1 ? "" : "s"}
             </Typography>
             {passMark}
             {overlapMark}
           </Stack>
           {failureLine}
-          <GroupLabelSizer
-            text={`${group.label} · ${group.count} scenarios${passText}`}
-          />
+          <GroupLabelSizer text={`${group.label}${passText}`} />
         </TableCell>
       ) : (
         descColumns.map((c, i) => (
@@ -1810,34 +1855,24 @@ function GroupHeaderRow({
                   />
                   <Typography
                     noWrap
-                    title={group.label}
+                    title={`${group.label} · ${group.count} scenario${group.count === 1 ? "" : "s"}`}
                     sx={{
-                      typography: "s2",
+                      typography: "m3",
                       fontWeight: 600,
                       color: "text.primary",
                       minWidth: 0,
-                      flex: "0 1 auto",
+                      /* The name keeps its room; the counts give way first. */
+                      flex: "0 0 auto",
+                      maxWidth: "68%",
                     }}
                   >
                     {group.label}
-                  </Typography>
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: "text.tertiary",
-                      whiteSpace: "nowrap",
-                      flexShrink: 0,
-                    }}
-                  >
-                    · {group.count} scenario{group.count === 1 ? "" : "s"}
                   </Typography>
                   {passMark}
                   {overlapMark}
                 </Stack>
                 {failureLine}
-                <GroupLabelSizer
-                  text={`${group.label} · ${group.count} scenarios${passText}`}
-                />
+                <GroupLabelSizer text={`${group.label}${passText}`} />
               </>
             ) : (
               <Typography
@@ -1852,7 +1887,7 @@ function GroupHeaderRow({
       )}
       {show("csat") && numCell(a.csat, "", "csat")}
       {show("turns") && numCell(a.turns, "", "turns")}
-      {show("latency") && numCell(a.latency, "ms", "latency")}
+      {show("latency") && numCell(a.latency, "", "latency")}
       {show("tokens") && numCell(a.tokens, "", undefined, "Total")}
       {/* `evals` here is the caller's shownEvals — GroupHeaderRow lives in
          its own scope and doesn't see the outer shownEvals binding. */}
@@ -2145,8 +2180,10 @@ function GroupLabelSizer({ text }) {
         visibility: "hidden",
         whiteSpace: "nowrap",
         maxWidth: GROUP_LABEL_FIT,
+        /* Sized at the label's own type (13px) plus room for the count dots. */
         pl: 3.5,
-        typography: "s2",
+        pr: 4,
+        typography: "m3",
         fontWeight: 600,
       }}
     >
@@ -2359,15 +2396,13 @@ function runOutcome(status, task) {
 const BAD_WHY = {
   csat: (v) =>
     `CSAT ${v} of 10 — ${METRIC_THRESHOLDS.csat.bad} or below is an unhappy caller.`,
-  turns: (v) =>
-    `${v} turns — ${METRIC_THRESHOLDS.turns.bad} or more is a long conversation for one task.`,
   latency: (v) =>
-    `${v}ms average reply — ${METRIC_THRESHOLDS.latency.bad}ms or slower feels laggy on a call.`,
+    `${formatLatency(v)} average reply — ${formatLatency(METRIC_THRESHOLDS.latency.bad)} or slower feels laggy on a call.`,
   tokens: (v) =>
     `${Number(v).toLocaleString()} tokens — ${METRIC_THRESHOLDS.tokens.bad.toLocaleString()} or more is among the heaviest calls.`,
 };
 
-function MetricValue({ metric, value, suffix = "" }) {
+function MetricValue({ metric, value, suffix = "", limit = null }) {
   if (value == null)
     return (
       <Typography
@@ -2377,9 +2412,24 @@ function MetricValue({ metric, value, suffix = "" }) {
         —
       </Typography>
     );
-  const bad = isBad(metric, typeof value === "number" ? value : Number(value));
+  /* Turns are flagged only when the conversation hit its limit. */
+  const hitLimit = metric === "turns" && limit != null;
+  const bad =
+    hitLimit ||
+    isBad(metric, typeof value === "number" ? value : Number(value));
+  const why = hitLimit
+    ? `Hit the turn limit (${limit})`
+    : bad && BAD_WHY[metric]
+      ? BAD_WHY[metric](value)
+      : "";
+  const shown =
+    metric === "latency" && typeof value === "number"
+      ? formatLatency(value)
+      : typeof value === "number"
+        ? value.toLocaleString()
+        : value;
   return (
-    <Tooltip arrow title={bad && BAD_WHY[metric] ? BAD_WHY[metric](value) : ""}>
+    <Tooltip arrow title={why}>
       <Stack
         direction="row"
         alignItems="center"
@@ -2402,7 +2452,7 @@ function MetricValue({ metric, value, suffix = "" }) {
             fontWeight: bad ? 600 : 400,
           }}
         >
-          {typeof value === "number" ? value.toLocaleString() : value}
+          {shown}
           {suffix}
         </Typography>
       </Stack>
@@ -2413,6 +2463,7 @@ MetricValue.propTypes = {
   metric: PropTypes.string,
   value: PropTypes.any,
   suffix: PropTypes.string,
+  limit: PropTypes.number,
 };
 
 /**

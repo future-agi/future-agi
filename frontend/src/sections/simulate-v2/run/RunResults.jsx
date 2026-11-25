@@ -13,7 +13,6 @@ import {
 import { alpha, useTheme } from "@mui/material/styles";
 import {
   Box,
-  ButtonBase,
   Stack,
   Typography,
   Button,
@@ -78,8 +77,9 @@ import { canEditEval } from "../workspace/evals/canEditEval";
 import { useAppliedEvals } from "../workspace/evals/useAppliedEvals";
 import { useEnvState } from "../store";
 import useRunFitCheck from "./useRunFitCheck";
+import RerunPlanDrawer from "./RerunPlanDrawer";
+import { flakyRerunLabel } from "../_mock/runPlanScope";
 import {
-  runPlanHref,
   attemptHeaderOf,
   attemptsOf,
   retriedIdsOf,
@@ -117,12 +117,15 @@ import CostStrip from "./CostStrip";
 import { TraceSheet } from "./TraceWaterfall";
 import { runTracingOf, runIssueImprovement } from "../errorFeed/runIssueFix";
 import { startImproverSession, useIntegrations } from "../_mock/integrations";
-import { useSimStore } from "../store";
+import { useSimStore, useConnectedAgents } from "../store";
+import { voiceFixOf } from "../_mock/voiceFix";
+import { versionNameOf } from "../_mock/codeRefs";
+import { optimisable } from "../_mock/optimize";
 import { envAgentKey } from "../_mock/agentRegistry";
 import { membersOf, rereadFor } from "../_mock/improvementPolicy";
 import { recordOutsideChange } from "../_mock/nudgeEffects";
 import { runReportOf } from "../_mock/runReport";
-import RunSummaryChip, { ProofKindChip } from "./RunSummaryChip";
+import RunSummaryChip from "./RunSummaryChip";
 import { runViaOf, ciOf } from "../_mock/runVia";
 import { memberResultsOf } from "../_mock/memberAttribution";
 import { delegationEvidenceOf } from "../_mock/handoffs";
@@ -143,6 +146,7 @@ import { runSkillsLineOf } from "../_mock/skillLibrary";
 import { scenarioAtVersion } from "../_mock/decoupled";
 import MeteredText from "./RunRecord";
 import ShareMenu from "./ShareMenu";
+import { codingAgentBrief } from "../_mock/codingAgentBrief";
 import CopyIdButton from "../components/CopyIdButton";
 import CopyCommandButton from "../components/CopyCommandButton";
 import { OnTheCall } from "./SubActorRows";
@@ -504,14 +508,16 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
      chip back to All. */
   const failureGrouping = groupBy === "subGoal" || groupBy === "pattern";
   const incompatibleChips = failureGrouping
-    ? ["passing", ...NOT_COUNTED_CHIPS]
+    ? ["passing", "notScored", ...NOT_COUNTED_CHIPS]
     : [];
   const setGroupByReconciled = (g) => {
     setGroupBy(g);
     const failView = g === "subGoal" || g === "pattern";
     if (
       failView &&
-      (statusChip === "passing" || NOT_COUNTED_CHIPS.includes(statusChip))
+      (statusChip === "passing" ||
+        statusChip === "notScored" ||
+        NOT_COUNTED_CHIPS.includes(statusChip))
     ) {
       setStatusChip("all");
     }
@@ -585,25 +591,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   */
   const summaries = runSummaries(env, envState);
   const identity = summaries.find((r) => r.id === runId);
-  /* Improvements started from this run. They live on the environment's
-     Improvements tab; the run header links to them. */
-  const improvedFromRun = (envState.optimizations || []).filter(
-    (o) => o.fromRunId === runId,
-  );
-  const improvedFrom = improvedFromRun.length;
-  const openImprovedFrom = () =>
-    improvedFrom === 1
-      ? navigate(improvementPath(env.id, improvedFromRun[0].id), {
-          state: {
-            back: {
-              to: paths.dashboard.simulate.simulationRun(env.id, runId),
-              label: identity?.ordinal ? `Run ${identity.ordinal}` : "the run",
-            },
-          },
-        })
-      : navigate(
-          paths.dashboard.simulate.environmentStep(env.id, "improvements"),
-        );
 
   /*
     Trial detection. A trial id is `${OPT-XXXXX}-t${n}`. When someone lands
@@ -763,28 +750,30 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     return `${older.length} scenario${older.length === 1 ? "" : "s"} played ${older.length === 1 ? "its" : "their"} text as it was in run ${ordinal}`;
   })();
   const gates = useRoleGates();
+  /* The run plan opens over these results as a right-side drawer: scope,
+     agent, environment, trials and readiness, without leaving the run. */
+  const [rerunPlan, setRerunPlan] = useState(null);
+  const openRerunPlan = (request) =>
+    !gates.canRun
+      ? enqueueSnackbar(gates.runReason, { variant: "info" })
+      : checkRunFit(() => setRerunPlan(request));
   const rerun = (
     ids,
     { mode = "now", agent = null, toolReplay = null, trials = null } = {},
-  ) =>
-    !gates.canRun
-      ? enqueueSnackbar(gates.runReason, { variant: "info" })
-      : checkRunFit(() => {
-          /* Through the run plan, like every run: scope, estimate and limit. */
-          const snap = mode === "snapshot" && canSnapshot;
-          navigate(
-            runPlanHref(envId, {
-              only: ids || [],
-              trials: trials || sourceRun?.repeats || 3,
-              agent: snap
-                ? agent || sourceRun.agentVersion
-                : agent || undefined,
-              snapshot: snap ? sourceRun.id : undefined,
-              envVersion: snap ? sourceRun.envVersion : undefined,
-              toolReplay: toolReplay || undefined,
-            }),
-          );
-        });
+  ) => {
+    const snap = mode === "snapshot" && canSnapshot;
+    openRerunPlan({
+      /* "With current versions": a new run on today's versions, not a
+         re-run held to this run's environment, evals and limits. */
+      fresh: mode === "fresh",
+      scenarioIds: ids || [],
+      trials: trials || sourceRun?.repeats || 3,
+      agent: snap ? agent || sourceRun.agentVersion : agent || undefined,
+      snapshot: snap ? sourceRun.id : undefined,
+      envVersion: snap ? sourceRun.envVersion : undefined,
+      toolReplay: toolReplay || undefined,
+    });
+  };
   const [runRerunAnchor, setRunRerunAnchor] = useState(null);
   /* Retry interrupted: confirmed first — it lists what restarts. */
   const [retryConfirm, setRetryConfirm] = useState(false);
@@ -829,6 +818,28 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
      Debug failures → Improve reaches. Nothing is read first, so nothing
      is charged here. */
   const [fixSetup, setFixSetup] = useState(false);
+  /* Opened from the header's Run Epoch rather than an Insights finding. */
+  const [fixDirect, setFixDirect] = useState(false);
+  /* Run Epoch's caret: hand the failures to your own coding agent instead. */
+  const [epochAnchor, setEpochAnchor] = useState(null);
+  /* An agent built in a voice platform's dashboard can't be changed by an
+     Epoch — the button stays, disabled with the reason. */
+  const { agents: connectedAgents } = useConnectedAgents();
+  /* What an Epoch can work on — the same set Debug failures counts: flaky
+     scenarios whose flakiness comes from the simulated caller are left out. */
+  const epochFailingCount = new Set(
+    optimisable(debugTasks).map((t) => t.scenarioId || t.id),
+  ).size;
+  const callerFlaky = failingScenarioIds.length - epochFailingCount;
+  const epochBlocked = (() => {
+    const key = envAgentKey(envState?.agent, env?.id);
+    const vf = voiceFixOf(connectedAgents.find((a) => a.key === key) || null);
+    if (vf)
+      return `Built in ${vf.where}, so an Epoch can't change it. Use Debug failures.`;
+    if (!epochFailingCount)
+      return "Only the simulated caller was flaky. Nothing for an Epoch to fix.";
+    return null;
+  })();
   const openImprove = (ids) => {
     setDebugIds(ids);
     setFixOptId(null);
@@ -1159,7 +1170,13 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
        claim on Insights asked for them by name. */
     if (t.pulled && !bucketFilter) return false;
 
-    if (statusChip !== "all" && statusBucket(t) !== statusChip) return false;
+    if (
+      statusChip !== "all" &&
+      (statusChip === "notScored"
+        ? !NOT_COUNTED_CHIPS.includes(statusBucket(t))
+        : statusBucket(t) !== statusChip)
+    )
+      return false;
 
     const d = taskDerivations.get(t.id);
     if (filters.goal?.length && !filters.goal.includes(d.goal)) return false;
@@ -1198,7 +1215,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   const currentFilter = useMemo(() => {
     const parts = [];
     if (statusChip !== "all")
-      parts.push(STATUS_CHIPS.find((c) => c.id === statusChip)?.label);
+      parts.push(
+        statusChip === "notScored"
+          ? "Not scored"
+          : STATUS_CHIPS.find((c) => c.id === statusChip)?.label,
+      );
     Object.entries(filters).forEach(([key, values]) => {
       if (!values?.length) return;
       const label = filterFields.find((f) => f.value === key)?.label || key;
@@ -1293,6 +1314,33 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
      fixed reference the chip filter narrows against, not a moving total. */
   /* Counted within a link's filter (a sub-goal, an issue), so the chips
      describe the rows on screen — not the whole run behind them. */
+  /* The flaky scenarios, and how many trials a re-run gives them. */
+  const flakyIds = [
+    ...new Set(
+      tasks
+        .filter((t) => !t.pulled && statusBucket(t) === "mixed")
+        .map((t) => t.scenarioId || t.id),
+    ),
+  ];
+  const flakyTrials = Math.max(5, (sourceRun?.repeats || 3) + 2);
+  /* Failed only (the Failing chip's scenarios); flaky are counted apart. */
+  const failedIds = [
+    ...new Set(
+      tasks
+        .filter((t) => !t.pulled && t.status === "failed")
+        .map((t) => t.scenarioId || t.id),
+    ),
+  ];
+  /* How each scenario ended here, for the plan's scope list. */
+  const scenarioStatus = useMemo(() => {
+    const out = {};
+    tasks.forEach((t) => {
+      const b = statusBucket(t);
+      const v = { passing: "passed", mixed: "flaky", failing: "failed" }[b];
+      if (v) out[t.scenarioId || t.id] = v;
+    });
+    return out;
+  }, [tasks]);
   const statusCounts = tasks.reduce(
     (c, t) => {
       /* Pulled scenarios are left out of every count. */
@@ -1611,8 +1659,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 return requested > ran ? { ran, requested } : null;
               })()}
             />
-            {/* Sealed · Live · Prompt only, as a mark — its words on hover. */}
-            <ProofKindChip proof={report.summary?.proofKind} compact />
             {/* A CI run's check result sits with the run's own status; where
                 it came from is on the line below. */}
             {sourceRun &&
@@ -1725,6 +1771,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   title={
                     <Box sx={{ whiteSpace: "pre-line" }}>
                       {[
+                        env.name,
                         pinned?.envLabel
                           ? `Environment ${pinned.envLabel}`
                           : envV &&
@@ -1736,6 +1783,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                           : `Suite ${pins.suite}`,
                         `${stats.total} scenario${stats.total === 1 ? "" : "s"}${identity?.repeats > 1 ? ` × ${identity.repeats} repeats` : ""}`,
                         skills,
+                        /* Sealed · Live · Prompt only — was a mark in the
+                           title row (24 Nov review: header shows only what
+                           a reader needs). */
+                        report.summary?.proofKind?.label &&
+                          `Proof · ${report.summary.proofKind.label}`,
                       ]
                         .filter(Boolean)
                         .join("\n")}
@@ -1743,7 +1795,28 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   }
                 >
                   <Box component="span" sx={{ cursor: "default" }}>
-                    {`${env.name}${envV ? ` ${envV}` : ""}${identity?.agentVersion ? ` · agent ${identity.agentVersion}` : ""}`}
+                    {/* The pairing the run tested; the environment's
+                        name, scenarios version and counts are on hover. */}
+                    {[
+                      identity?.agentVersion &&
+                        `agent ${identity.agentVersion}`,
+                      /* A code agent's version is a commit: branch @ sha. */
+                      identity?.agentVersion &&
+                        versionNameOf(
+                          connectedAgents.find(
+                            (a) =>
+                              a.key === envAgentKey(envState?.agent, env?.id),
+                          ) || envState?.agent,
+                          identity.agentVersion,
+                        ).commit,
+                      pinned?.envLabel
+                        ? `env ${pinned.envLabel}`
+                        : pins.env
+                          ? `env ${envLabelOf(env, envState, pins.env)}`
+                          : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </Box>
                 </Tooltip>
               );
@@ -1851,7 +1924,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               const src = of && (envState.runs || []).find((r) => r.id === of);
               return src ? ` · recorded-tool replay of run ${src.ordinal}` : "";
             })()}
-            {finishedLabel ? ` · ${finishedLabel}` : ""}
             {/* Where it was started from, when that wasn't the console — the
                 command on hover, so it can be re-run the same way. */}
             {sourceRun &&
@@ -1881,21 +1953,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   </>
                 );
               })()}
-            {/* Our harness's misses — never red; the reason on hover. */}
-            {report.summary?.health?.lost > 0 && (
-              <>
-                {" · "}
-                <Tooltip
-                  arrow
-                  placement="bottom-start"
-                  title={`${report.summary.health.note} A problem on our side, not your agent's.`}
-                >
-                  <Box component="span" sx={{ cursor: "default" }}>
-                    {`${report.summary.health.lost} not scored`}
-                  </Box>
-                </Tooltip>
-              </>
-            )}
+            {/* Not scored is in the status chips (Unmeasured · Test invalid
+                · Error); the header doesn't repeat it. */}
             {/* Tested invalid twice: out of every count; the rows are a click away. */}
             {pulledIds.length > 0 && (
               <>
@@ -1927,27 +1986,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 </Tooltip>
               </>
             )}
-            {/* Improvements started from this run: one opens it; several
-                open the environment's Improvements tab. */}
-            {improvedFrom > 0 && (
-              <>
-                {" · "}
-                <Box
-                  component="span"
-                  {...clickable(openImprovedFrom, { role: "link" })}
-                  sx={{
-                    ...focusRing,
-                    cursor: "pointer",
-                    color: "text.primary",
-                    textDecoration: "underline",
-                    textDecorationColor: "currentColor",
-                    textUnderlineOffset: "2px",
-                  }}
-                >
-                  {`${improvedFrom} ${improvedFrom === 1 ? "epoch" : "epochs"} started from this run →`}
-                </Box>
-              </>
-            )}
+            {/* Epochs started from this run are on the Epochs tab, each with
+                the run it started from (24 Nov review: not in the header). */}
             {/* What the agent could do here when the run started; the report on click. */}
 
             {/* The limit kept some from starting: finish them under a new
@@ -1972,14 +2012,12 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                         () =>
                           sourceRun?.status === "interrupted"
                             ? setRetryConfirm(true)
-                            : navigate(
-                                runPlanHref(envId, {
-                                  only: retryLeft,
-                                  trials: identity.repeats || 3,
-                                  agent: identity.agentVersion,
-                                  continues: identity.id,
-                                }),
-                              ),
+                            : openRerunPlan({
+                                scenarioIds: retryLeft,
+                                trials: identity.repeats || 3,
+                                agent: identity.agentVersion,
+                                continues: identity.id,
+                              }),
                         { role: "link" },
                       )}
                       sx={{
@@ -2062,20 +2100,10 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 </Box>
               }
             >
-              <Box
-                component="span"
-                sx={{
-                  display: "inline-flex",
-                  verticalAlign: "middle",
-                  ml: 0.75,
-                  cursor: "default",
-                }}
-              >
-                <Iconify
-                  icon="solar:info-circle-linear"
-                  width={14}
-                  sx={{ color: "text.tertiary" }}
-                />
+              {/* When it finished; how it ran (metering, caller, grading) on
+                  hover — the info icon folded into the time. */}
+              <Box component="span" sx={{ cursor: "default" }}>
+                {finishedLabel ? ` · ${finishedLabel}` : " · details"}
               </Box>
             </Tooltip>
           </Typography>
@@ -2143,14 +2171,17 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             <Stack direction="row" sx={{ flexShrink: 0 }}>
               <Tooltip
                 arrow
-                title={`Run the ${failingScenarioIds.length} scenario${failingScenarioIds.length === 1 ? "" : "s"} that didn't pass again`}
+                title={`Run the ${failedIds.length || flakyIds.length} ${failedIds.length ? "failed" : "flaky"} scenario${(failedIds.length || flakyIds.length) === 1 ? "" : "s"} again${flakyIds.length && failedIds.length ? ` · the ${flakyIds.length} flaky are in the menu` : ""}`}
               >
                 <Button
                   variant="outlined"
                   size="small"
                   onClick={() =>
-                    rerun(failingScenarioIds, {
+                    /* Failed only, as the label says; the flaky re-run
+                       (more trials) is second in the menu. */
+                    rerun(failedIds.length ? failedIds : flakyIds, {
                       mode: canSnapshot ? "snapshot" : "now",
+                      ...(!failedIds.length && { trials: flakyTrials }),
                     })
                   }
                   startIcon={<Iconify icon="solar:refresh-linear" width={16} />}
@@ -2199,6 +2230,107 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               Repeat
             </Button>
           ))}
+        {/* Run Epoch straight on the run: every failing scenario, no
+            Debug failures first — the Epoch finds the causes itself.
+            Nothing is read before the setup, so nothing is charged here. */}
+        {!candidate &&
+          !trialMeta &&
+          !fixFirst &&
+          failingScenarioIds.length > 0 && (
+            <Stack direction="row" sx={{ flexShrink: 0 }}>
+              <Tooltip
+                arrow
+                title={
+                  epochBlocked ||
+                  `Starts from all ${epochFailingCount} failing. The Epoch finds the causes.${callerFlaky > 0 ? ` ${callerFlaky} flaky from the caller left out.` : ""}`
+                }
+              >
+                <span>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    disabled={!!epochBlocked}
+                    onClick={() => {
+                      setFixDirect(true);
+                      openImprove(null);
+                    }}
+                    startIcon={<Iconify icon="solar:play-linear" width={16} />}
+                    sx={{
+                      color: "text.primary",
+                      borderColor: "divider",
+                      borderTopRightRadius: 0,
+                      borderBottomRightRadius: 0,
+                    }}
+                  >
+                    Run Epoch
+                  </Button>
+                </span>
+              </Tooltip>
+              <Button
+                variant="outlined"
+                size="small"
+                aria-label="Other ways to fix these failures"
+                disabled={!!epochBlocked}
+                onClick={(e) => setEpochAnchor(e.currentTarget)}
+                sx={{
+                  minWidth: 0,
+                  color: "text.tertiary",
+                  borderColor: "divider",
+                  borderLeft: "none",
+                  borderTopLeftRadius: 0,
+                  borderBottomLeftRadius: 0,
+                }}
+              >
+                <Iconify icon="solar:alt-arrow-down-linear" width={12} />
+              </Button>
+            </Stack>
+          )}
+        <Popover
+          open={!!epochAnchor}
+          anchorEl={epochAnchor}
+          onClose={() => setEpochAnchor(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+          slotProps={{
+            paper: { sx: { mt: 0.75, width: 280, borderRadius: "8px" } },
+          }}
+        >
+          <MenuItem
+            onClick={() => {
+              setEpochAnchor(null);
+              const text = codingAgentBrief({
+                agent: envState?.agent
+                  ? {
+                      name: envState.agent.name,
+                      key: envAgentKey(envState.agent, env?.id),
+                    }
+                  : null,
+                env,
+                issue: {
+                  title: `Failing scenarios in ${identity?.ordinal ? `Run ${identity.ordinal}` : "this run"}`,
+                },
+                runId,
+                failingScenarios: debugTasks
+                  .filter((t) => t.status === "failed" || t.status === "flaky")
+                  .map((t) => scenarioTitle(t.title) || t.id),
+              });
+              navigator.clipboard?.writeText(text);
+              enqueueSnackbar("Copied for your coding agent", {
+                variant: "success",
+              });
+            }}
+          >
+            <ListItemIcon sx={{ minWidth: "28px !important" }}>
+              <Iconify icon="solar:programming-linear" width={16} />
+            </ListItemIcon>
+            <ListItemText
+              primary="Copy for coding agent"
+              secondary="It fixes; we check each attempt."
+              primaryTypographyProps={{ typography: "s2", fontWeight: 500 }}
+              secondaryTypographyProps={{ typography: "s3" }}
+            />
+          </MenuItem>
+        </Popover>
         {/*
           The primary action after a failed run is not to run it again —
           the same agent against the same graders returns the same
@@ -2913,81 +3045,6 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   unmeasured tasks — with those filtered in and nothing failing,
                   `shown` is non-empty but zero groups render. Detect that and
                   show a real empty state instead of a blank table. */}
-                {/* Flaky scenarios (Chintan's PR #61 designs B and D): say what
-                  it means and offer the one useful next step — the same
-                  scenarios again with more trials, so each one settles. */}
-                {statusCounts.mixed > 0 &&
-                  !candidate &&
-                  !trialMeta &&
-                  (statusChip === "all" || statusChip === "mixed") &&
-                  (() => {
-                    const n = statusCounts.mixed;
-                    const more = Math.max(5, (sourceRun?.repeats || 3) + 2);
-                    const ids = [
-                      ...new Set(
-                        tasks
-                          .filter(
-                            (t) => !t.pulled && statusBucket(t) === "mixed",
-                          )
-                          .map((t) => t.scenarioId || t.id),
-                      ),
-                    ];
-                    return (
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        spacing={1}
-                        sx={{ mb: 1.5, flexWrap: "wrap", rowGap: 0.5 }}
-                      >
-                        <Iconify
-                          icon="solar:shuffle-linear"
-                          width={14}
-                          sx={{ color: "status.warning.solid", flexShrink: 0 }}
-                        />
-                        <Typography
-                          sx={{ typography: "s2", color: "text.secondary" }}
-                        >
-                          {/* The count narrows the table to the Flaky chip. */}
-                          <ButtonBase
-                            onClick={() => setStatusChip("mixed")}
-                            disabled={statusChip === "mixed"}
-                            sx={{
-                              typography: "s2",
-                              verticalAlign: "baseline",
-                              color:
-                                statusChip === "mixed"
-                                  ? "text.primary"
-                                  : "primary.main",
-                              fontWeight: 500,
-                              "&:hover": { textDecoration: "underline" },
-                            }}
-                          >
-                            {`${n} scenario${n === 1 ? "" : "s"}`}
-                          </ButtonBase>
-                          {` ${n === 1 ? "passes" : "pass"} in some trials and fail${n === 1 ? "s" : ""} in others — the agent isn't consistent on ${n === 1 ? "it" : "them"}.`}
-                        </Typography>
-                        <Button
-                          size="small"
-                          variant="text"
-                          onClick={() =>
-                            rerun(ids, {
-                              mode: canSnapshot ? "snapshot" : "now",
-                              trials: more,
-                            })
-                          }
-                          sx={{
-                            px: 0.75,
-                            minWidth: 0,
-                            typography: "s2",
-                            fontWeight: 500,
-                            color: "primary.main",
-                          }}
-                        >
-                          {`Run ${n === 1 ? "it" : "them"} again with ${more} trials`}
-                        </Button>
-                      </Stack>
-                    );
-                  })()}
                 {/* Test invalid twice: pulled from this run, flagged for review,
                   and left out of every count — a small group of its own. */}
                 {groupBy === "member" && entryMember && (
@@ -3495,26 +3552,44 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           paper: {
             sx: {
               mt: 0.75,
-              width: 420,
+              width: 300,
               maxHeight: "calc(100vh - 120px)",
               borderRadius: "8px",
             },
           },
         }}
       >
-        <Box sx={{ px: 2, pt: 1.75, pb: 1 }}>
-          <Typography
-            sx={{
-              typography: "s3",
-              fontWeight: 600,
-              color: "text.tertiary",
-              textTransform: "none",
-              letterSpacing: 0.4,
+        {/* ── what most re-runs are: the failed and the flaky, first ── */}
+        <RepeatRow
+          icon="solar:restart-linear"
+          action={repeat.failures}
+          onClick={() => {
+            setRunRerunAnchor(null);
+            rerun(repeat.failures.ids, {
+              mode: canSnapshot ? "snapshot" : "now",
+            });
+          }}
+        />
+        {flakyIds.length > 0 && (
+          <RepeatRow
+            icon="solar:shuffle-linear"
+            action={{
+              label: flakyRerunLabel(flakyIds.length, flakyTrials),
+              detail:
+                "The scenarios that passed some trials and failed others, run again with more trials so each settles as passed or failed.",
+              hint: "More trials, so each settles as passed or failed",
+              meta: "New agent calls · world reset",
+              ids: flakyIds,
             }}
-          >
-            {`Repeat ${identity ? `run ${identity.ordinal}` : "this run"} · ${stats.total} scenario${stats.total === 1 ? "" : "s"}`}
-          </Typography>
-        </Box>
+            onClick={() => {
+              setRunRerunAnchor(null);
+              rerun(flakyIds, {
+                mode: canSnapshot ? "snapshot" : "now",
+                trials: flakyTrials,
+              });
+            }}
+          />
+        )}
         {/* ── nothing runs again ── */}
         <RepeatGroup>No new agent calls</RepeatGroup>
         <RepeatRow
@@ -3549,20 +3624,16 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           agents={agentVersions(envState).map((v) => v.label)}
           onRun={(mode, agent) => {
             setRunRerunAnchor(null);
-            rerun(sourceRun?.partial ? sourceRun.scenarioIds : null, {
-              mode,
-              agent,
-            });
-          }}
-        />
-        <RepeatRow
-          icon="solar:restart-linear"
-          action={repeat.failures}
-          onClick={() => {
-            setRunRerunAnchor(null);
-            rerun(repeat.failures.ids, {
-              mode: canSnapshot ? "snapshot" : "now",
-            });
+            /* "Same versions" replays exactly what this run played; "current
+               versions" runs today's whole set. */
+            rerun(
+              sourceRun?.partial
+                ? sourceRun.scenarioIds
+                : mode === "fresh"
+                  ? null
+                  : [...new Set(tasks.map((t) => t.scenarioId || t.id))],
+              { mode, agent },
+            );
           }}
         />
         <RepeatRow
@@ -3612,17 +3683,17 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 pl: 0.5,
               }}
             >
-              From code
+              Copy CLI
             </Typography>
             {failingScenarioIds.length > 0 && (
               <CopyCommandButton
                 command={`fi sim run --from-run ${runId} --failed-only`}
-                label="Copy failing only"
+                label="Failed only"
               />
             )}
             <CopyCommandButton
               command={`fi sim run --from-run ${runId}`}
-              label="Copy whole run"
+              label="Whole run"
             />
           </Stack>
         )}
@@ -3690,14 +3761,12 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   disabled={real}
                   onClick={() => {
                     setRetryConfirm(false);
-                    navigate(
-                      runPlanHref(envId, {
-                        only: ids,
-                        trials: sourceRun?.repeats || 3,
-                        agent: sourceRun?.agentVersion,
-                        continues: sourceRun?.id,
-                      }),
-                    );
+                    openRerunPlan({
+                      scenarioIds: ids,
+                      trials: sourceRun?.repeats || 3,
+                      agent: sourceRun?.agentVersion,
+                      continues: sourceRun?.id,
+                    });
                   }}
                 >
                   {`Retry ${ids.length}`}
@@ -3706,6 +3775,18 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             />
           );
         })()}
+
+      {/* ── run plan, over the results ── */}
+      <RerunPlanDrawer
+        open={!!rerunPlan}
+        onClose={() => setRerunPlan(null)}
+        env={env}
+        envState={envState}
+        patch={patch}
+        request={rerunPlan}
+        sourceRun={sourceRun}
+        scenarioStatus={scenarioStatus}
+      />
 
       {/* ── trace drawer ── */}
       {/*
@@ -3717,11 +3798,13 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       <FixMyAgentDrawer
         open={fixOpen}
         openSetup={fixSetup}
+        direct={fixDirect}
         onClose={() => {
           setFixOpen(false);
           setFixOptId(null);
           setDebugIds(null);
           setFixSetup(false);
+          setFixDirect(false);
           /* Drop ?improve so "From Improvement run N" opens it again, and Back
              doesn't stop on the same run with the drawer shut. */
           if (params.get("improve")) {
@@ -4316,121 +4399,28 @@ InterruptedRows.propTypes = {
   environment version, pins and seed — only the agent version may change, so
   any difference is the agent's. "Run as configured now" picks up edits.
 */
-function RerunModes({ run, canSnapshot, envLabel, agents = [], onRun }) {
-  const [agent, setAgent] = useState(run?.agentVersion || null);
-  const itemSx = {
-    alignItems: "flex-start",
-    gap: 0.75,
-    py: 1.25,
-    whiteSpace: "normal",
-  };
-  const textProps = {
-    primaryTypographyProps: { typography: "s2", fontWeight: 600 },
-    secondaryTypographyProps: {
-      typography: "s3",
-      color: "text.tertiary",
-      sx: { whiteSpace: "normal" },
-    },
-  };
+function RerunModes({ run, canSnapshot, onRun }) {
+  /* Two lines; the agent version is picked in the re-run drawer. */
   return (
     <>
       {canSnapshot && (
-        <>
-          <MenuItem onClick={() => onRun("snapshot", agent)} sx={itemSx}>
-            <ListItemIcon sx={{ minWidth: "0 !important", mt: "3px" }}>
-              <Iconify
-                icon="solar:history-linear"
-                width={16}
-                sx={{ color: "text.primary" }}
-              />
-            </ListItemIcon>
-            <ListItemText
-              primary={
-                <>
-                  Run again
-                  <Box
-                    component="span"
-                    sx={{
-                      ml: 0.75,
-                      typography: "s3",
-                    }}
-                  >
-                    default for comparisons
-                  </Box>
-                </>
-              }
-              secondary={`Same versions (${envLabel || "environment and scenarios"}), pins and seed${run?.repeats ? `, ${run.repeats} repeats` : ""}. Only the agent version can change.`}
-              {...textProps}
-            />
-          </MenuItem>
-          {agents.length > 1 && (
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              sx={{
-                px: 2,
-                pb: 1.25,
-                pl: "44px",
-                flexWrap: "wrap",
-                rowGap: 0.5,
-              }}
-            >
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                Agent
-              </Typography>
-              {agents.map((a) => (
-                <Box
-                  key={a}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setAgent(a)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") setAgent(a);
-                  }}
-                  sx={{
-                    px: 0.75,
-                    height: 22,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    borderRadius: "4px",
-                    cursor: "pointer",
-                    typography: "s3",
-                    fontWeight: 600,
-                    border: "1px solid",
-                    borderColor: agent === a ? "text.primary" : "divider",
-                    color: agent === a ? "text.primary" : "text.secondary",
-                  }}
-                >
-                  {a}
-                  {a === run?.agentVersion && (
-                    <Box
-                      component="span"
-                      sx={{ ml: 0.5, color: "text.tertiary", fontWeight: 400 }}
-                    >
-                      this run
-                    </Box>
-                  )}
-                </Box>
-              ))}
-            </Stack>
-          )}
-        </>
-      )}
-      <MenuItem onClick={() => onRun("now", null)} sx={itemSx}>
-        <ListItemIcon sx={{ minWidth: "0 !important", mt: "3px" }}>
-          <Iconify
-            icon="solar:refresh-linear"
-            width={16}
-            sx={{ color: "text.primary" }}
-          />
-        </ListItemIcon>
-        <ListItemText
-          primary="Run again with current versions"
-          secondary="Picks up every edit since, with a new seed. Compares only the pairs that still match."
-          {...textProps}
+        <RepeatRow
+          icon="solar:history-linear"
+          action={{
+            label: "Run all again · same versions",
+            detail: "Same versions, pins and seed",
+          }}
+          onClick={() => onRun("snapshot", run?.agentVersion || null)}
         />
-      </MenuItem>
+      )}
+      <RepeatRow
+        icon="solar:refresh-linear"
+        action={{
+          label: "Run all with current versions",
+          detail: "Picks up every edit since, with a new seed",
+        }}
+        onClick={() => onRun("fresh", null)}
+      />
     </>
   );
 }
@@ -4473,14 +4463,13 @@ const STATUS_CHIPS = [
     id: "failing",
     label: "Failing",
     role: "danger",
-    about: "Failed every repeat, or errored.",
+    about: "Failed every trial",
   },
   {
     id: "mixed",
     label: "Flaky",
     role: "warning",
-    about:
-      "Passed some repeats and failed others — the agent isn't reliable here.",
+    about: "Passed some trials, failed others",
   },
   {
     id: "inconclusive",
@@ -4506,50 +4495,80 @@ const STATUS_CHIPS = [
     id: "passing",
     label: "Passing",
     role: "success",
-    about: "Passed every repeat.",
+    about: "Passed every trial",
   },
 ];
 
 /* Outcome quick-filter — one chip per status bucket plus All. The active chip
    is filled in its status colour; the rest are quiet outlines. Each carries
    its count so the distribution is legible before you click. */
+const SEGMENT_WORD = {
+  all: "All",
+  failing: "Failed",
+  mixed: "Flaky",
+  passing: "Passed",
+  notScored: "Not scored",
+};
+
 function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
+  /* One segmented control (25 Nov: the row of chips took too much room).
+     All carries its word; the others are a coloured dot and a count, the
+     name on hover. Unmeasured, test invalid and error are one segment. */
+  const notScored = NOT_COUNTED_CHIPS.reduce((a, k) => a + (counts[k] ?? 0), 0);
+  const segments = [
+    ...STATUS_CHIPS.filter((c) => !NOT_COUNTED_CHIPS.includes(c.id)),
+    {
+      id: "notScored",
+      label: "Not scored",
+      role: null,
+      about: STATUS_CHIPS.filter((c) => NOT_COUNTED_CHIPS.includes(c.id))
+        .filter((c) => (counts[c.id] ?? 0) > 0)
+        .map((c) => `${counts[c.id]} ${c.label.toLowerCase()}`)
+        .join(" · "),
+    },
+  ].filter(
+    (c) =>
+      ["all", "failing", "passing"].includes(c.id) ||
+      (c.id === "notScored" ? notScored : counts[c.id] ?? 0) > 0 ||
+      value === c.id,
+  );
   return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={0.75}
-      sx={{ flexWrap: "wrap", rowGap: 0.75 }}
+    <Box
+      role="group"
+      aria-label="Filter by result"
+      sx={{
+        display: "inline-flex",
+        alignItems: "stretch",
+        height: 28,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+        flexShrink: 0,
+      }}
     >
-      {/* An outcome nothing ended in isn't a filter worth offering — hidden,
-          unless it's the one selected. Passing and failing always show. */}
-      {STATUS_CHIPS.filter(
-        (chip) =>
-          ["all", "failing", "passing"].includes(chip.id) ||
-          (counts[chip.id] ?? 0) > 0 ||
-          value === chip.id,
-      ).map((chip) => {
+      {segments.map((chip, i) => {
         const active = value === chip.id;
-        const dot = chip.role ? `status.${chip.role}.solid` : "text.disabled";
-        const accent = chip.role ? `status.${chip.role}.solid` : "text.primary";
-        const count = counts[chip.id] ?? 0;
-        /* Disabled when empty, or when the current failure-only grouping has
-           no bucket for this outcome (passing / inconclusive). */
+        const count =
+          chip.id === "notScored" ? notScored : counts[chip.id] ?? 0;
         const blockedByGrouping = blocked.includes(chip.id);
         const disabled =
           (chip.id !== "all" && count === 0) || blockedByGrouping;
+        const dot = chip.role ? `status.${chip.role}.solid` : "text.disabled";
         return (
           <Tooltip
             key={chip.id}
             arrow
             title={
               blockedByGrouping
-                ? "Not available while grouping by a failure view — passing runs have no failure bucket"
-                : chip.about
+                ? "Not available with this grouping"
+                : chip.about || ""
             }
           >
             <Box
               role="button"
+              aria-pressed={active}
+              aria-label={`${chip.label} ${count}`}
               tabIndex={disabled ? -1 : 0}
               onClick={() => !disabled && onChange(chip.id)}
               onKeyDown={(e) => {
@@ -4560,23 +4579,15 @@ function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 0.625,
-                height: 28,
                 px: 1.125,
-                borderRadius: 1,
-                border: "1px solid",
-                borderColor: active ? accent : "divider",
-                bgcolor: active
-                  ? chip.role
-                    ? `status.${chip.role}.bg`
-                    : "action.selected"
-                  : "transparent",
+                borderLeft: i ? "1px solid" : "none",
+                borderColor: "divider",
+                bgcolor: active ? "action.selected" : "transparent",
                 color: disabled ? "text.disabled" : "text.primary",
                 cursor: disabled ? "default" : "pointer",
                 opacity: disabled ? 0.5 : 1,
-                transition: "border-color 120ms, background-color 120ms",
-                "&:hover": disabled
-                  ? {}
-                  : { borderColor: active ? accent : "text.disabled" },
+                transition: "background-color 120ms",
+                "&:hover": disabled ? {} : { bgcolor: "action.hover" },
               }}
             >
               {chip.id !== "all" && (
@@ -4590,17 +4601,19 @@ function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
                   }}
                 />
               )}
+              {/* The same words as the goal rows ("2 flaky · 1 failed"), so
+                  each colour is named where it's used. */}
               <Typography
                 sx={{ typography: "s2", fontWeight: 600, whiteSpace: "nowrap" }}
               >
-                {chip.label}
+                {SEGMENT_WORD[chip.id] || chip.label}
               </Typography>
               <Typography
                 sx={{
-                  typography: "s3",
+                  typography: "s2",
                   fontWeight: 600,
                   fontVariantNumeric: "tabular-nums",
-                  color: active ? "inherit" : "text.tertiary",
+                  color: active ? "text.primary" : "text.tertiary",
                 }}
               >
                 {count}
@@ -4609,7 +4622,7 @@ function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
           </Tooltip>
         );
       })}
-    </Stack>
+    </Box>
   );
 }
 StatusFilterChips.propTypes = {

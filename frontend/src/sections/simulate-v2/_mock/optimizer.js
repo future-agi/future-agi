@@ -727,8 +727,11 @@ export const triedLabelOf = (t, trials = []) => {
   if (t.feedback) return `Revised: ${t.feedback.why}`;
   const m = /^(kept|tried) (.+)$/.exec(raw);
   const what = m ? m[2] : raw;
+  /* A candidate that adds one change to earlier ones says so — "Tried: X"
+     alone read as if X were its whole change (25 Nov audit). */
+  const earlier = Math.max(0, (t.picks || []).length - 1);
   return m
-    ? `Tried: ${what}`
+    ? `Tried: ${what}${earlier ? `, on top of ${earlier} earlier change${earlier === 1 ? "" : "s"}` : ""}`
     : `${what.charAt(0).toUpperCase()}${what.slice(1)}`;
 };
 

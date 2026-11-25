@@ -9,7 +9,7 @@ import RunsOverview from "./RunsOverview";
 import {
   previousRunOf,
   runStatsOf,
-  sharedDeltaOf,
+  alignedStatsOf,
   sameEnvVersion,
 } from "../_mock/runCompare";
 import { gradedRunOf } from "../_mock/gradedRun";
@@ -52,7 +52,7 @@ import { staleScenarios } from "../_mock/proofs";
 import WinnerDrawer from "./WinnerDrawer";
 import FromImprovement from "./FromImprovement";
 import AppliedEvalsDrawer from "../workspace/evals/AppliedEvalsDrawer";
-import { allMetrics, deltaAgainst } from "../_mock/winner";
+import { allMetrics, deltaAgainst, statsDeltaOf } from "../_mock/winner";
 import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
 import { runCreditsOf } from "../_mock/usageLedger";
 import { resolveEval } from "../_mock/evals";
@@ -95,6 +95,11 @@ const runTimeLabel = (r) => {
  * environment: nothing was rewritten between the runs, so a row that moved
  * moved because of the agent.
  */
+/* Which run a row's deltas are read against, by the name the list shows —
+   the delta's tooltip says "vs Run N". */
+const againstName = (a) =>
+  a ? (a.kind === "trial" ? `Run ${a.trialN}` : `Run ${a.ordinal}`) : undefined;
+
 export default function RunsSummary({ env, envState, onGo, onStart }) {
   /* Each finished run's charge, priced as its Cost tab. */
   const creditsByRun = useMemo(
@@ -137,7 +142,16 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   */
   const baselineId = envState.baselineRunId || null;
 
-  const summaries = useMemo(() => runSummaries(env, envState), [env, envState]);
+  /* Each finished run carries the numbers its own page shows. */
+  const summaries = useMemo(
+    () =>
+      runSummaries(env, envState).map((r) =>
+        r.finishedAt
+          ? { ...r, stats: alignedStatsOf(r, { env, envState }) }
+          : r,
+      ),
+    [env, envState],
+  );
 
   /*
     Trials, exposed as first-class runs.
@@ -471,7 +485,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
        Started by, then the per-task numbers. Only the older ones carry a
        baseline delta, so only they widen with one. */
     /* Every number carries its change beside it, so each column is sized for both. */
-    const added = [172, 128, 96, 104, 64, 76, 156];
+    const added = [172, 128, 96, 124, 124, 76, 156];
     const nums = [...added, 128, 124, 124, 148, 120];
     /* Grader names may wrap onto two lines, so their columns can be narrow. */
     const score = evals.length >= 4 ? 124 : 136;
@@ -1157,12 +1171,12 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         onOpenImprovements={() => openImprovements(r)}
                       />
                       {scenarioCell(r, against)}
-                      <MetricCell
-                        anchor
-                        deltaWidth={grid.deltaWidth}
-                        text={`${r.passRate}%`}
-                        delta={deltaAgainst(metrics.passRate, r, against)}
-                      />
+                      {callPassCell(
+                        r,
+                        against,
+                        grid.deltaWidth,
+                        againstName(against),
+                      )}
                       {addedCells(r, against)}
                       <MetricCell
                         quiet
@@ -1200,6 +1214,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                             r,
                             against,
                           )}
+                          against={againstName(against)}
                         />
                       ))}
                     </Box>
@@ -1529,12 +1544,12 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       onOpenImprovements={() => openImprovements(r)}
                     />
                     {scenarioCell(r, against)}
-                    <MetricCell
-                      anchor
-                      deltaWidth={grid.deltaWidth}
-                      text={`${r.passRate}%`}
-                      delta={deltaAgainst(metrics.passRate, r, against)}
-                    />
+                    {callPassCell(
+                      r,
+                      against,
+                      grid.deltaWidth,
+                      againstName(against),
+                    )}
                     {addedCells(r, against)}
                     <MetricCell
                       quiet
@@ -1590,6 +1605,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           r,
                           against,
                         )}
+                        against={againstName(against)}
                       />
                     ))}
                   </Box>
@@ -2084,7 +2100,7 @@ const fmtTook = (ms) => {
   if (m < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 };
-const statsOf = (r) => (r?.finishedAt ? runStatsOf(r) : null);
+const statsOf = (r) => (r?.finishedAt ? r.stats || runStatsOf(r) : null);
 
 /* What the run was charged, in credits — the same number as its Cost tab.
    The agent's own model cost is billed to the customer's key and never
@@ -2109,7 +2125,9 @@ const countDelta = (now, before) =>
 function scenarioCell(r, against) {
   const st = statsOf(r);
   const d =
-    st && against && against.id !== r.id ? sharedDeltaOf(r, against) : null;
+    st && against && against.id !== r.id
+      ? statsDeltaOf(st, statsOf(against))
+      : null;
   const vs = against
     ? against.kind === "trial"
       ? `Run ${against.trialN}${against.selfImprovementName ? ` · ${against.selfImprovementName}` : ""}`
@@ -2137,7 +2155,7 @@ function scenarioCell(r, against) {
           ? "Target scenarios only — held-back scenarios are checked on the change it picks."
           : null,
         d
-          ? `${d.pts > 0 ? "+" : ""}${d.pts} pts against ${vs} on the ${d.shared} scenarios both measured. Two runs of that size differ by up to ±${d.noise} pts by chance (95%)${d.within ? ", so this is within noise." : "."}`
+          ? `${d.pts > 0 ? "+" : ""}${d.pts} pts against ${vs} on scored scenarios. Two runs of that size differ by up to ±${d.noise} pts by chance (95%)${d.within ? ", so this is within noise." : "."}`
           : null,
       ]
         .filter(Boolean)
@@ -2165,6 +2183,33 @@ function scenarioCell(r, against) {
         />
       </Box>
     </Tooltip>
+  );
+}
+
+/* Call pass — every repeat counted, from the same stats as the other
+   columns; the change is the difference of the two numbers shown. */
+function callPassCell(r, against, deltaWidth, againstLabel) {
+  const st = statsOf(r);
+  const was = against && against.id !== r.id ? statsOf(against) : null;
+  const rate = (x) => (x?.callRate != null ? Math.round(x.callRate) : null);
+  const now = rate(st) ?? Math.round(r.passRate ?? 0);
+  const before = was ? rate(was) : null;
+  const pts = before == null ? null : now - before;
+  return (
+    <MetricCell
+      key="callpass"
+      anchor
+      deltaWidth={deltaWidth}
+      text={`${now}%`}
+      delta={
+        pts == null
+          ? null
+          : pts === 0
+            ? { flat: true }
+            : { text: `${Math.abs(pts)} pts`, up: pts > 0, better: pts > 0 }
+      }
+      against={againstLabel}
+    />
   );
 }
 

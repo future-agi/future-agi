@@ -2,7 +2,7 @@
   What protects a scenario from an improvement — the must-pass set the
   improvement gate uses (RSI PRD): scenarios the user marked must-pass,
   scenarios added by regression memory, and every other scenario that passes
-  all its repeats on the current version. Nothing else.
+  all its trials on the current version. Nothing else.
 
   The Scenarios tab says it out loud, so a set of hundreds doesn't look like it
   needs hand-marking: most of it is protected because it passes today. Marking
@@ -14,7 +14,7 @@
   { task, name } — the environment's latest run it was in).
     marked   · the user marked it, or wrote it must-pass
     memory   · kept from a released fix
-    passing  · passed every repeat in the latest run
+    passing  · passed every trial in the latest run
     open     · nothing holds it — it fails sometimes, or hasn't run
 */
 export const protectionOf = (row, latest) => {
@@ -43,14 +43,14 @@ export const protectionOf = (row, latest) => {
     return {
       id: "passing",
       label: "Protected",
-      line: `Passed every repeat in ${latest.name}, so an epoch can't break it. Mark it must-pass to keep it protected if it starts to fail.`,
+      line: `Passed every trial in ${latest.name}, so an epoch can't break it. Mark it must-pass to keep it protected if it starts to fail.`,
     };
   }
   const why =
     !t || t.pulled
       ? "It hasn't been scored yet"
       : t.status === "flaky"
-        ? `It passed only some repeats in ${latest.name}`
+        ? `It passed only some trials in ${latest.name}`
         : `It failed in ${latest.name}`;
   return {
     id: "open",

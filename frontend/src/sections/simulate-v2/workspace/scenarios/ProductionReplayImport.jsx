@@ -453,8 +453,15 @@ export default function ProductionReplayImport({
               <Typography sx={{ typography: "s2", fontFamily: MONO, mt: 0.25 }}>
                 {frozenTraces.map((t) => t.traceId).join(", ")}
               </Typography>
+              {/* 25 Nov: the frozen-selection note is one short line. */}
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {`${project ? `Project ${project} · ` : ""}${sel?.all ? `every ${selectionNoun(unit, 1)} matching your filter in Observe · ` : ""}${unit === "calls" ? "simulated calls, not production · " : ""}only these — new ones arriving or a changed filter won't change this import`}
+                {[
+                  project && `Project ${project}`,
+                  unit === "calls" && "simulated calls",
+                  "only these",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
               </Typography>
             </Box>
 
@@ -480,26 +487,47 @@ export default function ProductionReplayImport({
                         borderColor: on ? "text.primary" : "divider",
                         borderRadius: 1,
                         px: 1.5,
-                        py: 1,
+                        py: 0.75,
                         cursor: off ? "not-allowed" : "pointer",
                         opacity: off ? 0.5 : 1,
                       }}
                     >
-                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                        {g.label}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.secondary" }}
+                      {/* One line each (25 Nov); what it keeps, makes and
+                          needs is on hover. */}
+                      <Tooltip
+                        arrow
+                        placement="top-start"
+                        enterDelay={400}
+                        title={`Keeps: ${g.keeps}. Makes: ${g.makes}. Needs: ${g.needs}.`}
                       >
-                        {`Keeps: ${g.keeps}. Makes: ${g.makes}.`}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.tertiary" }}
-                      >
-                        {off
-                          ? `Needs ${g.min} or more traces`
-                          : `Needs: ${g.needs}`}
-                      </Typography>
+                        <Stack
+                          direction="row"
+                          alignItems="baseline"
+                          spacing={1}
+                          sx={{ minWidth: 0 }}
+                        >
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 600,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {g.label}
+                          </Typography>
+                          <Typography
+                            noWrap
+                            sx={{
+                              typography: "s3",
+                              color: "text.tertiary",
+                              minWidth: 0,
+                            }}
+                          >
+                            {off ? `Needs ${g.min} or more traces` : g.short}
+                          </Typography>
+                        </Stack>
+                      </Tooltip>
                     </Box>
                   );
                 })}
@@ -510,7 +538,7 @@ export default function ProductionReplayImport({
                 <Typography
                   sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
                 >
-                  {`${passedTraces.map((t) => t.traceId).join(", ")} passed — ${passedTraces.length === 1 ? "it's" : "they're"} drafted as a regression to keep, not a failure to reproduce.`}
+                  {`${passedTraces.length} passed — kept as ${passedTraces.length === 1 ? "a regression" : "regressions"}.`}
                 </Typography>
               )}
               {/* Missing evidence, said before anything is created. */}
@@ -522,7 +550,7 @@ export default function ProductionReplayImport({
                     mt: 0.75,
                   }}
                 >
-                  {`${noState.map((t) => t.traceId).join(", ")} ${noState.length === 1 ? "has" : "have"} no starting state — the draft makes it up and labels it synthetic, so it's not an exact replay. You can add the real data at review.`}
+                  {`${noState.length} ${noState.length === 1 ? "has" : "have"} no starting state — drafted as synthetic; add real data at review.`}
                 </Typography>
               )}
               {goal === "replay" && noTools.length > 0 && (
@@ -533,7 +561,7 @@ export default function ProductionReplayImport({
                     mt: 0.75,
                   }}
                 >
-                  {`${noTools.map((t) => t.traceId).join(", ")} recorded no tool responses — only the caller's words can be replayed.`}
+                  {`${noTools.length} recorded no tool responses — only the caller's words replay.`}
                 </Typography>
               )}
             </Box>

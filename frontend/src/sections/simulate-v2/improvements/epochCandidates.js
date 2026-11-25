@@ -97,10 +97,12 @@ export const candidateRowsOf = (
     /* Held back: a finalist's own score; the kept pick's projection until
        it's verified; otherwise the check never ran on it. */
     let held = null;
-    if (!thin && finalist?.heldScore != null)
-      held = { from: r.heldBase, to: finalist.heldScore };
-    else if (!thin && winner && r.winner?.n === t.n && r.heldScore != null)
+    /* The winner reads its confirmed score — the one the card above shows —
+       not its finalist-round score (25 Nov: the two disagreed). */
+    if (!thin && winner && r.winner?.n === t.n && r.heldScore != null)
       held = { from: r.heldBase, to: r.heldScore };
+    else if (!thin && finalist?.heldScore != null)
+      held = { from: r.heldBase, to: finalist.heldScore };
     else if (!thin && winner)
       held = {
         from: r.heldBase,
@@ -347,4 +349,46 @@ export const evidenceRowsOf = (outcome, result, kept, proofLine) => {
     ],
     proofLine ? ["Proof", proofLine] : null,
   ].filter(Boolean);
+};
+
+/*
+  The causes an epoch worked on, each with the target scenarios it explains
+  and whether the winner fixed them (J4: Run Epoch straight on a run, where
+  the epoch's own diagnosis groups the failures). Held-back scenarios are
+  never counted: the search never saw them.
+*/
+export const causesOf = (result) => {
+  const pool = result?.pool || [];
+  const per = result?.winner?.perScenario || {};
+  if (!pool.length || !result?.winner) return null;
+  const target = new Set(
+    (result.train || []).map((t) => (typeof t === "string" ? t : t?.id)),
+  );
+  const rows = pool
+    .map((p) => {
+      const ids = (p.addresses || []).filter(
+        (id) => !target.size || target.has(id),
+      );
+      /* The cause, not the fix: the change's "why" without its count
+         ("3 tasks needed verify_identity and never called it — …"). */
+      const why = String(p.cause || p.why || "")
+        .split(" — ")[0]
+        .replace(/^\d+\s+(critical\s+)?(tasks?|scenarios?|calls?)\s+/i, "")
+        .replace(/\.$/, "")
+        .trim();
+      return {
+        id: p.id,
+        title: why
+          ? why.charAt(0).toUpperCase() + why.slice(1)
+          : String(p.title || p.id).replace(/\.$/, ""),
+        ids,
+        fixed: ids.length > 0 && ids.every((id) => per[id] === "fixed"),
+      };
+    })
+    .filter((r) => r.ids.length)
+    .sort((a, b) => b.ids.length - a.ids.length);
+  if (!rows.length) return null;
+  const scenarios = new Set(rows.flatMap((r) => r.ids)).size;
+  const fixed = rows.filter((r) => r.fixed).length;
+  return { rows, scenarios, fixed, remains: rows.length - fixed };
 };

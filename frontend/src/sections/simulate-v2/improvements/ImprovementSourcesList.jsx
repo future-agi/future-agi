@@ -23,7 +23,7 @@ import { DataTable } from "src/components/data-table";
 import { ObjectFilterPanel } from "src/components/filter";
 import { useSimStore, useConnectedAgents } from "../store";
 import { useIntegrations } from "../_mock/integrations";
-import { improvementRowsOf } from "./improvementRows";
+import { improvementRowsOf, sourceRunOf } from "./improvementRows";
 import { formatCreatedAt, modalityOfSurface } from "./improvementSources";
 import StatusPill from "./ImprovementStatusPill";
 import { ROW_HEIGHT as DS_ROW_HEIGHT } from "src/theme/sizes";
@@ -107,8 +107,23 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
         (o) => o.id === r.recordId,
       );
       const a = agents.find((x) => x.key === r.agentKey);
+      /* The run it started from — the run header no longer links here
+         (24 Nov review), so the row says it. */
+      const envRuns = state.byEnv?.[r.envId]?.runs || [];
+      const src = sourceRunOf(
+        {
+          kind: r.trigger?.kind,
+          fromRunId: r.fromRunId,
+          createdAt: r.createdAt,
+        },
+        envRuns,
+      );
+      const fromRun = src
+        ? `From Run ${src.ordinal || envRuns.indexOf(src) + 1}`
+        : null;
       return {
         ...r,
+        fromRun,
         kind: "env",
         modality: modalityOfSurface(env?.surface),
         /* A running search hasn't settled on its runs yet — "—" until it has. */
@@ -302,6 +317,7 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
             ? `${r.envName} · ${r.sub}`
             : [
                 r.duplicate && r.agentId,
+                r.fromRun,
                 r.trigger && `${r.trigger.source} · ${r.trigger.label}`,
                 !inEnv && `in ${r.envName}`,
               ]

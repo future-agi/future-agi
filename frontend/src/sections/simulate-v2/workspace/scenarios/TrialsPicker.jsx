@@ -248,7 +248,7 @@ export default function TrialsPicker({
               <Typography
                 sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}
               >
-                1 – 20 repeats
+                1 – 20 trials
               </Typography>
               <Button
                 size="small"

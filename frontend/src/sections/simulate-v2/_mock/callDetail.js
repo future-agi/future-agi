@@ -17,6 +17,7 @@
  * first person to notice stops trusting both.
  */
 
+import { latencyOf } from "../run/traceTableHelpers";
 import { rng, hashSeed } from "./runStream";
 import { validate } from "./contract";
 import { attribute, faultReason, flakySource } from "./failures";
@@ -154,20 +155,39 @@ const gradeChecklist = (steps, task, outcome, turns, h) => {
 
 const wordsIn = (text = "") => text.trim().split(/\s+/).filter(Boolean).length;
 
-const buildTranscript = (task, r) => {
+/* Openers a speaker might add — the same scenario, played again, never comes
+   out word for word. Prefixes only, so the substance of a turn (and what the
+   graders read it for) stays as it was. */
+const FILLERS = {
+  agent: ["Sure — ", "Of course. ", "Okay, ", "Right, ", "Thanks for waiting. "],
+  customer: ["Um, ", "Yeah, ", "Okay, ", "Well, ", "Right — ", "So, "],
+};
+
+const buildTranscript = (task, r, runKey = "") => {
   let at = 0;
   return (task?.steps || []).map((s, i) => {
-    const dur = (s.duration || 900) / 1000;
+    /* Per turn, per run: its own wording, pace and gaps. */
+    const th = hashSeed(`${task.id}:${runKey}:${s.id || i}`) >>> 0;
+    const pace = 0.88 + (th % 25) / 100;
+    const dur = ((s.duration || 900) * pace) / 1000;
+    const role = s.role === "agent" ? "agent" : "customer";
+    const fillers = FILLERS[role];
+    const baseText = s.text || "";
+    const text =
+      baseText && (th >>> 5) % 3 === 0
+        ? `${fillers[(th >>> 9) % fillers.length]}${baseText.charAt(0).toLowerCase()}${baseText.slice(1)}`
+        : baseText;
     /* Dead air between turns is state in a voice call, not whitespace — a
        two-second gap is what a caller experiences as the agent thinking. */
     const silenceAfter = i % 2 === 1 ? Math.round(r() * 22) / 10 : Math.round(r() * 6) / 10;
     const turn = {
       id: s.id || `t${i}`,
+      seed: `${s.id || `t${i}`}:${runKey}`,
       index: i,
       at: Math.round(at * 10) / 10,
       dur: Math.round(dur * 10) / 10,
-      role: s.role === "agent" ? "agent" : "customer",
-      text: s.text || "",
+      role,
+      text,
       silenceAfter,
     };
     at += dur + silenceAfter;
@@ -195,7 +215,10 @@ export const callDetail = ({ env, envState, run, task, scenario }) => {
      changes between columns makes the two look like different calls. */
   const scenarioHash = hashSeed(scenario?.id || task.id);
 
-  const turns = buildTranscript(task, r);
+  /* The run this call belongs to: tasks carry `runSeed`; an epoch's overlaid
+     task may not, so fall back to the run id passed in. */
+  const runKey = `${task.runSeed || run?.id || ""}`;
+  const turns = buildTranscript(task, r, runKey);
   const outcome = outcomeOf(task, h);
 
   const agentWords = turns.filter((t) => t.role === "agent").reduce((a, t) => a + wordsIn(t.text), 0);
@@ -209,13 +232,15 @@ export const callDetail = ({ env, envState, run, task, scenario }) => {
     pipeline because that is where a regression is actionable: 300ms added in
     endpointing is a VAD setting, 300ms added in the LLM is a model choice.
   */
-  const base = 1300 + Math.round(r() * 900);
+  /* The same latency the run table and compare table show for this call;
+     the stages are scaled to add up to it. */
+  const base = latencyOf(task) ?? 1300 + Math.round(r() * 900);
   const share = { endpointing: 0.16 + r() * 0.06, transcriber: 0.13 + r() * 0.05, voice: 0.13 + r() * 0.05 };
   const round10 = (n) => Math.round(n / 10) * 10;
   const endpointing = round10(base * share.endpointing);
   const transcriber = round10(base * share.transcriber);
   const voice = round10(base * share.voice);
-  const llm = round10(base - endpointing - transcriber - voice);
+  const llm = base - endpointing - transcriber - voice;
   const latency = [
     { id: "endpointing", label: "Endpointing", ms: endpointing, color: "#2563EB" },
     { id: "transcriber", label: "Transcriber", ms: transcriber, color: "#4F8DF5" },
@@ -270,10 +295,13 @@ export const callDetail = ({ env, envState, run, task, scenario }) => {
     type: /inbound|call(s|ed)? in|customer calls/i.test(`${scenario?.task || ""}`) ? "inbound" : "outbound",
     phone: `+1${2000000000 + (scenarioHash % 799999999)}`,
     provider: providerOf(),
+    /* The call's own length, as the run recorded it (varied per run at the
+       source), so this view and the run table agree. */
     durationS: Math.round((task.durationMs || 0) / 100) / 10,
     turns,
     stats: {
-      turnCount: turns.length,
+      /* Agent replies — what the turn limit counts. */
+      turnCount: turns.filter((t) => t.role === "agent").length,
       latencyMs,
       userPct: words ? Math.round((userWords / words) * 100) : 0,
       aiPct: words ? 100 - Math.round((userWords / words) * 100) : 100,
@@ -339,7 +367,7 @@ function buildPath({ env, task, scenario, turns, outcome, steps }) {
     label: "start",
     kind: "start",
     sub: spoken
-      ? `${turns.length} turns · ${Math.round(turns.reduce((a, t) => a + t.dur, 0))}s of speech`
+      ? `${turns.filter((t) => t.role === "agent").length} turns · ${Math.round(turns.reduce((a, t) => a + t.dur, 0))}s of speech`
       : `${turns.length} steps · ${Math.round(turns.reduce((a, t) => a + t.dur, 0))}s active`,
     at: 0,
     status: "ok",

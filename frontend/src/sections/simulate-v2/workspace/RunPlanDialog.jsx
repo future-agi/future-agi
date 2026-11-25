@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  Checkbox,
   Chip,
   Collapse,
   IconButton,
@@ -16,6 +17,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import SideDrawer from "../components/SideDrawer";
 import { useSimStore } from "../store";
 import { monthStart, monthUsage, simMeters } from "../_mock/usageLedger";
 import { FREE_TIER, RATE_PLAN } from "../_mock/rates";
@@ -36,11 +38,21 @@ import {
   RUN_DEADLINES,
   STEP_LIMITS,
   TRIAL_TIMEOUTS,
-  limitsLine,
   minutesLabel,
   runLimitsOf,
 } from "../_mock/runLimits";
 import { currentAgentVersion, currentEnvVersion } from "../_mock/versions";
+import { runPlan } from "../_mock/proofs";
+import { currentSuiteLabel, suiteVersionLogOf } from "../_mock/suiteLog";
+import { getScenarioSelection } from "../_mock/scenarioSelectionBus";
+import {
+  initialPickOf,
+  pairIdOf,
+  scopeRowsOf,
+  checkProblemsOf,
+  needsCheckOf,
+  trialsHelpOf,
+} from "../_mock/runPlanScope";
 import { validatingOf } from "../_mock/validating";
 import ReadyToRun, { KnownLimits } from "../compat/ReadyToRun";
 import { StatusDot } from "../components/primitives";
@@ -55,7 +67,6 @@ import { delegationEvidenceOf } from "../_mock/handoffs";
 import { membersOf } from "../_mock/improvementPolicy";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
-import SideDrawer from "../components/SideDrawer";
 import ToolFitRow from "../run/ToolFitRow";
 import RunHeldNotes from "./RunHeldNotes";
 import { startsFromCode } from "../_mock/connectionCheck";
@@ -130,6 +141,236 @@ Row.propTypes = {
   children: PropTypes.node,
 };
 
+const VALUE_SX = { fontSize: 13, lineHeight: "20px", minWidth: 0 };
+const LINK_SX = {
+  appearance: "none",
+  background: "none",
+  border: 0,
+  p: 0,
+  font: "inherit",
+  fontSize: 13,
+  cursor: "pointer",
+  color: "text.secondary",
+};
+
+/* A text link on a row's right ("Edit"). */
+function TextLink({ onClick, children }) {
+  return (
+    <Box
+      component="button"
+      type="button"
+      onClick={onClick}
+      sx={{ ...LINK_SX, "&:hover": { color: "text.primary" } }}
+    >
+      {children}
+    </Box>
+  );
+}
+TextLink.propTypes = { onClick: PropTypes.func, children: PropTypes.node };
+
+/* One row of the plan: label column, value, an optional right-aligned link,
+   and an optional detail that opens under the value. */
+function KV({ label, action, detail, children }) {
+  return (
+    <Box
+      className="kv"
+      sx={{
+        display: "grid",
+        gridTemplateColumns: "130px minmax(0, 1fr) auto",
+        columnGap: 1.5,
+        alignItems: "center",
+        minHeight: 38,
+        py: 0.5,
+        borderTop: "1px solid",
+        borderColor: "divider",
+      }}
+    >
+      <Typography sx={{ fontSize: 13, color: "text.secondary" }}>
+        {label}
+      </Typography>
+      <Box sx={{ minWidth: 0 }}>{children}</Box>
+      <Box>{action}</Box>
+      {detail && <Box sx={{ gridColumn: "1 / -1", mt: 0.5 }}>{detail}</Box>}
+    </Box>
+  );
+}
+KV.propTypes = {
+  label: PropTypes.string,
+  action: PropTypes.node,
+  detail: PropTypes.node,
+  children: PropTypes.node,
+};
+
+/* Which scenarios run: a compact checklist with select all / none and the
+   count. Rows that can't run on this environment version stay listed,
+   disabled, with the reason on hover. */
+function ScenarioChecklist({
+  rows,
+  selected,
+  onToggle,
+  onAll,
+  onNone,
+  envLabel,
+  fill = false,
+}) {
+  const okN = rows.filter((r) => r.ok).length;
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        overflow: "hidden",
+        /* Fill: the list takes the drawer's remaining height. */
+        ...(fill && {
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+        }),
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{
+          px: 1.5,
+          minHeight: 36,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Typography
+          sx={{
+            fontSize: 13,
+            fontWeight: 600,
+            flex: 1,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {`${selected.length} selected`}
+          <Box
+            component="span"
+            sx={{ fontWeight: 400, color: "text.tertiary", ml: 0.75 }}
+          >
+            {`· ${okN} can run on environment ${envLabel}`}
+          </Box>
+        </Typography>
+        <Button size="small" onClick={onAll} disabled={selected.length === okN}>
+          Select all
+        </Button>
+        <Button size="small" onClick={onNone} disabled={!selected.length}>
+          Select none
+        </Button>
+      </Stack>
+      <Box
+        sx={
+          fill
+            ? { flex: 1, minHeight: 0, overflowY: "auto" }
+            : { maxHeight: 224, overflowY: "auto" }
+        }
+      >
+        {rows.map((r) => {
+          const row = (
+            <Box
+              component="label"
+              key={r.id}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+                minHeight: 32,
+                pl: 0.75,
+                pr: 1.5,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                "&:last-of-type": { borderBottom: 0 },
+                cursor: r.ok ? "pointer" : "default",
+                "&:hover": r.ok ? { bgcolor: "action.hover" } : undefined,
+              }}
+            >
+              <Checkbox
+                size="small"
+                disabled={!r.ok}
+                checked={r.ok && selected.includes(r.id)}
+                onChange={() => onToggle(r.id)}
+                inputProps={{ "aria-label": r.title }}
+                sx={{ p: 0.5 }}
+              />
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s1",
+                  flex: 1,
+                  minWidth: 0,
+                  color: r.ok ? "text.primary" : "text.disabled",
+                }}
+              >
+                {r.title}
+                {r.actor && (
+                  <Box component="span" sx={{ color: "text.tertiary" }}>
+                    {` · ${r.actor}`}
+                  </Box>
+                )}
+              </Typography>
+              {r.status && (
+                <Stack direction="row" alignItems="center" spacing={0.75}>
+                  <StatusDot status={r.status} size={8} />
+                  <Typography
+                    sx={{ typography: "s3", color: "text.secondary" }}
+                  >
+                    {r.status}
+                  </Typography>
+                </Stack>
+              )}
+              {!r.ok && (
+                <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+                  {`can't run on ${envLabel}`}
+                </Typography>
+              )}
+              {r.notProved && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    px: 0.75,
+                    borderRadius: "4px",
+                    bgcolor: "action.hover",
+                  }}
+                >
+                  Not proved
+                </Typography>
+              )}
+            </Box>
+          );
+          return r.ok && !r.notProved ? (
+            row
+          ) : (
+            <Tooltip
+              key={r.id}
+              arrow
+              placement="left"
+              title={r.notProved ? "Its proof check fails now" : r.why || ""}
+            >
+              {row}
+            </Tooltip>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
+ScenarioChecklist.propTypes = {
+  rows: PropTypes.array,
+  selected: PropTypes.array,
+  onToggle: PropTypes.func,
+  onAll: PropTypes.func,
+  onNone: PropTypes.func,
+  envLabel: PropTypes.string,
+  fill: PropTypes.bool,
+};
+
 const lineValue = (l) => {
   if (l.status === "unpriced") return "no price set";
   if (l.status === "included") return "included";
@@ -153,7 +394,6 @@ export default function RunPlanDialog({
   missingRate,
   alsoCount,
   initialVersion,
-  scopeLead,
   alsoScopes = [],
   breakdown = null,
   /* The environment's saved versions [{ label, current }] and the scope
@@ -183,6 +423,18 @@ export default function RunPlanDialog({
   canAddEvals = true,
   /* Fixes made from the plan (the tool-fit row) write to the environment. */
   patch = null,
+  /* Scenario ids ticked when the plan opens (the rows picked on the results
+     page, e.g. the flaky ones). */
+  initialScenarioIds = null,
+  /* { [scenarioId]: "passed" | "flaky" | "failed" } from the source run. */
+  scenarioStatus = null,
+  /* The run this plan re-runs: { agentKey, agentVersion, envVersion, label }.
+     Its pairing needs no new check; any other pairing does. */
+  baseline = null,
+  /* The environment version to start on (a re-run on the source run's). */
+  initialEnvVersion = null,
+  /* "failed" | "flaky" | "scenarios": what the title says a re-run re-runs. */
+  titleKind = null,
 }) {
   const voice = ["voice", "multi"].includes(env?.surface);
   /* Agents we start from code run in our sandbox and take the seed; a
@@ -200,7 +452,9 @@ export default function RunPlanDialog({
   }, [open]);
   const [attempts, setAttempts] = useState(initialAttempts || 3);
   const [versions, setVersions] = useState(
-    versionOptions.slice(0, 1).map((o) => o.label),
+    initialVersion && versionOptions.some((o) => o.label === initialVersion)
+      ? [initialVersion]
+      : versionOptions.slice(0, 1).map((o) => o.label),
   );
   const [moreVersions, setMoreVersions] = useState(false);
   /* Run setup: which agent (this environment's, or another compatible one)
@@ -242,19 +496,128 @@ export default function RunPlanDialog({
     envLabel ||
     currentEnvVersion(env, envState)?.label ||
     "v1";
-  const [envVer, setEnvVer] = useState(null);
+  const [envVer, setEnvVer] = useState(initialEnvVersion || null);
   const pickedEnv = envVer && envVer !== currentEnvLabel ? envVer : null;
-  const bd = pickedEnv && breakdownOf ? breakdownOf(pickedEnv) : breakdown;
+  const bd0 = pickedEnv && breakdownOf ? breakdownOf(pickedEnv) : breakdown;
+  /* ── scope: which scenarios run (checklist, pre-filled by the caller) ── */
+  const scopePlan = useMemo(
+    () =>
+      env && envState && agentChoices.length
+        ? runPlan(env, envState, { envVersion: pickedEnv || undefined })
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      env,
+      envState?.scenarios,
+      envState?.envVersions,
+      envState?.activeEnvVersion,
+      pickedEnv,
+      agentChoices.length,
+    ],
+  );
+  const scopeRows = useMemo(
+    () =>
+      scopeRowsOf(scopePlan, scenarioStatus || {}, {
+        rerun:
+          !!baseline?.envVersion &&
+          (pickedEnv || currentEnvLabel) === baseline.envVersion,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      scopePlan,
+      scenarioStatus,
+      baseline?.envVersion,
+      pickedEnv,
+      currentEnvLabel,
+    ],
+  );
+  const listActive = scopeRows.some((r) => r.ok);
+  /* A selection made on the Scenarios tab is what Run opened with when its
+     count matches. */
+  const wantedIds =
+    initialScenarioIds?.length > 0
+      ? initialScenarioIds
+      : (() => {
+          const sel = getScenarioSelection()?.ids || [];
+          return sel.length && sel.length === scenarioCount ? sel : null;
+        })();
+  const defaultPick = useMemo(
+    () => initialPickOf(scopeRows, wantedIds),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [scopeRows, initialScenarioIds, scenarioCount],
+  );
+  const [picked, setPicked] = useState(null);
+  const okIds = useMemo(
+    () => new Set(scopeRows.filter((r) => r.ok).map((r) => r.id)),
+    [scopeRows],
+  );
+  const selIds = (picked ?? defaultPick).filter((id) => okIds.has(id));
+  /* Asked-for scenarios that can't run here are said, not dropped quietly:
+     "14 flaky · Re-run" opening on "13 selected" read as a bug. */
+  const wantedOut = (initialScenarioIds || []).filter((id) => !okIds.has(id));
+  const wantedOutWhy = [
+    ...new Set(
+      wantedOut.map((id) =>
+        (
+          scopeRows.find((r) => r.id === id)?.why ||
+          "no longer in this environment version"
+        ).replace(/\.+$/, ""),
+      ),
+    ),
+  ].join("; ");
+  const pickChanged =
+    picked !== null &&
+    (selIds.length !== defaultPick.length ||
+      selIds.some((id) => !defaultPick.includes(id)));
+  const toggleScenario = (id) =>
+    setPicked(
+      selIds.includes(id) ? selIds.filter((x) => x !== id) : [...selIds, id],
+    );
+  /* The scenario version (suite): the current one unless picked. */
+  const suiteLabels = envState
+    ? [
+        ...new Set(
+          [
+            ...suiteVersionLogOf(envState).map((l) => l.label),
+            currentSuiteLabel(envState),
+          ].filter(Boolean),
+        ),
+      ]
+    : [];
+  const currentSuiteLbl = currentSuiteLabel(envState || {});
+  const [suiteVer, setSuiteVer] = useState(null);
+  const scenarioVer = suiteVer || currentSuiteLbl;
+  /* Shown the way the run header names it ("scenarios v1"), not the
+     internal "s1". */
+  const verName = (l) => String(l || "").replace(/^s(?=\d)/, "v");
+  /* What stale/held notes read from: restricted to the ticked scenarios. */
+  const bd =
+    listActive && bd0
+      ? {
+          ...bd0,
+          eligible: selIds.length,
+          blocked: 0,
+          excluded: 0,
+          blockedList: [],
+          staleIds: (bd0.staleIds || []).filter((id) => selIds.includes(id)),
+          stale: (bd0.staleIds || []).filter((id) => selIds.includes(id))
+            .length,
+        }
+      : bd0;
   /* The version's scenarios in all — the count line splits them into
      eligible, blocked and excluded. */
-  const scopeCount = bd
-    ? bd.eligible + bd.blocked + bd.excluded
-    : scenarioCount;
-  const shownCount = suite
-    ? suite.ids.length
-    : pickedEnv && bd
-      ? bd.eligible
+  const scopeCount = listActive
+    ? scopeRows.length
+    : bd
+      ? bd.eligible + bd.blocked + bd.excluded
       : scenarioCount;
+  const shownCount = listActive
+    ? selIds.length
+    : suite
+      ? suite.ids.length
+      : pickedEnv && bd
+        ? bd.eligible
+        : scenarioCount;
   /* Ready to run is for exactly what would run: the picked agent, its picked
      version and the picked suite (the pair, and its cases). */
   const pickedKey =
@@ -263,7 +626,7 @@ export default function RunPlanDialog({
     compatOf
       ? compatOf(pickedKey, {
           version,
-          ids: suite ? suite.ids : null,
+          ids: listActive ? selIds : suite ? suite.ids : null,
           envVersion: pickedEnv,
         })
       : null;
@@ -289,8 +652,15 @@ export default function RunPlanDialog({
   const [capTouched, setCapTouched] = useState(false);
   const [alertAt, setAlertAt] = useState(WORKSPACE_POLICY.alertAt);
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const [limits, setLimits] = useState(() => runLimitsOf(env, envState));
+  /* A re-run uses the source run's limits; a new run the environment's. */
+  const startLimits = () => ({
+    ...runLimitsOf(env, envState),
+    ...(baseline?.turnLimit && { turnLimit: baseline.turnLimit }),
+    ...(baseline?.limits || {}),
+  });
+  const [limits, setLimits] = useState(startLimits);
   const [showLimits, setShowLimits] = useState(false);
+  const [showSuggested, setShowSuggested] = useState(false);
   /* Blocked cases are held back, never run (Karthik's run readiness): the
      button names the choice — "Run 6 of 10" — and the 4 left out are
      recorded on the run as not run (TH-8880). */
@@ -331,13 +701,16 @@ export default function RunPlanDialog({
     setMoreVersions(false);
     setAgentKey(initialAgentKey);
     setSuiteId("all");
+    setPicked(null);
+    setSuiteVer(null);
     setAddEvalIds([]);
     setCapTouched(false);
     setAlertAt(WORKSPACE_POLICY.alertAt);
     setShowBreakdown(false);
-    setLimits(runLimitsOf(env, envState));
+    setLimits(startLimits());
     setShowLimits(false);
-    setEnvVer(null);
+    setShowSuggested(false);
+    setEnvVer(initialEnvVersion || null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -460,6 +833,7 @@ export default function RunPlanDialog({
             }
           : null;
   const canStart = check.canStart && !pairHold;
+  /* No scenario ticked, nothing to run. */
   /* Nothing can run (the check failed, or every selected scenario waits on a
      fix): say why once, never "0 scenarios" or "pick a scenario". */
   const noRun = pairFailed || (!multi && allHeld);
@@ -527,84 +901,157 @@ export default function RunPlanDialog({
     versions[0] ||
     "v1";
   const sentence = (t) => String(t || "").replace(/^./, (c) => c.toLowerCase());
+  /* ── the readiness check, inline: whenever the agent, its version or the
+     environment differs from the run being repeated (or the pairing last
+     checked), the pair is checked here before Run is active. ── */
+  const ownKey = agentChoices.find((a) => a.current)?.key || null;
+  const pairId = pairIdOf(pickedKey, agentVerLbl, envLbl);
+  const baseId = baseline
+    ? pairIdOf(
+        baseline.agentKey || ownKey,
+        baseline.agentVersion,
+        baseline.envVersion,
+      )
+    : null;
+  const [checked, setChecked] = useState({});
+  const [pendingCheck, setPendingCheck] = useState(null);
+  const [checkTimerDone, setCheckTimerDone] = useState(null);
+  useEffect(() => {
+    if (!open) return;
+    /* A check already on record for the pairing the plan opens on counts. */
+    setChecked(compat?.validation?.state === "ready" ? { [pairId]: true } : {});
+    setPendingCheck(null);
+    setCheckTimerDone(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const needsCheck = open
+    ? needsCheckOf({
+        hasCheck: !!compat && agentChoices.length > 0,
+        pairId,
+        baseId,
+        checked,
+      })
+    : false;
+  const startCheck = () => {
+    setPendingCheck(pairId);
+    setCheckTimerDone(null);
+    if (onCheckCompat && canCheckCompat?.(pickedKey)) onCheckCompat(pickedKey);
+    const id = pairId;
+    setTimeout(() => setCheckTimerDone(id), 1200);
+  };
+  useEffect(() => {
+    if (needsCheck && !pendingCheck && !checkingCompat) startCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsCheck, pendingCheck, pairId]);
+  useEffect(() => {
+    if (pendingCheck && checkTimerDone === pendingCheck && !checkingCompat) {
+      setChecked((c) => ({ ...c, [pendingCheck]: true }));
+      setPendingCheck(null);
+    }
+  }, [pendingCheck, checkTimerDone, checkingCompat]);
+  /* checking → ready | problems, for this pairing. */
+  const checkState =
+    !compat || !agentChoices.length
+      ? null
+      : needsCheck || pendingCheck === pairId || checkingCompat
+        ? "checking"
+        : anyBlocker || pairFailed
+          ? "problems"
+          : "ready";
+  const checkProblems = checkProblemsOf(areasNow);
+  const checkHold = checkState === "checking";
+  const sameAsSource = !!baseline && pairId === baseId;
+  const nothingPicked = listActive && selIds.length === 0;
+  const canRun = canStart && !checkHold && !nothingPicked;
+  /* Same agent and environment as the run being re-run: it already ran
+     there, so it reads ready and the check's detail stays folded (24 Nov
+     review: one readiness answer, not two that disagree). */
+  const readyAsSource = sameAsSource && !anyBlocker && !pairFailed;
   const verdict = !compat
     ? null
-    : pairState === "validating"
+    : readyAsSource
       ? {
-          dot: "running",
-          live: true,
-          title: `Checking agent ${agentVerLbl} on environment ${envLbl}`,
-          rest: `up to ${PAIR_CHECK_LIMIT_MIN} min`,
+          dot: "passed",
+          title: `All ${runCount} ready`,
+          rest: `same agent and environment as ${baseline.label || "the run"}`,
         }
-      : pairFailed
+      : pairState === "validating"
         ? {
-            dot: "failed",
-            title: "Can't start",
-            rest:
-              pairState === "timed_out"
-                ? `the check ran past ${PAIR_CHECK_LIMIT_MIN} min · ${ago(pairVal.at)}`
-                : `${sentence(
-                    String(
-                      areasNow.find((a) => a.status === "blocked")?.detail ||
-                        pairVal?.reason ||
-                        "the check failed",
-                    )
-                      .split(/\s+—\s+|(?<=\.)\s/)[0]
-                      .replace(/\.$/, ""),
-                  )} · checked ${ago(pairVal.at)}`,
+            dot: "running",
+            live: true,
+            title: `Checking agent ${agentVerLbl} on environment ${envLbl}`,
+            rest: `up to ${PAIR_CHECK_LIMIT_MIN} min`,
           }
-        : !multi && allHeld
+        : pairFailed
           ? {
               dot: "failed",
               title: "Can't start",
-              /* The scenarios picked above, not every scenario the
-                 environment has — the same number the plan shows. */
-              rest: `all ${blockedN || shownCount} scenarios are blocked`,
+              rest:
+                pairState === "timed_out"
+                  ? `the check ran past ${PAIR_CHECK_LIMIT_MIN} min · ${ago(pairVal.at)}`
+                  : `${sentence(
+                      String(
+                        areasNow.find((a) => a.status === "blocked")?.detail ||
+                          pairVal?.reason ||
+                          "the check failed",
+                      )
+                        .split(/\s+—\s+|(?<=\.)\s/)[0]
+                        .replace(/\.$/, ""),
+                    )} · checked ${ago(pairVal.at)}`,
             }
-          : pairState === "unavailable"
+          : !multi && allHeld
             ? {
-                dot: "cancelled",
-                title: countLead,
-                rest: [
-                  ...countRest,
-                  "the check couldn't run on our side, so nothing is held",
-                ].join(" · "),
+                dot: "failed",
+                title: "Can't start",
+                /* The scenarios picked above, not every scenario the
+                 environment has — the same number the plan shows. */
+                rest: `all ${blockedN || shownCount} scenarios are blocked`,
               }
-            : pairState === "stale"
+            : pairState === "unavailable"
               ? {
-                  dot: "queued",
-                  hollow: true,
+                  dot: "cancelled",
                   title: countLead,
-                  /* Why the check is out of date is on Ready to run. */
-                  rest: countRest.join(" · "),
+                  rest: [
+                    ...countRest,
+                    "the check couldn't run on our side, so nothing is held",
+                  ].join(" · "),
                 }
-              : anyUnchecked && !anyBlocker && !pairVal
+              : pairState === "stale"
                 ? {
                     dot: "queued",
                     hollow: true,
                     title: countLead,
-                    rest: [...countRest, "not checked for this agent yet"].join(
-                      " · ",
-                    ),
+                    /* Why the check is out of date is on Ready to run. */
+                    rest: countRest.join(" · "),
                   }
-                : outParts.length
+                : anyUnchecked && !anyBlocker && !pairVal
                   ? {
-                      dot: "flaky",
-                      title: `${runCount} of ${totalN} will run`,
-                      rest: notesShown
-                        ? ""
-                        : [
-                            `${heldN} won't: ${outParts.join(", ")}`,
-                            staleN > 0 && `${staleN} stale`,
-                          ]
-                            .filter(Boolean)
-                            .join(" · "),
+                      dot: "queued",
+                      hollow: true,
+                      title: countLead,
+                      rest: [
+                        ...countRest,
+                        "not checked for this agent yet",
+                      ].join(" · "),
                     }
-                  : {
-                      dot: "passed",
-                      title: `All ${runCount} will run`,
-                      rest: staleN && !notesShown ? `${staleN} stale` : "",
-                    };
+                  : outParts.length
+                    ? {
+                        dot: "flaky",
+                        title: `${runCount} of ${totalN} will run`,
+                        rest: notesShown
+                          ? ""
+                          : [
+                              `${heldN} won't: ${outParts.join(", ")}`,
+                              staleN > 0 && `${staleN} stale`,
+                            ]
+                              .filter(Boolean)
+                              .join(" · "),
+                      }
+                    : {
+                        dot: "passed",
+                        title: `All ${runCount} will run`,
+                        rest: staleN && !notesShown ? `${staleN} stale` : "",
+                      };
   /* A first run of this agent version on this environment version prepares
      the pair first. */
   const ranBefore = (envState?.runs || []).some(
@@ -635,83 +1082,195 @@ export default function RunPlanDialog({
     "& .MuiInputBase-input": { py: 0.5, fontVariantNumeric: "tabular-nums" },
   };
 
+  /* Title: what this run does. */
+  const rerunIds = (initialScenarioIds || []).filter(Boolean);
+  const kindOf = () => {
+    if (titleKind) return titleKind;
+    if (!rerunIds.length || !scenarioStatus) return "scenarios";
+    const st = rerunIds.map((id) => scenarioStatus[id]);
+    if (st.every((s) => s === "failed")) return "failed";
+    if (st.every((s) => s === "flaky")) return "flaky";
+    return "scenarios";
+  };
+  const isRerun = !!baseline;
+  const titleN = isRerun && rerunIds.length ? rerunIds.length : runCount;
+  const titleText = isRerun
+    ? `Re-run ${titleN} ${kindOf()}`
+    : `Run ${titleN} ${titleN === 1 ? "scenario" : "scenarios"}`;
+  const fromRun =
+    isRerun && /^run\s+\d+/i.test(baseline.label || "")
+      ? baseline.label.replace(/^./, (c) => c.toUpperCase())
+      : null;
+  const subtitle = [env?.name || "Environment", fromRun && `from ${fromRun}`]
+    .filter(Boolean)
+    .join(" · ");
+  /* Tools that run for real on a platform agent, said on hover. */
+  const liveTools = (() => {
+    const v = envState?.agent?.values || {};
+    if (!v.provider || !v.agentId) return [];
+    const a = assistantsFor(v.provider).find((x) => x.id === v.agentId) || {
+      id: v.agentId,
+      name: envState?.agent?.name,
+    };
+    return (platformPreviewOf(v.provider, a, { voice })?.tools || []).filter(
+      (t) => t.handling === "live",
+    );
+  })();
+  const readinessTip = [
+    liveTools.length
+      ? `Runs for real: ${liveTools.map((t) => t.name).join(", ")}. Your own tools are redirected to the test world.`
+      : null,
+    compat && !noRun && !ranBefore
+      ? `First run prepares agent ${agentVerLbl} on environment ${envLbl}; it takes several minutes.`
+      : null,
+    outTip || null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const needsFix =
+    !!compat &&
+    checkState !== "checking" &&
+    (checkState === "problems" ||
+      blockedN > 0 ||
+      anyBlocker ||
+      notesShown ||
+      ["unavailable", "stale"].includes(pairState) ||
+      (anyUnchecked && !pairVal));
+  const readyDot =
+    checkState === "checking"
+      ? { dot: "running", live: true }
+      : checkState === "problems"
+        ? { dot: "failed" }
+        : { dot: verdict?.dot || "passed", hollow: verdict?.hollow };
+  const nProblems = checkProblems.length || 1;
+  const readyText =
+    checkState === "checking"
+      ? "Checking…"
+      : checkState === "problems"
+        ? `${nProblems} problem${nProblems === 1 ? "" : "s"}`
+        : outParts.length
+          ? `Ready · ${runCount} of ${totalN} will run`
+          : "Ready";
+  const cantRun = listActive ? scopeRows.filter((r) => !r.ok).length : 0;
+  const cantRunN =
+    wantedOut.length || (initialScenarioIds?.length ? 0 : cantRun);
+  const cantRunWhy =
+    wantedOutWhy ||
+    [
+      ...new Set(
+        scopeRows
+          .filter((r) => !r.ok)
+          .map((r) => r.why)
+          .filter(Boolean),
+      ),
+    ].join("; ");
+  const evalNames = (evals || []).length
+    ? (evals || []).map((e) => e.name).join(", ")
+    : "None added";
+
   return (
-    /* A side drawer (13 Nov): the environment stays in view beside the plan. */
     <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", md: 560 }}>
       <Stack sx={{ height: "100%" }}>
         <Stack
           direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{ px: 2.5, py: 2, borderBottom: 1, borderColor: "divider" }}
+          alignItems="flex-start"
+          sx={{ px: 3, pt: 2.5, pb: 1, flexShrink: 0 }}
         >
           <Box flex={1} minWidth={0}>
             <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-              Run plan
+              {titleText}
             </Typography>
-            {/* From a ready world, its exact release and pack are on hover. */}
             <Typography
               noWrap
               title={(() => {
                 const entry = catalogueOfEnv(env);
                 if (!entry) return undefined;
-                const pack =
-                  { starter: "Starter suite", full: "All scenarios" }[
-                    env?.pack
-                  ] || (env?.pack ? "A named pack" : null);
                 return [
                   `${entry.id} · ${entry.task}`,
                   `release ${envReleaseOf(env, entry)}`,
-                  pack,
-                ]
-                  .filter(Boolean)
-                  .join(" · ");
+                ].join(" · ");
               })()}
-              sx={{ typography: "s2", color: "text.tertiary" }}
+              sx={{ typography: "s2", color: "text.tertiary", fontWeight: 400 }}
             >
-              {[
-                env?.name || "Environment",
-                voice ? "Voice" : "Text",
-                runLocation
-                  ? runLocation === "hosted"
-                    ? "hosted"
-                    : "on your machine"
-                  : null,
-                alsoCount
-                  ? `plus ${alsoCount} other environment${alsoCount === 1 ? "" : "s"}`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+              {subtitle}
             </Typography>
           </Box>
-          <IconButton size="small" onClick={onClose} aria-label="Close">
-            <Iconify icon="solar:close-linear" width={16} />
+          <IconButton aria-label="Close" onClick={onClose} size="small">
+            <Iconify icon="mingcute:close-line" width={18} />
           </IconButton>
         </Stack>
 
-        <Box sx={{ px: 2.5, py: 2, flex: 1, minHeight: 0, overflowY: "auto" }}>
-          <Stack spacing={2}>
-            {scopeLead && (
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {scopeLead}
-              </Typography>
-            )}
-            {/* ── the agent first: everything below is for this agent on
-              this environment (compatibility belongs to the pair) ── */}
-            <Stack spacing={1}>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    color: "text.secondary",
-                    width: 88,
-                    flexShrink: 0,
-                  }}
-                >
-                  Agent
+        {/* Settings on top; the scenarios to run fill the rest, so the
+          drawer is never half empty (25 Nov). */}
+        <Box
+          sx={{
+            px: 3,
+            pb: 1,
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflowY: "auto",
+          }}
+        >
+          <Box
+            sx={{
+              mt: 1,
+              "& > .kv:first-of-type": { borderTop: 0 },
+            }}
+          >
+            {/* Scenario version */}
+            <KV label="Scenario version">
+              {baseline ? (
+                <Typography sx={VALUE_SX}>
+                  {verName(scenarioVer)}
+                  <Box
+                    component="span"
+                    sx={{ color: "text.tertiary", ml: 0.75 }}
+                  >
+                    {`· same as ${fromRun || baseline.label || "the run"}`}
+                  </Box>
                 </Typography>
-                <Box sx={{ typography: "s2", minWidth: 0 }}>
+              ) : suiteLabels.length > 1 ? (
+                <TextField
+                  select
+                  size="small"
+                  value={scenarioVer}
+                  onChange={(e) => setSuiteVer(e.target.value)}
+                  SelectProps={{ renderValue: (v) => verName(v) }}
+                  inputProps={{ "aria-label": "Scenario version" }}
+                  sx={{ minWidth: 88, ...fieldSx }}
+                >
+                  {[...suiteLabels].reverse().map((l) => (
+                    <MenuItem key={l} value={l} sx={{ gap: 1 }}>
+                      <Box component="span" sx={{ flex: 1 }}>
+                        {verName(l)}
+                      </Box>
+                      {l === currentSuiteLbl && (
+                        <Box
+                          component="span"
+                          sx={{ typography: "s3", color: "text.tertiary" }}
+                        >
+                          current
+                        </Box>
+                      )}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              ) : (
+                <Typography sx={VALUE_SX}>{verName(scenarioVer)}</Typography>
+              )}
+            </KV>
+
+            {/* Agent */}
+            <KV label="Agent">
+              <Stack
+                direction="row"
+                spacing={1}
+                alignItems="center"
+                minWidth={0}
+              >
+                <Box sx={{ ...VALUE_SX, minWidth: 0 }}>
                   {agentChoices.length > 1 ? (
                     <TextField
                       select
@@ -747,8 +1306,6 @@ export default function RunPlanDialog({
                     agentChoices[0]?.name || envState?.agent?.name || "—"
                   )}
                 </Box>
-                {/* The version beside the agent (12 Nov review): what runs is
-                  said once, at the top. */}
                 {otherAgent ? (
                   <TextField
                     select
@@ -794,6 +1351,11 @@ export default function RunPlanDialog({
                       setVersions([v]);
                     }}
                     inputProps={{ "aria-label": "Agent version" }}
+                    /* Just the version in the field ("v4"); "current" and the
+                     rest stay in the menu. */
+                    SelectProps={{
+                      renderValue: (v) => (Array.isArray(v) ? v.join(", ") : v),
+                    }}
                     sx={{ minWidth: 88, ...fieldSx }}
                   >
                     {versionOptions
@@ -832,26 +1394,33 @@ export default function RunPlanDialog({
                   </TextField>
                 )}
               </Stack>
-              {/* The environment version and its scenarios sit with the agent:
-                  the three things a run is for (runs.md: agent version,
-                  environment version, scenario suite version). */}
+            </KV>
+
+            {/* Environment */}
+            <KV label="Environment">
               <Stack direction="row" spacing={1} alignItems="center">
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    color: "text.secondary",
-                    width: 88,
-                    flexShrink: 0,
-                  }}
-                >
-                  Environment
-                </Typography>
-                {envVersionOptions.length > 1 ? (
+                {/* A re-run keeps the environment it re-runs, like the
+                    scenario version, so the result compares; only the agent
+                    version changes (25 Nov). */}
+                {baseline ? (
+                  <Typography sx={VALUE_SX}>
+                    {pickedEnv || currentEnvLabel}
+                    <Box
+                      component="span"
+                      sx={{ color: "text.tertiary", ml: 0.75 }}
+                    >
+                      {`· same as ${fromRun || baseline.label || "the run"}`}
+                    </Box>
+                  </Typography>
+                ) : envVersionOptions.length > 1 ? (
                   <TextField
                     select
                     size="small"
                     value={pickedEnv || currentEnvLabel}
-                    onChange={(e) => setEnvVer(e.target.value)}
+                    onChange={(e) => {
+                      setEnvVer(e.target.value);
+                      setPicked(null);
+                    }}
                     SelectProps={{ renderValue: (v) => v }}
                     inputProps={{ "aria-label": "Environment version" }}
                     sx={{ minWidth: 88, ...fieldSx }}
@@ -878,204 +1447,32 @@ export default function RunPlanDialog({
                 ) : (
                   <Box component="span">{currentEnvLabel}</Box>
                 )}
-                {/* Validate holds only Save — a run goes on the saved version. */}
                 {validatingOf(envState) && (
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Validate is running — this run uses the saved version
-                  </Typography>
-                )}
-              </Stack>
-              <Stack direction="row" spacing={1} alignItems="center">
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    color: "text.secondary",
-                    width: 88,
-                    flexShrink: 0,
-                  }}
-                >
-                  Scenarios
-                </Typography>
-                {suites.length ? (
-                  <TextField
-                    select
-                    size="small"
-                    value={suiteId}
-                    onChange={(e) => setSuiteId(e.target.value)}
-                    inputProps={{ "aria-label": "Suite" }}
-                    sx={{ minWidth: 180, ...fieldSx }}
+                  <Tooltip
+                    arrow
+                    title="Validate is running — this run uses the saved version"
                   >
-                    <MenuItem value="all">{`All · ${scopeCount}`}</MenuItem>
-                    {suites.map((x) => (
-                      <MenuItem key={x.id} value={x.id}>
-                        {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
-                      </MenuItem>
-                    ))}
-                  </TextField>
-                ) : (
-                  <Box component="span">{`All ${scopeCount} scenarios`}</Box>
-                )}
-                {suite && (
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Frozen when the run starts
-                  </Typography>
+                    <Typography sx={{ ...VALUE_SX, color: "text.tertiary" }}>
+                      · saved version
+                    </Typography>
+                  </Tooltip>
                 )}
               </Stack>
-            </Stack>
+            </KV>
 
-            {/* ── can I start? one verdict line ── */}
-            {verdict && (
-              <Tooltip
-                arrow
-                placement="top-start"
-                title={
-                  outTip ? (
-                    <Box sx={{ whiteSpace: "pre-line" }}>{outTip}</Box>
-                  ) : (
-                    ""
-                  )
-                }
-              >
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  alignItems="baseline"
-                  sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}
-                >
-                  <Box sx={{ display: "flex", transform: "translateY(-1px)" }}>
-                    <StatusDot
-                      status={verdict.dot}
-                      size={8}
-                      hollow={!!verdict.hollow}
-                      live={!!verdict.live}
-                    />
-                  </Box>
-                  <Typography sx={{ typography: "s1", minWidth: 0 }}>
-                    <Box component="span" sx={{ fontWeight: 600 }}>
-                      {verdict.title}
-                    </Box>
-                    {verdict.rest && (
-                      <Box component="span" sx={{ color: "text.secondary" }}>
-                        {` · ${verdict.rest}`}
-                      </Box>
-                    )}
-                  </Typography>
-                </Stack>
-              </Tooltip>
-            )}
-
-            {verdict && (
-              <RunHeldNotes
-                report={compat}
-                scenarios={envState?.scenarios || []}
-                staleIds={fromSuite?.staleIds || []}
-                envHeld={fromSuite?.blockedList || []}
-              />
-            )}
-
-            {/* ── Ready to run (plan T06): this agent version on this
-              environment, before anything starts — six areas, each blocker
-              with its scenarios and fix ── */}
-            {compat && multi && (
-              <Stack direction="row" spacing={1.5} alignItems="center">
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    color: "text.secondary",
-                    width: 88,
-                    flexShrink: 0,
-                  }}
-                >
-                  Version
-                </Typography>
-                <ToggleButtonGroup
-                  exclusive
-                  size="small"
-                  value={shownVersion}
-                  onChange={(_, v) => v && setViewVersion(v)}
-                  aria-label="Ready to run for version"
-                >
-                  {versionReports.map(({ v, report }) => {
-                    const held = report?.scope?.blocked?.length || 0;
-                    return (
-                      <ToggleButton key={v} value={v}>
-                        {held
-                          ? `${v} · ${report.scope.runnable} of ${report.scope.requested}`
-                          : `${v} · all ready`}
-                      </ToggleButton>
-                    );
-                  })}
-                </ToggleButtonGroup>
-              </Stack>
-            )}
-            {compat && (
-              <ReadyToRun
-                report={compat}
-                scenarios={envState?.scenarios || []}
-                evalCount={(evals || []).length}
-                onFix={(row) => onRepairCompat?.(row, pickedKey)}
-                fixKit={fixKitOf ? fixKitOf(pickedKey) : null}
-                onFixInBuilder={
-                  onFixInBuilder
-                    ? (jobs) => onFixInBuilder(jobs, pickedKey)
-                    : null
-                }
-                onCheck={
-                  onCheckCompat && canCheckCompat?.(pickedKey)
-                    ? () => onCheckCompat(pickedKey)
-                    : undefined
-                }
-                checking={checkingCompat}
-              />
-            )}
-            {/* The agent calls tools this environment can't answer — a row
-                here, not a dialog before the plan. Start run still runs the
-                rest; those scenarios come back not measured. */}
-            {!otherAgent && (
-              <ToolFitRow
-                env={env}
-                envState={envState}
-                patch={patch || undefined}
-                agent={shownVersion || currentEnvAgentLabel}
-                locked={!patch}
-              />
-            )}
-
-            {/* ── how it runs: trials, evaluations, seed and limits ── */}
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1.5}
-              sx={{ pt: 2, borderTop: "1px solid", borderColor: "divider" }}
-            >
-              <Typography
-                sx={{
-                  typography: "s2",
-                  color: "text.secondary",
-                  width: 88,
-                  flexShrink: 0,
-                }}
-              >
-                Trials
-              </Typography>
+            {/* Trials */}
+            <KV label="Trials per scenario">
               {noRun ? (
-                <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                <Typography sx={{ ...VALUE_SX, color: "text.tertiary" }}>
                   —
                 </Typography>
               ) : (
                 <Stack
                   direction="row"
+                  spacing={1}
                   alignItems="center"
                   flexWrap="wrap"
-                  gap={1}
-                  sx={{ typography: "s2", color: "text.secondary" }}
                 >
-                  <Tooltip arrow title={scopeNote || ""}>
-                    <Box component="span" sx={{ color: "text.primary" }}>
-                      {`${runCount} scenario${runCount === 1 ? "" : "s"}`}
-                    </Box>
-                  </Tooltip>
-                  <span>×</span>
                   <TextField
                     size="small"
                     type="number"
@@ -1084,699 +1481,790 @@ export default function RunPlanDialog({
                     inputProps={{
                       min: 1,
                       max: 20,
-                      "aria-label": "Repeats per scenario",
+                      "aria-label": "Trials per scenario",
                       style: { textAlign: "right" },
                     }}
                     sx={{ width: 64, ...fieldSx }}
                   />
-                  <span>{`repeat${Number(attempts) === 1 ? "" : "s"}`}</span>
-                  <Box
-                    component="span"
-                    sx={{
-                      color: "text.primary",
-                      fontWeight: 600,
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    {`= ${estimate.trials} ${unit}${estimate.trials === 1 ? "" : "s"}`}
-                  </Box>
-                  {/* How many repeats a decision needs (Chintan's PR #61
-                      design D): one is a quick read; flaky shows from 3. */}
-                  <Box
-                    component="span"
-                    sx={{
-                      width: "100%",
-                      typography: "s3",
-                      color: "text.tertiary",
-                    }}
-                  >
-                    {Number(attempts) <= 1
-                      ? "With 1 repeat you can't tell if a scenario is flaky — passes sometimes, fails other times. Use 3 or more."
-                      : Number(attempts) < 3
-                        ? "Use 3 or more repeats to tell a flaky scenario from one that always fails."
-                        : `Each scenario runs ${Number(attempts)} times, so the ones that pass only sometimes (flaky) show up.`}
-                  </Box>
-                </Stack>
-              )}
-            </Stack>
-
-            {/* ── who takes part and what scores the run ── */}
-            {
-              <Box sx={{ mt: -1 }}>
-                {[
-                  ...(participants.length
-                    ? [
-                        {
-                          k: "Participants",
-                          v: `${participants[0]?.name || "Coordinator"} + ${participants.length - 1} worker${participants.length === 2 ? "" : "s"}`,
-                          note: `${participants.map((m) => m.name).join(", ")}. ${
-                            participantsEvidence?.source === "instrumented"
-                              ? "Hand-offs are observed in this run."
-                              : "Hand-offs aren't observed; only the overall result counts."
-                          }`,
-                        },
-                      ]
-                    : []),
-                  /* What scores this run: the added evaluations, then the
-                   suggested ones — picked here, never added by default. */
-                  {
-                    k: "Evaluations",
-                    v: (
-                      <Stack spacing={0.5} sx={{ py: 0.25, minWidth: 0 }}>
-                        <Stack direction="row" alignItems="center">
-                          <Box component="span">
-                            {(evals || []).length
-                              ? (evals || []).map((e) => e.name).join(", ")
-                              : "None added"}
-                          </Box>
-                          <Tooltip
-                            arrow
-                            title={
-                              pickable.length
-                                ? "Suggested evaluations score a run only if you pick them. Picked ones are added to this environment's evaluations when the run starts. The scenarios' own checks always run."
-                                : "The scenarios' own checks always run. Add evaluations on the Evaluations step."
-                            }
-                          >
-                            <Box
-                              component="span"
-                              sx={{ display: "inline-flex", ml: 0.75 }}
-                            >
-                              <Iconify
-                                icon="solar:info-circle-linear"
-                                width={14}
-                                sx={{ color: "text.disabled" }}
-                              />
-                            </Box>
-                          </Tooltip>
-                        </Stack>
-                        {pickable.length > 0 && (
-                          <Stack
-                            direction="row"
-                            alignItems="center"
-                            gap={0.75}
-                            flexWrap="wrap"
-                          >
-                            <Box
-                              component="span"
-                              sx={{ color: "text.tertiary" }}
-                            >
-                              Suggested
-                            </Box>
-                            {pickable.map((e) => {
-                              const on = addEvalIds.includes(e.id);
-                              const full = !on && addEvalIds.length >= evalRoom;
-                              return (
-                                <Tooltip
-                                  key={e.id}
-                                  arrow
-                                  title={
-                                    full
-                                      ? "No room for more evaluations on this environment."
-                                      : e.blurb || e.description || ""
-                                  }
-                                >
-                                  <span>
-                                    <Chip
-                                      size="small"
-                                      label={e.name}
-                                      disabled={full}
-                                      onClick={() => toggleEval(e.id)}
-                                      icon={
-                                        <Iconify
-                                          icon={
-                                            on
-                                              ? "solar:check-read-linear"
-                                              : "solar:add-circle-linear"
-                                          }
-                                          width={12}
-                                        />
-                                      }
-                                      variant={on ? "filled" : "outlined"}
-                                      sx={{
-                                        height: 20,
-                                        borderRadius: "4px",
-                                        typography: "s3",
-                                        fontWeight: 500,
-                                        ...(on
-                                          ? {
-                                              bgcolor: "action.selected",
-                                              color: "text.primary",
-                                            }
-                                          : { color: "text.secondary" }),
-                                        "& .MuiChip-icon": {
-                                          ml: "6px",
-                                          mr: "-2px",
-                                          color: "inherit",
-                                        },
-                                        "& .MuiChip-label": { px: "6px" },
-                                      }}
-                                    />
-                                  </span>
-                                </Tooltip>
-                              );
-                            })}
-                          </Stack>
-                        )}
-                      </Stack>
-                    ),
-                    note: null,
-                  },
-                ].map((row) => (
-                  <Stack
-                    key={row.k}
-                    direction="row"
-                    spacing={1.5}
-                    alignItems="flex-start"
-                    sx={{ py: 0.5 }}
-                  >
+                  <Tooltip arrow title={scopeNote || ""}>
                     <Typography
                       sx={{
-                        typography: "s2",
-                        color: "text.secondary",
-                        width: 88,
-                        flexShrink: 0,
-                        pt: "5px",
+                        ...VALUE_SX,
+                        color: "text.tertiary",
+                        fontVariantNumeric: "tabular-nums",
                       }}
                     >
-                      {row.k}
+                      {/* The math in view: "× 12 scenarios = 36 conversations". */}
+                      {estimate.trials === runCount * Number(attempts)
+                        ? `× ${runCount} scenario${runCount === 1 ? "" : "s"} = ${estimate.trials} conversation${estimate.trials === 1 ? "" : "s"}`
+                        : `· ${estimate.trials} conversation${estimate.trials === 1 ? "" : "s"}`}
                     </Typography>
-                    <Box sx={{ minWidth: 0, flex: 1 }}>
-                      <Box
-                        sx={{
-                          typography: "s2",
-                          color: "text.primary",
-                          minHeight: 28,
-                          display: "flex",
-                          alignItems: "center",
-                        }}
-                      >
-                        {row.v}
-                        {/* One line per row; what it means is on hover. */}
-                        {row.note && (
-                          <Tooltip arrow title={row.note}>
-                            <Box
-                              component="span"
-                              sx={{ display: "inline-flex", ml: 0.75 }}
-                            >
-                              <Iconify
-                                icon="solar:info-circle-linear"
-                                width={14}
-                                sx={{ color: "text.disabled" }}
-                              />
-                            </Box>
-                          </Tooltip>
-                        )}
-                      </Box>
-                    </Box>
-                  </Stack>
-                ))}
-              </Box>
-            }
+                  </Tooltip>
+                  {trialsHelpOf(attempts) && (
+                    <Typography sx={{ ...VALUE_SX, color: "text.tertiary" }}>
+                      · 3+ spots flaky
+                    </Typography>
+                  )}
+                </Stack>
+              )}
+            </KV>
 
-            {/* ── a platform agent: what runs for real during this run, named ── */}
-            {(() => {
-              const v = envState?.agent?.values || {};
-              if (!v.provider || !v.agentId) return null;
-              const a = assistantsFor(v.provider).find(
-                (x) => x.id === v.agentId,
-              ) || { id: v.agentId, name: envState?.agent?.name };
-              const live = (
-                platformPreviewOf(v.provider, a, { voice })?.tools || []
-              ).filter((t) => t.handling === "live");
-              if (!live.length) return null;
-              return (
+            {/* Readiness */}
+            {(compat || verdict) && (
+              <KV
+                label="Readiness"
+                detail={
+                  <Stack
+                    spacing={1}
+                    sx={{ pb: 1, "&:empty": { display: "none" } }}
+                  >
+                    {needsFix && (
+                      <RunHeldNotes
+                        report={compat}
+                        scenarios={envState?.scenarios || []}
+                        staleIds={fromSuite?.staleIds || []}
+                        envHeld={fromSuite?.blockedList || []}
+                      />
+                    )}
+                    {needsFix && compat && multi && (
+                      <ToggleButtonGroup
+                        exclusive
+                        size="small"
+                        value={shownVersion}
+                        onChange={(_, v) => v && setViewVersion(v)}
+                        aria-label="Ready to run for version"
+                      >
+                        {versionReports.map(({ v, report }) => {
+                          const held = report?.scope?.blocked?.length || 0;
+                          return (
+                            <ToggleButton key={v} value={v}>
+                              {held
+                                ? `${v} · ${report.scope.runnable} of ${report.scope.requested}`
+                                : `${v} · all ready`}
+                            </ToggleButton>
+                          );
+                        })}
+                      </ToggleButtonGroup>
+                    )}
+                    {needsFix && compat && !readyAsSource && (
+                      <ReadyToRun
+                        report={compat}
+                        scenarios={envState?.scenarios || []}
+                        evalCount={(evals || []).length}
+                        onFix={(row) => onRepairCompat?.(row, pickedKey)}
+                        fixKit={fixKitOf ? fixKitOf(pickedKey) : null}
+                        onFixInBuilder={
+                          onFixInBuilder
+                            ? (jobs) => onFixInBuilder(jobs, pickedKey)
+                            : null
+                        }
+                        onCheck={
+                          onCheckCompat && canCheckCompat?.(pickedKey)
+                            ? () => onCheckCompat(pickedKey)
+                            : undefined
+                        }
+                        checking={checkingCompat}
+                      />
+                    )}
+                    {!otherAgent && (
+                      <ToolFitRow
+                        env={env}
+                        envState={envState}
+                        patch={patch || undefined}
+                        agent={shownVersion || currentEnvAgentLabel}
+                        locked={!patch}
+                      />
+                    )}
+                    {/* Provider limits are information, not a fix — shown only
+                      when the check found a problem. */}
+                    {checkState === "problems" && compat && (
+                      <KnownLimits
+                        report={compat}
+                        scenarios={envState?.scenarios || []}
+                        evalCount={(evals || []).length}
+                        provider={
+                          fixKitOf?.(pickedKey)?.agent?.values?.provider ||
+                          envState?.agent?.values?.provider
+                        }
+                      />
+                    )}
+                  </Stack>
+                }
+              >
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <StatusDot
+                    status={readyDot.dot}
+                    size={8}
+                    hollow={!!readyDot.hollow}
+                    live={!!readyDot.live}
+                  />
+                  <Typography sx={VALUE_SX}>{readyText}</Typography>
+                  {readinessTip && (
+                    <Tooltip
+                      arrow
+                      title={
+                        <Box sx={{ whiteSpace: "pre-line" }}>
+                          {readinessTip}
+                        </Box>
+                      }
+                    >
+                      <Box component="span" sx={{ display: "inline-flex" }}>
+                        <Iconify
+                          icon="solar:info-circle-linear"
+                          width={14}
+                          sx={{ color: "text.disabled" }}
+                        />
+                      </Box>
+                    </Tooltip>
+                  )}
+                </Stack>
+              </KV>
+            )}
+
+            {/* Evaluations */}
+            <KV
+              label="Evaluations"
+              detail={
+                showSuggested && !baseline && pickable.length > 0 ? (
+                  <Box sx={{ pb: 1 }}>
+                    {pickable.length > 0 && (
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        gap={0.75}
+                        flexWrap="wrap"
+                      >
+                        <Box component="span" sx={{ color: "text.tertiary" }}>
+                          Suggested
+                        </Box>
+                        {pickable.map((e) => {
+                          const on = addEvalIds.includes(e.id);
+                          const full = !on && addEvalIds.length >= evalRoom;
+                          return (
+                            <Tooltip
+                              key={e.id}
+                              arrow
+                              title={
+                                full
+                                  ? "No room for more evaluations on this environment."
+                                  : e.blurb || e.description || ""
+                              }
+                            >
+                              <span>
+                                <Chip
+                                  size="small"
+                                  label={e.name}
+                                  disabled={full}
+                                  onClick={() => toggleEval(e.id)}
+                                  icon={
+                                    <Iconify
+                                      icon={
+                                        on
+                                          ? "solar:check-read-linear"
+                                          : "solar:add-circle-linear"
+                                      }
+                                      width={12}
+                                    />
+                                  }
+                                  variant={on ? "filled" : "outlined"}
+                                  sx={{
+                                    height: 20,
+                                    borderRadius: "4px",
+                                    typography: "s3",
+                                    fontWeight: 500,
+                                    ...(on
+                                      ? {
+                                          bgcolor: "action.selected",
+                                          color: "text.primary",
+                                        }
+                                      : { color: "text.secondary" }),
+                                    "& .MuiChip-icon": {
+                                      ml: "6px",
+                                      mr: "-2px",
+                                      color: "inherit",
+                                    },
+                                    "& .MuiChip-label": { px: "6px" },
+                                  }}
+                                />
+                              </span>
+                            </Tooltip>
+                          );
+                        })}
+                      </Stack>
+                    )}
+                  </Box>
+                ) : null
+              }
+            >
+              <Stack direction="row" alignItems="center" sx={{ minWidth: 0 }}>
+                <Typography sx={VALUE_SX}>
+                  {evalNames}
+                  {/* A re-run grades with the same evaluations, so its
+                      result compares; adding one is for a new run. */}
+                  {baseline && (
+                    <Box
+                      component="span"
+                      sx={{ color: "text.tertiary", ml: 0.75 }}
+                    >
+                      {`· same as ${fromRun || baseline.label || "the run"}`}
+                    </Box>
+                  )}
+                  {!baseline && pickable.length > 0 && (
+                    <Box
+                      component="button"
+                      type="button"
+                      onClick={() => setShowSuggested((v) => !v)}
+                      aria-expanded={showSuggested}
+                      sx={{
+                        ...LINK_SX,
+                        color: "text.tertiary",
+                        ml: 0.75,
+                        "&:hover": { color: "text.primary" },
+                      }}
+                    >
+                      {addEvalIds.length
+                        ? `· +${addEvalIds.length} added`
+                        : `· +${pickable.length} suggested`}
+                    </Box>
+                  )}
+                </Typography>
                 <Tooltip
                   arrow
-                  title={`${live.map((t) => `${t.name}: ${t.line}`).join(" · ")}. Your own tools are redirected to the test world.`}
-                >
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: "text.secondary",
-                      mt: -1,
-                      alignSelf: "flex-start",
-                    }}
-                  >
-                    {`Runs for real: ${live.map((t) => t.name).join(", ")}`}
-                  </Typography>
-                </Tooltip>
-              );
-            })()}
-
-            {/* ── seed and limits: one line; each one on request ── */}
-            <Box>
-              <Stack direction="row" alignItems="center" spacing={1.5}>
-                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  {seedable ? "Seed and limits" : "Limits"}
-                </Typography>
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flex: 1,
-                    minWidth: 0,
-                    textAlign: "right",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {limitsLine(limits, {
-                    voice,
-                    /* A seed only where the agent can take one (runs.md). */
-                    seed: !seedable
-                      ? null
-                      : seedFrom
-                        ? `seed of ${seedFrom}`
-                        : "new seed",
-                  })}
-                </Typography>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => setShowLimits((v) => !v)}
-                  aria-expanded={showLimits}
-                  startIcon={
-                    showLimits ? null : (
-                      <Iconify icon="solar:pen-linear" width={14} />
-                    )
+                  title={
+                    pickable.length
+                      ? "Suggested evaluations score a run only if you pick them. The scenarios' own checks always run."
+                      : "The scenarios' own checks always run."
                   }
-                  sx={{ flexShrink: 0 }}
                 >
-                  {showLimits ? "Done" : "Edit"}
-                </Button>
-              </Stack>
-              <Collapse in={showLimits}>
-                <Box sx={{ mt: 0.5 }}>
-                  {seedable && (
-                    <Row
-                      label="Seed"
-                      detail={
-                        seedFrom
-                          ? `Same callers and data as ${seedFrom}`
-                          : "Saved with the run"
-                      }
-                      value={seedFrom ? `Same as ${seedFrom}` : "New"}
-                      muted
+                  <Box
+                    component="span"
+                    sx={{ display: "inline-flex", ml: 0.75 }}
+                  >
+                    <Iconify
+                      icon="solar:info-circle-linear"
+                      width={14}
+                      sx={{ color: "text.disabled" }}
                     />
-                  )}
-                  <Row
-                    label={voice ? "Longest call" : "Per-trial timeout"}
-                    detail="Then it fails as timed out"
+                  </Box>
+                </Tooltip>
+              </Stack>
+            </KV>
+
+            {/* Participants */}
+            {participants.length > 0 && (
+              <KV label="Participants">
+                <Stack direction="row" alignItems="center">
+                  <Typography sx={VALUE_SX}>
+                    {`${participants[0]?.name || "Coordinator"} + ${participants.length - 1} worker${participants.length === 2 ? "" : "s"}`}
+                  </Typography>
+                  <Tooltip
+                    arrow
+                    title={`${participants.map((m) => m.name).join(", ")}. ${
+                      participantsEvidence?.source === "instrumented"
+                        ? "Hand-offs are observed in this run."
+                        : "Hand-offs aren't observed; only the overall result counts."
+                    }`}
                   >
-                    <TextField
-                      select
-                      size="small"
-                      value={limits.trialTimeout}
-                      onChange={(e) =>
-                        setLimits((l) => ({
-                          ...l,
-                          trialTimeout: Number(e.target.value),
-                        }))
-                      }
-                      inputProps={{ "aria-label": "Per-trial timeout" }}
-                      sx={{ width: 120, ...fieldSx }}
+                    <Box
+                      component="span"
+                      sx={{ display: "inline-flex", ml: 0.75 }}
                     >
-                      {TRIAL_TIMEOUTS.map((m) => (
-                        <MenuItem key={m} value={m}>
-                          {minutesLabel(m)}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  </Row>
-                  <Row
-                    label="Whole-run deadline"
-                    detail={`No new ${unit}s after it`}
-                  >
-                    <TextField
-                      select
-                      size="small"
-                      value={limits.runDeadline}
-                      onChange={(e) =>
-                        setLimits((l) => ({
-                          ...l,
-                          runDeadline: Number(e.target.value),
-                        }))
-                      }
-                      inputProps={{ "aria-label": "Whole-run deadline" }}
-                      sx={{ width: 120, ...fieldSx }}
+                      <Iconify
+                        icon="solar:info-circle-linear"
+                        width={14}
+                        sx={{ color: "text.disabled" }}
+                      />
+                    </Box>
+                  </Tooltip>
+                </Stack>
+              </KV>
+            )}
+
+            {/* Limits */}
+            <KV
+              label="Limits"
+              /* Same limits on a re-run: a different turn or time limit can
+                 cause or hide a failure. */
+              action={
+                baseline ? null : (
+                  <TextLink onClick={() => setShowLimits((v) => !v)}>
+                    {showLimits ? "Done" : "Edit"}
+                  </TextLink>
+                )
+              }
+              detail={
+                <Collapse in={showLimits}>
+                  <Box sx={{ pb: 1 }}>
+                    {seedable && (
+                      <Row
+                        label="Seed"
+                        detail={
+                          seedFrom
+                            ? `Same callers and data as ${seedFrom}`
+                            : "Saved with the run"
+                        }
+                        value={seedFrom ? `Same as ${seedFrom}` : "New"}
+                        muted
+                      />
+                    )}
+                    <Row
+                      label={voice ? "Longest call" : "Per-trial timeout"}
+                      detail="Then it fails as timed out"
                     >
-                      {RUN_DEADLINES.map((m) => (
-                        <MenuItem key={m} value={m}>
-                          {minutesLabel(m)}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  </Row>
-                  <Row
-                    label="Turn limit"
-                    detail="Set in the environment's Settings"
-                    value={`${limits.turnLimit} turns`}
-                    muted
-                  />
-                  {limits.stepLimit ? (
-                    <Row label="Tool-step limit" detail="Tool calls per trial">
                       <TextField
                         select
                         size="small"
-                        value={limits.stepLimit}
+                        value={limits.trialTimeout}
                         onChange={(e) =>
                           setLimits((l) => ({
                             ...l,
-                            stepLimit: Number(e.target.value),
+                            trialTimeout: Number(e.target.value),
                           }))
                         }
-                        inputProps={{ "aria-label": "Tool-step limit" }}
+                        inputProps={{ "aria-label": "Per-trial timeout" }}
                         sx={{ width: 120, ...fieldSx }}
                       >
-                        {STEP_LIMITS.map((m) => (
+                        {TRIAL_TIMEOUTS.map((m) => (
                           <MenuItem key={m} value={m}>
-                            {`${m} steps`}
+                            {minutesLabel(m)}
                           </MenuItem>
                         ))}
                       </TextField>
                     </Row>
-                  ) : (
                     <Row
-                      label="Tool-step limit"
-                      detail="Its tools run on its own platform"
-                      value="Not enforced"
+                      label="Whole-run deadline"
+                      detail={`No new ${unit}s after it`}
+                    >
+                      <TextField
+                        select
+                        size="small"
+                        value={limits.runDeadline}
+                        onChange={(e) =>
+                          setLimits((l) => ({
+                            ...l,
+                            runDeadline: Number(e.target.value),
+                          }))
+                        }
+                        inputProps={{ "aria-label": "Whole-run deadline" }}
+                        sx={{ width: 120, ...fieldSx }}
+                      >
+                        {RUN_DEADLINES.map((m) => (
+                          <MenuItem key={m} value={m}>
+                            {minutesLabel(m)}
+                          </MenuItem>
+                        ))}
+                      </TextField>
+                    </Row>
+                    <Row
+                      label="Turn limit"
+                      detail="Set in the environment's Settings"
+                      value={`${limits.turnLimit} turns`}
                       muted
                     />
-                  )}
-                </Box>
-              </Collapse>
-            </Box>
-
-            {compat && !noRun && !ranBefore && (
-              <Stack direction="row" spacing={1.5} alignItems="baseline">
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    color: "text.secondary",
-                    width: 88,
-                    flexShrink: 0,
-                  }}
-                >
-                  First run
-                </Typography>
-                <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  {`prepares agent ${agentVerLbl} on environment ${envLbl} first, which takes several minutes`}
-                </Typography>
-              </Stack>
-            )}
-            {compat && (
-              <KnownLimits
-                report={compat}
-                scenarios={envState?.scenarios || []}
-                evalCount={(evals || []).length}
-                provider={
-                  fixKitOf?.(pickedKey)?.agent?.values?.provider ||
-                  envState?.agent?.values?.provider
-                }
-              />
-            )}
-
-            {/* Simulation runs show no pre-run estimate or cap (clarified plan,
-             30 Oct); improvements keep their limits. */}
-            {SHOW_RUN_COST && (
-              <>
-                {/* ── what it costs: one number; the breakdown on request ── */}
-                <Box>
-                  <Stack
-                    direction="row"
-                    alignItems="baseline"
-                    justifyContent="space-between"
-                    gap={2}
-                  >
-                    <Typography
-                      sx={{ typography: "s2", color: "text.secondary" }}
-                    >
-                      Estimated cost
-                    </Typography>
-                    <Typography
-                      sx={{
-                        typography: "m3",
-                        fontWeight: 600,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {estimate.platform.unknown
-                        ? "Can't estimate"
-                        : `≈ ${rangeLabel(estimate.platform.low, estimate.platform.high)}`}
-                    </Typography>
-                  </Stack>
-                  {external && (
-                    <Typography
-                      noWrap
-                      sx={{
-                        typography: "s3",
-                        color: "text.tertiary",
-                        textAlign: "right",
-                      }}
-                    >
-                      {`+ ${external.label.toLowerCase().startsWith("your") ? external.label.replace(/^Your/, "your") : external.label} on your own account: ${usdRange(external.low, external.high)}`}
-                    </Typography>
-                  )}
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={() => setShowBreakdown((v) => !v)}
-                    aria-expanded={showBreakdown}
-                    endIcon={
-                      <Iconify
-                        icon={
-                          showBreakdown
-                            ? "solar:alt-arrow-up-linear"
-                            : "solar:alt-arrow-down-linear"
-                        }
-                        width={14}
-                      />
-                    }
-                    sx={{ px: 0.5, ml: -0.5, mt: 0.25 }}
-                  >
-                    {showBreakdown ? "Hide breakdown" : "Show breakdown"}
-                  </Button>
-                  <Collapse in={showBreakdown}>
-                    <Box sx={{ mt: 0.5 }}>
-                      {estimate.lines.map((l) => (
-                        <Row
-                          key={l.id}
-                          label={l.label}
-                          detail={l.detail}
-                          value={lineValue(l)}
-                          muted={l.status !== "priced"}
-                        />
-                      ))}
-                      {estimate.external.map((x) => (
-                        <Row
-                          key={x.id}
-                          label={`${x.label} (not in the total)`}
-                          detail={x.source}
-                          value={usdRange(x.low, x.high)}
-                          muted
-                        />
-                      ))}
-                      {/* A multi-agent app: each worker's own model calls, in the
-                    estimate as unknown — never zero. */}
-                      {membersOf(envState?.agent).length > 1 &&
-                        membersOf(envState?.agent).map((m) => (
-                          <Row
-                            key={`member-${m.id}`}
-                            label={`${m.name} (not in the total)`}
-                            detail={`${m.model || "its model"} on your account · shares this run's limit`}
-                            value="Unknown"
-                            muted
-                          />
-                        ))}
+                    {limits.stepLimit ? (
                       <Row
-                        label="Warn me at"
-                        detail="Continue, lower the limit or stop"
+                        label="Tool-step limit"
+                        detail="Tool calls per trial"
                       >
                         <TextField
                           select
                           size="small"
-                          value={alertAt}
-                          onChange={(e) => setAlertAt(Number(e.target.value))}
-                          inputProps={{ "aria-label": "Warning threshold" }}
-                          sx={{ width: 160, ...fieldSx }}
+                          value={limits.stepLimit}
+                          onChange={(e) =>
+                            setLimits((l) => ({
+                              ...l,
+                              stepLimit: Number(e.target.value),
+                            }))
+                          }
+                          inputProps={{ "aria-label": "Tool-step limit" }}
+                          sx={{ width: 120, ...fieldSx }}
                         >
-                          {ALERTS.map((a) => (
-                            <MenuItem
-                              key={a}
-                              value={a}
-                            >{`${Math.round(a * 100)}% of the limit`}</MenuItem>
+                          {STEP_LIMITS.map((m) => (
+                            <MenuItem key={m} value={m}>
+                              {`${m} steps`}
+                            </MenuItem>
                           ))}
                         </TextField>
                       </Row>
-                    </Box>
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
-                    >
-                      {`${estimate.rateLine} · ${freeLine}`}
-                    </Typography>
-                  </Collapse>
-                </Box>
-
-                {/* ── where it stops ── */}
-                <Box>
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    justifyContent="space-between"
-                    gap={2}
+                    ) : (
+                      <Row
+                        label="Tool-step limit"
+                        detail="Its tools run on its own platform"
+                        value="Not enforced"
+                        muted
+                      />
+                    )}
+                  </Box>
+                </Collapse>
+              }
+            >
+              <Typography sx={VALUE_SX}>
+                {`${minutesLabel(limits.trialTimeout)} a ${voice ? "call" : "trial"} · ${limits.turnLimit} turns`}
+                {baseline && (
+                  <Box
+                    component="span"
+                    sx={{ color: "text.tertiary", ml: 0.75 }}
                   >
-                    <Stack direction="row" alignItems="center" gap={0.5}>
-                      <Typography
-                        sx={{ typography: "s2", color: "text.secondary" }}
-                      >
-                        Stop at
-                      </Typography>
-                      <Tooltip
-                        arrow
-                        title={`At the limit no new ${unit}s start; running ones finish (up to ~${overrun.toLocaleString()} credits more). Warning at ${Math.round(alertAt * 100)}%.${versions.length > 1 ? ` Shared by the ${versions.length} versions — each run holds ${Math.floor((effectiveCap || 0) / versions.length).toLocaleString()}.` : ""}${alsoCount ? ` Shared by the ${alsoCount + 1} environments — each run holds ${Math.floor((effectiveCap || 0) / (alsoCount + 1)).toLocaleString()}.` : ""}`}
-                      >
-                        <Iconify
-                          icon="solar:info-circle-linear"
-                          width={14}
-                          sx={{ color: "text.tertiary" }}
-                        />
-                      </Tooltip>
-                    </Stack>
-                    <TextField
-                      size="small"
-                      type="number"
-                      value={effectiveCap ?? ""}
-                      onChange={(e) => {
-                        setCapTouched(true);
-                        setCap(
-                          e.target.value === "" ? null : Number(e.target.value),
-                        );
-                      }}
-                      error={effectiveCap > WORKSPACE_POLICY.maxRunCredits}
-                      InputProps={{
-                        endAdornment: (
-                          <InputAdornment position="end">
-                            credits
-                          </InputAdornment>
-                        ),
-                      }}
-                      inputProps={{
-                        min: 1,
-                        "aria-label": "Run spending limit in credits",
-                        style: { textAlign: "right" },
-                      }}
-                      sx={{ width: 168, ...fieldSx }}
-                    />
-                  </Stack>
+                    {`· same as ${fromRun || baseline.label || "the run"}`}
+                  </Box>
+                )}
+              </Typography>
+            </KV>
+          </Box>
+
+          {/* Scenarios to run — always open, filling the drawer. */}
+          <Box
+            sx={{
+              mt: 2,
+              flex: 1,
+              minHeight: 220,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ mb: 1 }}
+            >
+              <Typography sx={{ ...VALUE_SX, fontWeight: 600 }}>
+                Scenarios
+              </Typography>
+              {cantRunN > 0 && (
+                <Tooltip arrow title={cantRunWhy}>
+                  <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+                    {`· ${cantRunN} can't run here`}
+                  </Typography>
+                </Tooltip>
+              )}
+              <Box flex={1} />
+              {suites.length > 0 && (
+                <TextField
+                  select
+                  size="small"
+                  value={suiteId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSuiteId(v);
+                    const x = suites.find((q) => q.id === v);
+                    setPicked(x ? x.ids : null);
+                  }}
+                  inputProps={{ "aria-label": "Suite" }}
+                  sx={{ minWidth: 160, ...fieldSx }}
+                >
+                  <MenuItem value="all">{`All · ${scopeCount}`}</MenuItem>
+                  {suites.map((x) => (
+                    <MenuItem key={x.id} value={x.id}>
+                      {`${x.name} · v${x.version || 1} · ${x.ids.length}`}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
+            </Stack>
+            {listActive ? (
+              <ScenarioChecklist
+                fill
+                /* The ones picked when it opened come first (stable while
+                   ticking), so a re-run's 10 aren't lost among 62. */
+                rows={(() => {
+                  const first = new Set(defaultPick);
+                  return [
+                    ...scopeRows.filter((r) => first.has(r.id)),
+                    ...scopeRows.filter((r) => !first.has(r.id)),
+                  ];
+                })()}
+                selected={selIds}
+                onToggle={toggleScenario}
+                onAll={() => setPicked([...okIds])}
+                onNone={() => setPicked([])}
+                envLabel={envLbl}
+              />
+            ) : (
+              <Typography sx={VALUE_SX}>
+                {`${shownCount} scenario${shownCount === 1 ? "" : "s"}`}
+              </Typography>
+            )}
+          </Box>
+
+          {/* Simulation runs show no pre-run estimate or cap (clarified plan,
+             30 Oct); improvements keep their limits. */}
+          {SHOW_RUN_COST && (
+            <>
+              {/* ── what it costs: one number; the breakdown on request ── */}
+              <Box>
+                <Stack
+                  direction="row"
+                  alignItems="baseline"
+                  justifyContent="space-between"
+                  gap={2}
+                >
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
+                  >
+                    Estimated cost
+                  </Typography>
+                  <Typography
+                    sx={{
+                      typography: "m3",
+                      fontWeight: 600,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {estimate.platform.unknown
+                      ? "Can't estimate"
+                      : `≈ ${rangeLabel(estimate.platform.low, estimate.platform.high)}`}
+                  </Typography>
+                </Stack>
+                {external && (
                   <Typography
                     noWrap
                     sx={{
                       typography: "s3",
                       color: "text.tertiary",
-                      mt: 0.5,
                       textAlign: "right",
-                      fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {[
-                      `Up to ${WORKSPACE_POLICY.maxRunCredits.toLocaleString()} per run`,
-                      check.allowance.limit == null
-                        ? null
-                        : `${check.allowance.left.toLocaleString()} left this month${ledger.heldRuns ? ` (${ledger.held.toLocaleString()} held by ${ledger.heldRuns} running)` : ""}`,
-                      check.project.limit == null
-                        ? null
-                        : `${check.project.name} ${check.projectLeft.toLocaleString()} left`,
-                      check.user.limit == null
-                        ? null
-                        : `You ${check.user.left.toLocaleString()} left`,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
+                    {`+ ${external.label.toLowerCase().startsWith("your") ? external.label.replace(/^Your/, "your") : external.label} on your own account: ${usdRange(external.low, external.high)}`}
                   </Typography>
-                  {check.notes.map((n) => (
-                    <Typography
-                      key={n}
-                      sx={{
-                        typography: "s3",
-                        color: "status.warning.fg",
-                        mt: 0.5,
-                        textAlign: "right",
-                      }}
+                )}
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setShowBreakdown((v) => !v)}
+                  aria-expanded={showBreakdown}
+                  endIcon={
+                    <Iconify
+                      icon={
+                        showBreakdown
+                          ? "solar:alt-arrow-up-linear"
+                          : "solar:alt-arrow-down-linear"
+                      }
+                      width={14}
+                    />
+                  }
+                  sx={{ px: 0.5, ml: -0.5, mt: 0.25 }}
+                >
+                  {showBreakdown ? "Hide breakdown" : "Show breakdown"}
+                </Button>
+                <Collapse in={showBreakdown}>
+                  <Box sx={{ mt: 0.5 }}>
+                    {estimate.lines.map((l) => (
+                      <Row
+                        key={l.id}
+                        label={l.label}
+                        detail={l.detail}
+                        value={lineValue(l)}
+                        muted={l.status !== "priced"}
+                      />
+                    ))}
+                    {estimate.external.map((x) => (
+                      <Row
+                        key={x.id}
+                        label={`${x.label} (not in the total)`}
+                        detail={x.source}
+                        value={usdRange(x.low, x.high)}
+                        muted
+                      />
+                    ))}
+                    {/* A multi-agent app: each worker's own model calls, in the
+                    estimate as unknown — never zero. */}
+                    {membersOf(envState?.agent).length > 1 &&
+                      membersOf(envState?.agent).map((m) => (
+                        <Row
+                          key={`member-${m.id}`}
+                          label={`${m.name} (not in the total)`}
+                          detail={`${m.model || "its model"} on your account · shares this run's limit`}
+                          value="Unknown"
+                          muted
+                        />
+                      ))}
+                    <Row
+                      label="Warn me at"
+                      detail="Continue, lower the limit or stop"
                     >
-                      {n}
-                    </Typography>
-                  ))}
-                  {/* Over the admin's per-run limit even at its most: say what fits. */}
-                  {overPolicy && (
-                    <Stack
-                      direction="row"
-                      justifyContent="flex-end"
-                      alignItems="center"
-                      gap={1}
-                      sx={{ mt: 0.5 }}
-                    >
-                      <Typography
-                        sx={{ typography: "s3", color: "text.secondary" }}
+                      <TextField
+                        select
+                        size="small"
+                        value={alertAt}
+                        onChange={(e) => setAlertAt(Number(e.target.value))}
+                        inputProps={{ "aria-label": "Warning threshold" }}
+                        sx={{ width: 160, ...fieldSx }}
                       >
-                        {fitAttempts >= 1
-                          ? `${fitAttempts} attempt${fitAttempts === 1 ? "" : "s"} fit${fitAttempts === 1 ? "s" : ""} under ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)}, or ask an admin to raise the per-run limit.`
-                          : "Pick fewer scenarios, or ask an admin to raise the per-run limit."}
-                      </Typography>
-                      {fitAttempts >= 1 && (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => setAttempts(fitAttempts)}
-                          sx={{
-                            color: "text.primary",
-                            borderColor: "divider",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {`Use ${fitAttempts}`}
-                        </Button>
-                      )}
-                    </Stack>
+                        {ALERTS.map((a) => (
+                          <MenuItem
+                            key={a}
+                            value={a}
+                          >{`${Math.round(a * 100)}% of the limit`}</MenuItem>
+                        ))}
+                      </TextField>
+                    </Row>
+                  </Box>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
+                  >
+                    {`${estimate.rateLine} · ${freeLine}`}
+                  </Typography>
+                </Collapse>
+              </Box>
+
+              {/* ── where it stops ── */}
+              <Box>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  justifyContent="space-between"
+                  gap={2}
+                >
+                  <Stack direction="row" alignItems="center" gap={0.5}>
+                    <Typography
+                      sx={{ typography: "s2", color: "text.secondary" }}
+                    >
+                      Stop at
+                    </Typography>
+                    <Tooltip
+                      arrow
+                      title={`At the limit no new ${unit}s start; running ones finish (up to ~${overrun.toLocaleString()} credits more). Warning at ${Math.round(alertAt * 100)}%.${versions.length > 1 ? ` Shared by the ${versions.length} versions — each run holds ${Math.floor((effectiveCap || 0) / versions.length).toLocaleString()}.` : ""}${alsoCount ? ` Shared by the ${alsoCount + 1} environments — each run holds ${Math.floor((effectiveCap || 0) / (alsoCount + 1)).toLocaleString()}.` : ""}`}
+                    >
+                      <Iconify
+                        icon="solar:info-circle-linear"
+                        width={14}
+                        sx={{ color: "text.tertiary" }}
+                      />
+                    </Tooltip>
+                  </Stack>
+                  <TextField
+                    size="small"
+                    type="number"
+                    value={effectiveCap ?? ""}
+                    onChange={(e) => {
+                      setCapTouched(true);
+                      setCap(
+                        e.target.value === "" ? null : Number(e.target.value),
+                      );
+                    }}
+                    error={effectiveCap > WORKSPACE_POLICY.maxRunCredits}
+                    InputProps={{
+                      endAdornment: (
+                        <InputAdornment position="end">credits</InputAdornment>
+                      ),
+                    }}
+                    inputProps={{
+                      min: 1,
+                      "aria-label": "Run spending limit in credits",
+                      style: { textAlign: "right" },
+                    }}
+                    sx={{ width: 168, ...fieldSx }}
+                  />
+                </Stack>
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    mt: 0.5,
+                    textAlign: "right",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {[
+                    `Up to ${WORKSPACE_POLICY.maxRunCredits.toLocaleString()} per run`,
+                    check.allowance.limit == null
+                      ? null
+                      : `${check.allowance.left.toLocaleString()} left this month${ledger.heldRuns ? ` (${ledger.held.toLocaleString()} held by ${ledger.heldRuns} running)` : ""}`,
+                    check.project.limit == null
+                      ? null
+                      : `${check.project.name} ${check.projectLeft.toLocaleString()} left`,
+                    check.user.limit == null
+                      ? null
+                      : `You ${check.user.left.toLocaleString()} left`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Typography>
+                {check.notes.map((n) => (
+                  <Typography
+                    key={n}
+                    sx={{
+                      typography: "s3",
+                      color: "status.warning.fg",
+                      mt: 0.5,
+                      textAlign: "right",
+                    }}
+                  >
+                    {n}
+                  </Typography>
+                ))}
+                {/* Over the admin's per-run limit even at its most: say what fits. */}
+                {overPolicy && (
+                  <Stack
+                    direction="row"
+                    justifyContent="flex-end"
+                    alignItems="center"
+                    gap={1}
+                    sx={{ mt: 0.5 }}
+                  >
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
+                      {fitAttempts >= 1
+                        ? `${fitAttempts} attempt${fitAttempts === 1 ? "" : "s"} fit${fitAttempts === 1 ? "s" : ""} under ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)}, or ask an admin to raise the per-run limit.`
+                        : "Pick fewer scenarios, or ask an admin to raise the per-run limit."}
+                    </Typography>
+                    {fitAttempts >= 1 && (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => setAttempts(fitAttempts)}
+                        sx={{
+                          color: "text.primary",
+                          borderColor: "divider",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {`Use ${fitAttempts}`}
+                      </Button>
+                    )}
+                  </Stack>
+                )}
+              </Box>
+            </>
+          )}
+
+          {!pairHold && check.holds.length > 0 && (
+            <Box
+              role="alert"
+              sx={{
+                border: "1px solid",
+                borderColor: "status.danger.border",
+                bgcolor: "status.danger.bg",
+                borderRadius: "8px",
+                px: 1.5,
+                py: 1,
+              }}
+            >
+              {check.holds.map((h) => (
+                <Box key={h.id} sx={{ "& + &": { mt: 0.75 } }}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      color: "status.danger.fg",
+                    }}
+                  >
+                    {h.title}
+                  </Typography>
+                  {h.line && (
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
+                      {h.line}
+                    </Typography>
                   )}
                 </Box>
-              </>
-            )}
-
-            {!pairHold && check.holds.length > 0 && (
-              <Box
-                role="alert"
-                sx={{
-                  border: "1px solid",
-                  borderColor: "status.danger.border",
-                  bgcolor: "status.danger.bg",
-                  borderRadius: "8px",
-                  px: 1.5,
-                  py: 1,
-                }}
-              >
-                {check.holds.map((h) => (
-                  <Box key={h.id} sx={{ "& + &": { mt: 0.75 } }}>
-                    <Typography
-                      sx={{
-                        typography: "s2",
-                        fontWeight: 600,
-                        color: "status.danger.fg",
-                      }}
-                    >
-                      {h.title}
-                    </Typography>
-                    {h.line && (
-                      <Typography
-                        sx={{ typography: "s3", color: "text.secondary" }}
-                      >
-                        {h.line}
-                      </Typography>
-                    )}
-                  </Box>
-                ))}
-              </Box>
-            )}
-          </Stack>
+              ))}
+            </Box>
+          )}
         </Box>
 
         {(submit === "rejected" || submit === "timeout") && (
@@ -1785,7 +2273,7 @@ export default function RunPlanDialog({
             alignItems="center"
             spacing={1.5}
             sx={{
-              mx: 2.5,
+              mx: 3,
               mb: 1,
               px: 1.5,
               py: 1,
@@ -1823,7 +2311,7 @@ export default function RunPlanDialog({
           direction="row"
           justifyContent="flex-end"
           spacing={1}
-          sx={{ px: 2.5, py: 1.5, borderTop: 1, borderColor: "divider" }}
+          sx={{ px: 3, py: 2, borderTop: 1, borderColor: "divider" }}
         >
           <Button
             size="small"
@@ -1836,13 +2324,17 @@ export default function RunPlanDialog({
           <Tooltip
             arrow
             title={
-              canStart
-                ? SHOW_RUN_COST
-                  ? `${estimate.trials} ${unit}s · stops at ${fmtCredits(effectiveCap)}`
-                  : `${estimate.trials} ${unit}s`
-                : (pairHold && verdict
-                    ? `${verdict.title}${verdict.rest ? ` · ${verdict.rest}` : ""}`
-                    : check.holds[0]?.title) || ""
+              checkHold
+                ? "Waiting for the readiness check"
+                : nothingPicked
+                  ? "Pick at least one scenario"
+                  : canRun
+                    ? SHOW_RUN_COST
+                      ? `${estimate.trials} ${unit}s · stops at ${fmtCredits(effectiveCap)}`
+                      : `${estimate.trials} ${unit}s`
+                    : (pairHold && verdict
+                        ? `${verdict.title}${verdict.rest ? ` · ${verdict.rest}` : ""}`
+                        : check.holds[0]?.title) || ""
             }
           >
             <span>
@@ -1851,9 +2343,10 @@ export default function RunPlanDialog({
                 variant="contained"
                 color="primary"
                 disabled={
-                  !canStart || submit === "sending" || submit === "timeout"
+                  !canRun || submit === "sending" || submit === "timeout"
                 }
-                startIcon={<Iconify icon="solar:play-bold" width={14} />}
+                startIcon={<Iconify icon="solar:play-bold" width={16} />}
+                sx={{ fontSize: 14, fontWeight: 600, px: 2 }}
                 onClick={() => {
                   if (submitDemo === "rejected" || submitDemo === "timeout") {
                     setSubmit("sending");
@@ -1871,7 +2364,16 @@ export default function RunPlanDialog({
                           version: otherAgent.version,
                         }
                       : null,
-                    suiteIds: suite ? suite.ids : null,
+                    suiteIds: listActive
+                      ? pickChanged
+                        ? selIds
+                        : null
+                      : suite
+                        ? suite.ids
+                        : null,
+                    scenarioVersion:
+                      scenarioVer !== currentSuiteLbl ? scenarioVer : null,
+                    agentKey: pickedKey,
                     addEvals: pickable.filter((e) => addEvalIds.includes(e.id)),
                     candidate: null,
                     /* No cap is applied while pre-run cost is Later (costFlags). */
@@ -1922,6 +2424,11 @@ export default function RunPlanDialog({
 }
 
 RunPlanDialog.propTypes = {
+  initialScenarioIds: PropTypes.array,
+  scenarioStatus: PropTypes.object,
+  baseline: PropTypes.object,
+  initialEnvVersion: PropTypes.string,
+  titleKind: PropTypes.string,
   patch: PropTypes.func,
   open: PropTypes.bool,
   onClose: PropTypes.func,

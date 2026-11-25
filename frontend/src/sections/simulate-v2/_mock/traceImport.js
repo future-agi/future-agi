@@ -68,6 +68,7 @@ export const TRACE_GOALS = [
   {
     id: "reproduce",
     label: "Reproduce the failure",
+    short: "What went wrong, judged against your policy",
     keeps:
       "The triggering situation, what the caller said and the failure evidence",
     makes:
@@ -77,6 +78,7 @@ export const TRACE_GOALS = [
   {
     id: "preserve",
     label: "Keep a success as a regression",
+    short: "Locks in a call that worked",
     keeps: "The workflow that worked, step by step",
     makes:
       "Explicit checks — an observed success still needs a reviewed expected outcome",
@@ -85,6 +87,7 @@ export const TRACE_GOALS = [
   {
     id: "replay",
     label: "Replay the conversation",
+    short: "Plays each call back word for word",
     keeps: "The caller's words, said verbatim, and the recorded tool responses",
     makes:
       "One scenario per trace that plays the conversation back as it happened — nothing made up, so state the trace didn't record stays missing",
@@ -93,6 +96,7 @@ export const TRACE_GOALS = [
   {
     id: "variants",
     label: "Make variations",
+    short: "Similar cases, marked Generated",
     keeps: "A link to the trace each one comes from",
     makes:
       "Neighbouring cases — changed data, ambiguity, a tool failing, a pushy caller — labelled Generated, never as something that happened",
@@ -101,6 +105,7 @@ export const TRACE_GOALS = [
   {
     id: "pattern",
     label: "Pull out a common pattern",
+    short: "One scenario for what the traces share",
     keeps: "Every trace as a source, and which ones didn't fit",
     makes:
       "One scenario for the situation the traces share, standing for the whole group",

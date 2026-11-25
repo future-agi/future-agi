@@ -83,7 +83,7 @@ export default function CompareSummary({ comparison, evals, env, envState }) {
                   sx={{ typography: "s3", color: "text.tertiary" }}
                 >
                   {r.id === baseline.id
-                    ? "baseline"
+                    ? "Baseline"
                     : r.kind === "trial"
                       ? `Run ${r.trialN} · ${r.selfImprovementName}`
                       : `Run ${r.ordinal ?? (r.index != null ? r.index + 1 : "")}`}
@@ -218,7 +218,11 @@ export default function CompareSummary({ comparison, evals, env, envState }) {
                             : "status.danger.fg",
                         }}
                       >
-                        {v.better ? "better" : "worse"}
+                        {v.delta
+                          ? `${v.delta.text}${v.unit === "pts" ? " pts" : ""}`
+                          : v.better
+                            ? "better"
+                            : "worse"}
                       </Typography>
                     </Stack>
                   )}

@@ -18,6 +18,8 @@ import { observeEnvsOf } from "../_mock/runningNow";
 import { observeImportHref, selectionNoun } from "../_mock/observeSelection";
 import { projectLinkOf } from "../_mock/projectLinks";
 import { agentIdOf } from "../_mock/agentRegistry";
+import { envVersionNameOf } from "../_mock/codeRefs";
+import { currentAgentVersion } from "../_mock/versions";
 import { TextLink } from "../agents/connect/connectBits";
 import YourAgentsList from "../agents/connect/YourAgentsList";
 import ClosableDialog from "./ClosableDialog";
@@ -89,6 +91,13 @@ function EnvironmentTestInner({
   const envAgentName = (envId) => {
     const a = state?.byEnv?.[envId]?.agent;
     return a?.values?.name || a?.name || null;
+  };
+  /* The version each environment tests — "v8 · main @ b2ca42d" — so two
+     environments of the same agent can be told apart. */
+  const envAgentVersion = (envId) => {
+    const es = state?.byEnv?.[envId];
+    const v = currentAgentVersion(es)?.label;
+    return v ? envVersionNameOf(es, v, envId).main : null;
   };
   const q = query.trim().toLowerCase();
   const shown = q
@@ -227,7 +236,7 @@ function EnvironmentTestInner({
                         noWrap
                         sx={{ typography: "s3", color: "text.tertiary" }}
                       >
-                        {`Tests ${agent}`}
+                        {`Tests ${agent}${envAgentVersion(t.envId) ? ` ${envAgentVersion(t.envId)}` : ""}`}
                       </Typography>
                     )}
                   </Box>

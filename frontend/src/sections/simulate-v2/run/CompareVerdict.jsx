@@ -95,7 +95,7 @@ export default function CompareVerdict({
     (p) => (p.criteria || []).length,
   ).length;
   const measuredNote = iv.n
-    ? ` · over ${iv.n} measured pair${iv.n === 1 ? "" : "s"}`
+    ? ` · over ${iv.n} scored pair${iv.n === 1 ? "" : "s"}`
     : "";
   const unmeasured =
     counts.exact +
@@ -104,6 +104,119 @@ export default function CompareVerdict({
     (read.excludeRechecked ? counts.rechecked : 0) -
     iv.n;
   const [head, ...rest] = read.sentence.split(" · ");
+
+  /* What was pinned across the runs: changed pins as chips, the rest
+     counted, the agent versions last. Sits on the trend line. */
+  const pinChips = held ? (
+    <Tooltip
+      arrow
+      placement="bottom-start"
+      title={`Runs from before a pin was recorded read it as it stands now. Compared runs: ${runs.map((r) => `${r.letter} ${identityOf(r).label}`).join(", ")}.`}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{ minWidth: 0 }}
+      >
+        <Stack
+          direction="row"
+          spacing={0.75}
+          useFlexGap
+          flexWrap="wrap"
+          sx={{ minWidth: 0 }}
+        >
+          {held.rows
+            .filter((r) => !r.same)
+            .map((r) => (
+              <Tooltip
+                key={r.id}
+                arrow
+                title={
+                  r.same
+                    ? `${pinLabel(r)}: ${pinValue(r)} in every run`
+                    : `${pinLabel(r)} ${pinValue(r)}${PIN_EFFECT[r.id] ? ` — ${PIN_EFFECT[r.id]}` : ""}`
+                }
+              >
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
+                  sx={{
+                    height: 20,
+                    px: 0.75,
+                    borderRadius: "4px",
+                    cursor: "default",
+                    ...(r.same
+                      ? {
+                          bgcolor: "action.selected",
+                          color: "text.secondary",
+                        }
+                      : {
+                          bgcolor: "status.warning.bg",
+                          color: "status.warning.fg",
+                        }),
+                  }}
+                >
+                  <Iconify
+                    icon={
+                      r.same
+                        ? "solar:check-read-linear"
+                        : "solar:danger-triangle-linear"
+                    }
+                    width={12}
+                  />
+                  <Typography
+                    noWrap
+                    sx={{
+                      fontSize: 11,
+                      lineHeight: "16px",
+                      fontWeight: 500,
+                      color: "inherit",
+                    }}
+                  >
+                    {r.same ? pinLabel(r) : `${pinLabel(r)} changed`}
+                  </Typography>
+                </Stack>
+              </Tooltip>
+            ))}
+          {held.rows.some((r) => r.same) && (
+            <Tooltip
+              arrow
+              title={held.rows
+                .filter((r) => r.same)
+                .map((r) => `${pinLabel(r)}: ${pinValue(r)}`)
+                .join(" · ")}
+            >
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  cursor: "default",
+                  lineHeight: "20px",
+                }}
+              >
+                {`${held.rows.filter((r) => r.same).length} matched`}
+              </Typography>
+            </Tooltip>
+          )}
+        </Stack>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            color: "text.secondary",
+            fontFamily: "ui-monospace, Menlo, monospace",
+            flexShrink: 0,
+          }}
+        >
+          {held.agents.length > 1
+            ? held.agents.join(" → ")
+            : `agent ${held.agents[0] || "—"}`}
+        </Typography>
+      </Stack>
+    </Tooltip>
+  ) : null;
 
   return (
     <Box
@@ -119,126 +232,6 @@ export default function CompareVerdict({
       {/* What each run pinned — first, so differing inputs are read before
           any delta (runs §2 Compare selection). One row of chips: what
           changed is tinted, its effect on hover; what matched is quiet. */}
-      {held && (
-        <Tooltip
-          arrow
-          placement="bottom-start"
-          title={`Runs from before a pin was recorded read it as it stands now. Compared runs: ${runs.map((r) => `${r.letter} ${identityOf(r).label}`).join(", ")}.`}
-        >
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1.5}
-            sx={{
-              px: 2,
-              py: 1,
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Typography
-              sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-            >
-              Pinned
-            </Typography>
-            <Stack
-              direction="row"
-              spacing={0.75}
-              useFlexGap
-              flexWrap="wrap"
-              sx={{ flex: 1, minWidth: 0 }}
-            >
-              {held.rows
-                .filter((r) => !r.same)
-                .map((r) => (
-                  <Tooltip
-                    key={r.id}
-                    arrow
-                    title={
-                      r.same
-                        ? `${pinLabel(r)}: ${pinValue(r)} in every run`
-                        : `${pinLabel(r)} ${pinValue(r)}${PIN_EFFECT[r.id] ? ` — ${PIN_EFFECT[r.id]}` : ""}`
-                    }
-                  >
-                    <Stack
-                      direction="row"
-                      alignItems="center"
-                      spacing={0.5}
-                      sx={{
-                        height: 20,
-                        px: 0.75,
-                        borderRadius: "4px",
-                        cursor: "default",
-                        ...(r.same
-                          ? {
-                              bgcolor: "action.selected",
-                              color: "text.secondary",
-                            }
-                          : {
-                              bgcolor: "status.warning.bg",
-                              color: "status.warning.fg",
-                            }),
-                      }}
-                    >
-                      <Iconify
-                        icon={
-                          r.same
-                            ? "solar:check-read-linear"
-                            : "solar:danger-triangle-linear"
-                        }
-                        width={12}
-                      />
-                      <Typography
-                        noWrap
-                        sx={{
-                          fontSize: 11,
-                          lineHeight: "16px",
-                          fontWeight: 500,
-                          color: "inherit",
-                        }}
-                      >
-                        {r.same ? pinLabel(r) : `${pinLabel(r)} changed`}
-                      </Typography>
-                    </Stack>
-                  </Tooltip>
-                ))}
-              {held.rows.some((r) => r.same) && (
-                <Tooltip
-                  arrow
-                  title={held.rows
-                    .filter((r) => r.same)
-                    .map((r) => `${pinLabel(r)}: ${pinValue(r)}`)
-                    .join(" · ")}
-                >
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: "text.tertiary",
-                      cursor: "default",
-                      lineHeight: "20px",
-                    }}
-                  >
-                    {`${held.rows.filter((r) => r.same).length} matched`}
-                  </Typography>
-                </Tooltip>
-              )}
-            </Stack>
-            <Typography
-              noWrap
-              sx={{
-                typography: "s3",
-                color: "text.secondary",
-                fontFamily: "ui-monospace, Menlo, monospace",
-                flexShrink: 0,
-              }}
-            >
-              {held.agents.length > 1
-                ? held.agents.join(" → ")
-                : `agent ${held.agents[0] || "—"}`}
-            </Typography>
-          </Stack>
-        </Tooltip>
-      )}
       {/* A must-pass case that regressed comes first, whatever the average says. */}
       {mustPass.length > 0 && (
         <Stack
@@ -286,7 +279,7 @@ export default function CompareVerdict({
         direction="row"
         alignItems="center"
         spacing={1.5}
-        sx={{ px: 2, py: 1.25 }}
+        sx={{ px: 2, py: 1 }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {side ? (
@@ -420,7 +413,7 @@ export default function CompareVerdict({
               <Tooltip
                 arrow
                 title={[
-                  `95% interval ${signed(iv.lo)} to ${signed(iv.hi)} pts${measuredNote}${unmeasured > 0 ? ` · ${unmeasured} not measured` : ""}.`,
+                  `95% interval ${signed(iv.lo)} to ${signed(iv.hi)} pts${measuredNote}${unmeasured > 0 ? ` · ${unmeasured} not scored` : ""}.`,
                   `${head}${rest.length ? ` · ${rest.join(" · ")}` : ""}.`,
                   envHeadline?.text ? `${envHeadline.text}.` : null,
                   band
@@ -471,59 +464,39 @@ export default function CompareVerdict({
               )}
             </Stack>
           )}
-
-          {/* Undecided: the cheapest way to tell them apart, priced; nothing runs until clicked. */}
-          {cheapest && (
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              alignItems={{ sm: "center" }}
-              spacing={1}
-              sx={{ mt: 1 }}
-            >
-              <Tooltip
-                arrow
-                title={`${cheapest.line}.${others.map((f) => ` Or ${f.line.charAt(0).toLowerCase()}${f.line.slice(1)}.`).join("")}`}
-              >
-                <Typography
-                  sx={{
-                    typography: "s2",
-                    color: "text.secondary",
-                    flex: 1,
-                    minWidth: 0,
-                    cursor: "default",
-                  }}
-                >
-                  Not enough evidence to tell these runs apart yet.
-                </Typography>
-              </Tooltip>
-              <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
-                {[cheapest, ...others]
-                  .filter((f) => f.can)
-                  .map((f) => (
-                    <Button
-                      key={f.id}
-                      size="small"
-                      variant="outlined"
-                      onClick={() => onFix(f)}
-                      startIcon={
-                        <Iconify
-                          icon={
-                            f.kind === "raise-k"
-                              ? "solar:repeat-linear"
-                              : "solar:play-linear"
-                          }
-                          width={14}
-                        />
-                      }
-                      sx={OUTLINE_SX}
-                    >
-                      {`${f.label} · ${f.calls} calls`}
-                    </Button>
-                  ))}
-              </Stack>
-            </Stack>
-          )}
         </Box>
+        {/* Undecided: the cheapest way to tell them apart, priced; nothing
+            runs until clicked. On the verdict's own line, beside the other
+            action, so the two buttons line up. */}
+        {cheapest &&
+          [cheapest, ...others]
+            .filter((f) => f.can)
+            .map((f) => (
+              <Tooltip
+                key={f.id}
+                arrow
+                title={`Not enough evidence yet. ${f.line}.`}
+              >
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => onFix(f)}
+                  startIcon={
+                    <Iconify
+                      icon={
+                        f.kind === "raise-k"
+                          ? "solar:repeat-linear"
+                          : "solar:play-linear"
+                      }
+                      width={14}
+                    />
+                  }
+                  sx={{ ...OUTLINE_SX, flexShrink: 0 }}
+                >
+                  {`${f.label} · ${f.calls} calls`}
+                </Button>
+              </Tooltip>
+            ))}
         {/* A confirmed regression: improve the agent from these failures. */}
         {onImprove && (label.id === "regressed" || mustPass.length > 0) && (
           <Button
@@ -544,7 +517,7 @@ export default function CompareVerdict({
             arrow
             title={
               promote.disabled ||
-              `Comparing deploys nothing. Make agent ${promote.candidate} active after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}.`
+              `Comparing deploys nothing. Make agent ${promote.label || promote.candidate} active after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}.`
             }
           >
             <span>
@@ -559,7 +532,7 @@ export default function CompareVerdict({
                   flexShrink: 0,
                 }}
               >
-                {`Make ${promote.candidate} active…`}
+                {`Make ${promote.label || promote.candidate} active…`}
               </Button>
             </span>
           </Tooltip>
@@ -634,7 +607,7 @@ export default function CompareVerdict({
           spacing={1}
           sx={{
             px: 2,
-            py: 1,
+            py: 0.75,
             borderTop: "1px solid",
             borderColor: "divider",
             flexWrap: "wrap",
@@ -679,11 +652,28 @@ export default function CompareVerdict({
               ))
             : null}
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {trend.n
-              ? `on the ${trend.n} scenario${trend.n === 1 ? "" : "s"} comparable across all ${trend.points.length} runs`
-              : `no scenario is comparable across all ${trend.points.length} runs`}
+            pass rate per run
           </Typography>
+          {pinChips && (
+            <>
+              <Box flex={1} />
+              {pinChips}
+            </>
+          )}
         </Stack>
+      )}
+      {/* No trend line: the pins get a quiet line of their own. */}
+      {(!trend || side) && pinChips && (
+        <Box
+          sx={{
+            px: 2,
+            py: 0.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          {pinChips}
+        </Box>
       )}
 
       {held?.drift && (

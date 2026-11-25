@@ -3,12 +3,16 @@
 
   A run's tasks are one per scenario; each carries `passShare`, the share of
   its repeats that passed. So:
-    scenario pass — scenarios that passed a majority of their repeats
+    scenario pass — scenarios that passed every repeat (a flaky one is not a
+                    pass — the same rule as the run header and the Flaky chip)
     call pass     — every repeat counted (the mean share; pass^1)
   Two runs are compared only on the scenarios both measured, and every change
   comes with the noise two samples of that size carry (95%, binomial), so a
   swing inside it isn't read as a regression or a fix.
 */
+
+import { runRollupOf } from "./runRollup";
+import { VERDICT_CAUSES } from "./decoupled";
 
 const keyOf = (t) => t.scenarioId || t.id;
 const shareOf = (t) => t.passShare ?? (t.status === "passed" ? 1 : 0);
@@ -20,7 +24,7 @@ const measuredTasks = (run) => tasksOf(run).filter((t) => !t.pulled && ["passed"
 /** The columns a run row shows. */
 export const runStatsOf = (run) => {
   const m = measuredTasks(run);
-  const passed = m.filter((t) => shareOf(t) > 0.5).length;
+  const passed = m.filter((t) => shareOf(t) >= 1).length;
   const repeats = run?.repeats || 1;
   const took = run?.startedAt && run?.finishedAt ? Date.parse(run.finishedAt) - Date.parse(run.startedAt) : null;
   return {
@@ -30,9 +34,61 @@ export const runStatsOf = (run) => {
     callRate: m.length ? Math.round((m.reduce((a, t) => a + shareOf(t), 0) / m.length) * 1000) / 10 : null,
     calls: tasksOf(run).length * repeats,
     flaky: m.filter((t) => t.status === "flaky").length,
-    failed: m.length - passed,
+    /* Flaky has its own column, so Failing is only the ones that failed. */
+    failed: m.length - passed - m.filter((t) => t.status === "flaky").length,
     tookMs: took && took > 0 ? took : null,
   };
+};
+
+/*
+  The Runs table's scenario pass, read exactly as the run's own page reads it
+  (runRollupOf: scored = in scope and graded; passed = every trial passed), so
+  a run never shows 57% on its page and 65% in the list.
+*/
+export const alignedStatsOf = (run, ctx = {}) => {
+  const base = runStatsOf(run);
+  if (!run?.finishedAt || !ctx.envState) return base;
+  const s = runRollupOf({ ...run, tasks: tasksOf(run) }, ctx);
+  if (!s || !s.scored) return base;
+  return {
+    ...base,
+    measured: s.scored,
+    scenarioPassed: s.passedAll,
+    scenarioRate: Math.round((s.passedAll / s.scored) * 100),
+    failed: Math.max(0, s.scored - s.passedAll - base.flaky),
+  };
+};
+
+/*
+  The run as its chip reads it: an improvement's run is its own per-scenario
+  outcomes (trialTasks), even once Compare has hydrated it with the source
+  run's calls.
+*/
+export const chipRunOf = (run) =>
+  run?.kind === "trial" && run.trialTasks?.length ? { ...run, tasks: run.trialTasks } : run;
+
+/** Chip numbers for a run — alignedStatsOf on the run as its chip reads it. */
+export const chipStatsOf = (run, ctx = {}) => alignedStatsOf(chipRunOf(run), ctx);
+
+/**
+ * The scenarios a run scored (id -> pass share), read the way its own page
+ * reads them (runRollupOf: in scope and graded). null when the run can't be
+ * rolled up, so callers fall back to their own measure.
+ */
+export const scoredSharesOf = (run, ctx = {}) => {
+  const r = chipRunOf(run);
+  if (!r?.finishedAt || !ctx.envState) return null;
+  const tasks = tasksOf(r);
+  const s = runRollupOf({ ...r, tasks }, ctx);
+  if (!s?.verdicts) return null;
+  const out = new Map();
+  tasks.forEach((t) => {
+    const v = s.verdicts.get(t.id);
+    if (!v || v.pulled || v.stale || v.exploration) return;
+    if (!VERDICT_CAUSES[v.cause]?.scored) return;
+    out.set(t.id, shareOf(t));
+  });
+  return out;
 };
 
 const noiseOf = (p1, n1, p2, n2) => Math.max(1, Math.round(1.96 * Math.sqrt((p1 * (1 - p1)) / n1 + (p2 * (1 - p2)) / n2) * 100));
@@ -43,8 +99,8 @@ const noiseOf = (p1, n1, p2, n2) => Math.max(1, Math.round(1.96 * Math.sqrt((p1 
  */
 export const sharedDeltaOf = (run, base) => {
   if (!run || !base) return null;
-  const a = new Map(measuredTasks(run).map((t) => [keyOf(t), shareOf(t) > 0.5]));
-  const b = new Map(measuredTasks(base).map((t) => [keyOf(t), shareOf(t) > 0.5]));
+  const a = new Map(measuredTasks(run).map((t) => [keyOf(t), shareOf(t) >= 1]));
+  const b = new Map(measuredTasks(base).map((t) => [keyOf(t), shareOf(t) >= 1]));
   const shared = [...a.keys()].filter((k) => b.has(k));
   if (shared.length < 3) return null;
   const p1 = shared.filter((k) => a.get(k)).length / shared.length;

@@ -16,7 +16,12 @@ export default function OutcomeChip({ pair }) {
   const meta = PAIR_CLASSES[pair.cls];
   if (!meta) return null;
   const moved = meta.inDelta && pair.flip && pair.flip.kind !== "same";
-  const bad = pair.cls === "exact" && pair.flip?.kind === "regressed";
+  /* Red is for a scenario that now fails; one that fails only some trials
+     (flaky) is never red. */
+  const bad =
+    pair.cls === "exact" &&
+    pair.flip?.kind === "regressed" &&
+    pair.flip?.b !== "flaky";
   const tip = [
     meta.tip,
     ...(pair.reasons || []).filter((r) => !/^Only in the/.test(r)),
@@ -94,68 +99,58 @@ export default function OutcomeChip({ pair }) {
 }
 OutcomeChip.propTypes = { pair: PropTypes.object };
 
-/* How a run went for one scenario, in words: "all 3 passed",
-   "2 of 3 passed", "none of 3 passed"; the "now" side is just "2 of 3". */
-const trialsWord = (c, { now = false } = {}) => {
-  if (!c || c.status === "missing") return "not run";
-  if (c.status === "unmeasured" || c.measured === false) return "not measured";
-  const n = c.repeats || 1;
-  const k = c.passes ?? (c.status === "passed" ? n : 0);
-  if (n <= 1) return k ? "passed" : "failed";
-  if (now) return k === n ? `all ${n}` : `${k} of ${n}`;
-  if (k === n) return `all ${n} passed`;
-  if (k === 0) return `none of ${n} passed`;
-  return `${k} of ${n} passed`;
-};
-
 /**
- * One quiet line under the scenario's title in the compare table, in plain
- * counts instead of labels: "All 3 passed before · now 2 of 3".
- * The "now" part is red when it got worse, green when it got better. The
- * pair class shows only when it isn't the usual exact match, with its
- * meaning on hover.
+ * What moved, and only that, beside the scenario's name: "passed → failed"
+ * when the baseline and the latest run disagree (two runs only — with more,
+ * each run's own row says it), the pair class when it isn't the usual exact
+ * match (its meaning on hover), and "criteria changed". Each run's result is
+ * on its own row, so it is not said again here.
  */
 export function OutcomeLine({ pair, cells = [], extra = null }) {
   const meta = pair ? PAIR_CLASSES[pair.cls] : null;
-  const base = cells[0];
-  const cur = cells[cells.length - 1];
   const kind = pair?.flip?.kind;
-  const changed =
-    !!base && !!cur && cells.length > 1 && kind && kind !== "same";
+  const moved = cells.length === 2 && !!kind && kind !== "same";
+  /* A scenario that now fails only some trials is amber, never red. */
+  const becameFlaky = kind === "regressed" && pair?.flip?.b === "flaky";
   const tone =
     kind === "regressed"
-      ? "status.danger.fg"
+      ? becameFlaky
+        ? "status.warning.fg"
+        : "status.danger.fg"
       : kind === "improved"
         ? "status.success.fg"
         : "text.secondary";
-  const first = trialsWord(base);
-  const lead = first.charAt(0).toUpperCase() + first.slice(1);
   const unusual = meta && pair.cls !== "exact";
+  const parts = [];
+  if (moved)
+    parts.push(
+      <Box key="flip" component="span" sx={{ color: tone, fontWeight: 600 }}>
+        {pair.flip.text}
+      </Box>,
+    );
+  if (unusual)
+    parts.push(
+      <Tooltip key="cls" arrow title={meta.tip || ""}>
+        <Box component="span" sx={{ cursor: "help" }}>
+          {meta.short.toLowerCase()}
+        </Box>
+      </Tooltip>,
+    );
+  if ((pair?.criteria || []).length > 0)
+    parts.push(<span key="crit">criteria changed</span>);
+  if (extra) parts.push(<span key="extra">{extra}</span>);
+  if (!parts.length) return null;
   return (
-    <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}>
-      {changed ? (
-        <>
-          {`${lead} before · `}
-          <Box component="span" sx={{ color: tone, fontWeight: 500 }}>
-            {`now ${trialsWord(cur, { now: true })}`}
-          </Box>
-        </>
-      ) : base && cur ? (
-        cells.length > 1 ? (
-          `${lead} in both runs`
-        ) : (
-          lead
-        )
-      ) : null}
-      {unusual && (
-        <Tooltip arrow title={meta.tip || ""}>
-          <Box component="span" sx={{ cursor: "help" }}>
-            {` · ${meta.short.toLowerCase()}`}
-          </Box>
-        </Tooltip>
-      )}
-      {(pair?.criteria || []).length > 0 && " · criteria changed"}
-      {extra && ` · ${extra}`}
+    <Typography
+      noWrap
+      sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+    >
+      {parts.map((p, i) => (
+        <Box key={i} component="span">
+          {i > 0 && " · "}
+          {p}
+        </Box>
+      ))}
     </Typography>
   );
 }

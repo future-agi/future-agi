@@ -2270,7 +2270,11 @@ export const improvementProgressOf = (record, now = Date.now()) => {
      reads "2 of up to 8"; once the runs have played, an early stop is said. */
   const early =
     record.fixDepth !== "suggestion" ? plateauStopOf(record.result) : null;
-  const runsMax = early ? early.of : total;
+  /* A search the budget will cut short still reads the plan's size ("of up
+     to 4", as the setup and the stop line say), not the cut length. */
+  const runsMax = early
+    ? early.of
+    : Math.max(total, record.stoppedAtBudget?.of || 0);
   const elapsed = Math.max(0, now - startMsOf(record, now));
   let t = 0;
   let runsDone = 0;

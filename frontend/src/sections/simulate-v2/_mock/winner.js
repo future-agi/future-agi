@@ -212,6 +212,24 @@ export const deltaAgainst = (metric, run, baselineRun) => {
   return { text, up, better: metric.lowerIsBetter ? !up : up, flat: false };
 };
 
+/**
+ * The change in scenario pass rate between two runs, read from the numbers
+ * the list displays (aligned stats), so a "57%" under a "66%" says -9 and
+ * nothing else. `noise` is the 95% chance spread of two independent samples;
+ * inside it the change is `within`.
+ */
+export const statsDeltaOf = (st, was) => {
+  if (!st?.measured || !was?.measured) return null;
+  const p1 = st.scenarioPassed / st.measured;
+  const p2 = was.scenarioPassed / was.measured;
+  const pts = (st.scenarioRate ?? 0) - (was.scenarioRate ?? 0);
+  const noise = Math.max(
+    1,
+    Math.round(1.96 * Math.sqrt((p1 * (1 - p1)) / st.measured + (p2 * (1 - p2)) / was.measured) * 100),
+  );
+  return { pts, noise, within: Math.abs(pts) <= noise, shared: Math.min(st.measured, was.measured) };
+};
+
 /*
   Winning is not shipping. A winner is whichever run best fits the weights
   someone chose — a preference, applied consistently. Whether that agent is

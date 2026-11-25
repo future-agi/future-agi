@@ -1,4 +1,3 @@
-import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import {
   useLocation,
@@ -17,6 +16,7 @@ import {
   IconButton,
   TextField,
   MenuItem,
+  Select,
   Tooltip,
   Menu,
   Checkbox,
@@ -45,8 +45,6 @@ import {
   groupRows,
   defaultView,
   bandRows,
-  isExactRegression,
-  behaviourDiff,
   ROW_HEIGHTS,
   viewSnapshot,
   snapshotsEqual,
@@ -64,13 +62,7 @@ import { mustPassRegressionsOf, promotePatch } from "../_mock/promote";
 import { useRoleGates } from "../_mock/previewRole";
 import PromoteDialog from "./PromoteDialog";
 import { runCreditsOf } from "../_mock/usageLedger";
-import {
-  SectionCard,
-  EmptyState,
-  PersonaBadge,
-  Verdict,
-  DomainChip,
-} from "../components/primitives";
+import { SectionCard, EmptyState } from "../components/primitives";
 import CallCompare from "./CallCompare";
 import CompareActions, {
   CompareSearchBar,
@@ -79,27 +71,28 @@ import CompareActions, {
 import CompareGrid from "./CompareGrid";
 import CompareSummary from "./CompareSummary";
 import CompareVerdict from "./CompareVerdict";
-import { OutcomeLine } from "./CompareOutcome";
-import { csatOf } from "./traceTableHelpers";
+import CompareRunColumns from "./CompareRunColumns";
+import CompareLetter from "./CompareLetter";
+import { comparedWithText, rowLabelOf, runLabelOf } from "../_mock/scoreDelta";
 import RuleChangeDialog from "../components/RuleChangeDialog";
 import { agentSourceOf } from "../_mock/agentRegistry";
 import { agentVersions, behaviourLabelOf } from "../_mock/versions";
-import { textTone } from "../components/textTone";
 import { versionOriginOf } from "../_mock/specChange";
 import { subGoalGroups, heldFixedAcross } from "../_mock/compareHeld";
 import { snapshotOfRun, compareEnvHeadline } from "../_mock/envSnapshot";
-import { clickable, focusRing } from "../components/clickable";
-import { runStatsOf } from "../_mock/runCompare";
+import { runStatsOf, alignedStatsOf } from "../_mock/runCompare";
 
 /* "62% 67/108" — scenario pass and its fraction, from runStatsOf like the Runs
    table's Scenario pass cell. An improvement's run is read from its own
    per-scenario outcomes (trialTasks), even once Compare has hydrated it with
    the source run's calls, so the menu, the pill and the table agree. */
-const scenarioPassText = (r) => {
-  const st = runStatsOf(
+const scenarioPassText = (r, ctx) => {
+  /* Read the way the run's own page reads it (alignedStatsOf). */
+  const st = alignedStatsOf(
     r?.kind === "trial" && r.trialTasks?.length
       ? { ...r, tasks: r.trialTasks }
       : r,
+    ctx,
   );
   return st.measured
     ? `${st.scenarioRate}% ${st.scenarioPassed}/${st.measured}`
@@ -142,7 +135,7 @@ export default function CompareRuns() {
 
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState(emptyFilters);
-  const [selected, setSelected] = useState([]);
+  const [selected] = useState([]);
   const [openRow, setOpenRow] = useState(null);
   const [addAnchor, setAddAnchor] = useState(null);
   const [pickedEval, setPickedEval] = useState(null);
@@ -315,6 +308,8 @@ export default function CompareRuns() {
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runIds, state.byEnv, state.myEnvironments, envId]);
+  const [numbersFor, setNumbersFor] = useState(null);
+  const [chartOpen, setChartOpen] = useState(false);
   const comparisonRaw = useMemo(
     () =>
       env
@@ -329,9 +324,10 @@ export default function CompareRuns() {
         ? withPairs(comparisonRaw, env, envState, {
             excludeRechecked,
             regrades: envState.compareRegrades || [],
+            targetId: numbersFor,
           })
         : { comparison: comparisonRaw, read: null },
-    [comparisonRaw, env, envState, excludeRechecked],
+    [comparisonRaw, env, envState, excludeRechecked, numbersFor],
   );
   /* What each run pinned (this environment's runs only), and the two
      environment versions the verdict sits on. */
@@ -346,7 +342,11 @@ export default function CompareRuns() {
     if (!env || !read || runs.length < 2 || runs.some((r) => r._env))
       return null;
     const a = snapshotOfRun(runs[0], env, envState);
-    const b = snapshotOfRun(runs[runs.length - 1], env, envState);
+    const b = snapshotOfRun(
+      runs.find((r) => r.id === read.targetId) || runs[1],
+      env,
+      envState,
+    );
     return compareEnvHeadline(a, b, read.counts, read.total);
   }, [comparisonRaw.runs, env, envState, read]);
   /* Every runnable row this environment has — manual runs plus every
@@ -357,14 +357,43 @@ export default function CompareRuns() {
     const chips = chipIdentity(env, envState);
     const manual = runSummaries(env, envState);
     const trials = trialSummaries(env, envState);
+    /* What would differ from the baseline's setup (world, tools, caller,
+       evals…) — the agent is what's under test, so it doesn't count. An
+       epoch's run reads its source run's setup. */
+    const base = comparisonRaw.runs[0];
+    const setupDiffOf = (r) => {
+      if (!base) return [];
+      const opt =
+        r.kind === "trial"
+          ? (envState.optimizations || []).find(
+              (o) => o.id === r.selfImprovementId,
+            )
+          : null;
+      const full =
+        (envState.runs || []).find((x) => x.id === r.id) ||
+        (opt && (envState.runs || []).find((x) => x.id === opt.fromRunId)) ||
+        r;
+      const h = heldFixedAcross([base, full], env, envState);
+      return (h?.differs || [])
+        .filter((d) => d.id !== "agent" && d.id !== "trials")
+        .map((d) => d.label);
+    };
     return [...manual, ...trials]
       .filter((r) => !runIds.includes(r.id))
-      .sort((a, b) => new Date(b.finishedAt) - new Date(a.finishedAt))
       .map((r) => {
         const chip = chips.get(r.id);
-        return chip ? { ...r, letter: chip.letter, color: chip.color } : r;
-      });
-  }, [env, envState, runIds]);
+        const withChip = chip
+          ? { ...r, letter: chip.letter, color: chip.color }
+          : r;
+        return { ...withChip, setupDiff: setupDiffOf(r) };
+      })
+      /* Same setup first: those read fairly against the baseline. */
+      .sort(
+        (a, b) =>
+          (a.setupDiff.length > 0) - (b.setupDiff.length > 0) ||
+          new Date(b.finishedAt) - new Date(a.finishedAt),
+      );
+  }, [env, envState, runIds, comparisonRaw.runs]);
 
   /* Runs in other environments: a fork's (or its parent's) compare on
      carried ids; an unrelated one's latest run only side by side. */
@@ -428,13 +457,15 @@ export default function CompareRuns() {
     () =>
       bandRows(rows, {
         group: view.group,
-        regressionsFirst: view.sort === "movement",
+        /* The table's run headers count and filter regressions per run, so
+           it doesn't also pull one pair's regressions into a band on top. */
+        regressionsFirst: view.sort === "movement" && view.view !== "table",
         groupFn: (rs) =>
           view.group === "subGoal" && env
             ? subGoalGroups(rs, comparison.runs, env, envState)
             : groupRows(rs, view.group),
       }),
-    [rows, view.group, view.sort, comparison.runs, env, envState],
+    [rows, view.group, view.sort, view.view, comparison.runs, env, envState],
   );
 
   const back = () =>
@@ -525,14 +556,18 @@ export default function CompareRuns() {
   }
 
   const changed = changedCount(comparison);
+  /* Every run on the same environment and scenario version: said once in the
+     subtitle, not on every chip. */
+  const sharedEnv =
+    new Set(comparison.runs.map((r) => identityOf(r).envName)).size === 1;
 
   /* n is part of the measurement. Runs sampled a different number of times are
      not reporting the same quantity, and the header says so rather than
      letting two differently-sampled rates sit side by side as equals. */
   const sampleNote =
     comparison.coverage.repeats.length === 1
-      ? ` · ${comparison.coverage.repeats[0]} repeat${comparison.coverage.repeats[0] === 1 ? "" : "s"} each`
-      : ` · repeats per scenario differ (${comparison.coverage.repeats.join(", ")})`;
+      ? ` · ${comparison.coverage.repeats[0]} trial${comparison.coverage.repeats[0] === 1 ? "" : "s"} each`
+      : ` · trials per scenario differ (${comparison.coverage.repeats.join(", ")})`;
 
   /*
     Re-running is the loop closing. It starts a real run of exactly the rows
@@ -674,8 +709,17 @@ export default function CompareRuns() {
                 decides releases. */}
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {(() => {
+                /* An improvement's run is its source version plus a change —
+                   a different agent config from the version itself. */
+                const changed = comparison.runs.some((r) => r.kind === "trial");
                 const labels = [
-                  ...new Set(comparison.runs.map((r) => r.agentVersion)),
+                  ...new Set(
+                    comparison.runs.map((r) =>
+                      r.kind === "trial"
+                        ? `${r.agentVersion} + change`
+                        : r.agentVersion,
+                    ),
+                  ),
                 ];
                 const n = labels.length;
                 /* A credentials-only version behaves as its base — said, so
@@ -683,43 +727,23 @@ export default function CompareRuns() {
                 const known = agentVersions(envState);
                 const same =
                   n > 1 &&
+                  !changed &&
                   new Set(labels.map((l) => behaviourLabelOf(known, l)))
                     .size === 1;
-                return `${comparison.runs.length} runs · ${n} agent version${n === 1 ? "" : "s"}${same ? ", same behaviour — only credentials differ" : ""}`;
-              })()}{" "}
-              · {comparison.coverage.shared} scenarios in every run
+                /* What every run shares is said once here, so the run
+                   chips below only carry what differs. */
+                const envs = [
+                  ...new Set(comparison.runs.map((r) => identityOf(r).envName)),
+                ];
+                return `${envs.length === 1 && envs[0] ? `${envs[0]} · ` : ""}${same ? "same behaviour, only credentials differ · " : ""}`;
+              })()}
+              {comparison.coverage.shared} scenarios
               {comparison.coverage.partial > 0 &&
                 ` · ${comparison.coverage.partial} in only some`}
-              {comparison.coverage.unmeasured > 0 &&
-                ` · ${comparison.coverage.unmeasured} not measured`}
               {sampleNote}
             </Typography>
           </Box>
           <Box flex={1} />
-          <Tooltip arrow title="Export comparison">
-            <IconButton size="small" onClick={exportComparison}>
-              <Iconify
-                icon="solar:download-minimalistic-linear"
-                width={16}
-                sx={{ color: "text.tertiary" }}
-              />
-            </IconButton>
-          </Tooltip>
-          <Tooltip arrow title="Copy link">
-            <IconButton
-              size="small"
-              onClick={() => {
-                navigator.clipboard?.writeText(window.location.href);
-                enqueueSnackbar("Link copied", { variant: "success" });
-              }}
-            >
-              <Iconify
-                icon="solar:share-linear"
-                width={16}
-                sx={{ color: "text.tertiary" }}
-              />
-            </IconButton>
-          </Tooltip>
         </Stack>
 
         <Stack
@@ -745,34 +769,41 @@ export default function CompareRuns() {
                   alpha(r.color, t.palette.mode === "dark" ? 0.12 : 0.06),
               }}
             >
-              <Letter letter={r.letter} color={r.color} />
+              <CompareLetter letter={r.letter} color={r.color} />
               {/*
                 Both halves of the pairing on the pill — a comparison is
                 `env × agent`, and reading only "agent v2" hides "which
                 world did that number come from". Env part is muted so
                 the label stays scannable when both are the same.
               */}
-              <Typography
-                noWrap
-                sx={{ typography: "s3", fontWeight: 600, maxWidth: 280 }}
+              <Tooltip
+                arrow
+                title={`${runLabelOf(r)} · ${identityOf(r).agentLabel}${identityOf(r).env ? ` × ${identityOf(r).envName}` : ""} · ${scenarioPassText(r, { env, envState })}`}
               >
-                {identityOf(r).agentLabel}
-                {identityOf(r).env && (
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", fontWeight: 600, maxWidth: 220 }}
+                >
+                  {identityOf(r).agentLabel}
+                  {!sharedEnv && identityOf(r).env && (
+                    <Box
+                      component="span"
+                      sx={{ color: "text.tertiary", fontWeight: 500 }}
+                    >
+                      {` × ${identityOf(r).envName}`}
+                    </Box>
+                  )}
                   <Box
                     component="span"
-                    sx={{ color: "text.tertiary", fontWeight: 500 }}
+                    sx={{ color: "text.secondary", fontWeight: 500 }}
                   >
-                    {" "}
-                    × {identityOf(r).envName}
+                    {comparison.coverage.notInAll > 0 &&
+                    comparison.coverage.common > 0
+                      ? ` · ${r.sharedPassRate ?? "—"}% on ${comparison.coverage.common} shared`
+                      : ` · ${String(scenarioPassText(r, { env, envState })).split(" ")[0]}`}
                   </Box>
-                )}
-                {/* When the runs covered different scenarios, the pill reads the
-                    same shared set the summary does, and says so. */}
-                {comparison.coverage.notInAll > 0 &&
-                comparison.coverage.common > 0
-                  ? ` · ${r.sharedPassRate ?? "—"}% on ${comparison.coverage.common} shared`
-                  : ` · ${scenarioPassText(r)}`}
-              </Typography>
+                </Typography>
+              </Tooltip>
               {i === 0 && (
                 <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                   baseline
@@ -895,17 +926,28 @@ export default function CompareRuns() {
                   ...neutralCheckboxSx,
                 }}
               />
-              <Letter letter={r.letter} color={r.color} />
+              <CompareLetter letter={r.letter} color={r.color} />
               <Box component="span" sx={{ flex: 1, minWidth: 0, ml: 1 }}>
-                {r.kind === "trial"
-                  ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}`
-                  : `Run ${r.ordinal}`}{" "}
+                {r.kind === "trial" ? runLabelOf(r) : `Run ${r.ordinal}`}{" "}
                 · {identityOf(r).agentLabel}
                 {identityOf(r).env && (
                   <Box component="span" sx={{ color: "text.tertiary" }}>
                     {" "}
                     × {identityOf(r).envName}
                   </Box>
+                )}
+                {r.setupDiff?.length > 0 && (
+                  <Tooltip
+                    arrow
+                    title={`Not the baseline's setup: ${r.setupDiff.join(", ")}. Differences may come from that, not the agent.`}
+                  >
+                    <Box
+                      component="span"
+                      sx={{ color: "status.warning.fg", ml: 0.75 }}
+                    >
+                      · different setup
+                    </Box>
+                  </Tooltip>
                 )}
               </Box>
               {/* Scenario pass with its fraction, from the same helper as the
@@ -928,7 +970,7 @@ export default function CompareRuns() {
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {scenarioPassText(r)}
+                  {scenarioPassText(r, { env, envState })}
                 </Box>
               </Tooltip>
             </MenuItem>
@@ -1036,9 +1078,13 @@ export default function CompareRuns() {
           /* Must-pass regressions first; promoting the last run is its own reviewed step. */
           const mustPass = mustPassRegressionsOf(comparison.rows);
           const first = comparison.runs[0];
-          const last = comparison.runs[comparison.runs.length - 1];
+          const last =
+            comparison.runs.find((r) => r.id === read?.targetId) ||
+            comparison.runs[1];
           const candidate = last?.agentVersion || null;
+          const candidateLabel = (last && identityOf(last).agent) || candidate;
           const baseline = first?.agentVersion || null;
+          const baselineLabel = (first && identityOf(first).agent) || baseline;
           const verdict =
             verdictWithMustPass(read?.label, mustPass)?.label || "No verdict";
           return (
@@ -1076,9 +1122,10 @@ export default function CompareRuns() {
                   setViewOverride({ ...view, quick: "critical" })
                 }
                 promote={
-                  candidate && baseline
+                  candidate && baseline && candidateLabel !== baselineLabel
                     ? {
                         candidate,
+                        label: candidateLabel,
                         baseline,
                         onClick: () => setPromoting(true),
                         disabled: !gates.canEdit
@@ -1139,15 +1186,30 @@ export default function CompareRuns() {
             borderColor: "divider",
             borderRadius: "8px",
             bgcolor: "background.paper",
-            overflow: "hidden",
+            /* clip, not hidden: hidden makes this box the scroll container,
+               and the table header could no longer stay fixed. */
+            overflow: "clip",
           }}
         >
           {view.showChart && (
             <SectionCard
               title="Score distribution"
-              sx={{ border: "none", borderRadius: 0, bgcolor: "transparent" }}
+              sx={{
+                border: "none",
+                borderRadius: 0,
+                bgcolor: "transparent",
+                /* Closed, the header's own bottom line would sit on the
+                   next section's top line and read as one thick stroke. */
+                /* A slim header: the chart is one click away, not a band. */
+                "& > :first-of-type": {
+                  py: 0.75,
+                  ...(!chartOpen && { borderBottom: "none" }),
+                },
+              }}
               action={
                 <Stack direction="row" alignItems="center" spacing={2}>
+                  {/* Legend and eval picker only steer the open chart. */}
+                  {chartOpen && (
                   <Stack
                     direction="row"
                     spacing={1.5}
@@ -1171,8 +1233,14 @@ export default function CompareRuns() {
                         <Typography
                           sx={{ typography: "s3", color: "text.secondary" }}
                         >
+                          <Box
+                            component="span"
+                            sx={{ fontWeight: 600, color: "text.primary" }}
+                          >
+                            {runLabelOf(r)}
+                          </Box>{" "}
                           {identityOf(r).agentLabel}
-                          {identityOf(r).env && (
+                          {!sharedEnv && identityOf(r).env && (
                             <Box
                               component="span"
                               sx={{ color: "text.tertiary" }}
@@ -1185,14 +1253,16 @@ export default function CompareRuns() {
                       </Stack>
                     ))}
                   </Stack>
+                  )}
+                  {chartOpen && (
                   <TextField
                     select
                     size="small"
                     value={evalId || ""}
                     onChange={(e) => setPickedEval(e.target.value)}
                     sx={{
-                      minWidth: 190,
-                      "& .MuiInputBase-input": { typography: "s2", py: 0.75 },
+                      minWidth: 170,
+                      "& .MuiInputBase-input": { typography: "s3", py: 0.5 },
                     }}
                   >
                     {comparison.evals.map((e) => (
@@ -1205,9 +1275,29 @@ export default function CompareRuns() {
                       </MenuItem>
                     ))}
                   </TextField>
+                  )}
+                  <IconButton
+                    size="small"
+                    aria-label={
+                      chartOpen ? "Hide score distribution" : "Show score distribution"
+                    }
+                    aria-expanded={chartOpen}
+                    onClick={() => setChartOpen((o) => !o)}
+                  >
+                    <Iconify
+                      icon={
+                        chartOpen
+                          ? "solar:alt-arrow-up-linear"
+                          : "solar:alt-arrow-down-linear"
+                      }
+                      width={16}
+                      sx={{ color: "text.tertiary" }}
+                    />
+                  </IconButton>
                 </Stack>
               }
             >
+              {chartOpen && (
               <Box sx={{ px: 1.5, pt: 0.5, pb: 0 }}>
                 <ReactApexChart
                   type="bar"
@@ -1261,6 +1351,7 @@ export default function CompareRuns() {
                   }}
                 />
               </Box>
+              )}
             </SectionCard>
           )}
 
@@ -1277,22 +1368,60 @@ export default function CompareRuns() {
               borderColor: "divider",
             }}
           >
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-                Scenario by scenario
-              </Typography>
-              <Typography
-                noWrap
-                sx={{ typography: "s3", color: "text.tertiary" }}
-              >
-                {changed} of {comparison.rows.length} ended differently
-                {(() => {
-                  const n = comparison.rows.filter(isExactRegression).length;
-                  return n ? ` · ${n} exact passed → failed` : "";
-                })()}
-                {` · showing ${rows.length}`}
-              </Typography>
-            </Box>
+            {/* One fact the rows below don't already say. */}
+            <Typography
+              noWrap
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                typography: "s2",
+                color: "text.secondary",
+              }}
+            >
+              {view.view !== "table" &&
+                `${comparedWithText(comparison.runs)} · `}
+              {changed} of {comparison.rows.length} changed
+              {rows.length !== comparison.rows.length &&
+                ` · showing ${rows.length}`}
+              {/* The table's number columns read one run against the
+                  baseline; which one is picked here. */}
+              {view.view === "table" && comparison.runs.length > 1 && (
+                <>
+                  {" · Numbers for "}
+                  {comparison.runs.length > 2 ? (
+                    <Select
+                      variant="standard"
+                      disableUnderline
+                      value={
+                        numbersFor &&
+                        comparison.runs.some((r) => r.id === numbersFor)
+                          ? numbersFor
+                          : comparison.runs[1].id
+                      }
+                      onChange={(e) => setNumbersFor(e.target.value)}
+                      sx={{
+                        typography: "s2",
+                        fontWeight: 600,
+                        color: "text.primary",
+                        "& .MuiSelect-select": { py: 0, pr: "18px !important", minWidth: 0 },
+                        "& .MuiSelect-icon": { right: 0, width: 16, height: 16, top: "calc(50% - 8px)" },
+                      }}
+                    >
+                      {comparison.runs.slice(1).map((r) => (
+                        <MenuItem key={r.id} value={r.id} sx={{ typography: "s2" }}>
+                          {runLabelOf(r)}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  ) : (
+                    <Box component="span" sx={{ fontWeight: 600, color: "text.primary" }}>
+                      {runLabelOf(comparison.runs[1])}
+                    </Box>
+                  )}
+                  {` vs ${runLabelOf(comparison.runs[0])}`}
+                </>
+              )}
+            </Typography>
             <CompareSearchBar
               query={query}
               onQuery={setQuery}
@@ -1326,20 +1455,15 @@ export default function CompareRuns() {
               bandAction={bandAction}
             />
           ) : (
-            <TableView
+            <CompareRunColumns
+              compareId={numbersFor}
+              allRows={comparison.rows}
               groups={groups}
               bandAction={bandAction}
               view={view}
               rowPad={rowPad}
               evals={comparison.evals}
-              selected={selected}
-              onToggle={(id) =>
-                setSelected((prev) =>
-                  prev.includes(id)
-                    ? prev.filter((x) => x !== id)
-                    : [...prev, id],
-                )
-              }
+              runs={comparison.runs}
               onOpen={setOpenRow}
             />
           )}
@@ -1363,623 +1487,3 @@ export default function CompareRuns() {
     </Stack>
   );
 }
-
-/* ── table view ──────────────────────────────────────────────────────────── */
-
-/* Per-task synthesised metrics — same derivations the traces table uses,
-   so a value read on a single-run screen equals the value read here. */
-const hashStr = (s) => {
-  let h = 0;
-  for (let i = 0; i < String(s || "").length; i += 1)
-    h = (h * 31 + String(s).charCodeAt(i)) >>> 0;
-  return h;
-};
-const turnsOf = (t) => (t ? t.steps?.length ?? 0 : null);
-const latencyOf = (t) =>
-  t ? t.latencyMs ?? 280 + (hashStr(t.id) % 320) : null;
-
-function TableView({
-  groups,
-  view,
-  rowPad,
-  selected,
-  onToggle,
-  onOpen,
-  evals,
-  bandAction,
-}) {
-  /* System-metric strip on the right of the row — same set the traces
-     table shows: CSAT, Turns, Latency, Duration, Tokens, Cost. Widens
-     with the number of active columns so nothing crushes. */
-  const metricBits = [
-    view.columns.csat && "CSAT",
-    view.columns.turns && "Turns",
-    view.columns.latency && "Latency",
-    view.columns.duration && "Duration",
-    view.columns.tokens && "Tokens",
-    view.columns.cost && "Model cost",
-  ].filter(Boolean);
-  const metricColWidth = metricBits.length
-    ? metricBits.length * 76 + (metricBits.length - 1) * 10
-    : 0;
-  const showScorers = view.columns.scorers && (evals?.length || 0) > 0;
-  const scorersColWidth = showScorers
-    ? evals.length * 92 + (evals.length - 1) * 10
-    : 0;
-  /* System metrics before evals — matches the single-run traces table,
-     where evals live at the far right of the row. */
-  /* No checkbox column — this screen is for reading a comparison, not for
-     picking scenarios. Bulk actions live on the runs list. */
-  const gridTemplate =
-    `260px 1fr ${metricColWidth ? `${metricColWidth}px ` : ""}${scorersColWidth ? `${scorersColWidth}px` : ""}`.trim();
-
-  return (
-    <>
-      <Box
-        sx={{
-          display: { xs: "none", lg: "grid" },
-          gridTemplateColumns: gridTemplate,
-          columnGap: 2,
-          px: 2.5,
-          py: 1,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <ColHead>Scenario</ColHead>
-        <ColHead>
-          {view.diff
-            ? "What changed against the baseline"
-            : "What each run did with it"}
-        </ColHead>
-        {metricBits.length > 0 && (
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${metricBits.length}, minmax(56px, 1fr))`,
-              columnGap: 1.25,
-            }}
-          >
-            {metricBits.map((label) => (
-              <ColHead key={label} sx={{ textAlign: "right" }}>
-                {label}
-              </ColHead>
-            ))}
-          </Box>
-        )}
-        {showScorers && (
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${evals.length}, minmax(72px, 1fr))`,
-              columnGap: 1.25,
-            }}
-          >
-            {evals.map((e) => (
-              <ColHead key={e.id} sx={{ textAlign: "right" }}>
-                {e.name}
-              </ColHead>
-            ))}
-          </Box>
-        )}
-      </Box>
-
-      {groups.map((group) => (
-        <Box key={group.id}>
-          {group.label && (
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1}
-              sx={{
-                px: 2.5,
-                py: 1,
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Typography
-                noWrap
-                sx={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  minWidth: 0,
-                  flexShrink: group.note ? 0 : 1,
-                  color:
-                    group.tone === "bad"
-                      ? "status.danger.fg"
-                      : "text.secondary",
-                }}
-              >
-                {group.label}
-              </Typography>
-              {group.mark === "critical" && (
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flexShrink: 0,
-                  }}
-                >
-                  critical
-                </Typography>
-              )}
-              <Typography
-                sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-              >
-                {group.rows.length}
-              </Typography>
-              {group.note && (
-                <Typography
-                  noWrap
-                  sx={{ typography: "s3", color: "text.tertiary", minWidth: 0 }}
-                >
-                  · {group.note}
-                </Typography>
-              )}
-              {!group.rates && bandAction?.(group) && (
-                <>
-                  <Box flex={1} />
-                  {bandAction(group)}
-                </>
-              )}
-              {group.rates && (
-                <>
-                  <Box flex={1} />
-                  {group.rates.map((r) => (
-                    <Tooltip
-                      key={r.runId}
-                      arrow
-                      title={
-                        r.n
-                          ? `Passed in run ${r.letter} on ${r.n} shared scenario${r.n === 1 ? "" : "s"} that check it`
-                          : "No shared scenario measured in every run"
-                      }
-                    >
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.5}
-                        sx={{ flexShrink: 0 }}
-                      >
-                        <Letter letter={r.letter} color={r.color} />
-                        <Typography
-                          sx={{
-                            typography: "s3",
-                            fontWeight: 600,
-                            fontVariantNumeric: "tabular-nums",
-                            minWidth: 30,
-                          }}
-                        >
-                          {r.rate == null ? "—" : `${r.rate}%`}
-                        </Typography>
-                      </Stack>
-                    </Tooltip>
-                  ))}
-                </>
-              )}
-            </Stack>
-          )}
-
-          <Stack
-            divider={
-              <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
-            }
-          >
-            {group.rows.map((row) => (
-              <Box
-                key={row.id}
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: { xs: "1fr", lg: gridTemplate },
-                  columnGap: 2,
-                  px: 2.5,
-                  py: rowPad,
-                  cursor: "pointer",
-                  "&:hover": {
-                    bgcolor: "action.hover",
-                    "& .row-open": { opacity: 1 },
-                  },
-                  ...focusRing,
-                }}
-                {...clickable(() => onOpen(row))}
-              >
-                <Box minWidth={0}>
-                  {/* Title on its own line, full width; the pair and what
-                      moved sit quietly under it (no chip beside the title). */}
-                  {/* Wraps to two lines; anything longer is on hover. */}
-                  <Typography
-                    title={row.title}
-                    sx={{
-                      typography: "s2",
-                      fontWeight: 600,
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                      overflow: "hidden",
-                    }}
-                  >
-                    {row.title}
-                  </Typography>
-                  <OutcomeLine
-                    pair={row.pair}
-                    cells={row.cells}
-                    extra={
-                      view.rowHeight !== "large" &&
-                      typeof row.persona?.name === "string"
-                        ? row.persona.name
-                        : null
-                    }
-                  />
-                  {view.rowHeight === "large" && (
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        color: "text.tertiary",
-                        mt: 0.25,
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                        overflow: "hidden",
-                      }}
-                    >
-                      {row.task}
-                    </Typography>
-                  )}
-                  {view.rowHeight === "large" && (
-                    <Box sx={{ mt: 0.75 }}>
-                      <PersonaBadge persona={row.persona} compact />
-                    </Box>
-                  )}
-                </Box>
-
-                <Stack spacing={1.25} sx={{ minWidth: 0 }}>
-                  {row.cells.map((c, i) => (
-                    <Stack
-                      key={c.runId}
-                      direction="row"
-                      spacing={1.25}
-                      alignItems="flex-start"
-                    >
-                      <Letter letter={c.letter} color={c.color} />
-                      <Box sx={{ width: 78, flexShrink: 0 }}>
-                        <Verdict
-                          status={c.status}
-                          passes={c.passes}
-                          repeats={c.repeats}
-                        />
-                      </Box>
-                      {/* Who the failure belongs to, on the row that reports
-                          it — an unmeasured row must never read as the agent's. */}
-                      {c.domain && !c.domain.measured && (
-                        <DomainChip domain={c.domain} dense />
-                      )}
-                      <Typography
-                        sx={{
-                          flex: 1,
-                          minWidth: 0,
-                          typography: "s2",
-                          color: "text.secondary",
-                          whiteSpace: "nowrap",
-                          textOverflow: "ellipsis",
-                          overflow: "hidden",
-                        }}
-                        title={c.deciding.text}
-                      >
-                        {view.diff && i > 0 ? (
-                          <DiffText
-                            diff={behaviourDiff(row.cells[0].task, c.task)}
-                          />
-                        ) : (
-                          <>
-                            {c.deciding.kind === "claim" && (
-                              <Box
-                                component="span"
-                                sx={{
-                                  color: "status.danger.fg",
-                                  fontWeight: 600,
-                                }}
-                              >
-                                Said, not done —{" "}
-                              </Box>
-                            )}
-                            {c.deciding.text}
-                          </>
-                        )}
-                      </Typography>
-                    </Stack>
-                  ))}
-                </Stack>
-
-                {/* System metrics column — sits before evals, matching the
-                    header order and the single-run traces table. */}
-                <Stack
-                  spacing={1.25}
-                  sx={{
-                    display: { xs: "none", lg: "flex" },
-                    position: "relative",
-                  }}
-                >
-                  {/* The row opens a side-by-side of the transcripts; without a
-                      mark, nothing on it says that. */}
-                  <Iconify
-                    icon="solar:alt-arrow-right-linear"
-                    width={16}
-                    className="row-open"
-                    sx={{
-                      position: "absolute",
-                      right: -14,
-                      top: 2,
-                      opacity: 0,
-                      transition: "opacity .12s",
-                      color: "text.tertiary",
-                      pointerEvents: "none",
-                    }}
-                  />
-                  {(() => {
-                    const columns = [
-                      view.columns.csat && {
-                        key: "csat",
-                        get: (c) => {
-                          const v = csatOf(c.task);
-                          return v != null ? String(v) : "—";
-                        },
-                      },
-                      view.columns.turns && {
-                        key: "turns",
-                        get: (c) => {
-                          const v = turnsOf(c.task);
-                          return v != null ? String(v) : "—";
-                        },
-                      },
-                      view.columns.latency && {
-                        key: "latency",
-                        get: (c) => {
-                          const v = latencyOf(c.task);
-                          return v != null ? `${v}ms` : "—";
-                        },
-                      },
-                      view.columns.duration && {
-                        key: "duration",
-                        get: (c) =>
-                          c.task ? `${(c.durationMs / 1000).toFixed(1)}s` : "—",
-                      },
-                      view.columns.tokens && {
-                        key: "tokens",
-                        get: (c) => (c.task ? c.tokens.toLocaleString() : "—"),
-                      },
-                      view.columns.cost && {
-                        key: "cost",
-                        get: (c) =>
-                          !c.task
-                            ? "—"
-                            : c.costUnverified
-                              ? "unverified"
-                              : `≈ $${(c.cost || 0).toFixed(2)}`,
-                      },
-                    ].filter(Boolean);
-                    return row.cells.map((c) => (
-                      <Box
-                        key={c.runId}
-                        sx={{
-                          display: "grid",
-                          gridTemplateColumns: `repeat(${columns.length}, minmax(56px, 1fr))`,
-                          columnGap: 1.25,
-                          alignItems: "baseline",
-                        }}
-                      >
-                        {columns.map((col) => (
-                          <Typography
-                            key={col.key}
-                            noWrap
-                            sx={{
-                              textAlign: "right",
-                              typography: "s2",
-                              color: "text.primary",
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {col.get(c)}
-                          </Typography>
-                        ))}
-                      </Box>
-                    ));
-                  })()}
-                </Stack>
-
-                {/* Eval scores column — sits after the system metrics so
-                    the run's numbers cluster together and evals close the
-                    row on the right, mirroring the traces table. */}
-                {showScorers && (
-                  <Stack
-                    spacing={1.25}
-                    sx={{ display: { xs: "none", lg: "flex" } }}
-                  >
-                    {row.cells.map((c) => (
-                      <Box
-                        key={c.runId}
-                        sx={{
-                          display: "grid",
-                          gridTemplateColumns: `repeat(${evals.length}, minmax(72px, 1fr))`,
-                          columnGap: 1.25,
-                          alignItems: "baseline",
-                        }}
-                      >
-                        {evals.map((e) => {
-                          const r = (c.task?.evalResults || []).find(
-                            (x) => x.id === e.id,
-                          );
-                          if (!r) {
-                            return (
-                              <Typography
-                                key={e.id}
-                                sx={{
-                                  textAlign: "right",
-                                  typography: "s2",
-                                  color: "text.disabled",
-                                  fontVariantNumeric: "tabular-nums",
-                                }}
-                              >
-                                —
-                              </Typography>
-                            );
-                          }
-                          return (
-                            <Typography
-                              key={e.id}
-                              sx={{
-                                textAlign: "right",
-                                typography: "s2",
-                                fontWeight: 600,
-                                color: r.passed
-                                  ? "text.primary"
-                                  : "status.danger.fg",
-                                fontVariantNumeric: "tabular-nums",
-                              }}
-                            >
-                              {Math.round(r.score * 100)}%
-                            </Typography>
-                          );
-                        })}
-                      </Box>
-                    ))}
-                  </Stack>
-                )}
-              </Box>
-            ))}
-          </Stack>
-        </Box>
-      ))}
-    </>
-  );
-}
-TableView.propTypes = {
-  groups: PropTypes.array,
-  view: PropTypes.object,
-  rowPad: PropTypes.number,
-  evals: PropTypes.array,
-  selected: PropTypes.array,
-  onToggle: PropTypes.func,
-  onOpen: PropTypes.func,
-  bandAction: PropTypes.func,
-};
-
-/** The behaviour diff, in one line. */
-function DiffText({ diff }) {
-  if (!diff) return null;
-  if (diff.identical) {
-    return (
-      <Box component="span" sx={{ color: "text.tertiary" }}>
-        Same behaviour as the baseline.
-      </Box>
-    );
-  }
-  const parts = [];
-  if (diff.missedNow.length)
-    parts.push(`stopped calling ${diff.missedNow.join(", ")}`);
-  else if (diff.dropped.length)
-    parts.push(`dropped ${diff.dropped.join(", ")}`);
-  if (diff.added.length) parts.push(`added ${diff.added.join(", ")}`);
-  if (diff.turnDelta)
-    parts.push(
-      `${Math.abs(diff.turnDelta)} ${diff.turnDelta > 0 ? "more" : "fewer"} turns`,
-    );
-  if (!parts.length && diff.firstDivergence >= 0) {
-    parts.push(
-      `same tools, wording differs from turn ${diff.firstDivergence + 1}`,
-    );
-  }
-  return (
-    <>
-      {diff.verdictChanged && (
-        <Box
-          component="span"
-          sx={{ color: "status.danger.fg", fontWeight: 600 }}
-        >
-          Verdict changed —{" "}
-        </Box>
-      )}
-      {parts.join(", ")}.
-    </>
-  );
-}
-DiffText.propTypes = { diff: PropTypes.object };
-
-function ColHead({ children, sx }) {
-  return (
-    <Typography
-      noWrap
-      sx={{
-        /* Reads like the product's DataTable header. */
-        fontSize: 13,
-        fontWeight: 500,
-        color: "text.secondary",
-        ...sx,
-      }}
-    >
-      {children}
-    </Typography>
-  );
-}
-ColHead.propTypes = { children: PropTypes.node, sx: PropTypes.object };
-
-function Letter({ letter, color }) {
-  return (
-    <Box
-      sx={{
-        width: 20,
-        height: 20,
-        borderRadius: "4px",
-        flexShrink: 0,
-        display: "grid",
-        placeItems: "center",
-        typography: "s3",
-        fontWeight: 600,
-        color: textTone(color),
-        bgcolor: (t) => alpha(color, t.palette.mode === "dark" ? 0.22 : 0.14),
-      }}
-    >
-      {letter}
-    </Box>
-  );
-}
-Letter.propTypes = { letter: PropTypes.string, color: PropTypes.string };
-
-function Metric({ value, delta, lowerIsBetter }) {
-  const good = delta == null ? null : lowerIsBetter ? delta < 0 : delta > 0;
-  return (
-    <Stack
-      direction="row"
-      alignItems="baseline"
-      spacing={0.5}
-      sx={{ minWidth: 78, justifyContent: "flex-end" }}
-    >
-      <Typography
-        sx={{
-          typography: "s2",
-          color: "text.secondary",
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {value}
-      </Typography>
-      {delta != null && delta !== 0 && (
-        <Typography
-          sx={{
-            typography: "s3",
-            fontWeight: 600,
-            color: good ? "status.success.fg" : "status.danger.fg",
-          }}
-        >
-          {delta > 0 ? "+" : ""}
-          {delta}%
-        </Typography>
-      )}
-    </Stack>
-  );
-}
-Metric.propTypes = {
-  value: PropTypes.string,
-  delta: PropTypes.number,
-  lowerIsBetter: PropTypes.bool,
-};

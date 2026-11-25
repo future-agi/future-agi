@@ -18,6 +18,7 @@ import {
 import { creditsForUsd, creditsLabel } from "../_mock/metering";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { mayChangeListOf } from "./constraintEdits";
+import { sourceRunOf } from "./improvementRows";
 
 /*
   A running epoch, as the stages it goes through — Queued, Reproducing,
@@ -124,6 +125,19 @@ export default function ImprovementStages({
   const issueId = record.trigger?.issueId;
   const fromRun =
     (envState?.runs || []).find((x) => x.id === record.fromRunId) || null;
+  /* "Run N" is a source only when it existed when the epoch began (or was
+     started for it); an Error Feed issue is its own source. */
+  const sourceRun =
+    fromRun && !fromRun.measuredFor
+      ? sourceRunOf(
+          {
+            kind: record.trigger?.kind,
+            fromRunId: record.fromRunId,
+            createdAt: record.createdAt,
+          },
+          envState?.runs || [],
+        )
+      : fromRun;
   /* A git agent's version reads as its commit ("main @ 3f9a2c1"), never vN. */
   const version = record.baseAgentVersion
     ? envVersionNameOf(envState, record.baseAgentVersion, fromRun?.envId).main
@@ -192,9 +206,9 @@ export default function ImprovementStages({
           : fromRun?.measuredFor
             ? stateOf("reproduce") === "now"
               ? `Running the environment's ${plural(envCount, "scenario")} on ${version}, ${reps} times each`
-              : `Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} pass every repeat`
-            : fromRun
-              ? `Starts from Run ${fromRun.ordinal} on ${version}`
+              : `Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} pass every trial`
+            : sourceRun
+              ? `Starts from Run ${sourceRun.ordinal} on ${version}`
               : stateOf("reproduce") === "now"
                 ? `Running the scenarios on ${version}`
                 : `Measured ${version} on ${plural((r.trainMeasured || 0) + (r.heldMeasured || 0), "scenario")}`,
@@ -203,8 +217,8 @@ export default function ImprovementStages({
           ? `Scenarios from ${issueId} are for this epoch only.`
           : null,
         /* What measuring today found in the environment — once it has. */
-        feed && fromRun && stateOf("reproduce") === "done"
-          ? `Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} pass every repeat.`
+        feed && sourceRun && stateOf("reproduce") === "done"
+          ? `Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} pass every trial.`
           : null,
         /* What else that run found — never this fix's to work on. */
         feed && stateOf("reproduce") === "done" && (r.otherFailing || []).length
@@ -214,14 +228,14 @@ export default function ImprovementStages({
           ? `${plural(rep.inconclusive, "scenario")} failed only once, so ${rep.inconclusive === 1 ? "it isn't a target" : "they aren't targets"}.`
           : null,
         stateOf("reproduce") === "done" && cal && r.noise != null
-          ? `The current version varied by ${r.noise} pts between repeats.`
+          ? `The current version varied by ${r.noise} pts between trials.`
           : null,
       ]
         .filter(Boolean)
         .join(" "),
       /* The environment's run, a link where the line names it. */
       link:
-        fromRun &&
+        sourceRun &&
         onOpenRun &&
         (!fromRun.measuredFor || stateOf("reproduce") === "done")
           ? { token: `Run ${fromRun.ordinal}`, onClick: onOpenRun }
@@ -285,7 +299,7 @@ export default function ImprovementStages({
       sub:
         [
           r.mustPass
-            ? `Must-pass: ${[`${r.mustPass.passing} passing every repeat today`, r.mustPass.marked ? `${r.mustPass.marked} marked` : null, r.mustPass.remembered ? `${r.mustPass.remembered} from regression memory` : null].filter(Boolean).join(", ")}.`
+            ? `Must-pass: ${[`${r.mustPass.passing} passing every trial today`, r.mustPass.marked ? `${r.mustPass.marked} marked` : null, r.mustPass.remembered ? `${r.mustPass.remembered} from regression memory` : null].filter(Boolean).join(", ")}.`
             : null,
           /* An issue's fix: the winner once more on what else failed today,
              to say what it fixed along the way. */

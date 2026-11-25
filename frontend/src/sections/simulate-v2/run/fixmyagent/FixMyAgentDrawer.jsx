@@ -73,6 +73,8 @@ export default function FixMyAgentDrawer({
   onViewIssue,
   openOptimizationId,
   openSetup = false,
+  /* Opened by the run header's Run Epoch: no Debug failures first. */
+  direct = false,
 }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
@@ -274,6 +276,7 @@ export default function FixMyAgentDrawer({
       spentFirst: today ? todaySpend(today, env.surface) : 0,
       trigger: {
         kind: "run",
+        ...(direct && { source: "run-direct" }),
         goal: goal
           ? {
               id: goal.id,
@@ -704,6 +707,7 @@ export default function FixMyAgentDrawer({
 FixMyAgentDrawer.propTypes = {
   /* Start on the improvement's setup, not the diagnosis. */
   openSetup: PropTypes.bool,
+  direct: PropTypes.bool,
   open: PropTypes.bool,
   onClose: PropTypes.func,
   env: PropTypes.object,

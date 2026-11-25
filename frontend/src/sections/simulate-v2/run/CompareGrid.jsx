@@ -7,21 +7,16 @@ import { runIdentityOf } from "../_mock/runIdentity";
 import { twinTimelineFor, twinById } from "../_mock/twins";
 import { Verdict } from "../components/primitives";
 import { textTone } from "../components/textTone";
-import { csatOf } from "./traceTableHelpers";
+import { csatOf, latencyOf as tableLatencyOf } from "./traceTableHelpers";
+import { turnsOf as countTurns } from "../_mock/runStream";
 import OutcomeChip from "./CompareOutcome";
+import { readDelta, toPoints } from "../_mock/scoreDelta";
 import { clickable, focusRing } from "../components/clickable";
 
 /* Same derivations the TraceTable and CompareRuns TableView use, so a
    number read here matches the number read on the single-run screen. */
-const hashStr = (s) => {
-  let h = 0;
-  for (let i = 0; i < String(s || "").length; i += 1)
-    h = (h * 31 + String(s).charCodeAt(i)) >>> 0;
-  return h;
-};
-const turnsOf = (t) => (t ? t.steps?.length ?? 0 : null);
-const latencyOf = (t) =>
-  t ? t.latencyMs ?? 280 + (hashStr(t.id) % 320) : null;
+const turnsOf = (t) => (t ? countTurns(t.steps || []) : null);
+const latencyOf = (t) => (t ? tableLatencyOf(t) : null);
 
 /**
  * A column per agent version.
@@ -108,7 +103,7 @@ export default function CompareGrid({
                     flexShrink: 0,
                   }}
                 >
-                  baseline
+                  Baseline
                 </Typography>
               )}
               <Box flex={1} />
@@ -412,6 +407,28 @@ function Cell({
                   >
                     {Math.round(r.score * 100)}%
                   </Typography>
+                  {/* Points against the baseline's score, never a percent of it. */}
+                  {(() => {
+                    const base = (baselineCell.task?.evalResults || []).find(
+                      (x) => x.id === e.id,
+                    );
+                    const d =
+                      !isBaseline && base
+                        ? readDelta(toPoints(r.score), toPoints(base.score))
+                        : null;
+                    return d && d.dir !== "same" ? (
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          fontWeight: 600,
+                          color: d.better
+                            ? "status.success.fg"
+                            : "status.danger.fg",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >{`${d.arrow} ${d.text}`}</Typography>
+                    ) : null;
+                  })()}
                 </Stack>
               );
             })}

@@ -268,7 +268,7 @@ export const brokenScenarios = (scenarios = [], env, envState) => {
  * Every count of "what Run will do" reads from here, so the header, the
  * Repeats picker and the live run agree.
  */
-export const runPlan = (env, envState, { only, envVersion } = {}) => {
+export const runPlan = (env, envState, { only, envVersion, keepUnproved } = {}) => {
   const label = envVersion || currentEnvVersion(env, envState)?.label;
   const pinned = { ...envState, activeEnvVersion: label };
   /* Re-proved rows, in place — the caller may persist them. */
@@ -284,7 +284,10 @@ export const runPlan = (env, envState, { only, envVersion } = {}) => {
     /* A stale scenario (an agent change removed a tool it needs) still
        runs — it counts toward no decision, it isn't skipped. */
     const why = skipReasonFor(sc, env, pinned, label);
-    if (why) skipped.push({ ...sc, skipReason: why });
+    /* A re-run on the source run's own version plays what that run played;
+       a proof that lapsed since is a tag, not a block. */
+    if (why && keepUnproved) run.push({ ...sc, notProved: why });
+    else if (why) skipped.push({ ...sc, skipReason: why });
     else run.push(sc);
   });
   return {

@@ -284,6 +284,7 @@ export default function DiagnosisPane({
   };
   const [handoff, setHandoff] = useState(false);
   const [previousAnchor, setPreviousAnchor] = useState(null);
+  const [moreAnchor, setMoreAnchor] = useState(null);
   const [open, setOpen] = useState({});
   /* Folded to one line — what to fix comes first; the six checks are a click away. */
   const [showDiagnosis, setShowDiagnosis] = useState(false);
@@ -681,24 +682,30 @@ export default function DiagnosisPane({
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {picked
               ? `Only the ${picked.count} you picked${picked.leftOut ? ` · ${picked.leftOut} other failing left out` : ""}`
-              : `${failing.length} failing of ${measured.length} measured`}
+              : `${failing.length} failing of ${measured.length}`}
             {!picked && tasks.length - measured.length
               ? ` · ${tasks.length - measured.length} not measured`
               : ""}
+            {/* The run header counts these as flaky; say why they're not here. */}
+            {(() => {
+              const n = measured.filter(
+                (t) => t.status === "flaky" && !failing.includes(t),
+              ).length;
+              return !picked && n
+                ? ` · ${n} flaky from the caller left out`
+                : "";
+            })()}
           </Typography>
         </Box>
         {/* Earlier improvement runs reopen from here — the one place a
             finished run was otherwise unreachable. */}
         {!!previous.length && (
           <Button
-            variant="outlined"
             size="small"
             onClick={(e) => setPreviousAnchor(e.currentTarget)}
-            sx={{
-              "&:hover": { bgcolor: "transparent", color: "text.primary" },
-            }}
+            sx={{ color: "text.secondary", minWidth: 0 }}
           >
-            {`Epochs (${previous.length})`}
+            {`Epochs ${previous.length}`}
           </Button>
         )}
         <Menu
@@ -730,31 +737,49 @@ export default function DiagnosisPane({
             </MenuItem>
           ))}
         </Menu>
-        {phase === "done" && !nothingToFix && (
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={exportReport}
-            startIcon={
-              <Iconify icon="solar:upload-minimalistic-linear" width={14} />
-            }
-            sx={{
-              "&:hover": { bgcolor: "transparent", color: "text.primary" },
-            }}
-          >
-            Export report
-          </Button>
-        )}
+        {/* 25 Nov declutter: Export and Read again sit in one ⋯ menu. */}
         {phase === "done" && (
-          <Tooltip arrow title="Read the run again">
-            <IconButton size="small" onClick={rescan}>
+          <>
+            <IconButton
+              size="small"
+              aria-label="More"
+              onClick={(e) => setMoreAnchor(e.currentTarget)}
+            >
               <Iconify
-                icon="solar:refresh-linear"
+                icon="solar:menu-dots-bold"
                 width={16}
                 sx={{ color: "text.tertiary" }}
               />
             </IconButton>
-          </Tooltip>
+            <Menu
+              anchorEl={moreAnchor}
+              open={!!moreAnchor}
+              onClose={() => setMoreAnchor(null)}
+              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+              transformOrigin={{ vertical: "top", horizontal: "right" }}
+            >
+              {!nothingToFix && (
+                <MenuItem
+                  onClick={() => {
+                    setMoreAnchor(null);
+                    exportReport();
+                  }}
+                  sx={{ typography: "s2" }}
+                >
+                  Export report
+                </MenuItem>
+              )}
+              <MenuItem
+                onClick={() => {
+                  setMoreAnchor(null);
+                  rescan();
+                }}
+                sx={{ typography: "s2" }}
+              >
+                Read the run again
+              </MenuItem>
+            </Menu>
+          </>
         )}
         <IconButton size="small" onClick={onClose}>
           <Iconify icon="solar:close-linear" width={16} />
@@ -1038,61 +1063,17 @@ export default function DiagnosisPane({
 
             {/* ── overall run summary — sits after the diagnosis so it reads as
                  the takeaway from the analyzers above, not a claim ahead of them ── */}
+            {/* 25 Nov declutter: the takeaway in two short lines, no box. */}
             <Collapse in={!running}>
-              <Box
-                sx={{
-                  mx: 2.5,
-                  mt: 2.5,
-                  px: 1.75,
-                  py: 1.5,
-                  borderRadius: "8px",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  bgcolor: "background.paper",
-                }}
-              >
-                <Stack direction="row" alignItems="flex-start" spacing={1.25}>
-                  <Iconify
-                    icon="solar:lightbulb-bolt-linear"
-                    width={16}
-                    sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
-                  />
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    {verdict}
-                  </Typography>
-                </Stack>
+              <Box sx={{ mx: 2.5, mt: 2 }}>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {verdict}
+                </Typography>
                 {causeCount > 0 && topFrees > 0 && (
                   <Typography
-                    sx={{
-                      typography: "s2",
-                      color: "text.secondary",
-                      mt: 1,
-                      pl: 3.375,
-                    }}
+                    sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
                   >
-                    These <b>{failing.length} failures</b> collapse into{" "}
-                    <b>
-                      {causeCount} {causeCount === 1 ? "cause" : "causes"}
-                    </b>
-                    . Fix the top one and{" "}
-                    <b>
-                      {topFrees}{" "}
-                      {topFrees === 1 ? "scenario flips" : "scenarios flip"}
-                    </b>{" "}
-                    green.
-                  </Typography>
-                )}
-                {alreadyPass > 0 && (
-                  <Typography
-                    sx={{
-                      typography: "s3",
-                      color: "text.tertiary",
-                      mt: 0.75,
-                      pl: 3.375,
-                    }}
-                  >
-                    {alreadyPass} of {measured.length} measured scenarios
-                    already pass — the gaps are concentrated, not scattered.
+                    {`${failing.length} failures · ${causeCount} ${causeCount === 1 ? "cause" : "causes"} · the top fix frees ${topFrees}`}
                   </Typography>
                 )}
               </Box>
@@ -1165,11 +1146,13 @@ export default function DiagnosisPane({
                   <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                     {running ? "Issues found" : "Fix in this order"}
                   </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {running
-                      ? `${shownIssues.length} so far · ranked once every call is read`
-                      : "ranked by severity, then how many scenarios each one frees"}
-                  </Typography>
+                  {running && (
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {`${shownIssues.length} so far · ranked once every call is read`}
+                    </Typography>
+                  )}
                 </Box>
                 {/* For teams whose coding agent makes the edit — it gets the
                     evidence and the constraints, and submits back here. */}
@@ -1334,34 +1317,16 @@ export default function DiagnosisPane({
                             "View" filters the trace table to the
                             exact task ids this finding addresses.
                           */}
+                          {/* Every action stays a button (Vel, 25 Nov); the
+                              count sits in View's label, not a second chip. */}
                           <Stack
                             direction="row"
                             alignItems="center"
-                            spacing={1.5}
+                            spacing={1}
+                            flexWrap="wrap"
+                            rowGap={0.75}
                             sx={{ mt: 1 }}
                           >
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              spacing={0.5}
-                            >
-                              <Iconify
-                                icon="solar:play-circle-linear"
-                                width={14}
-                                sx={{ color: "text.tertiary" }}
-                              />
-                              <Typography
-                                sx={{
-                                  typography: "s3",
-                                  fontWeight: 600,
-                                  color: "text.secondary",
-                                  fontVariantNumeric: "tabular-nums",
-                                }}
-                              >
-                                {p.addresses.length} call
-                                {p.addresses.length === 1 ? "" : "s"} affected
-                              </Typography>
-                            </Stack>
                             {onViewIssue && p.addresses.length > 0 && (
                               <Button
                                 size="small"
@@ -1381,10 +1346,9 @@ export default function DiagnosisPane({
                                   },
                                 }}
                               >
-                                View affected calls
+                                {`View ${p.addresses.length} affected call${p.addresses.length === 1 ? "" : "s"}`}
                               </Button>
                             )}
-                            {/* Your wording, tried by the search as written. */}
                             {!running &&
                               !diagnoseOnly &&
                               onEditChange &&
@@ -1554,13 +1518,14 @@ export default function DiagnosisPane({
                               ))}
                             </Stack>
                           )}
-                          {!diagnoseOnly && (
-                            <ScopeLine
-                              scope={scope}
-                              available={available[scope.surface]}
-                              onChangeConstraints={changeConstraints}
-                            />
-                          )}
+                          {!diagnoseOnly &&
+                            (!scope.ok || scope.environment) && (
+                              <ScopeLine
+                                scope={scope}
+                                available={available[scope.surface]}
+                                onChangeConstraints={changeConstraints}
+                              />
+                            )}
                         </Box>
                       </Stack>
                     </Box>
@@ -1589,9 +1554,6 @@ export default function DiagnosisPane({
             */}
             {checksFirst && !running && (
               <>
-                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  {`${checksLine}, so an epoch scored by ${toFix?.check ? "it" : "them"} can win without getting better. Fix ${toFix?.check ? "it" : "that"} first.`}
-                </Typography>
                 {fixChecks && (
                   <Button
                     size="small"
@@ -1649,7 +1611,7 @@ export default function DiagnosisPane({
                 )}
               </>
             ) : (
-              <>
+              <Stack direction="row" spacing={1} alignItems="center">
                 <Tooltip
                   arrow
                   title={
@@ -1661,7 +1623,7 @@ export default function DiagnosisPane({
                   }
                   placement="top"
                 >
-                  <Box>
+                  <Box sx={{ flex: 1 }}>
                     <Button
                       size="small"
                       fullWidth
@@ -1688,25 +1650,15 @@ export default function DiagnosisPane({
                 earlier full-width outlined button read as an equal
                 alternative, which it isn't.
               */}
-                <Box sx={{ textAlign: "center", pt: 0.25 }}>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    disabled={running || !included.length}
-                    onClick={() => setHandoff((v) => !v)}
-                    sx={{
-                      "&:hover": {
-                        bgcolor: "transparent",
-                        color: "text.primary",
-                      },
-                    }}
-                  >
-                    {handoff
-                      ? "Hide hand-off"
-                      : "or hand these changes over without a search"}
-                  </Button>
-                </Box>
-              </>
+                <Button
+                  size="small"
+                  disabled={running || !included.length}
+                  onClick={() => setHandoff((v) => !v)}
+                  sx={{ color: "text.secondary", flexShrink: 0 }}
+                >
+                  {handoff ? "Hide hand-off" : "Hand over instead"}
+                </Button>
+              </Stack>
             )}
           </Stack>
         </>

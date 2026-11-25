@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { ranVersionOf } from "../_mock/scenarioRunHistory";
 import { SHOW_TAGS } from "./scenarios/scenarioOrgFlags";
 import {
   Fragment,
@@ -681,6 +682,10 @@ export default function ScenariosStep({
       status: statuses[i] || null,
       samples: trials[i]?.samples || null,
       taskId: trials[i]?.taskId || null,
+      agentVersion: r.agentVersion || null,
+      envVersion: r.envVersion || null,
+      /* The scenario's version that run played — the table blanks a dot when it isn't comparable. */
+      ranVersion: statuses[i] ? ranVersionOf(r, row) : null,
     }));
   };
   const latestOf = (row) => runHistory.latestTask.get(row.id) || null;

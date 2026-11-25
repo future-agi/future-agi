@@ -196,8 +196,6 @@ export default function ImprovementSetup({
   /* The agent's rules (what may change), opened in place from the May
      change row — saved to the agent, never set for one epoch. */
   const [rulesOpen, setRulesOpen] = useState(false);
-  /* The rest of the plan opens in place. */
-  const [more, setMore] = useState(false);
   /* Stamped when the setup opens: the seed is never reused, even after an
      improvement is deleted, and stays the same until Start. */
   const [openedAt, setOpenedAt] = useState(() => Date.now().toString(36));
@@ -206,7 +204,6 @@ export default function ImprovementSetup({
     if (!open) return;
     setOpenedAt(Date.now().toString(36));
     setRulesOpen(false);
-    setMore(false);
     setAlsoIn([]);
     setAcrossLineage(false);
     setName(improvementRunName(es, null));
@@ -573,15 +570,6 @@ export default function ImprovementSetup({
       ]
         .filter(Boolean)
         .join(" ") || null;
-  const moreParts = [
-    "Name",
-    !preset?.fromGoal && "goal",
-    "how far it goes",
-    others.length > 0 && "other environments",
-    lineageVersions.length > 0 && "earlier versions",
-  ]
-    .filter(Boolean)
-    .join(", ");
   /* The same epoch from code — what Run Epoch would make. Flags follow the
      API's fields (source run, target and must-pass scenarios, surfaces,
      locked paths, credits, minutes). */
@@ -1104,34 +1092,12 @@ export default function ImprovementSetup({
         )}
 
         {/* The rest — name, goal (when it didn't start from one), how far it
-            goes, other environments, earlier versions — one click away. */}
+            goes, other environments, earlier versions — always open: the
+            drawer has the room, and a fold only left white space. */}
         {main && (
           <Box>
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              {...clickable(() => setMore((v) => !v), { expanded: more })}
-              sx={{ ...focusRing, cursor: "pointer", width: "fit-content" }}
-            >
-              <Iconify
-                icon={
-                  more
-                    ? "solar:alt-arrow-down-linear"
-                    : "solar:alt-arrow-right-linear"
-                }
-                width={14}
-                sx={{ color: "text.tertiary" }}
-              />
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                More options
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {moreParts}
-              </Typography>
-            </Stack>
-            {more && (
-              <Stack spacing={2.5} sx={{ mt: 2 }}>
+            {
+              <Stack spacing={2.5}>
                 <Box>
                   <Typography sx={fieldLabel}>Name</Typography>
                   <TextField
@@ -1291,7 +1257,7 @@ export default function ImprovementSetup({
                   </Stack>
                 )}
               </Stack>
-            )}
+            }
           </Box>
         )}
       </Stack>
@@ -1474,8 +1440,10 @@ function InlineLink({ onClick, expanded, children }) {
       aria-expanded={expanded}
       sx={{
         typography: "s2",
-        fontWeight: 600,
-        color: "text.primary",
+        fontWeight: 500,
+        /* The link colour, as "See the diff" and "Show all" use — bold body
+           text didn't read as something to click. */
+        color: "primary.main",
         verticalAlign: "baseline",
         ...focusRing,
       }}

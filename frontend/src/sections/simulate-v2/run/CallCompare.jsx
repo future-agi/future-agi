@@ -22,6 +22,9 @@ import { getSurface } from "../_mock/surfaces";
 import { runIdentityOf } from "../_mock/runIdentity";
 import { creditsText } from "./runsTableFormat";
 import { hashSeed } from "../_mock/runStream";
+import { trialTaskOf } from "../_mock/callRecord";
+import TrialSwitcher from "./TrialSwitcher";
+import { runLabelOf } from "../_mock/scoreDelta";
 import {
   callDetail,
   callDeltas,
@@ -32,6 +35,7 @@ import {
 import { DomainChip } from "../components/primitives";
 import { textTone } from "../components/textTone";
 import CallGraph, { GraphLegend } from "./CallGraph";
+import { formatLatency } from "./traceTableHelpers";
 import { clickable, focusRing } from "../components/clickable";
 
 /**
@@ -78,6 +82,17 @@ export default function CallCompare({
   const { enqueueSnackbar } = useSnackbar();
   const [tab, setTab] = useState("transcript");
   const [wide, setWide] = useState(false);
+  /* Which trial each run's column shows, for the scenario that is open. A
+     scenario that ran several times keeps one transcript per trial; each side
+     picks its own, or the strip above sets them all. */
+  const [trialPick, setTrialPick] = useState({ rowId: null, byRun: {} });
+  const trialOf = (runId) =>
+    trialPick.rowId === row?.id ? trialPick.byRun[runId] ?? 0 : 0;
+  const pickAllTrials = (k) =>
+    setTrialPick({
+      rowId: row.id,
+      byRun: Object.fromEntries(row.cells.map((c) => [c.runId, k])),
+    });
 
   const surface = getSurface(env?.surface);
   const voice = surface.stage === "voice";
@@ -91,13 +106,39 @@ export default function CallCompare({
     if (!row) return [];
     return row.cells.map((cell) => {
       const run = runs.find((r) => r.id === cell.runId);
-      return callDetail({ env, envState, run, task: cell.task, scenario: row });
+      const k =
+        trialPick.rowId === row.id ? trialPick.byRun[cell.runId] ?? 0 : 0;
+      return callDetail({
+        env,
+        envState,
+        run,
+        task: trialTaskOf(cell.task, k),
+        scenario: row,
+      });
     });
-  }, [row, runs, env, envState]);
+  }, [row, runs, env, envState, trialPick]);
 
   if (!row) return null;
 
   const baseline = details[0];
+  /* The longest list of trials any run has for this scenario. */
+  const allSamples = (() => {
+    const longest = Math.max(
+      0,
+      ...row.cells.map((c) => c.task?.samples?.length || 0),
+    );
+    /* A dot is the trial's outcome across the runs that scored it: all
+       passed, all failed, a mix (amber), or nobody scored it (grey). */
+    return Array.from({ length: longest }, (_, i) => {
+      const seen = row.cells
+        .filter((c) => c.measured !== false && c.task?.samples?.[i])
+        .map((c) => c.task.samples[i]);
+      if (!seen.length) return "unmeasured";
+      if (seen.every((v) => v === "passed")) return "passed";
+      if (seen.every((v) => v !== "passed")) return "failed";
+      return "flaky";
+    });
+  })();
   const index = rows.findIndex((r) => r.id === row.id);
   const go = (step) => {
     const next = rows[index + step];
@@ -314,6 +355,18 @@ export default function CallCompare({
             {heading || `Comparing ${row.cells.length} runs`}
           </Typography>
           <Box flex={1} />
+          {/* One switcher for every side. */}
+          <TrialSwitcher
+            samples={allSamples}
+            index={
+              row.cells.every(
+                (c) => trialOf(c.runId) === trialOf(row.cells[0].runId),
+              )
+                ? trialOf(row.cells[0].runId)
+                : -1
+            }
+            onPick={pickAllTrials}
+          />
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             Show Diff
           </Typography>
@@ -447,10 +500,7 @@ function RunColumn({
             noWrap
             sx={{ typography: "s1", fontWeight: 600, flex: 1, minWidth: 0 }}
           >
-            {run?.kind === "trial"
-              ? `Run ${run.trialN}${run.selfImprovementName ? ` · ${run.selfImprovementName}` : ""}`
-              : `Run ${run?.ordinal}`}{" "}
-            · {name}
+            {runLabelOf(run)} · {name}
           </Typography>
         )}
         {detail && !detail.measured && <DomainChip domain={detail.domain} />}
@@ -520,7 +570,7 @@ function RunColumn({
                       color: textTone(detail.domain.color),
                     }}
                   >
-                    {detail.domain.label} — not measured
+                    {detail.domain.label} — not scored
                   </Typography>
                 </Stack>
                 <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -551,12 +601,9 @@ function RunColumn({
             />
             <Meta
               label="Duration"
-              value={`0m ${Math.round(detail.durationS)}s`}
+              value={`${Math.floor(Math.round(detail.durationS) / 60)}m ${String(Math.round(detail.durationS) % 60).padStart(2, "0")}s`}
             />
-            <Meta
-              label="Avg Latency"
-              value={`${(detail.latencyMs / 1000).toFixed(1)}s`}
-            />
+            <Meta label="Avg Latency" value={formatLatency(detail.latencyMs)} />
           </Stack>
           <Stack
             direction="row"
@@ -680,7 +727,7 @@ function RunColumn({
           >
             <Stat label="Duration" value={`${detail.durationS}s`} />
             <Stat label="Turns" value={detail.stats.turnCount} />
-            <Stat label="Latency" value={`${detail.latencyMs}ms`} />
+            <Stat label="Latency" value={formatLatency(detail.latencyMs)} />
             <Stat
               label="User / AI"
               value={
@@ -2096,7 +2143,7 @@ Recording.propTypes = { detail: PropTypes.object };
 /* Bar heights for one turn. Seeded by the turn, so a call looks the same every
    time it is opened, and two speakers never draw the same shape. */
 const barsFor = (turn) => {
-  const h = hashSeed(turn.id);
+  const h = hashSeed(turn.seed || turn.id);
   const n = Math.max(4, Math.round(turn.dur * 9));
   return Array.from({ length: n }, (_, i) => {
     const v = Math.sin((h % 71) + i * 0.9) * Math.cos(i * 0.37 + (h % 17));

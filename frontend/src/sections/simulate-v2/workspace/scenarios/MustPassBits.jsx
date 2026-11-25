@@ -16,7 +16,7 @@ export function ProtectionLine({ tally, trailing = null, actions = null }) {
     tally.marked && `${tally.marked} must pass`,
     tally.memory && `${tally.memory} regression memory`,
     tally.passing &&
-      `${tally.passing} pass every repeat${tally.latestName ? ` in ${tally.latestName}` : " today"}`,
+      `${tally.passing}${tally.marked || tally.memory ? " more" : ""} passed every trial${tally.latestName ? ` in ${tally.latestName}` : " today"}`,
   ].filter(Boolean);
   return (
     <Stack

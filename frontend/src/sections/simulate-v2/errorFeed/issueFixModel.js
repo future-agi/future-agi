@@ -758,8 +758,18 @@ export const issueTasks = (issue, drafts, repro, env) => {
   });
 };
 
-export const fixSeed = (es, issueId) =>
-  `fix-${issueId}-${(es?.optimizations || []).length}`;
+/* Unique per environment: a run already recorded under the next number (a
+   seeded one, or one whose epoch was deleted) moves it on, so starting a
+   fix never lands on an old run (25 Nov). Still deterministic for a state,
+   so the plan's estimate and the run Start records match. */
+export const fixSeed = (es, issueId) => {
+  const taken = (es?.runs || []).map((r) => String(r.id || "").toLowerCase());
+  let n = (es?.optimizations || []).length;
+  const clash = (k) =>
+    taken.some((id) => id.endsWith(`fix-${issueId}-${k}-today`.toLowerCase()));
+  while (clash(n)) n += 1;
+  return `fix-${issueId}-${n}`;
+};
 
 /* Measure today, for a fix: the environment's scenarios on the version in
    production, recorded as a run named for the issue (measureToday.js). */

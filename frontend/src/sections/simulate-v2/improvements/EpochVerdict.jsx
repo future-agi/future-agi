@@ -4,6 +4,7 @@ import { Box, Link, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import {
+  causesOf,
   checksCountOf,
   winnerFiguresOf,
   winnerSentenceOf,
@@ -303,24 +304,109 @@ export default function EpochVerdict({
     the others that passed.
   */
   const figures = winnerFiguresOf(outcome, result, winner);
+  const causes = causesOf(result);
+  /* 25 Nov: one header line — the winner, what it did, its checks, the
+     others — then two rows. Was six lines and a footer. */
+  const dot = (
+    <Box component="span" sx={{ color: "text.disabled", flexShrink: 0 }}>
+      ·
+    </Box>
+  );
   return (
     <Box sx={panel}>
       <Stack
         direction="row"
         alignItems="center"
         spacing={1}
-        sx={{ px: 2, pt: 1.25 }}
+        sx={{ px: 2, py: 1, minWidth: 0 }}
       >
-        <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+        <Typography sx={{ typography: "s1", fontWeight: 600, flexShrink: 0 }}>
           {winner.name}
         </Typography>
         <StatusBadge status="passed" role="success" label="Winner" />
         {winnerNote && (
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          <Typography
+            noWrap
+            sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+          >
             {winnerNote}
           </Typography>
         )}
+        {figures.length > 0 && (
+          <Tooltip arrow placement="bottom-start" title={sentence}>
+            <Typography
+              noWrap
+              sx={{
+                typography: "s2",
+                ...num,
+                cursor: "default",
+                minWidth: 0,
+                pl: 0.5,
+              }}
+            >
+              {figures.map((f, k) => (
+                <Fragment key={f.text}>
+                  {k > 0 && (
+                    <Box component="span" sx={{ color: "text.disabled" }}>
+                      {" · "}
+                    </Box>
+                  )}
+                  <Box
+                    component="span"
+                    sx={{
+                      color: f.bad ? RED : "text.primary",
+                      fontWeight: f.bad ? 600 : 500,
+                    }}
+                  >
+                    {f.text}
+                  </Box>
+                </Fragment>
+              ))}
+            </Typography>
+          </Tooltip>
+        )}
+        {(checks.length > 0 || extra) && (
+          <>
+            {figures.length > 0 && dot}
+            {checks.length > 0 && (
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s2",
+                  color: failed.length ? RED : "text.secondary",
+                  minWidth: 0,
+                  ...num,
+                }}
+              >
+                {failed.length
+                  ? `${failed.length} of ${checks.length} checks failed`
+                  : `${passed} ${passed === 1 ? "check" : "checks"} passed`}
+              </Typography>
+            )}
+            <Link
+              component="button"
+              type="button"
+              underline="hover"
+              onClick={() => setAllChecks((o) => !o)}
+              aria-expanded={allChecks}
+              sx={linkSx}
+            >
+              {allChecks ? "Hide" : "Show all"}
+            </Link>
+          </>
+        )}
         <Box flex={1} />
+        {alsoPassed.length > 0 && onShowCandidates && (
+          <Link
+            component="button"
+            type="button"
+            underline="hover"
+            onClick={onShowCandidates}
+            sx={{ ...linkSx, color: "text.secondary" }}
+          >
+            {`${alsoPassed.length} other${alsoPassed.length === 1 ? "" : "s"} passed`}
+          </Link>
+        )}
         {onOpenRun && (
           <Tooltip
             arrow
@@ -339,41 +425,8 @@ export default function EpochVerdict({
           </Tooltip>
         )}
       </Stack>
-      {figures.length > 0 && (
-        <Tooltip arrow placement="bottom-start" title={sentence}>
-          <Typography
-            sx={{
-              px: 2,
-              pt: 0.375,
-              typography: "s2",
-              ...num,
-              cursor: "default",
-            }}
-          >
-            {figures.map((f, k) => (
-              <Fragment key={f.text}>
-                {k > 0 && (
-                  <Box component="span" sx={{ color: "text.disabled" }}>
-                    {" · "}
-                  </Box>
-                )}
-                <Box
-                  component="span"
-                  sx={{
-                    color: f.bad ? RED : "text.primary",
-                    fontWeight: f.bad ? 600 : 500,
-                  }}
-                >
-                  {f.text}
-                </Box>
-              </Fragment>
-            ))}
-          </Typography>
-        </Tooltip>
-      )}
-      {checksLine}
       {checksDetail}
-      <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+      <Box sx={{ borderTop: "1px solid", borderColor: "divider", pb: 0.5 }}>
         <Stack
           direction="row"
           alignItems="baseline"
@@ -405,40 +458,18 @@ export default function EpochVerdict({
             )}
           </Typography>
         </Stack>
-        <DiagnosisLine
-          diagnosis={diagnosis}
-          labelWidth={112}
-          sx={{ borderTop: 0, pt: 0 }}
-        />
+        {/* Causes are the diagnosis: one row. Without them, the folded
+            analyzer line as before. */}
+        {causes ? (
+          <CausesLine causes={causes} />
+        ) : (
+          <DiagnosisLine
+            diagnosis={diagnosis}
+            labelWidth={112}
+            sx={{ borderTop: 0, pt: 0 }}
+          />
+        )}
       </Box>
-      {alsoPassed.length > 0 && (
-        <Stack
-          direction="row"
-          alignItems="baseline"
-          spacing={1}
-          sx={{
-            px: 2,
-            py: 0.75,
-            borderTop: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            {`${alsoPassed.length} other${alsoPassed.length === 1 ? "" : "s"} also passed`}
-          </Typography>
-          {onShowCandidates && (
-            <Link
-              component="button"
-              type="button"
-              underline="hover"
-              onClick={onShowCandidates}
-              sx={linkSx}
-            >
-              See all candidates
-            </Link>
-          )}
-        </Stack>
-      )}
     </Box>
   );
 }
@@ -537,6 +568,95 @@ export function DiagnosisLine({ diagnosis, labelWidth = null, sx = {} }) {
     </Box>
   );
 }
+/*
+  The causes the epoch worked on, ranked by how many target scenarios each
+  explains, and whether the winner fixed them: "3 in 5 target scenarios ·
+  2 fixed · 1 remains". Held-back scenarios aren't counted — the search
+  never saw them.
+*/
+function CausesLine({ causes }) {
+  const [open, setOpen] = useState(false);
+  if (!causes) return null;
+  const { rows, fixed, remains } = causes;
+  return (
+    <Box sx={{ px: 2, pb: 0.375 }}>
+      <Stack direction="row" alignItems="baseline" spacing={0.75}>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.tertiary",
+            width: 112,
+            mr: 1.25,
+            flexShrink: 0,
+          }}
+        >
+          Diagnosis
+        </Typography>
+        <Typography sx={{ typography: "s2", minWidth: 0, ...num }}>
+          {`${rows.length} cause${rows.length === 1 ? "" : "s"} · ${remains ? `${fixed} fixed` : "all fixed"}`}
+          {remains > 0 && (
+            <Box component="span" sx={{ color: RED }}>
+              {` · ${remains} remain${remains === 1 ? "s" : ""}`}
+            </Box>
+          )}
+        </Typography>
+        <Link
+          component="button"
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          sx={{ ...linkSx, flexShrink: 0 }}
+        >
+          {open ? "Hide" : "Show"}
+        </Link>
+      </Stack>
+      {open && (
+        <Box sx={{ pl: "128px", mt: 0.5, maxWidth: 720 }}>
+          {rows.map((r, i) => (
+            <Stack
+              key={r.id}
+              direction="row"
+              alignItems="baseline"
+              spacing={1.5}
+              sx={{ py: 0.25 }}
+            >
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.tertiary",
+                  width: 16,
+                  ...num,
+                }}
+              >
+                {i + 1}
+              </Typography>
+              <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+                {r.title}
+              </Typography>
+              <Typography
+                sx={{ typography: "s2", color: "text.tertiary", ...num }}
+              >
+                {r.ids.length}
+              </Typography>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  width: 64,
+                  textAlign: "right",
+                  color: r.fixed ? "status.success.fg" : RED,
+                }}
+              >
+                {r.fixed ? "Fixed" : "Remains"}
+              </Typography>
+            </Stack>
+          ))}
+        </Box>
+      )}
+    </Box>
+  );
+}
+CausesLine.propTypes = { causes: PropTypes.object };
+
 DiagnosisLine.propTypes = {
   diagnosis: PropTypes.object,
   labelWidth: PropTypes.number,

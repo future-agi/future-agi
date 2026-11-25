@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
+  IconButton,
   Link,
   MenuItem,
   Select,
@@ -29,6 +30,9 @@ import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { useRebuildForAgent } from "../workspace/useRebuildForAgent";
 import { latestEnvVersion, toolFit } from "../_mock/toolFit";
 import { currentAgentVersion } from "../_mock/versions";
+import { voiceFixOf } from "../_mock/voiceFix";
+import { agentIdOf } from "../_mock/agentRegistry";
+import { envVersionNameOf } from "../_mock/codeRefs";
 import { buildPresetFor } from "../agents/agentViewUtils";
 import {
   envFitsIssue,
@@ -40,7 +44,7 @@ import {
 } from "./issueFix";
 import TraceReviewDrawer from "../workspace/scenarios/TraceReviewDrawer";
 import { fixImportIdOf, issueImportOf } from "../_mock/errorFeedSource";
-import ClosableDialog from "../components/ClosableDialog";
+import SideDrawer from "../components/SideDrawer";
 
 /*
   Run Epoch, confirmed in place: what it tests, where, and what it may
@@ -97,7 +101,7 @@ export default function FixStartDialog({
 }) {
   const navigate = useNavigate();
   const { commit } = useSimStore();
-  const { setAgentValues } = useConnectedAgents();
+  const { setAgentValues, agents: connected } = useConnectedAgents();
   const { agent, main, mainState, drafts, limits, estimate, budgets } = plan;
   const envs = plan.envs || [];
   /* The agent's main environment is the first of its list. */
@@ -109,6 +113,9 @@ export default function FixStartDialog({
      the main environment as one import, kept per issue, so closing the box
      loses nothing. The box steps aside while the review is open. */
   const [reviewing, setReviewing] = useState(false);
+  /* Approving the review starts the epoch (25 Nov: one step, not a trip
+     back to the plan); it waits for the kept drafts to land first. */
+  const [runAfterReview, setRunAfterReview] = useState(false);
   const reviewId = fixImportIdOf(issue?.cluster_id || "issue");
   const reviewRows = (mainState?.scenarios || []).filter(
     (r) => r.traceImport?.id === reviewId,
@@ -187,6 +194,25 @@ export default function FixStartDialog({
     if (latestFits) patchMain({ activeEnvVersion: latest.label });
     else rebuild(currentAgentVersion(mainState)?.label);
   };
+  /* What the epoch measures, named under Runs in (J3): the agent version
+     (a commit for code agents) and the environment version. */
+  const runsInVersions = (() => {
+    if (!main || !mainState) return null;
+    const a = currentAgentVersion(mainState)?.label;
+    const e =
+      mainState.activeEnvVersion || latestEnvVersion(main, mainState)?.label;
+    return [
+      a && `agent ${envVersionNameOf(mainState, a, main.id).main}`,
+      e && `env ${e}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  })();
+  const versionsLine = runsInVersions ? (
+    <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}>
+      {runsInVersions}
+    </Typography>
+  ) : null;
   const teachLabel = `Teach it ${toolGap.length === 1 ? "this tool" : `these ${toolGap.length} tools`}`;
   const [budget, setBudget] = useState(null);
   const [showAll, setShowAll] = useState(false);
@@ -262,15 +288,22 @@ export default function FixStartDialog({
     ?.length;
 
   /* Why it can't start from here — the full plan handles each one. */
-  const held = !main
-    ? `${agent?.name || "This agent"} has no environment yet — build one first.`
-    : plan.building
-      ? `${main.name} is still building — the epoch can start once it's done.`
-      : issueNeeds.length
-        ? `${main.name} can't answer ${issueNeeds.join(", ")} yet — teach it first.`
-        : !drafts.length
-          ? "No scenarios could be written from this issue's traces."
-          : null;
+  /* Built in a voice platform's dashboard: an Epoch can't change it — the
+     same rule as Run Epoch on a run (Nikhil, 2 Nov; 25 Nov audit). */
+  const voiceFix = voiceFixOf(
+    (connected || []).find((a) => a.key === agent?.key) || agent || null,
+  );
+  const held = voiceFix
+    ? `Built in ${voiceFix.where}, so an Epoch can't change it. Change it there, then run again.`
+    : !main
+      ? `${agent?.name || "This agent"} has no environment yet — build one first.`
+      : plan.building
+        ? `${main.name} is still building — the epoch can start once it's done.`
+        : issueNeeds.length
+          ? `${main.name} can't answer ${issueNeeds.join(", ")} yet — teach it first.`
+          : !drafts.length
+            ? "No scenarios could be written from this issue's traces."
+            : null;
 
   /* Nothing to decide: an environment that fits the issue's channel, every
      tool answered, consent already given, nothing holding it. The summary
@@ -471,6 +504,15 @@ export default function FixStartDialog({
     !(!main && agent) &&
     !(main && !plan.building && issueNeeds.length);
 
+  useEffect(() => {
+    if (!runAfterReview || !reviewed) return;
+    setRunAfterReview(false);
+    /* Still held (consent, a missing tool): back on the plan, which says why. */
+    if (held || waiting) return;
+    start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runAfterReview, reviewed]);
+
   return (
     <>
       <TraceReviewDrawer
@@ -493,24 +535,44 @@ export default function FixStartDialog({
             ),
           });
           setReviewing(false);
+          setRunAfterReview(true);
         }}
-        approveLabel={(n) => (n ? `Use ${n} in the epoch` : "Use in the epoch")}
+        approveLabel={(n) =>
+          n ? `Use ${n} and run Epoch` : "Use and run Epoch"
+        }
       />
-      <ClosableDialog
-        open={open && !reviewing}
-        onClose={onClose}
-        maxWidth="sm"
-        fullWidth
-      >
-        <Box sx={{ px: 2.5, pt: 2.5, pb: 1 }}>
-          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-            {`Run Epoch · ${issueId}`}
-          </Typography>
-          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-            {issue?.title || issue?.error_name || ""}
-          </Typography>
-        </Box>
-        <Box sx={{ px: 2.5 }}>
+      {/* A side drawer, like every other setup (25 Nov) — the issue stays
+          readable behind it. */}
+      <SideDrawer open={open && !reviewing} onClose={onClose} width={520}>
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          spacing={1}
+          sx={{
+            px: 2.5,
+            pt: 2,
+            pb: 1.5,
+            flexShrink: 0,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+              {`Run Epoch · ${issueId}`}
+            </Typography>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >
+              {issue?.title || issue?.error_name || ""}
+            </Typography>
+          </Box>
+          <IconButton size="small" aria-label="Close" onClick={onClose}>
+            <Iconify icon="solar:close-linear" width={18} />
+          </IconButton>
+        </Stack>
+        <Box sx={{ px: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}>
           {lastStatus && (
             <Row k="Last epoch">
               <Typography sx={{ typography: "s2" }}>
@@ -556,6 +618,7 @@ export default function FixStartDialog({
             <>
               <Row k="Runs in">
                 <Typography sx={{ typography: "s2" }}>{main.name}</Typography>
+                {versionsLine}
               </Row>
               {scenariosRow}
               <Row k="Budget">
@@ -637,6 +700,7 @@ export default function FixStartDialog({
                     )}
                   </Typography>
                 )}
+                {versionsLine}
                 {!main && agent && (
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
@@ -792,7 +856,8 @@ export default function FixStartDialog({
           sx={{
             px: 2.5,
             py: 2,
-            mt: 1,
+            mt: "auto",
+            flexShrink: 0,
             borderTop: "1px solid",
             borderColor: "divider",
           }}
@@ -833,6 +898,14 @@ export default function FixStartDialog({
               variant="contained"
               color="primary"
               onClick={() => {
+                /* A voice platform's agent changes on its own dashboard. */
+                if (voiceFix && agent?.key) {
+                  onClose();
+                  navigate(
+                    `/dashboard/agents/connected/${agentIdOf(agent.key)}?tab=connections`,
+                  );
+                  return;
+                }
                 /* No environment: build one, the same way the agent page does. */
                 if (!main && agent) {
                   setBuildOpen(true);
@@ -847,11 +920,13 @@ export default function FixStartDialog({
                 onAdjust();
               }}
             >
-              {!main && agent
-                ? "Build environment"
-                : main && !plan.building && issueNeeds.length
-                  ? teachLabel
-                  : "Open the full plan"}
+              {voiceFix
+                ? "Open the agent"
+                : !main && agent
+                  ? "Build environment"
+                  : main && !plan.building && issueNeeds.length
+                    ? teachLabel
+                    : "Open the full plan"}
             </Button>
           ) : needsReview ? (
             <Button
@@ -896,7 +971,7 @@ export default function FixStartDialog({
             }}
           />
         )}
-      </ClosableDialog>
+      </SideDrawer>
     </>
   );
 }

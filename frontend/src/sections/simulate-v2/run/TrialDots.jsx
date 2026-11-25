@@ -7,7 +7,17 @@ import { VERDICT_TONE } from "../components/primitives";
   they ran, then how many passed. A flaky scenario reads as a mix of dots.
   Trial 1 is the call the row opens; the others are its repeats.
 */
-const toneOf = (s) => VERDICT_TONE[s] || VERDICT_TONE.unmeasured;
+/* The run table's status colours: red failed, amber flaky, green passed —
+   the old terracotta "failed" read almost like flaky amber. */
+const DOT = {
+  passed: "status.success.solid",
+  failed: "status.danger.solid",
+  flaky: "status.warning.solid",
+};
+const toneOf = (s) => ({
+  ...(VERDICT_TONE[s] || VERDICT_TONE.unmeasured),
+  ...(DOT[s] && { color: DOT[s] }),
+});
 
 export default function TrialDots({ samples }) {
   if (!Array.isArray(samples) || samples.length < 2) return null;

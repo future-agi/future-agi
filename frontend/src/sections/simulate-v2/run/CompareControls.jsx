@@ -26,7 +26,6 @@ import {
   VIEWS,
   ROW_HEIGHTS,
   GROUPINGS,
-  QUICK_FILTERS,
   SORTS,
   filterFields,
   activeFilterCount,
@@ -388,7 +387,9 @@ export default function CompareActions({
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const [actionsAnchor, setActionsAnchor] = useState(null);
   const [groupAnchor, setGroupAnchor] = useState(null);
-  const filterCount = activeFilterCount(filters);
+  const [filterMenuAnchor, setFilterMenuAnchor] = useState(null);
+  const flakyOn = !!view?.quick?.includes("flaky");
+  const filterCount = activeFilterCount(filters) + (flakyOn ? 1 : 0);
   const currentGroup =
     GROUPINGS.find((g) => g.id === (view?.group || "none")) || GROUPINGS[0];
 
@@ -446,7 +447,7 @@ export default function CompareActions({
       <Button
         variant="outlined"
         size="small"
-        onClick={(e) => setFilterAnchor(e.currentTarget)}
+        onClick={(e) => setFilterMenuAnchor(e.currentTarget)}
         startIcon={<Iconify icon="solar:filter-linear" width={16} />}
         sx={{
           color: filterCount ? "primary.main" : "text.secondary",
@@ -489,6 +490,41 @@ export default function CompareActions({
       {/* The platform's own filter panel — same property / operator / value
           rows, Basic and Query tabs, Add filter, Clear all, Apply — rather than
           a bespoke one that behaves almost but not quite like it. */}
+      <Menu
+        anchorEl={filterMenuAnchor}
+        open={!!filterMenuAnchor}
+        onClose={() => setFilterMenuAnchor(null)}
+      >
+        <MenuItem
+          onClick={() => {
+            onView({
+              ...view,
+              quick: flakyOn
+                ? view.quick.filter((q) => q !== "flaky")
+                : [...view.quick, "flaky"],
+            });
+            setFilterMenuAnchor(null);
+          }}
+          sx={{ typography: "s2", gap: 1 }}
+        >
+          <Checkbox
+            size="small"
+            checked={flakyOn}
+            sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }}
+          />
+          Flaky only
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setFilterAnchor(filterMenuAnchor);
+            setFilterMenuAnchor(null);
+          }}
+          sx={{ typography: "s2", gap: 1 }}
+        >
+          <Iconify icon="solar:filter-linear" width={16} />
+          Add filter…
+        </MenuItem>
+      </Menu>
       <ObjectFilterPanel
         anchorEl={filterAnchor}
         open={!!filterAnchor}
@@ -563,7 +599,7 @@ export function CompareSearchBar({ query, onQuery, view, onView }) {
     >
       <TextField
         size="small"
-        placeholder="Search scenarios, personas, findings"
+        placeholder="Search"
         value={query}
         onChange={(e) => onQuery(e.target.value)}
         InputProps={{
@@ -657,13 +693,6 @@ function DisplayPanel({
   const set = (patch) => onView({ ...view, ...patch });
   const toggleColumn = (id) =>
     set({ columns: { ...view.columns, [id]: !view.columns[id] } });
-  const toggleQuick = (id) =>
-    set({
-      quick: view.quick.includes(id)
-        ? view.quick.filter((q) => q !== id)
-        : [...view.quick, id],
-    });
-
   return (
     <Popover
       open={!!anchor}
@@ -764,20 +793,6 @@ function DisplayPanel({
           checked={view.showChart}
           onChange={() => set({ showChart: !view.showChart })}
         />
-      </Section>
-
-      <Divider />
-
-      <Section title="Filter rows">
-        {QUICK_FILTERS.map((q) => (
-          <Check
-            key={q.id}
-            icon={q.icon}
-            label={q.label}
-            checked={view.quick.includes(q.id)}
-            onChange={() => toggleQuick(q.id)}
-          />
-        ))}
       </Section>
 
       <Divider />
