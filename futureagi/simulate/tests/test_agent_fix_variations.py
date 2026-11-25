@@ -328,6 +328,49 @@ class TestTheBuilderMessage:
 
 
 class TestThePrivateSuite:
+    @pytest.mark.parametrize(
+        ("keys", "collide"),
+        [
+            (("Case-1", "case_1"), True),
+            (("case_1", "Case-1"), True),
+            (("Case-1", "case_2"), False),
+        ],
+    )
+    def test_pinned_parent_goals_require_distinct_checkpoint_keys(
+        self, keys, collide, environment, fix_run
+    ):
+        goals = {key: ["refunded" if key == "Case-1" else "booked"] for key in keys}
+        documents = [
+            _scenario(key, scenario_key=key, sub_goals=goals[key]) for key in keys
+        ]
+        pinned = {
+            "scenarios.json": json.dumps(documents).encode(),
+            **{
+                f"scenarios/{one['name']}/scenario.json": json.dumps(one).encode()
+                for one in documents
+            },
+        }
+        files = archives.read_archive(
+            _builder_save(environment, numbers=(), extra=[f"{key}-var1" for key in keys])
+        )
+        env_files = drafts._piece_files(
+            environment, "environment", fix_run.source_run.environment_version
+        )
+        with (
+            patch.object(drafts, "_piece_files", side_effect=[pinned, env_files]),
+            patch.object(variations, "failing_targets", return_value=goals),
+        ):
+            if collide:
+                with pytest.raises(HostedHarnessError) as error:
+                    variations._private_suite(environment, fix_run, files)
+                assert error.value.code == "conversation_checkpoint_invalid"
+                return
+            _, parents, written = variations._private_suite(environment, fix_run, files)
+
+        assert {
+            parents[one["scenario_key"]]: one["sub_goals"] for one in written
+        } == goals
+
     def test_holds_the_run_s_suite_and_the_renamed_variations_with_their_case_s_sub_goals(
         self, environment, source_run, fix_run, storage
     ):
