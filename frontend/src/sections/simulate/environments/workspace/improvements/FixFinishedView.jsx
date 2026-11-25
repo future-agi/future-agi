@@ -225,7 +225,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
       {current === "trials" ? (
         trials.length > 0 ? (
           <>
-            <TrialChart candidates={trials} />
+            <TrialChart candidates={trials} finished />
             <TrialsTable fix={fix} />
           </>
         ) : (

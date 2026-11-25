@@ -9,7 +9,7 @@ import { paths } from "src/routes/paths";
 
 import { runColor, runColorValue } from "../runs/runs.constants";
 
-import { outcomeLabel, pct, pts } from "./fixRunView";
+import { checkLabel, outcomeLabel, pct, pts } from "./fixRunView";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 const GRID = "minmax(280px, 380px) 200px 160px 1fr";
@@ -47,6 +47,14 @@ function PassCell({ rate }) {
 }
 PassCell.propTypes = { rate: PropTypes.arrayOf(PropTypes.number) };
 
+function rejectionReason(candidate, request) {
+  if (candidate.outcome !== "rejected") return null;
+  const { reason, tiers } = candidate.verdict || {};
+  if (reason?.trim()) return reason;
+  const failed = tiers?.find((tier) => tier.status === "failed");
+  return failed?.name ? `${checkLabel(failed.name, request)} failed` : null;
+}
+
 // The design's trials table, contract columns only: what each trial tried,
 // how it ended, and its pass rate on the target scenarios.
 export default function TrialsTable({ fix }) {
@@ -80,6 +88,7 @@ export default function TrialsTable({ fix }) {
         const fixLive = FIX_LIVE_STATES.has(fix.state);
         const live =
           c.outcome === "pending" && fixLive ? c.check_runs?.[0] : null;
+        const reason = rejectionReason(c, fix.request);
         return (
           <Box
             key={c.id}
@@ -143,9 +152,16 @@ export default function TrialsTable({ fix }) {
                 Running · Watch live
               </Link>
             ) : (
-              <Typography sx={{ typography: "s2" }}>
-                {outcomeLabel(c.outcome, fixLive)}
-              </Typography>
+              <Box>
+                <Typography sx={{ typography: "s2" }}>
+                  {outcomeLabel(c.outcome, fixLive)}
+                </Typography>
+                {reason && (
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    {reason}
+                  </Typography>
+                )}
+              </Box>
             )}
             <PassCell rate={c.verdict?.target_pass_rate} />
           </Box>
