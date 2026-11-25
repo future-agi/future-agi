@@ -65,7 +65,7 @@ export const canDiscard = (v) =>
 // What a failed reading means, in the page's words.
 export const FAILURE_TEXT = {
   agent_type_unsupported:
-    "This kind of agent isn't supported yet (browser, computer-use and crawler agents).",
+    "This kind of agent isn't supported yet (computer-use and crawler agents).",
   subfolder_not_found: "The folder named isn't in the repository.",
   channel_changed:
     "This version changed from chat to voice or back; connect it as a new agent.",

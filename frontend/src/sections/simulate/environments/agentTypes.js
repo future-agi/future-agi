@@ -9,6 +9,14 @@ export const ENTRY_AGENT_TYPES = [
     icon: "solar:phone-calling-rounded-linear",
   },
   { id: AGENT_TYPES.CHAT, label: "Chat", icon: "solar:chat-round-linear" },
+  // A browser agent is built from its code, in an environment that names the sites its browser may
+  // open; no hosted platform runs one, so it stays gated on this panel.
+  {
+    id: "browser",
+    label: "Browser",
+    icon: "solar:global-linear",
+    comingSoon: true,
+  },
   {
     id: "computer",
     label: "Computer use",
@@ -41,6 +49,11 @@ export const MODALITY = {
     id: AGENT_TYPES.CHAT,
     label: "Chat",
     icon: "solar:chat-round-line-linear",
+  },
+  browser: {
+    id: "browser",
+    label: "Browser",
+    icon: "solar:global-linear",
   },
   computer: {
     id: "computer",

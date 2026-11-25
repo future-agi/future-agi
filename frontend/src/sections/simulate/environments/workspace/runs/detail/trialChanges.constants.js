@@ -10,6 +10,11 @@ export const TRIAL_CHANGES_COPY = {
   tab: "World state",
   heading: "What changed in the world",
   noticesHeading: "Worth knowing",
+  // The platform's words for a notice whose code it knows; any other shows the kit's message.
+  noticeWords: {
+    browser_not_started:
+      "This environment names sites for a browser, but the agent wasn't read as one that drives a browser, so no browser was started. If the agent does drive a browser, read it again.",
+  },
   about:
     "Each participant's attempts in this trial and what the world made of them. Refused and faulted attempts changed nothing.",
   counts: (one) =>

@@ -154,6 +154,11 @@ function envelope(draft, name) {
   if (draft.observabilityEnabled === true && (draft.kind === "repo" || draft.kind === "upload")) {
     payload.metadata.observability_enabled = true;
   }
+  // A browser environment's sites are its own, apart from the egress domains. Each is sent as
+  // typed, trimmed and lowercased: the server refuses a wrong one by position, never the page in
+  // silence.
+  const sites = browserSitesOf(draft.browserSites);
+  if (sites.length) payload.browser = { allowed_sites: sites };
   const domains = parseEgressDomains(draft.egress);
   if (domains.length) {
     payload.security = {
@@ -165,6 +170,15 @@ function envelope(draft, name) {
     };
   }
   return payload;
+}
+
+function browserSitesOf(input) {
+  if (typeof input !== "string") return [];
+  const sites = input
+    .split(/[,\n]/)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set(sites)];
 }
 
 function repoPayload(draft, name) {

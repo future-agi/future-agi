@@ -37,6 +37,8 @@ export default function DrawerEnvValues({
   onEnvText,
   egress,
   onEgress,
+  browserSites = "",
+  onBrowserSites,
   secretFiles = [],
   onSecretFiles,
   bare = false,
@@ -200,6 +202,17 @@ export default function DrawerEnvValues({
         helper="Optional. Public hostnames for hardcoded APIs or TURN endpoints. Everything else is firewalled while the agent runs."
         sx={{ mt: 1.5 }}
       />
+      {onBrowserSites && (
+        <Field
+          label="Browser sites"
+          mono
+          value={browserSites}
+          onChange={onBrowserSites}
+          placeholder="shop.example.com, *.docs.example.com"
+          helper="Only for an agent that drives a web browser: the sites its browser may open, and nothing else. List every host the site needs (sign-in, API, files): host names, or *.example.com for the hosts under a name. At most 10."
+          sx={{ mt: 1.5 }}
+        />
+      )}
     </Box>
   );
 }
@@ -209,6 +222,8 @@ DrawerEnvValues.propTypes = {
   onEnvText: PropTypes.func.isRequired,
   egress: PropTypes.string,
   onEgress: PropTypes.func.isRequired,
+  browserSites: PropTypes.string,
+  onBrowserSites: PropTypes.func,
   secretFiles: PropTypes.array,
   onSecretFiles: PropTypes.func.isRequired,
 };

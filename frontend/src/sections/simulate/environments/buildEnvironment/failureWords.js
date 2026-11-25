@@ -33,6 +33,12 @@ const START_TIMEOUT_CODE = "depends_on_timeout";
 export const START_TIMEOUT_LINE =
   "Stopped — a service this run needs didn't start in time. Run it again.";
 
+// An agent read as driving a web browser runs only in an environment that gives it a browser and
+// the sites it may open. The build refuses it, by this closed code, when the environment has none.
+const BROWSER_ENVIRONMENT_CODE = "browser_environment_required";
+export const BROWSER_ENVIRONMENT_LINE =
+  "Didn't start — this agent drives a web browser, so it runs only in a browser environment. Build a browser environment for it and list the sites its browser may open.";
+
 /** The plain headline of a failure, or null when it has none and reads as recorded. */
 export function failureHeadline(failure) {
   if (!failure) return null;
@@ -41,6 +47,8 @@ export function failureHeadline(failure) {
       ? CAUSE_WORDS[failure.cause]
       : CAUSE_WORDS.unknown;
   if (failure.code === START_TIMEOUT_CODE) return START_TIMEOUT_LINE;
+  if (failure.code === BROWSER_ENVIRONMENT_CODE)
+    return BROWSER_ENVIRONMENT_LINE;
   // A failure the platform set as final, such as a folder the build could not use, would fail
   // the same way again: it reads as recorded.
   if (failure.domain === "infrastructure" && failure.retryable !== false)

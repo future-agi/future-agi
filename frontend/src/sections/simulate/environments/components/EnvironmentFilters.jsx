@@ -28,6 +28,7 @@ const STATUS_OPTIONS = [
 const AGENT_TYPE_OPTIONS = [
   { value: "voice", label: "Voice" },
   { value: "chat", label: "Chat" },
+  { value: "browser", label: "Browser" },
 ];
 
 const SEARCH_DEBOUNCE_MS = 300;
