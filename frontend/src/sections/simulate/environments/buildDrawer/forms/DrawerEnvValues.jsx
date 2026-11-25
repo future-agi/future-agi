@@ -208,8 +208,8 @@ export default function DrawerEnvValues({
           mono
           value={browserSites}
           onChange={onBrowserSites}
-          placeholder="shop.example.com, *.docs.example.com"
-          helper="Only for an agent that drives a web browser: the sites its browser may open, and nothing else. List every host the site needs (sign-in, API, files): host names, or *.example.com for the hosts under a name. At most 10."
+          placeholder="shop.example.com, login.example.com"
+          helper="Only for an agent that drives a web browser: the sites its browser may open, and nothing else. List every host the site needs: its sign-in, its API, its files. Host names such as shop.example.com, at most 10."
           sx={{ mt: 1.5 }}
         />
       )}
