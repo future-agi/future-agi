@@ -179,6 +179,7 @@ test('H1 UI: isolated contexts retain actor and workspace headers through reload
 // H1 attachment extension: 90s provisioning + 2*UI_READY + 30s ordinary API/PG.
 // Browser qualification needs the managed HTTPS stack; no synthetic memberships.
 test.describe('H1 attachment identities', () => {
+  test.skip(process.env.E2E_STACK === 'standalone', 'The https attachment origin is Distributed-only');
   test('H1 same-user two-org: HTTPS contexts, foreign control and real removal',
     async ({ browser, scopeActors: scopes, scopeProbe: probe }, testInfo) => {
       test.setTimeout(240_000);

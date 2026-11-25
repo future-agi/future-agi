@@ -660,10 +660,15 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         const panel=drawer.getByRole('region',{name:'Conversation',exact:true});
         const slider=panel.getByRole('slider',{name:'Recording position'}), player=panel.locator('audio');
         const play=panel.getByRole('button',{name:'Play recording',exact:true});
-        // Read each body as soon as it arrives: a browser response body is gone once the page moves on.
-        const peakGrant=page.waitForResponse(exactResolve(voiceProject,item,traceKey,'peaks'))
+        // The first matching response can belong to a fetch the app aborts and repeats, whose
+        // body never arrives. Only a finished request has a body to read; read it at once.
+        const finished=(match:(r:Response)=>boolean)=>page.waitForEvent('requestfinished',async request=>{
+          const response=await request.response();
+          return !!response && match(response);
+        }).then(async request=>(await request.response())!);
+        const peakGrant=finished(exactResolve(voiceProject,item,traceKey,'peaks'))
           .then(response=>response.json() as Promise<{items:Grant[]}>);
-        const peakBytes=page.waitForResponse(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream')
+        const peakBytes=finished(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream')
           .then(async response=>({response, body: await response.body()}));
         await drawer.getByRole('button',{name:'Conversation',exact:true}).click();
         const [peak]=(await peakGrant).items;
