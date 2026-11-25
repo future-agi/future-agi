@@ -18,7 +18,7 @@ view wraps.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from tracer.services.clickhouse.query_builders.trace_usage import (
     CaptureCoverage,
@@ -27,10 +27,16 @@ from tracer.services.clickhouse.query_builders.trace_usage import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from rest_framework.request import Request
 
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
     from tracer.views.trace import TraceView
+
+
+# Marks an exhausted iterator in the explicit-stack tree walk below.
+_EXHAUSTED = object()
 
 
 class TraceDetail(TypedDict):
@@ -80,37 +86,54 @@ def compute_trace_summary_and_graph(
     call this so the two interchangeable paths cannot drift in the totals or the
     graph shape. Works with both PG and CH span dicts.
     """
-    all_spans = []
-    graph_nodes = []
-    graph_edges = []
+    all_spans: list[dict[str, Any]] = []
+    graph_nodes: list[dict[str, Any]] = []
+    graph_edges: list[dict[str, Any]] = []
 
-    def walk(entries, parent_id=None):
-        for entry in entries:
-            span = entry.get("observation_span") or entry.get("observationSpan") or {}
-            span_id = span.get("id", "")
-            all_spans.append(
-                {
-                    "span": span,
-                    "parent_id": parent_id,
-                }
-            )
-            graph_nodes.append(
-                {
-                    "id": span_id,
-                    "name": span.get("name", ""),
-                    "type": span.get("observation_type", "unknown"),
-                    "latency_ms": span.get("latency_ms") or span.get("latency") or 0,
-                    "tokens": span.get("total_tokens") or 0,
-                    "status": span.get("status"),
-                }
-            )
-            if parent_id:
-                graph_edges.append({"from": parent_id, "to": span_id})
-            children = entry.get("children", [])
-            if children:
-                walk(children, parent_id=span_id)
-
-    walk(spans_tree)
+    # Pre-order with siblings in order, the sequence of a recursive walk, kept
+    # on an explicit stack of child iterators so a deep span tree does not
+    # reach the interpreter recursion limit. An entry met again inside its own
+    # subtree is a cycle, which a recursive walk can only end with
+    # RecursionError; raise that at once instead of looping forever.
+    pending: list[tuple[Iterator[dict[str, Any]], Any, int | None]] = [
+        (iter(spans_tree), None, None)
+    ]
+    open_entries: set[int] = set()
+    while pending:
+        entries, parent_id, owner = pending[-1]
+        item = next(entries, _EXHAUSTED)
+        if item is _EXHAUSTED:
+            pending.pop()
+            if owner is not None:
+                open_entries.discard(owner)
+            continue
+        entry = cast("dict[str, Any]", item)
+        if id(entry) in open_entries:
+            raise RecursionError("span tree contains a cycle")
+        span = entry.get("observation_span") or entry.get("observationSpan") or {}
+        span_id = span.get("id", "")
+        all_spans.append(
+            {
+                "span": span,
+                "parent_id": parent_id,
+            }
+        )
+        graph_nodes.append(
+            {
+                "id": span_id,
+                "name": span.get("name", ""),
+                "type": span.get("observation_type", "unknown"),
+                "latency_ms": span.get("latency_ms") or span.get("latency") or 0,
+                "tokens": span.get("total_tokens") or 0,
+                "status": span.get("status"),
+            }
+        )
+        if parent_id:
+            graph_edges.append({"from": parent_id, "to": span_id})
+        children = entry.get("children", [])
+        if children:
+            open_entries.add(id(entry))
+            pending.append((iter(children), span_id, id(entry)))
 
     usage_rows = [
         {**item["span"], "parent_span_id": item["parent_id"] or ""}

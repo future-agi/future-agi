@@ -157,7 +157,11 @@ def test_session_graph_identity_is_versioned(monkeypatch):
         "observe-user-system-graph",
     ],
 )
-@pytest.mark.parametrize("earlier", [None, 1], ids=["unversioned", "median-v1"])
+@pytest.mark.parametrize(
+    "earlier",
+    [None, 1, 3],
+    ids=["unversioned", "median-v1", "whole-second-bounds-v3"],
+)
 def test_versioned_identity_never_reads_an_earlier_snapshot(namespace, earlier):
     base = {
         "project_id": PROJECT,
