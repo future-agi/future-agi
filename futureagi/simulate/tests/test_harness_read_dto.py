@@ -175,6 +175,24 @@ def test_serialize_job_returns_full_dto_shape(organization):
 
 
 @pytest.mark.django_db
+def test_serialize_job_dates_the_current_attempt(organization):
+    job, _ = create_hosted_job(
+        organization, _v1_payload(), idempotency_key="dto-attempt-start"
+    )
+    assert serialize_job(job)["status"]["attempt_started_at"] is None
+
+    register_attempt(job.id, endpoint_base_url="https://platform.example.com")
+    second = register_attempt(
+        job.id, endpoint_base_url="https://platform.example.com"
+    ).attempt
+    job.refresh_from_db()
+
+    status = serialize_job(job)["status"]
+    assert status["attempt"] == second.attempt_number
+    assert status["attempt_started_at"] == second.created_at.isoformat()
+
+
+@pytest.mark.django_db
 def test_serialize_job_includes_stage_outputs(organization):
     job, _ = create_hosted_job(
         organization, _v1_payload(), idempotency_key="dto-stages"

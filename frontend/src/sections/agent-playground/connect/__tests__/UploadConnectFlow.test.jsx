@@ -111,6 +111,10 @@ describe("UploadConnectFlow", () => {
     expect(
       screen.getByText("Connect the uploaded folder anyway"),
     ).toBeInTheDocument();
+    expect(screen.getByTestId("found-agent-support")).toHaveTextContent(
+      "the whole folder · agent.py",
+    );
+    expect(screen.queryByText(/repository root/)).toBeNull();
   });
 
   it("connects the whole upload when the agent isn't listed", () => {

@@ -113,7 +113,7 @@ export default function BuildStoppedStrip({
               component="div"
               sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
             >
-              {[keptLine(step, counts, designApproved), spent]
+              {[keptLine(step, counts, { designApproved, retryFrom }), spent]
                 .filter(Boolean)
                 .join(" ")}
               {log && (
@@ -167,7 +167,12 @@ export default function BuildStoppedStrip({
         </Stack>
 
         <BuildPhaseTable
-          rows={phaseRows(step, { stopped: true, readsAgent, counts })}
+          rows={phaseRows(step, {
+            stopped: true,
+            kept: retryFrom === "checks",
+            readsAgent,
+            counts,
+          })}
         />
 
         <Collapse in={open && Boolean(log)} unmountOnExit>

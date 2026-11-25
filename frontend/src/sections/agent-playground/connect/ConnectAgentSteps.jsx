@@ -43,6 +43,7 @@ export function FoundAgents({
   onManual,
   manualLabel = "Not in the list? Name its folder",
   failedManualLabel = "Name the agent's folder yourself",
+  rootLabel = "repository root",
   loadError = null,
   onRetry,
 }) {
@@ -160,7 +161,7 @@ export function FoundAgents({
                   fontFamily: MONO,
                 }}
               >
-                {agent.subfolder ? `${agent.subfolder}/` : "repository root"}
+                {agent.subfolder ? `${agent.subfolder}/` : rootLabel}
                 {agent.entry ? ` · ${agent.entry}` : ""}
               </Typography>
               {estimateLine(agent) && (
@@ -195,6 +196,7 @@ FoundAgents.propTypes = {
   onManual: PropTypes.func.isRequired,
   manualLabel: PropTypes.string,
   failedManualLabel: PropTypes.string,
+  rootLabel: PropTypes.string,
   loadError: PropTypes.object,
   onRetry: PropTypes.func,
 };

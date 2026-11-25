@@ -24203,6 +24203,11 @@ export interface HarnessJobStatusApi {
   /** @minLength 1 */
   updated_at: string;
   attempt: number;
+  /**
+   * When the current attempt was created; null before the first one.
+   * @minLength 1
+   */
+  attempt_started_at?: string;
   completed_scenarios: number;
   failed_scenarios: number;
   active_scenarios?: number;

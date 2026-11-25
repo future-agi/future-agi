@@ -184,6 +184,7 @@ const ChatRightPanel = ({
         score_label: scoreLabel,
         passed: passedById[String(e?.id ?? id)],
         explanation: e?.reason || e?.explanation,
+        removed: e?.removed === true,
         cell_id: e?.cell_id || e?.cellId,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,

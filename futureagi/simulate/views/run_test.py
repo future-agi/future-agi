@@ -2078,7 +2078,7 @@ class RunTestKPIsView(APIView):
                 name = metric_name.lower().replace(" ", "_")
                 if output_type in ("Pass/Fail", "score"):
                     eval_metrics[f"avg_{name}", metric_id, "score"] = (
-                        float(avg_value) if avg_value else 0
+                        float(avg_value) if avg_value is not None else None
                     )
                 elif output_type == "choices":
                     if choice_value is None and avg_value is not None:

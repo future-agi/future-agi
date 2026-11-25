@@ -54527,6 +54527,13 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     stage: zod.string().min(1),
     updated_at: zod.string().min(1),
     attempt: zod.number(),
+    attempt_started_at: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "When the current attempt was created; null before the first one.",
+      ),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
     active_scenarios: zod.number().optional(),
@@ -55575,6 +55582,13 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     stage: zod.string().min(1),
     updated_at: zod.string().min(1),
     attempt: zod.number(),
+    attempt_started_at: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "When the current attempt was created; null before the first one.",
+      ),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
     active_scenarios: zod.number().optional(),
@@ -55818,6 +55832,13 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     stage: zod.string().min(1),
     updated_at: zod.string().min(1),
     attempt: zod.number(),
+    attempt_started_at: zod
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "When the current attempt was created; null before the first one.",
+      ),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
     active_scenarios: zod.number().optional(),

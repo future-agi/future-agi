@@ -181,6 +181,43 @@ describe("VoiceRightPanel", () => {
     expect(screen.getByText(/1 failed/)).toBeInTheDocument();
   });
 
+  it("marks a removed eval and leaves it out of the pass count", async () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-1",
+          module: "simulate",
+          status: "completed",
+          provider: "vapi",
+          transcript: [],
+          eval_metrics: {
+            "eval-tone": {
+              id: "eval-tone",
+              name: "conversational_naturalness",
+              value: "Passed",
+              type: "Pass/Fail",
+              status: "Completed",
+            },
+            "eval-old": {
+              id: "eval-old",
+              name: "old_check",
+              value: "Failed",
+              type: "Pass/Fail",
+              status: "Completed",
+              removed: true,
+            },
+          },
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+
+    expect(screen.getByTestId("removed-eval-marker")).toBeInTheDocument();
+    expect(screen.getByText(/1\/1 passed/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 failed/)).toBeNull();
+  });
+
   it("shows image-region error localization when an image eval is expanded", async () => {
     const getContext = vi
       .spyOn(HTMLCanvasElement.prototype, "getContext")

@@ -16,7 +16,7 @@ import {
   useChangeScenarioTags,
   useEnvironmentTags,
 } from "src/api/simulate-environments/scenarioTags";
-import { SCENARIO_TAGS_COPY as C } from "./scenarios.constants";
+import { MAX_TAG_LENGTH, SCENARIO_TAGS_COPY as C } from "./scenarios.constants";
 import { tagRefusal } from "./tagRefusal";
 
 export default function BulkTagMenu({
@@ -69,9 +69,11 @@ export default function BulkTagMenu({
     );
   };
 
+  const newTagTooLong = newTag.trim().length > MAX_TAG_LENGTH;
+
   const addNew = () => {
     const tag = newTag.trim();
-    if (!tag) return;
+    if (!tag || newTagTooLong) return;
     setNewTag("");
     apply({ add: [tag] });
   };
@@ -157,6 +159,8 @@ export default function BulkTagMenu({
           placeholder={C.newTag}
           value={newTag}
           onChange={(event) => setNewTag(event.target.value)}
+          error={newTagTooLong}
+          helperText={newTagTooLong ? C.tooLong : undefined}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();

@@ -5,7 +5,10 @@ import { render, screen, waitFor } from "src/utils/test-utils";
 import { enqueueSnackbar } from "notistack";
 import BulkTagMenu from "../BulkTagMenu";
 import ScenarioTagCell from "../ScenarioTagCell";
-import { SCENARIO_TAGS_COPY as C } from "../scenarios.constants";
+import {
+  MAX_TAG_LENGTH,
+  SCENARIO_TAGS_COPY as C,
+} from "../scenarios.constants";
 
 const setTags = { mutate: vi.fn(), isPending: false };
 const changeTags = { mutate: vi.fn(), isPending: false };
@@ -192,6 +195,18 @@ describe("BulkTagMenu", () => {
         expect.any(Object),
       ),
     );
+  });
+
+  it("says a new tag is too long and does not send it", async () => {
+    const resolveKeys = vi.fn(() => Promise.resolve(["s1"]));
+    renderMenu(resolveKeys);
+    const box = screen.getByPlaceholderText(C.newTag);
+    await userEvent.click(box);
+    await userEvent.paste("x".repeat(MAX_TAG_LENGTH + 1));
+    await userEvent.keyboard("{Enter}");
+    expect(screen.getByText(C.tooLong)).toBeInTheDocument();
+    expect(resolveKeys).not.toHaveBeenCalled();
+    expect(changeTags.mutate).not.toHaveBeenCalled();
   });
 
   it("says the change failed when the selection cannot be read", async () => {

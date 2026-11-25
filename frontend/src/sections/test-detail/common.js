@@ -730,7 +730,7 @@ export const extractKpis = (data, agentType) => {
       callDetails[key] = data[key];
     } else if (newIgnored.includes(key)) {
       return;
-    } else if (typeof data[key] !== "object") {
+    } else if (data[key] === null || typeof data[key] !== "object") {
       evalMetrics[key] = data[key];
     } else {
       deterministicEvals.push({

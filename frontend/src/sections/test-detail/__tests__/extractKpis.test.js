@@ -3,6 +3,16 @@ import { AGENT_TYPES } from "src/sections/agents/constants";
 import { extractKpis } from "../common";
 
 describe("extractKpis", () => {
+  it("keeps a never-scored eval as an eval metric with no value", () => {
+    const { evalMetrics, deterministicEvals } = extractKpis(
+      { avg_task_completion: null, avg_tone: 0 },
+      AGENT_TYPES.CHAT,
+    );
+
+    expect(evalMetrics).toEqual({ avg_task_completion: null, avg_tone: 0 });
+    expect(deterministicEvals).toEqual([]);
+  });
+
   it("matches normalized choice counts to configured labels", () => {
     const { deterministicEvals } = extractKpis(
       {

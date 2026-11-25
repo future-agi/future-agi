@@ -21,6 +21,8 @@ export const ROW_HEIGHTS = {
 // label on one line and the button from shrinking.
 export const scenarioToolbarButtonSx = { whiteSpace: "nowrap", flexShrink: 0 };
 
+export const MAX_TAG_LENGTH = 64;
+
 export const SCENARIO_TAGS_COPY = {
   tag: "Tag",
   tagTip: "Add or remove a tag on the selected scenarios",
@@ -35,6 +37,7 @@ export const SCENARIO_TAGS_COPY = {
   removed: (tag, n) => `Removed ${tag} from ${n} scenario${n === 1 ? "" : "s"}`,
   failed: "Couldn't change the tags. Try again",
   refused: "Those tags can't be saved",
+  tooLong: `A tag can be at most ${MAX_TAG_LENGTH} characters`,
 };
 
 export const SCENARIOS_COPY = {

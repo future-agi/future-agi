@@ -47,6 +47,27 @@ describe("BuilderConsole", () => {
     expect(screen.getByTestId("builder-console-stop-orbit")).toBeInTheDocument();
   });
 
+  it("says it is checking the environment while the platform's post-build check runs", () => {
+    const line = "Checking the environment against your agent…";
+    render(
+      <BuilderConsole
+        turns={[
+          {
+            id: "b1",
+            role: "builder",
+            steps: [{ id: "c1", kind: "nudge-line", text: line, check: true }],
+          },
+        ]}
+        running
+        onStop={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getAllByRole("status").map((status) => status.textContent),
+    ).toContain(line);
+    expect(screen.queryByText(CONSOLE_COPY.working)).toBeNull();
+  });
+
   it("shows the working cue while a turn is in flight (canStop) but keeps the composer usable", () => {
     render(
       <BuilderConsole

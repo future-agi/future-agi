@@ -624,20 +624,20 @@ describe("TraceTable — eval cells without a score", () => {
     },
   );
 
-  it("marks a failed eval Failed and explains it with its reason", async () => {
+  it("marks a failed eval Couldn't score and explains it with its reason", async () => {
     renderCell({
       evalResults: [
         { id: "e1", score: null, status: "failed", reason: "Model quota hit" },
       ],
     });
-    expect(await hoverText("Failed")).toHaveTextContent(
+    expect(await hoverText("Couldn't score")).toHaveTextContent(
       "Evaluation failed: Model quota hit",
     );
   });
 
-  it("marks a failed eval with no reason Failed, with a generic tip", async () => {
+  it("marks a failed eval with no reason Couldn't score, with a generic tip", async () => {
     renderCell({ evalResults: [{ id: "e1", score: null, status: "failed" }] });
-    expect(await hoverText("Failed")).toHaveTextContent("Evaluation failed");
+    expect(await hoverText("Couldn't score")).toHaveTextContent("Evaluation failed");
   });
 
   it("marks a timed-out eval Timed out and shows the server's reason", async () => {
@@ -682,7 +682,7 @@ describe("TraceTable — eval cells without a score", () => {
     renderCell({
       evalResults: [{ id: "e1", score: null, status: "error", reason: "Boom" }],
     });
-    expect(await hoverText("Failed")).toHaveTextContent(
+    expect(await hoverText("Couldn't score")).toHaveTextContent(
       "Evaluation failed: Boom",
     );
   });
@@ -813,7 +813,7 @@ describe("TraceTable — CSAT cell from the call's CSAT status", () => {
       csatStatus: "failed",
       csatReason: "CSAT could not be scored.",
     });
-    expect(await hoverCsat("Failed")).toHaveTextContent(
+    expect(await hoverCsat("Couldn't score")).toHaveTextContent(
       "CSAT could not be scored.",
     );
   });

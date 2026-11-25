@@ -89,14 +89,17 @@ function countLine(kind, items, notEvaluated) {
     applicable.filter((one) => one.state === state).length;
   const failed = count("failed");
   const passed = count("passed");
+  const notScored = count("not_scored");
+  const unscored = notScored ? ` · ${C.notScored(notScored)}` : "";
   if (notEvaluated && !failed && !passed) return C.notEvaluated;
   if (!applicable.length) return C.noneApply(items.length);
-  if (failed) return C.failedOf(failed, applicable.length, someApply);
+  if (failed)
+    return `${C.failedOf(failed, applicable.length, someApply)}${unscored}`;
   if (count("waiting") === applicable.length)
     return C.waitingAll(applicable.length);
   if (passed === applicable.length)
     return C.allPassed(kind, applicable.length, someApply);
-  return C.passedOf(kind, passed, applicable.length, someApply);
+  return `${C.passedOf(kind, passed, applicable.length, someApply)}${unscored}`;
 }
 
 function Row({ item }) {

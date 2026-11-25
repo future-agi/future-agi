@@ -4,6 +4,7 @@ import {
   conversationInFlight,
   conversationWaiting,
   conversationStopping,
+  POST_BUILD_CHECK_LINE,
 } from "../conversationProjection";
 
 const msg = (over = {}) => ({
@@ -567,6 +568,36 @@ describe("projectConversation", () => {
     expect(suite[0].steps[0].text).toBe(
       "Updating the scenarios for environment v5…",
     );
+  });
+
+  it("opens the post-build check as the builder's line, not a user bubble", () => {
+    const turns = projectConversation({
+      messages: [
+        msg({
+          message_id: "c1",
+          role: "user",
+          kind: "message",
+          content:
+            "The environment is validated and sealed. Check it against the agent.",
+          state: "delivered",
+          payload: { command_kind: "post_build_check", from_platform: true },
+          sequence: 1,
+        }),
+        msg({
+          message_id: "a1",
+          content: "All tools answer.",
+          created_at: "2026-09-22T10:00:03Z",
+          sequence: 2,
+        }),
+      ],
+      events: [],
+    });
+
+    expect(turns.some((turn) => turn.role === "user")).toBe(false);
+    expect(turns[0].steps.map((s) => [s.kind, s.text, s.check])).toEqual([
+      ["nudge-line", POST_BUILD_CHECK_LINE, true],
+      ["note", "All tools answer.", undefined],
+    ]);
   });
 
   it("gives every turn and step a stable id", () => {

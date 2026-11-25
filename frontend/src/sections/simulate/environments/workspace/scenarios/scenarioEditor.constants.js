@@ -8,7 +8,7 @@
 export const EDITOR_COPY = {
   title: "Edit scenario",
   subtitle:
-    "Editable fields are saved to the suite; others are read-only because they're proved, not described.",
+    "Editable fields are saved to the suite; the rest were set when the scenario was written.",
   cancel: "Cancel",
   discardTitle: "Discard changes?",
   discardBody:

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import {
@@ -39,9 +39,11 @@ import ReviewBrief, { ReviewBanner } from "./ReviewBrief";
 import ToolChip from "./ToolChip";
 import {
   AGENT_TOOL_SOURCES,
+  MAX_RULE_LENGTH,
   PARK_AFTER_MS,
   REVIEW_COPY,
   REVIEW_STATUS,
+  RULE_COUNTER_FROM,
   sourceWords,
 } from "./designReview.constants";
 import {
@@ -84,43 +86,65 @@ function useMinuteClock() {
 
 function RuleEditor({ rule, busy, onSave, onCancel }) {
   const [text, setText] = useState(rule.text);
+  const hintId = useId();
   const trimmed = text.trim();
+  const tooLong = trimmed.length > MAX_RULE_LENGTH;
+  const invalid = !trimmed || tooLong;
+  let hint = "";
+  if (!trimmed) hint = REVIEW_COPY.ruleEmpty;
+  else if (tooLong) hint = REVIEW_COPY.ruleTooLong;
+  else if (trimmed.length >= RULE_COUNTER_FROM)
+    hint = REVIEW_COPY.ruleLength(trimmed.length);
   const save = () => {
-    if (!busy && trimmed && trimmed !== rule.text) onSave(trimmed);
+    if (!busy && !invalid && trimmed !== rule.text) onSave(trimmed);
   };
   return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={1}
-      sx={{ px: 1.5, py: 0.75 }}
-    >
-      <TextField
-        size="small"
-        fullWidth
-        autoFocus
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") save();
-          if (event.key === "Escape") onCancel();
-        }}
-        inputProps={{ "aria-label": REVIEW_COPY.ruleLabel, maxLength: 2000 }}
-        sx={{ "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
-      />
-      <Button
-        size="small"
-        variant="outlined"
-        disabled={!trimmed || trimmed === rule.text || busy}
-        onClick={save}
-        sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
-      >
-        {REVIEW_COPY.save}
-      </Button>
-      <ButtonBase onClick={onCancel} sx={{ ...linkSx, flexShrink: 0 }}>
-        {REVIEW_COPY.cancel}
-      </ButtonBase>
-    </Stack>
+    <Box sx={{ px: 1.5, py: 0.75 }}>
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <TextField
+          size="small"
+          fullWidth
+          autoFocus
+          value={text}
+          error={invalid}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") save();
+            if (event.key === "Escape") onCancel();
+          }}
+          inputProps={{
+            "aria-label": REVIEW_COPY.ruleLabel,
+            "aria-describedby": hint ? hintId : undefined,
+          }}
+          sx={{ "& .MuiInputBase-input": { typography: "s2", py: 0.5 } }}
+        />
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={invalid || trimmed === rule.text || busy}
+          onClick={save}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+        >
+          {REVIEW_COPY.save}
+        </Button>
+        <ButtonBase onClick={onCancel} sx={{ ...linkSx, flexShrink: 0 }}>
+          {REVIEW_COPY.cancel}
+        </ButtonBase>
+      </Stack>
+      {hint && (
+        <Typography
+          id={hintId}
+          role={invalid ? "alert" : undefined}
+          sx={{
+            typography: "s3",
+            mt: 0.5,
+            color: invalid ? "error.main" : "text.secondary",
+          }}
+        >
+          {hint}
+        </Typography>
+      )}
+    </Box>
   );
 }
 

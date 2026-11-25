@@ -182,6 +182,7 @@ export const WORKSPACE_COPY = {
     // The agent has no name on record; the Overview agent card says the same.
     unnamedAgent: "Agent",
     beforeVersioning: "before versioning",
+    beingBuilt: "being built",
     noAgent: "none",
     scenariosShared: (n) =>
       `${n} scenario${n === 1 ? "" : "s"}, shared across agent versions`,

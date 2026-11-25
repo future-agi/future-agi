@@ -200,19 +200,19 @@ def _eval_outcome(
     return judge_stored_eval(eval_data, _scoring_spec(config, specs)).outcome
 
 
-def _required_eval_failed(
+def _required_eval_outcomes(
     call: CallExecution,
     live_eval_configs: dict[str, SimulateEvalConfig],
     specs: dict[str, EvalScoringSpec] | None,
-) -> bool:
-    return any(
-        _eval_outcome(data, config, specs) == "failed"
+) -> set[str | None]:
+    return {
+        _eval_outcome(data, config, specs)
         for eval_id, data in iter_live_eval_outputs(
             call.eval_outputs, set(live_eval_configs)
         )
         if (config := live_eval_configs.get(str(eval_id))) is not None
         and is_required(config)
-    )
+    }
 
 
 def call_outcome(
@@ -251,18 +251,19 @@ def call_outcome(
     if judged_by_required_evals():
         if harness_outcome in HARNESS_FAILED:
             return "failed"
-        if harness_outcome in (
-            *HARNESS_NO_SCORE,
-            *HARNESS_INCONCLUSIVE,
-            *HARNESS_PASSED,
-        ) and _required_eval_failed(call, live_eval_configs, specs):
+        required = _required_eval_outcomes(call, live_eval_configs, specs)
+        if (
+            harness_outcome
+            in (*HARNESS_NO_SCORE, *HARNESS_INCONCLUSIVE, *HARNESS_PASSED)
+            and "failed" in required
+        ):
             return "failed"
         if harness_outcome in HARNESS_NO_SCORE:
             return "no_score"
         if harness_outcome in HARNESS_INCONCLUSIVE:
             return "inconclusive"
         if harness_outcome in HARNESS_PASSED:
-            return "passed"
+            return "inconclusive" if "error" in required else "passed"
     verdicts = [
         verdict
         for eval_id, data in iter_live_eval_outputs(

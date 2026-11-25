@@ -2327,6 +2327,7 @@ def test_a_finished_builder_session_build_asks_its_builder_to_check_it(
     check = built.conversation.messages.get(client_request_id=f"check-{attempt_id}")
     assert "validated and sealed" in check.content
     assert check.payload["from_platform"] is True
+    assert check.payload["command_kind"] == "post_build_check"
     assert scheduled == [(str(built.conversation.id), "https://platform.example.com")]
     assert not HostedHarnessConversationMessage.no_workspace_objects.filter(
         conversation__job=staged

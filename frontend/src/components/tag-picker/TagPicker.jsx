@@ -44,6 +44,7 @@ const TagPicker = ({
   disabled = false,
   disabledReason = "",
   shown = 2,
+  maxTagLength,
 }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
@@ -58,12 +59,15 @@ const TagPicker = ({
     [tags, onChange],
   );
 
+  const newTagTooLong =
+    maxTagLength != null && newTagInput.trim().length > maxTagLength;
+
   const handleNewTag = useCallback(() => {
     const tag = newTagInput.trim();
-    if (!tag) return;
+    if (!tag || newTagTooLong) return;
     if (!tags.includes(tag)) onChange([...tags, tag]);
     setNewTagInput("");
-  }, [newTagInput, tags, onChange]);
+  }, [newTagInput, newTagTooLong, tags, onChange]);
 
   const availableTags = useMemo(() => {
     const combined = new Set([...knownTags, ...tags]);
@@ -262,6 +266,12 @@ const TagPicker = ({
             placeholder="Type new tag and press Enter"
             value={newTagInput}
             onChange={(e) => setNewTagInput(e.target.value)}
+            error={newTagTooLong}
+            helperText={
+              newTagTooLong
+                ? `A tag can be at most ${maxTagLength} characters`
+                : undefined
+            }
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
@@ -297,6 +307,7 @@ TagPicker.propTypes = {
   disabled: PropTypes.bool,
   disabledReason: PropTypes.string,
   shown: PropTypes.number,
+  maxTagLength: PropTypes.number,
 };
 
 export default TagPicker;

@@ -77,6 +77,21 @@ describe("TraceCheckLines", () => {
     expect(screen.getAllByText(/^goal_/)).toHaveLength(5);
   });
 
+  it("counts the required evals that couldn't score", () => {
+    render(
+      <TraceCheckLines
+        requiredEvals={[
+          { id: "e1", name: "gating", passed: null, status: "failed" },
+          { id: "e2", name: "tone", passed: null, status: "failed" },
+        ]}
+      />,
+    );
+
+    expect(screen.getByTestId("trace-check-group-evals")).toHaveTextContent(
+      "Required evals · 0 of 2 passed · 2 couldn't score",
+    );
+  });
+
   it("shows only the count while every check is still waiting", () => {
     render(<TraceCheckLines requiredEvals={evals([null, null, null])} />);
 

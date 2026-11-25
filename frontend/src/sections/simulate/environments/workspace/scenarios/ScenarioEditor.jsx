@@ -38,7 +38,7 @@ import {
 // The drawer renders every field but disables the ones the server does not name,
 // so the read-only set is the server's answer, never a hardcoded list.
 const READ_ONLY_HINT =
-  "Proved, so not editable: this was verified when the scenario was generated.";
+  "Set when the scenario was written; ask the builder to change it.";
 const REPROOF_HINT = "Editing this re-proves the scenario.";
 
 export default function ScenarioEditor({

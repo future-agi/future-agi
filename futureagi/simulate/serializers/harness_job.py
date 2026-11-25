@@ -1105,6 +1105,11 @@ class HarnessJobStatusSerializer(serializers.Serializer):
     stage = serializers.CharField()
     updated_at = serializers.CharField()
     attempt = serializers.IntegerField()
+    attempt_started_at = serializers.CharField(
+        allow_null=True,
+        required=False,
+        help_text="When the current attempt was created; null before the first one.",
+    )
     completed_scenarios = serializers.IntegerField()
     failed_scenarios = serializers.IntegerField()
     active_scenarios = serializers.IntegerField(required=False)

@@ -20,7 +20,11 @@ import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
  * The confirm's dismiss button reads "Cancel" (ConfirmDialog's fixed label), so
  * the destructive action says "Stop build" to keep the two apart.
  */
-export default function CancelBuildControl({ envId, building = false }) {
+export default function CancelBuildControl({
+  envId,
+  building = false,
+  resumable = false,
+}) {
   const [confirming, setConfirming] = useState(false);
   const cancel = useCancelHarnessJob(envId);
   const { canEdit } = useSimulationAccess();
@@ -58,8 +62,9 @@ export default function CancelBuildControl({ envId, building = false }) {
         title="Stop this build?"
         content={(
           <Typography component="span" sx={{ typography: "s2" }}>
-            This build will be cancelled and the environment won&apos;t be created. You can start
-            a new build afterwards.
+            {resumable
+              ? "The build stops where it is. Try again picks it up in this environment, so you don't need to start a new build."
+              : "This build will be cancelled and the environment won't be created. You can start a new build afterwards."}
           </Typography>
         )}
         action={
@@ -81,4 +86,5 @@ export default function CancelBuildControl({ envId, building = false }) {
 CancelBuildControl.propTypes = {
   envId: PropTypes.string,
   building: PropTypes.bool,
+  resumable: PropTypes.bool,
 };

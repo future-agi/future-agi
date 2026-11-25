@@ -699,7 +699,7 @@ class TestRunResultsV3Views:
         pass_fail_eval_config.save(update_fields=["config"])
         settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = required_rule
         call_expected = (
-            ("failed" if expected == "failed" else "passed")
+            (expected if expected in ("failed", "inconclusive") else "passed")
             if required_rule
             else expected
         )

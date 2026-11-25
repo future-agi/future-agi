@@ -7,6 +7,7 @@ import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import OverviewPanel from "../OverviewPanel";
 import NextStepsChecklist from "../NextStepsChecklist";
 import SourceToSandboxMap from "../SourceToSandboxMap";
+import { startingCollections } from "../overview.constants";
 
 vi.mock(
   "src/api/simulate-environments/designReview",
@@ -248,5 +249,22 @@ describe("SourceToSandboxMap", () => {
       );
       expect(container).toBeEmptyDOMElement();
     });
+  });
+});
+
+describe("startingCollections", () => {
+  it("counts tables stored as lists and as records keyed by id", () => {
+    expect(
+      startingCollections({
+        rides: [{ id: 1 }, { id: 2 }],
+        BOOKINGS: { b1: { guest: "A" }, b2: { guest: "B" }, b3: {} },
+        settings: { currency: "USD" },
+        empty: {},
+        version: 3,
+      }),
+    ).toEqual([
+      { name: "rides", rows: 2 },
+      { name: "BOOKINGS", rows: 3 },
+    ]);
   });
 });

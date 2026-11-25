@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildStartTime,
   keptLine,
   landedOf,
   phaseRows,
@@ -7,6 +8,7 @@ import {
   stopCase,
   stopSentence,
   stoppedStep,
+  stoppingStep,
   tabWaits,
 } from "../buildSteps";
 
@@ -59,10 +61,74 @@ describe("stoppedStep", () => {
   });
 });
 
+describe("buildStartTime", () => {
+  const events = [{ emitted_at: "2026-11-25T09:00:00Z" }];
+  const approvedAt = "2026-11-25T08:00:00Z";
+  const attempt = "2026-11-25T10:00:00Z";
+
+  it("counts from the current attempt once it has left the queue", () => {
+    expect(
+      buildStartTime(
+        { stage: "generating_environment", attempt_started_at: attempt },
+        { events, approvedAt },
+      ),
+    ).toBe(attempt);
+  });
+
+  it("ignores the attempt while queued, when it can still be the last one", () => {
+    expect(
+      buildStartTime(
+        { stage: "queued", attempt_started_at: attempt },
+        { events, approvedAt },
+      ),
+    ).toBe(approvedAt);
+    expect(buildStartTime({ stage: "queued" }, { events })).toBe(
+      events[0].emitted_at,
+    );
+  });
+});
+
+describe("stoppingStep", () => {
+  const event = (type, stage) => ({ type, payload: { stage } });
+
+  it("places a stop at the last step the build reached, not at the cleanup", () => {
+    const step = stoppingStep({
+      events: [
+        event("stage.started", "environment"),
+        event("stage.completed", "environment"),
+        event("stage.started", "scenarios"),
+        event("stage.started", "cleaning_up"),
+      ],
+      designApproved: true,
+    });
+    expect(step.label).toBe("Generating scenarios");
+  });
+
+  it("falls back to what the build produced when no stage started", () => {
+    const step = stoppingStep({
+      outputs: [{ kind: "contract" }, { kind: "environment" }],
+      designApproved: true,
+    });
+    expect(step.label).toBe("Generating scenarios");
+  });
+});
+
 describe("phaseRows", () => {
+  it("says stopping at the step reached and counts no steps of it done", () => {
+    const rows = phaseRows(stepOfStage("connecting_agent"), {
+      stopping: true,
+    });
+    expect(rows.map((row) => [row.id, row.state, row.note])).toEqual([
+      ["world", "done", "Done"],
+      ["scenarios", "done", "Done"],
+      ["checks", "now", "Stopping at Connecting agent"],
+    ]);
+  });
+
   it("keeps finished phases, stops at one and leaves the rest not run", () => {
     const rows = phaseRows(stepOfStage("validating_environment"), {
       stopped: true,
+      kept: true,
       counts: { tools: 3, tables: 2 },
     });
     expect(rows.map((row) => [row.label, row.state, row.note])).toEqual([
@@ -74,6 +140,14 @@ describe("phaseRows", () => {
       ],
       ["Running the release checks", "next", "Not run"],
     ]);
+  });
+
+  it("calls a finished phase done, not kept, when a retry starts over", () => {
+    const rows = phaseRows(stepOfStage("connecting_agent"), {
+      stopped: true,
+      counts: { tools: 3 },
+    });
+    expect(rows.find((row) => row.id === "world").note).toBe("Done · 3 tools");
   });
 
   it("leaves out the step count while no step of the phase is done", () => {
@@ -110,19 +184,26 @@ describe("the stopped build's words", () => {
     );
   });
 
-  it("says nothing was kept only when nothing was", () => {
-    expect(keptLine(stepOfStage("generating_environment"))).toBe("");
-    expect(
-      keptLine(stepOfStage("connecting_agent"), { tables: 2, scenarios: 3 }),
-    ).toBe("The world and its 2 tables are kept, and its 3 scenarios too.");
-  });
-
-  it("counts the tools only when there are some", () => {
-    const step = stepOfStage("generating_scenarios");
-    expect(keptLine(step, { tools: 3 })).toBe(
+  it("keeps the world and scenarios only when a retry starts at the checks", () => {
+    const step = stepOfStage("connecting_agent");
+    const checks = { retryFrom: "checks" };
+    expect(keptLine(step, { tables: 2, scenarios: 3 }, checks)).toBe(
+      "The world and its 2 tables are kept, and its 3 scenarios too.",
+    );
+    expect(keptLine(step, { tools: 3 }, checks)).toBe(
       "The world and its 3 tools are kept.",
     );
-    expect(keptLine(step, { tools: 0 })).toBe("The world is kept.");
+    expect(keptLine(step, { tools: 0 }, checks)).toBe("The world is kept.");
+  });
+
+  it("keeps only the design when a retry starts over", () => {
+    const step = stepOfStage("connecting_agent");
+    const counts = { tables: 2, scenarios: 3 };
+    expect(
+      keptLine(step, counts, { designApproved: true, retryFrom: "start" }),
+    ).toBe("Your design is kept.");
+    expect(keptLine(step, counts, { retryFrom: "start" })).toBe("");
+    expect(keptLine(stepOfStage("generating_environment"))).toBe("");
   });
 });
 

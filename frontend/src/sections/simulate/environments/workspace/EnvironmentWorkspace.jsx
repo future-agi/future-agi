@@ -59,10 +59,12 @@ import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 import BuildStoppedStrip from "./BuildStoppedStrip";
 import {
+  buildStartTime,
   landedOf,
   stepOfStage,
   stopSentence,
   stoppedStep,
+  stoppingStep,
   tabWaits,
 } from "./buildSteps";
 
@@ -270,7 +272,16 @@ export default function EnvironmentWorkspace() {
   const jobStatus = jobQuery.data?.status;
   const jobEvents = jobQuery.data?.events;
   const readsAgent = !env?.designApproved;
-  const liveStep = building ? stepOfStage(buildStage, { readsAgent }) : null;
+  const stopping = building && Boolean(jobStatus?.cancel_requested_at);
+  const liveStep = stopping
+    ? stoppingStep({
+        events: jobEvents,
+        outputs: jobQuery.data?.stage_outputs,
+        designApproved: Boolean(env?.designApproved),
+      })
+    : building
+      ? stepOfStage(buildStage, { readsAgent })
+      : null;
   const stopStep = buildFailed
     ? stoppedStep(jobStatus, {
         events: jobEvents,
@@ -295,9 +306,12 @@ export default function EnvironmentWorkspace() {
           landed,
         })
       : {};
-  const buildStartedAt = env?.designApproved
-    ? jobQuery.data?.job?.metadata?.design_review?.approved_at
-    : jobEvents?.[0]?.emitted_at;
+  const buildStartedAt = buildStartTime(jobStatus, {
+    events: jobEvents,
+    approvedAt: env?.designApproved
+      ? jobQuery.data?.job?.metadata?.design_review?.approved_at
+      : null,
+  });
   useEffect(() => {
     if (building && buildStage)
       queryClient.invalidateQueries({
@@ -722,7 +736,8 @@ export default function EnvironmentWorkspace() {
       {building && (
         <BuildStrip
           name={displayEnv.name}
-          stage={buildStage}
+          step={liveStep}
+          stopping={stopping}
           startedAt={buildStartedAt}
           readsAgent={readsAgent}
         />
@@ -745,7 +760,7 @@ export default function EnvironmentWorkspace() {
       )}
 
       {!detailLoading && !detailFailed && (
-        <VersionBar env={env} envState={envState} />
+        <VersionBar env={env} envState={envState} building={building} />
       )}
       <DraftBar
         env={env}
