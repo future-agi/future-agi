@@ -425,7 +425,7 @@
     {
       "pattern": "futureagi/tfc/settings/test.py",
       "reason": "Test settings initialize disposable PostgreSQL databases, not product ClickHouse bootstrap.",
-      "sha256": "7d345e110e8f176a510cd9aa671732e9eb8d64015725562cc41b184efaabdaed"
+      "sha256": "bcfd9f8454a26c1ee2bb5f2372c273e04d746f9e097b3ee44d9d913714f49ea4"
     },
     {
       "pattern": "futureagi/model_hub/utils/SQL_queries.py",
