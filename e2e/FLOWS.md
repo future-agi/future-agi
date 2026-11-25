@@ -75,6 +75,28 @@
 - the scan of the uploaded folder reached found in PG simulate_agent_scan, scoped to the actor org
 - exactly one PG simulate_agent_definition row has the minted name in the actor org after Connect
 
+### AGENT-E2E-004 — an agent's values are listed by name, never by value, and removing a required one warns before any save
+
+**Goal:** A developer sees which values a connected agent holds, by name and never by value, and is warned before removing one the agent needs
+
+**Spec:** `flows/agents/agent-values-tab.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a connected agent whose production version holds a required value and an optional one
+2. open the agent page on its Values tab
+3. see exactly the two names, the required one marked Required
+4. mark the required name for removal
+5. see the warning that builds and runs are refused until it has a value again, without saving
+
+**Backend state verified:**
+
+- the values response the page received lists exactly the two names, required only on the first, and holds neither secret
+- neither secret string appears anywhere in the rendered page
+- marking a name for removal writes nothing: PG simulate_agent_version still holds one version, the seeded one, active
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
