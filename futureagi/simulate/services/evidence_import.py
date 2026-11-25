@@ -351,7 +351,11 @@ class _Held:
 
 
 def _held(
-    evidence_import: EvidenceImport, cases: list[EvidenceImportCase], statuses, *, leaving=()
+    evidence_import: EvidenceImport,
+    cases: list[EvidenceImportCase],
+    statuses,
+    *,
+    leaving=(),
 ) -> _Held:
     """The environment's cases in ``statuses`` (in imports still kept, no repeat
     themselves, no stale draft, and no added case the suite no longer holds) that
@@ -551,14 +555,18 @@ def _promote_duplicates(evidence_import: EvidenceImport, leaving) -> None:
     for case in duplicates:
         by_import[case.evidence_import_id].append(case)
     held = {
-        owner: _held(cases[0].evidence_import, cases, _REPEATED_STATUSES, leaving=leaving)
+        owner: _held(
+            cases[0].evidence_import, cases, _REPEATED_STATUSES, leaving=leaving
+        )
         for owner, cases in by_import.items()
     }
     successor: dict = {}
     now = timezone.now()
     for case in duplicates:
         current = held[case.evidence_import_id].of(case.evidence_import, case)
-        first = current[0] if current else successor.setdefault(case.duplicate_of_id, case)
+        first = (
+            current[0] if current else successor.setdefault(case.duplicate_of_id, case)
+        )
         if first is case:
             case.status = EvidenceImportCase.Status.PENDING
             case.duplicate_of_id = None

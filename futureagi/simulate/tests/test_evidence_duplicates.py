@@ -85,7 +85,9 @@ class TestObserve:
         second = (
             first
             if same_content
-            else _evidence(turns=(Turn("user", "Another conversation", False, "trace", T0),))
+            else _evidence(
+                turns=(Turn("user", "Another conversation", False, "trace", T0),)
+            )
         )
         _sessions(client, environment, project, {SESSION: first}, [SESSION])
         with patch(
@@ -445,7 +447,9 @@ class TestRetry:
 
 
 class TestImportHistory:
-    def test_discard_reuses_current_original(self, client, environment, dataset, columns):
+    def test_discard_reuses_current_original(
+        self, client, environment, dataset, columns
+    ):
         same = {columns["chat"]: CHAT, columns["expected"]: EXPECTED}
         a, b = [_row(dataset, index, same) for index in range(2)]
         first = _create_rows(client, environment, dataset, [a], columns).json()
@@ -460,7 +464,9 @@ class TestImportHistory:
         [earlier] = _stored(repeat)
         assert (earlier.status, earlier.duplicate_of_id) == ("duplicate", current.id)
 
-    def test_edited_source_retires_pending_history(self, client, environment, dataset, columns):
+    def test_edited_source_retires_pending_history(
+        self, client, environment, dataset, columns
+    ):
         row = _row(dataset, 0, {columns["chat"]: CHAT, columns["expected"]: EXPECTED})
         first = _create_rows(client, environment, dataset, [row], columns).json()
         repeat = _create_rows(client, environment, dataset, [row], columns).json()
@@ -473,13 +479,20 @@ class TestImportHistory:
         assert (old.status, new.status) == ("discarded", "pending")
         assert historical.duplicate_of_id == old.id
 
-    def test_unavailable_observe_history_does_not_abort_transcript(self, client, environment, project):
+    def test_unavailable_observe_history_does_not_abort_transcript(
+        self, client, environment, project
+    ):
         turns = (
             Turn("user", "Where is my parcel?", False, "t", T0),
             Turn("agent", "It left the depot today.", False, "t", T0),
         )
-        first = _sessions(client, environment, project, {SESSION: _evidence(turns=turns)}, [SESSION])
-        with patch("simulate.selectors.evidence_import.observe_evidence", side_effect=ConnectionError):
+        first = _sessions(
+            client, environment, project, {SESSION: _evidence(turns=turns)}, [SESSION]
+        )
+        with patch(
+            "simulate.selectors.evidence_import.observe_evidence",
+            side_effect=ConnectionError,
+        ):
             response = _post_transcripts(client, environment, _transcript(text=_CHAT))
         assert response.status_code == status.HTTP_201_CREATED, response.data
         assert _stored(response.json())[0].status == "pending"
