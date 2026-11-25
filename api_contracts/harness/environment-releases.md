@@ -435,6 +435,7 @@ Frozen by the platform at run submission, before dispatch:
 | `environment` | `[{digest, name}]`, base first, then the extension |
 | `suite` | `{digest}` |
 | `binding` | `{digest}` |
+| `binding_proof` | `{digest}` of the proof accepted with a `tool_routed` binding; absent otherwise |
 | `agent` | as in the binding |
 | `selection` | `{scenario_keys, trials}`; keys unique, trials 1–20 |
 | `simulator` | `{llm: {provider, model, location, thinking, fallback_models}, voice: {stt, tts, voice}, persona: {prompt_digest, temperature, interrupt_sensitivity, conversation_speed, finished_speaking_sensitivity, max_call_duration_in_minutes, initial_message_delay}}` |
@@ -732,6 +733,8 @@ sealed environment and a suite proved against it. It recomputes both digests
 - a suite proved against another environment;
 - a suite without a passing PostgreSQL proof;
 - a `provision.json` that does not match the suite;
+- a scenario whose `path` is not a normalized relative folder of the suite with
+  a listed `scenario.json`;
 - an extension whose parent is not registered, or a derived suite whose parent
   suite the organization cannot see.
 
@@ -796,7 +799,8 @@ At launch the gateway, for a job with `release_composition`:
 
 - refuses a job without `run_manifest` (`run_manifest_missing`), and a launch
   whose selected image differs from the manifest's
-  (`run_manifest_runtime_changed`);
+  (`run_manifest_runtime_changed`); the image is the one the run's whole
+  selection needs, also when an in-run rerun or a retry runs part of it;
 - applies the manifest's simulator settings instead of the current ones;
 - uploads the archives, `binding.json` and `run-manifest.json`, extracts them
   into `/work/releases` (§6), and runs `compose` and then the entrypoint, with
@@ -809,7 +813,17 @@ changes the suite: a scenario the binding cannot reach is reported
 `unscorable`, and a suite change is a separate scenario edit. It is a hosted
 job whose payload is an ordinary validated hosted job for the agent, with
 `metadata.adaptation = {environment: [{digest, name, object_key}], suite:
-{digest, name, object_key}, agent_version_id}`.
+{digest, name, object_key}, agent_version_id, agent, parallelism, mode,
+pairing?}`. The agent's own keys are stored in the platform vault and the job
+refers to them, so the composition and its runs resolve the same secrets; the
+adaptation is never given an agent of its own.
+
+**Mode of the request.** `review` (the default): the builder drafts the binding
+and the person approves its design. `run`: the control process drafts and checks
+it without a session (`--auto`), and once it is composed the platform starts one
+run of the measurable cases, recorded as `adaptation_result.run` or, when it
+can't start, `adaptation_result.run_failure: {code, message}`. A run is never
+started for an adaptation that was canceled or deleted.
 
 **Launch.** The gateway delivers the releases as for a run (§6 layout, no
 binding or manifest) and runs the control process:
@@ -829,12 +843,12 @@ environment's builder (`hosted_chat_entrypoint`, control-only) beside it, as for
 a build. The builder opens the `bind-agent` skill with the adaptation tools; the
 provider key never reaches it. Exit codes: `0` completed, `2` failed with
 `result.json` written; both are settled from the output. Any other exit takes
-the existing crash and infrastructure-retry path. `metadata.adaptation` also
-carries the agent reference (§2.4). Adaptation jobs are followed as jobs
-(`harness-jobs/{id}/`) and never listed as environments; a message to a
-finished one is refused (409 `conversation_closed`).
+the existing crash and infrastructure-retry path. Adaptation jobs are followed
+as jobs (`harness-jobs/{id}/`); only one in review is also listed as an
+environment, until its composition is. A message to a finished one is refused
+(409 `conversation_closed`).
 
-**Mode.** `canonical` when every admitted tool is an environment tool with the
+**Binding mode.** `canonical` when every admitted tool is an environment tool with the
 same name and compatible arguments: every argument the agent sends is an
 environment argument of the same JSON type whose values the environment
 accepts, and every required environment argument is one the agent sends. A
@@ -854,8 +868,12 @@ and the builder writes the binding.
 | `stop_adaptation` | ends the job failed: `adaptation_declined` after a declined approval, else `binding_unproved` |
 
 The builder retries within its turn budget; there is no fixed round limit. The
-approval is a builder question (`question_requested`, `{prompt, options}`,
-answered by a `user_response` replying to it).
+approval is a builder question (`question_requested`, `{prompt, options, data}`,
+its prompt starting "Use this binding for "), answered by a `user_response`
+replying to it, typed in the chat or with `approve`. While it is open the
+adaptation is awaiting approval, whatever was answered before. A yes is kept as
+`metadata.adaptation.approved_at`; any other answer, and every new attempt
+(whose builder checks the mapping and asks again), clears it.
 
 **Outputs** in `/work/authoring/adaptation/`:
 
@@ -873,19 +891,29 @@ extension_candidates: [{agent_tool, reason}], unscorable: [{scenario_key,
 reason}], conflicts: [{rule, policy, agent}]}`. Extension candidates are agent
 tools no environment tool can serve; building them is step 5.
 
+The control process also records what it sealed (the binding's digest and mode
+and its proof's digest) in `/work/.authoring-credentials/adaptation-verified.json`,
+which the builder's session cannot write.
+
 **Completion.** When the job's process exits, the gateway packs
-`/work/authoring/adaptation` and `complete_adaptation`
-(`services/harness_releases.py`): for `completed`, refuses a result whose suite
-is not the base suite (`adaptation_result_invalid`) and a `tool_routed` result
-(`binding_unproved`) unless `binding-proof.json` has `passed` and its binding,
-suite and environment digests equal the binding's, the base suite's and the
-binding's environment; then stores the binding (`HarnessAgentBinding`) and
-creates the composition on the base suite with `trajectories.json`, records
+`/work/authoring/adaptation` (at most 64 MiB) and `complete_adaptation`
+(`services/harness_releases.py`): for `completed`, refuses a document that is
+not an object or a result whose suite is not the base suite
+(`adaptation_result_invalid`), a review nobody approved
+(`adaptation_not_approved`), a binding other than the recorded one and a
+`tool_routed` result (`binding_unproved`) unless `binding-proof.json` is the
+recorded proof, has `passed` and its binding, suite and environment digests
+equal the binding's, the base suite's and the binding's environment; then stores
+the binding (`HarnessAgentBinding`) and creates the composition on the base
+suite with `trajectories.json`, records
 `metadata.adaptation_result = {composition_id, suite_digest, binding_digest,
 mode}` and completes the job; for `failed`, fails the job with
 `result.failure` (or `adaptation_result_missing` when `result.json` is absent or
-unreadable). `conversation_only` results complete the job with
-`composition_id: null` and `compose: {code: "compose_unsupported"}`.
+cannot be unpacked). `conversation_only` results need no approval and complete
+the job with `composition_id: null` and `compose: {code:
+"compose_unsupported"}`. A canceled or deleted adaptation composes nothing and
+ends canceled. The recorded outcome is final: how the sandbox ends afterwards
+does not change it.
 
 ### 7.6 API
 
@@ -893,9 +921,12 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
 
 | Route | Request | Response |
 |---|---|---|
-| `GET harness-releases/` | | `{results: [{id, digest, name, system, parent: {digest, name} or null, tools: [{name, description, mutates_state}], policy: {parameters: [{name, type, default, allowed}], agent_rules: [{id, text}]}, suites: [{id, digest, name, scenario_count, origins: {base, specialized, custom}, policy_profile}]}]}`; system releases and the organization's own |
-| `POST harness-adaptations/` | `{suite_id, agent_version_id, agent, name, idempotency_key, parallelism?}` (the key in the body; `parallelism` is the composition's, §7.3); `agent` as in a hosted job (`connector` `retell_chat`, `retell` or `vapi`, `mode: "provider_import"`, `config`, `secret_refs`); the agent definition's type must match the connector's modality (400 `agent_modality_mismatch`) | 202, the job (`HarnessJobReadSerializer`); the UI follows it like any harness job |
-| `POST harness-hosted-agents/` | `{suite_id, name, instructions, model, idempotency_key, parallelism?}`; `model` as in §6.4, `parallelism` as in §7.3 | 201 `{id, agent_version_id}`: the composition (an environment ID) and the new agent version; the same key with the same spec (and parallelism, when given) answers the same composition, with another 409 `idempotency_conflict` |
+| `GET harness-releases/` | | `{results: [{id, digest, name, system, parent: {digest, name} or null, tools: [{name, description, mutates_state}], policy: {parameters: [{name, type, default, allowed}], agent_rules: [{id, text}]}, suites: [{id, digest, name, scenario_count, origins: {base, specialized, custom}, policy_profile}], catalogue}]}`; system releases and the organization's own, the newest of each name; an earlier one stays usable by what was made from it. `catalogue` is `{title, summary, channel, records, apps, example_requests}` or `null` |
+| `POST harness-releases/fit/` | `{suite_id, agent_version_id, pairing?}`; `pairing` (environment tool to agent tool or `null`) is the person's edits over the suggestion, 400 `pairing_invalid` when one names no real pair | `{agent: {name, version}, agent_tools, rows: [{world, agent, kind: "matched", "mapped" or "missing"}], platform_actions, total, unmeasured: [{key, title}]}`; nothing is built, but a Viewer is refused as on any other `POST`; 409 `agent_tools_unavailable` |
+| `POST harness-adaptations/` | `{suite_id, agent_version_id, agent?, name, idempotency_key, parallelism?, pairing?, mode?}` (the key in the body; `parallelism` is the composition's, §7.3; `pairing` as in `fit/`; `mode` `review` or `run`, §7.5); `agent` as in a hosted job (`connector` `retell_chat`, `retell` or `vapi`, `mode: "provider_import"`, `config`, `secret_refs`), reaching the version's own provider agent (409 `agent_connection_mismatch`), and the version's own connection when left out; the agent definition's type must match the connector's modality (400 `agent_modality_mismatch`) | 202, the job (`HarnessJobReadSerializer`); the UI follows it like any harness job |
+| `GET harness-adaptations/{id}/design/` | | `{state: "checking", "awaiting_approval", "building", "ready" or "failed", failure, composition_id, agent, world, suite, scenarios, fit, conflicts: {checked, conflicts}, check}`; `check` is the approval question's `data` while it is open |
+| `POST harness-adaptations/{id}/approve/` | | 202 `{id}`; answers the open approval question yes; 409 `adaptation_not_awaiting_approval` or `conversation_closed` |
+| `POST harness-hosted-agents/` (the only way our hosted agent is admitted: a hosted job or a preflight naming `hosted_agent` is refused) | `{suite_id, name, instructions, model, idempotency_key, parallelism?}`; `model` as in §6.4, `parallelism` as in §7.3 | 201 `{id, agent_version_id}`: the composition (an environment ID) and the new agent version; the same key with the same spec (and parallelism, when given) answers the same composition, with another 409 `idempotency_conflict` |
 | `GET harness-environments/{id}/` | | adds `composition`: `null`, or `{environment: [{digest, name}], suite: {digest, name, parent_digest, policy_profile, unscored_agent_rules: [{id, text}], scenarios: [{key, origin, derived_from}]}, binding: {digest, mode, agent_tools, tools}, agent: {agent_definition_id, agent_version_id, connector, name, version_name}, alignment, binding_proof: {passed, scenarios}}` |
 | `GET harness-environments/{id}/runs/{run_id}/report/` | `?baseline=<run_id>`; a run is named by its test execution ID or its run job ID; the baseline may be a run of another composition in the organization | §7.7; 409 `not_a_composition` for other environments |
 
@@ -903,7 +934,7 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
 
 ```json
 {"run_mode": "tool_routed",
- "manifest": {"digest", "environment", "suite", "binding", "agent", "selection", "simulator", "scorer", "runtime"},
+ "manifest": {"digest", "environment", "suite", "binding", "binding_proof", "agent", "selection", "simulator", "scorer", "runtime"},
  "comparability": {"baseline_run_id", "comparable": false, "differing": ["simulator"]},
  "coverage": {"runnable": 7, "suite_scenarios": 7, "base_scenarios": 8,
               "unscorable": ["intake-forms-fallback-to-email"], "extension_tools": []},
@@ -913,6 +944,7 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
  "environment_faults": 1}
 ```
 
+- `manifest.binding_proof` is `null` when the binding is not `tool_routed`.
 - `run_mode` is the binding's mode; `origin` comes from the suite manifest.
 - A trial is a scenario's receipt per trial index. `errored` trials are
   environment faults: counted in `environment_faults` and excluded from rates.
@@ -986,8 +1018,8 @@ agent's own trajectory.
    scenario's reason (for example `no trajectory`).
 4. Writes `composition-change/`: `suite/`, `binding-proof.json` (`tool_routed`),
    `trajectories.json` and `change.json` (`{schema_version:
-   "futureagi.composition-change.v1", parent, suite, added, changed, removed,
-   unscorable: {key: reason}}`), then checkpoints the workspace and publishes
+   "futureagi.composition-change.v1", parent, suite, binding_proof: {digest} or
+   null, added, changed, removed, unscorable: {key: reason}}`), then checkpoints the workspace and publishes
    it. A refused save leaves nothing behind; a published one becomes the
    workspace's suite.
 
@@ -996,8 +1028,9 @@ agent's own trajectory.
 built on another suite (`conversation_checkpoint_stale`), and records one
 without `composition-change/` as chat state only. Otherwise it checks the
 change (`composition_change_invalid` unless `change.json` and the suite name
-the current suite as parent; the §7.2 suite checks; the §7.3 binding check with
-the new proof), registers the suite for the organization (`HarnessSuiteRelease`
+the current suite as parent and, when `tool_routed`, `change.json` names the
+digest of `binding-proof.json`; the §7.2 suite checks; the §7.3 binding check
+with the new proof), registers the suite for the organization (`HarnessSuiteRelease`
 with `parent` the current suite) and sets `metadata.release_composition`
 `suite`, `binding_proof`, `alignment.unscorable` and `trajectories`, and
 `authoring_revision` to the new suite digest. Scenario rows are re-indexed from

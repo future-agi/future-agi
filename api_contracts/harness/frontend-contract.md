@@ -205,8 +205,10 @@ where the frontend uses them.
 | Route / message | Shape | Frontend |
 |---|---|---|
 | `GET harness-releases/` | §7.6 | Prebuilt environments page: released-environment gallery at the top (`pages/dashboard/harness/ReleaseGallery.jsx` in `PrebuiltEnvironmentsBrowse.jsx`) |
-| `POST harness-adaptations/` | §7.6 | "Use with my agent" dialog, *Adapt to my agent*; navigates to the returned job's detail page |
-| `POST harness-compositions/` | §7.6 | Same dialog, *Compose without adaptation*; navigates to the composed environment |
+| `POST harness-releases/fit/` | §7.6 | "Use with my agent" dialog: the pairing table and the cases it measures (`buildDrawer/starts/WorldFitReport.jsx`) |
+| `POST harness-adaptations/` | §7.6 | Same dialog, with the pairing and the mode (`review` or `run`); the returned job is followed like any harness job |
+| `GET harness-adaptations/{id}/design/`, `POST harness-adaptations/{id}/approve/` | §7.6 | Review the design (`workspace/adaptation/ReviewTheDesign.jsx`); approve answers `{id}` |
+| `POST harness-hosted-agents/` | §7.6 | Our own agent on a release; navigates to the composed environment |
 | `tool_result` events of the adaptation tools | §7.5 | Job detail: adaptation checklist (`AdaptationProgress.jsx`): binding drafted, proved, conflicts reviewed, sealed; `job.metadata.adaptation_result.composition_id` links to the environment |
 | `question` message (`question_requested`) | §7.5 | Option buttons (the builder's approval of the binding is one); the answer is `kind: "user_response"`, `reply_to` the question, `payload: {value}` |
 | `GET harness-environments/{id}/` `composition` | §7.6 | Environment workspace: Alignment tab (including policy conflicts), header summary, labels in the run repeats pickers |
@@ -214,6 +216,9 @@ where the frontend uses them.
 
 A question counts as answered once a user message replies to it;
 its buttons stay visible and disabled.
+
+Every `POST` here is refused to a Viewer (403 `viewer_read_only`, with the
+action the Viewer tried), as on the other harness routes.
 
 ## Not in v0
 
