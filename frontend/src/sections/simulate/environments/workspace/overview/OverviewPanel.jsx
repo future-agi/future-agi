@@ -39,7 +39,7 @@ import StateSummary from "./StateSummary";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { DependsOnCard, SeededDataCard, StartingDataCard } from "./WorldCards";
 import ConnectOnlyWorld from "../world/ConnectOnlyWorld";
-import { hasNoWorld } from "../world/world.constants";
+import { hasNoWorld, isConnectOnly } from "../world/world.constants";
 import useApprovedDesign from "./useApprovedDesign";
 
 /**
@@ -96,7 +96,8 @@ export default function OverviewPanel({
   const degradeReasons = parallelism?.degrade_reasons || [];
 
   const seeded = Boolean(backedWorld) && worldTables(env).length > 0;
-  const startingData = Boolean(backedWorld) && env.baseEnvironment != null;
+  const startingData =
+    Boolean(backedWorld) && !isConnectOnly(env) && env.baseEnvironment != null;
 
   const amendments =
     (backedWorld

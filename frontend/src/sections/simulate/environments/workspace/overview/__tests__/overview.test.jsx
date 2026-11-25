@@ -409,6 +409,32 @@ describe("OverviewPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows no starting data for a connect-only agent whose reading recorded some", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        detailReady: true,
+        buildStatus: "ready",
+        agentMode: "connect_only",
+        connector: "vapi",
+        source: { kind: "provider" },
+        seed: undefined,
+        stores: [],
+        baseEnvironment: {
+          rooms: [{ room_id: "101" }, { room_id: "201" }],
+          reservations: [{ confirmation_number: "HH-1001" }],
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("No world to reset")).toBeInTheDocument();
+    expect(screen.queryByText(/Seeded data/)).toBeNull();
+    expect(screen.queryByText("reservations")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Show the starting data" }),
+    ).toBeNull();
+  });
+
   it("says nothing about the world in the agent line until the world is written", () => {
     renderPanel({
       env: {
