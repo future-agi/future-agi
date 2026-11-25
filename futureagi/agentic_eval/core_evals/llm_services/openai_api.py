@@ -15,6 +15,13 @@ from agentic_eval.core_evals.llm_services.abstract_llm import AbstractLlmService
 DEFAULT_TEMPERATURE = 0.0
 
 
+def _first_choice(response, operation: str):
+    choices = getattr(response, "choices", None)
+    if not choices:
+        raise ValueError(f"OpenAI {operation} returned no choices")
+    return choices[0]
+
+
 class OpenAiService(AbstractLlmService):
     _instance = None
 
@@ -55,20 +62,23 @@ class OpenAiService(AbstractLlmService):
                 model=model, messages=messages, **kwargs
             )
             end_time = time.time()
+            choice = _first_choice(response, "chat_completion")
+            usage = getattr(response, "usage", None)
+            if usage is None:
+                raise ValueError("OpenAI chat_completion returned no usage")
+
             completion_time = (end_time - start_time) * 1000
             metadata = {
                 "usage": {
-                    "completion_tokens": response.usage.completion_tokens,
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "total_tokens": response.usage.total_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "prompt_tokens": usage.prompt_tokens,
+                    "total_tokens": usage.total_tokens,
                 },
-                "cost": calculate_total_cost(model, dict(response.usage)),
+                "cost": calculate_total_cost(model, dict(usage)),
                 "response_time": completion_time,
             }
-            if response.choices[0].finish_reason == "tool_calls":
-                tool_calls = [
-                    call.model_dump() for call in response.choices[0].message.tool_calls
-                ]
+            if choice.finish_reason == "tool_calls":
+                tool_calls = [call.model_dump() for call in choice.message.tool_calls]
                 tool_calls_data = [
                     {
                         "arguments": call["function"]["arguments"],
@@ -78,13 +88,12 @@ class OpenAiService(AbstractLlmService):
                 ]
                 return {"value": json.dumps(tool_calls_data), "metadata": metadata}
             else:
-                prompt_response = response.choices[0].message.content
+                prompt_response = choice.message.content
 
                 if not prompt_response:
-                    if response.choices[0].message.tool_calls:
+                    if choice.message.tool_calls:
                         tool_calls = [
-                            call.model_dump()
-                            for call in response.choices[0].message.tool_calls
+                            call.model_dump() for call in choice.message.tool_calls
                         ]
                         tool_calls_data = [
                             {
@@ -99,7 +108,7 @@ class OpenAiService(AbstractLlmService):
                         }
                     else:
                         return {
-                            "value": json.dumps(response.choices[0].message.__dict__),
+                            "value": json.dumps(choice.message.__dict__),
                             "metadata": metadata,
                         }
                 return {"value": prompt_response, "metadata": metadata}
@@ -134,12 +143,13 @@ class OpenAiService(AbstractLlmService):
             params["tools"] = tools
 
         response = self.openai.chat.completions.create(**params)
+        choice = _first_choice(response, "log_probs")
+        logprobs = getattr(choice, "logprobs", None)
+        content = getattr(logprobs, "content", None)
+        if content is None:
+            raise ValueError("OpenAI log_probs returned no logprobs content")
 
-        top_1_raw_logprobs = [
-            token.logprob for token in response.choices[0].logprobs.content
-        ]
-
-        return top_1_raw_logprobs
+        return [token.logprob for token in content]
 
     @retry(stop_max_attempt_number=3, wait_fixed=2000)
     def chat_completion_json(self, messages, model, **kwargs) -> str:
@@ -155,7 +165,8 @@ class OpenAiService(AbstractLlmService):
                 response_format={"type": "json_object"},
                 **kwargs,
             )
-            return response.choices[0].message.content
+            choice = _first_choice(response, "chat_completion_json")
+            return choice.message.content
         except Exception as e:
             logger.error(f"Error in ChatCompletion: {e}")
             raise e
