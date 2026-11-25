@@ -141,7 +141,13 @@ def test_one_entry_per_rule_whatever_number_each_case_gave_it(
     _with_rules_and_files(child, [lookup, now], {})
 
     def record(action, text, **link):
-        return {"kind": "rule", "action": action, "key": f"rule-{rule_key(text)}", "text": text, **link}
+        return {
+            "kind": "rule",
+            "action": action,
+            "key": f"rule-{rule_key(text)}",
+            "text": text,
+            **link,
+        }
 
     history = [
         record("removed", oldest, replaced_by=f"rule-{rule_key(was)}"),

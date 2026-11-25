@@ -1652,7 +1652,9 @@ def test_a_case_validated_with_another_agent_version_names_the_tool_this_one_lac
     )
     assert views[LOOKUP_KEYS[0]]["reason"] == "proved_on_other_agent"
     assert plan.view["held_back"]["by_key"][REFUND_KEYS[0]] == "tool_not_on_agent"
-    assert "Needs issue_refund" in plan.view["held_back"]["reason_by_key"][REFUND_KEYS[0]]
+    assert (
+        "Needs issue_refund" in plan.view["held_back"]["reason_by_key"][REFUND_KEYS[0]]
+    )
 
 
 def test_a_case_not_validated_yet_names_the_tool_this_agent_version_lacks(

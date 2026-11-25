@@ -564,7 +564,9 @@ def _tested(before: Any, patch: list[JsonPatchOp]) -> list[JsonPatchOp]:
     for op in patch:
         if op["op"] in ("replace", "remove"):
             value = jsonpatch.JsonPointer(op["path"]).resolve(doc)
-            out.append({"op": "test", "path": op["path"], "value": copy.deepcopy(value)})
+            out.append(
+                {"op": "test", "path": op["path"], "value": copy.deepcopy(value)}
+            )
         out.append(op)
         doc = jsonpatch.apply_patch(doc, [op], in_place=True)
     return out

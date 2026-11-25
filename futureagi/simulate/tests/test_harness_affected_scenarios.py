@@ -834,7 +834,9 @@ def test_a_blocked_row_holds_back_only_the_cases_it_blocks():
         placed("status", "stale", ["tool_routing"]),
     ]
 
-    assert _row_holds({"id": "tool_discovery", "status": "blocked"}, cases) == ["refund"]
+    assert _row_holds({"id": "tool_discovery", "status": "blocked"}, cases) == [
+        "refund"
+    ]
     assert _row_holds({"id": "tool_routing", "status": "stale"}, cases) == [
         "refund",
         "lookup",
@@ -877,9 +879,15 @@ def test_cases_held_for_something_to_fix_are_listed_before_those_only_awaiting_v
 
 @pytest.mark.parametrize(
     ("stale_because", "blocked_by", "kind"),
-    [(None, None, "ready"), ("agent_version", None, "stale"), (None, "start", "unchecked")],
+    [
+        (None, None, "ready"),
+        ("agent_version", None, "stale"),
+        (None, "start", "unchecked"),
+    ],
 )
-def test_a_missing_tool_no_selected_case_uses_keeps_its_evidence_s_own_standing(stale_because, blocked_by, kind):
+def test_a_missing_tool_no_selected_case_uses_keeps_its_evidence_s_own_standing(
+    stale_because, blocked_by, kind
+):
     """The cases do not use the tool the agent lacks, so the row no longer blocks them; evidence measured with
     another version or behind a gate still reads stale or unchecked, never ready."""
     from types import SimpleNamespace
@@ -899,7 +907,10 @@ def test_a_missing_tool_no_selected_case_uses_keeps_its_evidence_s_own_standing(
     placed = [SimpleNamespace(case=SimpleNamespace(recorded=True, unknown=False))]
 
     found = _selected_answer(
-        {"kind": "blocked", "worst": "blocked", "reason_code": None}, [row], placed, blocked_workers=0
+        {"kind": "blocked", "worst": "blocked", "reason_code": None},
+        [row],
+        placed,
+        blocked_workers=0,
     )
 
     assert found["kind"] == kind

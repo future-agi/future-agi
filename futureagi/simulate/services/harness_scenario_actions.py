@@ -946,7 +946,9 @@ def _rule_pair(
     return before, after
 
 
-def _replaced(rule: str, old_rules: list[str], documents: Mapping[str, Any]) -> str | None:
+def _replaced(
+    rule: str, old_rules: list[str], documents: Mapping[str, Any]
+) -> str | None:
     """The parent's rule that ``rule`` replaced, followed back through the rewordings this version recorded."""
     from simulate.services.harness_versioning.review_items import rule_key
 
@@ -960,7 +962,11 @@ def _replaced(rule: str, old_rules: list[str], documents: Mapping[str, Any]) -> 
     while key and key not in seen:
         seen.add(key)
         key = next(
-            (str(one["previous"]) for one in records if one.get("key") == key and one.get("previous")),
+            (
+                str(one["previous"])
+                for one in records
+                if one.get("key") == key and one.get("previous")
+            ),
             "",
         )
         if key in held:
@@ -1032,7 +1038,9 @@ def source_changes(environment: HostedHarnessJob, version_id: Any) -> SourceChan
                 files.add(file_path(ref))
             entry = by_change.setdefault(
                 group,
-                SourceChange(kind=kind, ref=ref, before=before, after=after, cited_by=[]),
+                SourceChange(
+                    kind=kind, ref=ref, before=before, after=after, cited_by=[]
+                ),
             )
             if key not in entry["cited_by"]:
                 entry["cited_by"].append(key)
