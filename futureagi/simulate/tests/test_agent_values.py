@@ -12,6 +12,7 @@ from simulate.models import (
     AgentDefinition,
     AgentVersion,
     HarnessAgentVersionRuntime,
+    HostedHarnessJob,
 )
 from simulate.services.harness_agent_versions import (
     _side_row,
@@ -20,10 +21,14 @@ from simulate.services.harness_agent_versions import (
 )
 from simulate.services.harness_versioning import hashing
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.tests.test_agent_overview_api import _environment
 from simulate.tests.test_agent_versions_api import AGENTS, NUDGE, _change
 from simulate.tests.test_harness_agent_versions import _preflight
 from simulate.tests.test_harness_connected_versions import (
+    _completed,
     _connect,
+    _following,
+    _pinned,
 )
 
 pytestmark = pytest.mark.django_db
@@ -261,6 +266,117 @@ def test_the_gate_lets_through_what_it_cannot_judge(agent, production):
     # No reading's list, no stored contract: the kit stays the last line.
     values_gate(_runtime(production, required_variable_names=None))
     values_gate(None)
+
+
+# --- environments follow a values-only change -------------------------------------------
+
+
+def _store_reading(version):
+    from simulate.services.agent_setup import store_agent
+    from simulate.tests.test_agent_setup_service import source_agent
+
+    assert store_agent(
+        agent_version_id=version.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+
+
+def test_a_values_only_change_becomes_production_and_moves_followers(
+    auth_client, agent, production
+):
+    _store_reading(production)
+    following = _following(_completed(_environment(agent, 1), production))
+    pinned = _pinned(_completed(_environment(agent, 2), production))
+
+    body = _set(auth_client, agent, secret_values={"DB_URL": "pg://x"})
+    _store_reading(AgentVersion.objects.get(id=body["version"]["id"]))
+    with patch(NUDGE) as nudge:
+        _passed(body["version"]["id"])
+
+    version = AgentVersion.objects.get(id=body["version"]["id"])
+    production.refresh_from_db()
+    following.refresh_from_db()
+    pinned.refresh_from_db()
+    assert version.status == "active"
+    assert production.status == "archived"
+    assert following.agent_version_id == version.id
+    assert pinned.agent_version_id == production.id
+    # No rebuild card for the environment that moved.
+    moved_cards = [one for one in nudge.call_args_list if one.args[0] == following.id]
+    assert moved_cards == []
+
+
+def test_the_next_build_after_a_failed_one_takes_the_new_values(
+    auth_client, agent, production
+):
+    # The rehearsal's case: a build failed on a value the agent then lost. The
+    # failed environment is left as it is; pressing Build again builds the new
+    # production version.
+    from simulate.services.harness_provider import _connected_build_runtime
+
+    _store_reading(production)
+    environment = _following(_environment(agent, 1))
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        state=HostedHarnessJob.State.FAILED, agent_version=production
+    )
+
+    body = _set(auth_client, agent, secret_values={"DB_URL": "pg://x"})
+    _store_reading(AgentVersion.objects.get(id=body["version"]["id"]))
+    _passed(body["version"]["id"])
+
+    runtime = _connected_build_runtime(
+        agent.organization_id,
+        agent.workspace_id,
+        {"metadata": {"agent_definition_id": str(agent.id)}},
+    )
+    assert str(runtime.agent_version_id) == body["version"]["id"]
+    environment.refresh_from_db()
+    assert environment.agent_version_id == production.id
+
+
+def test_two_values_changes_in_a_row_keep_the_first(auth_client, agent, production):
+    _store_reading(production)
+    first = _set(auth_client, agent, secret_values={"A": "1"})
+    _passed(first["version"]["id"])
+
+    second = _set(auth_client, agent, secret_values={"B": "2"})
+
+    assert _names(second["version"]["id"]) == ["A", "B"]
+
+
+def test_a_code_change_still_waits_to_be_made_production(
+    auth_client, agent, production
+):
+    from simulate.services.harness_agent_changes import HeadResult
+
+    _store_reading(production)
+    with patch(
+        "simulate.services.harness_agent_changes.github_head",
+        return_value=HeadResult("ok", "b" * 40),
+    ):
+        body = _change(auth_client, agent, kind="sync").json()
+    version = AgentVersion.objects.get(id=body["version"]["id"])
+    _store_reading(version)
+    _passed(version.id)
+
+    version.refresh_from_db()
+    production.refresh_from_db()
+    assert version.status == "draft"
+    assert production.status == "active"
+
+
+def test_a_values_change_on_an_old_production_is_only_offered(
+    auth_client, agent, production
+):
+    _store_reading(production)
+    body = _set(auth_client, agent, secret_values={"A": "1"})
+    # Production moved meanwhile, to another version made from the same one.
+    other = _set(auth_client, agent, secret_values={"Z": "9"})
+    _passed(other["version"]["id"])
+
+    _passed(body["version"]["id"])
+
+    assert AgentVersion.objects.get(id=body["version"]["id"]).status != "active"
+    assert AgentVersion.objects.get(id=other["version"]["id"]).status == "active"
 
 
 # --- the agent page's list of names ------------------------------------------------
