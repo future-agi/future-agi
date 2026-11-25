@@ -16,7 +16,7 @@ export default function CodingAgentBriefDrawer({ open, onClose, getText }) {
       <Stack sx={{ height: "100%", minHeight: 0 }}>
         <Stack
           direction="row"
-          alignItems="flex-start"
+          alignItems="center"
           spacing={1}
           sx={{
             px: 2.5,
@@ -35,6 +35,23 @@ export default function CodingAgentBriefDrawer({ open, onClose, getText }) {
               Paste this into your coding agent.
             </Typography>
           </Box>
+          {/* In the header, where the page's floating buttons can't cover it. */}
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            startIcon={<Iconify icon="solar:copy-linear" width={14} />}
+            onClick={() => {
+              navigator.clipboard?.writeText(text);
+              enqueueSnackbar("Copied for your coding agent", {
+                variant: "success",
+              });
+              onClose();
+            }}
+            sx={{ flexShrink: 0 }}
+          >
+            Copy
+          </Button>
           <IconButton size="small" aria-label="Close" onClick={onClose}>
             <Iconify icon="solar:close-linear" width={18} />
           </IconButton>
@@ -80,21 +97,6 @@ export default function CodingAgentBriefDrawer({ open, onClose, getText }) {
             Your coding agent&apos;s attempts are checked here and charged to
             this workspace&apos;s credits.
           </Typography>
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            startIcon={<Iconify icon="solar:copy-linear" width={14} />}
-            onClick={() => {
-              navigator.clipboard?.writeText(text);
-              enqueueSnackbar("Copied for your coding agent", {
-                variant: "success",
-              });
-              onClose();
-            }}
-          >
-            Copy
-          </Button>
         </Stack>
       </Stack>
     </SideDrawer>

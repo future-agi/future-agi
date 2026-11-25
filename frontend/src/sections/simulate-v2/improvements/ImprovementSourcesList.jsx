@@ -417,23 +417,28 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
             }
             headline={r.headline}
           />
-          {r.stale && (
-            <Tooltip
-              arrow
-              title="The agent moved on after this was measured. It is re-checked on the new version before it can ship."
-            >
-              <Typography
-                noWrap
-                sx={{
-                  typography: "s3",
-                  color: "status.warning.fg",
-                  flexShrink: 0,
-                }}
+          {/* Short, and only where it means something: not where the status
+              already says it ("Needs re-check on v10") or the Epoch is done. */}
+          {r.stale &&
+            !/re-check|shipped|released|resolved/i.test(
+              r.status?.label || "",
+            ) && (
+              <Tooltip
+                arrow
+                title="The agent moved on after this was measured. It is re-checked on the new version before it can ship."
               >
-                {r.stale}
-              </Typography>
-            </Tooltip>
-          )}
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    color: "status.warning.fg",
+                    flexShrink: 0,
+                  }}
+                >
+                  {r.stale.replace(/^Stale: agent at /, "Stale · ")}
+                </Typography>
+              </Tooltip>
+            )}
         </Stack>
       ),
     },
