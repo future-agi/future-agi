@@ -935,9 +935,9 @@ jobs:
       CH_DATABASE: test_tfc
       PYTHONHASHSEED: "0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
@@ -960,20 +960,35 @@ jobs:
           mkdir -p "$RUNNER_TEMP/mixed-histories"
           echo "HISTORICAL_REPLAY_HISTORY_DIR=$RUNNER_TEMP/mixed-histories" >> "$GITHUB_ENV"
 
+      # The Temporal CLI archive is cached under its SHA-256, so a merge group
+      # downloads nothing once a run on dev has saved it. temporal-cli.sh
+      # verifies the digest on a cache hit and on a download alike.
+      - name: Key the pinned Temporal CLI by its digest
+        id: temporal-cli
+        run: echo "sha256=$(bash .ci/temporal-cli.sh digest)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pinned Temporal CLI archive
+        id: temporal-cli-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/temporal-cli-archive
+          key: temporal-cli-linux-amd64-sha256-${{ steps.temporal-cli.outputs.sha256 }}
+
       - name: Install the pinned Temporal dev server
         # temporalio 1.36.1's default CLI; the test's local server uses it
-        # instead of downloading one.
+        # instead of downloading one. Fetched only on a cache miss.
         run: |
-          archive="$RUNNER_TEMP/temporal_cli_1.10.1_linux_amd64.tar.gz"
-          timeout 180s curl --fail --location --show-error --connect-timeout 10 \
-            --max-time 60 --retry 3 --retry-all-errors --retry-max-time 120 \
-            https://temporal.download/assets/temporalio/cli/releases/download/v1.10.1/temporal_cli_1.10.1_linux_amd64.tar.gz \
-            --output "$archive"
-          echo "4c1500e2ce2d4de136e5fe8852d9b7f82eb62f19b6b383b3e0c040519a9d20b1  $archive" | sha256sum -c -
-          mkdir -p "$RUNNER_TEMP/temporal-cli"
-          tar -xOzf "$archive" temporal > "$RUNNER_TEMP/temporal-cli/temporal"
-          chmod 755 "$RUNNER_TEMP/temporal-cli/temporal"
+          bash .ci/temporal-cli.sh fetch "$RUNNER_TEMP/temporal-cli-archive"
+          bash .ci/temporal-cli.sh install "$RUNNER_TEMP/temporal-cli-archive" "$RUNNER_TEMP/temporal-cli"
           echo "TEMPORAL_DEV_SERVER=$RUNNER_TEMP/temporal-cli/temporal" >> "$GITHUB_ENV"
+
+      - name: Save the verified Temporal CLI archive
+        # Right after verification, so a failing test run still seeds it.
+        if: steps.temporal-cli-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/temporal-cli-archive
+          key: ${{ steps.temporal-cli-cache.outputs.cache-primary-key }}
 
       - name: Start test services
         run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
