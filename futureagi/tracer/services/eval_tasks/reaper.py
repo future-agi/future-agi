@@ -9,7 +9,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import structlog
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F
 from django.utils import timezone
 
@@ -146,14 +146,10 @@ def _record_instant_answers(task: EvalTask) -> None:
     pending) while it runs. Never fails the reap.
 
     The entries are locked and rechecked in the transaction that copies their
-    answers, and one a Retry is requeueing is skipped (``lock_unanswered``):
-    reading them first and copying later could bring back an answer the
-    Retry just dropped."""
-    from tracer.services.instant_eval_answers import (
-        is_instant_task,
-        lock_unanswered,
-        record_answers,
-    )
+    answers, and one a Retry is requeueing is skipped
+    (``_lock_unanswered_given_up``): reading them first and copying later
+    could bring back an answer the Retry just dropped."""
+    from tracer.services.instant_eval_answers import is_instant_task, record_answers
 
     try:
         if not is_instant_task(task.id):
@@ -161,12 +157,42 @@ def _record_instant_answers(task: EvalTask) -> None:
         # On the primary (a raw cursor of the default connection): these
         # rows were failed a moment ago, and a replica may not have them yet.
         with transaction.atomic(using="default"):
-            ids = lock_unanswered(
-                task.id, status=EvalEntryStatus.ERRORED, error_message=_GAVE_UP
-            )
+            ids = _lock_unanswered_given_up(task.id)
             if ids:
                 record_answers(task.id, ids)
     except Exception:
         logger.warning(
             "instant_eval_reaped_answers_failed", task_id=str(task.id), exc_info=True
         )
+
+
+def _lock_unanswered_given_up(task_id) -> list:
+    """Lock and return this task's given-up entries whose Instant eval row has
+    no answer yet. Call it inside the transaction that copies them, so each
+    one is rechecked under its row lock.
+
+    An entry another session holds is skipped, not waited for: Retry requeues
+    entries under their row locks, and an answer copied for one of those would
+    outlive the Retry that dropped it. One that stays given up and unanswered
+    is selected again by the next reap."""
+    from tracer.services.instant_eval_answers import _ENTRY_RID
+
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT l.id FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "
+            f"ON r.task_id = %(task)s AND r.row_id = {_ENTRY_RID} "
+            "WHERE l.eval_task_id = %(task_s)s AND l.deleted = false "
+            "AND l.status = %(status)s AND l.error_message = %(message)s "
+            "AND l.custom_eval_config_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM tracer_instant_eval_answer a "
+            "WHERE a.task_id = %(task)s AND a.row_id = r.id "
+            "AND a.config_id = l.custom_eval_config_id) "
+            "ORDER BY l.id FOR UPDATE OF l SKIP LOCKED",
+            {
+                "task": str(task_id),
+                "task_s": str(task_id),
+                "status": EvalEntryStatus.ERRORED,
+                "message": _GAVE_UP,
+            },
+        )
+        return [row[0] for row in cur.fetchall()]

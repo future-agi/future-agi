@@ -9,8 +9,7 @@ Jev's confidence.
 - ``record_answer`` is called when an entry reaches its terminal state
   (``entries.mark_terminal``), so a run's answers land here as they land.
 - ``record_answers`` does the same for many entries of one task at once
-  (the reaper failing entries that kept dying, which ``lock_unanswered``
-  picks).
+  (the reaper failing entries that kept dying).
 - ``forget_answers`` drops answers that are being asked again (retry).
 - ``sync_answers`` copies a whole run over in batches, for runs whose answers
   were written some other way (runs from before this table, bulk imports),
@@ -160,36 +159,6 @@ def record_answers(task_id, entry_ids) -> int:
         for start in range(0, len(ids), BATCH):
             written += _copy(cur, task_id, ids[start : start + BATCH])
     return written
-
-
-def lock_unanswered(task_id, *, status: str, error_message: str) -> list:
-    """Lock and return this task's entries in ``status`` with ``error_message``
-    whose run row has no answer yet. Call it inside the transaction that
-    copies them, so each one is rechecked under its row lock.
-
-    An entry another session holds is skipped, not waited for: Retry requeues
-    entries under their row locks, and an answer copied for one of those would
-    outlive the Retry that dropped it. One that stays unanswered is still
-    selected by the next call."""
-    with connection.cursor() as cur:
-        cur.execute(
-            "SELECT l.id FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "
-            f"ON r.task_id = %(task)s AND r.row_id = {_ENTRY_RID} "
-            "WHERE l.eval_task_id = %(task_s)s AND l.deleted = false "
-            "AND l.status = %(status)s AND l.error_message = %(message)s "
-            "AND l.custom_eval_config_id IS NOT NULL "
-            "AND NOT EXISTS (SELECT 1 FROM tracer_instant_eval_answer a "
-            "WHERE a.task_id = %(task)s AND a.row_id = r.id "
-            "AND a.config_id = l.custom_eval_config_id) "
-            "ORDER BY l.id FOR UPDATE OF l SKIP LOCKED",
-            {
-                "task": str(task_id),
-                "task_s": str(task_id),
-                "status": status,
-                "message": error_message,
-            },
-        )
-        return [row[0] for row in cur.fetchall()]
 
 
 def forget_answers(task_id, entry_ids) -> int:
