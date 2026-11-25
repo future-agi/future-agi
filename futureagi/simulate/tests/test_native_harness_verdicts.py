@@ -33,13 +33,36 @@ from simulate.services.run_results_v3_queries import (
             {"output": False},
             {"harness_outcome_status": "passed"},
             "completed",
-            "passed",
+            "failed",
         ),
         ({"output": False}, {}, "running", "inconclusive"),
         ({"output": False}, {}, "failed", "error"),
     ],
 )
 def test_native_check_rows_filters_and_counts_agree(
+    organization, workspace, native, metadata, call_status, expected
+):
+    _assert_rows_filters_and_counts_agree(
+        organization, workspace, native, metadata, call_status, expected
+    )
+
+
+@pytest.mark.django_db
+def test_native_check_only_scores_when_required_evals_judge_the_call(
+    settings, organization, workspace
+):
+    settings.HARNESS_EVAL_SUGGESTIONS_ENABLED = True
+    _assert_rows_filters_and_counts_agree(
+        organization,
+        workspace,
+        {"output": False},
+        {"harness_outcome_status": "passed"},
+        "completed",
+        "passed",
+    )
+
+
+def _assert_rows_filters_and_counts_agree(
     organization, workspace, native, metadata, call_status, expected
 ):
     run = RunTest.objects.create(
