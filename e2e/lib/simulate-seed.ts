@@ -541,6 +541,90 @@ export function seedParticipantsCall(opts: { organizationId: string; workspaceId
   return runInlineSeed<ParticipantsSeed>('e2e-participants-', PARTICIPANTS_SEED_SCRIPT, opts);
 }
 
+/**
+ * Seeds a connected agent whose production version holds two values, one the agent's reading lists as required, for
+ * the agent page's Values tab (`simulate/agent-definitions/{id}/versions/{vid}/values/`). The values are saved through
+ * the product's own `create_agent_version`, so they are encrypted as the agent page stores them; the version is made
+ * production with `make_production`, as a passed check makes it. The required list is set on the version's runtime
+ * row as a stored reading sets it: the reader is a model run this flow does not need. Nothing is built or checked.
+ * The secret strings are minted test values; callers keep them out of the report.
+ */
+export interface AgentValuesSeed {
+  agentId: string;
+  versionId: string;
+  agentName: string;
+  requiredName: string;
+  optionalName: string;
+  requiredSecret: string;
+  optionalSecret: string;
+}
+
+const AGENT_VALUES_SEED_SCRIPT = `
+import json
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from simulate.models import AgentDefinition, HarnessAgentVersionRuntime
+from simulate.services.harness_agent_versions import create_agent_version, make_production
+
+
+def main():
+    organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
+    workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
+    suffix = os.environ["SEED_SUFFIX"]
+    tag = suffix.upper()
+    required_name = f"E2E_REQUIRED_{tag}"
+    optional_name = f"E2E_OPTIONAL_{tag}"
+    required_secret = f"e2e-required-secret-{suffix}"
+    optional_secret = f"e2e-optional-secret-{suffix}"
+    agent = AgentDefinition.objects.create(
+        agent_name=f"e2e-agent-values-{suffix}",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        description="e2e agent values seed",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    version = create_agent_version(
+        agent,
+        parent=None,
+        env=None,
+        source={"kind": "github", "repository": "e2e/agent", "ref": "main",
+                "commit_sha": "e" * 40, "visibility": "public"},
+        prompt="You help.",
+        agent_payload={"connector": "auto", "config": {}},
+        secret_values={required_name: required_secret, optional_name: optional_secret},
+        trigger=HarnessAgentVersionRuntime.Trigger.CONNECT,
+        activate=False,
+    )
+    outcome = make_production(version)
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(agent_version=version).update(
+        required_variable_names=[required_name]
+    )
+    print(json.dumps({
+        "agentId": str(agent.id),
+        "versionId": str(version.id),
+        "agentName": agent.agent_name,
+        "requiredName": required_name,
+        "optionalName": optional_name,
+        "requiredSecret": required_secret,
+        "optionalSecret": optional_secret,
+        "production": str(outcome),
+    }))
+
+
+main()
+`;
+
+export function seedConnectedAgentValues(opts: { organizationId: string; workspaceId: string }): AgentValuesSeed {
+  return runInlineSeed<AgentValuesSeed>('e2e-agent-values-', AGENT_VALUES_SEED_SCRIPT, opts);
+}
+
 /** Runs one seed script in the backend container for the caller's org and workspace; returns its last JSON line. */
 function runInlineSeed<T>(prefix: string, script: string, opts: { organizationId: string; workspaceId: string }): T {
   const container = resolveBackendContainer();
