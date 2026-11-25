@@ -6648,7 +6648,7 @@ class TestEvalMetricsQueryBuilderExtended:
         assert "sumMerge" not in query
 
     def test_pass_fail_raw_query(self):
-        """Pass/fail raw query should use avg(CASE WHEN output_bool ...)."""
+        """Pass/fail raw query should exclude unresolved verdicts."""
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
         builder = EvalMetricsQueryBuilder(
@@ -6660,6 +6660,10 @@ class TestEvalMetricsQueryBuilderExtended:
         query, _ = builder.build()
         assert "output_bool" in query
         assert "tracer_eval_logger" in query
+        assert "avgIf(" in query
+        assert "output_bool IS NOT NULL" in query
+        assert "countIf(output_bool IS NOT NULL) AS primary_traffic" in query
+        assert "CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END" not in query
 
     def test_choices_query_with_choices(self):
         """Choices query should parse the JSON-string choice list before has()."""
