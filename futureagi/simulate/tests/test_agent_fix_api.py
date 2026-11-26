@@ -34,8 +34,12 @@ from simulate.selectors.agent_fix import (
     LOST_MODELS_SKIPPED_FOR,
     default_max_minutes,
     engine_brief,
+    inventory,
 )
-from simulate.serializers.agent_fix import AgentFixLaunchSerializer
+from simulate.serializers.agent_fix import (
+    AgentFixLaunchSerializer,
+    AgentFixListQuerySerializer,
+)
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
@@ -53,6 +57,7 @@ from simulate.services.run_results_v3_queries import (
     run_calls_queryset,
 )
 from simulate.services.run_traces_v3 import CallUsage
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_agent_fix_services import (
     BASE_AGENT,
     KEYS,
@@ -1301,6 +1306,132 @@ class TestUserApi:
             "fix_run_active",
         )
 
+    @pytest.mark.parametrize(
+        ("agent", "code"),
+        [
+            # Made before agent versions were kept: neither it nor its run has one.
+            ("unversioned", "environment_agent_unversioned"),
+            ("provider", "fix_agent_not_editable"),
+        ],
+    )
+    def test_a_run_epoch_cannot_start_from_says_why_on_the_form_and_the_launch(
+        self, auth_client, environment, source_run, agent, code
+    ):
+        if agent == "unversioned":
+            HostedHarnessJob.no_workspace_objects.filter(
+                id__in=[environment.id, source_run.id]
+            ).update(agent_version=None)
+            HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+                payload={**environment.payload, "source": {"kind": "github"}}
+            )
+        else:
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=source_run.agent_version_id
+            ).update(source_kind="provider")
+
+        response = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        )
+        launched = auth_client.post(f"{BASE}/", _launch_body(source_run), format="json")
+
+        assert response.status_code == 200, response.content
+        options = response.json()
+        # The variations' check says the same as the launch's.
+        assert (options["blocked"]["code"], options["variations_blocked"]["code"]) == (
+            code,
+            code,
+        )
+        assert options["ship"] is None
+        assert (options["agent"] is None) == (agent == "unversioned")
+        assert (launched.status_code, launched.json()["error"]) == (422, code)
+
+    def test_launch_options_hold_back_what_the_launch_holds_back(
+        self, auth_client, source_run
+    ):
+        # The split's answer names what it was given, so any other seed or target set
+        # reads differently on the form than on the epoch.
+        def split(seed, failing, parents=None):
+            return [f"{seed}|{','.join(sorted(failing))}"]
+
+        with (
+            patch("simulate.selectors.agent_fix.split_held_back", side_effect=split),
+            patch(
+                "simulate.services.agent_fix_runs.split_held_back", side_effect=split
+            ),
+        ):
+            options = auth_client.get(
+                f"{BASE}/launch-options/",
+                {"source_run_id": str(source_run.test_execution_id)},
+            ).json()
+            launched = auth_client.post(
+                f"{BASE}/",
+                _launch_body(
+                    source_run,
+                    target_scenario_keys=options["suggested"]["target_scenario_keys"],
+                ),
+                format="json",
+            )
+
+        assert launched.status_code == 201, launched.content
+        stored = AgentFixRun.no_workspace_objects.get(id=launched.json()["id"])
+        assert options["held_back_scenario_keys"] == [f"{source_run.id}|{KEYS[0]}"]
+        assert (
+            stored.request["held_back_scenario_keys"]
+            == (options["held_back_scenario_keys"])
+        )
+
+    def test_launch_options_leave_held_back_to_the_variations(
+        self, auth_client, source_run, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 12
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+
+        assert options["held_back_scenario_keys"] is None
+
+    @pytest.mark.parametrize(
+        ("source_kind", "installation", "commit", "ship"),
+        [
+            ("archive", None, None, ("make_default", None)),
+            ("github", None, "a" * 40, ("pull_request", "fix_github_not_connected")),
+            ("github", "42", None, ("pull_request", "fix_github_commit_unknown")),
+            ("github", "42", "a" * 40, ("pull_request", None)),
+            # An agent Epoch can't change ships nothing: no row says how.
+            ("provider", None, None, None),
+        ],
+    )
+    def test_launch_options_say_how_the_winner_ships(
+        self, auth_client, source_run, source_kind, installation, commit, ship
+    ):
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=source_run.agent_version_id
+        )
+        access = {"installation_id": installation} if installation else {}
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            source_kind=source_kind,
+            source={"repository": "acme/agent", "ref": "refs/heads/main"},
+            agent_payload={**(runtime.agent_payload or {}), "source_access": access},
+        )
+        source = {"kind": source_kind, "commit_sha": commit} if commit else {}
+        HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+            payload={**source_run.payload, "source": source}
+        )
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+
+        said = options["ship"]
+        blocked = said and said["blocked"]
+        assert (said and (said["path"], blocked and blocked["code"])) == ship
+        # Before launch there is no patch yet: the words don't offer it as the way out.
+        assert not blocked or "download the patch instead" not in blocked["message"]
+
     def test_launch_refuses_a_part_the_agent_does_not_offer(
         self, auth_client, source_run, monkeypatch
     ):
@@ -1372,6 +1503,85 @@ class TestUserApi:
         assert page(limit=2) == (3, newest_first[:2])
         assert page(limit=2, page=2) == (3, newest_first[2:])
 
+    def test_fixes_list_by_state_with_their_total(
+        self, auth_client, environment, source_run
+    ):
+        ready = _fix_run(source_run, state=AgentFixRun.State.READY)
+        stopped = _fix_run(source_run, state=AgentFixRun.State.STOPPED)
+        # An environment holds one live fix at a time.
+        stopping = _fix_run(source_run, state=AgentFixRun.State.STOPPING)
+        failed = _fix_run(source_run, state=AgentFixRun.State.FAILED)
+
+        def listed(**query):
+            response = auth_client.get(
+                f"{BASE}/", {"environment_id": str(environment.id), **query}
+            )
+            assert response.status_code == 200, response.content
+            body = response.json()
+            return body["count"], [one["id"] for one in body["results"]]
+
+        # Running, as the list's filter sends it: every live state.
+        assert listed(state="queued,running,stopping") == (1, [str(stopping.id)])
+        assert listed(state="ready") == (1, [str(ready.id)])
+        assert listed(state=" failed , stopped ") == (
+            2,
+            [str(failed.id), str(stopped.id)],
+        )
+        # No state lists every fix, as before.
+        assert listed()[0] == 4
+        assert listed(state="ready", limit=1, page=1) == (1, [str(ready.id)])
+
+    def test_an_unknown_state_is_refused(self, auth_client, environment, source_run):
+        _fix_run(source_run, state=AgentFixRun.State.READY)
+
+        response = auth_client.get(
+            f"{BASE}/",
+            {"environment_id": str(environment.id), "state": "ready,shipped"},
+        )
+
+        assert response.status_code == 400, response.content
+        assert "shipped" in response.content.decode()
+
+    @pytest.mark.parametrize("state", [",,", "ready,", " , "])
+    def test_an_empty_state_is_refused_with_the_states_to_use(
+        self, auth_client, environment, source_run, state
+    ):
+        # Read as no state, ",," once listed every fix.
+        _fix_run(source_run, state=AgentFixRun.State.READY)
+
+        response = auth_client.get(
+            f"{BASE}/", {"environment_id": str(environment.id), "state": state}
+        )
+
+        assert response.status_code == 400, response.content
+        body = response.content.decode()
+        assert all(one in body for one in AgentFixRun.State.values), body
+
+    def test_the_state_param_names_every_state(self):
+        help_text = AgentFixListQuerySerializer().fields["state"].help_text
+        assert all(one in help_text for one in AgentFixRun.State.values)
+
+    @pytest.mark.parametrize("deleted", ["execution", "job"])
+    def test_a_fix_from_a_deleted_run_names_no_run(
+        self, auth_client, environment, source_run, deleted
+    ):
+        fix = _fix_run(source_run, state=AgentFixRun.State.STOPPED)
+        if deleted == "execution":
+            # What deleting the run from its page does (run_test views).
+            source_run.test_execution.delete()
+        else:
+            HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+                deleted=True
+            )
+
+        detail = auth_client.get(f"{BASE}/{fix.id}/").json()
+        listed = auth_client.get(
+            f"{BASE}/", {"environment_id": str(environment.id)}
+        ).json()["results"][0]
+
+        for body in (detail, listed):
+            assert (body["source_run_id"], body["source_run_number"]) == (None, None)
+
     def test_a_fix_shows_its_limit_and_spend_in_credits(
         self, auth_client, environment, source_run, settings
     ):
@@ -1384,8 +1594,13 @@ class TestUserApi:
                 f"{BASE}/", {"environment_id": str(environment.id)}
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+            # What only one fix's read carries: its evals, and the words it reads.
             read.pop("eval_warnings")
             read.pop("eval_grading")
+            read.pop("flaky_protected_text")
+            read.pop("scenario_names")
+            for candidate in read["candidates"]:
+                candidate.pop("wording")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
@@ -1651,8 +1866,9 @@ class TestUserApi:
 
         assert (response.status_code, response.json()) == (
             200,
-            {"outcome": "activated"},
+            {"outcome": "validating"},
         )
+        settle_validations(environment)
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
 
@@ -1891,7 +2107,7 @@ class TestUserApi:
             " epoch to verify it; it takes 4 or more."
         )
         assert (
-            "Checked by Epoch: target pass rate 0% → 63%, broke none\n"
+            "Target pass rate 0% → 63%. No must-pass scenario broke.\n"
             in (sent["json"]["body"])
         )
         assert "### Verdict: Proven on the targets only" in sent["json"]["body"]
@@ -1928,8 +2144,8 @@ class TestUserApi:
             assert label not in sent["json"]["title"].lower()
             assert label not in sent["json"]["body"].lower()
         assert (
-            "Checked by Epoch: held-back pass rate 0% → 61%, target pass rate"
-            " 0% → 63%, broke none\n" in sent["json"]["body"]
+            "Held-back pass rate 0% → 61%. No must-pass scenario broke.\n"
+            in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
         assert sent["json"]["title"] == "Epoch: change agent.py"
@@ -2300,8 +2516,11 @@ class TestUserApi:
         assert pull["draft"] is True
         assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
-        key, check = self.REGRESSED.split(": ")
-        assert f"- Must-pass case “{key}”: its “{check}” check" in pull["body"]
+        # By the scenario's name in the environment, never by its key.
+        key, _ = self.REGRESSED.split(": ")
+        name = next(one.name for one in inventory(fix_run) if one.key == key)
+        assert f"- Must-pass scenario “{name}”" in pull["body"]
+        assert f"“{key}”" not in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
         assert "Verified by" not in pull["body"]
         after = self._override(auth_client, fix_run)
@@ -2607,7 +2826,8 @@ class TestUserApi:
             "fix_override_reason_required",
             before,
         )
-        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "activated"})
+        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "validating"})
+        settle_validations(environment)
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
         override = self._override(auth_client, fix_run)
@@ -2624,6 +2844,8 @@ class TestUserApi:
             {},
             format="json",
         )
+        # Its pairing with the defaults validates before it moves.
+        settle_validations(environment)
 
         response = auth_client.post(
             f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",

@@ -12,8 +12,10 @@ export function formatLatency(ms) {
   if (ms == null || isNaN(ms)) return "-";
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const minutes = Math.floor(ms / 60000);
-  const seconds = Math.round((ms % 60000) / 1000);
+  // Round to whole seconds before splitting, so 119.6s reads "2m", not "1m 60s".
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 

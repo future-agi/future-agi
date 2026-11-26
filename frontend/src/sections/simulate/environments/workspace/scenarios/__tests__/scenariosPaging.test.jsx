@@ -44,22 +44,20 @@ const { queryScenarioFixture, resetScenarioFixture } = await import(
 );
 
 // 60 rows (> two pages at PAGE_SIZE 25). envState is seeded from the SAME rows
-// so the selection predicate and the bulk-delete patch line up by id.
+// so the selection predicate and the bulk-delete drop line up by id.
 const PAGING_ROWS = makeServerRows(60);
 
 const renderStep = (scenarios = PAGING_ROWS) => {
-  const patch = vi.fn();
   const onStartRun = vi.fn();
   renderWithClient(
     <ScenariosStep
       env={TEST_ENV}
       envState={envStateFor(scenarios)}
-      patch={patch}
       canRun
       onStartRun={onStartRun}
     />,
   );
-  return { patch, onStartRun };
+  return { onStartRun };
 };
 
 const headerCheckbox = () => screen.getAllByRole("checkbox")[0];

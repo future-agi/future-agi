@@ -261,7 +261,9 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
     def publish(self, request, pk=None):
         return Response(
             publish_conversation_workspace(
-                self._conversation, digest=request.validated_data["digest"]
+                self._conversation,
+                digest=request.validated_data["digest"],
+                failed_scenarios=request.validated_data.get("failed_scenarios"),
             )
         )
 

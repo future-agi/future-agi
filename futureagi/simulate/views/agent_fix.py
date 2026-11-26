@@ -154,7 +154,11 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         paginator = _FixRunPages()
         page = paginator.paginate_queryset(
-            fix_runs_for_environment(environment), request, view=self
+            fix_runs_for_environment(
+                environment, states=request.validated_query_data.get("state")
+            ),
+            request,
+            view=self,
         )
         return paginator.get_paginated_response(
             AgentFixRunSerializer(

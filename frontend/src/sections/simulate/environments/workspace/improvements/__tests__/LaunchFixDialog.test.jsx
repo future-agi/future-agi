@@ -44,7 +44,7 @@ function renderDialog(props = {}) {
   lastClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const view = (overrides = {}) => (
     <QueryClientProvider client={lastClient}>
       <SnackbarProvider>
         <MemoryRouter>
@@ -54,11 +54,14 @@ function renderDialog(props = {}) {
             sourceRunId="te-run-6"
             onClose={onClose}
             {...props}
+            {...overrides}
           />
         </MemoryRouter>
       </SnackbarProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const result = render(view());
+  return { ...result, update: (overrides) => result.rerender(view(overrides)) };
 }
 
 const pinOptions = (options) => {
@@ -176,9 +179,75 @@ describe("LaunchFixDialog", () => {
       screen.getByLabelText("Add a locked file"),
       "spec.json{Enter}",
     );
+    const changed = fixtureLaunchOptions("te-run-6");
+    changed.agent.name = "Updated agent";
+    axios.get.mockResolvedValueOnce({ data: changed });
     await act(() => lastClient.refetchQueries());
+    await screen.findByText("Run Epoch on Updated agent");
     expect(fixCases().getByText("11 of 12")).toBeInTheDocument();
-    expect(screen.getByText("spec.json")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Run Epoch" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect(body.locked_paths).toEqual(["spec.json"]);
+    expect(body.target_scenario_keys).not.toContain("authority-claim");
+  });
+
+  it.each(["reopen", "change source"])(
+    "starts a fresh draft on %s",
+    async (change) => {
+      const user = userEvent.setup();
+      const { update } = renderDialog();
+      await user.type(
+        await screen.findByLabelText("Add a locked file"),
+        "spec.json{Enter}",
+      );
+      if (change === "reopen") {
+        update({ open: false });
+        update({ open: true });
+      } else {
+        update({ sourceRunId: "other-run" });
+      }
+      await screen.findByLabelText("Add a locked file");
+      expect(screen.queryByText("spec.json")).toBeNull();
+    },
+  );
+
+  it.each([true, false])(
+    "shows diagnosis availability independently of imported targets: %s",
+    async (diagnosisUnavailable) => {
+      renderDialog({ diagnosisUnavailable });
+      await screen.findByText(/Searches for a better/);
+      if (diagnosisUnavailable) {
+        expect(
+          screen.getByText(/No completed diagnosis is available/),
+        ).toBeVisible();
+      } else {
+        expect(
+          screen.queryByText(/No completed diagnosis is available/),
+        ).toBeNull();
+      }
+    },
+  );
+
+  it("hides the opening note after swapping cases at the same count", async () => {
+    const user = userEvent.setup();
+    renderDialog({
+      initialTargets: ["authority-claim"],
+      initialNote: "From imported evidence",
+      diagnosisUnavailable: true,
+    });
+    await screen.findByText("From imported evidence");
+    await openPicker(user);
+    await user.click(
+      fixCases().getByRole("checkbox", { name: "Authority claim" }),
+    );
+    await user.click(
+      fixCases().getByRole("checkbox", { name: /outside the return window/ }),
+    );
+    expect(screen.queryByText("From imported evidence")).toBeNull();
+    expect(
+      screen.getByText(/No completed diagnosis is available/),
+    ).toBeVisible();
   });
 
   it.each([
@@ -342,6 +411,84 @@ describe("LaunchFixDialog", () => {
     );
   });
 
+  it.each([
+    [
+      "fix_variations_source_moved",
+      "Open its runs",
+      `${paths.dashboard.simulate.environments.detail("env-1")}?tab=runs`,
+    ],
+    [
+      "conversation_workspace_not_ready",
+      "Open the environment",
+      paths.dashboard.simulate.environments.detail("env-1"),
+    ],
+  ])(
+    "opens where a %s refusal of the variations is fixed",
+    async (code, label, href) => {
+      const base = fixtureLaunchOptions("te-run-6");
+      pinOptions({
+        ...base,
+        suggested: {
+          ...base.suggested,
+          target_scenario_keys: base.suggested.target_scenario_keys.slice(0, 5),
+        },
+        variations_blocked: { code, message: "Variations can't be written." },
+      });
+      renderDialog();
+      expect(
+        await screen.findByText("Variations can't be written."),
+      ).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: label }));
+      expect(navigate).toHaveBeenCalledWith(href);
+    },
+  );
+
+  it("shows no Ships as row for an agent Epoch can't change", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "fix_agent_not_editable",
+        message: "Epoch can change an uploaded or GitHub agent.",
+      },
+      ship: null,
+    });
+    renderDialog();
+    expect(
+      await screen.findByText("Epoch can change an uploaded or GitHub agent.", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ships as")).toBeNull();
+  });
+
+  it("says a run with no agent version needs a new environment, and names no version", async () => {
+    // As the server answers: no agent to name, nothing to ship, and the refusal.
+    const refusal = {
+      code: "environment_agent_unversioned",
+      message: "This environment has no saved version of its agent.",
+    };
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      agent: null,
+      blocked: refusal,
+      variations_blocked: refusal,
+      ship: null,
+    });
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "This environment has no saved version of its agent.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Run Epoch on this agent")).toBeInTheDocument();
+    expect(screen.queryByText("Agent")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
+    await userEvent.click(screen.getByTestId("epoch-blocker-action"));
+    expect(navigate).toHaveBeenCalledWith(
+      paths.dashboard.simulate.environments.root,
+    );
+  });
+
   it("offers no draft link when the variations are not needed", async () => {
     const base = fixtureLaunchOptions("te-run-6");
     pinOptions({
@@ -357,6 +504,140 @@ describe("LaunchFixDialog", () => {
     expect(
       screen.queryByRole("button", { name: "Review unsaved changes" }),
     ).not.toBeInTheDocument();
+  });
+
+  // Two failing cases, the second held back by the server, with no variations.
+  const heldBackOptions = () => {
+    const base = fixtureLaunchOptions("te-run-6");
+    const [first, second] = base.scenarios;
+    return {
+      first,
+      second,
+      options: {
+        ...base,
+        suggested: {
+          ...base.suggested,
+          target_scenario_keys: [first.key, second.key],
+        },
+        held_back_scenario_keys: [second.key],
+        limits: { ...base.limits, cases_min: 1, scenarios_min: 1 },
+      },
+    };
+  };
+
+  it("names the cases the server holds back", async () => {
+    const { first, second, options } = heldBackOptions();
+    pinOptions(options);
+    renderDialog({ initialTargets: [first.key, second.key] });
+    expect(await screen.findByTestId("epoch-held-back")).toHaveTextContent(
+      `Held back to prove it: ${second.name}.`,
+    );
+    expect(
+      screen.getByText("2 failing: 1 to fix, 1 held back to prove it", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("says the launch picks the held-back cases when the cases to fix aren't the suggested ones", async () => {
+    const { first, options } = heldBackOptions();
+    pinOptions(options);
+    renderDialog({ initialTargets: [first.key] });
+    expect(await screen.findByTestId("epoch-held-back")).toHaveTextContent(
+      "These aren't the suggested cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
+    );
+  });
+
+  it("says held-back cases come with the variations when there are too few to fix", async () => {
+    const { first, options } = heldBackOptions();
+    pinOptions({
+      ...options,
+      suggested: { ...options.suggested, target_scenario_keys: [first.key] },
+      held_back_scenario_keys: null,
+      limits: { ...options.limits, cases_min: 12 },
+    });
+    renderDialog();
+    expect(await screen.findByTestId("epoch-held-back")).toHaveTextContent(
+      "The cases held back to prove the fix are chosen after the variations are written.",
+    );
+  });
+
+  it("says why the environment can't take an epoch now and opens it", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "environment_updating",
+        message:
+          "This environment is updating. Run Epoch once the update finishes.",
+      },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "This environment is updating. Run Epoch once the update finishes.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
+    await userEvent.click(screen.getByTestId("epoch-blocker-action"));
+    expect(navigate).toHaveBeenCalledWith(
+      paths.dashboard.simulate.environments.detail("env-1"),
+    );
+  });
+
+  it("opens the issue whose epoch is starting in the environment", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "issue_epoch_measuring",
+        message:
+          "An epoch from an Error Feed issue is starting in this environment. Wait for it, or open it.",
+        cluster_id: "TH-42",
+      },
+    });
+    renderDialog();
+    const open = await screen.findByTestId("epoch-blocker-action");
+    expect(open).toHaveTextContent("Open that issue");
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
+    await userEvent.click(open);
+    expect(navigate).toHaveBeenCalledWith(
+      paths.dashboard.errorFeed.detail("TH-42"),
+    );
+  });
+
+  it("says how the winner ships and where to connect GitHub, without blocking Start", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      ship: {
+        path: "pull_request",
+        blocked: {
+          code: "fix_github_not_connected",
+          message: "Connect the agent's repository to get a pull request.",
+        },
+      },
+    });
+    renderDialog();
+    // A pull request that can't open yet: the winner ships as a patch until then.
+    expect(await screen.findByText("A patch to download")).toBeInTheDocument();
+    expect(
+      screen.queryByText("A pull request on the agent's repository"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Connect GitHub" }),
+    ).toHaveAttribute("href", paths.dashboard.settings.integrations);
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeEnabled();
+  });
+
+  it("says the winner ships as a pull request when one can open, with nothing to connect", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      ship: { path: "pull_request", blocked: null },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText("A pull request on the agent's repository"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("epoch-ship-blocked")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Connect GitHub" })).toBeNull();
   });
 
   it("disables a part the agent cannot change", async () => {
