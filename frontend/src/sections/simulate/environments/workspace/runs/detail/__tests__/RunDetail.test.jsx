@@ -2011,3 +2011,84 @@ describe("RunDetail build notice", () => {
     expect(screen.queryByTestId("run-build-notice")).toBeNull();
   });
 });
+
+describe("RunDetail Debug failures needs connected calls and a failure", () => {
+  const withCounts = (connected, failed) =>
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, connected, failed },
+      isLoading: false,
+    });
+  const unanalyzed = () => {
+    const hook = debugHook({
+      ...ANALYSIS,
+      status: "not_requested",
+      goals: [],
+      oneOffs: [],
+    });
+    useDebugAnalysis.mockClear();
+    useDebugAnalysis.mockReturnValue(hook);
+    return hook;
+  };
+
+  it.each([
+    [14, 4, "You need at least 15 connected calls to debug failures."],
+    [15, 0, "Nothing failed in this run, so there’s nothing to debug."],
+  ])(
+    "with %i connected and %i failing it is disabled, says why, and never requests a diagnosis",
+    async (connected, failed, reason) => {
+      withCounts(connected, failed);
+      const hook = unanalyzed();
+      // A disabled MUI button takes no pointer events; force the click through.
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      renderDetail();
+
+      const button = screen.getByRole("button", { name: "Debug failures" });
+      expect(button).toBeDisabled();
+      await user.hover(button.parentElement);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+
+      await user.click(button);
+      expect(hook.request).not.toHaveBeenCalled();
+      expect(useDebugAnalysis).not.toHaveBeenCalledWith("ex1");
+    },
+  );
+
+  it("with 15 connected and a failing call it is enabled and requests the diagnosis on open", async () => {
+    withCounts(15, 1);
+    const hook = unanalyzed();
+    const user = userEvent.setup();
+    renderDetail();
+
+    const button = screen.getByRole("button", { name: "Debug failures" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(hook.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's refusal in the same words", async () => {
+    withCounts(15, 1);
+    useDebugAnalysis.mockReturnValue(
+      debugHook(
+        { ...ANALYSIS, status: "not_requested", goals: [], oneOffs: [] },
+        {
+          requestError: {
+            code: "investigation_nothing_failed",
+            detail: "raw server text",
+          },
+        },
+      ),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(
+      screen.getByText(
+        "Nothing failed in this run, so there’s nothing to debug.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("raw server text")).toBeNull();
+  });
+});
