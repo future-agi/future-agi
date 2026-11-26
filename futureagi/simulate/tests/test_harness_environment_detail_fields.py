@@ -248,6 +248,7 @@ def test_the_scenario_list_answers_the_shape_it_documents(
     # Grouped by default, and no unsaved changes: every documented row key but `draft_change`, and nothing else.
     expected = set(HarnessScenarioRowSerializer().fields) - {"draft_change"}
     assert [set(row) for row in body["results"]] == [expected, expected]
+    assert all(row["source_citations"] == [] for row in body["results"])
     held = next(row for row in body["results"] if row["scenario_key"] == "held")
     assert held["door_problem"]["code"] == "fault_unreachable"
 

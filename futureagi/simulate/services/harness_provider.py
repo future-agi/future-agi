@@ -3131,8 +3131,7 @@ class HostedHarnessProvider:
             row = scenario_row(
                 one, targets=door, fault_targets=targets, actor_cast=actor_cast
             )
-            if one.scenario_key in citations:
-                row["source_citations"] = citations[one.scenario_key]
+            row["source_citations"] = citations.get(one.scenario_key, [])
             return _with_lifecycle(
                 row if drafted is None else {**row, "draft_change": one.draft_change},
                 lifecycle,
