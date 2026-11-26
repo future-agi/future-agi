@@ -18,6 +18,7 @@ from tracer.serializers.trace_investigation import (
     RecordTraceNotificationsRequestSerializer,
     RecordTraceNotificationsResponseSerializer,
     SimulationEvidenceRequestSerializer,
+    SimulationEvidenceResponseSerializer,
     UpdateInvestigationAttemptRequestSerializer,
     UpdateInvestigationAttemptResponseSerializer,
 )
@@ -147,7 +148,10 @@ class ConversationEvidenceView(InternalInvestigationView):
 class SimulationEvidenceView(InternalInvestigationView):
     @validated_request(
         SimulationEvidenceRequestSerializer,
-        responses={409: InvestigationControlErrorSerializer},
+        responses={
+            200: SimulationEvidenceResponseSerializer,
+            409: InvestigationControlErrorSerializer,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request: Request, attempt_id):

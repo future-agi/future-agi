@@ -259,7 +259,6 @@ export default function RerunSelectionBar({
                 trials={trials}
                 onChange={setTrials}
                 scenarioCount={scenarios}
-                size="xs"
               />
               {ready && (
                 <Typography

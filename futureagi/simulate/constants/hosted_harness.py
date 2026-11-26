@@ -2,6 +2,9 @@
 
 # Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
 TRIAL_STATE_KEY = "harness_trial_state"
+# The authored scenario key of the case a call ran, on the call's metadata. A receipt's `scenario_key` names the trial's
+# own execution, never the case.
+SCENARIO_KEY = "harness_scenario_key"
 # The trial notice ALK seals when a separately wired worker reached the world on the shared address.
 WORKER_CHANNEL_BYPASSED = "worker_channel_bypassed"
 # How the world holds a worker to its limits, and the words the cards show for it.
@@ -22,3 +25,16 @@ HAND_OFFS_INCOMPLETE = "hand_offs_incomplete"
 SCENARIO_FAILURE_CODES = frozenset({"actor_missing", "worker_limits_not_enforced"})
 # The cancel reason and failure code of a run the user stopped; a fix ending or an environment delete has its own.
 USER_CANCELED = "user_canceled"
+
+
+# Draft reasons a validation with the pairing's agent version settles: never proved there, not reached, ended or failed
+# on the way, or proved with another agent version. Each caller adds the reasons its own question also covers.
+VALIDATION_SETTLES = frozenset(
+    {
+        "not_validated",
+        "validation_incomplete",
+        "validation_failed",
+        "validation_ended_on_our_side",
+        "proved_on_other_agent",
+    }
+)

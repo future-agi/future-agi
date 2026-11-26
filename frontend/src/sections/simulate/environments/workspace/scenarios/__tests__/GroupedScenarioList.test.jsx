@@ -28,3 +28,31 @@ describe("GroupedScenarioList — sticky group header", () => {
     expect(hover).not.toMatch(/background-color/);
   });
 });
+
+describe("GroupedScenarioList — scenario states", () => {
+  const row = (id, lifecycle) => ({ id, name: id, lifecycle });
+  const renderRows = (rows, props) =>
+    render(
+      <GroupedScenarioList
+        groups={[{ id: "g1", label: "Refunds", rows }]}
+        env={{ id: "env-1", name: "Env" }}
+        {...props}
+      />,
+    );
+
+  it("marks a row that isn't proved and one being validated, not an active one", () => {
+    renderRows(
+      [row("a", { state: "draft" }), row("b", { state: "active" }), row("c", { state: "active" })],
+      { isValidating: (one) => one.id === "c" },
+    );
+    expect(screen.getAllByRole("img", { name: "Not proved" })).toHaveLength(1);
+    expect(screen.getAllByText("Validating")).toHaveLength(1);
+  });
+
+  it("can't remove an archived scenario, which must be restored first", () => {
+    renderRows([row("a", { state: "archived" }), row("b", { state: "active" })]);
+    const [archived, active] = screen.getAllByRole("button", { name: "Remove from this environment" });
+    expect(archived).toBeDisabled();
+    expect(active).toBeEnabled();
+  });
+});

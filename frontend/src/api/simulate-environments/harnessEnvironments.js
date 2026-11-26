@@ -69,7 +69,8 @@ export const runHarnessEnvironment = async (
     await axios.post(
       environmentRunPath(id),
       {
-        scenario_ids: scenarioIds,
+        // None for a run of them all: the server runs the whole suite.
+        ...(scenarioIds ? { scenario_ids: scenarioIds } : {}),
         trials,
         ...versionPickFields(picks),
         // Omitted so the run keeps the environment's seed.

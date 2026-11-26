@@ -9,9 +9,26 @@ import { SPEC_GLOBS, parseShard, shardTestMatch } from './lib/shard';
 const shard = parseShard(process.env.E2E_SHARD);
 const blobName = shard ? `report-${shard.index}-of-${shard.total}.zip` : 'report.zip';
 
+// These specs need the entitled Error Feed stack (E2E_STACK=error-feed bin/e2e);
+// other stacks leave them out of the listing instead of skipping them at run time.
+const ERROR_FEED_STACK_ONLY = [
+  'flows/error-feed/automatic-escalation-recovery.spec.ts',
+  'flows/error-feed/creation-defaults.spec.ts',
+  'flows/error-feed/escalation-presets.spec.ts',
+  'flows/error-feed/escalation-settings-scope.spec.ts',
+  'flows/error-feed/escalation-settings.spec.ts',
+  'flows/error-feed/manual-status-protection.spec.ts',
+  'flows/error-feed/membership-revisions.spec.ts',
+  'flows/error-feed/settings-conflicts.spec.ts',
+  'flows/error-feed/settings-reevaluation.spec.ts',
+  'harness/error-feed-source.spec.ts',
+];
+
 export default defineConfig({
   testDir: '.',
   testMatch: shardTestMatch() ?? SPEC_GLOBS,
+  testIgnore: process.env.E2E_STACK === 'error-feed' || process.env.E2E_INCLUDE_ERROR_FEED_STACK
+    ? undefined : ERROR_FEED_STACK_ONLY,
   grepInvert: grepInvertPattern(),
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

@@ -44,9 +44,6 @@ const { seedFromTemplate } = await import("../helpers/seedEnvState");
 const { PIPELINE_CHECKS_COPY } = await import(
   "../../buildEnvironment/build.constants"
 );
-const { INFRASTRUCTURE_LINE } = await import(
-  "../../buildEnvironment/failureWords"
-);
 const { SAVE_GRACE_MS } = await import(
   "src/api/simulate-environments/environment"
 );
@@ -322,6 +319,44 @@ describe("EnvironmentWorkspace route shell", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByText("Environment not found")).toBeNull();
+  });
+
+  it("offers a composition's repeats on the scenarios its run of everything covers", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-done\/$/.test(url)
+        ? Promise.resolve({
+            data: {
+              ...DETAIL_NOT_AUTHORED,
+              overview: {
+                ...DETAIL_NOT_AUTHORED.overview,
+                status: "completed",
+                agent_type: "chat",
+                scenario_count: 8,
+                run: { run_test_id: "rt1", test_execution_id: "ex1" },
+              },
+              composition: {
+                alignment: {
+                  unscorable: [
+                    { scenario_key: "reply", reason: "no tool" },
+                    { scenario_key: "draft", reason: "no tool" },
+                  ],
+                },
+              },
+            },
+          })
+        : base(url),
+    );
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    await userEvent.click(
+      await screen.findByText(/^Repeats:/, {}, { timeout: 8000 }),
+    );
+    expect(
+      screen.getByText(/6 scenarios × 1 repeat = 6 runs/),
+    ).toBeInTheDocument();
   });
 
   it("offers a retry instead of half-filled tabs when the environment detail fails", async () => {
@@ -804,6 +839,7 @@ describe("EnvironmentWorkspace route shell", () => {
           stage: "understanding_agent",
           code: "sandbox_launch_failed",
           message: "Sandbox launch failed",
+          person_message: "The build can be retried now.",
         },
       },
     });
@@ -816,7 +852,7 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(screen.queryByText("Building")).toBeNull();
     expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
-    expect(screen.getByText(INFRASTRUCTURE_LINE)).toBeInTheDocument();
+    expect(screen.getByText("The build can be retried now.")).toBeInTheDocument();
   });
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {
@@ -978,7 +1014,9 @@ describe("EnvironmentWorkspace unsaved changes", () => {
         Object.assign(new Error("Not found"), { statusCode: 404 }),
       );
     });
-  const saveButton = () => screen.findByRole("button", { name: "Save" });
+  // Saving starts from the bar's Review and save, which the holds grey out.
+  const saveButton = () =>
+    screen.findByRole("button", { name: "Review and save" });
 
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -999,15 +1037,15 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     expect(await saveButton()).toBeEnabled();
   });
 
-  it("opens the draft in the Versions tab from the bar", async () => {
+  it("opens the review of the changes from the bar", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
-      await screen.findByRole("button", { name: "View changes" }),
+      await screen.findByRole("button", { name: "Review and save" }),
     );
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "/dashboard/simulate/environments/job-done?tab=versions&version=environment%3Aed",
-    );
+    expect(
+      await screen.findByRole("dialog", { name: "Review changes" }),
+    ).toBeInTheDocument();
   });
 
   it("shows no bar without drafts", async () => {
