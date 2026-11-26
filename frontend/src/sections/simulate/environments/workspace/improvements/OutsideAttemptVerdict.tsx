@@ -1,4 +1,3 @@
-import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 
 import ContentSkeleton from "src/components/content-skeleton";
@@ -8,6 +7,7 @@ import {
   useAttemptVerdict,
   useCodingAgentAttemptsEnabled,
 } from "src/api/simulate-environments/codingAgent";
+import type { AgentFixRunDetailApi } from "src/generated/api-contracts/api.schemas";
 
 import CheckLine from "./CheckLine";
 import { attemptChecks, attemptNote } from "./attemptVerdictView";
@@ -16,14 +16,21 @@ const note = { typography: "s2", color: "text.secondary" };
 
 // On an Epoch a person's own coding agent started: who wrote the change, its own words
 // for it, and Future AGI's verdict on it, check by check, as the agent reads it.
-export default function OutsideAttemptVerdict({ fix }) {
+export default function OutsideAttemptVerdict({
+  fix,
+}: {
+  fix: AgentFixRunDetailApi;
+}) {
   const enabled = useCodingAgentAttemptsEnabled();
   const outside = isOutsideAttempt(fix);
   const { verdict, isLoading, error } = useAttemptVerdict(fix, {
     enabled: enabled && outside,
   });
   if (!enabled || !outside) return null;
-  const { number, summary } = fix.request.outside_candidate;
+  // An outside attempt has one: isOutsideAttempt reads its number.
+  const candidate = fix.request.outside_candidate;
+  if (!candidate) return null;
+  const { number, summary } = candidate;
   const checks = attemptChecks(verdict, fix.request);
   const said = attemptNote(verdict);
   return (
@@ -69,5 +76,3 @@ export default function OutsideAttemptVerdict({ fix }) {
     </Box>
   );
 }
-
-OutsideAttemptVerdict.propTypes = { fix: PropTypes.object.isRequired };
