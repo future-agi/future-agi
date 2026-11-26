@@ -27,7 +27,10 @@ import { RELEASE_COPY, versionLine } from "./overview.constants";
 const ADD_SCENARIOS_FOR = ["release_too_few_test", "release_too_few_train"];
 
 const shortDate = (at) =>
-  new Date(at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  new Date(at).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+  });
 
 export default function ReleaseCard({ envId, onGo }) {
   const { data } = useEnvironmentVersions(envId);
@@ -62,15 +65,10 @@ export default function ReleaseCard({ envId, onGo }) {
       : lock.refusal?.message;
   const failed = (error) =>
     enqueueSnackbar(errorMessage(error), { variant: "error" });
-  const onLock = () => {
+  // Locks the pair the dialog was opened on, which a refresh may since have moved.
+  const onLock = (pair) => {
     setConfirm(null);
-    lockRelease.mutate(
-      {
-        environmentVersionId: lock.environmentVersionId,
-        suiteVersionId: lock.suiteVersionId,
-      },
-      { onError: failed },
-    );
+    lockRelease.mutate(pair, { onError: failed });
   };
   // Any locked release can be unlocked, not only the default pair's: an edit moves
   // the default on, and delete still waits for every lock to go.
@@ -167,7 +165,12 @@ export default function ReleaseCard({ envId, onGo }) {
         sx={{ px: 1.5, py: 1.25 }}
       >
         <Typography
-          sx={{ typography: "s3", color: "text.tertiary", flex: 1, minWidth: 0 }}
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            flex: 1,
+            minWidth: 0,
+          }}
         >
           {line}
         </Typography>
@@ -185,7 +188,11 @@ export default function ReleaseCard({ envId, onGo }) {
                 size="small"
                 variant="outlined"
                 onClick={() => onGo("scenarios")}
-                sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+                sx={{
+                  color: "text.primary",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
               >
                 {RELEASE_COPY.addScenarios}
               </Button>
@@ -193,15 +200,26 @@ export default function ReleaseCard({ envId, onGo }) {
             <ViewerLock locked={!canEdit} title={RELEASE_COPY.viewer}>
               <Tooltip
                 arrow
-                title={canEdit && !lock.canLock ? lock.refusal?.message || "" : ""}
+                title={
+                  canEdit && !lock.canLock ? lock.refusal?.message || "" : ""
+                }
               >
                 <span>
                   <Button
                     size="small"
                     variant="contained"
                     color="primary"
-                    disabled={!canEdit || !lock.canLock || lockRelease.isPending}
-                    onClick={() => setConfirm({ lock: true })}
+                    disabled={
+                      !canEdit || !lock.canLock || lockRelease.isPending
+                    }
+                    onClick={() =>
+                      setConfirm({
+                        lock: {
+                          environmentVersionId: lock.environmentVersionId,
+                          suiteVersionId: lock.suiteVersionId,
+                        },
+                      })
+                    }
                     startIcon={
                       <Iconify icon="solar:lock-keyhole-linear" width={14} />
                     }
@@ -259,7 +277,7 @@ export default function ReleaseCard({ envId, onGo }) {
               size="small"
               variant="contained"
               color="primary"
-              onClick={onLock}
+              onClick={() => onLock(confirm.lock)}
             >
               {RELEASE_COPY.lockAction}
             </Button>
@@ -296,7 +314,9 @@ function UnlockButton({ disabled, onClick }) {
       variant="outlined"
       disabled={disabled}
       onClick={onClick}
-      startIcon={<Iconify icon="solar:lock-keyhole-unlocked-linear" width={14} />}
+      startIcon={
+        <Iconify icon="solar:lock-keyhole-unlocked-linear" width={14} />
+      }
       sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
     >
       {RELEASE_COPY.unlock}
