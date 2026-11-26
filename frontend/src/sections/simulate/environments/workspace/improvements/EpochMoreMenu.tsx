@@ -1,4 +1,3 @@
-import PropTypes from "prop-types";
 import { useState } from "react";
 import {
   IconButton,
@@ -10,6 +9,7 @@ import {
 import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
+import type { AgentFixRunDetailApi } from "src/generated/api-contracts/api.schemas";
 import { copyToClipboard } from "src/utils/copyToClipboard";
 import {
   fetchCandidatePatch,
@@ -19,13 +19,13 @@ import {
 import { downloadText } from "./downloadText";
 import { fixName, winnerOf } from "./fixRunView";
 
-const exportFileName = (fix) =>
+const exportFileName = (fix: AgentFixRunDetailApi) =>
   `${fixName(fix).toLowerCase().replace(/\s+/g, "-")}.json`;
 
 // The design's ⋯ on the epoch page (EpochMoreMenu): everything that is not the
 // page's one primary. An action that does not apply is disabled, not hidden.
-export default function EpochMoreMenu({ fix }) {
-  const [anchor, setAnchor] = useState(null);
+export default function EpochMoreMenu({ fix }: { fix: AgentFixRunDetailApi }) {
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const winner = fix.state === "ready" ? winnerOf(fix) : null;
   const close = () => setAnchor(null);
 
@@ -41,6 +41,8 @@ export default function EpochMoreMenu({ fix }) {
   };
   const downloadPatch = async () => {
     close();
+    // The item is disabled without a winner.
+    if (!winner) return;
     try {
       const patch = await fetchCandidatePatch(fix.id, winner.id);
       downloadText(patchFileName(fix.id, winner.attempt), patch);
@@ -111,5 +113,3 @@ export default function EpochMoreMenu({ fix }) {
     </>
   );
 }
-
-EpochMoreMenu.propTypes = { fix: PropTypes.object.isRequired };
