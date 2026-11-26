@@ -39154,6 +39154,8 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
  * Submit the tree a person's own coding agent made for a finished run. Future AGI
 verifies it as a short Epoch that calls no model; read its verdict.
  */
+export const simulateApiAgentFixRunsSubmitAttemptBodyLockedPathsItemMax = 512;
+
 export const SimulateApiAgentFixRunsSubmitAttemptBody = zod.object({
   source_run_id: zod.string().uuid(),
   tree: zod.instanceof(File),
@@ -39164,7 +39166,14 @@ export const SimulateApiAgentFixRunsSubmitAttemptBody = zod.object({
     .describe(
       "A GitHub agent's change is refused unless this is the brief's base_commit.",
     ),
-  locked_paths: zod.array().optional(),
+  locked_paths: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiAgentFixRunsSubmitAttemptBodyLockedPathsItemMax),
+    )
+    .optional(),
   budget_credits: zod
     .number()
     .optional()

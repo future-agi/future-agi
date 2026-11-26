@@ -208,6 +208,29 @@ function normalizeHostStatusSpec(spec) {
   };
 }
 
+// Orval's Swagger 2 upgrade (@scalar/openapi-upgrader) keeps only a formData
+// field's type, format and description, so an array field loses its items and
+// generates an untyped zod.array(). Put the items back from the source spec.
+function withFormDataArrayItems(spec, swagger) {
+  Object.entries(swagger.paths || {}).forEach(([pathName, pathSpec]) => {
+    Object.entries(pathSpec || {}).forEach(([method, operation]) => {
+      if (!HTTP_METHODS.has(method)) return;
+      const content = spec.paths?.[pathName]?.[method]?.requestBody?.content;
+      (operation.parameters || [])
+        .filter((one) => one.in === "formData" && one.items)
+        .forEach((param) => {
+          Object.values(content || {}).forEach((media) => {
+            const field = media.schema?.properties?.[param.name];
+            if (field?.type === "array" && !field.items) {
+              field.items = param.items;
+            }
+          });
+        });
+    });
+  });
+  return spec;
+}
+
 function buildManagementApiSwagger(swagger) {
   const paths = {};
   const refs = new Set();
@@ -310,6 +333,9 @@ function normalizeGeneratedQueryParamSerialization() {
 async function runGeneration(schemaPath) {
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
+  const source = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
+  const transformer = (spec) =>
+    normalizeHostStatusSpec(withFormDataArrayItems(spec, source));
 
   const baseOverride = {
     header: (info) => [
@@ -332,7 +358,7 @@ async function runGeneration(schemaPath) {
   await generate({
     input: {
       target: schemaPath,
-      override: { transformer: normalizeHostStatusSpec },
+      override: { transformer },
     },
     output: {
       target: apiOutputPath,
@@ -346,7 +372,7 @@ async function runGeneration(schemaPath) {
   await generate({
     input: {
       target: schemaPath,
-      override: { transformer: normalizeHostStatusSpec },
+      override: { transformer },
     },
     output: {
       target: zodOutputPath,

@@ -49247,7 +49247,7 @@ export type SimulateApiAgentFixRunsSubmitAttemptBodyOne = {
   summary?: string;
   /** A GitHub agent's change is refused unless this is the brief's base_commit. */
   base_commit?: string;
-  locked_paths?: unknown[];
+  locked_paths?: string[];
   /** The attempt's limit in credits. Left out, the most its check runs can hold at once: a hold on the budget, not spend. */
   budget_credits?: number;
 };
@@ -49259,7 +49259,7 @@ export type SimulateApiAgentFixRunsSubmitAttemptBodyTwo = {
   summary?: string;
   /** A GitHub agent's change is refused unless this is the brief's base_commit. */
   base_commit?: string;
-  locked_paths?: unknown[];
+  locked_paths?: string[];
   /** The attempt's limit in credits. Left out, the most its check runs can hold at once: a hold on the budget, not spend. */
   budget_credits?: number;
 };
