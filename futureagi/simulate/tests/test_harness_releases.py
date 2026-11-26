@@ -551,6 +551,26 @@ class TestLock:
         # N is the 80 scorable tasks, not the 100 members: min(24, max(60, 16)).
         assert (lock["train"], lock["test"], lock["test_target"]) == (56, 24, 24)
 
+    def test_four_pairs_stay_under_the_30_percent_cap_and_cannot_lock(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        # 8 tasks in 4 categories: the cap is 3 test tasks, below the 4 a lock needs.
+        _suite(
+            environment,
+            [
+                (f"p{pair}-{index}", f"pair{pair}", [{"name": GOAL}])
+                for pair in range(4)
+                for index in range(2)
+            ],
+        )
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "release_too_few_test"
+        assert not HarnessRelease.no_workspace_objects.exists()
+
     def test_too_few_test_tasks_is_refused(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(10))
