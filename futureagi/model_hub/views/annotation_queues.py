@@ -149,6 +149,7 @@ from model_hub.utils.utils import send_message_to_channel
 from simulate.models.test_execution import CallTranscript
 from simulate.selectors.call_transcripts import with_speakers
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+from tfc.utils import email_unsubscribe
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import (
@@ -981,6 +982,7 @@ def _send_annotation_discussion_email(*, item, comment, thread, recipient_emails
                 "item_url": _annotation_discussion_url(item),
             },
             recipient_emails,
+            notification_category=email_unsubscribe.ANNOTATION_DISCUSSION,
         )
         logger.info(
             "annotation_discussion_email_sent",
