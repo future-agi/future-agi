@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "tool_names_sha256": "5ad2957e82f68283058c41474668d17185d549ad9ecc33de85140b85d36d5bdd",
-  "tool_count": 159,
+  "tool_names_sha256": "c795430e3ad21361fd923e9d23e5194b571023077610c38621345e627f654387",
+  "tool_count": 161,
   "tools": [
     {
       "name": "whoami",
@@ -11619,7 +11619,7 @@
     },
     {
       "name": "list_environment_drafts",
-      "description": "List the environment's unsaved changes (drafts), with the piece, parent and revision of each that save_environment_drafts takes.",
+      "description": "List the environment's unsaved changes (drafts), with the piece, parent and revision of each that save_environment_drafts takes. validation_required says a save must go through validate_environment_drafts first; validation says where that validation stands, and candidates are the versions it built.",
       "group": "simulation",
       "inputSchema": {
         "type": "object",
@@ -11659,7 +11659,7 @@
     },
     {
       "name": "save_environment_drafts",
-      "description": "Save the named drafts together as the environment's next versions, which become the defaults. Pass the piece, expected_parent_id and expected_revision from list_environment_drafts; a draft that moved since is refused. Reuse the same idempotency_key to repeat a call safely.",
+      "description": "Save the environment's changes as its next versions, which become the defaults. Where list_environment_drafts says validation_required, pass candidates (from list_environment_drafts, once validation is ready), expected_review_digest and a name; a plain save is refused with validation_required. Otherwise pass drafts, each with the piece, expected_parent_id and expected_revision from list_environment_drafts; a draft that moved since is refused. Reuse the same idempotency_key to repeat a call safely.",
       "group": "simulation",
       "inputSchema": {
         "type": "object",
@@ -11798,6 +11798,104 @@
       },
       "source": {
         "operationId": "simulate_api_harness-environments_drafts_save_drafts"
+      }
+    },
+    {
+      "name": "review_environment_drafts",
+      "description": "List every change the environment's drafts make, with the decision on each, and the review_digest that validate_environment_drafts and save_environment_drafts take. Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/drafts/review/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_drafts_drafts_review"
+      }
+    },
+    {
+      "name": "validate_environment_drafts",
+      "description": "Build candidate versions from the environment's reviewed drafts and validate them against the agent before they are saved. Pass expected_revisions (per piece, the revision from list_environment_drafts) and the review_digest from review_environment_drafts. It runs in a build sandbox and makes model calls; see the Usage page in the app for what it counts toward. Poll list_environment_drafts until validation is no longer validating, then save the candidates with save_environment_drafts.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "expected_revisions": {
+            "title": "Expected revisions",
+            "description": "Per piece, the draft revision the person reviewed.",
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "expected_review_digest": {
+            "title": "Expected review digest",
+            "description": "The review digest the person saw; required once any change is decided.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "expected_revisions"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/drafts/validate/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "expected_revisions",
+            "expected_review_digest"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_drafts_validate_drafts"
       }
     },
     {

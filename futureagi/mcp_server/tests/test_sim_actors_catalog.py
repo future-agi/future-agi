@@ -38,6 +38,8 @@ TOOLS = [
     ),
     ("list_environment_drafts", "GET", ENVIRONMENT + "drafts/"),
     ("save_environment_drafts", "POST", ENVIRONMENT + "drafts/save/"),
+    ("review_environment_drafts", "GET", ENVIRONMENT + "drafts/review/"),
+    ("validate_environment_drafts", "POST", ENVIRONMENT + "drafts/validate/"),
     ("get_environment_run_plan", "GET", ENVIRONMENT + "run-plan/"),
     ("run_environment", "POST", ENVIRONMENT + "run/"),
     ("get_call_execution", "GET", "/simulate/v3/call-executions/{call_execution_id}/"),
@@ -45,6 +47,8 @@ TOOLS = [
 NAMES = {name for name, _, _ in TOOLS}
 # Tools whose call starts billed model work.
 SPENDING = {"run_environment"}
+# Tools that start sandbox work and say so without stating a cost.
+SANDBOX = {"validate_environment_drafts"}
 # Tools that remove what they name.
 DESTRUCTIVE = {"delete_environment_actor"}
 # Tools that write nothing.
@@ -55,6 +59,7 @@ READS = {
     "get_environment_actor",
     "validate_environment_actor",
     "list_environment_drafts",
+    "review_environment_drafts",
     "get_environment_run_plan",
     "get_call_execution",
 }
@@ -89,8 +94,25 @@ def test_access_and_spend(registry, name):
 
     assert tool.annotations["readOnlyHint"] is (name in READS)
     assert tool.annotations["destructiveHint"] is (name in DESTRUCTIVE)
-    assert tool.annotations["openWorldHint"] is (name in SPENDING)
+    assert tool.annotations["openWorldHint"] is (name in SPENDING | SANDBOX)
     assert ("may incur usage charges" in tool.description) is (name in SPENDING)
+    assert (
+        "see the Usage page in the app for what it counts toward" in tool.description
+    ) is (name in SANDBOX)
+
+
+def test_a_save_that_needs_validation_can_send_its_candidates(registry):
+    save = registry.get("save_environment_drafts").request["parameters"]["body"]
+    validate = registry.get("validate_environment_drafts").request["parameters"]["body"]
+
+    assert {
+        "candidates",
+        "expected_review_digest",
+        "name",
+        "drafts",
+        "idempotency_key",
+    } <= set(save)
+    assert {"expected_revisions", "expected_review_digest"} <= set(validate)
 
 
 def test_a_run_takes_its_seed_and_versions(registry):

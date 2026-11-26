@@ -11,7 +11,7 @@ from mcp_server.generated_registry import (
 def test_committed_generated_registry_loads_all_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
-    assert registry.count() == 159
+    assert registry.count() == 161
     for name in ("run_sql", "get_sql_result", "cancel_sql", "get_sql_catalog"):
         assert registry.get(name).group == "observability"
     assert registry.get("list_datasets").group == "datasets"
@@ -91,6 +91,8 @@ def test_agents_group_matches_legacy_agents_category():
         "accept_environment_actor_unresolved",
         "list_environment_drafts",
         "save_environment_drafts",
+        "review_environment_drafts",
+        "validate_environment_drafts",
         "get_environment_run_plan",
         "run_environment",
         "get_call_execution",
