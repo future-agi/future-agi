@@ -21360,6 +21360,28 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export interface HarnessReleaseRefusalApi {
+  /**
+   * release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_admin_only, release_not_found, release_locked, version_conflict, rebuild_running or versioning_disabled.
+   * @minLength 1
+   */
+  error: string;
+  /** @minLength 1 */
+  message: string;
+  retryable: boolean;
+  /**
+   * version_conflict: the piece whose default moved.
+   * @minLength 1
+   */
+  piece?: string;
+  /** release_too_few_*: the train tasks a lock gives. */
+  train?: number;
+  /** release_too_few_*: the test tasks a lock gives. */
+  test?: number;
+  /** release_locked: the release to unlock first. */
+  release_id?: string;
+}
+
 /**
  * The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.
  */
@@ -23375,6 +23397,51 @@ export interface HarnessSuiteMemberApi {
 
 export interface HarnessUnlockReleaseApi {
   release_id: string;
+}
+
+export type HarnessUnlockForbiddenApiType =
+  (typeof HarnessUnlockForbiddenApiType)[keyof typeof HarnessUnlockForbiddenApiType];
+
+export const HarnessUnlockForbiddenApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type HarnessUnlockForbiddenApiCode =
+  (typeof HarnessUnlockForbiddenApiCode)[keyof typeof HarnessUnlockForbiddenApiCode];
+
+export const HarnessUnlockForbiddenApiCode = {
+  viewer_read_only: "viewer_read_only",
+} as const;
+
+export type HarnessUnlockForbiddenApiDetails = { [key: string]: string[] };
+
+export interface HarnessUnlockForbiddenApi {
+  status?: boolean;
+  type?: HarnessUnlockForbiddenApiType;
+  code?: HarnessUnlockForbiddenApiCode;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  /** @minLength 1 */
+  error?: string;
+  attr?: string;
+  details?: HarnessUnlockForbiddenApiDetails;
+  action?: string;
+  retryable?: boolean;
 }
 
 export interface HarnessDefaultMoveApi {

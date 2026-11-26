@@ -29613,6 +29613,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           403: {
             $ref: "#/definitions/ViewerReadOnlyError",
           },
+          409: {
+            $ref: "#/definitions/HarnessReleaseRefusal",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30493,6 +30496,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           403: {
             $ref: "#/definitions/ViewerReadOnlyError",
           },
+          409: {
+            $ref: "#/definitions/HarnessReleaseRefusal",
+          },
+          422: {
+            $ref: "#/definitions/HarnessReleaseRefusal",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30536,7 +30545,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessVersions",
           },
           403: {
-            $ref: "#/definitions/ViewerReadOnlyError",
+            $ref: "#/definitions/HarnessUnlockForbidden",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -73541,6 +73550,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessReleaseRefusal: {
+      required: ["error", "message", "retryable"],
+      type: "object",
+      properties: {
+        error: {
+          title: "Error",
+          description:
+            "release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_admin_only, release_not_found, release_locked, version_conflict, rebuild_running or versioning_disabled.",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+        },
+        piece: {
+          title: "Piece",
+          description: "version_conflict: the piece whose default moved.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        train: {
+          title: "Train",
+          description: "release_too_few_*: the train tasks a lock gives.",
+          type: "integer",
+        },
+        test: {
+          title: "Test",
+          description: "release_too_few_*: the test tasks a lock gives.",
+          type: "integer",
+        },
+        release_id: {
+          title: "Release id",
+          description: "release_locked: the release to unlock first.",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
     HarnessResultReceipt: {
       required: [
         "schema_version",
@@ -74319,6 +74373,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessUnlockForbidden: {
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          enum: ["viewer_read_only"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        action: {
+          title: "Action",
+          type: "string",
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
         },
       },
     },

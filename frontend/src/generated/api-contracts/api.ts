@@ -704,6 +704,7 @@ import type {
   HarnessNudgeApi,
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
+  HarnessReleaseRefusalApi,
   HarnessResultReceiptApi,
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
@@ -720,6 +721,7 @@ import type {
   HarnessStartingRecordReworkWriteApi,
   HarnessStartingRecordsApi,
   HarnessSuiteMemberApi,
+  HarnessUnlockForbiddenApi,
   HarnessUnlockReleaseApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
@@ -62101,7 +62103,7 @@ export type simulateApiHarnessEnvironmentsDeleteResponse403 = {
 };
 
 export type simulateApiHarnessEnvironmentsDeleteResponse409 = {
-  data: void;
+  data: HarnessReleaseRefusalApi;
   status: 409;
 };
 
@@ -64373,9 +64375,19 @@ export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponse403 = {
   status: 403;
 };
 
+export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponse409 = {
+  data: HarnessReleaseRefusalApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponse422 = {
+  data: HarnessReleaseRefusalApi;
+  status: 422;
+};
+
 export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 403>;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 409 | 422>;
 };
 
 export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponseSuccess =
@@ -64384,6 +64396,8 @@ export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponseSuccess =
   };
 export type simulateApiHarnessEnvironmentsVersionsLockReleaseResponseError = (
   | simulateApiHarnessEnvironmentsVersionsLockReleaseResponse403
+  | simulateApiHarnessEnvironmentsVersionsLockReleaseResponse409
+  | simulateApiHarnessEnvironmentsVersionsLockReleaseResponse422
   | simulateApiHarnessEnvironmentsVersionsLockReleaseResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -64479,7 +64493,7 @@ export type simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse200 = {
 };
 
 export type simulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse403 = {
-  data: ViewerReadOnlyErrorApi;
+  data: HarnessUnlockForbiddenApi;
   status: 403;
 };
 
