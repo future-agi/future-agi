@@ -1310,17 +1310,25 @@ def _load_ids(
     return agent_version, environment_version, suite_version, runtime
 
 
+def sub_goal_catalogue(sub_goals: Any) -> frozenset[str]:
+    """The sub-goal names an environment version grades, from its ``sub_goals``
+    document; empty for a version recorded before the catalogue was."""
+    return frozenset(
+        str(goal["name"])
+        for goal in sub_goals or []
+        if isinstance(goal, dict) and goal.get("name")
+    )
+
+
 def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
     """Refuse selected scenarios that grade no sub-goal of the pinned environment.
 
     Certifying drops them from the bundle, so the run could not play them. A member
     without a ``sub_goals`` field predates them and is left to the run.
     """
-    catalogue = {
-        str(goal.get("name"))
-        for goal in (pins.environment_version.documents or {}).get("sub_goals") or []
-        if isinstance(goal, dict) and goal.get("name")
-    }
+    catalogue = sub_goal_catalogue(
+        (pins.environment_version.documents or {}).get("sub_goals")
+    )
     if not catalogue:
         return
     ungradable = []
