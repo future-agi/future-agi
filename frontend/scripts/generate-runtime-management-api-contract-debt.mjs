@@ -14,12 +14,12 @@ const outputPath = path.join(
   "runtime-management-api-contract-debt.generated.json",
 );
 
-const STRICT_VIEW_TARGETS = [
+export const STRICT_VIEW_TARGETS = [
   path.join(repoRoot, "futureagi", "accounts", "views"),
   path.join(repoRoot, "futureagi", "model_hub", "views"),
   path.join(repoRoot, "futureagi", "tracer", "views"),
 ];
-const PRODUCT_VIEW_TARGETS = [
+export const PRODUCT_VIEW_TARGETS = [
   path.join(repoRoot, "futureagi", "accounts", "views"),
   path.join(repoRoot, "futureagi", "agent_playground", "views"),
   path.join(repoRoot, "futureagi", "agentcc", "views"),
@@ -214,7 +214,7 @@ function analyzeFile(filePath) {
   return decorators;
 }
 
-function analyzeTargets(targets) {
+export function analyzeTargets(targets) {
   const decorators = targets
     .flatMap((target) => walkPythonTarget(target).flatMap(analyzeFile))
     .sort(compareDecoratorRecords);
@@ -272,7 +272,11 @@ function compareDecoratorRecords(a, b) {
   );
 }
 
-function formatSummary(result) {
+// Every count, for check-runtime-management-api-contract-coverage.mjs, which
+// computes them in memory. The committed report keeps only the debt counters:
+// the validated/direct-swagger totals change on most API PRs, so committing
+// them made every two API PRs conflict here.
+export function countSummary(result) {
   return {
     runtime_backed_validated_request_decorators: result.validated.length,
     direct_swagger_auto_schema_decorators: result.directSwagger.length,
@@ -281,51 +285,66 @@ function formatSummary(result) {
   };
 }
 
-const strictResult = analyzeTargets(STRICT_VIEW_TARGETS);
-const appWideResult = analyzeTargets(PRODUCT_VIEW_TARGETS);
-
-const report = {
-  generated_from: STRICT_VIEW_TARGETS.map((target) =>
-    path.relative(repoRoot, target),
-  ),
-  app_wide_generated_from: PRODUCT_VIEW_TARGETS.map((target) =>
-    path.relative(repoRoot, target),
-  ),
-  summary: formatSummary(strictResult),
-  app_wide_summary: formatSummary(appWideResult),
-  doc_only_input_contract_decorators: formatDecorators(
-    strictResult.docOnlyInputContracts,
-  ),
-  broad_request_contract_decorators: formatDecorators(
-    strictResult.broadRequestContracts,
-  ),
-  app_wide_doc_only_input_contract_decorators: formatDecorators(
-    appWideResult.docOnlyInputContracts,
-  ),
-  app_wide_broad_request_contract_decorators: formatDecorators(
-    appWideResult.broadRequestContracts,
-  ),
-};
-
-const nextJson = `${JSON.stringify(report, null, 2)}\n`;
-
-if (process.argv.includes("--check")) {
-  const current = fs.existsSync(outputPath)
-    ? fs.readFileSync(outputPath, "utf8")
-    : "";
-  if (current !== nextJson) {
-    console.error(
-      "Runtime Management API contract debt report is stale. Run yarn contracts:generate.",
-    );
-    process.exit(1);
-  }
-  console.log("Runtime Management API contract debt report is up to date.");
-} else {
-  fs.writeFileSync(outputPath, nextJson);
-  console.log(
-    `Runtime Management API contract debt report written to ${path.relative(
-      repoRoot,
-      outputPath,
-    )}.`,
-  );
+function debtSummary(result) {
+  return {
+    doc_only_input_contract_decorators: result.docOnlyInputContracts.length,
+    broad_request_contract_decorators: result.broadRequestContracts.length,
+  };
 }
+
+export function buildReport(
+  strictTargets = STRICT_VIEW_TARGETS,
+  appWideTargets = PRODUCT_VIEW_TARGETS,
+) {
+  const strictResult = analyzeTargets(strictTargets);
+  const appWideResult = analyzeTargets(appWideTargets);
+  const report = {
+    generated_from: strictTargets.map((target) =>
+      path.relative(repoRoot, target),
+    ),
+    app_wide_generated_from: appWideTargets.map((target) =>
+      path.relative(repoRoot, target),
+    ),
+    summary: debtSummary(strictResult),
+    app_wide_summary: debtSummary(appWideResult),
+    doc_only_input_contract_decorators: formatDecorators(
+      strictResult.docOnlyInputContracts,
+    ),
+    broad_request_contract_decorators: formatDecorators(
+      strictResult.broadRequestContracts,
+    ),
+    app_wide_doc_only_input_contract_decorators: formatDecorators(
+      appWideResult.docOnlyInputContracts,
+    ),
+    app_wide_broad_request_contract_decorators: formatDecorators(
+      appWideResult.broadRequestContracts,
+    ),
+  };
+  return `${JSON.stringify(report, null, 2)}\n`;
+}
+
+function main() {
+  const nextJson = buildReport();
+  if (process.argv.includes("--check")) {
+    const current = fs.existsSync(outputPath)
+      ? fs.readFileSync(outputPath, "utf8")
+      : "";
+    if (current !== nextJson) {
+      console.error(
+        "Runtime Management API contract debt report is stale. Run yarn contracts:generate.",
+      );
+      process.exit(1);
+    }
+    console.log("Runtime Management API contract debt report is up to date.");
+  } else {
+    fs.writeFileSync(outputPath, nextJson);
+    console.log(
+      `Runtime Management API contract debt report written to ${path.relative(
+        repoRoot,
+        outputPath,
+      )}.`,
+    );
+  }
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) main();
