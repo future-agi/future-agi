@@ -1,4 +1,4 @@
-"""Complete 137/142-pending-migration inventory and A9 scope regressions, without Django.
+"""Complete 133/138-pending-migration inventory and A9 scope regressions, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -101,12 +101,13 @@ LATEST = (
     ('simulate','0119_merge_scenario_lifecycle_and_dev'),
     ('simulate','0120_merge_cancel_confirmation_and_scenario_lifecycle'),
     ('simulate','0121_merge_harness_releases_and_scenario_lifecycle'),
+    ('simulate','0122_agent_fix_candidate_changed_files'),
     ('mcp_server','0005_enable_epoch_tool_group'),
     ('simulate','0113_simulate_eval_config_removed_keys'),
     ('simulate','0114_remove_evaluator_keys_from_eval_config'),
     ('simulate','0117_merge_eval_config_keys_and_agent_fix_issue_job'),
     ('simulate','0121_merge_eval_config_keys_and_scenario_lifecycle'),
-    ('simulate','0122_merge_eval_config_keys_and_harness_releases'),
+    ('simulate','0123_merge_eval_config_keys_and_agent_fix_changed_files'),
 )
 # Eight SQL additions shared with the SQL-only candidate. These identities
 # account for the graph; they are not safety declarations for opaque operations.
@@ -435,7 +436,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         self.assertEqual(len(METRICS_ADDITIONS),29)
         self.assertTrue(set(BASELINE_ADDITIONS).isdisjoint(METRICS_ADDITIONS))
         self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,137),(REVISIONS[0],LATEST+FLOOR_ONLY,142)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,133),(REVISIONS[0],LATEST+FLOOR_ONLY,138)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
 
@@ -443,8 +444,8 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # Preserve the SQL-layer negative controls when adding sampling's graph.
         # Same-count replacement must fail just as an extra or missing file does.
         unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 137),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 142)):
+        for revision, identities, count in ((REVISIONS[1], LATEST, 133),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 138)):
             paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
                 '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
                 'futureagi/**/migrations/*.py'], text=True).splitlines()
@@ -482,7 +483,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         with mock.patch.object(subprocess,'check_output',return_value=paths+
                 'futureagi/tracer/migrations/9999_unexpected.py\n'):
             with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,137)
+                self.assert_complete_inventory(REVISIONS[1],LATEST,133)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -531,7 +532,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 self.assertEqual(list(p.select_reference_registry(registry,[row],plan=plan)),[])
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
-        for revision,identities,count in ((REVISIONS[1],LATEST,137),(REVISIONS[0],LATEST+FLOOR_ONLY,142)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,133),(REVISIONS[0],LATEST+FLOOR_ONLY,138)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
                 # Keep the complete gate fail-closed on undeclared Metrics operations.

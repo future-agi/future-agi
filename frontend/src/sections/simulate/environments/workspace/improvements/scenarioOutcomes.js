@@ -36,7 +36,6 @@ function byScenario(tasks) {
   const byKey = new Map();
   tasks.forEach((t) => {
     const prev = byKey.get(t.sourceScenarioKey) || {
-      name: t.sourceScenario,
       calls: [],
       measured: 0,
       passing: 0,
@@ -74,9 +73,18 @@ export function trialsText({ passed, of, ran }) {
   return `${passed} of ${of} measured, ${unmeasured} not measured`;
 }
 
+// A scenario the epoch's read has no stored name for. Its key is never shown.
+const UNNAMED_SCENARIO = "Unnamed scenario";
+
 // One row per scenario the candidate called, measured or not. `verdict` is the
-// candidate's: its must-pass lists say which drops count.
-export function scenarioOutcomes(beforeTasks, afterTasks, verdict = null) {
+// candidate's: its must-pass lists say which drops count. `names` is the read's
+// `scenario_names`, the stored name by key that the server's words use too.
+export function scenarioOutcomes(
+  beforeTasks,
+  afterTasks,
+  verdict = null,
+  names = {},
+) {
   const before = byScenario(beforeTasks);
   const lists = {
     counted: mustPassScenarioKeys(verdict?.must_pass_regressions),
@@ -95,7 +103,7 @@ export function scenarioOutcomes(beforeTasks, afterTasks, verdict = null) {
     };
     rows.push({
       key,
-      name: a.name,
+      name: names?.[key] || UNNAMED_SCENARIO,
       before: was === null ? null : was ? "passed" : "failed",
       after: is === null ? null : is ? "passed" : "failed",
       outcome,

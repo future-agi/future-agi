@@ -88,11 +88,13 @@ describe("the running view's candidates", () => {
     expect(screen.queryByTestId("candidate-1")).toBeNull();
     await user.click(screen.getByTestId("candidate-group-target"));
     const rejected = within(screen.getByTestId("candidate-1"));
+    // The server's change line, never the engine's note on its last round.
     expect(
-      rejected.getByText(
-        "Escalate refused late cancellations to the front desk.",
-      ),
+      rejected.getByText("Changes instructions.md: 3 lines added, 1 removed."),
     ).toBeInTheDocument();
+    expect(
+      rejected.queryByText(/Escalate refused late cancellations/),
+    ).toBeNull();
     expect(rejected.getByText("0%")).toBeInTheDocument();
   });
 
