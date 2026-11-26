@@ -151,6 +151,17 @@ def _tasks(sizes):
     ]
 
 
+def _tests_by_category(assign, names):
+    return {
+        name: sum(
+            1
+            for key, split in assign.items()
+            if key.startswith(f"{name}-") and split == "test"
+        )
+        for name in names
+    }
+
+
 class TestTestTarget:
     @pytest.mark.parametrize(
         ("scorable", "expected"),
@@ -210,6 +221,46 @@ class TestPlanSplits:
         assert sum(1 for split in second.assign.values() if split == "test") == (
             target_test_size(60) - first.test
         )
+
+    def test_a_first_lock_puts_every_category_in_test(self):
+        plan = plan_splits(_tasks({"a": 14, "b": 2, "c": 2, "d": 2}), {}, "env")
+
+        assert (plan.train, plan.test) == (14, 6)
+        assert _tests_by_category(plan.assign, "abcd") == {
+            "a": 3,
+            "b": 1,
+            "c": 1,
+            "d": 1,
+        }
+
+    def test_growth_never_takes_the_suite_past_its_target(self):
+        first = plan_splits(_tasks({"a": 100, "b": 100}), {}, "env")
+        assert first.test == 60
+
+        second = plan_splits(_tasks({"a": 100, "b": 200}), dict(first.assign), "env")
+
+        # Retained test tasks already fill the target of 300: the new ones train.
+        assert (second.train, second.test, second.test_target) == (240, 60, 60)
+        assert set(second.assign.values()) == {"train"}
+
+    def test_a_category_added_to_a_full_test_split_trains(self):
+        first = plan_splits(_tasks({"a": 100, "b": 100}), {}, "env")
+
+        second = plan_splits(
+            _tasks({"a": 100, "b": 100, "c": 50}), dict(first.assign), "env"
+        )
+
+        # Nothing already assigned moves, and the target is a ceiling.
+        assert second.test == second.test_target == 60
+        assert _tests_by_category(second.assign, "c") == {"c": 0}
+
+    def test_growth_fills_the_target_from_the_new_tasks(self):
+        first = plan_splits(_tasks({"a": 40}), {}, "env")
+
+        second = plan_splits(_tasks({"a": 40, "b": 60}), dict(first.assign), "env")
+
+        assert second.test == target_test_size(100) == 30
+        assert _tests_by_category(second.assign, "ab") == {"a": 0, "b": 18}
 
     def test_a_test_task_never_moves_to_train(self):
         first = plan_splits(_tasks({"a": 40}), {}, "env")
