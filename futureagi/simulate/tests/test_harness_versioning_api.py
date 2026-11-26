@@ -169,7 +169,7 @@ class TestVersionsList:
         assert lock.json()["can_lock"] is False
         assert lock.json()["refusal"] == {
             "code": "lock_not_ready",
-            "message": "Build this environment before you lock a version.",
+            "message": "Build this environment before you lock it.",
         }
 
     def test_versioning_off_is_not_found(

@@ -172,7 +172,10 @@ describe("LockedVersionCard", () => {
   it("offers the lock with the splits it would get", async () => {
     render(<LockedVersionCard envId="env" />);
 
-    expect(screen.getByText("Lock a version")).toBeInTheDocument();
+    // The title names the default pair the lock would freeze.
+    expect(
+      screen.getByText("Lock environment v3, scenarios v5"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
         "Lock these versions to freeze their scenarios, splits and scorer environment.",
@@ -188,14 +191,16 @@ describe("LockedVersionCard", () => {
       screen.getByRole("button", { name: "Lock this version" }),
     );
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Lock this version?")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Lock environment v3, scenarios v5?"),
+    ).toBeInTheDocument();
     expect(
       within(dialog).getByText(
-        "Its scenarios, their train and test splits and the scorer environment freeze. Each scenario keeps its split in every later locked version. Edits make a new, unlocked version.",
+        "The scenarios, their train and test splits and the scorer environment freeze. Each scenario keeps its split in every later lock. Edits make a new, unlocked version.",
       ),
     ).toBeInTheDocument();
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Lock version" }),
+      within(dialog).getByRole("button", { name: "Lock versions" }),
     );
 
     expect(calls.lock).toEqual([
@@ -214,9 +219,15 @@ describe("LockedVersionCard", () => {
       lock: { environment_version_id: "env-4", suite_version_id: "suite-6" },
     });
     rerender(<LockedVersionCard envId="env" />);
+    // The dialog still names the pair it opened on.
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "Lock environment v3, scenarios v5?",
+      ),
+    ).toBeInTheDocument();
     await userEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
-        name: "Lock version",
+        name: "Lock versions",
       }),
     );
 
@@ -295,15 +306,19 @@ describe("LockedVersionCard", () => {
 
     render(<LockedVersionCard envId="env" />);
 
-    expect(screen.getByText("Locked version 2026.11.1")).toBeInTheDocument();
     expect(
-      screen.getByText("Frozen: edits make a new, unlocked version."),
+      screen.getByText("Locked: environment v3, scenarios v5"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Edits make a new, unlocked version."),
     ).toBeInTheDocument();
     // The title already says Locked: a locked card shows no status badge.
     expect(screen.queryByText("Locked")).not.toBeInTheDocument();
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(
-      screen.getByText(/Train 54 · Test 14 scenarios · scorer environment v3$/),
+      screen.getByText(
+        /^Lock 2026\.11\.1 · .+ · Train 54 · Test 14 scenarios · scorer frozen$/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Lock this version" }),
@@ -312,15 +327,15 @@ describe("LockedVersionCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
     const dialog = screen.getByRole("dialog");
     expect(
-      within(dialog).getByText("Unlock version 2026.11.1?"),
+      within(dialog).getByText("Unlock environment v3, scenarios v5?"),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByText(
-        "Its scores stay, but they're no longer a locked comparison. The train/test split of each scenario never changes.",
+        "Lock 2026.11.1 moves to Earlier locks. Its scores stay, but they're no longer a locked comparison. Each scenario keeps its train and test split.",
       ),
     ).toBeInTheDocument();
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Unlock version" }),
+      within(dialog).getByRole("button", { name: "Unlock versions" }),
     );
 
     expect(calls.unlock).toEqual([{ lockedVersionId: "rel-1" }]);
@@ -350,18 +365,20 @@ describe("LockedVersionCard", () => {
     render(<LockedVersionCard envId="env" />);
 
     expect(screen.getByText("Ready")).toBeInTheDocument();
+    expect(screen.getByText("Earlier locks")).toBeInTheDocument();
+    // A locked row adds nothing after its date.
     expect(
       screen.getByText(
-        "2026.11.1 · environment v3 · scenarios v4 · Train 54 · Test 14 · locked",
+        /^Lock 2026\.11\.1 · environment v3, scenarios v4 · [^·]+$/,
       ),
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
     const dialog = screen.getByRole("dialog");
     expect(
-      within(dialog).getByText("Unlock version 2026.11.1?"),
+      within(dialog).getByText("Unlock environment v3, scenarios v4?"),
     ).toBeInTheDocument();
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Unlock version" }),
+      within(dialog).getByRole("button", { name: "Unlock versions" }),
     );
 
     expect(calls.unlock).toEqual([{ lockedVersionId: "rel-1" }]);
@@ -383,10 +400,12 @@ describe("LockedVersionCard", () => {
 
     render(<LockedVersionCard envId="env" />);
 
-    expect(screen.getByText("Lock a version")).toBeInTheDocument();
+    expect(
+      screen.getByText("Lock environment v3, scenarios v5"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "2026.11.1 · environment v3 · scenarios v4 · Train 54 · Test 14 · unlocked",
+        /^Lock 2026\.11\.1 · environment v3, scenarios v4 · [^·]+ · unlocked$/,
       ),
     ).toBeInTheDocument();
   });

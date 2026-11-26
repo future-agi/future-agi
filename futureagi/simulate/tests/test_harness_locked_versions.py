@@ -629,8 +629,9 @@ class TestLock:
         assert response.status_code == 409
         assert response.json()["error"] == "version_already_locked"
         label = HarnessLockedVersion.no_workspace_objects.get().label
+        # The pair as the card names it: environment vN, scenarios vN.
         assert response.json()["message"] == (
-            f"These versions are already locked as {label}."
+            f"Lock {label} already covers environment v1, scenarios v2."
         )
         assert HarnessLockedVersion.no_workspace_objects.count() == 1
 
@@ -877,7 +878,8 @@ class TestUnlockAndDelete:
         assert response.status_code == 409
         assert response.json()["error"] == "version_locked"
         assert response.json()["message"] == (
-            f"A workspace admin or owner must unlock version {label} first."
+            f"Lock {label} covers this version. A workspace admin or owner must "
+            "unlock it first."
         )
         # What an admin's Unlock action in the refusal needs.
         assert response.json()["locked_version_id"] == locked_version["id"]
@@ -922,7 +924,7 @@ class TestUnlockAndDelete:
         assert response.status_code == 403
         assert response.json()["error"] == "unlock_admin_only"
         assert response.json()["message"] == (
-            "Only a workspace admin or owner can unlock a version."
+            "Only a workspace admin or owner can unlock versions."
         )
         assert HarnessLockedVersion.no_workspace_objects.get().unlocked_at is None
 
@@ -1173,4 +1175,4 @@ def test_unlock_of_an_unknown_locked_version_is_not_found(user, workspace, stora
         unlock_version(environment, "00000000-0000-0000-0000-000000000000", user=user)
 
     assert refused.value.code == "locked_version_not_found"
-    assert refused.value.message == "This locked version doesn't exist."
+    assert refused.value.message == "This lock doesn't exist."

@@ -25,6 +25,9 @@ vi.mock("src/api/simulate-environments/versions", async () => ({
 }));
 
 const { default: useDeleteRefusal } = await import("../useDeleteRefusal");
+const { environmentVersionsKey, lockPreviewKey } = await import(
+  "src/api/simulate-environments/versions"
+);
 
 // A delete refused because a version is locked, as the server sends it (409).
 const LOCKED = {
@@ -33,7 +36,7 @@ const LOCKED = {
     data: {
       error: "version_locked",
       message:
-        "A workspace admin or owner must unlock version 2026.11.1 first.",
+        "Lock 2026.11.1 covers this version. A workspace admin or owner must unlock it first.",
       retryable: false,
       locked_version_id: "lv-1",
       label: "2026.11.1",
@@ -41,8 +44,25 @@ const LOCKED = {
   },
 };
 
+// The unlock's answer: every version and the locked-version history.
+const UNLOCKED = {
+  agent: [],
+  environment: [],
+  suite: [],
+  locked_versions: [
+    {
+      id: "lv-1",
+      label: "2026.11.1",
+      environment_label: "v3",
+      suite_label: "v2",
+      unlocked_at: "2026-11-26T10:00:00Z",
+    },
+  ],
+};
+
+let client;
 const refuse = (error) => {
-  const client = new QueryClient();
+  client = new QueryClient();
   const { result } = renderHook(() => useDeleteRefusal(), {
     wrapper: ({ children }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -59,24 +79,45 @@ beforeEach(() => {
 });
 
 describe("useDeleteRefusal", () => {
-  it("offers an admin Unlock version in a locked-version refusal, and unlocks it", async () => {
+  it("offers an admin Unlock versions in a locked-version refusal, and unlocks it", async () => {
+    unlockVersion.mockResolvedValueOnce(UNLOCKED);
     const shown = refuse(LOCKED);
 
     expect(shown.message).toBe(
-      "A workspace admin or owner must unlock version 2026.11.1 first.",
+      "Lock 2026.11.1 covers this version. A workspace admin or owner must unlock it first.",
     );
     expect(shown.options.variant).toBe("error");
     render(shown.options.action("snack-1"));
     await userEvent.click(
-      screen.getByRole("button", { name: "Unlock version 2026.11.1" }),
+      screen.getByRole("button", { name: "Unlock versions" }),
     );
 
     expect(unlockVersion).toHaveBeenCalledWith("env-1", "lv-1");
     await waitFor(() =>
       expect(snackbars.at(-1)).toMatchObject({
-        message: "Version 2026.11.1 is unlocked.",
+        message: "Unlocked environment v3, scenarios v2 (lock 2026.11.1).",
         options: { variant: "success" },
       }),
+    );
+  });
+
+  it("asks for the lock preview again after the unlock", async () => {
+    unlockVersion.mockResolvedValueOnce(UNLOCKED);
+    const shown = refuse(LOCKED);
+    client.setQueryData(lockPreviewKey("env-1"), { can_lock: false });
+    render(shown.options.action("snack-1"));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Unlock versions" }),
+    );
+
+    await waitFor(() =>
+      expect(client.getQueryState(lockPreviewKey("env-1")).isInvalidated).toBe(
+        true,
+      ),
+    );
+    expect(client.getQueryData(environmentVersionsKey("env-1"))).toEqual(
+      UNLOCKED,
     );
   });
 
@@ -86,7 +127,7 @@ describe("useDeleteRefusal", () => {
     const shown = refuse(LOCKED);
 
     expect(shown.message).toBe(
-      "A workspace admin or owner must unlock version 2026.11.1 first.",
+      "Lock 2026.11.1 covers this version. A workspace admin or owner must unlock it first.",
     );
     expect(shown.options.action).toBeUndefined();
   });

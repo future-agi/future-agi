@@ -28,8 +28,10 @@ const LOCK = (env: string) => `${ENVIRONMENTS}/${env}/versions/lock/`;
 // Copy, pinned from frontend/src/sections/simulate/environments/workspace/overview/overview.constants.js
 // (LOCK_COPY).
 const LOCK_BUTTON = 'Lock this version';
-const LOCK_TITLE = 'Lock this version?';
-const LOCK_ACTION = 'Lock version';
+const LOCK_ACTION = 'Lock versions';
+// The default pair, as the card names it: "environment vN, scenarios vN".
+const pairOf = (environmentLabel: string, suiteLabel: string) =>
+  `environment ${environmentLabel}, scenarios ${suiteLabel}`;
 // A locked version's label is "YYYY.M.N" (locked_versions.py::_next_label).
 const LABEL = /^\d{4}\.\d{1,2}\.\d+$/;
 // Scorable scenarios the seed holds: 6 refunds + 6 lookups, each with one sub-goal
@@ -50,7 +52,8 @@ interface Lock {
   refusal: { code: string; message: string } | null; train: number | null; test: number | null;
   test_target: number | null;
 }
-interface Versions { locked_versions: LockedVersion[] }
+interface PieceVersion { id: string; label: string | null; is_default: boolean }
+interface Versions { environment: PieceVersion[]; suite: PieceVersion[]; locked_versions: LockedVersion[] }
 
 test(
   'SIM-E2E-038: an author locks an environment\'s default versions and sees the locked version\'s label with the train and test split',
@@ -65,9 +68,9 @@ test(
         'seed a built, versioned environment with 12 scorable scenarios (e2e/lib/harness_environment_seed.py)',
         "read the environment's versions: nothing is locked",
         'read the lock preview: the default pair can be locked',
-        'open the Overview tab and read the Lock a version card as Ready',
-        'choose Lock this version and confirm Lock version in the dialog',
-        'read the card as Locked version <label>, with no status badge and the Train and Test line',
+        'open the Overview tab and read the "Lock environment <vN>, scenarios <vN>" card as Ready',
+        'choose Lock this version and confirm Lock versions in the dialog',
+        'read the card as "Locked: environment <vN>, scenarios <vN>", with no status badge and the lock line',
         'delete the environment through the API',
       ],
       backendChecks: [
@@ -76,11 +79,11 @@ test(
         'simulate_harness_locked_version has one row for the environment, unlocked_at NULL, with the default environment and suite version ids and a YYYY.M.N label',
         'simulate_harness_task_split has one row per seeded scenario, each first given by that locked version, and the test rows number what target_test_size gives (4 of 12)',
         'the versions read lists that locked version with the same label and the 8 train and 4 test counts, and the versions/lock-preview read refuses with version_already_locked',
-        'deleting the environment answers 409 version_locked, "A workspace admin or owner must unlock version <label> first.", and the environment is still readable',
+        'deleting the environment answers 409 version_locked, "Lock <label> covers this version. A workspace admin or owner must unlock it first.", and the environment is still readable',
       ],
       browserChecks: [
-        'the card reads Lock a version and Ready, with "Lock this version" enabled',
-        'the dialog reads "Lock this version?"; after confirming the card title is "Locked version <label>", it shows no status badge and its line reads "Locked <d Mon> · Train 8 · Test 4 scenarios · scorer environment <vN>"',
+        'the card reads "Lock environment <vN>, scenarios <vN>" (the default pair) and Ready, with "Lock this version" enabled',
+        'the dialog reads "Lock environment <vN>, scenarios <vN>?"; after confirming the card title is "Locked: environment <vN>, scenarios <vN>", it shows no status badge and its line reads "Lock <label> · <d Mon> · Train 8 · Test 4 scenarios · scorer frozen"',
       ],
     }),
   },
@@ -98,6 +101,16 @@ test(
     // Before: nothing locked, and the default pair is lockable with the split the lock would give.
     const before = await actor.api.get<Versions>(versions(env));
     expect(before.locked_versions).toEqual([]);
+    const defaultLabel = (pieces: PieceVersion[], id: string) => {
+      const found = pieces.find((one) => one.is_default);
+      expect(found?.id).toBe(id);
+      expect(found?.label).toMatch(/^v\d+$/);
+      return found?.label as string;
+    };
+    const pair = pairOf(
+      defaultLabel(before.environment, seed.environmentVersionId),
+      defaultLabel(before.suite, seed.suiteVersionId),
+    );
     expect(before).not.toHaveProperty('lock');
     const preview = await actor.api.get<Lock>(LOCK_PREVIEW(env));
     expect(preview).toMatchObject({
@@ -112,7 +125,7 @@ test(
 
     await test.step('open Overview: the version is ready to lock', async () => {
       await page.goto(`/dashboard/simulate/environments/${env}?tab=overview`);
-      await expect(card.getByText('Lock a version', { exact: true })).toBeVisible({ timeout: UI_READY });
+      await expect(card.getByText(`Lock ${pair}`, { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(card.getByText('Ready', { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(card.getByRole('button', { name: LOCK_BUTTON })).toBeEnabled();
       await expect(card.getByText('Locked', { exact: true })).toHaveCount(0);
@@ -129,7 +142,7 @@ test(
 
     await test.step('lock the version', async () => {
       await card.getByRole('button', { name: LOCK_BUTTON }).click({ timeout: UI_READY });
-      const dialog = page.getByRole('dialog').filter({ hasText: LOCK_TITLE });
+      const dialog = page.getByRole('dialog').filter({ hasText: `Lock ${pair}?` });
       await expect(dialog).toBeVisible({ timeout: UI_READY });
       const answered = page.waitForResponse((r) => r.url().endsWith(LOCK(env))
         && r.request().method() === 'POST', { timeout: UI_READY });
@@ -176,18 +189,18 @@ test(
     expect(after.locked_versions[0]).toMatchObject({
       id: lockedVersion.id, label: lockedVersion.label, unlocked_at: null, train: TRAIN_TASKS, test: TEST_TASKS,
     });
-    const environmentLabel = after.locked_versions[0].environment_label;
-    expect(environmentLabel).toMatch(/^v\d+$/);
+    // The lock is on the default pair, whose environment version is its scorer.
+    expect(pair.startsWith(`environment ${after.locked_versions[0].environment_label},`)).toBe(true);
     const previewAfter = await actor.api.get<Lock>(LOCK_PREVIEW(env));
     expect(previewAfter).toMatchObject({ can_lock: false, refusal: { code: 'version_already_locked' } });
 
     await test.step('read the locked card', async () => {
-      await expect(card.getByText(`Locked version ${lockedVersion.label}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+      await expect(card.getByText(`Locked: ${pair}`, { exact: true })).toBeVisible({ timeout: UI_READY });
       // The title says Locked: a locked card shows no status badge.
       await expect(card.getByText('Locked', { exact: true })).toHaveCount(0);
       await expect(card.getByText('Ready', { exact: true })).toHaveCount(0);
       await expect(card.getByText(new RegExp(
-        `^Locked (?:\\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \\d{1,2}) · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} scenarios · scorer environment ${environmentLabel}$`,
+        `^Lock ${lockedVersion.label.replace(/\./g, '\\.')} · (?:\\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \\d{1,2}) · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} scenarios · scorer frozen$`,
       ))).toBeVisible();
       await expect(card.getByRole('button', { name: LOCK_BUTTON })).toHaveCount(0);
     });
@@ -196,7 +209,7 @@ test(
     // simulate/tests/test_harness_locked_versions.py delete test reads it: error and message.
     const refused = await actor.api.request<{ error: string; message: string }>('delete', `${ENVIRONMENTS}/${env}/`);
     expect(refused.status).toBe(409);
-    expect(refused.body).toMatchObject({ error: 'version_locked', message: `A workspace admin or owner must unlock version ${lockedVersion.label} first.` });
+    expect(refused.body).toMatchObject({ error: 'version_locked', message: `Lock ${lockedVersion.label} covers this version. A workspace admin or owner must unlock it first.` });
     const still = await actor.api.get<Versions>(versions(env));
     expect(still.locked_versions.map((one) => one.id)).toEqual([lockedVersion.id]);
   },
