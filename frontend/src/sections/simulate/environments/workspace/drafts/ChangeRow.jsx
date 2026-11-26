@@ -7,9 +7,9 @@ import {
   IconButton,
   Stack,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
 import ChangeDecision from "./ChangeDecision";
@@ -39,6 +39,8 @@ const clock = (iso) =>
       })
     : "";
 
+const rowText = (row) => (Number.isInteger(row) ? COPY.fileRow(row) : null);
+
 const sourceText = (source) => {
   if (!source) return COPY.noSource;
   const line = sourceLine(source);
@@ -48,12 +50,16 @@ const sourceText = (source) => {
     hand: COPY.byHand,
     update: COPY.fromUpdate,
   }[line.kind];
-  // A file row says where in the file, not when.
-  const at = line.kind === "file" ? null : clock(line.at);
-  return [from, line.where, at].filter(Boolean).join(" · ");
+  return [from, rowText(line.row), clock(line.at)].filter(Boolean).join(" · ");
 };
 
-const linkText = (link) => (link.kind === "chat" ? COPY.openInChat : COPY.open);
+const linkText = (link) => {
+  if (link.kind === "chat") return COPY.openInChat;
+  if (!link.file) return COPY.open;
+  return [COPY.openFile(link.file), rowText(link.row)]
+    .filter(Boolean)
+    .join(" · ");
+};
 
 function DiffLine({ line }) {
   return (
@@ -122,6 +128,7 @@ export default function ChangeRow({
   onDecide,
   onOpen,
 }) {
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [expanded, setExpanded] = useState(false);
   const lines = diffLines(change);
   const source = change.sources?.[0];
@@ -149,13 +156,16 @@ export default function ChangeRow({
           sx={{ flexShrink: 0, ml: -0.5 }}
         >
           <Iconify
-            icon={
-              expanded
-                ? "solar:alt-arrow-down-linear"
-                : "solar:alt-arrow-right-linear"
-            }
+            icon="solar:alt-arrow-right-linear"
             width={14}
-            sx={{ color: "text.tertiary" }}
+            sx={{
+              color: "text.tertiary",
+              transition: (theme) => theme.transitions.create("transform"),
+              transform: expanded ? "rotate(90deg)" : "none",
+              "@media (prefers-reduced-motion: reduce)": {
+                transition: "none",
+              },
+            }}
           />
         </IconButton>
         <Box flex={1} minWidth={0}>
@@ -183,40 +193,26 @@ export default function ChangeRow({
             </Typography>
           </OverflowTooltip>
         </Box>
-        {link.kind === "file" ? (
-          // An icon, so the title keeps the room.
-          <CustomTooltip show size="small" arrow title={COPY.viewIn(link.file)}>
-            <IconButton
-              size="small"
-              aria-label={COPY.viewIn(link.file)}
-              onClick={() => onOpen(link)}
-              sx={{ flexShrink: 0, color: "text.secondary" }}
+        <Button
+          size="small"
+          color="inherit"
+          onClick={() => onOpen(link)}
+          sx={{
+            flexShrink: 0,
+            maxWidth: LINK_MAX_WIDTH,
+            color: "text.secondary",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <OverflowTooltip title={linkText(link)}>
+            <Box
+              component="span"
+              sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
             >
-              <Iconify icon="solar:eye-linear" width={16} />
-            </IconButton>
-          </CustomTooltip>
-        ) : (
-          <Button
-            size="small"
-            color="inherit"
-            onClick={() => onOpen(link)}
-            sx={{
-              flexShrink: 0,
-              maxWidth: LINK_MAX_WIDTH,
-              color: "text.secondary",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <OverflowTooltip title={linkText(link)}>
-              <Box
-                component="span"
-                sx={{ overflow: "hidden", textOverflow: "ellipsis" }}
-              >
-                {linkText(link)}
-              </Box>
-            </OverflowTooltip>
-          </Button>
-        )}
+              {linkText(link)}
+            </Box>
+          </OverflowTooltip>
+        </Button>
         {canEdit && (
           <ChangeDecision
             decision={change.decision}
@@ -226,13 +222,15 @@ export default function ChangeRow({
             restoreReason={
               heldFromRestore ? COPY.restoreBlocked(heldFromRestore.by) : null
             }
-            // Added from a file's proposals, so it arrives accepted: Undo.
-            undoText={link.kind === "file" ? COPY.undo : COPY.change}
             onDecide={onDecide}
           />
         )}
       </Stack>
-      <Collapse in={expanded} unmountOnExit>
+      <Collapse
+        in={expanded}
+        timeout={reduceMotion ? 0 : undefined}
+        unmountOnExit
+      >
         <Stack spacing={0.25} sx={{ px: 1.5, pb: 1.25, pl: 5.5 }}>
           {lines.slice(0, DIFF_LINES_SHOWN).map((line, index) => (
             // eslint-disable-next-line react/no-array-index-key

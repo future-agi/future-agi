@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourcesSection from "../SourcesSection";
-import DraftBar, { WorkspaceDraftBar } from "../../drafts/DraftBar";
+import WorkspaceDraftBar from "../../drafts/WorkspaceDraftBar";
 import { validateContractedResponse } from "src/api/contracts/openapi-contract";
 
 const api = vi.hoisted(() => ({
@@ -49,13 +49,10 @@ function mount(state, withDraft = false, inline = false) {
           })
         }
       >
-        {inline && (
+        {(inline || withDraft) && (
           <WorkspaceDraftBar
             env={{ id: "env-1", versioning: { enabled: true } }}
           />
-        )}
-        {withDraft && (
-          <DraftBar env={{ id: "env-1", versioning: { enabled: true } }} />
         )}
         <SourcesSection env={{ id: "env-1" }} />
       </QueryClientProvider>
@@ -151,11 +148,31 @@ beforeEach(() => {
   api.upload.mockReset();
   api.post.mockReset();
   api.get.mockReset().mockImplementation(async (path) => ({
-    data: path.endsWith("/capabilities/")
-      ? currentBasis
-      : path === reviewPath
-        ? serverReview
-        : { draft: Boolean(sources.length), sources },
+    data: path.endsWith("/drafts/review/")
+      ? {
+          drafts: { environment: { id: "draft-1", revision: 1 } },
+          changes: [
+            {
+              id: "file:policy",
+              kind: "file",
+              key: "policy.pdf",
+              piece: "environment",
+              action: "added",
+              summary: "Add policy.pdf",
+              decision: "accepted",
+              sources: [],
+              fields: [],
+              patch: [],
+              depends_on: [],
+              revalidate: [],
+            },
+          ],
+        }
+      : path.endsWith("/capabilities/")
+        ? currentBasis
+        : path === reviewPath
+          ? serverReview
+          : { draft: Boolean(sources.length), sources },
   }));
 });
 
@@ -608,8 +625,8 @@ describe("SourcesSection", () => {
       await screen.findByRole("button", { name: "Review and save" }),
     );
     expect(
-      await screen.findByRole("button", { name: "Save", exact: true }),
-    ).toBeDisabled();
+      await screen.findByRole("button", { name: /^Save version\./ }),
+    ).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText("Sources added")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
     fireEvent.click(
@@ -687,10 +704,13 @@ describe("SourcesSection", () => {
     expect(
       await screen.findByText("Scenario generation is queued."),
     ).toBeInTheDocument();
-    const save = screen
-      .getByTestId("draft-bar")
-      .querySelector("button[aria-describedby]");
-    expect(save).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review and save" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: /^Save version\./ }),
+    ).toHaveAttribute("aria-disabled", "true");
 
     generation = {
       ...generation,
@@ -705,14 +725,22 @@ describe("SourcesSection", () => {
       ],
     };
     expect(
-      await screen.findByText(
+      await within(screen.getByRole("dialog", { name: /review changes/i })).findByText(
         "Refund within the approved 15-day window",
         {},
         { timeout: 3000 },
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("policy.pdf · Page 2")).toBeInTheDocument();
-    await waitFor(() => expect(save).toBeEnabled());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Save version", exact: true }),
+      ).not.toHaveAttribute("aria-disabled"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review sources" }),
+    );
+    expect(await screen.findByText("policy.pdf · Page 2")).toBeInTheDocument();
     expect(api.post).not.toHaveBeenCalled();
   });
 });

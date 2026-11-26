@@ -7,6 +7,7 @@ import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { useDebounce } from "src/hooks/use-debounce";
 import {
   designDraftsOf,
+  designReviewOf,
   designVersionsOf,
   isDesignEnvId,
   saveDesignDrafts,
@@ -83,6 +84,18 @@ const saveDraftsPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/drafts/save/", {
     id: envId,
   });
+const draftReviewPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/drafts/review/", {
+    id: envId,
+  });
+const reviewDecisionsPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/drafts/review/decisions/", {
+    id: envId,
+  });
+const validateDraftsPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/drafts/validate/", {
+    id: envId,
+  });
 const discardDraftPath = (envId, piece) =>
   apiPath("/simulate/api/harness-environments/{id}/drafts/{piece}/", {
     id: envId,
@@ -107,6 +120,11 @@ const acceptUnresolvedPath = (envId) =>
   });
 const environmentFilesPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/files/", { id: envId });
+
+const fileRolePath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/files/role/", {
+    id: envId,
+  });
 
 const actorValidationPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/actor-validation/", {
@@ -202,15 +220,72 @@ export const getDrafts = async (envId) =>
 
 // Each draft carries the default it started from and the revision the user
 // saw; a newer edit or default refuses the save (409).
-export const saveDrafts = async (envId, { drafts, idempotencyKey }) =>
+// A plain Save; reviewed drafts carry the review digest the person saw and the new version's name.
+export const saveDrafts = async (
+  envId,
+  { drafts, idempotencyKey, reviewDigest, name },
+) =>
   isDesignEnvId(envId)
-    ? saveDesignDrafts(envId)
+    ? saveDesignDrafts(envId, name)
     : (
         await axios.post(saveDraftsPath(envId), {
           drafts,
           idempotency_key: idempotencyKey,
+          ...(reviewDigest ? { expected_review_digest: reviewDigest } : {}),
+          ...(name ? { name } : {}),
         })
       ).data;
+
+export const getDraftReview = async (envId) =>
+  isDesignEnvId(envId)
+    ? designReviewOf(envId)
+    : (await axios.get(draftReviewPath(envId))).data;
+
+// Decide changes in the review: [{ id | kind | remaining, decision: "accepted" | "rejected" }], sent with the
+// revisions the person saw. Answers the whole review again, with a new digest.
+export const decideReviewChanges = async (
+  envId,
+  { expectedRevisions, decisions },
+) =>
+  (
+    await axios.post(reviewDecisionsPath(envId), {
+      expected_revisions: expectedRevisions,
+      decisions,
+    })
+  ).data;
+
+// Build candidate versions from the reviewed drafts and start validating them.
+export const validateDrafts = async (
+  envId,
+  { expectedRevisions, expectedReviewDigest },
+) =>
+  (
+    await axios.post(validateDraftsPath(envId), {
+      expected_revisions: expectedRevisions,
+      ...(expectedReviewDigest
+        ? { expected_review_digest: expectedReviewDigest }
+        : {}),
+    })
+  ).data;
+
+// Save the versions Validate built, once their validation is ready.
+export const saveCandidates = async (
+  envId,
+  { candidates, expectedReviewDigest, name, idempotencyKey },
+) =>
+  (
+    await axios.post(saveDraftsPath(envId), {
+      candidates: {
+        environment_version_id: candidates.environmentVersionId,
+        suite_version_id: candidates.suiteVersionId,
+      },
+      ...(expectedReviewDigest
+        ? { expected_review_digest: expectedReviewDigest }
+        : {}),
+      ...(name ? { name } : {}),
+      idempotency_key: idempotencyKey,
+    })
+  ).data;
 
 export const discardDraft = async (envId, piece) =>
   (await axios.delete(discardDraftPath(envId, piece))).data;
@@ -295,6 +370,16 @@ export const uploadEnvironmentFile = async (
   return (await axios.post(environmentFilesPath(envId), form)).data;
 };
 
+// Give one attached file its role (policy, seed_records or evaluator_only); resolves to the cast.
+export const setFileRole = async (envId, { path, role, revision }) =>
+  (
+    await axios.post(fileRolePath(envId), {
+      path,
+      role,
+      ...(revision != null ? { expected_revision: revision } : {}),
+    })
+  ).data;
+
 export const environmentVersionsKey = (envId) => [
   "harness-env-versions",
   envId,
@@ -343,7 +428,7 @@ const retryUnlessNotFound = (failureCount, error) =>
   errorStatus(error) !== 404 && failureCount < 2;
 // A refused plan answers the same way every time; only a server or network
 // failure is worth asking again.
-const retryServerFailures = (failureCount, error) => {
+export const retryServerFailures = (failureCount, error) => {
   const status = errorStatus(error);
   return (status === undefined || status >= 500) && failureCount < 2;
 };
@@ -351,6 +436,7 @@ const retryServerFailures = (failureCount, error) => {
 export const versionFromApi = (item = {}) => ({
   id: item.id,
   label: item.label || null,
+  name: item.name || null,
   status: item.status || "active",
   isDefault: Boolean(item.is_default),
   createdAt: item.created_at || null,
@@ -377,6 +463,7 @@ export const versionFromApi = (item = {}) => ({
   requestedHere: Boolean(item.requested_here),
   pickable: Boolean(item.pickable),
   discardable: Boolean(item.discardable),
+  savedWithoutCheck: Boolean(item.saved_without_check),
 });
 
 // A check still pending after this long is stuck: offered again, not polled.
@@ -418,6 +505,22 @@ const awaitsCheck = (data) =>
   Array.isArray(data?.agent) &&
   data.agent.some((item) => awaitedCheck(versionFromApi(item)));
 
+// A hand move of the default agent waits on its pair check (about 15 minutes), so the list is asked again slower.
+const MOVE_POLL_MS = 15000;
+
+// The newest agent version whose move to the default waits on its check with this environment, or null.
+export const movingAgent = (agentVersions) =>
+  (agentVersions || []).find(
+    (version) =>
+      version.activationOutcome === "validating" &&
+      !version.isDefault &&
+      version.status === "active",
+  ) ?? null;
+
+const awaitsMove = (data) =>
+  Array.isArray(data?.agent) &&
+  Boolean(movingAgent(data.agent.map(versionFromApi)));
+
 // Only an active version that is not already the default can become it; an
 // agent version only when the server says it can be picked here.
 export const canMakeDefault = (piece, version) =>
@@ -451,8 +554,10 @@ export function useEnvironmentVersions(envId, { enabled = true } = {}) {
     select: toVersions,
     enabled: Boolean(envId) && enabled,
     retry: retryUnlessNotFound,
-    refetchInterval: (query) =>
-      awaitsCheck(query.state.data) ? PREFLIGHT_POLL_MS : false,
+    refetchInterval: (query) => {
+      if (awaitsCheck(query.state.data)) return PREFLIGHT_POLL_MS;
+      return awaitsMove(query.state.data) ? MOVE_POLL_MS : false;
+    },
     meta: { errorHandled: true },
   });
 }
@@ -522,8 +627,10 @@ export const refreshDrafts = (queryClient, envId) => {
 };
 
 // Make a version the default. The answer is every version, so it seeds the list;
-// what follows the default is asked again too. A conflict means the default
-// moved elsewhere: refresh so the user picks again from what is current.
+// what follows the default is asked again too. An agent move that waits for its
+// pairing to be checked answers 202 with the versions under `versions` and the
+// check under `validation`. A conflict means the default moved elsewhere:
+// refresh so the user picks again from what is current.
 export function useMoveDefault(envId) {
   const queryClient = useQueryClient();
   const refresh = () => refreshFollowers(queryClient, envId);
@@ -532,7 +639,10 @@ export function useMoveDefault(envId) {
     mutationFn: ({ piece, versionId, expectedDefaultId }) =>
       moveDefault(envId, piece, versionId, expectedDefaultId),
     onSuccess: (data) => {
-      if (data) queryClient.setQueryData(environmentVersionsKey(envId), data);
+      const versions = data?.validation ? data.versions : data;
+      if (versions) {
+        queryClient.setQueryData(environmentVersionsKey(envId), versions);
+      }
       refresh();
     },
     onError: (error) => {
@@ -617,7 +727,17 @@ export function useCreateAgentVersion(envId) {
 export function useRefreshWhenChecked(envId, agentVersions) {
   const queryClient = useQueryClient();
   const pending = (agentVersions || []).some(awaitedCheck);
+  // A move that waited on its check changes the default pair, so everything that follows it is read again.
+  const moving = Boolean(movingAgent(agentVersions));
+  const wasMoving = useRef(moving);
   const wasPending = useRef(pending);
+  useEffect(() => {
+    if (wasMoving.current && !moving) {
+      refreshFollowers(queryClient, envId);
+      queryClient.invalidateQueries({ queryKey: nudgesKey(envId) });
+    }
+    wasMoving.current = moving;
+  }, [moving, envId, queryClient]);
   useEffect(() => {
     if (wasPending.current && !pending) {
       queryClient.invalidateQueries({
@@ -771,6 +891,23 @@ export const toDrafts = (data = {}) => {
     pieces,
     any: pieces.length > 0,
     stale: pieces.some((piece) => drafts[piece].stale),
+    // Whether a Save must go through Validate; false from a server that doesn't send it, whose refusal then asks.
+    validationRequired: data?.validation_required === true,
+    // Where the validation of the reviewed changes stands, and what it built.
+    validation: data?.validation
+      ? {
+          state: data.validation.state,
+          affectedScenarios: data.validation.affected_scenarios ?? [],
+          // Why it failed, when the server says.
+          reason: data.validation.error?.message,
+        }
+      : null,
+    candidates: data?.candidates
+      ? {
+          environmentVersionId: data.candidates.environment_version_id,
+          suiteVersionId: data.candidates.suite_version_id,
+        }
+      : null,
   };
 };
 
@@ -783,7 +920,100 @@ export function useDrafts(envId, { enabled = true } = {}) {
     select: toDrafts,
     enabled: Boolean(envId) && enabled,
     retry: retryUnlessNotFound,
+    // Only a running validation moves on its own.
+    refetchInterval: (query) =>
+      query.state.data?.validation?.state === "validating" ? 5000 : false,
     meta: { errorHandled: true },
+  });
+}
+
+// Under the drafts key, so every refresh of the drafts reads the review again.
+export const draftReviewKey = (envId) => [...draftsKey(envId), "review"];
+
+// What the open drafts change and the decisions taken on them.
+export function useDraftReview(envId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: draftReviewKey(envId),
+    queryFn: () => getDraftReview(envId),
+    staleTime: isDesignEnvId(envId) ? Infinity : 0,
+    enabled: Boolean(envId) && enabled,
+    retry: retryUnlessNotFound,
+    meta: { errorHandled: true },
+  });
+}
+
+// Accept or reject changes, one by `id`, a whole `kind`, or every undecided one with `remaining`.
+// One at a time, so a slower answer can't overwrite a newer decision; the answer is the whole review.
+export function useDecideChanges(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    scope: { id: `draft-review-${envId}` },
+    meta: { errorHandled: true },
+    mutationFn: async (vars) => {
+      if (!isDesignEnvId(envId)) return decideReviewChanges(envId, vars);
+      const current =
+        queryClient.getQueryData(draftReviewKey(envId)) ??
+        designReviewOf(envId);
+      const { withSampleDecisions } = await import("./_fixtures/draftReview");
+      const updated = withSampleDecisions(current, vars.decisions);
+      return {
+        ...current,
+        changes: updated.changes,
+        counts: updated.counts,
+        can_save: updated.can_save,
+      };
+    },
+    onSuccess: (review) => {
+      queryClient.setQueryData(draftReviewKey(envId), review);
+      // A decision outdates any validation of the earlier set.
+      if (!isDesignEnvId(envId))
+        queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+    },
+  });
+}
+
+// Validate the reviewed drafts; the drafts read again carry its state.
+export function useValidateDrafts(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (vars) => validateDrafts(envId, vars),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+      queryClient.invalidateQueries({ queryKey: draftReviewKey(envId) });
+    },
+  });
+}
+
+// Save the validated candidates. A click keeps its key while the same
+// candidates are sent again after a failure the server may not have seen.
+export function useSaveCandidates(envId) {
+  const queryClient = useQueryClient();
+  const pending = useRef(null);
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (vars) => {
+      const signature = JSON.stringify(vars.candidates);
+      if (pending.current?.signature !== signature) {
+        pending.current = { signature, key: harnessIdempotencyKey() };
+      }
+      return saveCandidates(envId, {
+        ...vars,
+        idempotencyKey: pending.current.key,
+      });
+    },
+    onSuccess: (data) => {
+      pending.current = null;
+      if (data?.versions) {
+        queryClient.setQueryData(environmentVersionsKey(envId), data.versions);
+      }
+      refreshFollowers(queryClient, envId);
+    },
+    onError: (error) => {
+      const status = errorStatus(error);
+      if (status >= 400 && status < 500) pending.current = null;
+      queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+    },
   });
 }
 
@@ -802,19 +1032,22 @@ export function useSaveDrafts(envId) {
   const pending = useRef(null);
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: (drafts) => {
+    mutationFn: ({ drafts, reviewDigest, name }) => {
       const body = drafts.map(({ piece, parentId, revision }) => ({
         piece,
         expected_parent_id: parentId ?? null,
         ...(revision != null ? { expected_revision: revision } : {}),
       }));
-      const signature = JSON.stringify(body);
+      // A changed name or digest is a different save, so it gets its own key.
+      const signature = JSON.stringify([body, reviewDigest, name]);
       if (pending.current?.signature !== signature) {
         pending.current = { signature, key: harnessIdempotencyKey() };
       }
       return saveDrafts(envId, {
         drafts: body,
         idempotencyKey: pending.current.key,
+        reviewDigest,
+        name,
       });
     },
     onSuccess: (data) => {
@@ -922,6 +1155,7 @@ export const useSetActorLimits = (envId) =>
   useCastChange(envId, setActorLimits);
 export const useUploadEnvironmentFile = (envId) =>
   useCastChange(envId, uploadEnvironmentFile);
+export const useSetFileRole = (envId) => useCastChange(envId, setFileRole);
 export const useAcceptUnresolved = (envId) =>
   useCastChange(envId, acceptUnresolved);
 

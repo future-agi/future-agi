@@ -1,188 +1,224 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
-import {
-  Box, Stack, Typography, Button, Checkbox, InputBase, Divider,
-} from "@mui/material";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
 import SideDrawer from "../../components/SideDrawer";
-import EmptyState from "../../components/EmptyState";
-import { ADD_COPY, addCandidates } from "./addScenarios.constants";
-import { ENV_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
+import ImportTranscriptDialog from "../../evidence/ImportTranscriptDialog";
+import { focusRing } from "../../buildDrawer/drawerStyles";
+import { SCENARIOS_COPY } from "./scenarios.constants";
 
-const checkboxSx = { p: 0 };
+// The sources that work today. The design also has Generate, From chat, Write
+// one, From a script, From an Error Feed issue and From failing cases; each
+// joins this list once it has a working path.
+const SOURCES = [
+  {
+    id: "observe",
+    label: "From production",
+    blurb: "Traces or sessions from Observe",
+    icon: "solar:server-linear",
+    to: paths.dashboard.observe,
+  },
+  {
+    id: "dataset",
+    label: "From a dataset",
+    blurb: "Each row becomes a draft",
+    icon: "solar:database-linear",
+    to: paths.dashboard.develop,
+  },
+  {
+    id: "files",
+    label: "Upload transcript or file",
+    blurb: "Transcripts, CSV or JSON",
+    icon: "solar:upload-minimalistic-linear",
+  },
+];
 
 // Add scenarios.
 //
-// Scenarios already exist by the time anyone reaches this drawer — they are
-// derived when the environment is built. So this is not how you get scenarios,
-// it is how you add ones the derivation could not know to write. The single
-// route generates from the agent (mock, no backend): pick from the pool of
-// probes not already on the environment and they append through `onAdd`.
-export default function AddScenariosDrawer({ open, onClose, env, selected, onAdd }) {
-  const candidates = useMemo(() => addCandidates(env, selected), [env, selected]);
-  const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState(() => new Set());
+// Scenarios already exist by the time anyone reaches this panel: they are
+// derived from the agent when the environment is built. So these sources add
+// the ones the derivation could not know to write. Observe and dataset
+// evidence is picked where it lives, and its import opens back on the
+// Scenarios tab for review; an uploaded transcript's review opens at once.
+export default function AddScenariosDrawer({
+  open,
+  onClose,
+  envId,
+  onImported,
+}) {
+  const navigate = useNavigate();
+  const [uploading, setUploading] = useState(false);
 
-  const q = query.trim().toLowerCase();
-  const shown = candidates.filter((r) => {
-    if (!q) return true;
-    const hay = `${r.name || ""} ${r.summary || ""} ${r.useCase || ""} ${r.persona?.name || ""}`.toLowerCase();
-    return hay.includes(q);
-  });
-  const shownIds = shown.map((r) => r.id);
-  const allShownPicked = shownIds.length > 0 && shownIds.every((id) => picked.has(id));
-  const someShownPicked = shownIds.some((id) => picked.has(id)) && !allShownPicked;
-
-  const close = () => { setPicked(new Set()); setQuery(""); onClose(); };
-  const toggle = (id) => setPicked((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-  const toggleAll = () => setPicked((prev) => {
-    if (allShownPicked) {
-      const next = new Set(prev);
-      shownIds.forEach((id) => next.delete(id));
-      return next;
-    }
-    return new Set([...prev, ...shownIds]);
-  });
-
-  const confirm = () => {
-    const rows = candidates.filter((r) => picked.has(r.id));
-    if (rows.length) onAdd(rows);
-    close();
+  // The panel closes first, so the review that follows is the only drawer open.
+  const pick = (source) => {
+    onClose();
+    if (source.to) navigate(source.to);
+    else setUploading(true);
   };
 
   return (
-    <SideDrawer open={open} onClose={close} width={720}>
-      <Stack sx={{ height: "100%" }}>
-        <Box sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-          <Typography sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}>
-            {ADD_COPY.title}
-          </Typography>
-          <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
-            {ADD_COPY.subtitle}
-          </Typography>
-        </Box>
-
-        {candidates.length === 0 ? (
-          <Box sx={{ flex: 1, display: "grid", placeItems: "center", p: 4 }}>
-            <EmptyState
-              icon="solar:check-circle-linear"
-              title={ADD_COPY.emptyTitle}
-              body={ADD_COPY.emptyBody}
-            />
-          </Box>
-        ) : (
-          <>
-            <Stack
-              direction="row" alignItems="center" spacing={1}
-              sx={{ px: 3, py: 1, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
-            >
-              <Iconify icon="solar:magnifer-linear" width={16} sx={{ color: "text.subtitle" }} />
-              <InputBase
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={ADD_COPY.searchPlaceholder}
-                sx={{ typography: "m3", flex: 1 }}
-              />
-            </Stack>
-
-            <Stack
-              direction="row" alignItems="center" spacing={1.5}
-              sx={{ px: 3, py: 1, bgcolor: "background.neutral", borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
-            >
-              <Checkbox
-                size="small"
-                checked={allShownPicked}
-                indeterminate={someShownPicked}
-                onChange={toggleAll}
-                inputProps={{ "aria-label": ADD_COPY.selectAll }}
-                sx={checkboxSx}
-              />
-              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: "fontWeightMedium" }}>
-                {ADD_COPY.routeLabel} · {shown.length}
-              </Typography>
-            </Stack>
-
-            <Box sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-              <Stack divider={<Divider />}>
-                {shown.map((r) => (
-                  <CandidateRow key={r.id} row={r} checked={picked.has(r.id)} onToggle={() => toggle(r.id)} />
-                ))}
-              </Stack>
-            </Box>
-          </>
-        )}
-
-        <Stack
-          direction="row" justifyContent="flex-end" spacing={1}
-          sx={{ px: 3, py: 1.5, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
-        >
-          <Button onClick={close} size="small" variant="outlined" color="inherit">
-            {ADD_COPY.cancel}
-          </Button>
-          <Button
-            variant="contained" color="primary" size="small"
-            disabled={picked.size === 0}
-            onClick={confirm}
+    <>
+      <SideDrawer open={open} onClose={onClose} width={960}>
+        <Stack sx={{ height: "100%" }}>
+          <Box
+            sx={{
+              px: 2.5,
+              py: 2,
+              // Room for the drawer's own close button.
+              pr: 6,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
           >
-            {ADD_COPY.confirm(picked.size)}
-          </Button>
+            <Typography
+              sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}
+            >
+              {SCENARIOS_COPY.addLabel}
+            </Typography>
+            <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+              This environment already has its scenarios. Add the ones it
+              couldn&apos;t work out from your agent on its own.
+            </Typography>
+          </Box>
+
+          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2.5 }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                fontWeight: "fontWeightMedium",
+                mb: 0.75,
+              }}
+            >
+              From what already happened
+            </Typography>
+            <Box
+              sx={{
+                display: "grid",
+                gap: 1,
+                // The design's five tiles to a row, so a tile keeps its size.
+                gridTemplateColumns: {
+                  xs: "repeat(2, minmax(0, 1fr))",
+                  md: "repeat(5, minmax(0, 1fr))",
+                },
+              }}
+            >
+              {SOURCES.map((source) => (
+                <SourceTile
+                  key={source.id}
+                  source={source}
+                  onClick={() => pick(source)}
+                />
+              ))}
+            </Box>
+          </Box>
+
+          <Stack
+            direction="row"
+            justifyContent="flex-end"
+            sx={{
+              px: 2.5,
+              py: 1.75,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
+          >
+            <Button
+              size="small"
+              onClick={onClose}
+              sx={{ color: "text.secondary" }}
+            >
+              Cancel
+            </Button>
+          </Stack>
         </Stack>
-      </Stack>
-    </SideDrawer>
+      </SideDrawer>
+      {uploading ? (
+        <ImportTranscriptDialog
+          open
+          onClose={() => setUploading(false)}
+          envId={envId}
+          onImported={onImported}
+        />
+      ) : null}
+    </>
   );
 }
 
 AddScenariosDrawer.propTypes = {
   open: PropTypes.bool,
-  onClose: PropTypes.func,
-  env: ENV_SHAPE,
-  selected: PropTypes.arrayOf(SCENARIO_SHAPE),
-  onAdd: PropTypes.func,
+  onClose: PropTypes.func.isRequired,
+  envId: PropTypes.string.isRequired,
+  // Opens the review of a transcript import: (importId).
+  onImported: PropTypes.func.isRequired,
 };
 
-function CandidateRow({ row, checked, onToggle }) {
-  const p = row.persona;
+// One source: icon, name and one line.
+function SourceTile({ source, onClick }) {
   return (
-    <Stack
-      direction="row" alignItems="flex-start" spacing={1.5}
-      onClick={onToggle}
+    <ButtonBase
+      onClick={onClick}
       sx={{
-        px: 3, py: 1.5, cursor: "pointer",
-        bgcolor: checked ? "action.selected" : "transparent",
-        "&:hover": { bgcolor: "action.hover" },
+        display: "flex",
+        width: 1,
+        minWidth: 0,
+        alignItems: "flex-start",
+        justifyContent: "flex-start",
+        gap: 1,
+        px: 1.25,
+        py: 1,
+        textAlign: "left",
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+        transition: "border-color .16s ease",
+        "&:hover": { borderColor: "text.tertiary" },
+        "&.Mui-focusVisible": focusRing,
       }}
     >
-      <Checkbox
-        size="small"
-        checked={checked}
-        onChange={onToggle}
-        onClick={(e) => e.stopPropagation()}
-        inputProps={{ "aria-label": row.name }}
-        sx={{ ...checkboxSx, mt: 0.25 }}
+      <Iconify
+        icon={source.icon}
+        width={16}
+        sx={{ color: "text.secondary", mt: "2px", flexShrink: 0 }}
       />
-      <Box flex={1} minWidth={0}>
-        <Typography noWrap sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
-          {row.name}
+      <Box minWidth={0}>
+        <Typography
+          sx={{
+            typography: "s2",
+            fontWeight: "fontWeightSemiBold",
+            color: "text.primary",
+          }}
+        >
+          {source.label}
         </Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {row.useCase}
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {source.blurb}
         </Typography>
-        {p?.name && (
-          <Typography sx={{ typography: "s3", color: "text.disabled", mt: 0.25 }}>
-            {p.name}
-          </Typography>
-        )}
       </Box>
-    </Stack>
+    </ButtonBase>
   );
 }
-CandidateRow.propTypes = {
-  row: SCENARIO_SHAPE,
-  checked: PropTypes.bool,
-  onToggle: PropTypes.func,
+
+SourceTile.propTypes = {
+  source: PropTypes.shape({
+    label: PropTypes.string.isRequired,
+    blurb: PropTypes.string.isRequired,
+    icon: PropTypes.string.isRequired,
+  }).isRequired,
+  onClick: PropTypes.func.isRequired,
 };

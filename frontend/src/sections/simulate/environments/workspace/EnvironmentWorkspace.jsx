@@ -11,7 +11,7 @@ import {
   canRunHeader,
   stageOutputsToWorld,
   harnessEnvironmentQuery,
-  harnessJobQuery,
+  useHarnessJob,
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
@@ -21,7 +21,6 @@ import {
   refreshAfterRunStart,
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
-import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { environmentVersionsKey } from "src/api/simulate-environments/versions";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
@@ -40,13 +39,16 @@ import AdaptationProgress from "src/pages/dashboard/harness/AdaptationProgress";
 import DesignProgress from "src/pages/dashboard/harness/DesignProgress";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
+import AgentMoveBanner from "./AgentMoveBanner";
 import VersionBar from "./VersionBar";
-import { WorkspaceDraftBar } from "./drafts/DraftBar";
+import WorkspaceDraftBar from "./drafts/WorkspaceDraftBar";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
 import { inlineRunError } from "./run/runErrors";
-import useWorkspaceTab from "./helpers/useWorkspaceTab";
+import useWorkspaceTab, {
+  AGENT_VERSIONS_PARAM,
+} from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
@@ -137,7 +139,7 @@ export default function EnvironmentWorkspace() {
     handleDismiss: dismissCreditBanner,
     clearError: clearCreditError,
   } = useCreditExhaustion({ feature: "hosted_harness" });
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
+  const jobQuery = useHarnessJob(envId, { enabled: backed });
   const metadata = jobQuery.data?.job?.metadata || {};
   const reviewId = metadata.source_review?.id || metadata.source_review_id;
   const reviewStage = [
@@ -157,13 +159,9 @@ export default function EnvironmentWorkspace() {
     // `resolved` is every version the dialog resolved, defaults included; only
     // the changed `picks` are sent.
     mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
-      // Run-all reads the keys from the server list: the bootstrap
-      // `envState.scenarios` is seeded once and keeps a key an amend dropped.
-      const scenarioIds =
-        ids === undefined ? await listAllScenarioKeys(env.id) : ids;
       const selection = JSON.stringify([
         env.id,
-        scenarioIds,
+        ids ?? null,
         trials || 1,
         resolved?.agent ?? picks?.agent ?? null,
         resolved?.environment ?? picks?.environment ?? null,
@@ -178,7 +176,7 @@ export default function EnvironmentWorkspace() {
       }
       return runHarnessEnvironment(
         env.id,
-        scenarioIds,
+        ids,
         trials || 1,
         pendingSubmission.current.key,
         picks,
@@ -236,6 +234,10 @@ export default function EnvironmentWorkspace() {
       initialPicks={runDialog.initialPicks}
       initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
+      onOpenAgentVersions={() => {
+        setRunDialog(null);
+        setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" });
+      }}
       onSubmit={(picks, ids, resolved, seed) =>
         runMutation.mutate({
           ids,
@@ -397,7 +399,8 @@ export default function EnvironmentWorkspace() {
   // goes Live, at which point buildStatus flips and the branch below takes over.
   if (building || buildFailed) {
     const question = metadata.design && designQuestion(designJob?.conversation);
-    const awaiting = jobQuery.data?.status?.stage === "awaiting_source_review" || question;
+    const awaiting =
+      jobQuery.data?.status?.stage === "awaiting_source_review" || question;
     return (
       <Box
         sx={{
@@ -408,7 +411,15 @@ export default function EnvironmentWorkspace() {
         }}
       >
         <WorkspaceHeader
-          env={awaiting ? { ...env, buildingLabel: "Awaiting approval", buildingTooltip: "Review and approve to continue." } : env}
+          env={
+            awaiting
+              ? {
+                  ...env,
+                  buildingLabel: "Awaiting approval",
+                  buildingTooltip: "Review and approve to continue.",
+                }
+              : env
+          }
           envState={envState}
           canRun={false}
           runBlockedReason={
@@ -420,20 +431,34 @@ export default function EnvironmentWorkspace() {
         />
         {creditBanner}
         {refusalLine}
-        {(metadata.design || (reviewId && reviewStage)) ? (
-          <DesignWorkspace chat={chat} canEdit={canEdit} question={question}
-            progress={designPanel} requirements={metadata.design?.requirements} modality={metadata.design?.modality} hasSources={Boolean(reviewId)}
-            review={reviewId && reviewStage ? (
-              <SourceReviewPanel
-                reviewId={reviewId}
-                ownerId={envId}
-                canEdit={canEdit}
-                defaultPersonalDataMode={metadata.design?.personal_data_mode}
-                acceptLabel={metadata.design ? "Approve sources and design environment" : "Approve sources and start build"}
-                onAccepted={() => jobQuery.refetch()}
-                onDismiss={() => navigate(paths.dashboard.simulate.environments.root)}
-              />
-            ) : null}
+        {metadata.design || (reviewId && reviewStage) ? (
+          <DesignWorkspace
+            chat={chat}
+            canEdit={canEdit}
+            question={question}
+            progress={designPanel}
+            requirements={metadata.design?.requirements}
+            modality={metadata.design?.modality}
+            hasSources={Boolean(reviewId)}
+            review={
+              reviewId && reviewStage ? (
+                <SourceReviewPanel
+                  reviewId={reviewId}
+                  ownerId={envId}
+                  canEdit={canEdit}
+                  defaultPersonalDataMode={metadata.design?.personal_data_mode}
+                  acceptLabel={
+                    metadata.design
+                      ? "Approve sources and design environment"
+                      : "Approve sources and start build"
+                  }
+                  onAccepted={() => jobQuery.refetch()}
+                  onDismiss={() =>
+                    navigate(paths.dashboard.simulate.environments.root)
+                  }
+                />
+              ) : null
+            }
           />
         ) : (
           <>
@@ -676,17 +701,27 @@ export default function EnvironmentWorkspace() {
 
       <SystemBanners env={env} envState={envState} patch={patch} />
       {!detailLoading && !detailFailed && (
-        <VersionBar
-          env={env}
-          envState={envState}
-          action={
-            <WorkspaceDraftBar
-              env={env}
-              busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
-              rebuilding={chat.rebuildHold}
-            />
-          }
-        />
+        <>
+          <VersionBar
+            env={env}
+            envState={envState}
+            action={
+              <WorkspaceDraftBar
+                env={env}
+                busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
+                canEdit={canEdit && !locked}
+                onOpenTab={setTab}
+                rebuilding={chat.rebuildHold}
+              />
+            }
+          />
+          <AgentMoveBanner
+            env={env}
+            onOpenAgentVersions={() =>
+              setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" })
+            }
+          />
+        </>
       )}
 
       {/* A template-seeded env is read-only until forked — the banner states the

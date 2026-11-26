@@ -81,6 +81,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.alk_sim",
     "simulate.tasks.environment_source_imports",
     "simulate.tasks.hosted_harness_usage",
+    "simulate.tasks.hosted_harness_cancel",
     "simulate.tasks.agent_scans",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",

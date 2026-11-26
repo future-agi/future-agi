@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  comparabilityLine,
   diffLines,
   groupChanges,
   keptChanges,
@@ -187,63 +186,68 @@ describe("reviewCounts", () => {
 });
 
 describe("sources", () => {
-  it("tells a chat change, a file place and a direct edit apart", () => {
+  it("tells a chat change, a file row and a direct edit apart", () => {
     const chat = { origin: "chat", used: [{ kind: "message", id: "m1" }] };
     const file = {
       origin: "manual",
-      used: [{ kind: "source", source_id: "o.csv", locator: "O-104" }],
+      used: [{ kind: "file", id: "f-1", name: "o.csv", row: 7 }],
     };
     expect(sourceLine(chat).kind).toBe("chat");
     expect(sourceLine(file)).toMatchObject({
       kind: "file",
       file: "o.csv",
-      where: "O-104",
+      row: 7,
     });
     expect(sourceLine({ origin: "manual" }).kind).toBe("hand");
     expect(sourceLink(chat)).toMatchObject({ kind: "chat" });
-    expect(sourceLink(file)).toMatchObject({ kind: "file", file: "o.csv" });
+    // The message it answered, as the server names it.
+    expect(
+      sourceLink({ origin: "chat", used: [{ kind: "message", id: "m2" }] }),
+    ).toEqual({ kind: "chat", messageId: "m2" });
+    expect(sourceLink(file)).toEqual({ kind: "file", file: "o.csv", row: 7 });
     expect(sourceLink({ origin: "manual" }).kind).toBe("tab");
+  });
+
+  it("reads a file with no name, and a whole file, without showing its id", () => {
+    const unnamed = {
+      origin: "manual",
+      used: [{ kind: "file", id: "f-1", row: null }],
+    };
+    expect(sourceLine(unnamed)).toMatchObject({
+      kind: "file",
+      file: null,
+      row: null,
+    });
+    expect(sourceLink(unnamed)).toEqual({
+      kind: "file",
+      file: null,
+      row: null,
+    });
+  });
+
+  it("names the file a chat change read and still links to its message", () => {
+    const both = {
+      origin: "chat",
+      used: [
+        { kind: "message", id: "m2" },
+        { kind: "file", id: "f-1", name: "o.csv", row: 7 },
+      ],
+    };
+    expect(sourceLine(both)).toMatchObject({ kind: "file", file: "o.csv" });
+    expect(sourceLink(both)).toEqual({ kind: "chat", messageId: "m2" });
   });
 });
 
 describe("saveLine", () => {
-  const versions = (environment, suite) => ({
-    defaults: {
-      environment: { label: environment },
-      suite: { label: suite },
-    },
-  });
-
-  it("names the next environment version and the recheck count", () => {
-    const line = saveLine(
-      [change({ kind: "rule", revalidate: ["s1", "s2"] })],
-      versions("v3", "v1"),
-    );
-    expect(line).toEqual({
-      kind: "spec",
-      piece: "environment",
-      next: "v4",
-      rechecked: 2,
-    });
-  });
-
-  it("names the scenario version when only scenarios changed", () => {
+  it("names the edit and the recheck count", () => {
     expect(
-      saveLine(
-        [change({ piece: "suite", kind: "scenario" })],
-        versions("v3", "v1"),
-      ),
-    ).toMatchObject({ kind: "scenarios", piece: "suite", next: "v2" });
+      saveLine([change({ kind: "rule", revalidate: ["s1", "s2"] })]),
+    ).toEqual({ kind: "spec", rechecked: 2 });
   });
 
-  it("has no number to promise before a numbered version exists", () => {
-    expect(saveLine([change()], versions(null, null)).next).toBeNull();
-  });
-});
-
-describe("comparabilityLine", () => {
-  it("never reads a negative number of exact comparisons", () => {
-    expect(comparabilityLine(5, 3)).toEqual({ rechecked: 5, exact: 0 });
-    expect(comparabilityLine(2, 3)).toEqual({ rechecked: 2, exact: 1 });
+  it("is a scenario edit when only scenarios changed", () => {
+    expect(saveLine([change({ piece: "suite", kind: "scenario" })]).kind).toBe(
+      "scenarios",
+    );
   });
 });

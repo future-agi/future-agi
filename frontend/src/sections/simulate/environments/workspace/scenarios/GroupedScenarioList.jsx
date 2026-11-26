@@ -5,11 +5,13 @@ import { Box, Stack, Typography, IconButton, Tooltip, Checkbox } from "@mui/mate
 import Iconify from "src/components/iconify";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import ScenarioDetail from "./ScenarioDetail";
-import { UnsavedMark } from "./ScenarioTableCells";
+import { LifecycleMark, UnsavedMark } from "./ScenarioTableCells";
 import {
   SCENARIOS_COPY,
   hasUnsavedChange,
+  isArchived,
   isUnsavedAddition,
+  removeTitle,
   selectableRowIds,
   unsavedCheckboxProps,
 } from "./scenarios.constants";
@@ -32,11 +34,11 @@ const onKeyActivate = (fn) => (e) => {
 // The grouped body: each use-case section as a collapsible block with a sticky
 // header. The per-row edit pencil opens the editor through onEdit; remove works
 // through onRemove.
-export default function GroupedScenarioList({ groups, env, onEdit, onRemove, onHideGroup, selection, locked = false, lockTooltip = LOCK_TOOLTIP, editHint }) {
+export default function GroupedScenarioList({ groups, env, onEdit, onRemove, onHideGroup, selection, locked = false, lockTooltip = LOCK_TOOLTIP, editHint, isValidating }) {
   return (
     <Box>
       {groups.map((g) => (
-        <CollapsibleGroup key={g.id} group={g} env={env} onEdit={onEdit} onRemove={onRemove} onHideGroup={onHideGroup} selection={selection} locked={locked} lockTooltip={lockTooltip} editHint={editHint} />
+        <CollapsibleGroup key={g.id} group={g} env={env} onEdit={onEdit} onRemove={onRemove} onHideGroup={onHideGroup} selection={selection} locked={locked} lockTooltip={lockTooltip} editHint={editHint} isValidating={isValidating} />
       ))}
     </Box>
   );
@@ -53,9 +55,11 @@ GroupedScenarioList.propTypes = {
   locked: PropTypes.bool,
   lockTooltip: PropTypes.string,
   editHint: PropTypes.string,
+  // (row) => whether a running validation is proving it.
+  isValidating: PropTypes.func,
 };
 
-function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection, locked = false, lockTooltip = LOCK_TOOLTIP, editHint }) {
+function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection, locked = false, lockTooltip = LOCK_TOOLTIP, editHint, isValidating }) {
   const [open, setOpen] = useState(true);
 
   // Selection is opt-in and drops out entirely on a locked template, mirroring
@@ -163,7 +167,11 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                       <UnsavedMark row={s} />
                     </Box>
                   )}
-                  <ScenarioDetail row={s} env={env} />
+                  <ScenarioDetail
+                    row={s}
+                    env={env}
+                    mark={<LifecycleMark lifecycle={s.lifecycle} validating={Boolean(isValidating?.(s))} />}
+                  />
                 </Box>
                 <Tooltip arrow title={locked ? lockTooltip : editHint || SCENARIOS_COPY.editLabel}>
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, flexShrink: 0 }}>
@@ -177,15 +185,15 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                     </IconButton>
                   </Box>
                 </Tooltip>
-                <Tooltip arrow title={locked ? lockTooltip : editHint || SCENARIOS_COPY.removeLabel}>
+                <Tooltip arrow title={locked ? lockTooltip : editHint || removeTitle(s)}>
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, mr: 1.5, flexShrink: 0 }}>
                     <IconButton
                       size="small"
-                      disabled={locked || Boolean(editHint)}
+                      disabled={locked || Boolean(editHint) || isArchived(s)}
                       aria-label={SCENARIOS_COPY.removeLabel}
                       onClick={() => onRemove(s.id)}
                     >
-                      <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
+                      <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: isArchived(s) ? "action.disabled" : "text.subtitle" }} />
                     </IconButton>
                   </Box>
                 </Tooltip>
@@ -207,4 +215,6 @@ CollapsibleGroup.propTypes = {
   locked: PropTypes.bool,
   lockTooltip: PropTypes.string,
   editHint: PropTypes.string,
+  // (row) => whether a running validation is proving it.
+  isValidating: PropTypes.func,
 };

@@ -2,16 +2,16 @@ const GROUPS = [
   {
     id: "rules",
     label: "Rules",
-    tab: "world",
+    tab: "contract",
     kinds: ["rule", "contract_field", "sub_goal"],
   },
   {
     id: "state",
     label: "Starting state and records",
-    tab: "world",
+    tab: "contract",
     kinds: ["world_state"],
   },
-  { id: "tools", label: "Tools", tab: "world", kinds: ["tool"] },
+  { id: "tools", label: "Tools", tab: "contract", kinds: ["tool"] },
   { id: "actors", label: "Actors", tab: "contract", kinds: ["actor"] },
   {
     id: "scenarios",
@@ -19,7 +19,7 @@ const GROUPS = [
     tab: "scenarios",
     kinds: ["scenario"],
   },
-  { id: "other", label: "Other", tab: "world", kinds: ["source", "file"] },
+  { id: "other", label: "Other", tab: "contract", kinds: ["source", "file"] },
 ];
 
 const FIELD_LABEL = {
@@ -32,15 +32,6 @@ const FIELD_LABEL = {
   scenario: "Scenarios",
   source: "Sources",
   file: "Files",
-};
-
-// Parts of the world a file changes, named as the screens name them.
-const OWN_FIELDS = {
-  "/tables": "Tables",
-  "/world_data": "World data",
-  "/personal_data": "Personal data",
-  "/mapping": "Mapping",
-  "/used_as": "Used as",
 };
 
 /** Undo rejects a change: it leaves the list. Keeping one accepts it at Save. */
@@ -96,16 +87,6 @@ export const diffLines = (change) => {
           before: nameOf(old),
           text: nameOf(op.value),
         };
-      }
-      const own = OWN_FIELDS[op.path];
-      if (own) {
-        return op.op === "add"
-          ? { sign: "+", field: own, text: nameOf(op.value) }
-          : {
-              sign: "~",
-              field: own,
-              text: `${nameOf(old)} → ${nameOf(op.value)}`,
-            };
       }
       const name = `${change.key} · ${fieldWords(op.path)}`;
       if (op.op === "remove") {
@@ -172,7 +153,7 @@ export const pieceOf = (changes = []) =>
   changes.some((one) => one.piece === "environment") ? "environment" : "suite";
 
 const fileOf = (source) =>
-  (source?.used || []).find((one) => one.kind === "source");
+  (source?.used || []).find((one) => one.kind === "file");
 
 /** Where a change came from, to read. */
 export const sourceLine = (source = {}) => {
@@ -181,8 +162,8 @@ export const sourceLine = (source = {}) => {
   if (used) {
     return {
       kind: "file",
-      file: used.name || used.source_id,
-      where: used.place || used.locator || null,
+      file: used.name || null,
+      row: used.row ?? null,
       at,
     };
   }
@@ -192,44 +173,37 @@ export const sourceLine = (source = {}) => {
 
 /** Where a change came from, to go to. */
 export const sourceLink = (source = {}) => {
+  if (source.origin === "chat") {
+    // The person's message the change answered, when the server names it.
+    const message = (source.used || []).find((one) => one.kind === "message");
+    return { kind: "chat", messageId: message?.id };
+  }
   const used = fileOf(source);
-  if (!used) return { kind: source.origin === "chat" ? "chat" : "tab" };
-  // The sample puts a file name in source_id; a named file has a real id to open.
-  if (!used.name) return { kind: "file", file: used.source_id };
-  return {
-    kind: "file",
-    file: used.name,
-    sourceId: used.source_id,
-    at: used.locator || null,
-  };
+  return used
+    ? { kind: "file", file: used.name || null, row: used.row ?? null }
+    : { kind: "tab" };
 };
 
-export const nextVersion = (version) => {
-  const match = /^v(\d+)$/.exec(version?.label || "");
-  return match ? `v${Number(match[1]) + 1}` : null;
-};
-
-/** What Save makes: the footer's and the bar's one line and its button. */
-export const saveLine = (changes = [], versions) => {
+/**
+ * What Save makes: the footer's one line. No version number: the server counts versions the page isn't sent, and can
+ * reuse one.
+ */
+export const saveLine = (changes = []) => {
   const kept = keptChanges(changes);
-  const piece = kept.some((one) => one.piece === "environment")
-    ? "environment"
-    : "suite";
   const spec = kept.some((one) =>
     ["rule", "contract_field", "sub_goal"].includes(one.kind),
   );
   let kind = "scenarios";
-  if (piece === "environment") kind = spec ? "spec" : "environment";
-  return {
-    kind,
-    piece,
-    next: nextVersion(versions?.defaults?.[piece]),
-    rechecked: recheckedKeys(kept).length,
-  };
+  if (pieceOf(kept) === "environment") kind = spec ? "spec" : "environment";
+  return { kind, rechecked: recheckedKeys(kept).length };
 };
 
-/** How the saved version compares with past runs. */
-export const comparabilityLine = (rechecked, total) => ({
-  rechecked,
-  exact: Math.max(0, total - rechecked),
-});
+// The server keeps a version name of at most 80 characters.
+export const NAME_LIMIT = 80;
+
+// The version name Save suggests: the first accepted change's own words, cut to the limit.
+export const suggestedName = (changes = []) =>
+  (changes.find((one) => one.decision === "accepted")?.summary ?? "").slice(
+    0,
+    NAME_LIMIT,
+  );

@@ -148,7 +148,6 @@ export default function WorkspacePanels({
           <ScenariosStep
             env={env}
             envState={envState}
-            patch={patch}
             locked={locked}
             onFork={onFork}
             onStartRun={onStartRun}

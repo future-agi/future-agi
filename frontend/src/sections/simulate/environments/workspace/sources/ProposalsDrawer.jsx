@@ -264,7 +264,6 @@ export function Proposals({
     const batches = batchesOf(prepared);
     let draft = capabilities?.draft ?? batches[0].capabilities.draft;
     try {
-      // eslint-disable-next-line no-restricted-syntax -- sequential on purpose: accepts share one draft
       for (const batch of batches.filter(
         (one) =>
           !done.current.has(one.import_ref) &&

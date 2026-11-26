@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Box, Collapse, Stack, Typography, Grid } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
@@ -20,6 +21,7 @@ import {
   degradeReasonCopy,
 } from "../../parallelism.constants";
 import SideDrawer from "../../components/SideDrawer";
+import { AGENT_VERSIONS_PARAM } from "../helpers/useWorkspaceTab";
 import AgentVersionsPanel from "../agents/AgentVersionsPanel";
 import ConnectAgentDrawer from "../agents/ConnectAgentDrawer";
 import { connectDesignEnvAgent } from "src/api/simulate-environments/designEnvironment";
@@ -75,6 +77,17 @@ export default function OverviewPanel({
   const design = env.designBuild;
   // Picked in place, saved as v1 or not.
   const canConnect = !!design && !env.testSubject;
+  // Also open while the URL asks for it, so it opens on a mounted Overview too.
+  const [params, setParams] = useSearchParams();
+  const agentDrawerShown =
+    agentDrawerOpen || params.get(AGENT_VERSIONS_PARAM) === "open";
+  const closeAgentDrawer = () => {
+    setAgentDrawerOpen(false);
+    if (!params.has(AGENT_VERSIONS_PARAM)) return;
+    const next = new URLSearchParams(params);
+    next.delete(AGENT_VERSIONS_PARAM);
+    setParams(next, { replace: true });
+  };
   // Agent versions are managed on real data, so only while versioning is on.
   const canManageVersions =
     !locked && !design && Boolean(env.versioning?.enabled);
@@ -298,8 +311,8 @@ export default function OverviewPanel({
           never leaves the tab. Not kept mounted while closed. */}
       {canManageVersions && (
         <SideDrawer
-          open={agentDrawerOpen}
-          onClose={() => setAgentDrawerOpen(false)}
+          open={agentDrawerShown}
+          onClose={closeAgentDrawer}
           width={{ xs: "100%", sm: 720, md: 880 }}
         >
           <Stack sx={{ height: "100%", minHeight: 0 }}>

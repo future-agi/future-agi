@@ -217,6 +217,7 @@ export const WORKSPACE_COPY = {
 // environment, what changed in each, and which scenarios a suite version holds.
 export const VERSIONS_COPY = {
   title: "Versions",
+  savedWithoutCheck: "Saved without a check",
   subtitle:
     "Every change to the agent, the environment or its scenarios is kept as a version. Runs replay the default environment and scenario versions.",
   pieces: {
@@ -262,6 +263,9 @@ export const VERSIONS_COPY = {
       suite: "scenario version",
     },
     body: "New runs use it. If this combination hasn't run before, the next run prepares it first.",
+    // The server checks a new agent with the environment first, unless the pair is already certified or can't be checked.
+    agentBody:
+      "If it hasn't been checked with this environment yet, it's checked first. Until the check ends, runs keep using the current default.",
     confirm: "Make default",
     pending: "Making default…",
     error: "Couldn't change the default. Try again in a moment.",
@@ -352,6 +356,11 @@ export const AGENT_VERSIONS_COPY = {
     not_bound: "Not made default: this environment can't use this version",
     rerun_only: "Made for a single rerun; not used as the default",
     failed: "Not made default: something went wrong; make it default by hand",
+    validating:
+      "Becomes the default once it passes a check with this environment",
+    pair_failed: "Not made default: it failed its check with this environment",
+    validation_retry:
+      "Not made default: its check with this environment couldn't finish; make it default to try again",
   },
   activationOther: (code) => `Not made default (${code})`,
   // Read aloud when a version's check starts or lands.
@@ -479,7 +488,6 @@ export const RUN_DIALOG_COPY = {
   },
   default: "default",
   none: "None yet",
-  unlabelled: "Unnumbered version",
   loading: "Loading versions…",
   loadError: "Couldn't load the versions. The run uses the current defaults.",
   disabled: "Versioning is switched off, so the run uses the current versions.",
@@ -488,6 +496,13 @@ export const RUN_DIALOG_COPY = {
     "Couldn't check these versions and what the run would block. The run can still start; a blocked one is refused.",
   retryPlan: "Try again",
   refused: "These versions can't run.",
+  // Refusals whose words are ours, by code; any other shows the server's.
+  errors: {
+    pair_validating:
+      "These versions are being checked together. Run them once the check ends.",
+    pair_failed:
+      "These versions failed their check together. Fix them and check again.",
+  },
   rerunFallback:
     "That run's versions can't run now; using the current defaults.",
   rerunAgentFallback:
@@ -517,128 +532,29 @@ export const RUN_DIALOG_COPY = {
   cancel: "Cancel",
   run: "Run",
   runAnyway: "Run anyway",
-  starting: "Starting…",
-};
-
-// The review of unsaved changes, before they become a version.
-const SAVE_KIND = {
-  spec: "Environment spec edit",
-  environment: "Environment edit",
-  scenarios: "Scenario edit",
-};
-const SAVE_TARGET = { environment: "environment", suite: "scenarios" };
-const scenarioWord = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
-const affectedWord = (n) => `${n} affected scenario${n === 1 ? "" : "s"}`;
-export const REVIEW_COPY = {
-  title: "Review changes",
-  subtitle: (n, rejected, piece, label) =>
-    `${n} unsaved edit${n === 1 ? "" : "s"}${rejected ? ` · ${rejected} rejected` : ""} since ${label ? `${SAVE_TARGET[piece]} ${label}` : "the saved version"}. Accept or reject each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
-  emptyTitle: "Nothing waiting",
-  emptyBody: "Every edit is saved.",
-  loadError: "Couldn't load the changes",
-  loadErrorBody: "Your edits are still there. Try again in a moment.",
-  announced: {
-    accepted: (summary) => `Accepted: ${summary}`,
-    rejected: (summary) => `Rejected: ${summary}`,
-    restored: (summary) => `Restored: ${summary}`,
-    undecided: (summary) => `Undecided: ${summary}`,
+  // How many scenarios the run sends; held ones are never sent.
+  runCount: (n) => `Run ${n} ${n === 1 ? "scenario" : "scenarios"}`,
+  willRun: (n, of) => `${n} of ${of} will run`,
+  heldBackTitle: (n) => `Held back · ${n}`,
+  heldReason: (text, n) => `${text} · ${n}`,
+  heldUnlisted: (n) => `and ${n} more`,
+  showMore: (n) => `Show ${n} more`,
+  // Held-back rows in our words: what the report words per scenario, or not at all.
+  heldCodes: {
+    pair_failed: "These versions failed their check together",
+    not_validated: "Not validated on these versions",
+    not_active: "Validated, not saved yet",
+    proof_failed: "Its proof failed",
+    tool_not_on_agent: "Needs a tool this agent version doesn't have",
+    scenario_archived: "Archived",
+    unreadable: "Its seed records couldn't be read",
   },
-  allAccepted: "Accepted all remaining changes",
-  dismissed: (detail) => `Dismissed: ${detail}`,
-  groupTitle: (label, n) => `${label} · ${n}`,
-  failed: "Couldn't apply",
-  failedMeta: ({ source_id: id, source_name: source = id, scenarios }) => {
-    let held = "no scenario depends on it";
-    if (scenarios?.length) {
-      const more =
-        scenarios.length > 3 ? ` and ${scenarios.length - 3} more` : "";
-      held = `holds up ${scenarios.slice(0, 3).join(", ")}${more}`;
-    }
-    return [
-      source && `From ${source}`,
-      held,
-      "the rest of the draft saves without it",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-  },
-  fix: "Fix",
-  fixIn: (name) => `Fix in ${name}`,
-  fixes: { supply: "Supply the records", attach: "Attach a file" },
-  dismiss: "Dismiss",
-  noSource: "Source not recorded",
-  fromChat: "From the builder chat",
-  fromFile: (name) => `From ${name}`,
-  byHand: "By hand",
-  fromUpdate: "From an agent update",
-  openInChat: "Open in chat",
-  viewIn: (name) => `View in ${name}`,
-  open: "Open",
-  accept: "Accept",
-  reject: "Reject",
-  accepted: "Accepted",
-  rejected: "Rejected",
-  change: "Change",
-  undo: "Undo",
-  restore: "Restore",
-  rejectBlocked: (title) => `"${title}" needs this. Reject that one first.`,
-  restoreBlocked: (title) =>
-    `This needs "${title}", which is rejected. Restore that one first.`,
-  acceptAll: "Accept all",
-  acceptRemaining: "Accept all remaining",
-  progress: ({ total, accepted, rejected, undecided }) =>
-    [
-      `${total - undecided} of ${total} decided`,
-      accepted && `${accepted} accepted`,
-      rejected && `${rejected} rejected`,
-      rejected && "restore any until you save",
-    ]
-      .filter(Boolean)
-      .join(" · "),
-  saveWaiting: (n) =>
-    `Accept or reject the ${n} change${n === 1 ? "" : "s"} still waiting first.`,
-  saveAllRejected: "Every change is rejected. Discard all puts the world back.",
-  reviewAndSave: "Review and save",
-  dismissedCount: (n) => `${n} dismissed`,
-  show: "Show",
-  bringBack: "Bring back",
-  rejectedEdits: (n) => `${n} rejected edit${n === 1 ? "" : "s"}`,
-  showChange: "Show the change",
-  hideChange: "Hide the change",
-  andMore: (n) => `and ${n} more`,
-  rechecked: (n) =>
-    `These change what's graded, so ${scenarioWord(n)} get${n === 1 ? "s" : ""} rechecked when you save`,
-  checkFirst: (n) => `Check the ${affectedWord(n)} before you save`,
-  checking: (n) => `Checking ${affectedWord(n)}…`,
-  checked: (n) => `${affectedWord(n)} checked, all pass`,
-  runChecks: "Run checks",
-  runChecksFirst: "Run the affected scenario checks first.",
   showWhich: "Show which",
-  hide: "Hide",
-  comparability: ({ rechecked, exact }) =>
-    `${scenarioWord(rechecked)} pair with past runs as Rechecked if their gates pass, outdated if not; ${exact} compare exactly. Agent, scenario set and evals don't move.`,
-  nameLabel: "Name this version (optional)",
-  nameTooLong: (max) => `Use ${max} characters or fewer.`,
-  namePlaceholder: "For example: Refund window from the 2026 policy",
-  discardAll: "Discard all",
-  discardTitle: (n) => `Discard ${n} edit${n === 1 ? "" : "s"}?`,
-  discardBody: (piece, label) => {
-    const saved = label
-      ? `${SAVE_TARGET[piece]} ${label}`
-      : "the saved version";
-    return piece === "suite"
-      ? `The scenarios go back to ${saved} as they were saved. This can't be undone.`
-      : `The world goes back to ${saved} as it was saved. This can't be undone.`;
-  },
-  discard: "Discard",
-  saveLine: ({ kind, piece, next, rechecked }) =>
-    `${SAVE_KIND[kind]} → ${SAVE_TARGET[piece]}${next ? ` ${next}` : ""} · ${scenarioWord(rechecked)} rechecked`,
-  save: (next) => (next ? `Save version ${next}` : "Save version"),
-  unsavedEdits: (n) => `${n} unsaved edit${n === 1 ? "" : "s"}`,
-  unsavedEditsUncounted: "Unsaved edits",
-  couldntApply: (n) => `${n} change${n === 1 ? "" : "s"} couldn't apply`,
-  sampleSaved: "Sample data: nothing was saved.",
-  sampleDiscarded: "Sample data: nothing was discarded.",
+  hideWhich: "Hide",
+  changedTitle: "Changed since proved",
+  changedHint: "Validate them before relying on the results.",
+  allHeld: "Every picked scenario is held back, so nothing would run.",
+  starting: "Starting…",
 };
 
 // Unsaved changes (drafts) to the environment and its scenarios, made live
@@ -652,9 +568,6 @@ export const DRAFTS_COPY = {
     `${added} added, ${removed} removed, ${changed} changed`,
   lastEdited: (name, when) =>
     name ? `last edited by ${name}, ${when}` : `last edited ${when}`,
-  viewChanges: "View changes",
-  save: "Save",
-  saving: "Saving…",
   discard: "Discard",
   discarding: "Discarding…",
   discardTitle: "Discard unsaved changes?",
@@ -665,6 +578,24 @@ export const DRAFTS_COPY = {
   busy: "Chat is working; save when it finishes",
   refreshingGeneratedScenarios: "Refreshing the generated scenarios…",
   saveError: "Couldn't save the changes. Try again in a moment.",
+  validateError: "Couldn't start validating. Try again in a moment.",
+  validation: {
+    validating: "Validating the changes. Save opens when it's done.",
+    retry: "Validation did not start. Try again",
+    superseded: "The environment changed while validating. Validate again",
+    // The scenarios to change, else why the pair itself failed.
+    failed: (n, reason) => {
+      if (n > 0)
+        return `Validation failed. ${plural(n, "scenario")} need${n === 1 ? "s" : ""} a change`;
+      return reason
+        ? `Validation failed: ${reason}`
+        : "Validation failed. Validate again";
+    },
+    check_unavailable:
+      "The check is unavailable on our side, so this saves without a check. Re-check the pairing once it is back.",
+    unavailable: "Validation isn't available right now. Try again later",
+    outdated: "The changes moved since they were validated. Validate again",
+  },
   discardError: "Couldn't discard the changes. Try again in a moment.",
   errors: {
     draft_changed:
@@ -681,6 +612,13 @@ export const DRAFTS_COPY = {
       "Prepare the sources again or discard the draft before saving.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
+    validation_required: "Validate these reviewed changes, then save them.",
+    validation_running:
+      "Scenarios are being validated. Save again when it finishes.",
+    scenario_index_mismatch:
+      "A scenario's entry in the suite list doesn't match the scenario itself. Ask chat to fix that scenario, then save again.",
+    change_depends_on_rejected:
+      "An accepted change needs one that was rejected. Accept both or reject both, then save again.",
   },
   // The Scenarios tab and the run dialog.
   unsaved: "Unsaved",
@@ -769,4 +707,153 @@ export const agentDiffersTag = (agentLabel, envLabel) => {
   return agent && env
     ? `${agent} differs from ${env}`
     : "Agent differs from its environment version";
+};
+
+// The review of unsaved changes, before they become a version.
+const SAVE_KIND = {
+  spec: "Environment spec edit",
+  environment: "Environment edit",
+  scenarios: "Scenario edit",
+};
+const SAVE_TARGET = { environment: "environment", suite: "scenarios" };
+const scenarioWord = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
+const affectedWord = (n) => `${n} affected scenario${n === 1 ? "" : "s"}`;
+export const REVIEW_COPY = {
+  title: "Review changes",
+  // `named` is the version's number and name; its number alone is enough the second time.
+  subtitle: (n, rejected, piece, named, label) =>
+    `${n} unsaved edit${n === 1 ? "" : "s"}${rejected ? ` · ${rejected} rejected` : ""} since ${named ? `${SAVE_TARGET[piece]} ${named}` : "the saved version"}. Accept or reject each one, then save. Runs use ${label || "the saved version"} until they're saved.`,
+  emptyTitle: "Nothing waiting",
+  emptyBody: "Every edit is saved.",
+  loadError: "Couldn't load the changes",
+  loadErrorBody: "Your edits are still there. Try again in a moment.",
+  announced: {
+    accepted: (summary) => `Accepted: ${summary}`,
+    rejected: (summary) => `Rejected: ${summary}`,
+    restored: (summary) => `Restored: ${summary}`,
+    undecided: (summary) => `Undecided: ${summary}`,
+  },
+  allAccepted: "Accepted all remaining changes",
+  groupTitle: (label, n) => `${label} · ${n}`,
+  noSource: "Source not recorded",
+  fromChat: "From the builder chat",
+  fromFile: (name) => `From ${name || "an imported file"}`,
+  fileRow: (row) => `row ${row}`,
+  byHand: "By hand",
+  fromUpdate: "From an agent update",
+  openInChat: "Open in chat",
+  openFile: (name) => `Open ${name}`,
+  open: "Open",
+  accept: "Accept",
+  reject: "Reject",
+  accepted: "Accepted",
+  rejected: "Rejected",
+  change: "Reject instead",
+  validateFirst: (n) =>
+    n > 0
+      ? `Validate the ${scenarioWord(n)} affected before you save.`
+      : "Validate the accepted changes before you save.",
+  restore: "Restore",
+  rejectBlocked: (title) => `"${title}" needs this. Reject that one first.`,
+  restoreBlocked: (title) =>
+    `This needs "${title}", which is rejected. Restore that one first.`,
+  acceptAll: "Accept all",
+  acceptRemaining: "Accept all remaining",
+  progress: ({ total, accepted, rejected, undecided }) =>
+    [
+      `${total - undecided} of ${total} decided`,
+      accepted && `${accepted} accepted`,
+      rejected && `${rejected} rejected`,
+      rejected && "restore any until you save",
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  saveWaiting: (n) =>
+    `Accept or reject the ${n} change${n === 1 ? "" : "s"} still waiting first.`,
+  saveAllRejected: "Every change is rejected. Discard all puts the world back.",
+  reviewAndSave: "Review and save",
+  showChange: "Show the change",
+  hideChange: "Hide the change",
+  andMore: (n) => `and ${n} more`,
+  rechecked: (n) =>
+    `These change what's graded, so ${scenarioWord(n)} get${n === 1 ? "s" : ""} rechecked when you save`,
+  showWhich: "Show which",
+  hide: "Hide",
+  // A plain save names the version only if asked; a validated one needs a name.
+  nameLabel: (optional) =>
+    optional ? "Name this version (optional)" : "Name this version",
+  nameNeeded: "Name the version to save it.",
+  scenariosValidating:
+    "Scenarios are being validated. Save waits until it finishes.",
+  nameTooLong: (max) => `Use ${max} characters or fewer.`,
+  namePlaceholder: "For example: Refund window from the 2026 policy",
+  discardAll: "Discard all",
+  discardTitle: (n) => `Discard ${n} edit${n === 1 ? "" : "s"}?`,
+  discardBody: (piece, label) => {
+    const saved = label
+      ? `${SAVE_TARGET[piece]} ${label}`
+      : "the saved version";
+    return piece === "suite"
+      ? `The scenarios go back to ${saved} as they were saved. This can't be undone.`
+      : `The world goes back to ${saved} as it was saved. This can't be undone.`;
+  },
+  discard: "Discard",
+  saveLine: ({ kind, rechecked }) =>
+    `${SAVE_KIND[kind]} → new version · ${scenarioWord(rechecked)} rechecked`,
+  save: "Save version",
+  validate: "Validate",
+  validating: "Validating…",
+  saved: "Saved as a new version.",
+  notActive: (n) =>
+    `${n} scenario${n === 1 ? "" : "s"} won't run yet. Their reasons are on the Scenarios tab.`,
+  dismissed: (detail) => `Dismissed: ${detail}`,
+  failed: "Couldn't apply",
+  failedMeta: ({ source_id: id, source_name: source = id, scenarios }) => {
+    let held = "no scenario depends on it";
+    if (scenarios?.length) {
+      const more =
+        scenarios.length > 3 ? ` and ${scenarios.length - 3} more` : "";
+      held = `holds up ${scenarios.slice(0, 3).join(", ")}${more}`;
+    }
+    return [
+      source && `From ${source}`,
+      held,
+      "the rest of the draft saves without it",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  },
+  fix: "Fix",
+  fixIn: (name) => `Fix in ${name}`,
+  fixes: { supply: "Supply the records", attach: "Attach a file" },
+  dismiss: "Dismiss",
+  viewIn: (name) => `View in ${name}`,
+  undo: "Undo",
+  dismissedCount: (n) => `${n} dismissed`,
+  show: "Show",
+  bringBack: "Bring back",
+  rejectedEdits: (n) => `${n} rejected edit${n === 1 ? "" : "s"}`,
+  checkFirst: (n) => `Check the ${affectedWord(n)} before you save`,
+  checking: (n) => `Checking ${affectedWord(n)}…`,
+  checked: (n) => `${affectedWord(n)} checked, all pass`,
+  runChecks: "Run checks",
+  runChecksFirst: "Run the affected scenario checks first.",
+  comparability: ({ rechecked, exact }) =>
+    `${scenarioWord(rechecked)} pair with past runs as Rechecked if their gates pass, outdated if not; ${exact} compare exactly. Agent, scenario set and evals don't move.`,
+  unsavedEdits: (n) => `${n} unsaved edit${n === 1 ? "" : "s"}`,
+  unsavedEditsUncounted: "Unsaved edits",
+  couldntApply: (n) => `${n} change${n === 1 ? "" : "s"} couldn't apply`,
+  sampleSaved: "Sample data: nothing was saved.",
+  sampleDiscarded: "Sample data: nothing was discarded.",
+};
+
+// The banner under the version bar while a new default agent is checked with this environment, and how it ended.
+export const AGENT_MOVE_COPY = {
+  checking: (next) => `Checking ${next} with this environment`,
+  stays: (current) => `${current} stays the default while it's checked.`,
+  slow: "This is taking longer than usual.",
+  open: "Open agent versions",
+  nowDefault: (next) => `${next} is now the default agent`,
+  ended: (next, why) => `${next}: ${why}`,
+  dismiss: "Dismiss",
 };

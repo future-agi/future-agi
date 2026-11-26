@@ -55,7 +55,7 @@ export function Turn({ turn }) {
 
   if (turn.role === "user") {
     return (
-      <Stack alignItems="flex-end">
+      <Stack alignItems="flex-end" data-message-id={turn.id}>
         <Box
           sx={{
             maxWidth: "82%",
@@ -97,7 +97,11 @@ export function Turn({ turn }) {
         </Typography>
       )}
       {(turn.steps || []).map((step, i) => (
-        <div key={step.id ?? i} data-message-id={step.id ?? undefined}>
+        <div
+          key={step.id ?? i}
+          data-message-id={step.id ?? undefined}
+          data-answer-id={step.answerId}
+        >
           <Step step={step} />
         </div>
       ))}

@@ -21,6 +21,7 @@ from pathlib import PurePosixPath
 from minio.error import S3Error
 
 from simulate.services.harness_storage import (
+    open_private,
     put_private,
     read_private,
     stat_customer_archive,
@@ -37,7 +38,17 @@ MAX_ARCHIVE_ENTRIES = 1_000_000
 MAX_ARCHIVE_INFLATED_BYTES = 512 * 1024 * 1024
 
 SUITE_ROOTS = ("scenarios/", "scenario/")
-SUITE_FILES = frozenset({"scenarios.json", "coverage.json", "proofs.json"})
+# dropped.json: scenarios a rebuild dropped for a removed capability, kept to restore them. scenario-proofs.json: the
+# build's own proofs of each case on its sealed runtime (live), kept with the suite they prove.
+SUITE_FILES = frozenset(
+    {
+        "scenarios.json",
+        "coverage.json",
+        "proofs.json",
+        "dropped.json",
+        "scenario-proofs.json",
+    }
+)
 
 SEALED_ROOTS = ("environment-bundle/", "generic-harness/certified-bundle/")
 # The contract a bundle was sealed and certified with: a build can amend the authored one while it builds.
@@ -312,6 +323,35 @@ def read_members(body: bytes, paths: set[str], max_size: int) -> dict[str, bytes
             if path in paths and member.size <= max_size:
                 source = archive.extractfile(member)
                 found[path] = source.read() if source is not None else b""
+    return found
+
+
+def stream_members(key: str, paths: set[str], max_size: int) -> dict[str, bytes]:
+    """The named regular members of at most ``max_size`` bytes, read off the stored
+    archive as it streams: reading stops once every named member has been passed, and
+    nothing but those members is held in memory. Stored archives are packed with sorted
+    members (``pack_archive``), so reading also stops at the first member that sorts
+    after every named one: an archive missing one of them is not read to its end."""
+    found: dict[str, bytes] = {}
+    passed: set[str] = set()
+    last = max((PurePosixPath(path) for path in paths), default=None)
+    response = open_private(key, legacy_archive=True)
+    try:
+        with tarfile.open(fileobj=response, mode="r|gz") as archive:
+            for path, member in _regular_members(archive):
+                if last is None or PurePosixPath(path) > last:
+                    break
+                if path not in paths:
+                    continue
+                if member.size <= max_size:
+                    source = archive.extractfile(member)
+                    found[path] = source.read() if source is not None else b""
+                passed.add(path)
+                if passed >= paths:
+                    break
+    finally:
+        response.close()
+        response.release_conn()
     return found
 
 

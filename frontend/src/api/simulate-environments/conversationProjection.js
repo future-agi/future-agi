@@ -69,10 +69,25 @@ function finalizeRunningSteps(steps) {
 
 export function projectConversation(conversation) {
   if (!conversation) return [];
-  const messages = Array.isArray(conversation.messages)
-    ? conversation.messages
+  // The older ones are only for reading: the chat's state follows the newest.
+  const recent = [
+    ...(conversation.older_messages ?? []),
+    ...(conversation.messages ?? []),
+  ];
+  // Messages read around one far back, with some before the rest not held.
+  const around = conversation.around?.messages ?? [];
+  const apart = new Set(around.map((m) => m.message_id));
+  const isApart = ({ src, data }) =>
+    src === "msg" && apart.has(data.message_id);
+  const messages = [...around, ...recent];
+  const allEvents = Array.isArray(conversation.events)
+    ? conversation.events
     : [];
-  const events = Array.isArray(conversation.events) ? conversation.events : [];
+  // A step from before the rest starts belongs with a message that isn't held.
+  const startsAt = apart.size ? Date.parse(recent[0]?.created_at) || 0 : 0;
+  const events = allEvents.filter(
+    (e) => !startsAt || (Date.parse(e.emitted_at) || 0) >= startsAt,
+  );
   const blocking = conversation.blocking_input || null;
 
   // A question is resolved once a user message replies to it; capture the answer
@@ -96,6 +111,7 @@ export function projectConversation(conversation) {
       data: e,
     })),
   ].sort((a, b) => {
+    if (isApart(a) !== isApart(b)) return isApart(a) ? -1 : 1;
     const ta = Date.parse(a.t) || 0;
     const tb = Date.parse(b.t) || 0;
     if (ta !== tb) return ta - tb;
@@ -124,6 +140,51 @@ export function projectConversation(conversation) {
     builder = null;
   };
 
+  // Where the held messages and steps start: the ones before are read on
+  // demand, and once read back, the line says so.
+  const starts = { msg: "messages", evt: "events" };
+  const markStart = ({ src, seq }) => {
+    const kind = starts[src];
+    delete starts[src];
+    const start = kind && conversation.history?.[kind];
+    if (!start?.has_older && !start?.read_back) return;
+    if (kind === "events" && events.length < allEvents.length) return;
+    builder = null;
+    turns.push({
+      id: `older-${kind}`,
+      role: "history",
+      kind,
+      oldest: seq,
+      hasOlder: Boolean(start.has_older),
+      afterGap: apart.size > 0,
+    });
+  };
+
+  if (apart.size) {
+    turns.push({
+      id: "older-around",
+      role: "history",
+      kind: "messages",
+      oldest: around[0].sequence,
+      hasOlder: conversation.around.has_older,
+    });
+  }
+  // Where the messages read apart end.
+  const markGap = () => {
+    builder = null;
+    turns.push({
+      id: "gap",
+      role: "history",
+      kind: "gap",
+      oldest: around.at(-1).sequence,
+      hasOlder: true,
+      // Steps are read back from the latest only, so none are held here.
+      withoutSteps:
+        allEvents.length > 0 ||
+        Boolean(conversation.history?.events?.has_older),
+    });
+  };
+
   const pushActivity = (line, seedId) => {
     if (!builder?.title) {
       builder = {
@@ -149,7 +210,13 @@ export function projectConversation(conversation) {
     }
   };
 
+  let gapAhead = apart.size > 0;
   for (const item of timeline) {
+    if (gapAhead && !isApart(item)) {
+      markGap();
+      gapAhead = false;
+    }
+    if (!isApart(item)) markStart(item);
     if (item.src === "msg") {
       const m = item.data;
       if (m.role === "user") {
@@ -216,6 +283,20 @@ export function projectConversation(conversation) {
           answerFor,
           m.message_id,
         );
+        // Its answer may be among the ones not held: shown, not asked again.
+        if (
+          !answered &&
+          isApart(item) &&
+          blocking?.message_id !== m.message_id
+        ) {
+          b.steps.push({
+            id: m.message_id,
+            kind: "note",
+            text: normalizeQuestion(m, blocking).prompt,
+            markdown: true,
+          });
+          continue;
+        }
         b.steps.push({
           id: m.message_id,
           kind: "ask",
@@ -224,6 +305,7 @@ export function projectConversation(conversation) {
           confirmation: m.kind === "confirmation",
           resolved: answered,
           answerText: answered ? answerFor[m.message_id].content : undefined,
+          answerId: answered ? answerFor[m.message_id].message_id : undefined,
           // An answer the server did not take: shown failed, with the reason it serves, never as accepted.
           answerFailed:
             answered && answerFor[m.message_id].state === "failed"
@@ -342,7 +424,8 @@ export function projectConversation(conversation) {
   }
 
   turns.forEach((t, ti) => {
-    if (!t.id) t.id = `turn-${ti}`;
+    // By its first step, not its place: older events add turns above it.
+    if (!t.id) t.id = `turn-${t.steps?.[0]?.id ?? ti}`;
     (t.steps || []).forEach((s, si) => {
       if (!s.id) s.id = `${t.id}-s${si}`;
     });
@@ -359,7 +442,22 @@ export function conversationInFlight(conversation) {
   const messages = Array.isArray(conversation.messages)
     ? conversation.messages
     : [];
-  return messages.some((m) => IN_FLIGHT_MESSAGE_STATES.has(m.state));
+  // A message a later finished reply came after has been handled, whatever state it was left in:
+  // the server leaves the answer to a confirmation "delivered", which kept the chat in flight for
+  // good, so the unsaved-changes bar never refreshed after the turn. A question the builder still
+  // waits on is not such a reply: its turn is paused, not finished.
+  const open = conversation.blocking_input?.message_id;
+  const answered = (m) =>
+    messages.some(
+      (o) =>
+        o.role === "assistant" &&
+        o.state === "completed" &&
+        (!open || o.message_id !== open) &&
+        (o.sequence ?? 0) > (m.sequence ?? 0),
+    );
+  return messages.some(
+    (m) => IN_FLIGHT_MESSAGE_STATES.has(m.state) && !answered(m),
+  );
 }
 
 // A Stop the builder has not acted on yet. The server settles it when the turn

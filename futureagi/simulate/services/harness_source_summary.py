@@ -78,7 +78,7 @@ def source_summary(environment, *, reviewer_scope=None) -> dict[str, Any]:
         "environment_version", "suite_version"
     ).get(id=environment.id)
     version = drafts.fresh_draft(head, "environment") or head.environment_version
-    files = drafts._piece_files(head, "environment", version) if version else {}
+    files = drafts.piece_files(head, "environment", version) if version else {}
     try:
         manifest = json.loads(files.get("sources/manifest.json", b"{}").decode())
     except (UnicodeDecodeError, ValueError):
@@ -117,7 +117,7 @@ def source_summary(environment, *, reviewer_scope=None) -> dict[str, Any]:
         return result
     sealed_digests = digests
     if result["draft"]:
-        sealed = drafts._piece_files(head, "environment", head.environment_version)
+        sealed = drafts.piece_files(head, "environment", head.environment_version)
         sealed_digests = json.loads(sealed.get("sources/manifest.json", b"{}")).get(
             "source_snapshot_digests", {}
         )

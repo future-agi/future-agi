@@ -313,7 +313,7 @@ function VersionDetail({ envId, move, piece, version, siblings, defaultId }) {
             <MenuItem value="">{detail.previous}</MenuItem>
             {others.map((one) => (
               <MenuItem key={one.id} value={one.id}>
-                {one.label || VERSIONS_COPY.unlabelled}
+                {named(one)}
               </MenuItem>
             ))}
           </TextField>

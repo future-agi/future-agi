@@ -1,20 +1,21 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Collapse,
+  Stack,
+  Typography,
+  useMediaQuery,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
 
 const NAMES_SHOWN = 20;
 
-/**
- * The scenarios a save rechecks, because the changes alter what's graded.
- * With `check`, they're checked here first and the save waits for it.
- */
-export default function RecheckCard({ names, check = null }) {
-  let line = COPY.rechecked(names.length);
-  if (check?.state === "passed") line = COPY.checked(names.length);
-  else if (check?.state === "running") line = COPY.checking(names.length);
-  else if (check) line = COPY.checkFirst(names.length);
+/** The scenarios a save rechecks, because the changes alter what's graded. */
+export default function RecheckCard({ names }) {
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [showNames, setShowNames] = useState(false);
   return (
     <Box
@@ -32,19 +33,9 @@ export default function RecheckCard({ names, check = null }) {
           width={16}
           sx={{ color: "text.secondary", flexShrink: 0 }}
         />
-        <Typography sx={{ typography: "s1", flex: 1 }}>{line}</Typography>
-        {check && check.state !== "passed" && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={check.state === "running"}
-            onClick={check.onRun}
-            sx={{ flexShrink: 0 }}
-          >
-            {COPY.runChecks}
-          </Button>
-        )}
+        <Typography sx={{ typography: "s1", flex: 1 }}>
+          {COPY.rechecked(names.length)}
+        </Typography>
         <Button
           size="small"
           color="inherit"
@@ -55,7 +46,11 @@ export default function RecheckCard({ names, check = null }) {
           {showNames ? COPY.hide : COPY.showWhich}
         </Button>
       </Stack>
-      <Collapse in={showNames} unmountOnExit>
+      <Collapse
+        in={showNames}
+        timeout={reduceMotion ? 0 : undefined}
+        unmountOnExit
+      >
         <Stack component="ul" sx={{ m: 0, mt: 0.5, pl: 3.5 }}>
           {names.slice(0, NAMES_SHOWN).map((name) => (
             <Typography
@@ -82,9 +77,4 @@ export default function RecheckCard({ names, check = null }) {
 
 RecheckCard.propTypes = {
   names: PropTypes.arrayOf(PropTypes.string).isRequired,
-  // { state: "idle" | "running" | "passed", onRun }: checked before the save.
-  check: PropTypes.shape({
-    state: PropTypes.oneOf(["idle", "running", "passed"]).isRequired,
-    onRun: PropTypes.func.isRequired,
-  }),
 };

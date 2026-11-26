@@ -702,8 +702,8 @@ def apply_environment_review(
         drafts.fresh_draft(head, "environment") or head.environment_version
     )
     suite_version = drafts.fresh_draft(head, "suite") or head.suite_version
-    environment_files = drafts._piece_files(head, "environment", environment_version)
-    suite_files = drafts._piece_files(head, "suite", suite_version)
+    environment_files = drafts.piece_files(head, "environment", environment_version)
+    suite_files = drafts.piece_files(head, "suite", suite_version)
     validation = _scenario_validation(suite_files)
     try:
         existing_manifest = json.loads(
