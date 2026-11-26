@@ -12,8 +12,10 @@ Eval reads on ``tracer_eval_logger`` are scoped to the trace, pick the latest
 version of each record (``argMax(tuple(...), version).1`` keeps a NULL span)
 and only then require that latest span to be one of the trace's live spans.
 Filtering spans before the collapse would resurrect an older version after its
-newest version left the span. Eval reads on ``tracer_eval_logger_v2`` are
-scoped to the same trace/span candidates.
+newest version left the span. ``tracer_eval_logger_v2`` is not sorted by
+trace, so its eval read first selects the sort keys of the trace/span
+candidates, then reads every version of those keys through the primary key and
+applies the same rule.
 """
 
 from __future__ import annotations
@@ -114,6 +116,15 @@ class TraceDetailRead:
 
 class TraceDetailReadBuilder:
     TABLE = "spans"
+    # Bound once with WITH and used twice in the annotation read: as the
+    # candidate (span bloom index) filter and as the live-span test after the
+    # collapse. It must never be a column of model_hub_score, nor a SELECT
+    # alias in that statement.
+    _ANNOTATION_SPAN_SET = "detail_annotation_span_set"
+    # The full ORDER BY of model_hub_score (schema.CDC_MODEL_HUB_SCORE). The
+    # outer annotation read addresses versions by this tuple so the primary
+    # key can prune it.
+    _SCORE_SORT_KEY = "label_id, created_at, id"
     SCORE_TABLE = "model_hub_score"
     # The authorized config tuple is written into the SQL text once, bound to
     # this alias, and both config checks name the alias. The driver inlines
@@ -122,6 +133,16 @@ class TraceDetailReadBuilder:
     # must never be a column of an eval table: inside the subquery a column
     # would win over the outer alias.
     _EVAL_CONFIG_SET = "detail_eval_config_set"
+    # Bound once with WITH and used twice on tracer_eval_logger_v2: as the
+    # candidate (span bloom index) filter and as the live-span test after the
+    # collapse. It must never be a column of an eval table, nor a SELECT alias
+    # in these statements.
+    _EVAL_SPAN_SET = "detail_eval_span_set"
+    # The full ORDER BY of tracer_eval_logger_v2 (011_eval_logger_v2.sql). The
+    # outer read addresses versions by this tuple so the primary key can prune
+    # it. Every version of an id must share it; ReplacingMergeTree dedup
+    # relies on the same.
+    _V2_EVAL_SORT_KEY = "custom_eval_config_id, created_at, id"
 
     def __init__(self, *, project_ids: list[str], trace_id: str) -> None:
         normalized = tuple(dict.fromkeys(str(value) for value in project_ids if value))
@@ -338,30 +359,42 @@ class TraceDetailReadBuilder:
                 f"coalesce(argMax(deleted, {version}), 0))"
             )
         )
+        # The live-span check runs on the latest version, after GROUP BY id.
+        # In PREWHERE it would drop a newer version that moved to a NULL,
+        # tombstoned or foreign span, and argMax would then serve the older
+        # version still on a live span. ``tuple(...).1`` keeps a NULL latest
+        # span (plain argMax skips NULLs), so the outer IN drops it.
         if v2:
-            # tracer_eval_logger_v2 is not sorted by trace_id, so a trace-scoped
-            # scan is not bounded by its primary key. It keeps the span
-            # candidate filter until it has its own latest-first read.
-            span_aggregate = f"argMax(observation_span_id, {version})"
-            span_candidate_filter = (
-                "AND observation_span_id IN %(detail_eval_span_ids)s"
+            # tracer_eval_logger_v2 is not sorted by trace_id. The candidate
+            # subquery keeps the trace, span (bloom-pruned) and config
+            # predicates and returns only sort keys; the outer read takes every
+            # version of those keys through the primary key, so the latest
+            # version is chosen before the live-span test. The keys never leave
+            # the server.
+            with_clause = (
+                f"WITH %(detail_eval_config_ids)s AS {self._EVAL_CONFIG_SET},\n"
+                f"                 %(detail_eval_span_ids)s AS {self._EVAL_SPAN_SET}"
             )
-            live_span_filter = ""
+            span_set = self._EVAL_SPAN_SET
+            candidate_filter = f"""
+                  AND ({self._V2_EVAL_SORT_KEY}) IN (
+                      SELECT {self._V2_EVAL_SORT_KEY}
+                      FROM {table}
+                      PREWHERE trace_id = %(detail_eval_trace_id)s
+                        AND observation_span_id IN {span_set}
+                        AND toString(custom_eval_config_id)
+                              IN {self._EVAL_CONFIG_SET}
+                  )"""
         else:
             # tracer_eval_logger is sorted by trace_id first: one trace-scoped
             # scan reads only this trace's granules, so every version of an id
             # is read and the latest one is chosen before its span is tested.
-            # In PREWHERE the live-span check would drop a newer version that
-            # moved to a NULL, tombstoned or foreign span, and argMax would then
-            # serve the older version still on a live span. ``tuple(...).1``
-            # keeps a NULL latest span (plain argMax skips NULLs), so the outer
-            # IN drops it.
-            span_aggregate = f"argMax(tuple(observation_span_id), {version}).1"
-            span_candidate_filter = ""
-            live_span_filter = "AND latest_span_id IN %(detail_eval_span_ids)s"
+            with_clause = f"WITH %(detail_eval_config_ids)s AS {self._EVAL_CONFIG_SET}"
+            span_set = "%(detail_eval_span_ids)s"
+            candidate_filter = ""
         return (
             f"""
-            WITH %(detail_eval_config_ids)s AS {self._EVAL_CONFIG_SET}
+            {with_clause}
             SELECT
                 latest_span_id AS span_id,
                 toString(latest_eval_config_id) AS eval_config_id,
@@ -380,7 +413,8 @@ class TraceDetailReadBuilder:
             FROM (
                 SELECT
                     id AS grouped_eval_id,
-                    {span_aggregate} AS latest_span_id,
+                    argMax(tuple(observation_span_id), {version}).1
+                        AS latest_span_id,
                     argMax(custom_eval_config_id, {version})
                         AS latest_eval_config_id,
                     argMax(tuple(output_float), {version}).1 AS latest_output_float,
@@ -400,13 +434,12 @@ class TraceDetailReadBuilder:
                     {deleted} AS latest_is_deleted
                 FROM {table}
                 PREWHERE trace_id = %(detail_eval_trace_id)s
-                  {span_candidate_filter}
                   AND toString(custom_eval_config_id)
-                        IN {self._EVAL_CONFIG_SET}
+                        IN {self._EVAL_CONFIG_SET}{candidate_filter}
                 GROUP BY id
             ) AS latest_trace_evals
             WHERE latest_is_deleted = 0
-              {live_span_filter}
+              AND latest_span_id IN {span_set}
               AND toString(latest_eval_config_id)
                     IN {self._EVAL_CONFIG_SET}
             ORDER BY span_id ASC, eval_config_id ASC
@@ -430,8 +463,16 @@ class TraceDetailReadBuilder:
             return "", {}
         if str(project_id) not in self.project_ids:
             raise TraceDetailReadUnavailable("annotation_project_out_of_scope")
+        # The live-span check runs on the latest version, after GROUP BY id;
+        # in PREWHERE it would let an older version on a live span stand in
+        # for a newer one that left it. model_hub_score is not sorted by
+        # trace: the candidate subquery keeps the project, trace and span
+        # (bloom-pruned) predicates and returns only sort keys, and the outer
+        # read takes every version of those keys through the primary key.
+        # ``tuple(...).1`` keeps a NULL latest span, so the outer IN drops it.
         return (
             f"""
+            WITH %(detail_annotation_span_ids)s AS {self._ANNOTATION_SPAN_SET}
             SELECT
                 latest_span_id AS span_id,
                 toString(latest_label_id) AS label_id,
@@ -439,7 +480,7 @@ class TraceDetailReadBuilder:
             FROM (
                 SELECT
                     id AS grouped_score_id,
-                    argMax(observation_span_id, _peerdb_version)
+                    argMax(tuple(observation_span_id), _peerdb_version).1
                         AS latest_span_id,
                     argMax(label_id, _peerdb_version) AS latest_label_id,
                     argMax(value, _peerdb_version) AS latest_value,
@@ -450,10 +491,17 @@ class TraceDetailReadBuilder:
                 FROM {self.SCORE_TABLE}
                 PREWHERE tracer_project_id = %(detail_annotation_project_id)s
                   AND trace_id = %(detail_annotation_trace_id)s
-                  AND observation_span_id IN %(detail_annotation_span_ids)s
+                  AND ({self._SCORE_SORT_KEY}) IN (
+                      SELECT {self._SCORE_SORT_KEY}
+                      FROM {self.SCORE_TABLE}
+                      PREWHERE tracer_project_id = %(detail_annotation_project_id)s
+                        AND trace_id = %(detail_annotation_trace_id)s
+                        AND observation_span_id IN {self._ANNOTATION_SPAN_SET}
+                  )
                 GROUP BY id
             ) AS latest_trace_annotations
             WHERE latest_is_deleted = 0
+              AND latest_span_id IN {self._ANNOTATION_SPAN_SET}
             ORDER BY span_id ASC, label_id ASC
             LIMIT {_MAX_ANNOTATION_ROWS + 1}
             """,

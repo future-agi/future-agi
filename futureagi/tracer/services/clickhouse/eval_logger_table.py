@@ -10,6 +10,15 @@ in favour of the unified ``is_deleted`` ReplacingMergeTree marker.
 peerdb-backed deployment keeps the legacy table (default) while a CH-direct
 stack flips to v2 without code edits. See
 ``v2/schema/011_eval_logger_v2.sql`` + ``docs/CH25_MIGRATION.md``.
+
+Key contract for ``tracer_eval_logger_v2`` writers: every version of a record
+keeps the table's sort key ``(custom_eval_config_id, created_at, id)``.
+ReplacingMergeTree collapses versions that share it, and the trace-detail eval
+read reaches every version of a record through it. A writer that re-inserts an
+eval copies the record's ``custom_eval_config_id`` and ``created_at``; a
+``created_at`` stamped at write time gives each version its own key, and a
+newer version that also leaves the trace's live spans then lets the older
+version be served.
 """
 
 from __future__ import annotations
