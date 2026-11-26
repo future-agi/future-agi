@@ -358,6 +358,22 @@ def actor_problems(
         )
         for path, other in broken_references(actor, known, rules)
     ]
+    # A chance of 0 never brings them in, and the runtime refuses it when a scenario is kept.
+    activation = actor.get("activation")
+    trigger = activation.get("trigger") if isinstance(activation, dict) else None
+    if isinstance(trigger, dict) and trigger.get("kind") == "probability":
+        chance = trigger.get("p")
+        if (
+            isinstance(chance, bool)
+            or not isinstance(chance, (int, float))
+            or not 0 < chance <= 1
+        ):
+            problems.append(
+                problem(
+                    field_at("activation.trigger.p"),
+                    "Give a chance above 0% and at most 100%.",
+                )
+            )
     problems += [
         problem(field_at(path), f"{actor_id} is in a cycle of {path} links; break it.")
         for path in rules.get("acyclic", [])
