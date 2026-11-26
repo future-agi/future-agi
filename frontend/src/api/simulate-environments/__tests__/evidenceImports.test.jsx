@@ -222,6 +222,49 @@ describe("useEvidenceImport", () => {
 });
 
 describe("useDraftEvidenceCases", () => {
+  const body = { caseIds: ["c1"], shows: { c1: "success" } };
+
+  it.each([
+    ["a lost response", { transportCode: "ERR_NETWORK" }],
+    ["a gateway timeout", { statusCode: 504 }],
+  ])("recovers the active review after %s without posting again", async (_, error) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const other = "33333333-3333-3333-3333-333333333333";
+    for (const id of [IMPORT, other]) {
+      client.setQueryData(evidenceImportKey(ENV, id), bundle({ id }));
+    }
+    renderHook(() => useEvidenceImport(ENV, other), { wrapper });
+    const review = renderHook(() => useEvidenceImport(ENV, IMPORT), { wrapper });
+    const draft = renderHook(() => useDraftEvidenceCases(ENV, IMPORT), { wrapper });
+    axios.post.mockRejectedValue(error);
+    axios.get
+      .mockResolvedValueOnce({ data: bundle({ drafting: true }) })
+      .mockResolvedValue({ data: bundle() });
+
+    await act(async () => {
+      await expect(draft.result.current.mutateAsync(body)).rejects.toBe(error);
+    });
+    await waitFor(() => expect(review.result.current.data.drafting).toBe(true));
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    await waitFor(() => expect(review.result.current.data.drafting).toBe(false));
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(axios.get.mock.calls).toEqual([[`${BASE}${IMPORT}/`], [`${BASE}${IMPORT}/`]]);
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not reread a review after a definite refusal", async () => {
+    client.setQueryData(evidenceImportKey(ENV, IMPORT), bundle());
+    renderHook(() => useEvidenceImport(ENV, IMPORT), { wrapper });
+    const draft = renderHook(() => useDraftEvidenceCases(ENV, IMPORT), { wrapper });
+    const refusal = { statusCode: 422 };
+    axios.post.mockRejectedValue(refusal);
+    await act(async () => {
+      await expect(draft.result.current.mutateAsync(body)).rejects.toBe(refusal);
+    });
+    expect(axios.get).not.toHaveBeenCalled();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
   it("sends what each record shows and keeps the answer", async () => {
     const answer = bundle({ drafting: true });
     axios.post.mockResolvedValue({ data: answer });
