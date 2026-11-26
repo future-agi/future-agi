@@ -14,6 +14,7 @@ import ToolEvaluationCellRenderer from "./CellRenderers/ToolEvaluationCellRender
 import { getLabel } from "./PerformanceMetrics/common";
 import EvalReasonCellRenderer from "./CellRenderers/EvalReasonCellRenderer";
 import ToolReasonCellRenderer from "./CellRenderers/ToolReasonCellRenderer";
+import { MIN_CONNECTED_CALLS, TOO_FEW_CALLS_REASON } from "./debugFailuresRule";
 import {
   reorderMenuList,
   setMenuIcons,
@@ -998,10 +999,10 @@ export const useFixMyAgentBlocked = (executionId) => {
     };
   } else if (FINISHED_RUN_STATUSES.includes(status)) {
     // An older backend sends no count: undefined < 15 is false, so it stays open.
-    if (kpis?.connected_calls < 15) {
+    if (kpis?.connected_calls < MIN_CONNECTED_CALLS) {
       return {
         disabled: true,
-        reason: "You need at least 15 connected calls to debug failures.",
+        reason: TOO_FEW_CALLS_REASON,
       };
     }
   }

@@ -74,6 +74,21 @@ def _metric_schema_installed(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _debug_failures_readable(monkeypatch):
+    """Debug analysis fixtures build one- and two-call runs to test the job
+    mechanics, so every run passes the minimum-calls-and-a-failure refusal here.
+    simulate/tests/test_debug_analysis_refusals.py tests the refusal itself."""
+    from tracer.services import simulation_investigation
+
+    monkeypatch.setattr(
+        simulation_investigation,
+        "connected_call_count",
+        lambda _: simulation_investigation.MIN_CONNECTED_CALLS,
+    )
+    monkeypatch.setattr(simulation_investigation, "failing_call_count", lambda _: 1)
+
+
+@pytest.fixture(autouse=True)
 def _stub_eval_task_workflow(monkeypatch):
     """Keep eval-task create/edit views and tools from connecting to Temporal."""
 

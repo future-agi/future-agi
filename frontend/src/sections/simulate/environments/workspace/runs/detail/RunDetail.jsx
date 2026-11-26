@@ -69,6 +69,7 @@ import RunReport from "./RunReport";
 import useCallListNavigation from "./useCallListNavigation";
 import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
+import { debugFailuresBlockedReason } from "src/sections/test-detail/debugFailuresRule";
 
 /**
  * The designer-style run/execution detail page.
@@ -184,6 +185,14 @@ export default function RunDetail({
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
   const stopNotice = stopNoticeOf(identity, live);
+  // Debug failures needs enough connected calls and a failing one; the server
+  // refuses the rest. Judged once the run has loaded, so it never flashes.
+  const debugBlocked = identity
+    ? debugFailuresBlockedReason({
+        connectedCalls: stats.connected,
+        failingCalls: stats.failed,
+      })
+    : null;
   // The header launches from failing cases without opening the diagnosis drawer.
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
@@ -479,16 +488,25 @@ export default function RunDetail({
         )}
         {!fixRun && (
           <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              onClick={() => setDebugging(true)}
-              disabled={!access.canRun || live}
-              startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            <Tooltip
+              arrow
+              title={access.canRun && !live ? debugBlocked ?? "" : ""}
             >
-              Debug failures
-            </Button>
+              <Box component="span" sx={{ display: "inline-flex" }}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  onClick={() => setDebugging(true)}
+                  disabled={!access.canRun || live || !!debugBlocked}
+                  startIcon={
+                    <Iconify icon="solar:magnifer-linear" width={15} />
+                  }
+                >
+                  Debug failures
+                </Button>
+              </Box>
+            </Tooltip>
           </ViewerLock>
         )}
       </Stack>

@@ -13,6 +13,7 @@ import {
 } from "src/api/simulate-environments/runDetail";
 import DiagnosisPane from "./DiagnosisPane";
 import ImaginePane from "./ImaginePane";
+import { DEBUG_FAILURES_REFUSALS } from "src/sections/test-detail/debugFailuresRule";
 
 /**
  * Fix my agent — the Debug-failures drawer.
@@ -26,12 +27,14 @@ import ImaginePane from "./ImaginePane";
  * close-X — so this content deliberately does NOT add its own, or the two would
  * stack in the same corner.
  */
-// The API refuses a run whose calls are still in flight; anything else is a
-// generic failure — raw backend text is not user copy.
+// The API refuses a run whose calls are still in flight, or one too small or
+// with nothing failed; anything else is a generic failure — raw backend text is
+// not user copy.
 function refusalMessage(error) {
-  return error?.code === "execution_not_completed"
-    ? "Diagnosis is available once every call in this run finishes."
-    : null;
+  if (error?.code === "execution_not_completed") {
+    return "Diagnosis is available once every call in this run finishes.";
+  }
+  return DEBUG_FAILURES_REFUSALS[error?.code] ?? null;
 }
 
 export default function FixMyAgentDrawer({
