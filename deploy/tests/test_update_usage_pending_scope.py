@@ -411,21 +411,28 @@ def declared_high_volume_scope(registry, row):
     key=(row['app_label'],row['name'])
     scoped=p.select_reference_registry(registry,[row],plan=[{'app_label':key[0],'name':key[1]}])
     actual={item['table'] for item in scoped}
-    if key in PINNED_SCOPES:
-        declared=PINNED_SCOPES[key]
-    else:
-        high_volume={(item['database'],item['table']) for item in registry}
-        safety,scope=declared_scope(*key)
-        unknown=sorted(t for t in scope if tuple(t.split(':',1)) not in high_volume)
-        assert not unknown, (f'{key[0]}/{key[1]}: UPDATE_SCOPE lists tables that are not in '
-            f'deploy/update/high-volume-tables.json: {unknown}')
-        declared={t.split(':',1)[1] for t in safety|scope if tuple(t.split(':',1)) in high_volume}
     wanted=', '.join(repr('postgres:'+t) for t in sorted(actual))
-    assert actual==declared, (f'{key[0]}/{key[1]}: its high-volume scope is {sorted(actual)} but it declares '
-        f'{sorted(declared)}. Declare it in the migration: UPDATE_SCOPE = ({wanted},) at module level, '
+    fix=(f'Declare it in the migration: UPDATE_SCOPE = ({wanted},) at module level, '
         "or UPDATE_SAFETY['tables'] when it carries one. scripts/check_update_safety.py refuses edits "
         'to a merged migration, so pin a merged one in PINNED_SCOPES instead.')
-    return declared
+    if key in PINNED_SCOPES:
+        assert actual==PINNED_SCOPES[key], (f'{key[0]}/{key[1]}: its high-volume scope is {sorted(actual)} '
+            f'but PINNED_SCOPES records {sorted(PINNED_SCOPES[key])}.')
+        return actual
+    high_volume={(item['database'],item['table']) for item in registry}
+    safety,scope=declared_scope(*key)
+    unknown=sorted(t for t in scope if tuple(t.split(':',1)) not in high_volume)
+    assert not unknown, (f'{key[0]}/{key[1]}: UPDATE_SCOPE lists tables that are not in '
+        f'deploy/update/high-volume-tables.json: {unknown}')
+    # UPDATE_SAFETY may list more tables than the scope reaches, as the gate
+    # allows. UPDATE_SCOPE exists only for this check, so it must not go stale.
+    declared={t.split(':',1)[1] for t in safety|scope if tuple(t.split(':',1)) in high_volume}
+    undeclared=sorted(actual-declared)
+    assert not undeclared, (f'{key[0]}/{key[1]}: its high-volume scope reaches {undeclared}, which it does not '
+        f'declare. {fix}')
+    stale=sorted({t.split(':',1)[1] for t in scope}-actual)
+    assert not stale, f'{key[0]}/{key[1]}: UPDATE_SCOPE lists {stale}, which its scope does not reach. Remove them.'
+    return actual
 
 
 PROBE = '''from django.db import migrations, models
@@ -556,6 +563,8 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
             ('undeclared high-volume scope',fk,'',False),
             ('declared high-volume scope',fk,"UPDATE_SCOPE = ('postgres:tracer_trace',)",True),
             ('stale declaration',fk,"UPDATE_SCOPE = ('postgres:tracer_trace', 'postgres:tracer_eval_task')",False),
+            # The gate lets a reviewed UPDATE_SAFETY list more tables than are touched.
+            ('wider UPDATE_SAFETY',fk,"UPDATE_SAFETY = {'tables': ['postgres:tracer_trace', 'postgres:tracer_eval_task']}",True),
             ('non high-volume declaration',fk,"UPDATE_SCOPE = ('postgres:tracer_trace', 'postgres:tracer_project')",False),
             ('no high-volume scope',column,'',True),
             ('undeclared opaque operation','migrations.RunPython(forwards)','',None),
