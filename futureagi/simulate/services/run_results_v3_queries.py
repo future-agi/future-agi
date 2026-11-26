@@ -1567,15 +1567,14 @@ def build_run_comparison(
             current_trials = verdicts(queryset)[2]
             pairs, summary = run_compare.scenario_pairs(current_trials, {})
             summary["excluded_not_comparable"] = queryset.filter(NOT_COMPARABLE).count()
+            current_versions = run_compare.run_versions([execution.id])[
+                str(execution.id)
+            ]
             comparison.update(
                 pairs=pairs,
                 summary=summary,
-                versions={
-                    "current": run_compare.run_versions([execution.id])[
-                        str(execution.id)
-                    ],
-                    "against": None,
-                },
+                versions={"current": current_versions, "against": None},
+                comparability=run_compare.comparability(current_versions, None),
             )
         return comparison
     previous_calls = run_calls_queryset(previous)
@@ -1670,10 +1669,15 @@ def _run_pairs(
     )
     for pair in pairs:
         pair["changed_test"] = pair["scenario_key"] in changed
+    # Runs of other splits or versions keep their pairs, but no verdict between them.
+    comparability = run_compare.comparability(current_versions, previous_versions)
+    if not comparability["comparable"]:
+        run_compare.withhold_verdicts(pairs, summary)
     return {
         "pairs": pairs,
         "summary": summary,
         "versions": {"current": current_versions, "against": previous_versions},
+        "comparability": comparability,
     }
 
 

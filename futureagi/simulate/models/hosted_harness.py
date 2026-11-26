@@ -9,6 +9,7 @@ from django.db import models
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
+from simulate.models.harness_versioning import TaskSplit
 from tfc.utils.base_model import BaseModel
 
 # Ceiling on one hosted run; enforced by the DB constraint below and reused by request validation.
@@ -137,6 +138,21 @@ class HostedHarnessJob(BaseModel):
     suite_version = models.ForeignKey(
         "simulate.HarnessSuiteVersion",
         on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # The split a run job ran and the locked version it ran it under; both null for
+    # the scenarios selected. A relock of the same versions is another locked version,
+    # so the run names its own rather than the one its versions match.
+    split = models.CharField(
+        max_length=8, choices=TaskSplit.choices, null=True, blank=True
+    )
+    # RESTRICT, like the locked version's own version pins: a locked version a run
+    # scored is never deleted while the run exists.
+    locked_version = models.ForeignKey(
+        "simulate.HarnessLockedVersion",
+        on_delete=models.RESTRICT,
         null=True,
         blank=True,
         related_name="+",

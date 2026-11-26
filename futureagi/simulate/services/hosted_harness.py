@@ -378,6 +378,7 @@ def create_selected_harness_run(
     verify: bool = False,
     coding_agent_key_id: str | None = None,
     for_agent_fix: bool = False,
+    split: str | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
@@ -386,7 +387,9 @@ def create_selected_harness_run(
     ``verify`` as a verify of the environment's held-back cases. A Run a coding agent
     asks for (``coding_agent_key_id``) is stamped with its key, and a held-back case
     in it is refused as an unknown one. ``seed`` and ``parallelism`` replace the
-    environment's; each defaults to what it has.
+    environment's; each defaults to what it has. A ``split`` runs that split of the
+    locked version of the pinned versions, the given scenarios or else all of it, and
+    the Run records that locked version.
     """
 
     if environment.environment_id is not None:
@@ -412,6 +415,18 @@ def create_selected_harness_run(
             "environment has no durable validated snapshot",
             status_code=409,
         )
+    if split is not None:
+        from simulate.services.harness_versioning.locked_versions import select_split
+
+        # Before the checks and the readiness plan: a split's scenarios are its lock's.
+        scenario_keys = select_split(
+            environment,
+            resolve_run_pins(
+                environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
+            ),
+            split,
+            scenario_keys,
+        ).scenario_keys
     if not scenario_keys:
         raise HostedHarnessError(
             "scenario_selection_empty",
@@ -515,6 +530,12 @@ def create_selected_harness_run(
         resolved = resolve_run_pins(
             environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
         )
+        locked_version = None
+        if split is not None:
+            # Again under the lock: the pair may have been unlocked or relocked since.
+            locked_version = select_split(
+                environment, resolved, split, scenario_keys
+            ).locked_version
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
@@ -524,6 +545,7 @@ def create_selected_harness_run(
                 scenario_keys,
                 trials,
                 seed=seed,
+                split=split,
             )
             if replayed is not None:
                 return replayed, False
@@ -790,6 +812,8 @@ def create_selected_harness_run(
             child.environment_version = pins.environment_version
             child.suite_version = pins.suite_version
             child.assembled_bundle = pins.assembled_bundle
+            child.split = split
+            child.locked_version = locked_version
             if planned is not None and planned.plan is not None:
                 # The report the selection was decided from, not one read after this
                 # run changed its inputs.
@@ -817,6 +841,8 @@ def create_selected_harness_run(
                 "environment_version",
                 "suite_version",
                 "assembled_bundle",
+                "split",
+                "locked_version",
             ]
         child.save(
             update_fields=[
@@ -1628,9 +1654,10 @@ def _replayed_run(
     scenario_keys: list[str],
     trials: int,
     seed: int | None = None,
+    split: str | None = None,
 ) -> HostedHarnessJob | None:
     """The run an earlier request with this key created, when this one repeats it; a key reused for other versions,
-    scenarios, trials or another seed is refused."""
+    scenarios, trials, another seed or another split is refused."""
     existing = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id, idempotency_key=idempotency_key
     ).first()
@@ -1658,6 +1685,7 @@ def _replayed_run(
         or metadata.get("selected_scenario_keys") != scenario_keys
         or metadata.get("trials") != trials
         or (seed is not None and existing.seed != seed)
+        or existing.split != split
     ):
         raise HostedHarnessError(
             "idempotency_conflict",

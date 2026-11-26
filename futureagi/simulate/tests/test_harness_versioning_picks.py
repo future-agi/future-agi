@@ -2057,15 +2057,6 @@ class TestSplitApi:
         run = HostedHarnessJob.no_workspace_objects.get(id=body["job_id"])
         assert (run.split, run.locked_version_id) == ("test", locked_version.id)
 
-    def test_neither_scenario_ids_nor_a_split_is_refused(
-        self, auth_client, user, workspace, storage
-    ):
-        environment, _ = _locked(user, workspace, "sp-api-empty", storage)
-
-        response = _post_run(auth_client, environment, {"trials": 1})
-
-        assert response.status_code == 400, response.content
-
     def test_an_unknown_split_is_refused(self, auth_client, user, workspace, storage):
         environment, _ = _locked(user, workspace, "sp-api-bad", storage)
 

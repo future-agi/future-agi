@@ -2124,8 +2124,15 @@ class HostedHarnessProvider:
                 return response
             raise
         coder = coding_agent_key(request)
+        split = request.validated_data.get("split")
         try:
             if coder is not None:
+                if split is not None:
+                    raise HostedHarnessError(
+                        "split_not_for_coding_agent",
+                        "A coding agent runs the whole suite. Leave out the split.",
+                        status_code=422,
+                    )
                 # The cases a coding agent may not run are chosen before its first run,
                 # and it runs only the default suite.
                 require_default_suite(
@@ -2140,6 +2147,9 @@ class HostedHarnessProvider:
             )
             if "scenario_ids" in request.validated_data:
                 scenario_keys = list(request.validated_data["scenario_ids"])
+            elif split is not None:
+                # A split's scenarios are its lock's: the run resolves them.
+                scenario_keys = []
             else:
                 # Run all: every scenario of the chosen suite, resolved here, then
                 # planned and checked as a list.
@@ -2155,6 +2165,7 @@ class HostedHarnessProvider:
             child, created = create_selected_harness_run(
                 environment,
                 scenario_keys=scenario_keys,
+                split=split,
                 trials=request.validated_data["trials"],
                 idempotency_key=idempotency_key,
                 seed=request.validated_data.get("seed"),
@@ -2531,6 +2542,7 @@ class HostedHarnessProvider:
             trials=trials,
             idempotency_key=str(uuid4()),
             rerun_of=job if job.environment_id is not None else None,
+            split=job.split,
             picks=(
                 VersionPicks(agent_version_id=credentials_agent.id)
                 if credentials_agent is not None

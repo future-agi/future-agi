@@ -37,6 +37,11 @@ IMPROVED = "improved"
 REGRESSED = "regressed"
 NO_MEANINGFUL_CHANGE = "no_meaningful_change"
 INCONCLUSIVE = "inconclusive"
+VERDICTS = (IMPROVED, REGRESSED, NO_MEANINGFUL_CHANGE, INCONCLUSIVE)
+
+# Why two runs' verdicts are withheld.
+DIFFERENT_VERSIONS = "different_versions"
+DIFFERENT_SPLIT = "different_split"
 
 PAIRED = "paired"
 CRITERIA_CHANGED = "criteria_changed"
@@ -319,16 +324,52 @@ def _summary(
 
 
 def run_versions(execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]]:
-    """Each run's pinned ``{agent, environment, suite}``; an unpinned run's are null."""
+    """Each run's pinned ``{agent, environment, suite}`` with its ``split`` and
+    ``locked_version``; an unpinned run's are null."""
     labels = run_version_labels(execution_ids)
-    return {
-        str(one): {
-            piece: (labels.get(str(one)) or {}).get(f"{piece}_version")
-            for piece in ("agent", "environment", "suite")
+
+    def pinned(held: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            **{
+                piece: held.get(f"{piece}_version")
+                for piece in ("agent", "environment", "suite")
+            },
+            "split": held.get("split"),
+            "locked_version": held.get("locked_version"),
         }
-        for one in execution_ids
-        if one
+
+    return {
+        str(one): pinned(labels.get(str(one)) or {}) for one in execution_ids if one
     }
+
+
+def _pinned_id(versions: Mapping[str, Any], piece: str) -> Any:
+    return (versions.get(piece) or {}).get("id")
+
+
+def comparability(
+    current: Mapping[str, Any], against: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    """Whether the verdicts between two runs mean better or worse, as ``run_versions``
+    gives each. Runs without a split compare as always. A run of a split compares
+    only with a run of the same split of the same environment and suite versions."""
+    reasons = []
+    if against is not None and (current.get("split") or against.get("split")):
+        if any(
+            _pinned_id(current, piece) != _pinned_id(against, piece)
+            for piece in ("environment", "suite")
+        ):
+            reasons.append(DIFFERENT_VERSIONS)
+        if current.get("split") != against.get("split"):
+            reasons.append(DIFFERENT_SPLIT)
+    return {"comparable": not reasons, "reasons": reasons}
+
+
+def withhold_verdicts(pairs: list[dict[str, Any]], summary: dict[str, Any]) -> None:
+    """Clear every verdict and its count, keeping the pairs and their differences."""
+    for pair in pairs:
+        pair["verdict"] = None
+    summary.update(dict.fromkeys(VERDICTS))
 
 
 def sub_goal_digests(environment_version_ids: Iterable[Any]) -> dict[str, Any]:

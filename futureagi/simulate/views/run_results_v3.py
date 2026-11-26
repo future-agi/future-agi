@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 
 from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import CallExecution, TestExecution
+from simulate.models.harness_versioning import TaskSplit
 from simulate.selectors.call_detail import (
     call_actors,
     comparability,
@@ -62,7 +63,10 @@ from simulate.serializers.harness_job import (
     RunStopSerializer,
 )
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
-from simulate.serializers.response.run_test import RunVersionLabelSerializer
+from simulate.serializers.response.run_test import (
+    RunLockedVersionLabelSerializer,
+    RunVersionLabelSerializer,
+)
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
@@ -334,6 +338,17 @@ class RunExecutionSerializer(serializers.Serializer):
             "The selected cases readiness held back from this run, and why; null for"
             " a coding agent's key."
         ),
+    )
+    split = serializers.ChoiceField(
+        choices=TaskSplit.choices,
+        allow_null=True,
+        required=False,
+        help_text="The split the run ran; null for the scenarios selected.",
+    )
+    locked_version = RunLockedVersionLabelSerializer(
+        allow_null=True,
+        required=False,
+        help_text="The locked version the run of a split ran under; null without a split.",
     )
     build_notice = serializers.CharField(
         allow_null=True,
@@ -844,6 +859,8 @@ def _execution_payload(
         "readiness_selection": (
             None if coding_agent else pinned.get("readiness_selection")
         ),
+        "split": pinned.get("split"),
+        "locked_version": pinned.get("locked_version"),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition
