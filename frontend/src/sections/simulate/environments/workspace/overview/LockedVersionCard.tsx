@@ -149,6 +149,7 @@ export default function LockedVersionCard({
         shortDate(current.lockedAt),
         current.train,
         current.test,
+        current.environmentLabel,
       )
     : lock.canLock
       ? LOCK_COPY.readyLine(lock.train, lock.test)

@@ -83,7 +83,7 @@ test(
       ],
       browserChecks: [
         'the card reads "Lock environment <vN>, scenarios <vN>" (the default pair) and Ready, with "Lock versions" enabled',
-        'the dialog reads "Lock environment <vN>, scenarios <vN>?"; after confirming the card title is "Locked: environment <vN>, scenarios <vN>", it shows no status badge and its line reads "Lock <label> · <d Mon> · Train 8 · Test 4 scenarios · scorer frozen"',
+        'the dialog reads "Lock environment <vN>, scenarios <vN>?"; after confirming the card title is "Locked: environment <vN>, scenarios <vN>", it shows no status badge and its line reads "Lock <label> · <d Mon> · Train 8 · Test 4 scenarios · scorer environment <vN>"',
       ],
     }),
   },
@@ -200,7 +200,7 @@ test(
       await expect(card.getByText('Locked', { exact: true })).toHaveCount(0);
       await expect(card.getByText('Ready', { exact: true })).toHaveCount(0);
       await expect(card.getByText(new RegExp(
-        `^Lock ${lockedVersion.label.replace(/\./g, '\\.')} · (?:\\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \\d{1,2}) · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} scenarios · scorer frozen$`,
+        `^Lock ${lockedVersion.label.replace(/\./g, '\\.')} · (?:\\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \\d{1,2}) · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} scenarios · scorer environment ${after.locked_versions[0].environment_label}$`,
       ))).toBeVisible();
       await expect(card.getByRole('button', { name: LOCK_BUTTON })).toHaveCount(0);
     });

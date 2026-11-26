@@ -3816,4 +3816,4 @@
 **Browser observations:**
 
 - the card reads "Lock environment <vN>, scenarios <vN>" (the default pair) and Ready, with "Lock versions" enabled
-- the dialog reads "Lock environment <vN>, scenarios <vN>?"; after confirming the card title is "Locked: environment <vN>, scenarios <vN>", it shows no status badge and its line reads "Lock <label> · <d Mon> · Train 8 · Test 4 scenarios · scorer frozen"
+- the dialog reads "Lock environment <vN>, scenarios <vN>?"; after confirming the card title is "Locked: environment <vN>, scenarios <vN>", it shows no status badge and its line reads "Lock <label> · <d Mon> · Train 8 · Test 4 scenarios · scorer environment <vN>"

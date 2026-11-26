@@ -237,8 +237,18 @@ export const LOCK_COPY = {
     passed: "Passed",
     unproved: "Not proved",
   },
-  lockedLine: (label, at, train, test) =>
-    `Lock ${label} · ${at} · Train ${train} · Test ${test} scenarios · scorer frozen`,
+  // Mapped judges stay editable, so the line names the scorer environment rather
+  // than claim the scorer is frozen.
+  lockedLine: (label, at, train, test, environmentLabel) =>
+    [
+      `Lock ${label}`,
+      at,
+      `Train ${train}`,
+      `Test ${test} scenarios`,
+      environmentLabel && `scorer environment ${environmentLabel}`,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   readyLine: (train, test) =>
     `Train ${train} · Test ${test} scenarios once locked.`,
   lock: "Lock versions",
