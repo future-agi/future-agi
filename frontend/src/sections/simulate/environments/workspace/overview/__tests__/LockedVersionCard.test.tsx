@@ -155,9 +155,7 @@ describe("LockedVersionCard", () => {
     expect(screen.getByText("Ready")).toBeInTheDocument();
     expect(screen.getByText("Not proved")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Train 54 · Test 14 scenarios once locked. Lock to freeze scenarios, splits and the scorer environment.",
-      ),
+      screen.getByText("Train 54 · Test 14 scenarios once locked."),
     ).toBeInTheDocument();
 
     await userEvent.click(
