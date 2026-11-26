@@ -84,7 +84,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # approve the rollup as github-actions[bot]
-      issues: write # labels and comments on members
+      issues: write # labels and comments on members; the breaker's base-red issues
       actions: write # re-run an infra-red rollup's failed jobs; a member's full run
       checks: read
     steps:

@@ -22,6 +22,10 @@ One tick reads GitHub, plans, and (live mode only) acts:
    rollup is rebuilt once dev passes that job. A rollup removed for
    a conflict is rebuilt on the new dev. While an open issue carries the
    base-red label, no rollup starts, and a red one is closed without a split.
+   A live tick first runs the base-health breaker (devflow_tick.py), so
+   rollup-only traffic trips it too. It files and closes base-red issues only
+   with DEVFLOW_HEARTBEAT=live, else it logs; a trip it files pauses the
+   same tick.
 2. Admitted pull requests (label devflow:train). Exclusions send a pull
    request down the normal path: drafts, forks, high tier (tier contract
    v2), reverts, natively enqueued, auto-merge on a full head, conflicts with
@@ -55,6 +59,7 @@ from __future__ import annotations
 import argparse
 import base64
 import calendar
+import http.client
 import json
 import math
 import os
@@ -66,6 +71,17 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import UTC, datetime
+
+# The base-health breaker is the sibling devflow_tick.py, and -I leaves the
+# script's directory off sys.path. A checkout without it runs no breaker.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import devflow_tick
+except ModuleNotFoundError as err:
+    if err.name != "devflow_tick":
+        raise
+    devflow_tick = None
 
 SCHEMA = "devflow-train/v1"
 MANIFEST_MARKER = "<!-- devflow-train:v1 -->"
@@ -1704,10 +1720,39 @@ def backoff_seconds(limits: dict, now: float, floor: int) -> float:
     return max(waits, default=0.0)
 
 
-def tick(reader: GitHub, required: list, cfg: Config, live: Live | None) -> dict:
+def run_breaker(api, file_trips: bool) -> set:
+    """One base-health breaker pass (devflow_tick.py) over the queue, dev and
+    rollup runs; returns the numbers of the issues it filed. It writes only
+    when file_trips, else it logs. A failed pass is logged and files nothing:
+    the open base-red issues still pause the train."""
+    now = datetime.now(UTC)
+    try:
+        runs, failures, jobs = devflow_tick.collect_queue(api, now, breaker_only=True)
+        tripped, new = devflow_tick.run_breaker(
+            api, now, runs, failures, jobs, dry=not file_trips
+        )
+    except (OSError, http.client.HTTPException, ValueError, KeyError) as err:
+        print(f"::warning::base-health breaker not run: {err}", flush=True)
+        return set()
+    for b in tripped:
+        print(devflow_tick.breaker_line(b), flush=True)
+    return {b["issue"] for b in new if b.get("issue")}
+
+
+def tick(
+    reader: GitHub,
+    required: list,
+    cfg: Config,
+    live: Live | None,
+    breaker=None,
+    file_trips: bool = False,
+) -> dict:
+    """breaker: a devflow_tick.Api for the base-health breaker, or None."""
     before = reader.calls, live.app.calls if live else 0
     data = reader.gather()
-    data["base_red"] = reader.base_red()
+    filed = run_breaker(breaker, file_trips) if breaker else set()
+    # The listing may not show an issue filed a moment ago.
+    data["base_red"] = sorted(set(reader.base_red()) | filed)
     reader.attach_reviewer_permissions(data)
     reader.attach_permissions(data, required, cfg)
     reader.attach_checks(data, required, cfg)
@@ -1941,6 +1986,14 @@ def run_cmd(args: argparse.Namespace) -> int:
             os.environ["TRAIN_APP_ID"], os.environ["TRAIN_APP_PRIVATE_KEY"], repo
         )
         live = Live(repo, GitHub(minter.get(), repo), reader)
+    # The breaker runs on live ticks with GH_TOKEN, as github-actions[bot]
+    # like its other runs, so its own closes stay its own.
+    breaker = None
+    if live and devflow_tick:
+        breaker = devflow_tick.Api(repo, os.environ["GH_TOKEN"])
+    elif live:
+        print("::warning::devflow_tick.py not found: no base-health breaker")
+    file_trips = os.environ.get("DEVFLOW_HEARTBEAT") == "live"
     start = last_busy = time.monotonic()
     deadline = start + args.loop_minutes * 60
     failed = 0
@@ -1951,7 +2004,7 @@ def run_cmd(args: argparse.Namespace) -> int:
             if minter:
                 live.app.token = minter.get()
             try:
-                result = tick(reader, required, cfg, live)
+                result = tick(reader, required, cfg, live, breaker, file_trips)
                 failed = 0
             except (RuntimeError, OSError) as err:
                 # State lives in GitHub, so the next tick starts clean. A
