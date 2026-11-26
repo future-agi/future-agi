@@ -53460,7 +53460,7 @@
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessReleaseRefusal"
+                            "$ref": "#/definitions/HarnessLockRefusal"
                         }
                     },
                     "default": {
@@ -55285,15 +55285,15 @@
         },
         "/simulate/api/harness-environments/{id}/versions/lock/": {
             "post": {
-                "operationId": "simulate_api_harness-environments_versions_lock_release",
-                "description": "Lock the default environment and suite versions into a release with train and\ntest splits; returns every version and release.",
+                "operationId": "simulate_api_harness-environments_versions_lock_version",
+                "description": "Lock the default environment and suite versions with train and test splits;\nreturns every version and locked version.",
                 "parameters": [
                     {
                         "name": "data",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/HarnessLockRelease"
+                            "$ref": "#/definitions/HarnessLockVersion"
                         }
                     }
                 ],
@@ -55313,13 +55313,13 @@
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessReleaseRefusal"
+                            "$ref": "#/definitions/HarnessLockRefusal"
                         }
                     },
                     "422": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessReleaseRefusal"
+                            "$ref": "#/definitions/HarnessLockRefusal"
                         }
                     },
                     "default": {
@@ -55388,15 +55388,15 @@
         },
         "/simulate/api/harness-environments/{id}/versions/unlock/": {
             "post": {
-                "operationId": "simulate_api_harness-environments_versions_unlock_release",
-                "description": "Unlock a release, as a workspace admin or owner. Its versions, splits and\nscores stay; returns every version and release.",
+                "operationId": "simulate_api_harness-environments_versions_unlock_version",
+                "description": "Unlock a locked version, as a workspace admin or owner. Its versions, splits and\nscores stay; returns every version and locked version.",
                 "parameters": [
                     {
                         "name": "data",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/HarnessUnlockRelease"
+                            "$ref": "#/definitions/HarnessUnlockVersion"
                         }
                     }
                 ],
@@ -150414,7 +150414,7 @@
                 }
             }
         },
-        "HarnessReleaseRefusal": {
+        "HarnessLockRefusal": {
             "required": [
                 "error",
                 "message",
@@ -150424,7 +150424,7 @@
             "properties": {
                 "error": {
                     "title": "Error",
-                    "description": "release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_locked, version_conflict or rebuild_running.",
+                    "description": "lock_not_ready, version_already_locked, lock_too_few_test, lock_too_few_train, version_locked, version_conflict or rebuild_running.",
                     "type": "string",
                     "minLength": 1
                 },
@@ -150446,17 +150446,17 @@
                 },
                 "train": {
                     "title": "Train",
-                    "description": "release_too_few_*: the train tasks a lock gives.",
+                    "description": "lock_too_few_*: the train tasks a lock gives.",
                     "type": "integer"
                 },
                 "test": {
                     "title": "Test",
-                    "description": "release_too_few_*: the test tasks a lock gives.",
+                    "description": "lock_too_few_*: the test tasks a lock gives.",
                     "type": "integer"
                 },
-                "release_id": {
-                    "title": "Release id",
-                    "description": "release_locked: the release to unlock first.",
+                "locked_version_id": {
+                    "title": "Locked version id",
+                    "description": "version_locked: the locked version to unlock first.",
                     "type": "string",
                     "format": "uuid"
                 }
@@ -153205,7 +153205,7 @@
                 }
             }
         },
-        "HarnessRelease": {
+        "HarnessLockedVersion": {
             "required": [
                 "id",
                 "label",
@@ -153360,7 +153360,7 @@
                 "agent",
                 "environment",
                 "suite",
-                "releases",
+                "locked_versions",
                 "lock"
             ],
             "type": "object",
@@ -153383,10 +153383,10 @@
                         "$ref": "#/definitions/HarnessVersion"
                     }
                 },
-                "releases": {
+                "locked_versions": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/HarnessRelease"
+                        "$ref": "#/definitions/HarnessLockedVersion"
                     }
                 },
                 "lock": {
@@ -155448,7 +155448,7 @@
                 }
             }
         },
-        "HarnessLockRelease": {
+        "HarnessLockVersion": {
             "required": [
                 "environment_version_id",
                 "suite_version_id"
@@ -155511,14 +155511,14 @@
                 }
             }
         },
-        "HarnessUnlockRelease": {
+        "HarnessUnlockVersion": {
             "required": [
-                "release_id"
+                "locked_version_id"
             ],
             "type": "object",
             "properties": {
-                "release_id": {
-                    "title": "Release id",
+                "locked_version_id": {
+                    "title": "Locked version id",
                     "type": "string",
                     "format": "uuid"
                 }

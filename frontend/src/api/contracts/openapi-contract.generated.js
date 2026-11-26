@@ -29614,7 +29614,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ViewerReadOnlyError",
           },
           409: {
-            $ref: "#/definitions/HarnessReleaseRefusal",
+            $ref: "#/definitions/HarnessLockRefusal",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30482,11 +30482,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     "/simulate/api/harness-environments/{id}/versions/lock/": {
       post: {
-        operationId: "simulate_api_harness-environments_versions_lock_release",
+        operationId: "simulate_api_harness-environments_versions_lock_version",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/HarnessLockRelease",
+          $ref: "#/definitions/HarnessLockVersion",
         },
         queryParameters: {},
         responses: {
@@ -30497,10 +30497,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ViewerReadOnlyError",
           },
           409: {
-            $ref: "#/definitions/HarnessReleaseRefusal",
+            $ref: "#/definitions/HarnessLockRefusal",
           },
           422: {
-            $ref: "#/definitions/HarnessReleaseRefusal",
+            $ref: "#/definitions/HarnessLockRefusal",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30533,11 +30533,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/api/harness-environments/{id}/versions/unlock/": {
       post: {
         operationId:
-          "simulate_api_harness-environments_versions_unlock_release",
+          "simulate_api_harness-environments_versions_unlock_version",
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/HarnessUnlockRelease",
+          $ref: "#/definitions/HarnessUnlockVersion",
         },
         queryParameters: {},
         responses: {
@@ -73228,7 +73228,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessLockRelease: {
+    HarnessLockRefusal: {
+      required: ["error", "message", "retryable"],
+      type: "object",
+      properties: {
+        error: {
+          title: "Error",
+          description:
+            "lock_not_ready, version_already_locked, lock_too_few_test, lock_too_few_train, version_locked, version_conflict or rebuild_running.",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+        },
+        piece: {
+          title: "Piece",
+          description: "version_conflict: the piece whose default moved.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        train: {
+          title: "Train",
+          description: "lock_too_few_*: the train tasks a lock gives.",
+          type: "integer",
+        },
+        test: {
+          title: "Test",
+          description: "lock_too_few_*: the test tasks a lock gives.",
+          type: "integer",
+        },
+        locked_version_id: {
+          title: "Locked version id",
+          description: "version_locked: the locked version to unlock first.",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    HarnessLockVersion: {
       required: ["environment_version_id", "suite_version_id"],
       type: "object",
       properties: {
@@ -73547,51 +73592,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         snapshot: {
           title: "Snapshot",
           type: "object",
-        },
-      },
-    },
-    HarnessReleaseRefusal: {
-      required: ["error", "message", "retryable"],
-      type: "object",
-      properties: {
-        error: {
-          title: "Error",
-          description:
-            "release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_locked, version_conflict or rebuild_running.",
-          type: "string",
-          minLength: 1,
-        },
-        message: {
-          title: "Message",
-          type: "string",
-          minLength: 1,
-        },
-        retryable: {
-          title: "Retryable",
-          type: "boolean",
-        },
-        piece: {
-          title: "Piece",
-          description: "version_conflict: the piece whose default moved.",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        train: {
-          title: "Train",
-          description: "release_too_few_*: the train tasks a lock gives.",
-          type: "integer",
-        },
-        test: {
-          title: "Test",
-          description: "release_too_few_*: the test tasks a lock gives.",
-          type: "integer",
-        },
-        release_id: {
-          title: "Release id",
-          description: "release_locked: the release to unlock first.",
-          type: "string",
-          format: "uuid",
         },
       },
     },
@@ -74456,12 +74456,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessUnlockRelease: {
-      required: ["release_id"],
+    HarnessUnlockVersion: {
+      required: ["locked_version_id"],
       type: "object",
       properties: {
-        release_id: {
-          title: "Release id",
+        locked_version_id: {
+          title: "Locked version id",
           type: "string",
           format: "uuid",
         },
@@ -74680,7 +74680,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessVersions: {
-      required: ["agent", "environment", "suite", "releases", "lock"],
+      required: ["agent", "environment", "suite", "locked_versions", "lock"],
       type: "object",
       properties: {
         agent: {
@@ -74701,10 +74701,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessVersion",
           },
         },
-        releases: {
+        locked_versions: {
           type: "array",
           items: {
-            $ref: "#/definitions/HarnessRelease",
+            $ref: "#/definitions/HarnessLockedVersion",
           },
         },
         lock: {
@@ -117042,7 +117042,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessRelease: {
+    HarnessLockedVersion: {
       required: [
         "id",
         "label",

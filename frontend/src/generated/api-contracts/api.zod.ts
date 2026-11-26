@@ -47790,7 +47790,7 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
             .nullable(),
         }),
       ),
-      releases: zod.array(
+      locked_versions: zod.array(
         zod.object({
           id: zod.string().uuid(),
           label: zod.string().min(1),
@@ -51383,7 +51383,7 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
         .nullable(),
     }),
   ),
-  releases: zod.array(
+  locked_versions: zod.array(
     zod.object({
       id: zod.string().uuid(),
       label: zod.string().min(1),
@@ -51746,7 +51746,7 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
           .nullable(),
       }),
     ),
-    releases: zod.array(
+    locked_versions: zod.array(
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1),
@@ -51812,15 +51812,15 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionBody =
   zod.object({});
 
 /**
- * Lock the default environment and suite versions into a release with train and
-test splits; returns every version and release.
+ * Lock the default environment and suite versions with train and test splits;
+returns every version and locked version.
  */
-export const SimulateApiHarnessEnvironmentsVersionsLockReleaseParams =
+export const SimulateApiHarnessEnvironmentsVersionsLockVersionParams =
   zod.object({
     id: zod.string(),
   });
 
-export const SimulateApiHarnessEnvironmentsVersionsLockReleaseBody = zod.object(
+export const SimulateApiHarnessEnvironmentsVersionsLockVersionBody = zod.object(
   {
     environment_version_id: zod
       .string()
@@ -51833,7 +51833,7 @@ export const SimulateApiHarnessEnvironmentsVersionsLockReleaseBody = zod.object(
   },
 );
 
-export const SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse =
+export const SimulateApiHarnessEnvironmentsVersionsLockVersionResponse =
   zod.object({
     agent: zod.array(
       zod.object({
@@ -52072,7 +52072,7 @@ export const SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse =
           .nullable(),
       }),
     ),
-    releases: zod.array(
+    locked_versions: zod.array(
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1),
@@ -52151,20 +52151,20 @@ export const SimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse =
   );
 
 /**
- * Unlock a release, as a workspace admin or owner. Its versions, splits and
-scores stay; returns every version and release.
+ * Unlock a locked version, as a workspace admin or owner. Its versions, splits and
+scores stay; returns every version and locked version.
  */
-export const SimulateApiHarnessEnvironmentsVersionsUnlockReleaseParams =
+export const SimulateApiHarnessEnvironmentsVersionsUnlockVersionParams =
   zod.object({
     id: zod.string(),
   });
 
-export const SimulateApiHarnessEnvironmentsVersionsUnlockReleaseBody =
+export const SimulateApiHarnessEnvironmentsVersionsUnlockVersionBody =
   zod.object({
-    release_id: zod.string().uuid(),
+    locked_version_id: zod.string().uuid(),
   });
 
-export const SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse =
+export const SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse =
   zod.object({
     agent: zod.array(
       zod.object({
@@ -52403,7 +52403,7 @@ export const SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse =
           .nullable(),
       }),
     ),
-    releases: zod.array(
+    locked_versions: zod.array(
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1),
@@ -52718,7 +52718,7 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
           .nullable(),
       }),
     ),
-    releases: zod.array(
+    locked_versions: zod.array(
       zod.object({
         id: zod.string().uuid(),
         label: zod.string().min(1),

@@ -21360,9 +21360,9 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
-export interface HarnessReleaseRefusalApi {
+export interface HarnessLockRefusalApi {
   /**
-   * release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_locked, version_conflict or rebuild_running.
+   * lock_not_ready, version_already_locked, lock_too_few_test, lock_too_few_train, version_locked, version_conflict or rebuild_running.
    * @minLength 1
    */
   error: string;
@@ -21374,12 +21374,12 @@ export interface HarnessReleaseRefusalApi {
    * @minLength 1
    */
   piece?: string;
-  /** release_too_few_*: the train tasks a lock gives. */
+  /** lock_too_few_*: the train tasks a lock gives. */
   train?: number;
-  /** release_too_few_*: the test tasks a lock gives. */
+  /** lock_too_few_*: the test tasks a lock gives. */
   test?: number;
-  /** release_locked: the release to unlock first. */
-  release_id?: string;
+  /** version_locked: the locked version to unlock first. */
+  locked_version_id?: string;
 }
 
 /**
@@ -22367,7 +22367,7 @@ export type HarnessDraftSaveResponseApiSaved = {
   [key: string]: HarnessVersionApi;
 };
 
-export interface HarnessReleaseApi {
+export interface HarnessLockedVersionApi {
   id: string;
   /** @minLength 1 */
   label: string;
@@ -22406,7 +22406,7 @@ export interface HarnessVersionsApi {
   agent: HarnessVersionApi[];
   environment: HarnessVersionApi[];
   suite: HarnessVersionApi[];
-  releases: HarnessReleaseApi[];
+  locked_versions: HarnessLockedVersionApi[];
   lock: HarnessLockPreviewApi;
 }
 
@@ -23377,7 +23377,7 @@ export interface HarnessAgentCredentialsResponseApi {
   agent_version: HarnessVersionApi;
 }
 
-export interface HarnessLockReleaseApi {
+export interface HarnessLockVersionApi {
   /** The default environment version the caller saw. */
   environment_version_id: string;
   /** The default suite version the caller saw. */
@@ -23395,8 +23395,8 @@ export interface HarnessSuiteMemberApi {
   issue_project_id: string;
 }
 
-export interface HarnessUnlockReleaseApi {
-  release_id: string;
+export interface HarnessUnlockVersionApi {
+  locked_version_id: string;
 }
 
 export type HarnessUnlockForbiddenApiType =
