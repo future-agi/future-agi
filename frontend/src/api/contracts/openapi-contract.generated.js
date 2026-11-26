@@ -28801,6 +28801,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               maximum: 100,
             },
           },
+          state: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
         },
         responses: {
           200: {
@@ -55025,6 +55032,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         issue: {
           $ref: "#/definitions/AgentFixEpochIssue",
         },
+        from_issue: {
+          title: "From issue",
+          description:
+            "Run from an Error Feed issue, even once the issue is gone.",
+          type: "boolean",
+          readOnly: true,
+        },
         check_runs: {
           description: "The base version's runs; each candidate lists its own.",
           type: "array",
@@ -55186,6 +55200,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         issue: {
           $ref: "#/definitions/AgentFixEpochIssue",
+        },
+        from_issue: {
+          title: "From issue",
+          description:
+            "Run from an Error Feed issue, even once the issue is gone.",
+          type: "boolean",
+          readOnly: true,
         },
         check_runs: {
           description: "The base version's runs; each candidate lists its own.",
@@ -102806,7 +102827,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixEpochIssue: {
-      required: ["job_id", "cluster_id", "project_id"],
+      required: ["job_id", "cluster_id", "project_id", "title"],
       type: "object",
       properties: {
         job_id: {
@@ -102823,6 +102844,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Project id",
           type: "string",
           format: "uuid",
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
       "x-nullable": true,

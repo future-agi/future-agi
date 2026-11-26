@@ -38606,6 +38606,13 @@ export const SimulateApiAgentFixRunsListQueryParams = zod.object({
     .min(1)
     .max(simulateApiAgentFixRunsListQueryLimitMax)
     .optional(),
+  state: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Comma-separated fix states to list, any of: queued, running, stopping, ready, no_improvement, not_reproduced, out_of_budget, stopped, failed, too_few_cases.",
+    ),
 });
 
 export const simulateApiAgentFixRunsListResponseResultsItemStageMax = 32;
@@ -38878,10 +38885,15 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
             job_id: zod.string().uuid(),
             cluster_id: zod.string().min(1),
             project_id: zod.string().uuid(),
+            title: zod.union([zod.string().min(1), zod.null()]),
           }),
           zod.null(),
         ])
         .optional(),
+      from_issue: zod
+        .boolean()
+        .optional()
+        .describe("Run from an Error Feed issue, even once the issue is gone."),
       check_runs: zod
         .array(
           zod.object({
@@ -39442,10 +39454,15 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
         job_id: zod.string().uuid(),
         cluster_id: zod.string().min(1),
         project_id: zod.string().uuid(),
+        title: zod.union([zod.string().min(1), zod.null()]),
       }),
       zod.null(),
     ])
     .optional(),
+  from_issue: zod
+    .boolean()
+    .optional()
+    .describe("Run from an Error Feed issue, even once the issue is gone."),
   check_runs: zod
     .array(
       zod.object({
@@ -39907,10 +39924,15 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
         job_id: zod.string().uuid(),
         cluster_id: zod.string().min(1),
         project_id: zod.string().uuid(),
+        title: zod.union([zod.string().min(1), zod.null()]),
       }),
       zod.null(),
     ])
     .optional(),
+  from_issue: zod
+    .boolean()
+    .optional()
+    .describe("Run from an Error Feed issue, even once the issue is gone."),
   check_runs: zod
     .array(
       zod.object({
