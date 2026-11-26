@@ -66,6 +66,15 @@ INFRA_STEP_PATTERN = re.compile(
     r"download|checkout|cache)",
     re.IGNORECASE,
 )
+# Jobs whose failure is not a base signal: the required aggregates fail with
+# whatever job failed (that job is counted itself), the full-run gate fails
+# per pull request (a light PR without ci:full), and the breaker is this.
+NOT_BASE_SIGNALS = frozenset({
+    "Backend Tests Pass",
+    "E2E Tests Pass",
+    "Members ran the internal suite",
+    "Base-health breaker",
+})
 BREAKER_LABEL = "base-red"
 BREAKER_TITLE = "Base looks red: "
 VARIABLE_NAME = "APPROVAL_MODE_TIGHT"
@@ -132,7 +141,11 @@ def queue_failures(runs: list[dict], jobs_by_run: dict[int, list[dict]]) -> list
     out = []
     for r in runs:
         for j in jobs_by_run.get(r["id"], []):
-            if j.get("status", "completed") == "completed" and j.get("conclusion") == "failure":
+            if (
+                j.get("status", "completed") == "completed"
+                and j.get("conclusion") == "failure"
+                and j["name"] not in NOT_BASE_SIGNALS
+            ):
                 out.append({
                     "job": j["name"], "pr": pr_number(r), "workflow": r.get("path"),
                     "at": j.get("completed_at") or r["updated_at"],

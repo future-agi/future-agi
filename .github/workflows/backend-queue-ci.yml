@@ -33,14 +33,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # dev's tip: the group itself is unlanded code.
-          ref: ${{ github.event.merge_group.base_sha }}
+          # The target branch's tip. Not base_sha: under HEADGREEN it can be
+          # the entry ahead, which is unlanded code like the group itself.
+          ref: ${{ github.event.merge_group.base_ref }}
           persist-credentials: false
           sparse-checkout: .github/scripts
       - env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: python3 -I .github/scripts/queue_full_run_gate.py
 
@@ -64,8 +65,9 @@ jobs:
   breaker:
     # Base-health breaker after each queue build, so a red base trips it even
     # when nothing lands (pushes to dev also run it, from pr-digest.yml). Not
-    # in Backend Tests Pass's needs: it never changes the queue's verdict.
-    # The script comes from dev's tip; the group is unlanded code.
+    # in Backend Tests Pass's needs: it never changes the queue's verdict,
+    # and its step cannot fail the run. The script comes from the target
+    # branch's tip (base_ref); the group is unlanded code.
     name: Base-health breaker
     needs: backend
     if: always() && github.repository == 'future-agi/future-agi'
@@ -81,13 +83,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.merge_group.base_sha }}
+          ref: ${{ github.event.merge_group.base_ref }}
           persist-credentials: false
           sparse-checkout: .github/scripts
       # No secrets in this file (a group can hold fork code): the trip files
       # the base-red issue here, and the hourly digest on dev carries the
       # Slack line.
-      - env:
+      - continue-on-error: true
+        env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |

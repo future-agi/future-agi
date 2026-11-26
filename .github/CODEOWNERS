@@ -54,6 +54,17 @@
 *stripe* @future-agi/internal-all-write
 *Stripe* @future-agi/internal-all-write
 *STRIPE* @future-agi/internal-all-write
+# Everything inside a directory with the keyword in its name, spelled out.
+**/*oauth*/** @future-agi/internal-all-write
+**/*OAuth*/** @future-agi/internal-all-write
+**/*licens*/** @future-agi/internal-all-write
+**/*Licens*/** @future-agi/internal-all-write
+**/*billing*/** @future-agi/internal-all-write
+**/*Billing*/** @future-agi/internal-all-write
+**/*pricing*/** @future-agi/internal-all-write
+**/*Pricing*/** @future-agi/internal-all-write
+**/*stripe*/** @future-agi/internal-all-write
+**/*Stripe*/** @future-agi/internal-all-write
 
 # Changes to the Python lint gate and to this file need a code owner's review.
 /futureagi/pyproject.toml @nik13 @atharva-bhange @hadarishav

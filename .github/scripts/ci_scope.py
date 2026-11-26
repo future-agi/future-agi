@@ -19,9 +19,10 @@ PIN_INPUTS = {
     b"futureagi/code-executor/requirements.sandbox.txt",
 }
 SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
-# CI_SCOPE_MODE=light: a pull request runs no backend, Metrics or E2E suite.
-# Lint, types, contracts, frontend, update safety and Update CI still run, and
-# the merge group runs everything before anything lands. The batch train's
+# CI_SCOPE_MODE=light: a pull request runs no backend pytest or Metrics
+# shards. E2E runs on every push exactly as in full mode, and so do lint,
+# types, contracts, frontend, update safety and Update CI. The merge group
+# runs everything before anything lands. The batch train's
 # rollup pull request stays full: merge groups run without the private
 # package, so the rollup is the only pre-merge run of the internal suite.
 # A pull request that goes to the queue alone needs its own full run: the
@@ -29,7 +30,7 @@ SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
 # queue_full_run_gate.py fails a merge group whose same-repository member has
 # none. A fork never gets the light plan: it never has an internal run, so it
 # keeps today's full OSS run.
-LIGHT_HELD = ("backend", "metrics", "any")
+LIGHT_HELD = ("backend", "metrics")
 FULL_LABEL = "ci:full"
 TRAIN_AUTHOR = "futureagi-devflow-train[bot]"
 TRAIN_HEAD_PREFIX = "chore/devflow-train-"
@@ -338,8 +339,9 @@ def plan(
         and not (rollup or fork or full)
     )
     if light:
-        # The e2e-standalone label still asks for E2E on a light pull request.
-        flags.update(dict.fromkeys(LIGHT_HELD, False), any=standalone)
+        # E2E ("any") keeps the full plan on every push: only the backend
+        # pytest and Metrics shards wait.
+        flags.update(dict.fromkeys(LIGHT_HELD, False))
     if event == "pull_request" and paths is not None:
         # What the workflow's path filter decided before; unknown impact runs.
         flags["ordinary_update"] = flags["ordinary_update"] and update_ci_relevant(

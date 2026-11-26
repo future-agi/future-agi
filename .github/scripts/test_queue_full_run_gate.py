@@ -62,6 +62,10 @@ class Api:
 
     def json(self, path):
         root = f"/repos/{REPO}"
+        if path.startswith(f"{root}/compare/dev..."):
+            # dev's tip is BASE: every queue merge above it is unlanded.
+            self.compared = path
+            return {"merge_base_commit": {"sha": BASE}}, ""
         if path.startswith(f"{root}/commits/"):
             return self.commits[path.rsplit("/", 1)[1]], ""
         if path.startswith(f"{root}/pulls/"):
@@ -79,7 +83,7 @@ class Api:
 
 
 def judge(api, head):
-    code, lines = gate.decide(api, REPO, BASE, head)
+    code, lines = gate.decide(api, REPO, "dev", head)
     return code, "\n".join(lines)
 
 
@@ -156,7 +160,23 @@ class GateTests(unittest.TestCase):
         self.assertIn("if: vars.CI_SCOPE_MODE == 'light'", text)
         self.assertIn("python3 -I .github/scripts/queue_full_run_gate.py", text)
         # The script comes from dev's tip, not from the unlanded group.
-        self.assertIn("ref: ${{ github.event.merge_group.base_sha }}", text)
+        # The script comes from the target branch: base_sha can be the entry
+        # ahead, which is unlanded too.
+        self.assertIn("ref: ${{ github.event.merge_group.base_ref }}", text)
+        self.assertNotIn("ref: ${{ github.event.merge_group.base_sha }}", text)
+        self.assertIn("BASE_REF: ${{ github.event.merge_group.base_ref }}", text)
+
+    def test_the_walk_starts_at_the_merge_base_not_the_event_base(self):
+        # HEADGREEN: the event's base_sha for #4454 is #4131's queue merge
+        # (gh-readonly-queue/dev/pr-4454-d5d90489...), not a dev commit.
+        api = Api()
+        ahead = api.member(4131, BASE)
+        head = api.member(4454, ahead)
+        api.run(4454, 9002)
+        code, text = judge(api, head)
+        self.assertEqual(code, 1)
+        self.assertIn("#4131", text)
+        self.assertTrue(api.compared.endswith(f"/compare/dev...{head}"))
 
 
 if __name__ == "__main__":

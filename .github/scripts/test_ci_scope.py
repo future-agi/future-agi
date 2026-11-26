@@ -532,20 +532,34 @@ class CandidateScope(unittest.TestCase):
         self.git("merge", "-q", "--no-ff", "work", "-m", "event merge")
         return self.git("rev-parse", "HEAD"), base, head
 
-    def test_a_light_pull_request_holds_only_the_backend_and_e2e_suites(self):
+    def test_a_light_pull_request_holds_only_the_backend_shards(self):
         tested, base, head = self.pull_request()
         result = plan("pull_request", tested, base, head, "light")
         self.assertEqual((result["mode"], result["reason"]), ("light", "light pull request plan"))
-        for suite in ("backend", "metrics", "any"):
+        for suite in ("backend", "metrics"):
             self.assertFalse(result["flags"][suite], suite)
-        # Update CI, update safety and the pin check keep their own plan.
+        # E2E, Update CI, update safety and the pin check keep the full plan.
         full = plan("pull_request", tested, base, head, "")["flags"]
-        for kept in ("collector", "ordinary_update", "update_safety", "executor_base", "tooling", "built", "python"):
+        for kept in ("any", "collector", "ordinary_update", "update_safety", "executor_base", "tooling", "built", "python"):
             self.assertEqual(result["flags"][kept], full[kept], kept)
         self.assertTrue(full["backend"] and full["any"])
-        # The e2e-standalone label still asks for E2E.
-        labelled = plan("pull_request", tested, base, head, "light", standalone=True)
-        self.assertEqual((labelled["flags"]["any"], labelled["flags"]["backend"]), (True, False))
+
+    def test_light_mode_runs_e2e_on_every_push_with_a_backend_only_diff(self):
+        # Every PR runs E2E, no skipping: light defers the backend shards only.
+        tested, base, head = self.pull_request("futureagi/tracer/services/span.py")
+        result = plan("pull_request", tested, base, head, "light")
+        self.assertEqual(result["mode"], "light")
+        self.assertTrue(result["flags"]["any"])
+        self.assertFalse(result["flags"]["backend"])
+
+    def test_light_mode_keeps_the_metadata_only_exemption(self):
+        tested, base, head = self.pull_request(".git-blame-ignore-revs")
+        for mode in ("", "light"):
+            with self.subTest(mode=mode):
+                self.assertEqual(
+                    plan("pull_request", tested, base, head, mode)["flags"]["any"],
+                    plan("pull_request", tested, base, head, "")["flags"]["any"],
+                )
 
     def test_the_merge_group_is_always_full(self):
         # Whatever CI_SCOPE_MODE says, a light plan never reaches the queue.
@@ -587,8 +601,11 @@ class CandidateScope(unittest.TestCase):
             with self.subTest(workflow=name):
                 self.assertIn("PR_AUTHOR: ${{ github.event.pull_request.user.login }}\n", text)
                 self.assertIn("PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}\n", text)
-                self.assertIn("PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}\n", text)
-                self.assertIn("FULL_LABEL: ${{ steps.labels.outputs.full }}\n", text)
+        # Only the backend shards are held, so only Backend CI needs the fork
+        # and ci:full signals.
+        text = (SCRIPTS.parent / "workflows" / "backend-ci.yml").read_text()
+        self.assertIn("PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}\n", text)
+        self.assertIn("FULL_LABEL: ${{ steps.labels.outputs.full }}\n", text)
 
     def test_diverged_pr_selects_head_diff_but_records_actual_merge_tree(self):
         self.git("checkout", "-qb", "work")

@@ -1079,7 +1079,7 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
   );
 });
 
-test("a pull request run also reads its current labels, adds Standalone or the full plan only, and keeps the event's labels when the read fails", (t) => {
+test("a pull request run also reads its current labels, adds Standalone only, and keeps the event's labels when the read fails", (t) => {
   const changes = workflow().jobs.changes;
   const step = changes.steps.find((s) => s.id === "labels");
   const planner = changes.steps.find((s) => s.id === "filter");
@@ -1119,7 +1119,6 @@ test("a pull request run also reads its current labels, adds Standalone or the f
         GITHUB_OUTPUT: output,
         RUNNER_TEMP: dir,
         EVENT_LABEL: String(eventLabel),
-        EVENT_FULL: "false",
         PR: "4354",
         FAKE_LABELS: "",
         ...env,
@@ -1132,30 +1131,19 @@ test("a pull request run also reads its current labels, adds Standalone or the f
       calls: existsSync(calls) ? readFileSync(calls, "utf8") : "",
     };
   };
-  // The event carried both labels: nothing to read.
-  let r = run("pull_request", true, {
-    FAKE_LABELS: "infra",
-    EVENT_FULL: "true",
-  });
-  assert.deepEqual(
-    [r.status, r.output, r.calls],
-    [0, "standalone=true\nfull=true\n", ""],
-  );
+  // The event carried the label: nothing to read.
+  let r = run("pull_request", true, { FAKE_LABELS: "infra" });
+  assert.deepEqual([r.status, r.output, r.calls], [0, "standalone=true\n", ""]);
   // Added with the pull request, after "opened" (#4354): the live labels add it.
   r = run("pull_request", false, { FAKE_LABELS: "infra e2e-standalone" });
-  assert.deepEqual([r.status, r.output], [0, "standalone=true\nfull=false\n"]);
+  assert.deepEqual([r.status, r.output], [0, "standalone=true\n"]);
   assert.match(r.calls, /repos\/owner\/repo\/issues\/4354\/labels/);
-  // ci:full added since the event (a re-run sees it): the full plan.
-  r = run("pull_request", false, { FAKE_LABELS: "infra ci:full" });
-  assert.deepEqual([r.status, r.output], [0, "standalone=false\nfull=true\n"]);
   // Not on the pull request now either (an exact name only): Distributed only.
-  r = run("pull_request", false, {
-    FAKE_LABELS: "infra e2e-standalone-later ci:fuller",
-  });
-  assert.deepEqual([r.status, r.output], [0, "standalone=false\nfull=false\n"]);
+  r = run("pull_request", false, { FAKE_LABELS: "infra e2e-standalone-later" });
+  assert.deepEqual([r.status, r.output], [0, "standalone=false\n"]);
   // The read fails: the event's labels stand, a warning says so, and the job goes on.
   r = run("pull_request", false, { FAKE_ERROR: "HTTP 502: Bad Gateway" });
-  assert.deepEqual([r.status, r.output], [0, "standalone=false\nfull=false\n"]);
+  assert.deepEqual([r.status, r.output], [0, "standalone=false\n"]);
   assert.match(r.stdout, /::warning title=E2E stacks::.*HTTP 502: Bad Gateway/);
   // Not a pull request: no read (the stacks step runs both stacks or follows a dispatch).
   for (const event of [
@@ -1167,7 +1155,7 @@ test("a pull request run also reads its current labels, adds Standalone or the f
     r = run(event, false, { FAKE_LABELS: "e2e-standalone" });
     assert.deepEqual(
       [r.status, r.output, r.calls],
-      [0, "standalone=false\nfull=false\n", ""],
+      [0, "standalone=false\n", ""],
       event,
     );
   }

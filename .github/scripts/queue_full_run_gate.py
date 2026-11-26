@@ -7,9 +7,10 @@ revert, too many files, auto-merge, a person's own enqueue) would land with
 no internal run at all. The batch train's rollup is fine: its own pull
 request run is always full.
 
-For every member of the group, read from the group's merge commits (base_sha
-to head_sha, first parents, each "Merge pull request #N" with the member's
-head as second parent), this passes when:
+For every member of the group, read from the group's merge commits (from
+its merge base with the target branch to head_sha, first parents, each
+"Merge pull request #N" with the member's head as second parent; under
+HEADGREEN the entries ahead are members too), this passes when:
 
 - the member is a fork: exempt, as today. A fork never gets the light plan
   and never has an internal run; the dev push run (internal) catches EE
@@ -22,7 +23,7 @@ head as second parent), this passes when:
 Any member without one fails the group, with the fix: add the ci:full label
 and re-run Backend CI on the pull request (or push). It only reads.
 
-    GH_TOKEN=... REPO=owner/name BASE_SHA=... HEAD_SHA=... python3 -I queue_full_run_gate.py
+    GH_TOKEN=... REPO=owner/name BASE_REF=refs/heads/dev HEAD_SHA=... python3 -I queue_full_run_gate.py
 """
 
 from __future__ import annotations
@@ -56,8 +57,16 @@ FIX = (
 )
 
 
+def landed_base(gh, repo: str, branch: str, head: str) -> str:
+    """Where the group leaves the target branch. A merge_group event's base_sha
+    is the group's parent, which under HEADGREEN can be the entry ahead (also
+    unlanded), so walk to the merge base with the branch instead."""
+    compare, _ = gh.json(f"/repos/{repo}/compare/{branch}...{head}")
+    return compare["merge_base_commit"]["sha"]
+
+
 def members(gh, repo: str, base: str, head: str) -> list[tuple[int, str]]:
-    """[(pull request, member head)] from the group's merge commits, newest first."""
+    """[(pull request, member head)] from the merge commits base..head, newest first."""
     out, sha = [], head
     while sha != base:
         if len(out) >= MAX_MEMBERS:
@@ -122,10 +131,10 @@ def internal_proof(gh, repo: str, pr: int, head: str) -> tuple[bool, str]:
     return False, "; ".join(why[:4]) or "no Backend CI pull_request run on this head"
 
 
-def decide(gh, repo: str, base: str, head: str) -> tuple[int, list[str]]:
+def decide(gh, repo: str, branch: str, head: str) -> tuple[int, list[str]]:
     title = "::{} title=Full internal run::"
     try:
-        group = members(gh, repo, base, head)
+        group = members(gh, repo, landed_base(gh, repo, branch, head), head)
         lines, failed = [], False
         for pr, member_head in group:
             pull, _ = gh.json(f"/repos/{repo}/pulls/{pr}")
@@ -157,7 +166,7 @@ def main() -> int:
     code, lines = decide(
         GitHub(os.environ["GH_TOKEN"]),
         os.environ["REPO"],
-        os.environ["BASE_SHA"],
+        os.environ["BASE_REF"].removeprefix("refs/heads/"),
         os.environ["HEAD_SHA"],
     )
     for line in lines:

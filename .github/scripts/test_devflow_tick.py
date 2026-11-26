@@ -229,8 +229,21 @@ class Liveness(unittest.TestCase):
         text = (pathlib.Path(__file__).parents[1] / "workflows/backend-queue-ci.yml").read_text()
         breaker = text.split("\n  breaker:\n", 1)[1]
         self.assertIn("devflow_tick.py --breaker-only", breaker)
-        self.assertIn("ref: ${{ github.event.merge_group.base_sha }}", breaker)
+        self.assertIn("ref: ${{ github.event.merge_group.base_ref }}", breaker)
+        self.assertIn("- continue-on-error: true", breaker)
         self.assertNotIn("breaker", text.split("\n  backend-tests:\n", 1)[1].split("\n  breaker:\n")[0])
+
+    def test_per_pr_verdicts_and_aggregates_are_not_base_signals(self):
+        # Three light PRs enqueued without ci:full fail the gate and the
+        # aggregate; that is not a red base and must not pause the train.
+        runs = [{"id": i, "updated_at": "2026-11-26T11:40:00Z", "head_branch": f"gh-readonly-queue/dev/pr-{i}-x", "path": "p"} for i in (1, 2, 3)]
+        jobs = {i: [
+            {"name": name, "status": "completed", "conclusion": "failure", "completed_at": "2026-11-26T11:40:00Z"}
+            for name in ("Members ran the internal suite", "Backend Tests Pass", "E2E Tests Pass", "Base-health breaker")
+        ] for i in (1, 2, 3)}
+        self.assertEqual(t.detect_breaker(t.queue_failures(runs, jobs), NOW), [])
+        jobs[1].append({"name": "backend / pytest shard 3", "status": "completed", "conclusion": "failure", "completed_at": "2026-11-26T11:40:00Z"})
+        self.assertEqual([f["job"] for f in t.queue_failures(runs, jobs)], ["backend / pytest shard 3"])
 
     def test_a_trip_closes_after_the_job_stops_and_a_later_build_passes(self):
         issue = {"number": 5, "title": "Base looks red: backend", "created_at": "2026-11-26T10:00:00Z"}
