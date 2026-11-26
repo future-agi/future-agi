@@ -196,5 +196,8 @@ describe("a private copy in the ready environments", () => {
     expect(copy.name).toBe("Retail · copy");
     expect(copy.copyOf).toBe("Retail");
     expect(copy.system).toBe(false);
+    // Sealed without catalogue metadata: its rows aren't counted, so none are claimed.
+    expect(copy.recordCount).toBeNull();
+    expect(readyEnvironmentFrom(RELEASE).recordCount).toBeGreaterThan(0);
   });
 });

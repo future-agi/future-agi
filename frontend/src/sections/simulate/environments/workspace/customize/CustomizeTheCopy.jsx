@@ -122,18 +122,21 @@ export default function CustomizeTheCopy({ jobId, job, chat }) {
         </Typography>
         <StatusBadge status={shownState} />
         <Box flex={1} />
-        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.cancel}>
-          <Button
-            variant="outlined"
-            color="inherit"
-            size="small"
-            disabled={finished || cancel.isPending || !canEdit}
-            onClick={() => setConfirmingCancel(true)}
-            startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
-          >
-            Cancel build
-          </Button>
-        </ViewerLock>
+        {/* A finished copy has nothing left to stop. */}
+        {!finished && (
+          <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.cancel}>
+            <Button
+              variant="outlined"
+              color="inherit"
+              size="small"
+              disabled={cancel.isPending || !canEdit}
+              onClick={() => setConfirmingCancel(true)}
+              startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
+            >
+              Cancel build
+            </Button>
+          </ViewerLock>
+        )}
       </Stack>
       <ConfirmDialog
         open={confirmingCancel}

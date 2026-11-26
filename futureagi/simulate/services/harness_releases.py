@@ -2121,14 +2121,16 @@ def _customized(
             str(failure.get("message") or "the design did not finish"),
         )
     source = (customization_of(job) or {}).get("source") or {}
-    environment, suite = register_release(
-        output / "environment", output / "suite", organization=job.organization
-    )
-    if _lineage(environment) != f"release:{source.get('environment_digest')}":
-        raise _error(
-            "customization_lineage_invalid",
-            "the sealed copy does not name the ready environment it was made from",
+    # A copy that names another source is not kept: its releases go with the failure.
+    with transaction.atomic():
+        environment, suite = register_release(
+            output / "environment", output / "suite", organization=job.organization
         )
+        if _lineage(environment) != f"release:{source.get('environment_digest')}":
+            raise _error(
+                "customization_lineage_invalid",
+                "the sealed copy does not name the ready environment it was made from",
+            )
     return {
         "environment_release_id": str(environment.id),
         "environment_name": environment.name,

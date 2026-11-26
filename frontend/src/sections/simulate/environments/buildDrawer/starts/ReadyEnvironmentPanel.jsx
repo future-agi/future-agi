@@ -644,7 +644,14 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
           )}
           <Line
             label="Copied"
-            value={`${world.recordCount.toLocaleString()} seeded rows · ${plural(suite.scenario_count, "scenario")} · release ${world.releaseName}`}
+            value={[
+              world.recordCount != null &&
+                `${world.recordCount.toLocaleString()} seeded rows`,
+              plural(suite.scenario_count, "scenario"),
+              `release ${world.releaseName}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           />
           <Line
             label="Visibility"
@@ -807,7 +814,6 @@ function Line({ label, value }) {
 }
 Line.propTypes = { label: PropTypes.string, value: PropTypes.node };
 
-/* Customize: a private copy built from this world with the change asked for. */
 /*
   Customize — a private copy of the ready world with the person's change
   (env-world-customize). The builder starts from this world's records, tools and rules and

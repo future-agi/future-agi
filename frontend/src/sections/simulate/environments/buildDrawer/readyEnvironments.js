@@ -64,7 +64,11 @@ export function readyEnvironmentFrom(release) {
     rules: release.policy?.agent_rules || [],
     parameters: release.policy?.parameters || [],
     records,
-    recordCount: Object.values(records).reduce((n, c) => n + c, 0),
+    // Null when the release was sealed without catalogue metadata (a private copy is): its
+    // rows aren't counted, so none are claimed.
+    recordCount: catalogue?.records
+      ? Object.values(records).reduce((n, c) => n + c, 0)
+      : null,
     apps: apps.map((app) => ({ ...app, label: appLabelOf(app) })),
     exampleRequests: catalogue?.example_requests || [],
     suite,

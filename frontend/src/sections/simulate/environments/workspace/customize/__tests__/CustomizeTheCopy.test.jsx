@@ -90,7 +90,10 @@ describe("The copy's design", () => {
     );
 
     expect(screen.getByText(/Your copy is ready/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cancel build" })).toBeDisabled();
+    // A finished copy has nothing left to stop.
+    expect(
+      screen.queryByRole("button", { name: "Cancel build" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Use with my agent" }));
 
     expect(navigate).toHaveBeenCalledWith(

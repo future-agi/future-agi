@@ -260,6 +260,10 @@ class TestSettleCustomization:
 
         assert settled.state == HostedHarnessJob.State.FAILED
         assert settled.failure["code"] == "customization_lineage_invalid"
+        # The refused copy isn't left listed with the ready environments.
+        assert not HarnessEnvironmentRelease.no_workspace_objects.filter(
+            name="elsewhere"
+        ).exists()
 
     def test_a_design_that_stopped_fails_with_its_reason(self, job, tmp_path):
         output = _result(
