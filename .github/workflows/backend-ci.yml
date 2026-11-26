@@ -2,13 +2,16 @@ name: Backend CI
 
 on:
   pull_request:
-    # Only these three activity types. A run started by any other one (a body
+    # Only these four activity types. A run started by any other one (a body
     # or title edit, a label) becomes this workflow's newest suite for the
     # head commit, and GitHub then ignores the older suite's required check,
     # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
     # the merge queue re-tests every dev merge, but a PR moved onto main is
     # not re-tested until a push (see e2e/README.md).
-    types: [opened, synchronize, reopened]
+    # A draft runs only the planner (see HOLD_SUITES below). The
+    # ready_for_review run is the full one, and as the newest suite it is the
+    # one the required check reads.
+    types: [opened, synchronize, reopened, ready_for_review]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
@@ -65,6 +68,12 @@ env:
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
   # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).
   PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker"
+  # Which runs hold the suites: "true" runs only the planner, and the
+  # required aggregate then passes with every suite skipped. The one place
+  # that chooses; the changes job and the aggregate both read it. Today: a
+  # draft's pull_request run. False for merge groups, pushes, schedules,
+  # dispatches and the queue's call, which run as before.
+  HOLD_SUITES: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
 
 jobs:
   policy-self-test:
@@ -79,7 +88,7 @@ jobs:
           persist-credentials: false
       - name: Exercise the candidate policy against Git fixtures
         run: python3 -I .github/scripts/test_ci_scope.py
-      - name: "\"CI ran on this base\" verdicts on recorded API payloads"
+      - name: '"CI ran on this base" verdicts on recorded API payloads'
         run: python3 -I .github/scripts/test_ci_base_gate.py
 
   changes:
@@ -87,10 +96,13 @@ jobs:
     timeout-minutes: 5
     outputs:
       queue_target: ${{ steps.queue.outputs.target }}
-      backend: ${{ steps.filter.outputs.backend }}
-      update_safety: ${{ steps.filter.outputs.update_safety }}
-      executor_base: ${{ steps.filter.outputs.executor_base }}
-      metrics: ${{ steps.filter.outputs.metrics }}
+      # On a held run every suite flag is false, so no suite job runs and no
+      # receipt is recorded. The scope output still records the plan.
+      hold: ${{ steps.hold.outputs.hold }}
+      backend: ${{ steps.hold.outputs.hold == 'true' && 'false' || steps.filter.outputs.backend }}
+      update_safety: ${{ steps.hold.outputs.hold == 'true' && 'false' || steps.filter.outputs.update_safety }}
+      executor_base: ${{ steps.hold.outputs.hold == 'true' && 'false' || steps.filter.outputs.executor_base }}
+      metrics: ${{ steps.hold.outputs.hold == 'true' && 'false' || steps.filter.outputs.metrics }}
       scope: ${{ steps.filter.outputs.scope }}
       shards: ${{ steps.shards.outputs.matrix }}
       internal: ${{ steps.overlay.outputs.internal }}
@@ -169,6 +181,14 @@ jobs:
             echo "executor_base=$pin"
             echo "scope=$(jq -cn --arg sha "$GITHUB_SHA" --arg base "$policy" '{version:0,mode:"full",reason:"legacy policy base",tested_commit:$sha,policy_base:$base}')"
           } >> "$GITHUB_OUTPUT"
+      - id: hold
+        name: Hold the suites while the pull request is a draft (HOLD_SUITES)
+        run: |
+          [[ $HOLD_SUITES == true || $HOLD_SUITES == false ]] || exit 1
+          echo "hold=$HOLD_SUITES" >> "$GITHUB_OUTPUT"
+          if [[ $HOLD_SUITES == true ]]; then
+            echo "::notice title=Suites held::Backend suites run when the pull request is marked ready for review. Python lint and types still run on every push."
+          fi
       - id: overlay
         env:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -419,7 +439,7 @@ jobs:
         uses: ./.github/actions/backend-test-packages/database
         with:
           profile: ${{ inputs.backend_setup }}
-          handoff: 'true'
+          handoff: "true"
       - name: Dump producer service logs on failure
         if: failure() && steps.cold.outcome == 'failure'
         working-directory: futureagi
@@ -440,7 +460,6 @@ jobs:
           # include-hidden-files: false, dropping it even when named literally.
           include-hidden-files: true
           if-no-files-found: error
-
 
   test:
     # "pytest shard N" and "metrics shard N" share these steps; the changes
@@ -1155,12 +1174,19 @@ jobs:
         name: Require exactly the outcomes the change plan selected
         env:
           NEEDS: ${{ toJSON(needs) }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
-          jq -e '
+          # HOLD_SUITES is evaluated again here, from the event, not read from
+          # the changes job: a run that should not hold but whose plan says
+          # it did fails. A held run passes only on its first attempt. A re-run
+          # replays the held event after the pull request may be ready, so it
+          # fails: push, or re-run the ready_for_review run.
+          jq -e --arg hold "$HOLD_SUITES" --arg attempt "$ATTEMPT" '
             def flag: if . == "true" then true elif . == "false" then false else error("invalid plan flag") end;
             def status: if . then "success" else "skipped" end;
             .changes.outputs as $p | ($p.backend|flag) as $b | ($p.metrics|flag) as $m |
-            ($p.update_safety|flag) as $u | ($p.executor_base|flag) as $x |
+            ($p.update_safety|flag) as $u | ($p.executor_base|flag) as $x | ($p.hold|flag) as $d |
+            $d == ($hold|flag) and (($d|not) or ($attempt == "1" and (($b or $m or $u or $x)|not))) and
             .changes.result == "success" and .["policy-self-test"].result == "success" and ($m == $b) and
             .["update-safety"].result == (($b or $u)|status) and
             .["code-executor-base-pin"].result == ($x|status) and

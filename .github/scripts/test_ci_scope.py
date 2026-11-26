@@ -578,18 +578,21 @@ class CandidateScope(unittest.TestCase):
         # becomes its workflow's newest suite for the head commit, and GitHub
         # then ignores the older suite's required check, so the PR cannot be
         # enqueued (#4332, #4001). These workflows therefore never start on
-        # one, and nothing in them depends on such an event.
-        for workflow, job, check in (
-            ("backend-ci", "backend-tests", "Backend Tests Pass"),
-            ("e2e-ci", "e2e-tests", "E2E Tests Pass"),
-            ("python-lint", "python-lint-pass", "Python Lint Pass"),
+        # one, and nothing in them depends on such an event. The two suites
+        # also start on ready_for_review: a draft runs none of their legs, so
+        # the ready run is the full one. Lint runs in full on a draft.
+        ready = ", ready_for_review"
+        for workflow, job, check, types in (
+            ("backend-ci", "backend-tests", "Backend Tests Pass", ready),
+            ("e2e-ci", "e2e-tests", "E2E Tests Pass", ready),
+            ("python-lint", "python-lint-pass", "Python Lint Pass", ""),
         ):
             text = (SCRIPTS.parent / "workflows" / (workflow + ".yml")).read_text()
             with self.subTest(workflow=workflow):
                 self.assertRegex(
                     text,
                     r"(?m)^  pull_request:\n(?:    #.*\n)*"
-                    r"    types: \[opened, synchronize, reopened\]\n",
+                    rf"    types: \[opened, synchronize, reopened{types}\]\n",
                 )
                 for expression in (
                     "github.event.action",
@@ -609,6 +612,96 @@ class CandidateScope(unittest.TestCase):
                     else "-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}"
                 )
                 self.assertRegex(text, rf"(?m)^  group: .*{re.escape(suffix)}$")
+
+    def test_one_expression_holds_the_suites_and_the_gate_rereads_it(self):
+        # HOLD_SUITES, a workflow-level env, is the one place that decides
+        # which runs hold the suites. Today it is a draft's pull_request run:
+        # false for every other event, so merge groups, pushes, schedules,
+        # dispatches and the queue's call keep their plan unchanged.
+        hold = "  HOLD_SUITES: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}\n"
+        backend = (SCRIPTS.parent / "workflows/backend-ci.yml").read_text()
+        e2e = (SCRIPTS.parent / "workflows/e2e-ci.yml").read_text()
+        for name, text, aggregate in (
+            ("backend-ci", backend, "backend-tests"),
+            ("e2e-ci", e2e, "e2e-tests"),
+        ):
+            with self.subTest(workflow=name):
+                top = text.split("\nenv:\n", 1)[1].split("\njobs:\n", 1)[0]
+                self.assertIn(hold, top)
+                # Defined once; no job or step sets its own.
+                self.assertEqual(len(re.findall(r"(?m)^ +HOLD_SUITES:", text)), 1)
+                self.assertIn("HOLD_SUITES", workflow_job(text, "changes"))
+                # The required aggregate evaluates it again from the event, so a
+                # plan that held a run that should not hold fails it.
+                gate = re.search(
+                    rf"(?ms)^  {aggregate}:\n(.*?)(?=^  [a-z0-9_-]+:\n|\Z)", text
+                )[1]
+                self.assertIn("$HOLD_SUITES", gate)
+                self.assertIn("ATTEMPT: ${{ github.run_attempt }}\n", gate)
+        changes = workflow_job(backend, "changes")
+        # Every suite flag is false on a held run and the raw plan otherwise.
+        for flag in ("backend", "update_safety", "executor_base", "metrics"):
+            self.assertIn(
+                f"      {flag}: ${{{{ steps.hold.outputs.hold == 'true' && 'false' || steps.filter.outputs.{flag} }}}}\n",
+                changes,
+            )
+        self.assertIn("      hold: ${{ steps.hold.outputs.hold }}\n", changes)
+        changes = workflow_job(e2e, "changes")
+        for output in ("hold", "any", "backend", "frontend", "gateway"):
+            source = "hold" if output == "hold" else "any"
+            self.assertIn(
+                f"      {output}: ${{{{ steps.selected.outputs.{source} }}}}\n", changes
+            )
+        shards = changes.split("      - id: shards\n", 1)[1]
+        self.assertIn("ANY: ${{ steps.selected.outputs.any }}\n", shards)
+        # A job's if cannot read env, so lock-wheels repeats the expression.
+        self.assertIn(
+            "    if: ${{ !(" + hold.split("${{ ", 1)[1].split(" }}", 1)[0] + ") }}\n",
+            workflow_job(e2e, "lock-wheels"),
+        )
+
+    def test_the_hold_steps_clear_the_plan_only_on_a_held_run(self):
+        backend = workflow_job(
+            (SCRIPTS.parent / "workflows/backend-ci.yml").read_text(), "changes"
+        )
+        e2e = workflow_job(
+            (SCRIPTS.parent / "workflows/e2e-ci.yml").read_text(), "changes"
+        )
+        steps = {
+            "backend": backend.split("      - id: hold\n", 1)[1].split("      - id: overlay\n", 1)[0],
+            "e2e": e2e.split("        id: selected\n", 1)[1].split("      - id: stacks\n", 1)[0],
+        }
+        cases = {
+            # (ANY, HOLD_SUITES) -> exit status, GITHUB_OUTPUT
+            "backend": (
+                ("", "false", 0, "hold=false\n"),
+                ("", "true", 0, "hold=true\n"),
+                ("", "", 1, ""),
+            ),
+            "e2e": (
+                ("true", "false", 0, "hold=false\nany=true\n"),
+                ("false", "false", 0, "hold=false\nany=false\n"),
+                ("true", "true", 0, "hold=true\nany=false\n"),
+                ("false", "true", 0, "hold=true\nany=false\n"),
+                ("true", "", 1, ""),
+                ("", "false", 1, ""),
+            ),
+        }
+        for name, step in steps.items():
+            script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+            for any_, held, status, expected in cases[name]:
+                with self.subTest(workflow=name, any=any_, hold=held), tempfile.TemporaryDirectory() as temp:
+                    output = Path(temp) / "out"
+                    output.write_text("")
+                    run = subprocess.run(
+                        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+                        env={"PATH": "/usr/bin:/bin", "ANY": any_, "HOLD_SUITES": held, "GITHUB_OUTPUT": str(output)},
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    self.assertEqual(run.returncode, status, run.stdout + run.stderr)
+                    self.assertEqual(output.read_text(), expected)
 
     def test_only_retarget_proof_runs_leave_the_candidate_group(self):
         # Pull request and merge-group runs, direct or through the merge
