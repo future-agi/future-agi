@@ -14,6 +14,7 @@ import {
 import { paths } from "src/routes/paths";
 import { Columns } from "./MappingTab";
 import ProposalItem from "./ProposalItem";
+import { plural } from "./sources.constants";
 import { readableField } from "./importSourceReview";
 
 function passageCaption(rule, text) {
@@ -153,7 +154,7 @@ export function ReviewedRecords({ source }) {
       )}
       {!!rejected.length && (
         <Alert severity="warning">
-          {source.rejected_count ?? rejected.length} rejected rows
+          {plural(source.rejected_count ?? rejected.length, "rejected row")}
           {source.rejected_count > rejected.length
             ? " (showing the first 100)"
             : ""}

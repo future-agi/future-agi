@@ -530,6 +530,7 @@ describe("SourcesSection", () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "orders.csv" }));
     expect(await screen.findByText(/Found 3 cells, expected 2/)).toBeVisible();
+    expect(screen.getByText("1 rejected row.")).toBeVisible();
     fireEvent.click(screen.getByRole("tab", { name: "Mapping" }));
     expect(screen.getByText("Accepted field mappings")).toBeVisible();
     expect(screen.getByText(/order_id → order_number/)).toBeVisible();
