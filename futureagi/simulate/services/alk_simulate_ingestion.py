@@ -24,6 +24,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.models.evals_metric import EvalTemplate
+from simulate.constants.hosted_harness import SCENARIO_KEY
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
@@ -1290,7 +1291,7 @@ def _build_manifest_call_executions(
         call.call_metadata.update(
             {
                 "harness_execution_key": entry["execution_key"],
-                "harness_scenario_key": entry["scenario_key"],
+                SCENARIO_KEY: entry["scenario_key"],
                 "harness_trial_index": entry["trial_index"],
             }
         )

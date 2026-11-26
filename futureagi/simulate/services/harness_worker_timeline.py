@@ -812,8 +812,8 @@ def _tool_call_event(sealed: _SealedRows, index: int) -> WorkerEvent:
         "attribution": "reported",
         "row": index,
     }
-    if call.get("refusal_code"):
-        # Why the world refused it, as its action log coded it.
+    if call.get("refused") is True and call.get("refusal_code"):
+        # Why the world refused it, as its action log coded it; a failure of ours is no refusal.
         event["refusal_code"] = str(call["refusal_code"])
     _call_place(event, sealed.placed_in(call))
     for _key, flag in PAYLOADS:

@@ -28,6 +28,36 @@ def _unix_microseconds(value: datetime) -> int:
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
+def exact_datetime_bound_sql(params: dict[str, Any], name: str) -> str:
+    """Render one bound request-window datetime param at DateTime64(6) precision.
+
+    clickhouse-driver substitutes a Python ``datetime`` as
+    ``'YYYY-MM-DD HH:MM:SS'`` and drops its microseconds. A whole-second bound
+    keeps its historical ``%(name)s`` text, so its SQL and params stay
+    byte-identical. Only a sub-second bound is also bound as integer epoch
+    microseconds in ``<name>_exact_us`` and rendered through
+    ``fromUnixTimestamp64Micro``.
+
+    The rendered shape therefore depends on the value: a rolling default
+    ``now`` window is almost always sub-second. The check is duck-typed (a
+    datetime has ``year``, ``hour`` and ``microsecond``) because tests replace
+    this module's ``datetime`` name with a subclass whose ``utcnow`` returns
+    plain ``datetime`` instances; ``date`` and ``time`` values keep the
+    historical text.
+    """
+
+    value = params[name]
+    if (
+        getattr(value, "microsecond", 0)
+        and hasattr(value, "year")
+        and hasattr(value, "hour")
+    ):
+        exact_name = f"{name}_exact_us"
+        params[exact_name] = _unix_microseconds(value)
+        return f"fromUnixTimestamp64Micro(%({exact_name})s, 'UTC')"
+    return f"%({name})s"
+
+
 @dataclass(frozen=True)
 class BoundedDateTimeRange:
     """One finite base window plus conjunctive exclusions inside it."""

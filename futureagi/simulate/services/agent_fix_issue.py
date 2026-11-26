@@ -67,6 +67,7 @@ from simulate.services.evidence_import import (
     create_evidence_import,
     discard_evidence_import,
     discard_open_cases,
+    sources_awaiting_review,
 )
 from simulate.services.harness_agent_versions import advisory_xact_lock
 from simulate.services.harness_usage import (
@@ -96,6 +97,10 @@ _ENDS_THE_JOB = frozenset({"evidence_draft_stale"})
 # up: the run itself, or a launch that keeps failing in a way a later look might outlive.
 _BASELINE_PATIENCE = timedelta(hours=12)
 STOPPED = IssueJobEnding(code="stopped", message="Stopped")
+_IN_REVIEW = (
+    "Another import in this environment is still drafting or reviewing some"
+    " of these traces. Swap them for others."
+)
 
 
 def _refused(
@@ -187,6 +192,19 @@ def create_issue_job(
                 "This issue already has an epoch in progress. Open it.",
                 job_id=str(held.id),
             )
+        # Asked of the cases alone, before importing: the import retires another
+        # import's waiting case whose source changed or has no fingerprint, and
+        # an Observe read that fails must not let a pick past another's review.
+        if in_review := sources_awaiting_review(
+            environment, project=issue.project, source_kind=unit, source_ids=sources
+        ):
+            raise _refused(
+                "issue_epoch_picks_in_review",
+                _IN_REVIEW,
+                member_ids=[
+                    member_of_source[one] for one in sources if one in in_review
+                ],
+            )
         evidence_import, _evidence = create_evidence_import(
             environment=environment,
             project=issue.project,
@@ -197,7 +215,8 @@ def create_issue_job(
         )
         cases = list(evidence_import.cases.select_related("duplicate_of"))
         # A pick that repeats another pick is drafted once, as that pick; one that
-        # repeats another import's case waits on that import's review.
+        # repeats another import's case (its conversation, or a source imported
+        # since the check above) waits on that import's review.
         if waiting := [
             member_of_source[case.source_id]
             for case in cases
@@ -207,10 +226,7 @@ def create_issue_job(
             and case.duplicate_of.status != EvidenceImportCase.Status.ADDED
         ]:
             raise _refused(
-                "issue_epoch_picks_in_review",
-                "Another import in this environment is still drafting or reviewing some"
-                " of these traces. Swap them for others.",
-                member_ids=waiting,
+                "issue_epoch_picks_in_review", _IN_REVIEW, member_ids=waiting
             )
         pending = [
             str(case.id)
@@ -416,6 +432,7 @@ def _run(
                 expected={},
                 idempotency_key=f"issue-epoch-{locked.id}",
                 user=user,
+                for_agent_fix=True,
             )
         # The drafts the person did not keep are discarded, so they hold back no
         # later import of their sources.
@@ -426,6 +443,7 @@ def _run(
             scenario_keys=keys,
             trials=1,
             idempotency_key=f"issue-epoch:{locked.id}:baseline",
+            for_agent_fix=True,
         )
         if launch.max_minutes is None:
             suite = HarnessSuiteMember.no_workspace_objects.filter(
