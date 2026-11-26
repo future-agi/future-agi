@@ -4696,7 +4696,7 @@ def _relaunch(monkeypatch, gateway, first, *, lands: dict[str, int]):
     for name, value in (
         ("_authoring_archive_for", lambda _job: None),
         ("_platform_simulator_material", lambda: {}),
-        ("_resolved_egress_domains", lambda *_args: {"platform.example"}),
+        ("_resolved_egress_domains", lambda *_args, **_kwargs: {"platform.example"}),
     ):
         monkeypatch.setattr(f"simulate.services.hosted_harness_gateway.{name}", value)
 
