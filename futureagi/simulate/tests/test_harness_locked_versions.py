@@ -1406,6 +1406,34 @@ class TestRoster:
         [kept] = body["locked_versions"]
         assert (kept["train"], kept["test"]) == (locked["train"], locked["test"])
 
+    def test_a_later_suite_change_leaves_an_old_lock_s_roster(
+        self, auth_client, user, workspace, storage
+    ):
+        from simulate.services.harness_versioning.locked_versions import (
+            locked_version_members,
+        )
+
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [locked] = _lock(auth_client, environment).json()["locked_versions"]
+        before = locked_version_members(locked["id"])
+
+        # A new default suite drops ten of the lock's scenarios and adds fifteen,
+        # and five of the dropped ones are deleted outright.
+        _suite(environment, _scenarios(10) + _scenarios(15, prefix="n"))
+        HostedHarnessScenario.all_objects.filter(
+            job=environment, scenario_key__in=[f"s{index}" for index in range(15, 20)]
+        ).update(deleted=True)
+        body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+
+        assert len(before) == 20
+        assert locked_version_members(locked["id"]) == before
+        assert set(_keyed(environment, before)) == {f"s{index}" for index in range(20)}
+        [kept] = body["locked_versions"]
+        assert kept == locked
+        # The new default is a new, unlocked pair the card offers to lock.
+        assert _preview(auth_client, environment)["can_lock"] is True
+
     def test_a_relock_writes_a_new_roster_with_the_same_splits(
         self, auth_client, user, workspace, storage
     ):
