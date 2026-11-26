@@ -49,21 +49,49 @@ const ghHeaders = {
   'User-Agent': `${OWNER}-${REPO}-issue-alerts`,
 };
 
-// --- Slack mention mapping (best effort) -----------------------------------
-function loadSlackMap() {
+// --- Reviewer config: Slack mentions + maintainer roster -------------------
+// One read of .github/reviewer-config.json yields two things:
+//   • SLACK_IDS       — GitHub login → Slack member id (for @-mentions)
+//   • MAINTAINER_LOGINS — the team roster, used to classify issue ASSIGNEES
+//     as internal vs external (the assigned-event payload carries no
+//     author_association for the assignee, and resolving it via the API would
+//     require granting the job push access — which an alert job shouldn't have).
+function loadReviewerConfig() {
+  const slackIds = new Map();
+  const maintainers = new Set();
   try {
     const cfg = JSON.parse(readFileSync('.github/reviewer-config.json', 'utf8'));
-    const map = new Map();
     for (const [login, u] of Object.entries(cfg.users || {})) {
-      if (u && u.slack_id) map.set(login.toLowerCase(), u.slack_id);
+      const key = login.toLowerCase();
+      maintainers.add(key);
+      if (u && u.slack_id) slackIds.set(key, u.slack_id);
     }
-    return map;
+    for (const team of Object.values(cfg.teams || {})) {
+      if (team.lead) maintainers.add(team.lead.toLowerCase());
+      for (const m of team.members || []) maintainers.add(m.toLowerCase());
+    }
+    if (cfg.fallback_lead) maintainers.add(cfg.fallback_lead.toLowerCase());
   } catch {
-    // Map is a nicety, not a requirement — degrade to plain handles.
-    return new Map();
+    // Config is best-effort: no Slack ids → plain handles; empty roster →
+    // every assignee looks external (fail toward alerting, not silence).
   }
+  return { slackIds, maintainers };
 }
-const SLACK_IDS = loadSlackMap();
+const { slackIds: SLACK_IDS, maintainers: MAINTAINER_LOGINS } = loadReviewerConfig();
+
+// GitHub's native membership signal, present on issue/PR payloads. Anyone with
+// one of these associations is a repo maintainer; everyone else is external.
+const MAINTAINER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+// External by association (used for issue openers and PR authors — no API call).
+function isExternalAssociation(association) {
+  return !MAINTAINER_ASSOCIATIONS.has(String(association || '').toUpperCase());
+}
+
+// External by roster (used for issue assignees, which carry no association).
+function isExternalLogin(login) {
+  return !login || !MAINTAINER_LOGINS.has(login.toLowerCase());
+}
 
 function mention(login) {
   if (!login) return '_unassigned_';
@@ -142,6 +170,13 @@ async function linkedIssues(prNumber) {
 // --- Handlers --------------------------------------------------------------
 async function handleIssueOpened() {
   const i = event.issue;
+  // External-only: skip issues filed by maintainers (they don't need triaging).
+  if (!isExternalAssociation(i.author_association)) {
+    console.log(
+      `Issue #${i.number} opened by maintainer (${i.user?.login}, ${i.author_association}); skipping.`,
+    );
+    return;
+  }
   const labels = (i.labels || []).map((l) => l.name).filter(Boolean);
   const blocks = [
     header('🆕 New issue filed'),
@@ -160,6 +195,12 @@ async function handleIssueOpened() {
 async function handleIssueAssigned() {
   const i = event.issue;
   const assignee = event.assignee?.login; // the user just added
+  // External-only: skip when a maintainer picks up an issue (internal
+  // coordination). Fire only when the new assignee is outside the team roster.
+  if (!isExternalLogin(assignee)) {
+    console.log(`Issue #${i.number} assigned to maintainer ${assignee}; skipping.`);
+    return;
+  }
   const others = (i.assignees || []).map((a) => a.login).filter((l) => l && l !== assignee);
   let who = mention(assignee);
   if (others.length) who += ` (with ${others.map(mention).join(', ')})`;
@@ -173,6 +214,14 @@ async function handleIssueAssigned() {
 
 async function handlePrOpened() {
   const pr = event.pull_request;
+  // External-only: skip PRs authored by maintainers (checked before the
+  // GraphQL call, so a maintainer's PR costs nothing).
+  if (!isExternalAssociation(pr.author_association)) {
+    console.log(
+      `PR #${pr.number} opened by maintainer (${pr.user?.login}, ${pr.author_association}); skipping.`,
+    );
+    return;
+  }
   const issues = await linkedIssues(pr.number);
   if (issues.length === 0) {
     console.log(`PR #${pr.number} links no issues; nothing to announce.`);
