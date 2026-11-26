@@ -2801,6 +2801,12 @@ def test_chat_attachment_pins_only_an_environment_review_owned_by_the_job(
         conversation__job=job, client_request_id="attached"
     )
     assert message.payload["source_review_id"] == str(review.id)
+    from simulate.services.hosted_harness_conversation import pending_commands
+    command = pending_commands(message.conversation, after=0)["commands"][0]
+    assert "direct the user to Review sources" in command["payload"]["content"]
+    assert "current state is reading" in command["payload"]["content"]
+    assert message.content == "Review my sources."
+
 
 
 def _events(conversation, count):

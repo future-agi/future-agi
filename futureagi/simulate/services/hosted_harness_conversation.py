@@ -1042,6 +1042,36 @@ def _keep_working_sandbox_alive(conversation, lease, now) -> None:
         )
 
 
+def _attachment_notes(conversation, messages):
+    from simulate.models import HarnessSourceReview
+
+    ids = set()
+    for message in messages:
+        if review_id := (message.payload or {}).get("source_review_id"):
+            try:
+                ids.add(uuid.UUID(str(review_id)))
+            except ValueError:
+                continue
+    if not ids:
+        return {}
+    reviews = HarnessSourceReview.objects.filter(
+        id__in=ids,
+        owner_id=conversation.job_id,
+        organization_id=conversation.organization_id,
+        workspace_id=conversation.workspace_id,
+        owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
+    ).values_list("id", "state")
+    return {
+        str(review_id): (
+            f"The user attached a source review. Its current state is {state}. "
+            "Acknowledge the attachment. If it is awaiting approval, direct the user to "
+            "Review sources on the attachment card. Its contents can only be used after approval. "
+            "Keep any already approved workspace sources distinct from this attachment."
+        )
+        for review_id, state in reviews
+    }
+
+
 def pending_commands(
     conversation: HostedHarnessConversation, *, after: int
 ) -> dict[str, Any]:
@@ -1068,6 +1098,7 @@ def pending_commands(
         )
         .order_by("sequence")[:COMMAND_LIMIT]
     )
+    attachment_notes = _attachment_notes(conversation, messages)
     return {
         "schema_version": CONVERSATION_SCHEMA_VERSION,
         "commands": [
@@ -1087,6 +1118,17 @@ def pending_commands(
                         for key, value in message.payload.items()
                         if key != "command_kind" and not key.startswith("_")
                     },
+                    **(
+                        {
+                            "content": f"{message.content}\n\n[Platform source review] {note}"
+                        }
+                        if (
+                            note := attachment_notes.get(
+                                str(message.payload.get("source_review_id"))
+                            )
+                        )
+                        else {}
+                    ),
                 },
             }
             for message in messages

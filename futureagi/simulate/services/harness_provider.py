@@ -2782,7 +2782,7 @@ class HostedHarnessProvider:
                     **{
                         key: value
                         for key, value in (data.get("payload") or {}).items()
-                        if key != "from_platform"
+                        if key not in {"from_platform", "source_review_id"}
                     },
                     **attachment,
                 },
