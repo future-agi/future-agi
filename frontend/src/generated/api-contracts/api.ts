@@ -1365,6 +1365,7 @@ import type {
   SimulateV3TestExecutionTracesParams,
   SimulateV3TestExecutionTrialRoutesParams,
   SimulationEvidenceRequestApi,
+  SimulationEvidenceResponseApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
   SimulatorAgentApi,
@@ -82216,10 +82217,10 @@ export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreate =
     );
   };
 
-export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 =
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse200 =
   {
-    data: SimulationEvidenceRequestApi;
-    status: 201;
+    data: SimulationEvidenceResponseApi;
+    status: 200;
   };
 
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse409 =
@@ -82231,11 +82232,11 @@ export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse409
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 201 | 409>;
+    status: Exclude<HTTPStatusCodes, 200 | 409>;
   };
 
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseSuccess =
-  tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 & {
+  tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse200 & {
     headers: ApiResponseHeaders;
   };
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseError =

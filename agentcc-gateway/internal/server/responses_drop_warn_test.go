@@ -346,7 +346,7 @@ func (p *responsesAttemptNotesPlugin) ProcessRequest(_ context.Context, rc *mode
 	rc.Metadata["translation_drops"] = "forged-secret\r\nx-fake: yes"
 	w := httptest.NewRecorder()
 	for i := 0; i < 2; i++ {
-		noteResponsesRouteDrops(w, rc, p.provider, rc.Request)
+		noteRouteDrops(w, rc, p.provider, rc.Request)
 		if got := rc.Metadata["translation_drops"]; got != "top_k_unsupported,stop" {
 			p.t.Errorf("attempt %d notes=%q", i, got)
 		}

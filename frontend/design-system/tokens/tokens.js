@@ -533,7 +533,7 @@ window.DS = {
     "1": {
      "light": "{purple.500}",
      "dark": "{purple.400}",
-     "use": "The brand colours as a chart palette: purple, then the green, red and amber steps the org design guide names (#22C55E, #EF4444, #F59E0B), the same in both modes. For category and answer charts that should read in the product's own colours, such as Insights categories and Instant eval answers. Status marks still use status.*."
+     "use": "The brand colours as a chart palette: purple, then the green, red and amber steps the org design guide names (#22C55E, #EF4444, #F59E0B), the same in both modes. For two-answer charts in the product's own colours, such as Instant eval's Yes (purple) and No (amber). Not for categories: its green, red and amber read as status, so categories take data slots 2, 3, 5 and 7 (blue, teal, pink, lime). Status marks still use status.*."
     },
     "2": {
      "light": "{green.500}",

@@ -28,7 +28,7 @@ function useWidth() {
   return [ref, width];
 }
 
-export default function TrialChart({ candidates }) {
+export default function TrialChart({ candidates, finished = false }) {
   const theme = useTheme();
   const [ref, W] = useWidth();
   const trials = candidates
@@ -49,12 +49,13 @@ export default function TrialChart({ candidates }) {
   const paper = theme.palette.background.paper;
   const sub = theme.palette.text.disabled;
   const pick =
-    trials.find((c) => c.outcome === "winner") || trials[rates.indexOf(best)];
-  const gain = pts(pick.verdict.target_pass_rate);
+    trials.find((c) => c.outcome === "winner") ||
+    (!finished && trials[rates.indexOf(best)]);
+  const gain = pick && pts(pick.verdict.target_pass_rate);
   const versus = gain
     ? `${gain > 0 ? "▲" : "▼"} ${Math.abs(gain)} pts vs the agent before the change`
     : "· no change from the agent before the change";
-  const lead = `pass rate on the target scenarios · Candidate ${pick.attempt} · ${
+  const lead = pick && `pass rate on the target scenarios · Candidate ${pick.attempt} · ${
     pick.outcome === "winner" ? "winner" : "best so far"
   } ${versus}, on the same scenarios`;
   return (
@@ -68,30 +69,32 @@ export default function TrialChart({ candidates }) {
         overflow: "hidden",
       }}
     >
-      <Stack
-        direction="row"
-        alignItems="baseline"
-        spacing={1}
-        sx={{
-          px: 2.5,
-          py: 1.5,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Typography sx={{ typography: "m2", fontWeight: 600, ...num }}>
-          {pct(pick.verdict.target_pass_rate[1])}
-          <Box
-            component="span"
-            sx={{ typography: "s2", color: "text.subtitle", ml: 0.25 }}
-          >
-            %
-          </Box>
-        </Typography>
-        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-          {lead}
-        </Typography>
-      </Stack>
+      {pick && (
+        <Stack
+          direction="row"
+          alignItems="baseline"
+          spacing={1}
+          sx={{
+            px: 2.5,
+            py: 1.5,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography sx={{ typography: "m2", fontWeight: 600, ...num }}>
+            {pct(pick.verdict.target_pass_rate[1])}
+            <Box
+              component="span"
+              sx={{ typography: "s2", color: "text.subtitle", ml: 0.25 }}
+            >
+              %
+            </Box>
+          </Typography>
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            {lead}
+          </Typography>
+        </Stack>
+      )}
       <Stack direction="row" alignItems="center" sx={{ px: 2.5, pt: 1.5 }}>
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
           {`Each point is one finished candidate, oldest to latest · ${n} ${n === 1 ? "candidate" : "candidates"} · ${before}% before the change`}
@@ -156,7 +159,7 @@ export default function TrialChart({ candidates }) {
             strokeLinejoin="round"
           />
           {trials.map((c, i) => {
-            const top = rates[i] === best;
+            const top = finished ? c === pick : rates[i] === best;
             return (
               <g key={c.id} data-testid="trial-point">
                 <circle
@@ -186,4 +189,7 @@ export default function TrialChart({ candidates }) {
   );
 }
 
-TrialChart.propTypes = { candidates: PropTypes.array.isRequired };
+TrialChart.propTypes = {
+  candidates: PropTypes.array.isRequired,
+  finished: PropTypes.bool,
+};

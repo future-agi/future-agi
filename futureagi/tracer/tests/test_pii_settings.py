@@ -39,6 +39,30 @@ class TestGetPiiSettingsForProjects:
             assert result["proj-a"] is True
             assert result["proj-b"] is False
 
+    def test_cache_write_failure_preserves_db_settings(self):
+        from tracer.utils.pii_settings import get_pii_settings_for_projects
+
+        with (
+            mock.patch("tracer.models.project.Project.objects") as projects,
+            mock.patch.object(
+                cache, "set", side_effect=[RuntimeError("cache down"), True]
+            ) as cache_set,
+        ):
+            projects.filter.return_value.values.return_value = [
+                {"name": "enabled", "metadata": {"pii_redaction_enabled": True}},
+                {"name": "disabled", "metadata": {"pii_redaction_enabled": False}},
+            ]
+            result = get_pii_settings_for_projects({"enabled", "disabled"}, "org1")
+
+        assert result == {"enabled": True, "disabled": False}
+        cache_set.assert_has_calls(
+            [
+                mock.call("pii_redaction:org1:enabled", True, 300),
+                mock.call("pii_redaction:org1:disabled", False, 300),
+            ],
+            any_order=True,
+        )
+
     def test_cache_miss_project_not_in_db(self):
         from tracer.utils.pii_settings import get_pii_settings_for_projects
 
@@ -67,14 +91,16 @@ class TestGetPiiSettingsForProjects:
         result = get_pii_settings_for_projects({"proj-a"}, "org1")
         assert result["proj-a"] is True
 
-    def test_fail_open_on_db_error(self):
+    def test_db_error_redacts_only_unresolved_projects_without_caching(self):
         from tracer.utils.pii_settings import get_pii_settings_for_projects
 
+        cache.set("pii_redaction:org1:disabled", False, 300)
         with mock.patch("tracer.models.project.Project.objects") as mock_objects:
             mock_objects.filter.side_effect = RuntimeError("DB down")
+            result = get_pii_settings_for_projects({"unknown", "disabled"}, "org1")
 
-            result = get_pii_settings_for_projects({"proj-a"}, "org1")
-            assert result["proj-a"] is False
+        assert result == {"unknown": True, "disabled": False}
+        assert cache.get("pii_redaction:org1:unknown") is None
 
     def test_null_metadata_defaults_false(self):
         from tracer.utils.pii_settings import get_pii_settings_for_projects
