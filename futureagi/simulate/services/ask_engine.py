@@ -32,6 +32,7 @@ import hashlib
 import json
 import re
 import time
+import uuid
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -286,6 +287,14 @@ _GRADED_TEMPLATE_FIELDS = (
 def template_digest(template) -> str:
     """A hash of what the template grades with, as it is stored now."""
     graded = {name: getattr(template, name) for name in _GRADED_TEMPLATE_FIELDS}
+    config = graded["config"]
+    if isinstance(config, dict) and isinstance(config.get("required_keys"), list):
+        # The update view rebuilds the inputs from a set, in an order that differs
+        # between processes: the same inputs in another order are the same question.
+        graded["config"] = {
+            **config,
+            "required_keys": sorted(config["required_keys"], key=str),
+        }
     encoded = json.dumps(graded, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
 
@@ -553,14 +562,20 @@ def _queue(ask_id) -> None:
     _asks().filter(id=ask_id).update(engine_run_id=str(getattr(started, "id", "")))
 
 
-def _queue_settle(ask_id) -> None:
+def _queue_settle(ask_id, *, follow_up: bool = False) -> None:
     """Settle the ask once no delivery of its job can still be working: after the
-    job's time limit and the give-up time for its last claims."""
+    job's time limit and the give-up time for its last claims. A follow-up settles
+    claims that were still live when the job or a settle ended, once they are past
+    the give-up time."""
+    if follow_up:
+        task_id = f"simulate-ask-settle-{ask_id}-{uuid.uuid4().hex[:12]}"
+        delay = GRADING_GIVE_UP + SETTLE_MARGIN
+    else:
+        task_id = f"simulate-ask-settle-{ask_id}"
+        delay = SETTLE_AFTER + SETTLE_MARGIN
     try:
         settle_ask_later.apply_async(
-            args=(str(ask_id),),
-            task_id=f"simulate-ask-settle-{ask_id}",
-            start_delay=SETTLE_AFTER + SETTLE_MARGIN,
+            args=(str(ask_id),), task_id=task_id, start_delay=delay
         )
     except Exception:
         # A reader settles the ask too; nothing is lost but the timing.
@@ -611,14 +626,19 @@ def run_ask(ask_id: str) -> None:
             cause="not_run",
             finished_at=timezone.now(),
         )
-        settle_ask(ask_id)
+        settle_ask(ask_id, follow_up=True)
 
 
-def settle_ask(ask_id) -> None:
+def settle_ask(ask_id, *, follow_up: bool = False) -> None:
     """Close what no worker will finish, then the ask. A claim older than
     ``GRADING_GIVE_UP`` lost its worker; once the job's own time limit has passed
     since the launch, a row nobody claimed will not be run either. The job calls
-    this when it ends; a reader calls it first, for an ask whose job died."""
+    this when it ends; a reader calls it first, for an ask whose job died.
+
+    With ``follow_up`` (the job and the later settle, never a reader), a claim
+    still too young to call dead gets one more settle after the give-up time.
+    Claims are only taken on unclaimed rows, which the settle after the job's time
+    limit closes, so these follow-ups end."""
     _close_dead(ask_id)
     _results().filter(
         ask_id=ask_id,
@@ -631,13 +651,20 @@ def settle_ask(ask_id) -> None:
         finished_at=timezone.now(),
     )
     _finish(ask_id)
+    if (
+        follow_up
+        and _results()
+        .filter(ask_id=ask_id, state=RESULT.PENDING, claimed_at__isnull=False)
+        .exists()
+    ):
+        _queue_settle(ask_id, follow_up=True)
 
 
 @temporal_activity(time_limit=600, max_retries=3, queue="tasks_s")
 def settle_ask_later(ask_id: str) -> None:
     """``settle_ask``, queued at launch to run after every delivery of the job is
     over, so an ask whose job died is closed without waiting for a reader."""
-    settle_ask(ask_id)
+    settle_ask(ask_id, follow_up=True)
 
 
 def _in_thread(work, *args):
@@ -682,33 +709,42 @@ def _close_dead(ask_id) -> None:
         state=RESULT.PENDING,
         claimed_at__lt=timezone.now() - GRADING_GIVE_UP,
     )
-    for row_id, organization_id, claimed in dead.values_list(
-        "id", "organization_id", "claimed_at"
+    for row_id, organization_id, claimed, question in dead.values_list(
+        "id", "organization_id", "claimed_at", "question_definition"
     ):
         _results().filter(id=row_id, state=RESULT.PENDING, claimed_at=claimed).update(
             state=RESULT.INFRASTRUCTURE_ERROR,
             cause="worker_died",
-            evaluator_log_id=_logged_call(row_id, organization_id),
+            evaluator_log_id=_logged_call(
+                row_id, organization_id, _template_id(question)
+            ),
             finished_at=timezone.now(),
         )
 
 
-def _logged_call(row_id, organization_id):
+def _template_id(question) -> str | None:
+    if isinstance(question, Mapping) and question.get("eval_template_id"):
+        return str(question["eval_template_id"])
+    return None
+
+
+def _logged_call(row_id, organization_id, template_id):
     """The evaluator's log row for this grading, if the evaluator was called: the
-    grading passes the row's id in the config the log row keeps."""
+    grading passes the row's id in the config the log row keeps. The log row names
+    the template as its source, which keeps the lookup on the org's own index; a
+    row kept without its question is looked up without it."""
     from django.apps import apps
 
     try:
         log_model = apps.get_model("usage", "APICallLog")
     except LookupError:
         return None
+    logs = log_model.objects.filter(organization_id=organization_id)
+    if template_id:
+        logs = logs.filter(source_id=template_id)
     # The log row keeps its config as JSON text; the row id is a UUID.
     return (
-        log_model.objects.filter(
-            organization_id=organization_id,
-            source=EVAL_SOURCE,
-            config__icontains=str(row_id),
-        )
+        logs.filter(source=EVAL_SOURCE, config__icontains=str(row_id))
         .values_list("log_id", flat=True)
         .first()
     )
@@ -1094,9 +1130,14 @@ def _write(row, claimed, **fields) -> None:
         # Closed as a dead worker's row meanwhile; that row stands, but it names
         # the evaluator's log row, since this grading was charged.
         logger.warning("simulate_ask_result_already_closed", row_id=str(row.id))
-        if fields.get("evaluator_log_id"):
+        # A failed grading carries no log id, though the evaluator may have logged
+        # (and charged) the call before it failed: look it up.
+        log_id = fields.get("evaluator_log_id") or _logged_call(
+            row.id, row.organization_id, _template_id(row.question_definition)
+        )
+        if log_id:
             _results().filter(id=row.id, evaluator_log_id__isnull=True).update(
-                evaluator_log_id=fields["evaluator_log_id"]
+                evaluator_log_id=log_id
             )
 
 
