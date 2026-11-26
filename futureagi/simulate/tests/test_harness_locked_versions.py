@@ -29,7 +29,11 @@ from simulate.services.harness_versioning.locked_versions import (
     plan_splits,
     target_test_size,
 )
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    grades_nothing,
+    sub_goal_catalogue,
+)
 from simulate.tests.test_harness_versioning_backfill import _legacy, _RealisticStorage
 from tfc.constants.levels import Level
 
@@ -1174,6 +1178,56 @@ def test_lock_version_records_who_locked(user, workspace, storage):
     locked_version = HarnessLockedVersion.no_workspace_objects.get()
     assert locked_version.locked_by == user
     assert locked_version.environment == environment
+
+
+class TestSubGoalShapes:
+    """The JSON shapes the runnable rule reads."""
+
+    @pytest.mark.parametrize(
+        ("document", "expected"),
+        [
+            # A version recorded before the catalogue was.
+            (None, frozenset()),
+            ([], frozenset()),
+            # Shapes no writer makes: none is a catalogue.
+            ("refunded", frozenset()),
+            ({"name": "refunded"}, frozenset()),
+            (5, frozenset()),
+            # Only named goal objects count.
+            (
+                [{"name": "refunded"}, {"name": ""}, "resolved", {"title": "x"}, 7],
+                frozenset({"refunded"}),
+            ),
+            ([{"name": 3}], frozenset({"3"})),
+        ],
+    )
+    def test_the_catalogue_reads_only_a_list_of_named_goals(self, document, expected):
+        assert sub_goal_catalogue(document) == expected
+
+    @pytest.mark.parametrize(
+        ("sub_goals", "expected"),
+        [
+            # A member from before sub-goals is left to the run.
+            (None, False),
+            ("resolved", False),
+            ({"name": "resolved"}, False),
+            # A legacy member names its goals bare.
+            (["refunded"], False),
+            (["resolved"], True),
+            ([{"name": "refunded"}], False),
+            ([{"name": "resolved"}, "other"], True),
+            # A goal object without a name names nothing graded.
+            ([{"title": "refunded"}], True),
+            ([], True),
+        ],
+    )
+    def test_a_member_grades_nothing_only_when_its_list_names_no_graded_goal(
+        self, sub_goals, expected
+    ):
+        assert grades_nothing(sub_goals, frozenset({GOAL})) is expected
+
+    def test_an_empty_catalogue_grades_anything(self):
+        assert grades_nothing(["resolved"], frozenset()) is False
 
 
 def test_unlock_of_an_unknown_locked_version_is_not_found(user, workspace, storage):
