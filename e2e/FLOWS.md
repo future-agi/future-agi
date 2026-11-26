@@ -4205,17 +4205,18 @@
 
 **Goal:** A user building an environment for a browser agent names the sites its browser may open, and a wrong site is refused by its position, before anything is built
 
-**Spec:** `flows/simulate/browser-environment-form-and-filter.spec.ts:27`
+**Spec:** `flows/simulate/browser-environment-form-and-filter.spec.ts:33`
 
 **Tags:** —
 
 **User steps:**
 
-1. open Environments with the Build environment drawer on GitHub
-2. choose Paste a repo link and enter a public repository
-3. in Browser sites, type a good host in capitals and a URL after it
-4. run preflight
-5. read the preflight row
+1. open Environments with the Build environment drawer on folder upload
+2. choose the agent folder and find its agent
+3. pick the agent found and go on to its form
+4. in Browser sites, type a good host in capitals and a URL after it
+5. run preflight
+6. read the preflight row
 
 **Backend state verified:**
 
@@ -4231,7 +4232,7 @@
 
 **Goal:** A user finds the environments built for browser agents by their Browser label and the Browser filter
 
-**Spec:** `flows/simulate/browser-environment-form-and-filter.spec.ts:87`
+**Spec:** `flows/simulate/browser-environment-form-and-filter.spec.ts:104`
 
 **Tags:** —
 
