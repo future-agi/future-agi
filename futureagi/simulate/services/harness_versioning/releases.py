@@ -71,10 +71,14 @@ class SplitPlan:
     assign: Mapping[UUID, str]
 
 
+# The test split never takes more than this share of the runnable tasks.
+MAX_TEST_SHARE = 0.3
+
+
 def target_test_size(size: int) -> int:
     """How many tasks the test split aims for: 30% of a small suite, 20% of a large
     one, and never more than 30%."""
-    return min(math.ceil(0.3 * size), max(60, math.ceil(0.2 * size)))
+    return min(math.ceil(MAX_TEST_SHARE * size), max(60, math.ceil(0.2 * size)))
 
 
 def _order(seed: str, value: str) -> str:
@@ -133,21 +137,22 @@ def _seats(
     tasks the categories already have.
 
     A category with no test task yet gets a seat first, larger ones first, and the
-    pooled single-task group last. Then each
+    pooled single-task group last, even when the target is already met, while the
+    split stays within ``MAX_TEST_SHARE`` of the tasks. Then each
     seat goes to the category furthest below its share of the target, counting the
     test tasks it already has. ``room`` caps a category, so it keeps a train task.
     """
     total = sum(sizes.values())
-    budget = max(0, target - sum(kept_test.values()))
+    kept = sum(kept_test.values())
     share = {name: target * size / total for name, size in sizes.items()}
     seats = dict.fromkeys(sizes, 0)
     uncovered = sorted(
         (name for name in sizes if not kept_test[name] and room[name] > 0),
         key=lambda name: (name == "", -sizes[name], _order(seed, name)),
     )
-    for name in uncovered[:budget]:
+    for name in uncovered[: max(0, math.ceil(MAX_TEST_SHARE * total) - kept)]:
         seats[name] = 1
-    budget -= sum(seats.values())
+    budget = target - kept - sum(seats.values())
     while budget > 0:
         open_ = [name for name in sizes if seats[name] < room[name]]
         if not open_:
