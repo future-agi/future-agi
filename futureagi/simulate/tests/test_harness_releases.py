@@ -634,7 +634,18 @@ class TestUnlockAndDelete:
         _suite(environment, _scenarios(20))
         _as_member(user)
 
-        assert _lock(auth_client, environment).status_code == 200
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 200, response.json()
+        [listed] = response.json()["releases"]
+        release = HarnessRelease.no_workspace_objects.get(id=listed["id"])
+        assert (release.environment_version_id, release.suite_version_id) == (
+            environment.environment_version_id,
+            environment.suite_version_id,
+        )
+        assert release.locked_by == user
+        assert release.unlocked_at is None
+        assert (release.train_count, release.test_count) == (14, 6)
 
     def test_unlock_keeps_the_release_readable_then_delete_works(
         self, auth_client, user, workspace, storage
