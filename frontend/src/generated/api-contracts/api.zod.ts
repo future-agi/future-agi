@@ -38885,9 +38885,9 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
       committed_credits: zod.number(),
       report: zod.union([
         zod.object({
-          ending: zod.string().min(1),
+          ending: zod.union([zod.string().min(1), zod.null()]),
           summary: zod.string(),
-          winner_candidate_id: zod.string().min(1),
+          winner_candidate_id: zod.union([zod.string().min(1), zod.null()]),
           flaky_protected: zod
             .array(
               zod.object({
@@ -39627,9 +39627,9 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
   committed_credits: zod.number(),
   report: zod.union([
     zod.object({
-      ending: zod.string().min(1),
+      ending: zod.union([zod.string().min(1), zod.null()]),
       summary: zod.string(),
-      winner_candidate_id: zod.string().min(1),
+      winner_candidate_id: zod.union([zod.string().min(1), zod.null()]),
       flaky_protected: zod
         .array(
           zod.object({
@@ -40121,9 +40121,9 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
   committed_credits: zod.number(),
   report: zod.union([
     zod.object({
-      ending: zod.string().min(1),
+      ending: zod.union([zod.string().min(1), zod.null()]),
       summary: zod.string(),
-      winner_candidate_id: zod.string().min(1),
+      winner_candidate_id: zod.union([zod.string().min(1), zod.null()]),
       flaky_protected: zod
         .array(
           zod.object({

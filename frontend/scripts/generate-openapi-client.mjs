@@ -137,6 +137,8 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   // failed one has a failure.
   AgentFixRun: EPOCH_NULLABLE_REFS,
   AgentFixRunDetail: EPOCH_NULLABLE_REFS,
+  // An Epoch that ended with no winner names none.
+  AgentFixReport: [],
   AgentFixCandidate: ["verdict"],
   AgentFixOverride: ["by"],
   // A candidate whose patch could not be read has no change line.

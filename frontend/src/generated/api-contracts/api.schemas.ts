@@ -19551,11 +19551,9 @@ export interface AgentFixRequestApi {
 }
 
 export interface AgentFixReportApi {
-  /** @minLength 1 */
-  ending: string;
+  ending: string | null;
   summary: string;
-  /** @minLength 1 */
-  winner_candidate_id: string;
+  winner_candidate_id: string | null;
   flaky_protected?: AgentFixFlakyProtectedApi[];
 }
 

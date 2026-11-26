@@ -30,27 +30,6 @@ import {
 // generated contract keeps them true to the API: a field the API renames or drops
 // fails here.
 
-// The serializers allow null on three fields the generated zod still reads as
-// required (simulate/serializers/agent_fix.py): AgentFixReportSerializer's
-// winner_candidate_id, AgentFixAttemptVerdictSerializer's failure and
-// AgentFixCodingAgentBriefSerializer's blocked. The stubs carry the null the server
-// sends for an ending with no winner and an open brief, so these three, and only
-// these, are parsed as nullable.
-const Read = SimulateApiAgentFixRunsReadResponse.extend({
-  report: SimulateApiAgentFixRunsReadResponse.shape.report.options[0]
-    .extend({
-      winner_candidate_id:
-        SimulateApiAgentFixRunsReadResponse.shape.report.options[0].shape.winner_candidate_id.nullable(),
-    })
-    .nullable(),
-});
-const Verdict = SimulateApiAgentFixRunsVerdictResponse.extend({
-  failure: SimulateApiAgentFixRunsVerdictResponse.shape.failure.nullable(),
-});
-const Brief = SimulateApiAgentFixRunsBriefResponse.extend({
-  blocked: SimulateApiAgentFixRunsBriefResponse.shape.blocked.nullable(),
-});
-
 // The stubs use the prebuilt template's id for the environment, the only one the
 // E2E stack opens an epoch page under; the contract's ids are UUIDs.
 const ENV_UUID = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b";
@@ -67,19 +46,25 @@ const ORIGIN = "http://localhost:3031";
 
 describe("SIM-E2E-042's stubbed responses match the agent-fix-runs contracts", () => {
   it("the attempt's Epoch read, a coding agent's attempt with no winner", () => {
-    const read = Read.parse(asContract(attemptEpoch(ids)));
+    const read = SimulateApiAgentFixRunsReadResponse.parse(
+      asContract(attemptEpoch(ids)),
+    );
     expect(read.request.outside_candidate?.number).toBe(2);
     expect(read.report?.winner_candidate_id).toBeNull();
   });
 
   it("the attempt's verdict read", () => {
-    const verdict = Verdict.parse(attemptVerdict(ids));
+    const verdict = SimulateApiAgentFixRunsVerdictResponse.parse(
+      attemptVerdict(ids),
+    );
     expect(verdict.ending).toBe("no_improvement");
     expect(verdict.failure).toBeNull();
   });
 
   it("an open coding-agent brief for the attempt's run", () => {
-    const brief = Brief.parse(asContract(codingAgentBrief(ids)));
+    const brief = SimulateApiAgentFixRunsBriefResponse.parse(
+      asContract(codingAgentBrief(ids)),
+    );
     expect(brief.blocked).toBeNull();
     expect(brief.source_run.id).toBe(ids.sourceRun);
   });
