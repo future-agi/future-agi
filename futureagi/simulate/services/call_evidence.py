@@ -248,13 +248,19 @@ def read_call_evidence(
     many calls. ``states_only`` answers each kind's state without fetching what is
     kept elsewhere: an end-of-trial world file is present when its row is, and agent
     traces when the run has a trace source. Such an answer carries no content, and a
-    stored world file that cannot be parsed is found out only when it is read."""
+    stored world file that cannot be parsed is found out only when it is read.
+    A store that fails is remembered in ``shared`` too, so it is asked once."""
     run = call.test_execution
-    if not in_workspace(run.run_test, organization_id, workspace_id):
-        raise CallNotInWorkspace(str(call.id))
-    if call.deleted or run.deleted or run.run_test.deleted:
-        raise CallDeleted(str(call.id))
     shared = shared if shared is not None else {}
+    run_test = run.run_test
+    if not _once(
+        shared,
+        ("in_workspace", run_test.id, str(organization_id), str(workspace_id)),
+        lambda: in_workspace(run_test, organization_id, workspace_id),
+    ):
+        raise CallNotInWorkspace(str(call.id))
+    if call.deleted or run.deleted or run_test.deleted:
+        raise CallDeleted(str(call.id))
     trial = hosted_trial(call, shared=shared)
     read = _Read(
         call=call,
@@ -779,9 +785,12 @@ def _whole_instructions(read: _Read) -> tuple[str, str] | None:
         return None
     # Its prompt may be the reading's excerpt, and nothing stored tells that apart
     # from one a person set.
-    if AgentVersionSetup.no_workspace_objects.filter(
-        agent_version_id=version.id, agent_kind="source"
-    ).exists():
+    if read.once(
+        ("source_agent", version.id),
+        lambda: AgentVersionSetup.no_workspace_objects.filter(
+            agent_version_id=version.id, agent_kind="source"
+        ).exists(),
+    ):
         return None
     text = _mapping(version.configuration_snapshot).get("description")
     if isinstance(text, str) and text.strip():
@@ -1309,9 +1318,17 @@ def _present_unread(kind: Kind, source: str) -> Evidence:
 
 
 def _once(memo: dict[Any, Any], key: tuple[Any, ...], load: Any) -> Any:
+    """``load()`` once per key. A store error is kept and raised again, so a store
+    that is down is asked once for every call that shares ``memo``."""
     if key not in memo:
-        memo[key] = load()
-    return memo[key]
+        try:
+            memo[key] = (load(), None)
+        except _store_errors() as error:
+            memo[key] = (None, error)
+    value, error = memo[key]
+    if error is not None:
+        raise error
+    return value
 
 
 def _missing(kind: Kind, cause: Cause, *, note: str | None = None) -> Evidence:
