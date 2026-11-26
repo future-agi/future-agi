@@ -1271,6 +1271,7 @@ def all_run_keys(
     """
     from simulate.models import HarnessSuiteMember
 
+    keys: Any
     resolved = resolve_run_pins(environment, rerun_of=None, picks=picks, fix_run=None)
     if resolved is not None:
         keys = HarnessSuiteMember.no_workspace_objects.filter(
@@ -2517,7 +2518,7 @@ def _lock_job_and_current_attempt(
         current = (
             HostedHarnessAttempt.no_workspace_objects.select_for_update()
             .select_related("job")
-            .get(job_id=job_id, attempt_number=number)
+            .get(job_id=uuid.UUID(str(job_id)), attempt_number=number)
         )
         # Registration moves the number only under these locks; re-read if one did.
         if current.job.current_attempt_number == number:
