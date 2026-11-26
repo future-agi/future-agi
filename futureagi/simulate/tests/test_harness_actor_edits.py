@@ -253,6 +253,7 @@ def test_trigger_kinds_follow_the_runtime_and_the_sealed_schema_and_editable_tri
         "on_tool",
         "on_keyword",
         "mid_journey",
+        "probability",
     ]
     assert labels.trigger_kinds(newer, None) == [
         "always",
@@ -260,13 +261,17 @@ def test_trigger_kinds_follow_the_runtime_and_the_sealed_schema_and_editable_tri
         "contacted",
         "after_seconds",
         "conditional",
+        "probability",
     ]
     kinds = labels.trigger_kinds(newer, None)
     assert labels.editable_trigger({"kind": "on_tool", "tool": "a"}, None, kinds)
-    assert not labels.editable_trigger(
+    # A later call of an action and a chance are made in the editor too.
+    assert labels.editable_trigger(
         {"kind": "on_tool", "tool": "a", "on_call": 2}, None, kinds
     )
-    assert not labels.editable_trigger({"kind": "probability", "p": 0.5}, None, kinds)
+    assert labels.editable_trigger({"kind": "probability", "p": 0.5}, None, kinds)
+    assert labels.TRIGGER_FIELDS["probability"] == ["p"]
+    assert labels.TRIGGER_FIELDS["on_tool"] == ["tool", "on_call"]
     assert not labels.editable_trigger(
         {"kind": "on_keyword", "words": ["x"]}, None, kinds
     )
@@ -598,6 +603,7 @@ def test_the_cast_carries_what_the_server_decides_about_each_actor(
         "on_tool",
         "contacted",
         "after_seconds",
+        "probability",
     ]
     assert cast["id_hint"] == "1 to 64 lowercase letters, digits or underscores"
     kinds = {one["key"]: one["kind"] for one in cast["limit_fields"]}
@@ -1090,3 +1096,17 @@ def test_a_chat_actor_scheduled_for_a_turn_says_it_comes_in_before_the_person_cl
     assert "before the person closes" in when_label(scheduled, "chat_message")
     # On a call the scheduled turn is the whole rule.
     assert "closes" not in when_label(scheduled, "audio_mix")
+
+
+@pytest.mark.parametrize(
+    "p, refused", [(0.25, False), (1, False), (0, True), (1.5, True), (None, True)]
+)
+def test_a_chance_trigger_takes_a_chance_above_0_and_at_most_1(p, refused):
+    from simulate.serializers.harness_actors import HarnessActorTriggerSerializer
+
+    trigger = {"kind": "probability", **({} if p is None else {"p": p})}
+    serializer = HarnessActorTriggerSerializer(data=trigger)
+
+    assert serializer.is_valid() is not refused
+    if refused:
+        assert "p" in serializer.errors
