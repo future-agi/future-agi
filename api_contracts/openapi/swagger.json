@@ -55286,7 +55286,7 @@
         "/simulate/api/harness-environments/{id}/versions/lock/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_lock_version",
-                "description": "Lock the default environment and suite versions with train and test splits;\nreturns every version and locked version.",
+                "description": "Lock the default environment and suite versions with train and test splits;\nreturns every version and the locked-version history: every locked one plus\nthe newest unlocked ones.",
                 "parameters": [
                     {
                         "name": "data",
@@ -55389,7 +55389,7 @@
         "/simulate/api/harness-environments/{id}/versions/unlock/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_unlock_version",
-                "description": "Unlock a locked version, as a workspace admin or owner. Its versions, splits and\nscores stay; returns every version and locked version.",
+                "description": "Unlock a locked version, as a workspace admin or owner. Its versions, splits and\nscores stay; returns every version and the locked-version history: every\nlocked one plus the newest unlocked ones.",
                 "parameters": [
                     {
                         "name": "data",

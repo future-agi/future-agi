@@ -4,7 +4,7 @@ import hashlib
 import json
 import secrets
 import uuid
-from collections.abc import Callable, Collection, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
@@ -1320,17 +1320,16 @@ def sub_goal_catalogue(sub_goals: Any) -> frozenset[str]:
     )
 
 
-def grades_nothing(sub_goals: Any, catalogue: Collection[str]) -> bool:
+def grades_nothing(sub_goals: Any, catalogue: frozenset[str]) -> bool:
     """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
     cannot score it. A scenario without the field predates sub-goals and an empty
     catalogue grades anything: neither is refused."""
     if not catalogue or not isinstance(sub_goals, list):
         return False
-    names = {
+    return catalogue.isdisjoint(
         str(goal.get("name") if isinstance(goal, Mapping) else goal)
         for goal in sub_goals
-    }
-    return not names & set(catalogue)
+    )
 
 
 def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:

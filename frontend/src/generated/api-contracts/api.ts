@@ -64415,7 +64415,8 @@ export const getSimulateApiHarnessEnvironmentsVersionsLockVersionUrl = (
 
 /**
  * Lock the default environment and suite versions with train and test splits;
-returns every version and locked version.
+returns every version and the locked-version history: every locked one plus
+the newest unlocked ones.
  */
 export const simulateApiHarnessEnvironmentsVersionsLockVersion = async (
   id: string,
@@ -64526,7 +64527,8 @@ export const getSimulateApiHarnessEnvironmentsVersionsUnlockVersionUrl = (
 
 /**
  * Unlock a locked version, as a workspace admin or owner. Its versions, splits and
-scores stay; returns every version and locked version.
+scores stay; returns every version and the locked-version history: every
+locked one plus the newest unlocked ones.
  */
 export const simulateApiHarnessEnvironmentsVersionsUnlockVersion = async (
   id: string,

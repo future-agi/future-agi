@@ -84,7 +84,8 @@ MAX_TEST_SHARE = 0.3
 
 def target_test_size(size: int) -> int:
     """How many tasks the test split aims for: 30% of a small suite, 20% of a large
-    one, and never more than 30%."""
+    one. New test seats never take the split past 30%, but retained test tasks never
+    move, so a suite that shrinks can keep more than 30% in test."""
     return min(math.ceil(MAX_TEST_SHARE * size), max(60, math.ceil(0.2 * size)))
 
 
@@ -151,7 +152,8 @@ def _seats(
 
     A category with no test task yet gets a seat first, larger ones first, and the
     pooled single-task group last, even when the target is already met, while the
-    split stays within ``MAX_TEST_SHARE`` of the tasks. Then each
+    split stays within ``MAX_TEST_SHARE`` of the tasks. Retained test tasks may
+    already exceed that share; new seats never add to it past the share. Then each
     seat goes to the category furthest below its share of the target, counting the
     test tasks it already has. ``room`` caps a category, so it keeps a train task.
     """

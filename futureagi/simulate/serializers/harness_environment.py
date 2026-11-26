@@ -1298,7 +1298,7 @@ class HarnessLockedVersionSerializer(serializers.Serializer):
     """A locked environment and suite version pair, with its split counts."""
 
     id = serializers.UUIDField()
-    label = serializers.CharField()  # type: ignore[assignment]
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label, as DRF Field's own
     environment_version_id = serializers.UUIDField()
     environment_label = serializers.CharField(allow_null=True)
     suite_version_id = serializers.UUIDField()
@@ -1380,8 +1380,7 @@ class HarnessLockRefusalSerializer(serializers.Serializer):
     locked_version_id = serializers.UUIDField(
         required=False, help_text="version_locked: the locked version to unlock first."
     )
-    # A field named label shadows DRF's own Field.label (a str), so mypy flags it.
-    label = serializers.CharField(  # type: ignore[assignment]
+    label = serializers.CharField(  # type: ignore[assignment]  # the API field is named label, as DRF Field's own
         required=False, help_text="version_locked: that locked version's label."
     )
 

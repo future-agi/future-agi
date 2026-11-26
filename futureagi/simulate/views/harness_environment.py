@@ -418,7 +418,8 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="versions/lock")
     def lock_version(self, request, pk=None):
         """Lock the default environment and suite versions with train and test splits;
-        returns every version and locked version."""
+        returns every version and the locked-version history: every locked one plus
+        the newest unlocked ones."""
         from simulate.services.harness_versioning.locked_versions import lock_version
 
         version_reads.require_versioning()
@@ -447,7 +448,8 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="versions/unlock")
     def unlock_version(self, request, pk=None):
         """Unlock a locked version, as a workspace admin or owner. Its versions, splits and
-        scores stay; returns every version and locked version."""
+        scores stay; returns every version and the locked-version history: every
+        locked one plus the newest unlocked ones."""
         from simulate.services.harness_versioning.locked_versions import unlock_version
 
         # Not behind the versioning flag: a locked version blocks deletion either way.
