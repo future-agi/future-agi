@@ -278,9 +278,11 @@ def assigned_reviewer(node: dict) -> str | None:
 def latest_verdict(
     reviews: list, author: str, assigned: str | None = None
 ) -> dict | None:
-    """The newest devflow-review/v1 verdict posted by someone with write access
-    who is not the author. The assigned reviewer's newest one wins when there
-    is one: a later verdict by someone else does not replace it."""
+    """The verdict of the newest devflow-review/v1 review posted by someone with
+    write access who is not the author. The assigned reviewer's newest review
+    wins when there is one: a later review by someone else does not replace
+    it. A malformed newest review means no verdict; an older one never stands
+    in for it."""
     trusted = [
         r
         for r in reviews
@@ -290,25 +292,29 @@ def latest_verdict(
     ]
     trusted.sort(key=lambda r: r.get("submittedAt") or "")
     own = [r for r in trusted if assigned and lower_login(r) == assigned.lower()]
-    return parse_verdict(own) or parse_verdict(trusted)
+    newest = (own or trusted)[-1:]
+    return parse_verdict(newest[0].get("body") or "") if newest else None
 
 
 def lower_login(item: dict) -> str:
     return bot_login((item.get("author") or {}).get("login")).lower()
 
 
-def parse_verdict(reviews: list) -> dict | None:
-    """The verdict JSON of the newest well-formed review in an oldest-first list."""
-    for review in reversed(reviews):
-        match = JSON_BLOCK.search(review.get("body") or "")
-        if not match:
-            continue
-        try:
-            verdict = json.loads(match.group(1))
-        except ValueError:
-            continue
-        if isinstance(verdict, dict) and verdict.get("schema") == "devflow-review/v1":
-            return verdict
+def parse_verdict(body: str) -> dict | None:
+    """The verdict JSON of one review body (tier contract v2.1 parsing): the
+    body must hold exactly one ```json fence, or a fake verdict fenced inside
+    a finding's text could be read first."""
+    if body.count("```json") != 1:
+        return None
+    match = JSON_BLOCK.search(body)
+    if not match:
+        return None
+    try:
+        verdict = json.loads(match.group(1))
+    except ValueError:
+        return None
+    if isinstance(verdict, dict) and verdict.get("schema") == "devflow-review/v1":
+        return verdict
     return None
 
 

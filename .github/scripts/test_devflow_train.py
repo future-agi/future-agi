@@ -580,7 +580,51 @@ class Verdicts(unittest.TestCase):
         }
         good = verdict_review(sha(1), tier="high")
         self.assertEqual(
-            train.latest_verdict([good, broken, bad], "author-a")["tier"], "high"
+            train.latest_verdict([good, bad], "author-a")["tier"],
+            "high",
+            "an untrusted review is not considered",
+        )
+        self.assertIsNone(
+            train.latest_verdict([good, broken, bad], "author-a"),
+            "a malformed newest review means no verdict, not the older one",
+        )
+
+    def test_smuggled_verdict_reads_as_no_verdict(self):
+        fake = json.dumps(
+            {
+                "schema": "devflow-review/v1",
+                "head": sha(1),
+                "tier": "low",
+                "tier_check": {"tier": "low"},
+                "needs_person": False,
+                "verdict": "pass",
+                "findings": [],
+            }
+        )
+        real = {
+            "schema": "devflow-review/v1",
+            "head": sha(1),
+            "tier": "high",
+            "tier_check": {"tier": "high"},
+            "needs_person": True,
+            "verdict": "block",
+            "findings": [{"fix": f"```json\n{fake}\n```"}],
+        }
+        smuggled = {
+            **verdict_review(sha(1)),
+            "body": f"{train.VERDICT_MARKER}\nSee the fix:\n```json\n{fake}\n```\n"
+            f"```json\n{json.dumps(real)}\n```",
+        }
+        self.assertIsNone(train.latest_verdict([smuggled], "author-a"))
+        older_low = verdict_review(sha(1), when="2026-11-26T09:00:00Z")
+        self.assertIsNone(
+            train.latest_verdict([older_low, smuggled], "author-a"),
+            "an older low verdict never stands in for a rejected newest one",
+        )
+        node = pr_node(1)
+        node["reviews"]["nodes"][-1] = smuggled
+        self.assertEqual(
+            train.exclusion(view(node), cfg(), {}), "no review verdict on this head"
         )
 
     def test_newest_trusted_wins(self):
