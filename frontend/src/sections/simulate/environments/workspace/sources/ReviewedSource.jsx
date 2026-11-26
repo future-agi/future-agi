@@ -51,61 +51,101 @@ export function ReviewedStatements({ source, rules, ruleIds, onSelect }) {
       </Stack>
     );
   }
-  return (source.statements || [])
-    .filter((statement) => statement.text)
-    .map((statement) => {
-      const rule = rules.find(
-        (candidate) => candidate.statement_id === statement.statement_id,
-      );
-      const ref = [
-        source.filename,
-        statement.page != null && `page ${statement.page}`,
-      ]
-        .filter(Boolean)
-        .join(", ");
-      // Old previews omitted the flag and may end exactly at the excerpt limit.
-      const excerpt = statement.text_truncated ?? statement.text.length >= 2000;
-      if (!rule || rule.status !== "supported" || !onSelect || excerpt)
-        return (
-          <Stack spacing={0.25} key={statement.statement_id}>
-            <Typography
-              component="blockquote"
-              sx={{
-                m: 0,
-                pl: 1.5,
-                borderLeft: "2px solid",
-                borderColor: "divider",
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {statement.text}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {ref} ·{" "}
-              {excerpt
-                ? "Excerpt · full passage kept as reference only"
-                : passageCaption(rule, statement.text)}
-            </Typography>
-          </Stack>
+  const name = (source.filename || "")
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  const statements = (source.statements || []).filter(
+    (statement, index, list) => {
+      if (!statement.text) return false;
+      const heading = statement.text
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+      const [firstLine, ...rest] = statement.text.trim().split(/\r?\n/);
+      const documentTitle =
+        firstLine.trim().split(/\s+/).length <= 8 &&
+        /^(?:[\p{L}-]+\s+){0,6}(?:policy|policies|guidelines|handbook)$/iu.test(
+          firstLine.trim(),
+        ) &&
+        rest.every(
+          (line) =>
+            !line.trim() || /^(?:policy\s+)?version\s*:/i.test(line.trim()),
         );
-      return (
-        <ProposalItem
-          key={rule.rule_id}
-          inset={0}
-          item={{
-            id: rule.rule_id,
-            title: statement.text,
-            rule: statement.text,
-            kind: "rule",
-            cite: { ref },
-          }}
-          checked={ruleIds.includes(statement.statement_id)}
-          onToggle={(event) =>
-            onSelect(statement.statement_id, event.target.checked)
-          }
-        />
+      return !(
+        index === 0 &&
+        list.length > 1 &&
+        (heading === name || documentTitle)
       );
-    });
+    },
+  );
+  const policy = new Map(rules.map((rule) => [rule.statement_id, rule]));
+  const selectable = (statement) =>
+    policy.get(statement.statement_id)?.status === "supported" &&
+    !(statement.text_truncated ?? statement.text.length >= 2000);
+  return [
+    ["Rules", statements.filter(selectable)],
+    ["Reference passages", statements.filter((s) => !selectable(s))],
+  ]
+    .filter(([, items]) => items.length)
+    .map(([heading, items]) => (
+      <Stack key={heading} spacing={1}>
+        <Typography sx={{ typography: "s1" }}>{heading}</Typography>
+        {items.map((statement) => {
+          const rule = policy.get(statement.statement_id);
+          const ref = [
+            source.filename,
+            statement.page != null && `page ${statement.page}`,
+          ]
+            .filter(Boolean)
+            .join(", ");
+          // Old previews omitted the flag and may end exactly at the excerpt limit.
+          const excerpt =
+            statement.text_truncated ?? statement.text.length >= 2000;
+          if (!rule || rule.status !== "supported" || !onSelect || excerpt)
+            return (
+              <Stack spacing={0.25} key={statement.statement_id}>
+                <Typography
+                  component="blockquote"
+                  sx={{
+                    m: 0,
+                    pl: 1.5,
+                    borderLeft: "2px solid",
+                    borderColor: "divider",
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {statement.text}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  From {ref} ·{" "}
+                  {excerpt
+                    ? "Excerpt · full passage kept as reference only"
+                    : passageCaption(rule, statement.text)}
+                </Typography>
+              </Stack>
+            );
+          return (
+            <ProposalItem
+              key={rule.rule_id}
+              inset={0}
+              item={{
+                id: rule.rule_id,
+                title: statement.text,
+                rule: statement.text,
+                kind: "rule",
+                cite: { ref },
+              }}
+              checked={ruleIds.includes(statement.statement_id)}
+              onToggle={(event) =>
+                onSelect(statement.statement_id, event.target.checked)
+              }
+            />
+          );
+        })}
+      </Stack>
+    ));
 }
 ReviewedStatements.propTypes = {
   source: PropTypes.object.isRequired,
@@ -274,7 +314,16 @@ export function SourceRepairs({ source, choices, repair, change, editable }) {
         [
           "identity_fields",
           "Identify records by",
-          identity?.fields || fieldNames,
+          (identity?.fields || fieldNames).filter((name) => {
+            const field = source.fields.find(
+              (item) => item.source_field === name,
+            );
+            return (
+              field &&
+              (field.null_count == null || field.null_count === 0) &&
+              source.row_count !== 0
+            );
+          }),
         ],
       ].map(([key, title, options]) => {
         if (
@@ -306,7 +355,11 @@ export function SourceRepairs({ source, choices, repair, change, editable }) {
               ))}
             </TextField>
             {key === "text_fields" && text.length > 1 && (
-              <Button size="small" onClick={() => change(key, text)}>
+              <Button
+                size="small"
+                sx={{ alignSelf: "flex-start" }}
+                onClick={() => change(key, text)}
+              >
                 Treat all {text.length} columns as text
               </Button>
             )}

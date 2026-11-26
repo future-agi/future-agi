@@ -357,7 +357,7 @@ def _retained_inputs(captured):
     ]
 
 
-def table_choices(captured, table_fields):
+def table_choices(captured, table_fields, *, record_shapes=None):
     import csv
     import io
 
@@ -370,9 +370,13 @@ def table_choices(captured, table_fields):
             continue
         try:
             if source.media_type == "text/csv":
-                sample = next(
-                    csv.reader(io.StringIO(source.content.decode("utf-8-sig"))), []
-                )
+                records = csv.reader(io.StringIO(source.content.decode("utf-8-sig")))
+                sample = next(records, [])
+                if record_shapes is not None:
+                    record_shapes[source.source_id] = {
+                        "row_count": sum(1 for row in records if row),
+                        "field_count": len(sample),
+                    }
             elif source.media_type == "application/json":
                 records = json.loads(source.content)
                 sample = (
@@ -382,6 +386,15 @@ def table_choices(captured, table_fields):
                     and isinstance(records[0], dict)
                     else []
                 )
+                if (
+                    record_shapes is not None
+                    and isinstance(records, list)
+                    and all(isinstance(row, dict) for row in records)
+                ):
+                    record_shapes[source.source_id] = {
+                        "row_count": len(records),
+                        "field_count": len({key for row in records for key in row}),
+                    }
             else:
                 continue
             headers.update(str(name).casefold() for name in sample)
@@ -427,6 +440,7 @@ def _stage(
             for key in ("destination_tables", "suggested_target_table")
             if key in row.basis
         }
+        record_shapes = {}
         if row.owner_kind == Owner.ENVIRONMENT and (
             row.basis.get("target_table") or row.basis.get("destination_tables")
         ):
@@ -434,7 +448,13 @@ def _stage(
             _environment_schema(
                 row.owner, row.basis.get("target_table"), fields_by_table=table_fields
             )
-            choices.update(table_choices(captured, table_fields))
+            choices.update(
+                table_choices(
+                    captured,
+                    table_fields,
+                    record_shapes=record_shapes if schema is None else None,
+                )
+            )
         if schema is None and "destination_tables" in row.basis:
             _store_staging(
                 row,
@@ -454,6 +474,7 @@ def _stage(
                             "pin": {"source_id": source.source_id, "role": source.role},
                             "filename": source.origin.get("original_name")
                             or source.filename,
+                            **record_shapes.get(source.source_id, {}),
                         }
                         for source in captured
                     ],

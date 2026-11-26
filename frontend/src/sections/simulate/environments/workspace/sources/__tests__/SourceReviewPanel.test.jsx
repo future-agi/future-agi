@@ -35,7 +35,7 @@ beforeEach(() => {
   api.post.mockReset();
 });
 
-function mount(onAccepted, cachedReview) {
+function mount(onAccepted, cachedReview, compact = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -47,6 +47,7 @@ function mount(onAccepted, cachedReview) {
         reviewId="review-1"
         ownerId="job-1"
         canEdit
+        compact={compact}
         acceptLabel="Approve sources and start build"
         onAccepted={onAccepted}
       />
@@ -157,6 +158,70 @@ describe("Prebuild source review", () => {
     );
     expect(onAccepted).toHaveBeenCalledExactlyOnceWith(serverReview);
   });
+  it("keeps a four-page source collapsed until the reviewer asks to see the text", async () => {
+    serverReview = {
+      ...repair,
+      state: "ready",
+      preview: {
+        ...preview,
+        sources: [
+          {
+            pin: { source_id: "doc", role: "reference" },
+            filename: "Refund policy.pdf",
+            statements: [
+              "Refund policy",
+              "First business rule.",
+              "Second business rule.",
+              "Third business rule.",
+            ].map((text, i) => ({
+              text,
+              page: i + 1,
+              statement_id: String(i),
+            })),
+          },
+        ],
+      },
+    };
+    mount(null, null, true);
+    expect(await screen.findByText("Refund policy.pdf")).toBeVisible();
+    expect(screen.getByText("Reference · 4 pages")).toBeVisible();
+    expect(screen.getByText("First business rule.")).not.toBeVisible();
+    fireEvent.click(screen.getByText("Show text"));
+    expect(screen.getByText("First business rule.")).toBeVisible();
+    expect(screen.queryByText("Refund policy")).toBeNull();
+    expect(screen.getByText("Reference passages")).toBeVisible();
+  });
+  it("shows safe row and column counts before a preselected destination", async () => {
+    serverReview = {
+      ...repair,
+      scope: { ...repair.scope, kind: "environment" },
+      preview: {
+        ...preview,
+        sources: [
+          {
+            pin: { source_id: "orders", role: "seed_records" },
+            filename: "orders.csv",
+            row_count: 13,
+            field_count: 4,
+          },
+        ],
+        destination_tables: ["customers", "orders"],
+        suggested_target_table: "orders",
+      },
+    };
+    mount();
+    const counts = await screen.findByText(
+      "Structured scenario data · 13 rows · 4 columns",
+    );
+    const table = screen.getByRole("combobox", { name: "Scenario data table" });
+    expect(
+      counts.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(table).toHaveTextContent("orders");
+    expect(
+      screen.getByRole("button", { name: "Prepare for this table" }),
+    ).toBeEnabled();
+  });
   it("shows supported policy wording and its page, while preserving other passages as references", async () => {
     const statementId = "src_1:page:2:statement:1";
     const passage = "The response must contain the confirmation code.";
@@ -241,7 +306,7 @@ describe("Prebuild source review", () => {
     });
     mount();
     expect(await screen.findByText(/detected on page 3/)).toBeVisible();
-    fireEvent.click(screen.getByRole("checkbox", { name: /Select emails/ }));
+    expect(screen.getByText("Personal data, your choice")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: label }));
     await screen.findByRole("button", {
       name: "Approve sources and start build",
@@ -334,7 +399,7 @@ describe("Prebuild source review", () => {
     );
     fireEvent.click(screen.getByRole("option", { name: "orders" }));
     expect(
-      screen.getByRole("button", { name: "Approve sources and start build" }),
+      screen.getByRole("button", { name: /Add \d+ changes?/ }),
     ).toBeDisabled();
     fireEvent.click(
       screen.getByRole("button", { name: "Prepare for this table" }),

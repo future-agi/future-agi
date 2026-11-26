@@ -1,12 +1,6 @@
 import PropTypes from "prop-types";
 import { useRef } from "react";
-import {
-  Checkbox,
-  FormControlLabel,
-  Menu,
-  MenuItem,
-  Typography,
-} from "@mui/material";
+import { Menu, MenuItem, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { SOURCES_COPY } from "./sources.constants";
@@ -20,8 +14,6 @@ export default function AddSourceMenu({
   onAddFiles,
   onAddKb,
   limits,
-  pdfPolicy,
-  onPdfPolicyChange,
 }) {
   const fileRef = useRef(null);
   const accept = (limits?.formats || []).map((ext) => `.${ext}`).join(",");
@@ -79,19 +71,6 @@ export default function AddSourceMenu({
             </MenuItem>
           </CustomTooltip>
         )}
-        {onPdfPolicyChange && (
-          <FormControlLabel
-            sx={{ mx: 1 }}
-            label="Use PDFs as policy rules"
-            control={
-              <Checkbox
-                size="small"
-                checked={pdfPolicy}
-                onChange={(event) => onPdfPolicyChange(event.target.checked)}
-              />
-            }
-          />
-        )}
       </Menu>
       <input
         data-testid="build-files"
@@ -122,6 +101,4 @@ AddSourceMenu.propTypes = {
     max_file_bytes: PropTypes.number,
     max_total_bytes: PropTypes.number,
   }),
-  pdfPolicy: PropTypes.bool,
-  onPdfPolicyChange: PropTypes.func,
 };

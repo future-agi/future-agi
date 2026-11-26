@@ -41,7 +41,6 @@ export default function SourcesSection({ env, locked }) {
   const [selecting, setSelecting] = useState(false);
   const [anchor, setAnchor] = useState(null);
   const [kbOpen, setKbOpen] = useState(false);
-  const [pdfPolicy, setPdfPolicy] = useState(false);
   const [limitError, setLimitError] = useState("");
   const request = useRef(null);
   const consumedSelection = useRef(null);
@@ -137,11 +136,6 @@ export default function SourcesSection({ env, locked }) {
         expected_draft: capabilities.data.draft,
       },
       ...sources.selection,
-      document_purposes: Object.fromEntries(
-        sources.uploads.done
-          .filter((file) => pdfPolicy && /\.pdf$/i.test(file.name))
-          .map((file) => [file.documentId, "policy"]),
-      ),
     };
     const signature = JSON.stringify(body);
     if (request.current?.signature !== signature)
@@ -265,8 +259,6 @@ export default function SourcesSection({ env, locked }) {
               ),
             }
           }
-          pdfPolicy={pdfPolicy}
-          onPdfPolicyChange={setPdfPolicy}
           onAddFiles={(files) => {
             const errorText = overUploadLimit(files, capabilities.data?.upload);
             if (errorText) {
@@ -301,8 +293,20 @@ export default function SourcesSection({ env, locked }) {
         subtitle="Review the changes before adding them to this environment."
       >
         {reviewId ? (
-          <Box sx={{ px: 2.5, py: 1.5 }}>
+          <Box
+            sx={{
+              px: 2.5,
+              pt: 1.5,
+              minHeight: "100%",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
             <SourceReviewPanel
+              readingNames={[
+                ...sources.uploads.files.map((file) => file.name),
+                ...sources.knowledge.map((item) => item.label),
+              ]}
               reviewId={reviewId}
               ownerId={env.id}
               canEdit={writable && capabilities.isSuccess}
@@ -322,15 +326,12 @@ export default function SourcesSection({ env, locked }) {
                 spacing={1}
                 alignItems="center"
               >
-                <Typography>{file.name}</Typography>
-                <Typography color="text.secondary">
-                  {
-                    {
-                      failed: "Upload failed",
-                      uploading: "Uploading…",
-                      done: create.isPending ? "Preparing review…" : "Uploaded",
-                    }[file.status]
-                  }
+                <Typography role="status" color="text.secondary">
+                  {file.status === "failed"
+                    ? `Upload failed: ${file.name}`
+                    : file.status === "uploading"
+                      ? `Uploading ${file.name}…`
+                      : `Reading ${file.name}…`}
                 </Typography>
                 {file.status === "failed" && (
                   <>
@@ -345,7 +346,9 @@ export default function SourcesSection({ env, locked }) {
               </Stack>
             ))}
             {sources.knowledge.map((item) => (
-              <Typography key={item.selection.kb_id}>{item.label}</Typography>
+              <Typography role="status" key={item.selection.kb_id}>
+                Reading {item.label}…
+              </Typography>
             ))}
             {create.isError ? (
               <Alert
@@ -364,11 +367,11 @@ export default function SourcesSection({ env, locked }) {
                 {create.error?.message || "Could not prepare sources."}
               </Alert>
             ) : (
-              !sources.blocked && (
+              !sources.blocked &&
+              !sources.uploads.files.length &&
+              !sources.knowledge.length && (
                 <Typography role="status">
-                  {sources.selection
-                    ? "Preparing sources…"
-                    : "Select files to prepare a review."}
+                  Select files to prepare a review.
                 </Typography>
               )
             )}

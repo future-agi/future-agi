@@ -258,9 +258,9 @@ describe("SourcesSection", () => {
     const add = screen.getByRole("button", { name: "Add source" });
     await waitFor(() => expect(add).toBeEnabled());
     fireEvent.click(add);
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Use PDFs as policy rules" }),
-    );
+    expect(
+      screen.queryByRole("checkbox", { name: "Use PDFs as policy rules" }),
+    ).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: /Upload files/ }));
     const csv = new File(["email\nalice@example.test"], "orders.csv");
     const policy = new File(["15-day policy"], "policy.pdf");
@@ -268,7 +268,7 @@ describe("SourcesSection", () => {
     expect(await screen.findByText("The request timed out")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
-      await screen.findByRole("heading", { name: "Review sources" }),
+      await screen.findByRole("checkbox", { name: /Refunds are allowed/ }),
     ).toBeInTheDocument();
 
     const [, body] = api.post.mock.calls[0];
@@ -280,7 +280,7 @@ describe("SourcesSection", () => {
         expected_draft: basis.draft,
       },
       document_ids: ["uploaded-orders.csv", "uploaded-policy.pdf"],
-      document_purposes: { "uploaded-policy.pdf": "policy" },
+      document_purposes: {},
       knowledge_base: [],
       idempotency_key: expect.any(String),
     });
@@ -298,7 +298,7 @@ describe("SourcesSection", () => {
       name: /Refunds are allowed/,
     });
     fireEvent.click(rule);
-    fireEvent.click(screen.getByRole("button", { name: "Add to draft" }));
+    fireEvent.click(screen.getByRole("button", { name: /Add \d+ changes?/ }));
     expect(
       await screen.findByText("Source review accepted."),
     ).toBeInTheDocument();
@@ -345,7 +345,7 @@ describe("SourcesSection", () => {
         { timeout: 3000 },
       ),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel review" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(sessionStorage.getItem(storageKey)).toBeNull());
     expect(api.post).toHaveBeenCalledExactlyOnceWith(`${reviewPath}cancel/`, {
       expected_revision: 2,
@@ -400,7 +400,7 @@ describe("SourcesSection", () => {
     mount({
       environmentSourceSelection: { kb_id: "kb-1", file_ids: ["ready-file"] },
     });
-    await screen.findByRole("heading", { name: "Review sources" });
+    await screen.findByRole("checkbox", { name: /Refunds are allowed/ });
     expect(api.post).toHaveBeenCalledExactlyOnceWith(
       indexPath,
       expect.objectContaining({
@@ -711,7 +711,9 @@ describe("SourcesSection", () => {
     expect(
       await screen.findByText(/No fields in orders.csv match/),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add to draft" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Add \d+ changes?/ }),
+    ).toBeDisabled();
     expect(api.post).not.toHaveBeenCalled();
   });
 
@@ -723,8 +725,10 @@ describe("SourcesSection", () => {
     expect(
       await screen.findByText(/The Environment changed/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add to draft" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /Add \d+ changes?/ }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     expect(api.post).not.toHaveBeenCalled();
   });
 

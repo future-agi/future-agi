@@ -94,6 +94,32 @@ def test_template_table_choices_survive_prepare_and_retarget(monkeypatch):
             assert schema["fields"][0]["name"] == tables[target][0][0]
 
 
+def test_ambiguous_destination_preview_counts_records_without_exposing_values():
+    shapes = {}
+    inputs = [
+        SimpleNamespace(
+            source_id="csv",
+            role="seed_records",
+            media_type="text/csv",
+            content=b'order_id,notes\n1,"hello\nprivate"\n2,private\n',
+        ),
+        SimpleNamespace(
+            source_id="json",
+            role="seed_records",
+            media_type="application/json",
+            content=b'[{"order_id":"1"},{"order_id":"2","notes":"private"}]',
+        ),
+    ]
+    choices = reviews.table_choices(
+        inputs, {"orders": {"order_id", "notes"}, "users": {"id"}}, record_shapes=shapes
+    )
+    assert choices["suggested_target_table"] == "orders"
+    assert shapes == {
+        "csv": {"row_count": 2, "field_count": 2},
+        "json": {"row_count": 2, "field_count": 2},
+    }
+
+
 def test_environment_schema_reads_generated_json_schema(monkeypatch):
     monkeypatch.setattr(reviews.drafts, "fresh_draft", lambda *_: None)
     owner = SimpleNamespace(

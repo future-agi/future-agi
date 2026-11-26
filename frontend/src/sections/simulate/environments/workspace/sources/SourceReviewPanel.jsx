@@ -61,6 +61,9 @@ function SourceReviewEditor({
   onAccepted,
   onCancelled,
   defaultPersonalDataMode,
+  compact,
+  readingNames = [],
+  onRepair,
   stale,
 }) {
   const { id, state, revision, draft_digest: digest, preview, scope } = review;
@@ -89,7 +92,6 @@ function SourceReviewEditor({
       )
       .map((d) => d.span?.source_id),
   );
-  const [redactions, setRedactions] = useState([]);
   const hasRepairControls =
     tables.length > 0 ||
     (inferRepairs && sources.some((item) => item.fields?.length));
@@ -172,6 +174,10 @@ function SourceReviewEditor({
         mappings[index].source_id === to_source_id &&
         mappings[index].mapping.target_field === to_field,
     );
+  const changeCount =
+    sources.length +
+    ruleIds.length +
+    joinIndexes.filter((index) => validJoin(joins[index].relationship)).length;
   const canAccept =
     state === "ready" &&
     Boolean(digest && scope?.schema_digest) &&
@@ -184,12 +190,35 @@ function SourceReviewEditor({
     ) &&
     !changingTable;
 
-  const doRepair = (body) =>
-    reprepare.mutate({
-      ...pins,
-      ...body,
-      idempotency_key: keyFor(body),
-    });
+  const doRepair = (body) => {
+    reprepare
+      .mutateAsync({
+        ...pins,
+        ...body,
+        idempotency_key: keyFor(body),
+      })
+      .then((result) => {
+        const fixed = (body.schema_repairs || []).flatMap((repair) => {
+          const remaining =
+            result.preview?.destination_schema?.repair_choices || [];
+          const pendingText = remaining
+            .filter(
+              (c) =>
+                c.source_id === repair.source_id && c.decision === "keep_text",
+            )
+            .flatMap((c) => c.fields);
+          return (repair.text_fields || []).filter(
+            (field) => !pendingText.includes(field),
+          );
+        });
+        onRepair(
+          fixed.length
+            ? `Stored ${fixed.length} ${fixed.length === 1 ? "column" : "columns"} as text: ${fixed.join(", ")}.`
+            : "",
+        );
+      })
+      .catch(() => {}); // The mutation error is rendered in the review.
+  };
   const doAccept = () => {
     const body = {
       expected_draft_digest: digest,
@@ -214,9 +243,15 @@ function SourceReviewEditor({
     }));
 
   return (
-    <Stack spacing={2}>
-      <Typography variant="h6">Review sources</Typography>
-      {state === "reading" && (
+    <Stack spacing={2} sx={{ flex: 1 }}>
+      {state === "reading" &&
+        readingNames.length > 0 &&
+        readingNames.map((name, index) => (
+          <Typography key={index} role="status">
+            Reading {name}…
+          </Typography>
+        ))}
+      {state === "reading" && !readingNames.length && (
         <Stack direction="row" alignItems="center" spacing={1} role="status">
           <CircularProgress size={16} />
           <Typography>Reading sources…</Typography>
@@ -257,27 +292,6 @@ function SourceReviewEditor({
         spacing={2}
         sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}
       >
-        {tables.length > 0 && (
-          <TextField
-            select
-            size="small"
-            label="Scenario data table"
-            helperText={
-              suggestedTable && tables.includes(suggestedTable)
-                ? `Suggested table: ${suggestedTable}`
-                : undefined
-            }
-            value={table}
-            disabled={!editable}
-            onChange={(event) => setTable(event.target.value)}
-          >
-            {tables.map((name) => (
-              <MenuItem key={name} value={name}>
-                {name}
-              </MenuItem>
-            ))}
-          </TextField>
-        )}
         {sources.map((source) => {
           const { pin, filename, fields = [], row_count: rows } = source;
           const sid = pin.source_id;
@@ -304,25 +318,78 @@ function SourceReviewEditor({
               m.mapping.personal_data &&
               mappingIndexes.includes(i),
           );
+          const pageCount = new Set(
+            (source.statements || []).map((item) => item.page).filter(Boolean),
+          ).size;
+          const needsIdentity = missingIdentity.some(
+            (item) => item.pin.source_id === sid,
+          );
+          const columns = fields.length > 0 && (
+            <ReviewedColumns
+              source={source}
+              mappings={mappings}
+              selected={mappingIndexes}
+              stable={stableIndexes}
+              onStable={
+                state === "ready"
+                  ? (i, on) => setStableIndexes(toggled(stableIndexes, i, on))
+                  : undefined
+              }
+              joins={joins}
+              onInclude={
+                state === "ready"
+                  ? (i, on) => setMappingIndexes(toggled(mappingIndexes, i, on))
+                  : undefined
+              }
+            />
+          );
+          const statements = (
+            <ReviewedStatements
+              source={source}
+              rules={rules}
+              ruleIds={ruleIds}
+              onSelect={
+                state === "ready"
+                  ? (id, on) => setRuleIds(toggled(ruleIds, id, on))
+                  : undefined
+              }
+            />
+          );
           return (
             <Stack key={sid} spacing={1}>
-              <Typography fontWeight={600}>
-                {filename || roles[pin.role]}
-              </Typography>
-              <Typography color="text.secondary">
-                {roles[pin.role] || pin.role}
-                {pin.role === "seed_records" &&
-                  rows != null &&
-                  ` · ${rows} rows`}
-                {pin.role === "seed_records" &&
-                  scope.target_table &&
-                  ` · Table: ${scope.target_table}`}
-              </Typography>
-              {pin.role === "seed_records" && (
-                <ReviewedRecords source={source} />
+              <Stack
+                direction={compact ? "row" : "column"}
+                alignItems={compact ? "baseline" : undefined}
+                spacing={compact ? 1 : 0}
+              >
+                <Typography fontWeight={600}>
+                  {filename || roles[pin.role]}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {roles[pin.role] || pin.role}
+                  {pin.role === "seed_records" &&
+                    rows != null &&
+                    ` · ${rows} rows · ${source.field_count ?? fields.length} columns`}
+                  {pageCount > 0 &&
+                    ` · ${pageCount} ${pageCount === 1 ? "page" : "pages"}`}
+                  {pin.role === "seed_records" &&
+                    scope.target_table &&
+                    ` · Table: ${scope.target_table}`}
+                </Typography>
+              </Stack>
+              {pin.role === "seed_records" && !compact && (
+                <>
+                  <Typography sx={{ typography: "s1" }}>
+                    Starting state and records
+                  </Typography>
+                  <ReviewedRecords source={source} />
+                </>
               )}
               {state === "needs_repair" && privateText.has(sid) && (
                 <Stack spacing={0.5}>
+                  <Typography sx={{ typography: "s1" }}>
+                    Personal data, your choice
+                  </Typography>
                   <Alert severity="warning">
                     An email address or phone number was detected
                     {privacyPages.length
@@ -331,19 +398,25 @@ function SourceReviewEditor({
                     . Remove or replace those details in the review copy, or
                     upload a sanitized file.
                   </Alert>
-                  <FormControlLabel
-                    label="Select emails and phone numbers in this review copy"
-                    control={
-                      <Checkbox
-                        checked={redactions.includes(sid)}
-                        onChange={(e) =>
-                          setRedactions(
-                            toggled(redactions, sid, e.target.checked),
-                          )
-                        }
-                      />
-                    }
-                  />
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={!editable}
+                      onClick={() =>
+                        doRepair({ synthetic_text_sources: [sid] })
+                      }
+                    >
+                      Replace with synthetic contacts
+                    </Button>
+                    <Button
+                      size="small"
+                      disabled={!editable}
+                      onClick={() => doRepair({ redact_text_sources: [sid] })}
+                    >
+                      Remove personal details and prepare again
+                    </Button>
+                  </Stack>
                 </Stack>
               )}
               {state === "needs_repair" &&
@@ -358,30 +431,12 @@ function SourceReviewEditor({
                     editable={editable}
                   />
                 )}
-              {fields.length > 0 && (
-                <ReviewedColumns
-                  source={source}
-                  mappings={mappings}
-                  selected={mappingIndexes}
-                  stable={stableIndexes}
-                  onStable={
-                    state === "ready"
-                      ? (i, on) =>
-                          setStableIndexes(toggled(stableIndexes, i, on))
-                      : undefined
-                  }
-                  joins={joins}
-                  onInclude={
-                    state === "ready"
-                      ? (i, on) =>
-                          setMappingIndexes(toggled(mappingIndexes, i, on))
-                      : undefined
-                  }
-                />
-              )}
+              {(!compact || needsIdentity) && columns}
               {state === "ready" && mode && (
                 <Stack>
-                  <Typography variant="subtitle2">Personal data</Typography>
+                  <Typography variant="subtitle2">
+                    Personal data, your choice
+                  </Typography>
                   <Typography variant="body2">
                     Fields marked as personal must be replaced or excluded.
                   </Typography>
@@ -402,19 +457,57 @@ function SourceReviewEditor({
                   />
                 </Stack>
               )}
-              <ReviewedStatements
-                source={source}
-                rules={rules}
-                ruleIds={ruleIds}
-                onSelect={
-                  state === "ready"
-                    ? (id, on) => setRuleIds(toggled(ruleIds, id, on))
-                    : undefined
-                }
-              />
+              {compact
+                ? (source.statements?.length > 0 ||
+                    source.origin?.kind === "knowledge_base" ||
+                    fields.length > 0) && (
+                    <Box
+                      component="details"
+                      sx={{
+                        "& > summary": {
+                          cursor: "pointer",
+                          color: "primary.main",
+                          typography: "s3",
+                        },
+                      }}
+                    >
+                      <summary>
+                        {pin.role === "seed_records"
+                          ? "Show records"
+                          : "Show text"}
+                      </summary>
+                      {pin.role === "seed_records" && (
+                        <ReviewedRecords source={source} />
+                      )}
+                      {!needsIdentity && columns}
+                      {statements}
+                    </Box>
+                  )
+                : statements}
             </Stack>
           );
         })}
+        {tables.length > 0 && (
+          <TextField
+            select
+            size="small"
+            label="Scenario data table"
+            helperText={
+              suggestedTable && tables.includes(suggestedTable)
+                ? `Suggested table: ${suggestedTable}`
+                : undefined
+            }
+            value={table}
+            disabled={!editable}
+            onChange={(event) => setTable(event.target.value)}
+          >
+            {tables.map((name) => (
+              <MenuItem key={name} value={name}>
+                {name}
+              </MenuItem>
+            ))}
+          </TextField>
+        )}
         {state === "ready" && (
           <>
             {missingIdentity.map(({ pin, filename }) => (
@@ -450,15 +543,27 @@ function SourceReviewEditor({
                 }
               />
             ))}
-            <FormControlLabel
-              label="Make approved source facts visible to the tested agent"
-              control={
-                <Switch
-                  checked={testedAgent}
-                  onChange={(event) => setTestedAgent(event.target.checked)}
-                />
-              }
-            />
+            <Box
+              component="details"
+              sx={{
+                "& summary": {
+                  cursor: "pointer",
+                  typography: "s3",
+                  color: "text.secondary",
+                },
+              }}
+            >
+              <summary>Source visibility</summary>
+              <FormControlLabel
+                label="Make approved source facts visible to the tested agent"
+                control={
+                  <Switch
+                    checked={testedAgent}
+                    onChange={(event) => setTestedAgent(event.target.checked)}
+                  />
+                }
+              />
+            </Box>
           </>
         )}
       </Stack>
@@ -506,32 +611,32 @@ function SourceReviewEditor({
         </Alert>
       ))}
       {unfinished.includes(state) && (
-        <Stack direction="row" spacing={1}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            mt: scope.kind === "environment" ? "auto !important" : undefined,
+            position: "sticky",
+            bottom: 0,
+            zIndex: 1,
+            bgcolor: "background.paper",
+            py: 1.25,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            justifyContent: "flex-end",
+          }}
+        >
           <Button
+            variant="outlined"
+            size="small"
             disabled={!canEdit || pending}
             onClick={() =>
               cancel.mutate({ ...pins, expected_draft_digest: digest || null })
             }
           >
-            Cancel review
+            {scope.kind === "environment" ? "Reject" : "Cancel review"}
           </Button>
-          {state === "needs_repair" && privateText.size > 0 && (
-            <Stack direction="row" spacing={1}>
-              <Button
-                variant="contained"
-                disabled={!editable || !redactions.length}
-                onClick={() => doRepair({ synthetic_text_sources: redactions })}
-              >
-                Replace with synthetic contacts
-              </Button>
-              <Button
-                disabled={!editable || !redactions.length}
-                onClick={() => doRepair({ redact_text_sources: redactions })}
-              >
-                Remove personal details and prepare again
-              </Button>
-            </Stack>
-          )}
           {((state === "needs_repair" && hasRepairControls) ||
             (state === "ready" && changingTable)) && (
             <Button
@@ -550,7 +655,9 @@ function SourceReviewEditor({
               disabled={!editable || !canAccept}
               onClick={doAccept}
             >
-              {acceptLabel}
+              {scope.kind === "environment"
+                ? `Add ${changeCount} ${changeCount === 1 ? "change" : "changes"}`
+                : acceptLabel}
             </Button>
           )}
         </Stack>
@@ -565,6 +672,9 @@ SourceReviewEditor.propTypes = {
   canEdit: PropTypes.bool,
   onAccepted: PropTypes.func,
   onCancelled: PropTypes.func,
+  readingNames: PropTypes.arrayOf(PropTypes.string),
+  compact: PropTypes.bool,
+  onRepair: PropTypes.func.isRequired,
   stale: PropTypes.bool,
   defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
 };
@@ -576,6 +686,7 @@ export default function SourceReviewPanel({
   onDismiss,
   ...editor
 }) {
+  const [repairNotice, setRepairNotice] = useState(null);
   const query = useEnvironmentSourceReview(reviewId);
   const review = query.data;
   if (query.isError) {
@@ -608,7 +719,13 @@ export default function SourceReviewPanel({
       review.scope.draft?.revision !== environmentBasis.draft?.revision);
   return (
     <>
+      {repairNotice?.id === reviewId && repairNotice.message && (
+        <Alert severity="success" role="status">
+          {repairNotice.message}
+        </Alert>
+      )}
       <SourceReviewEditor
+        onRepair={(message) => setRepairNotice({ id: reviewId, message })}
         key={`${review.id}:${review.revision}`}
         review={review}
         stale={stale}
@@ -627,6 +744,8 @@ SourceReviewPanel.propTypes = {
   reviewId: PropTypes.string.isRequired,
   ownerId: PropTypes.string.isRequired,
   environmentBasis: PropTypes.object,
+  readingNames: PropTypes.arrayOf(PropTypes.string),
+  compact: PropTypes.bool,
   defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
   acceptLabel: PropTypes.string.isRequired,
   canEdit: PropTypes.bool,
