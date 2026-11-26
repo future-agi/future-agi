@@ -17,10 +17,14 @@ from tfc.utils.error_codes import get_error_message
 VIEWER_READ_ONLY_CODE = ApiErrorCode.VIEWER_READ_ONLY.value
 
 
-def viewer_denied_message(action=None):
+def viewer_denied_message(action=None, advice=None):
+    """``advice`` replaces the Member-role advice for an action a Member can't take."""
     if not action:
         return get_error_message("VIEWER_READ_ONLY")
-    return f"Viewers can't {action}. Ask a workspace admin for the Member role."
+    return (
+        f"Viewers can't {action}. "
+        f"{advice or 'Ask a workspace admin for the Member role.'}"
+    )
 
 
 def is_read_only_user(user=None, workspace=None):
