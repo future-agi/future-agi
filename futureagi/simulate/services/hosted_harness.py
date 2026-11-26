@@ -1324,26 +1324,39 @@ def _load_ids(
     return agent_version, environment_version, suite_version, runtime
 
 
-def sub_goal_catalogue(sub_goals: Any) -> frozenset[str]:
+def sub_goal_catalogue(sub_goals: object) -> frozenset[str]:
     """The sub-goal names an environment version grades, from its ``sub_goals``
-    document; empty for a version recorded before the catalogue was."""
+    document: a list of goal objects, each named by ``name``. Empty for a version
+    recorded before the catalogue was, and for any other shape."""
+    if not isinstance(sub_goals, list):
+        return frozenset()
     return frozenset(
         str(goal["name"])
-        for goal in sub_goals or []
+        for goal in sub_goals
         if isinstance(goal, dict) and goal.get("name")
     )
 
 
-def grades_nothing(sub_goals: Any, catalogue: frozenset[str]) -> bool:
+def _goal_names(sub_goals: object) -> list[str] | None:
+    """The goal names a scenario's ``sub_goals`` field gives: a list of goal objects,
+    or of bare names as legacy members wrote them. None for a missing field or any
+    other shape, which predates sub-goals."""
+    if not isinstance(sub_goals, list):
+        return None
+    return [
+        str(goal.get("name")) if isinstance(goal, Mapping) else str(goal)
+        for goal in sub_goals
+    ]
+
+
+def grades_nothing(sub_goals: object, catalogue: frozenset[str]) -> bool:
     """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
     cannot score it. A scenario without the field predates sub-goals and an empty
     catalogue grades anything: neither is refused."""
-    if not catalogue or not isinstance(sub_goals, list):
+    names = _goal_names(sub_goals)
+    if not catalogue or names is None:
         return False
-    return catalogue.isdisjoint(
-        str(goal.get("name") if isinstance(goal, Mapping) else goal)
-        for goal in sub_goals
-    )
+    return catalogue.isdisjoint(names)
 
 
 def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
