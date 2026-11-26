@@ -3,6 +3,7 @@
 
 import copy
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -13,7 +14,8 @@ import devflow_approval as da  # noqa: E402
 REPO = "org/repo"
 HEAD = "a" * 40
 OLD = "b" * 40
-FLOOR = json.loads(da.FLOOR_FILE.read_text())["paths"]
+CODEOWNERS = Path(__file__).resolve().parent.parent / "CODEOWNERS"
+FLOOR_TEAM = "@future-agi/internal-all-write"
 
 
 def review_body(**overrides):
@@ -72,26 +74,19 @@ class Case:
             "head": {"sha": HEAD, "repo": {"full_name": REPO}},
             "base": {"ref": "dev", "repo": {"full_name": REPO}},
             "labels": [{"name": "devflow:reviewed"}],
-            "changed_files": 1,
         }
         self.reviews = [review()]
         self.comments = [marker()]
-        self.files = [{"filename": "futureagi/tracer/views/span.py"}]
         self.permissions = {"author": "write", "rev": "write"}
 
-    def files_are(self, *names):
-        self.files = [{"filename": n} for n in names]
-        self.pr["changed_files"] = len(names)
-
-    def decide(self, tight=False):
+    def decide(self, tight=False, observe=False):
         return da.decide(
             self.pr,
             self.reviews,
             self.comments,
-            self.files,
             self.permissions,
-            FLOOR,
             tight,
+            observe,
         )
 
 
@@ -111,14 +106,6 @@ class DecideTests(unittest.TestCase):
     def test_admin_permission_counts_as_write(self):
         case = Case()
         case.permissions = {"author": "admin", "rev": "admin"}
-        self.check(case, "approve")
-
-    def test_migrations_are_left_to_the_review_tier(self):
-        case = Case()
-        case.files_are(
-            "futureagi/tracer/migrations/0120_add_column.py",
-            "migrations/0001_initial.py",
-        )
         self.check(case, "approve")
 
     def test_newest_marker_names_the_reviewer(self):
@@ -158,6 +145,8 @@ class DecideTests(unittest.TestCase):
             )
         )
         self.check(case, "skip", "already approved")
+        # Observe mode still decides it: the admin rule approves in that mode.
+        self.assertEqual(case.decide(observe=True)["action"], "approve")
 
     def test_bot_approval_of_an_old_head_does_not_skip(self):
         case = Case()
@@ -259,53 +248,6 @@ class DecideTests(unittest.TestCase):
                 case.reviews = [review(needs_person=value)]
                 self.check(case, "needs-human", "needs_person")
 
-    def test_floor_paths_need_a_human(self):
-        for path in (
-            ".github/workflows/devflow-approval.yml",
-            ".github/CODEOWNERS",
-            "futureagi/accounts/views/login.py",
-            "futureagi/accounts/migrations/0052_x.py",
-            "futureagi/saml2_auth/views.py",
-            "futureagi/tfc/permissions/rbac.py",
-            "futureagi/tfc/middleware/jwt_auth.py",
-            "futureagi/ee/usage/deployment.py",
-            "fi-collector/pkg/pricing/table.go",
-            "agentcc-gateway/internal/plugins/credits/credits.go",
-            "frontend/src/auth/guard/auth-guard.jsx",
-            "frontend/src/pages/dashboard/settings/BillingPage.jsx",
-            "agentcc-gateway/scripts/merge_pricing.py",
-            "billing.py",
-            "agentcc-gateway/internal/middleware/auth.go",
-            "agentcc-gateway/internal/middleware/license_auth.go",
-            "agentcc-gateway/internal/plugins/rbac/rbac.go",
-            "agentcc-gateway/internal/plugins/quota/quota.go",
-            "futureagi/agentcc/views/api_key.py",
-            "futureagi/agentcc/permissions.py",
-            "futureagi/tracer/views/feed/_permissions.py",
-            "futureagi/mcp_server/views/oauth.py",
-            "futureagi/tfc/licensing/types.py",
-            "futureagi/simulate/authentication.py",
-        ):
-            with self.subTest(path=path):
-                case = Case()
-                case.files_are("futureagi/tracer/views/span.py", path)
-                self.check(case, "needs-human", path)
-
-    def test_rename_out_of_the_floor_needs_a_human(self):
-        case = Case()
-        case.files = [
-            {
-                "filename": "futureagi/common/login.py",
-                "previous_filename": "futureagi/accounts/login.py",
-            }
-        ]
-        self.check(case, "needs-human", "futureagi/accounts/login.py")
-
-    def test_unread_files_need_a_human(self):
-        case = Case()
-        case.pr["changed_files"] = 3001
-        self.check(case, "needs-human", "of 3001 changed files")
-
     def test_author_without_write_access_needs_a_human(self):
         case = Case()
         case.permissions["author"] = "read"
@@ -314,8 +256,15 @@ class DecideTests(unittest.TestCase):
     def test_every_reason_is_reported(self):
         case = Case()
         case.reviews = [review(tier="high", needs_person=True)]
-        case.files_are(".github/workflows/x.yml")
+        case.permissions["author"] = "read"
         self.assertEqual(len(case.decide()["reasons"]), 3)
+
+    def test_paths_are_not_decided_here(self):
+        # The CODEOWNERS floor is the one source; GitHub enforces it. Red before:
+        # decide() took a file list and a floor and sent .github/** to a person.
+        self.check(Case(), "approve")
+        self.assertFalse(hasattr(da, "floor_hits"))
+        self.assertFalse((CODEOWNERS.parent / "approval-floor.json").exists())
 
     # tight mode (APPROVAL_MODE_TIGHT == "1")
     def test_tight_mode_sends_a_passing_low_tier_review_to_a_person(self):
@@ -333,32 +282,168 @@ class DecideTests(unittest.TestCase):
 
     def test_decide_does_not_mutate_inputs(self):
         case = Case()
-        before = copy.deepcopy((case.pr, case.reviews, case.comments, case.files))
+        before = copy.deepcopy((case.pr, case.reviews, case.comments))
         case.decide()
-        self.assertEqual(before, (case.pr, case.reviews, case.comments, case.files))
+        self.assertEqual(before, (case.pr, case.reviews, case.comments))
 
 
-class FloorTests(unittest.TestCase):
-    def test_glob_semantics(self):
-        cases = [
-            (".github/**", ".github/workflows/a.yml", True),
-            (".github/**", "x/.github/a.yml", False),
-            ("futureagi/accounts/**", "futureagi/accounts_v2/a.py", False),
-            ("**/*billing*", "frontend/src/BillingPage.jsx", True),
-            ("**/*billing*", "billing.py", True),
-            ("**/*billing*", "a/billing/b.py", False),
-            ("**/*billing*/**", "a/billing/b.py", True),
-            ("futureagi/tfc/ee_gating.py", "futureagi/tfc/ee_gatingXpy", False),
-        ]
-        for glob, path, expected in cases:
-            with self.subTest(glob=glob, path=path):
-                self.assertEqual(bool(da.glob_regex(glob).fullmatch(path)), expected)
+class TrainLabelTests(unittest.TestCase):
+    def test_an_approved_pull_request_joins_the_train(self):
+        self.assertEqual(da.train_labels(Case().pr), ["devflow:train"])
 
-    def test_floor_has_no_migration_glob(self):
-        self.assertFalse([g for g in FLOOR if "migrations" in g])
+    def test_draft_fork_needs_human_or_already_labelled_get_none(self):
+        for key, value in [
+            ("draft", True),
+            ("head", {"sha": HEAD, "repo": {"full_name": "fork/repo"}}),
+            ("head", {"sha": HEAD, "repo": None}),
+            ("labels", [{"name": "needs-human"}]),
+            ("labels", [{"name": "devflow:train"}]),
+        ]:
+            with self.subTest(key=key, value=value):
+                case = Case()
+                case.pr[key] = value
+                self.assertEqual(da.train_labels(case.pr), [])
 
-    def test_floor_covers_github(self):
-        self.assertIn(".github/**", FLOOR)
+
+class ModeTests(unittest.TestCase):
+    WORKFLOW = CODEOWNERS.parent / "workflows" / "devflow-approval.yml"
+
+    def test_observe_mode_takes_no_action(self):
+        # main() returns before any gh write in observe mode.
+        calls = []
+        real = da.gh
+
+        def fake(*args, stdin=None):
+            calls.append(args)
+            if args[:2] == ("api", "repos/org/repo/pulls/1"):
+                return json.dumps(Case().pr)
+            if "--paginate" in args:
+                path = args[2]
+                if path.endswith("/reviews?per_page=100"):
+                    return json.dumps(review())
+                return json.dumps(marker())
+            return "write\n"
+
+        da.gh = fake
+        try:
+            self.assertEqual(da.main(["--repo", REPO, "--pr", "1", "--mode", "observe"]), 0)
+        finally:
+            da.gh = real
+        writes = [c for c in calls if "-X" in c]
+        self.assertEqual(writes, [])
+
+    def test_the_workflow_runs_the_devflow_job_in_both_modes(self):
+        text = self.WORKFLOW.read_text()
+        self.assertIn("(vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe')", text)
+        self.assertIn('--mode "$APPROVAL_MODE"', text)
+        # The admin rule keeps approving until the mode is devflow.
+        self.assertIn("vars.APPROVAL_MODE != 'devflow' &&", text)
+
+
+def codeowners_regex(pattern: str):
+    """GitHub's CODEOWNERS matching (gitignore rules without ! and [ ]): enough to
+    check which line owns a path. Case-sensitive, like GitHub."""
+    anchored = "/" in pattern.rstrip("/")
+    directory = pattern.endswith("/")
+    body, out, i = pattern.strip("/"), [], 0
+    while i < len(body):
+        if body.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif body[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append(re.escape(body[i]))
+            i += 1
+    tail = "/.*" if directory else "(?:/.*)?"
+    return re.compile(("" if anchored else "(?:.*/)?") + "".join(out) + tail)
+
+
+def owners(path: str) -> list:
+    """Owners on the last CODEOWNERS line that matches path."""
+    found = []
+    for line in CODEOWNERS.read_text().splitlines():
+        if line.strip() and not line.startswith("#"):
+            pattern, *who = line.split()
+            if codeowners_regex(pattern).fullmatch(path):
+                found = who
+    return found
+
+
+class CodeownersFloorTests(unittest.TestCase):
+    def test_every_floor_path_is_owned_by_the_team(self):
+        # The paths the removed approval-floor.json sent to a person.
+        for path in (
+            ".github/workflows/devflow-approval.yml",
+            "futureagi/accounts/views/login.py",
+            "futureagi/accounts/migrations/0052_x.py",
+            "futureagi/saml2_auth/views.py",
+            "futureagi/tfc/permissions/rbac.py",
+            "futureagi/tfc/middleware/jwt_auth.py",
+            "futureagi/tfc/ee_gating.py",
+            "futureagi/ee/usage/deployment.py",
+            "futureagi/ee/licensing/keys.py",
+            "fi-collector/pkg/pricing/table.go",
+            "fi-collector/pkg/auth/auth.go",
+            "agentcc-gateway/internal/plugins/credits/credits.go",
+            "agentcc-gateway/internal/redisstate/credits.go",
+            "frontend/src/auth/guard/auth-guard.jsx",
+            "frontend/src/pages/dashboard/settings/BillingPage.jsx",
+            "frontend/src/pages/dashboard/settings/Pricing/PricingV2.jsx",
+            "frontend/src/pages/mcp/OAuthConsent.jsx",
+            "agentcc-gateway/scripts/merge_pricing.py",
+            "billing.py",
+            "futureagi/tfc/templates/billing/invoice.html",
+            "LICENSE-EE",
+            "agentcc-gateway/internal/middleware/auth.go",
+            "agentcc-gateway/internal/middleware/license_auth.go",
+            "agentcc-gateway/internal/plugins/rbac/rbac.go",
+            "agentcc-gateway/internal/plugins/quota/quota.go",
+            "futureagi/agentcc/views/api_key.py",
+            "futureagi/agentcc/permissions.py",
+            "futureagi/tracer/views/feed/_permissions.py",
+            "futureagi/mcp_server/views/oauth.py",
+            "futureagi/tfc/licensing/types.py",
+            "futureagi/simulate/authentication.py",
+            "futureagi/payments/stripe_client.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(owners(path), [FLOOR_TEAM])
+
+    def test_ordinary_paths_and_migrations_have_no_owner(self):
+        for path in (
+            "futureagi/tracer/views/span.py",
+            "futureagi/tracer/migrations/0120_add_column.py",
+            "futureagi/accounts_v2/a.py",
+            "x/.github/a.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(owners(path), [])
+
+    def test_the_specific_lines_come_last_and_keep_their_owners(self):
+        lint = ["@nik13", "@atharva-bhange", "@hadarishav"]
+        for path in (
+            ".github/CODEOWNERS",
+            ".github/workflows/python-lint.yml",
+            "futureagi/pyproject.toml",
+            "scripts/check_python_lint_delta.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(owners(path), lint)
+
+    def test_the_matcher_follows_codeowners_rules(self):
+        for pattern, path, expected in [
+            ("/.github/", ".github/workflows/a.yml", True),
+            ("/.github/", "x/.github/a.yml", False),
+            ("/futureagi/accounts/", "futureagi/accounts_v2/a.py", False),
+            ("*billing*", "a/billing/b.py", True),
+            ("*billing*", "a/Billing.jsx", False),  # case-sensitive
+            ("/futureagi/**/*api_key*", "futureagi/a/b/api_key.py", True),
+            ("/futureagi/tfc/ee_gating.py", "futureagi/tfc/ee_gatingXpy", False),
+        ]:
+            with self.subTest(pattern=pattern, path=path):
+                self.assertEqual(bool(codeowners_regex(pattern).fullmatch(path)), expected)
 
 
 if __name__ == "__main__":

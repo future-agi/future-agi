@@ -3,7 +3,7 @@ name: Devflow approval self-test
 on:
   pull_request:
     paths:
-      - ".github/approval-floor.json"
+      - ".github/CODEOWNERS"
       - ".github/scripts/devflow_approval.py"
       - ".github/scripts/test_devflow_approval.py"
       - ".github/workflows/devflow-approval.yml"

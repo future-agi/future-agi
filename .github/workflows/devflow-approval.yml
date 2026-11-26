@@ -9,11 +9,16 @@ name: PR approval
 # - admin (the default, also when unset): approve when the author and the
 #   event's sender are both repository admins, so a push by a non-admin to an
 #   admin's branch keeps the normal review.
+# - observe: the admin rule keeps approving; the devflow rule only writes
+#   what it would do to the job summary, so its decisions can be compared
+#   with people's before the switch.
 # - devflow: approve the head commit on a passing low-tier devflow agent
-#   review by the assigned reviewer, unless a file is on the approval floor
-#   (.github/approval-floor.json). A floor hit or a high tier gets the
-#   needs-human label instead. When the variable APPROVAL_MODE_TIGHT is "1",
-#   a passing low-tier review also gets needs-human, so a person approves.
+#   review by the assigned reviewer, and add devflow:train so the batch
+#   train may take it. A high tier gets the needs-human label instead. Paths
+#   that need a person are the floor block in .github/CODEOWNERS: the dev
+#   ruleset's code owner review enforces it, whatever the bot approves. When
+#   the variable APPROVAL_MODE_TIGHT is "1", a passing low-tier review also
+#   gets needs-human, so a person approves.
 #   See .github/scripts/devflow_approval.py.
 #
 # pull_request and pull_request_review run this file from the pull request's
@@ -94,7 +99,7 @@ jobs:
     # A new review, a new head, or the devflow:reviewed label (the nudge when a
     # review was posted by a token whose events start no workflow).
     if: >-
-      vars.APPROVAL_MODE == 'devflow' &&
+      (vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe') &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.ref == 'dev' &&
       !github.event.pull_request.draft &&
@@ -104,7 +109,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-      issues: write # adds the needs-human label
+      issues: write # adds the needs-human or devflow:train label
     # Job level, so a skipped run (another label) never cancels a decision.
     # Each run reads the pull request live, so the newest queued run is enough.
     concurrency:
@@ -120,5 +125,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          APPROVAL_MODE: ${{ vars.APPROVAL_MODE }}
           APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}
-        run: python3 -I .github/scripts/devflow_approval.py --repo "$REPO" --pr "$PR"
+        run: python3 -I .github/scripts/devflow_approval.py --repo "$REPO" --pr "$PR" --mode "$APPROVAL_MODE"
