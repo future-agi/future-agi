@@ -3,6 +3,7 @@ import { useState } from "react";
 import {
   Box,
   Button,
+  Chip,
   Collapse,
   IconButton,
   Stack,
@@ -25,29 +26,32 @@ const ONE_LINE = {
   verticalAlign: "top",
 };
 
-function summary(actor, loudChannels) {
+// How they take part, how loud, when they come in and how many scenarios, one short tag each.
+export function tagsOf(actor, loudChannels) {
   return [
-    actor.channel && (CHANNEL_LABELS[actor.channel] || actor.channel),
+    actor.channel
+      ? CHANNEL_LABELS[actor.channel] || actor.channel
+      : C.actsInWorld,
     actor.channel &&
       loudChannels.includes(actor.channel) &&
       (actor.loudness_ratio
         ? C.loudnessShare(actor.loudness_ratio)
         : C.loudnessAutomatic),
-    `${C.mayDo}: ${
-      actor.permissions.length
-        ? actor.permissions
-            .map((one) =>
-              one.in_world ? one.action : `${one.action} (${C.notInWorld})`,
-            )
-            .join(", ")
-        : C.nothing
-    }`,
-    `${C.comesIn}: ${actor.when_label}`,
-    `${C.ifNoAnswer}: ${actor.fallback.label}`,
+    actor.when_label,
     ACTORS_COPY.callActors.scenarios(actor.scenarios),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  ].filter(Boolean);
+}
+
+// What the open row says about their part before what they see.
+export function partOf(actor) {
+  const mayDo = actor.permissions.length
+    ? actor.permissions
+        .map((one) =>
+          one.in_world ? one.action : `${one.action} (${C.notInWorld})`,
+        )
+        .join(", ")
+    : C.nothing;
+  return [`${C.mayDo}: ${mayDo}`, `${C.ifNoAnswer}: ${actor.fallback.label}`];
 }
 
 export default function ActorRow({
@@ -140,15 +144,27 @@ export default function ActorRow({
               </OverflowTooltip>
             </Box>
           ) : null}
-          <Typography
-            sx={{
-              typography: "s2",
-              color: "text.secondary",
-              wordBreak: "break-word",
-            }}
+          <Stack
+            direction="row"
+            flexWrap="wrap"
+            useFlexGap
+            spacing={0.75}
+            sx={{ mt: 0.5 }}
           >
-            {summary(actor, loudChannels)}
-          </Typography>
+            {tagsOf(actor, loudChannels).map((tag) => (
+              <Chip
+                key={tag}
+                label={tag}
+                size="small"
+                sx={{
+                  bgcolor: "background.neutral",
+                  color: "text.secondary",
+                  typography: "s3",
+                  maxWidth: "100%",
+                }}
+              />
+            ))}
+          </Stack>
           {actor.arrival_overrides?.length ? (
             <CustomTooltip
               show
@@ -223,6 +239,16 @@ export default function ActorRow({
         </Stack>
       </Stack>
       <Collapse in={open} unmountOnExit>
+        <Stack spacing={0.75} sx={{ pl: 6.5, pr: 1.5, pb: 1 }}>
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {C.theirPart}
+          </Typography>
+          {partOf(actor).map((line) => (
+            <Typography key={line} sx={quiet}>
+              {line}
+            </Typography>
+          ))}
+        </Stack>
         {viewLoading && <ContentSkeleton variant="panel" sx={{ pl: 5 }} />}
         {viewFailed && !view && (
           <ErrorState

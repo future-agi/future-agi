@@ -209,7 +209,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     // A window-focus refetch moves the cast under the open form.
     axios.get.mockResolvedValue({ data: elsewhere });
     await client.invalidateQueries({ queryKey: actorsKey("env-1") });
-    await screen.findByText(/Wants: Approve only large discounts/);
+    await screen.findByText(/Pushes for: Approve only large discounts/);
     save.mockRejectedValueOnce(DRAFT_CHANGED);
 
     fireEvent.click(saveButton());
@@ -383,7 +383,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
       target: { files: [file()] },
     });
     await screen.findByText(/changed elsewhere while you were editing/);
-    await screen.findByText(/Wants: Approve only large discounts/);
+    await screen.findByText(/Pushes for: Approve only large discounts/);
     // What was typed stays.
     expect(screen.getByLabelText("Role (optional)")).toHaveValue(
       "regional manager",
@@ -562,7 +562,11 @@ describe("WorldActorsPanel", () => {
     const names = screen
       .getAllByRole("button", { name: /^Edit / })
       .map((one) => one.getAttribute("aria-label"));
-    expect(names).toEqual(["Edit Dana", "Edit Jordan Taylor", "Edit Priya Raman"]);
+    expect(names).toEqual([
+      "Edit Dana",
+      "Edit Jordan Taylor",
+      "Edit Priya Raman",
+    ]);
   });
 
   it("adds an actor from the cast's new_actor with one Add actor button", () => {
@@ -598,10 +602,19 @@ describe("WorldActorsPanel", () => {
       },
     ]);
     render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getByText("Acts in the world")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "May do: crm.approve_discount · Comes in: When the agent calls crm.request_approval · If they do not answer: Sam Rivera answers instead · In 2 scenarios",
-      ),
+      screen.getByText("When the agent calls crm.request_approval"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("In 2 scenarios")).toBeInTheDocument();
+    expect(screen.queryByText(/^May do:/)).toBeNull();
+    fireEvent.click(screen.getByText("What they see"));
+    expect(screen.getByText("Their part")).toBeInTheDocument();
+    expect(
+      screen.getByText("May do: crm.approve_discount"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("If they do not answer: Sam Rivera answers instead"),
     ).toBeInTheDocument();
     expect(screen.getByText(/Unsaved changes/)).toBeInTheDocument();
   });
@@ -618,6 +631,7 @@ describe("WorldActorsPanel", () => {
       },
     ]);
     render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByText("What they see"));
     expect(
       screen.getByText(
         /May do: crm.approve_discount, crm.old \(not an action of this world\)/,
@@ -625,7 +639,7 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows how a speaking actor joins and how loud it is, beside what it may do", () => {
+  it("shows how a speaking actor joins and how loud it is as tags", () => {
     actorsData = cast([
       typedActor({
         id: "colleague",
@@ -636,11 +650,14 @@ describe("WorldActorsPanel", () => {
       }),
     ]);
     render(<WorldActorsPanel envId="env-1" />);
-    expect(
-      screen.getByText(
-        "Heard nearby · Loudness automatic · May do: Nothing in the world · Comes in: From the start · If they do not answer: Nothing happens · In 2 scenarios",
-      ),
-    ).toBeInTheDocument();
+    for (const tag of [
+      "Heard nearby",
+      "Loudness automatic",
+      "From the start",
+      "In 2 scenarios",
+    ])
+      expect(screen.getByText(tag)).toBeInTheDocument();
+    expect(screen.queryByText("Acts in the world")).toBeNull();
   });
 
   it("shows who can reach whom from each actor's reaches and when it comes in, once there is more than one actor", () => {
@@ -1157,9 +1174,7 @@ describe("WorldActorsPanel", () => {
       },
     ]);
     render(<WorldActorsPanel envId="env-1" />);
-    expect(
-      screen.getByText(/Comes in: 30 s after the start/),
-    ).toBeInTheDocument();
+    expect(screen.getByText("30 s after the start")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(screen.getByLabelText("Comes in")).toHaveTextContent(
       "At a set time",

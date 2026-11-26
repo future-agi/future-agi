@@ -79,7 +79,9 @@ export const ACTORS_COPY = {
     remove: "Remove",
     removeNamed: (name) => `Remove ${name}`,
     empty: "No actors yet. Add one, or ask the builder chat.",
-    wants: "Wants",
+    wants: "Pushes for",
+    actsInWorld: "Acts in the world",
+    theirPart: "Their part",
     mayDo: "May do",
     nothing: "Nothing in the world",
     notInWorld: "not an action of this world",
@@ -87,7 +89,6 @@ export const ACTORS_COPY = {
     hideView: "Hide what they see",
     sees: "Sees",
     neverSees: "Never sees",
-    comesIn: "Comes in",
     comesInDifferently: (n) =>
       `Comes in differently in ${n} scenario${n === 1 ? "" : "s"}`,
     loudnessShare: (ratio) =>
