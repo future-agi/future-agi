@@ -116,7 +116,7 @@ FIX_TITLE = re.compile(r"^fix(?:\([^)]*\))?!?:", re.IGNORECASE)
 PR_REF = re.compile(r"#(\d+)\b")
 REVIEW_MARKER = "<!-- devflow-review:v1 -->"
 JSON_BLOCK = re.compile(r"```json\s*\n(.*?)\n\s*```", re.DOTALL)
-TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+WRITE = {"admin", "maintain", "write"}
 # The author's replies to an agent review (the land skill writes them).
 REPLY_MARKER = re.compile(r"<!--\s*devflow-land:v1\s+round=\d+\s+review=(\d+)\s*-->")
 REPLY_LINE = re.compile(r"^\s*-\s*([A-Z]+\d+)\s*:\s*(fixed in [0-9a-f]{7,40}|answer:.*)$", re.MULTILINE)
@@ -315,14 +315,22 @@ def landing(c: dict) -> dict:
     }
 
 
-def review_engine(reviews: list[dict]) -> str | None:
+def reviewer(r: dict) -> str:
+    return ((r.get("author") or {}).get("login") or "").lower()
+
+
+def trusted(r: dict, writers: set[str]) -> bool:
+    """A devflow-review/v1 review by someone with write access. Not the
+    authorAssociation: GitHub shows an org member with private membership as
+    CONTRIBUTOR to GITHUB_TOKEN."""
+    return REVIEW_MARKER in (r.get("body") or "") and reviewer(r) in writers
+
+
+def review_engine(reviews: list[dict], writers: set[str]) -> str | None:
     """Engine of the newest trusted devflow-review/v1 review; "unknown" when it
     names none; None when the pull request has no such review."""
-    trusted = sorted(
-        (r for r in reviews if REVIEW_MARKER in (r.get("body") or "") and r.get("authorAssociation") in TRUSTED),
-        key=lambda r: r.get("submittedAt") or "",
-    )
-    for r in reversed(trusted):
+    trusted_reviews = sorted((r for r in reviews if trusted(r, writers)), key=lambda r: r.get("submittedAt") or "")
+    for r in reversed(trusted_reviews):
         verdict = review_verdict(r["body"])
         if verdict:
             engine = verdict.get("engine")
@@ -460,7 +468,7 @@ def top_flaky(flakes: list[dict], n: int = 5) -> list[dict]:
     ]
 
 
-def review_quality(reviews: list[dict], comments: list[dict], author: str) -> dict:
+def review_quality(reviews: list[dict], comments: list[dict], author: str, writers: set[str]) -> dict:
     """{engine: {"findings", "fixed", "answered"}} on one pull request.
 
     Findings come from trusted devflow-review/v1 reviews; the author's
@@ -474,7 +482,7 @@ def review_quality(reviews: list[dict], comments: list[dict], author: str) -> di
                 replies[header.group(1)][fid] = "fixed" if answer.startswith("fixed") else "answered"
     out: dict[str, dict[str, int]] = {}
     for r in reviews:
-        if REVIEW_MARKER not in (r.get("body") or "") or r.get("authorAssociation") not in TRUSTED:
+        if not trusted(r, writers):
             continue
         verdict = review_verdict(r["body"])
         if not verdict:
@@ -589,6 +597,7 @@ class Api:
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "devflow-tick",
         }
+        self.permissions: dict[str, bool] = {}  # login -> has write, for one tick
 
     def request(self, method: str, url: str, body: dict | None = None, token: str | None = None):
         """(json, Link header)."""
@@ -634,6 +643,19 @@ class Api:
 
     def graphql(self, query: str):
         return self.call("POST", "/graphql", {"query": query})
+
+    def writers(self, logins: set[str]) -> set[str]:
+        """The logins with admin, maintain or write on the repo, each read once per tick."""
+        cache = self.permissions
+        for login in sorted(logins - set(cache) - {""}):
+            try:
+                data = self.get(f"/collaborators/{urllib.parse.quote(login)}/permission") or {}
+            except urllib.error.HTTPError as err:
+                if err.code != 404:
+                    raise
+                data = {}
+            cache[login] = data.get("role_name") in WRITE or data.get("permission") in WRITE
+        return {login for login in logins if cache.get(login)}
 
 
 def list_runs(api: Api, workflow: str, since: datetime, until: datetime, event: str = "merge_group") -> list[dict]:
@@ -718,7 +740,7 @@ def pr_details(api: Api, numbers: list[int]) -> dict[int, dict]:
     for i in range(0, len(numbers), 25):
         fields = " ".join(
             f"p{n}: pullRequest(number: {n}) {{ number body author {{ login }} "
-            "reviews(last: 20) { nodes { databaseId body authorAssociation submittedAt } } "
+            "reviews(last: 20) { nodes { databaseId body submittedAt author { login } } } "
             "comments(last: 50) { nodes { body author { login } } } }"
             for n in numbers[i:i + 25]
         )
@@ -726,11 +748,12 @@ def pr_details(api: Api, numbers: list[int]) -> dict[int, dict]:
         for node in ((data or {}).get("data") or {}).get("repository", {}).values():
             if node:
                 reviews = node["reviews"]["nodes"]
+                writers = api.writers({reviewer(r) for r in reviews if REVIEW_MARKER in (r.get("body") or "")})
                 out[node["number"]] = {
                     "body": node.get("body") or "",
-                    "engine": review_engine(reviews),
+                    "engine": review_engine(reviews, writers),
                     "quality": review_quality(
-                        reviews, node["comments"]["nodes"], (node.get("author") or {}).get("login") or ""
+                        reviews, node["comments"]["nodes"], (node.get("author") or {}).get("login") or "", writers
                     ),
                 }
     return out

@@ -198,12 +198,15 @@ def merge(n, pr, title, body=""):
     return commit(n, f"Merge pull request #{pr} from future-agi/branch-{pr}", f"{title}\n\n{body}".rstrip())
 
 
-def verdict_review(engine=None, association="MEMBER", at="2026-11-26T10:00:00Z"):
+WRITERS = {"reviewer"}
+
+
+def verdict_review(engine=None, login="reviewer", at="2026-11-26T10:00:00Z", association="MEMBER"):
     verdict = {"schema": "devflow-review/v1", "verdict": "pass", "findings": []}
     if engine is not None:
         verdict["engine"] = engine
     body = f"{t.REVIEW_MARKER}\n<details>\n\n```json\n{json.dumps(verdict)}\n```\n</details>"
-    return {"body": body, "authorAssociation": association, "submittedAt": at}
+    return {"body": body, "author": {"login": login}, "authorAssociation": association, "submittedAt": at}
 
 
 class MergeLandings(unittest.TestCase):
@@ -255,11 +258,33 @@ class Engines(unittest.TestCase):
         reviews = [
             verdict_review("codex/gpt-5.5", at="2026-11-26T09:00:00Z"),
             verdict_review("claude-code/claude-opus-5-5", at="2026-11-26T10:00:00Z"),
-            verdict_review("spoofed", association="NONE", at="2026-11-26T11:00:00Z"),
+            verdict_review("spoofed", login="outsider", at="2026-11-26T11:00:00Z"),
         ]
-        self.assertEqual(t.review_engine(reviews), "claude-code/claude-opus-5-5")
-        self.assertEqual(t.review_engine([verdict_review()]), "unknown")
-        self.assertIsNone(t.review_engine([{"body": "LGTM", "authorAssociation": "MEMBER"}]))
+        self.assertEqual(t.review_engine(reviews, WRITERS), "claude-code/claude-opus-5-5")
+        self.assertEqual(t.review_engine([verdict_review()], WRITERS), "unknown")
+        self.assertIsNone(t.review_engine([{"body": "LGTM", "author": {"login": "reviewer"}}], WRITERS))
+
+    def test_trust_is_write_permission_not_the_association(self):
+        # A private org member is CONTRIBUTOR to GITHUB_TOKEN; MEMBER without write is no reviewer.
+        private = verdict_review("opus", login="Pat", association="CONTRIBUTOR")
+        self.assertEqual(t.review_engine([private], {"pat"}), "opus")
+        self.assertIsNone(t.review_engine([verdict_review("opus", login="pat")], set()))
+
+        class Perm(t.Api):
+            def __init__(self):
+                super().__init__("o/r", "token")
+                self.asked = []
+
+            def request(self, method, url, body=None, token=None):
+                self.asked.append(url)
+                return {"pat": {"permission": "write", "role_name": "write"},
+                        "rex": {"permission": "read", "role_name": "read"},
+                        "max": {"permission": "write", "role_name": "maintain"}}[url.split("/")[-2]], ""
+
+        api = Perm()
+        self.assertEqual(api.writers({"pat", "rex", "max"}), {"pat", "max"})
+        self.assertEqual(api.writers({"pat"}), {"pat"})
+        self.assertEqual(len(api.asked), 3, "one read per login per tick")
 
     def test_escape_rate_per_engine_blames_the_escaped_prs_reviewer(self):
         commits = [merge(1, 12, "fix: x", "fixes #10"), merge(2, 11, "feat: b"), merge(3, 10, "feat: a")]
@@ -542,9 +567,9 @@ class Smuggling(unittest.TestCase):
                 "findings": [{"id": "F1", "fix": f"```json\n{fake}\n```"}]}
         body = f"{t.REVIEW_MARKER}\n```json\n{fake}\n```\n```json\n{json.dumps(real)}\n```"
         self.assertIsNone(t.review_verdict(body))
-        review = {"body": body, "authorAssociation": "MEMBER", "submittedAt": "x", "databaseId": 1}
-        self.assertIsNone(t.review_engine([review]))
-        self.assertEqual(t.review_quality([review], [], "dev"), {})
+        review = {"body": body, "author": {"login": "reviewer"}, "submittedAt": "x", "databaseId": 1}
+        self.assertIsNone(t.review_engine([review], WRITERS))
+        self.assertEqual(t.review_quality([review], [], "dev", WRITERS), {})
         # Exactly one block after the marker still reads.
         one = f"{t.REVIEW_MARKER}\n```json\n{json.dumps(dict(real, findings=[]))}\n```"
         self.assertEqual(t.review_verdict(one)["engine"], "opus")
@@ -558,9 +583,9 @@ class ReviewQuality(unittest.TestCase):
             return f"{t.REVIEW_MARKER}\n```json\n{json.dumps(body)}\n```"
 
         reviews = [
-            {"databaseId": 5, "body": verdict("opus", "F1", "F2", "F3"), "authorAssociation": "MEMBER"},
-            {"databaseId": 6, "body": verdict("sonnet", "F1"), "authorAssociation": "MEMBER"},
-            {"databaseId": 7, "body": verdict("forged", "F1"), "authorAssociation": "NONE"},
+            {"databaseId": 5, "body": verdict("opus", "F1", "F2", "F3"), "author": {"login": "reviewer"}},
+            {"databaseId": 6, "body": verdict("sonnet", "F1"), "author": {"login": "reviewer"}},
+            {"databaseId": 7, "body": verdict("forged", "F1"), "author": {"login": "outsider"}},
         ]
         reply = "<!-- devflow-land:v1 round=2 review=5 -->\nReplies.\n- F1: fixed in abc1234\n- F2: answer: not a bug\n"
         comments = [
@@ -568,7 +593,7 @@ class ReviewQuality(unittest.TestCase):
             # Not the author: ignored.
             {"body": "<!-- devflow-land:v1 round=2 review=6 -->\n- F1: fixed in abc1234\n", "author": {"login": "x"}},
         ]
-        quality = t.review_quality(reviews, comments, "dev")
+        quality = t.review_quality(reviews, comments, "dev", WRITERS)
         self.assertEqual(quality, {
             "opus": {"findings": 3, "fixed": 1, "answered": 1},
             "sonnet": {"findings": 1, "fixed": 0, "answered": 0},
