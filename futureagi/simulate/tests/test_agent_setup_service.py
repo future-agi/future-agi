@@ -389,6 +389,8 @@ def test_a_malformed_model_source_is_not_shown(version, part):
         (["agent.py"], 19.0),
         ({"p": 1}, True),
         ("", -1),
+        # The kit's "no line": not a line the page may print as path:0.
+        ("", 0),
         (None, None),
     ],
 )
@@ -412,7 +414,7 @@ def test_only_the_three_model_source_fields_are_shown(version):
         {
             "setting": "A" * 255,
             "path": "src/agent.py",
-            "line": 0,
+            "line": 1,
             "value": "claude-opus",
             "default": "secret",
         },
@@ -421,7 +423,7 @@ def test_only_the_three_model_source_fields_are_shown(version):
     assert agent["extension"]["model_source"] == {
         "setting": "A" * 255,
         "path": "src/agent.py",
-        "line": 0,
+        "line": 1,
     }
     assert "claude-opus" not in str(agent)
 

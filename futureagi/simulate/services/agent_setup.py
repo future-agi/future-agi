@@ -297,7 +297,7 @@ def _shown_model_source(part: Any) -> dict[str, Any] | None:
         "path": path if isinstance(path, str) and path else None,
         "line": (
             line
-            if isinstance(line, int) and not isinstance(line, bool) and line >= 0
+            if isinstance(line, int) and not isinstance(line, bool) and line >= 1
             else None
         ),
     }
