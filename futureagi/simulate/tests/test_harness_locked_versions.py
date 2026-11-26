@@ -865,6 +865,8 @@ class TestProductionOnlyTasks:
             ),
         ],
     )
+    # A run resolves its pins whether actors are on or off, so the lock does too.
+    @pytest.mark.parametrize("actors", [True, False])
     def test_a_default_pair_the_run_refuses_cannot_lock(
         self,
         auth_client,
@@ -875,10 +877,11 @@ class TestProductionOnlyTasks:
         monkeypatch,
         run_refusal,
         message,
+        actors,
     ):
         from simulate.services.harness_versioning import locked_versions
 
-        settings.HARNESS_ACTORS_ENABLED = True
+        settings.HARNESS_ACTORS_ENABLED = actors
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
 
