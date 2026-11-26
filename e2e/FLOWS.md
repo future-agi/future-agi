@@ -1253,7 +1253,7 @@
 
 **Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
 
-**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:132`
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:133`
 
 **Tags:** —
 
@@ -1279,7 +1279,7 @@
 - the create POST body is exactly the issue, project, environment and the picks after the swap
 - the run POST body is exactly the kept scenario and the review's launch rows at their defaults
 - the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
-- the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
+- the epoch page's breadcrumb is the environment linking to the environment, then Epochs linking to its Epochs tab, the header reads "From issue: <title>" linking to the issue, and both survive a reload
 - the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
 
 ### ESC-E2E-001 — New issues require evidence before showing Escalating
@@ -3720,7 +3720,7 @@
 - the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
 - the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
-- the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the epoch page's stages are Writing variations, Reproducing, Diagnosing, Proposing and Checking, and Writing variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
 - the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
 
 ### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
@@ -3744,7 +3744,7 @@
 
 **Browser observations:**
 
-- the ending reads "No safe improvement: the only candidate went over the cost or latency limit."
+- the ending reads "The only candidate went over the reply-time or cost limit."
 - the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
 - the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
@@ -4200,3 +4200,28 @@
 
 - the URL agent's Run reads Stop requested, its hover says the stop can't be confirmed, and its note says why
 - the runs list reads Stop requested for the URL agent's Run and Stopped for the sandboxed Run
+
+### SIM-E2E-040 — a developer narrows an environment's Epochs list to one status and sees only the epochs in it
+
+**Goal:** A developer narrows an environment's Epochs list to one status and sees only the epochs in it
+
+**Spec:** `flows/simulate/epochs-status-filter.spec.ts:94`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the environment's Epochs tab
+2. read every epoch under All statuses
+3. choose Running
+4. choose No safe improvement
+5. choose Ready for review
+6. choose All statuses again
+
+**Browser observations:**
+
+- All statuses asks the list with no state and shows exactly the three minted epochs, newest first
+- Running asks for state=queued,running,stopping and shows exactly the stopping epoch
+- No safe improvement asks for state=no_improvement and shows exactly that epoch
+- Ready for review asks for state=ready and says no epoch has that status
+- All statuses again shows the three epochs
