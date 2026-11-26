@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -569,6 +570,52 @@ describe("Debug failures when a status read fails", () => {
       expect(server.kpis).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+// The Agents call logs grid resets this store in a passive cleanup. When it
+// unmounts in the commit that mounts the run grid, the reset lands after the
+// run grid's claim.
+describe("Debug failures when another page resets the store as the run grid mounts", () => {
+  it("reads the status of the run on screen", async () => {
+    server.runPage.mockResolvedValue(runPage("completed"));
+    server.kpis.mockResolvedValue(kpis(15));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const decision: { current: Decision | null } = { current: null };
+    const DebugFailures = () => {
+      decision.current = useFixMyAgentBlocked(route.executionId);
+      return null;
+    };
+    const CallLogs = () => {
+      useEffect(() => () => resetState(), []);
+      return null;
+    };
+    const page = (onRunPage: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        {onRunPage ? (
+          <>
+            <TestRunDetailGrid />
+            <DebugFailures />
+          </>
+        ) : (
+          <CallLogs />
+        )}
+      </QueryClientProvider>
+    );
+    const { rerender } = render(page(false));
+
+    await act(async () => {
+      rerender(page(true));
+    });
+    await vi.waitFor(() =>
+      expect(useTestExecutionStore.getState()).toMatchObject({
+        status: "completed",
+        statusExecutionId: EXECUTION_ID,
+      }),
+    );
+    await vi.waitFor(() => expect(decision.current).toEqual(ENABLED));
+  });
 });
 
 describe("Debug failures after a rerun", () => {

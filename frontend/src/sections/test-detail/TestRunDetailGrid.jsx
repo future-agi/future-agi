@@ -197,10 +197,19 @@ const TestRunDetailGrid = () => {
   // after the user leaves Call Details. It stops once another execution opens,
   // the user leaves the run, or a newer grid mounts.
   const ownsRunStatus = useCallback(() => {
-    const { statusExecutionId, statusReader: reader } =
-      useTestExecutionStore.getState();
-    return statusExecutionId === executionId && reader === statusReader;
-  }, [executionId, statusReader]);
+    const executionStore = useTestExecutionStore.getState();
+    // A page unmounting in the commit that mounted this grid can reset the
+    // store after the claim (CallLogsGrid resets it in a passive cleanup).
+    // A grid still on screen claims again; an unmounted one cannot.
+    if (executionStore.statusReader === null && isCurrentGrid()) {
+      executionStore.claimStatus(executionId, statusReader);
+      return true;
+    }
+    return (
+      executionStore.statusExecutionId === executionId &&
+      executionStore.statusReader === statusReader
+    );
+  }, [executionId, statusReader, isCurrentGrid]);
 
   // Publishes a status read for this execution. A running status starts
   // polling and drops the final count of an earlier finish. The first finished
