@@ -638,7 +638,8 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
         serializer_or_field=serializers.DictField(child=serializers.CharField())
     )
     def get_scenario_names(self, fix_run: AgentFixRun) -> dict[str, str]:
-        return self.context["fix_names"].scenarios
+        names: FixNames = self.context["fix_names"]
+        return names.scenarios
 
     @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(

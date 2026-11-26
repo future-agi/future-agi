@@ -19,7 +19,7 @@ import {
 // requires_license) and no simulation runner, so it cannot hold an epoch or its
 // check runs. Stub only the epoch's read and its check runs' calls, as SIM-E2E-008
 // and ERR-E2E-006 do. The stubs live in epoch-change-and-scenario-names.payload.ts,
-// which the frontend suite parses with the generated contract (epochNamesStubs.test.js),
+// which the frontend suite parses with the generated contract (epochNamesStubs.test.ts),
 // so they cannot drift from the API. The epoch page, its tabs and the requests it
 // sends are the product's own.
 // Known limit: this proves the page shows the read's words, not that the server
