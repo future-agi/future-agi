@@ -39,6 +39,13 @@ export interface LockedVersion {
   test: number;
 }
 
+// A version as useEnvironmentVersions maps it (versions.js::versionFromApi), with
+// only the fields this card reads.
+interface VersionRow {
+  id: string;
+  label: string | null;
+}
+
 // The default pair a lock names.
 export interface VersionPair {
   environmentVersionId: string | null;
@@ -124,6 +131,11 @@ export default function LockedVersionCard({
 
   const lockedVersions: LockedVersion[] = data.lockedVersions;
   const { defaults } = data;
+  // toVersions spreads each piece's list in by name, which its inferred type loses.
+  const pieces = data as unknown as Record<
+    "environment" | "suite",
+    VersionRow[]
+  >;
   const current = lockedVersions.find(
     (lockedVersion) =>
       !lockedVersion.unlockedAt &&
@@ -133,10 +145,17 @@ export default function LockedVersionCard({
   const earlier = lockedVersions.filter(
     (lockedVersion) => lockedVersion !== current,
   );
-  // The pair the title names: the locked one, else the default a lock would freeze.
+  // A version's label by its id. The preview's pair is the one a lock sends, so the
+  // title names it, not the versions read's default: the two reads can disagree.
+  const labelOf = (versions: VersionRow[], id: string | null) =>
+    versions.find((version) => version.id === id)?.label;
+  // The pair the title names: the locked one, else the one a lock would freeze.
   const pair = current
     ? lockPair(current.environmentLabel, current.suiteLabel)
-    : lockPair(defaults?.environment?.label, defaults?.suite?.label);
+    : lockPair(
+        labelOf(pieces.environment, lock.environmentVersionId),
+        labelOf(pieces.suite, lock.suiteVersionId),
+      );
   // A locked card has no badge: its title already says Locked.
   const status = current
     ? null
