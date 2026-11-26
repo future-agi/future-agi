@@ -751,6 +751,23 @@ class RiskScanTests(unittest.TestCase):
         self.assertEqual(scan({"filename": "e2e/package.json", "status": "removed"}, base={"e2e/package.json": new}),
                          ["e2e/package.json changes dependencies"])
 
+    def test_a_lockfile_or_requirements_change_is_a_hit_in_any_directory(self):
+        # The lockfile is what gets installed: a pin can move with no manifest change.
+        for path in ("uv.lock", "futureagi/uv.lock", "frontend/yarn.lock", "e2e/package-lock.json",
+                     "docs/pnpm-lock.yaml", "agentcc-gateway/go.sum", "requirements.txt",
+                     "futureagi/requirements-dev.txt", "sdk/requirements_test.txt"):
+            for status in ("added", "modified", "removed"):
+                with self.subTest(path=path, status=status):
+                    self.assertEqual(scan({"filename": path, "status": status}), [f"{path} changes a lockfile"])
+        renamed = {"filename": "old/uv.lock.bak", "status": "renamed", "previous_filename": "futureagi/uv.lock"}
+        self.assertEqual(scan(renamed), ["old/uv.lock.bak changes a lockfile"], "renamed away")
+        for path in ("docs/requirements.md", "frontend/yarn.lock.md", "futureagi/requirements/base.in", "go.summary"):
+            with self.subTest(path=path):
+                self.assertEqual(scan({"filename": path, "status": "modified"}), [])
+        case = Case()
+        case.scan = scan({"filename": "frontend/yarn.lock", "status": "modified"})
+        self.assertEqual(case.decide()["tier"], "high")
+
     def test_an_unread_listing_is_a_hit(self):
         files = [{"filename": f"docs/{i}.md", "status": "added"} for i in range(da.FILES_CAP)]
         self.assertEqual(scan(*files), [f"{da.FILES_CAP} files, the most the listing returns"])

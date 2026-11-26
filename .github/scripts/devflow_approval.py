@@ -55,7 +55,8 @@ MODES = ("devflow", "observe")
 TIERS = ("low", "medium", "high")  # ordinal
 # The deterministic risk scan reads only the pull request's changed files, no
 # model: destructive Django operations and ClickHouse statements in a
-# migration's added lines, and any change to a manifest's dependency tables.
+# migration's added lines, any change to a manifest's dependency tables, and
+# any change to a lockfile or a requirements*.txt.
 DJANGO_MIGRATION = re.compile(r"(^|/)migrations/(?!__init__\.py$)[^/]+\.py$")
 DJANGO_RISK = re.compile(r"\b(RemoveField|DeleteModel|RenameField|RenameModel|RunSQL|RunPython)\b")
 CLICKHOUSE_MIGRATION = re.compile(
@@ -90,6 +91,9 @@ PACKAGE_TABLES = (
     "resolutions",
 )
 MANIFESTS = ("pyproject.toml", "package.json", "go.mod")
+# What actually gets installed: any change to one, in any directory, is a hit.
+LOCKFILES = ("uv.lock", "yarn.lock", "package-lock.json", "pnpm-lock.yaml", "go.sum")
+REQUIREMENTS = re.compile(r"^requirements[^/]*\.txt$")
 GO_DIRECTIVE = re.compile(r"^(require|replace)\b\s*(\()?\s*(.*)$")
 # The pull request files listing stops at this many files.
 FILES_CAP = 3000
@@ -230,6 +234,11 @@ def manifest_changes(path: str, old: str, new: str) -> list:
     return [key for key in tables if dotted(before, key) != dotted(after, key)]
 
 
+def is_lockfile(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return name in LOCKFILES or bool(REQUIREMENTS.match(name))
+
+
 def risk_scan(files: list, read) -> list:
     """Hits of the deterministic risk scan over pulls/{n}/files items.
 
@@ -242,6 +251,9 @@ def risk_scan(files: list, read) -> list:
         hits.append(f"{len(files)} files, the most the listing returns")
     for item in files:
         path, status = item.get("filename") or "", item.get("status")
+        if any(is_lockfile(p) for p in (path, item.get("previous_filename") or "")):
+            hits.append(f"{path} changes a lockfile")
+            continue
         clickhouse = bool(CLICKHOUSE_MIGRATION.match(path))
         if clickhouse or DJANGO_MIGRATION.search(path):
             if status == "removed":
