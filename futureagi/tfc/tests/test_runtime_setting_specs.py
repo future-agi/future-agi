@@ -3,7 +3,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from tfc.settings import runtime_setting_specs
 from tfc.settings.runtime_setting_specs import (
     DATASET_READ_SETTING_SPECS,
@@ -266,6 +265,30 @@ def test_exact_graph_workers_have_a_larger_bounded_wall_than_http_reads():
     assert values["GRAPH_BACKGROUND_WALL_MS"] == 180_000
     assert values["CLICKHOUSE_REVIEWED_READ_TIMEOUT_CEILING_MS"] == 180_000
     validate_interactive_read_settings(values)
+
+
+def test_exact_attribute_detail_specs_have_fixed_bounds():
+    values = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
+    assert values["EXACT_ATTRIBUTE_DETAIL_SQL_LEVEL"] == 0
+    assert values["EXACT_ATTRIBUTE_DETAIL_RESHAPED_TIMEOUT_MS"] == 30_000
+    for name, good, bad in (
+        ("EXACT_ATTRIBUTE_DETAIL_SQL_LEVEL", (0, 1, 2), (-1, 3)),
+        (
+            "EXACT_ATTRIBUTE_DETAIL_RESHAPED_TIMEOUT_MS",
+            (1_000, 180_000),
+            (999, 180_001),
+        ),
+    ):
+        for value in good:
+            loaded = load_numeric_settings(
+                INTERACTIVE_READ_SETTING_SPECS, source={name: value}
+            )
+            assert loaded[name] == value
+        for value in bad:
+            with pytest.raises(ValueError):
+                load_numeric_settings(
+                    INTERACTIVE_READ_SETTING_SPECS, source={name: value}
+                )
 
 
 def test_blank_source_value_uses_fallback_before_default():

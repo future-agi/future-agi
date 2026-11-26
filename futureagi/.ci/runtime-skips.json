@@ -70,16 +70,6 @@
   },
   {
     "files": {
-      "tracer/tests/test_exact_attribute_detail.py": 1
-    },
-    "reason": "^Skipped: local ClickHouse is unavailable",
-    "why": "The test connects to a hard-coded local ClickHouse port. 1 test.",
-    "issue": "TH-10618",
-    "owner": "tracer",
-    "expires": "2027-01-06"
-  },
-  {
-    "files": {
       "model_hub/tests/test_annotation_e2e_gaps.py": 1
     },
     "reason": "^Skipped: NLTK punkt_tab tokenizer not available in this env$",
