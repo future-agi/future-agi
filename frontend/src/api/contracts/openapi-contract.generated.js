@@ -76412,6 +76412,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           maxItems: 100,
         },
+        synthetic_text_sources: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
       },
     },
     HarnessSourceScenarioGeneration: {
@@ -120790,6 +120799,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         lifecycle: {
           $ref: "#/definitions/HarnessScenarioLifecycle",
         },
+        source_citations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioSourceCitation",
+          },
+        },
       },
     },
     HarnessProvisionPersona: {
@@ -144937,6 +144952,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "object",
           "x-nullable": true,
           additionalProperties: true,
+        },
+      },
+    },
+    HarnessScenarioSourceCitation: {
+      required: ["filename"],
+      type: "object",
+      properties: {
+        filename: {
+          title: "Filename",
+          type: "string",
+          minLength: 1,
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+        },
+        row: {
+          title: "Row",
+          type: "integer",
         },
       },
     },

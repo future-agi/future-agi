@@ -56513,17 +56513,24 @@
                 "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
+                        "name": "archive",
+                        "in": "formData",
+                        "description": "One source ZIP, instead of files and paths.",
+                        "required": false,
+                        "type": "file"
+                    },
+                    {
                         "name": "files",
                         "in": "formData",
                         "description": "Repeat this field once for every source file.",
-                        "required": true,
+                        "required": false,
                         "type": "file"
                     },
                     {
                         "name": "paths",
                         "in": "formData",
                         "description": "Repeat in file order with each repository-relative path.",
-                        "required": true,
+                        "required": false,
                         "type": "string"
                     },
                     {
@@ -162136,6 +162143,12 @@
                 },
                 "lifecycle": {
                     "$ref": "#/definitions/HarnessScenarioLifecycle"
+                },
+                "source_citations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessScenarioSourceCitation"
+                    }
                 }
             }
         },
@@ -212055,6 +212068,36 @@
                         "minLength": 1
                     },
                     "maxItems": 100
+                },
+                "synthetic_text_sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 100
+                }
+            }
+        },
+        "HarnessScenarioSourceCitation": {
+            "required": [
+                "filename"
+            ],
+            "type": "object",
+            "properties": {
+                "filename": {
+                    "title": "Filename",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer"
+                },
+                "row": {
+                    "title": "Row",
+                    "type": "integer"
                 }
             }
         }

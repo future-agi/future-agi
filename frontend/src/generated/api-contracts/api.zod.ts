@@ -57280,9 +57280,11 @@ selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
-  files: zod.instanceof(File),
+  archive: zod.instanceof(File).optional(),
+  files: zod.instanceof(File).optional(),
   paths: zod
     .string()
+    .optional()
     .describe("Repeat in file order with each repository-relative path."),
   name: zod.string().optional(),
 });
@@ -58419,6 +58421,15 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
             }),
           ),
         })
+        .optional(),
+      source_citations: zod
+        .array(
+          zod.object({
+            filename: zod.string().min(1),
+            page: zod.number().optional(),
+            row: zod.number().optional(),
+          }),
+        )
         .optional(),
     }),
   ),
@@ -114975,6 +114986,10 @@ export const simulateApiHarnessSourceReviewsReprepareBodyRedactTextSourcesItemMa
 
 export const simulateApiHarnessSourceReviewsReprepareBodyRedactTextSourcesMax = 100;
 
+export const simulateApiHarnessSourceReviewsReprepareBodySyntheticTextSourcesItemMax = 255;
+
+export const simulateApiHarnessSourceReviewsReprepareBodySyntheticTextSourcesMax = 100;
+
 export const SimulateApiHarnessSourceReviewsReprepareBody = zod.object({
   expected_revision: zod.number().min(1),
   idempotency_key: zod
@@ -115036,6 +115051,17 @@ export const SimulateApiHarnessSourceReviewsReprepareBody = zod.object({
         ),
     )
     .max(simulateApiHarnessSourceReviewsReprepareBodyRedactTextSourcesMax)
+    .optional(),
+  synthetic_text_sources: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessSourceReviewsReprepareBodySyntheticTextSourcesItemMax,
+        ),
+    )
+    .max(simulateApiHarnessSourceReviewsReprepareBodySyntheticTextSourcesMax)
     .optional(),
 });
 

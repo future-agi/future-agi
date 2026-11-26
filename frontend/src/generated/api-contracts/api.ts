@@ -65893,6 +65893,9 @@ export const simulateApiHarnessJobsSourceUpload = async (
   options?: RequestInit,
 ): Promise<simulateApiHarnessJobsSourceUploadResponse> => {
   const formData = new FormData();
+  if (simulateApiHarnessJobsSourceUploadBody?.archive !== undefined) {
+    formData.append(`archive`, simulateApiHarnessJobsSourceUploadBody.archive);
+  }
   if (simulateApiHarnessJobsSourceUploadBody?.files !== undefined) {
     formData.append(`files`, simulateApiHarnessJobsSourceUploadBody.files);
   }

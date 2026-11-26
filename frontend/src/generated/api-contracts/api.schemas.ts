@@ -25917,6 +25917,13 @@ export const HarnessScenarioRowApiDraftChange = {
   unchanged: "unchanged",
 } as const;
 
+export interface HarnessScenarioSourceCitationApi {
+  /** @minLength 1 */
+  filename: string;
+  page?: number;
+  row?: number;
+}
+
 export interface HarnessScenarioRowApi {
   id: string;
   scenario_id: string;
@@ -25952,6 +25959,7 @@ export interface HarnessScenarioRowApi {
   /** Present while the list shows unsaved changes. */
   draft_change?: HarnessScenarioRowApiDraftChange;
   lifecycle?: HarnessScenarioLifecycleApi;
+  source_citations?: HarnessScenarioSourceCitationApi[];
 }
 
 /**
@@ -47102,6 +47110,8 @@ export interface HarnessSourceReviewReprepareApi {
   schema_repairs?: SourceSchemaRepairApi[];
   /** @maxItems 100 */
   redact_text_sources?: string[];
+  /** @maxItems 100 */
+  synthetic_text_sources?: string[];
 }
 
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
@@ -49967,10 +49977,12 @@ export type SimulateApiHarnessJobsSecretFileUploadBody = {
 };
 
 export type SimulateApiHarnessJobsSourceUploadBody = {
+  /** One source ZIP, instead of files and paths. */
+  archive?: Blob;
   /** Repeat this field once for every source file. */
-  files: Blob;
+  files?: Blob;
   /** Repeat in file order with each repository-relative path. */
-  paths: string;
+  paths?: string;
   name?: string;
 };
 
