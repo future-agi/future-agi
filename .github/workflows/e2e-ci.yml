@@ -2,13 +2,16 @@ name: E2E CI
 
 on:
   pull_request:
-    # Only these three activity types. A run started by any other one (a body
+    # Only these four activity types. A run started by any other one (a body
     # or title edit, a label) becomes this workflow's newest suite for the
     # head commit, and GitHub then ignores the older suite's required check,
     # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
     # the merge queue re-tests every dev merge, but a PR moved onto main is
     # not re-tested until a push (see e2e/README.md).
-    types: [opened, synchronize, reopened]
+    # A draft runs no suite (see HOLD_SUITES below). The
+    # ready_for_review run is the full one, and as the newest suite it is the
+    # one the required check reads.
+    types: [opened, synchronize, reopened, ready_for_review]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
@@ -66,6 +69,12 @@ env:
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
+  # Which runs hold the suites: "true" runs only the planner, and the
+  # required aggregate then passes with every suite skipped. The one place
+  # that chooses; the changes job and the aggregate both read it. Today: a
+  # draft's pull_request run. False for merge groups, pushes, schedules,
+  # dispatches and the queue's call, which run as before.
+  HOLD_SUITES: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
 
 jobs:
   changes:
@@ -76,10 +85,13 @@ jobs:
       actions: read # immutable creation date for partial reruns
       issues: read # the pull request's current labels (e2e-standalone)
     outputs:
-      any: ${{ steps.filter.outputs.any }}
-      backend: ${{ steps.filter.outputs.any }}
-      frontend: ${{ steps.filter.outputs.any }}
-      gateway: ${{ steps.filter.outputs.any }}
+      # False on a held run, so no leg runs and no receipt is recorded. The
+      # scope output still records the plan.
+      hold: ${{ steps.selected.outputs.hold }}
+      any: ${{ steps.selected.outputs.any }}
+      backend: ${{ steps.selected.outputs.any }}
+      frontend: ${{ steps.selected.outputs.any }}
+      gateway: ${{ steps.selected.outputs.any }}
       legs: ${{ steps.shards.outputs.legs }}
       scope: ${{ steps.filter.outputs.scope }}
       stacks: ${{ steps.stacks.outputs.stacks }}
@@ -182,10 +194,18 @@ jobs:
             echo "executor_base=$pin"
             echo "scope=$(jq -cn --arg sha "$GITHUB_SHA" --arg base "$policy" '{version:0,mode:"full",reason:"legacy policy base",tested_commit:$sha,policy_base:$base}')"
           } >> "$GITHUB_OUTPUT"
-      - name: Validate the E2E plan flag
+      - name: Validate the E2E plan flag, and hold the suite (HOLD_SUITES)
+        id: selected
         env:
           ANY: ${{ steps.filter.outputs.any }}
-        run: '[[ "$ANY" == true || "$ANY" == false ]]'
+        run: |
+          [[ "$ANY" == true || "$ANY" == false ]] || exit 1
+          [[ "$HOLD_SUITES" == true || "$HOLD_SUITES" == false ]] || exit 1
+          if [[ $HOLD_SUITES == true && $ANY == true ]]; then
+            echo "::notice title=Suite held::E2E runs when the pull request is marked ready for review."
+            ANY=false
+          fi
+          printf 'hold=%s\nany=%s\n' "$HOLD_SUITES" "$ANY" >> "$GITHUB_OUTPUT"
       - id: stacks
         env:
           EVENT: ${{ github.event_name }}
@@ -211,7 +231,7 @@ jobs:
       - id: shards
         env:
           GH_TOKEN: ${{ github.token }}
-          ANY: ${{ steps.filter.outputs.any }}
+          ANY: ${{ steps.selected.outputs.any }}
           STACKS: ${{ steps.stacks.outputs.stacks }}
           FALLIBILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility }}
         run: |
@@ -240,6 +260,10 @@ jobs:
     # installs it with --require-hashes against the same uv.lock sha256. It
     # runs beside the changes job, so it adds nothing to the critical path.
     name: Fetch and verify lock wheels
+    # Only the E2E legs use it, and a held run runs none. A job's if cannot
+    # read env, so this repeats HOLD_SUITES. If the two ever differ, either
+    # this job runs for nothing, or the legs skip and E2E Tests Pass fails.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     # The script stops retrying after 180 s; the step below caps a stalled
     # transfer at 4 minutes.
@@ -973,8 +997,10 @@ jobs:
           E2E_NEEDED: ${{ needs.changes.outputs.any }}
           E2E: ${{ needs.e2e.result }}
           REPORT: ${{ needs.report.result }}
+          PLAN_HOLD: ${{ needs.changes.outputs.hold }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
-          echo "changes: $CHANGES, e2e needed: ${E2E_NEEDED:-<none>}, e2e: $E2E, report: $REPORT"
+          echo "changes: $CHANGES, e2e needed: ${E2E_NEEDED:-<none>}, e2e: $E2E, report: $REPORT, held: ${HOLD_SUITES:-<none>}"
           # Stricter than "every dependency succeeded or was skipped": a skip
           # passes only when the changes job said there was nothing to run. A
           # skipped report job would otherwise pass without the parity proof.
@@ -982,10 +1008,26 @@ jobs:
             echo "::error::The changes job did not succeed ($CHANGES)."
             exit 1
           fi
+          # HOLD_SUITES is evaluated again here, from the event, not read from
+          # the changes job. A held run passes only on its first attempt. A
+          # re-run replays the held event after the pull request may be ready:
+          # push, or re-run the ready_for_review run.
+          if [ "$HOLD_SUITES" != true ] && [ "$HOLD_SUITES" != false ] || [ "$PLAN_HOLD" != "$HOLD_SUITES" ]; then
+            echo "::error::The plan's hold flag (${PLAN_HOLD:-<none>}) does not match the event (${HOLD_SUITES:-<none>})."
+            exit 1
+          fi
+          if [ "$HOLD_SUITES" = true ] && [ "$ATTEMPT" != 1 ]; then
+            echo "::error::A re-run of a held run cannot prove the suite. Push, or re-run the ready_for_review run."
+            exit 1
+          fi
           if [ "$E2E_NEEDED" = true ] && [ "$E2E" = success ] && [ "$REPORT" = success ]; then
             echo "Every shard passed and the report job proved they ran the whole suite."
           elif [ "$E2E_NEEDED" = false ] && [ "$E2E" = skipped ] && [ "$REPORT" = skipped ]; then
-            echo "No path that the E2E suite covers changed, so it was not needed."
+            if [ "$HOLD_SUITES" = true ]; then
+              echo "HOLD_SUITES held the suite: it runs when the pull request is marked ready for review."
+            else
+              echo "No path that the E2E suite covers changed, so it was not needed."
+            fi
           else
             echo "::error::E2E did not pass (e2e: $E2E, report: $REPORT, e2e needed: ${E2E_NEEDED:-<none>})."
             exit 1

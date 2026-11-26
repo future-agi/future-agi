@@ -1057,10 +1057,12 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
   assert.equal(jobs["e2e-tests"].name, "E2E Tests Pass");
   assert.equal(jobs["e2e-tests"].if, "${{ always() }}");
   assert.equal(jobs.changes.if, undefined);
+  // ready_for_review too: a draft runs no leg, so the ready run is the full one.
   assert.deepEqual(workflow().on.pull_request.types, [
     "opened",
     "synchronize",
     "reopened",
+    "ready_for_review",
   ]);
   const text = workflowText();
   for (const expression of [
@@ -1201,11 +1203,72 @@ test("the E2E gate passes only on a green suite with its report, or when nothing
     E2E_NEEDED: "${{ needs.changes.outputs.any }}",
     E2E: "${{ needs.e2e.result }}",
     REPORT: "${{ needs.report.result }}",
+    PLAN_HOLD: "${{ needs.changes.outputs.hold }}",
+    ATTEMPT: "${{ github.run_attempt }}",
   });
+  // HOLD_SUITES is the workflow-level env the gate evaluates again.
+  assert.equal(
+    workflow().env.HOLD_SUITES,
+    "${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}",
+  );
+  // A ready pull request, or any event that is not a pull request.
+  const ready = { PLAN_HOLD: "false", HOLD_SUITES: "false", ATTEMPT: "1" };
   const cases = [
-    // changes, e2e needed, e2e, report, passes
+    // changes, e2e needed, e2e, report, passes[, hold fields]
     ["success", "true", "success", "success", true],
     ["success", "false", "skipped", "skipped", true],
+    // A held run (a draft today) holds the suite on its first attempt.
+    [
+      "success",
+      "false",
+      "skipped",
+      "skipped",
+      true,
+      { PLAN_HOLD: "true", HOLD_SUITES: "true", ATTEMPT: "1" },
+    ],
+    // A re-run replays the held event, maybe after the pull request is ready.
+    [
+      "success",
+      "false",
+      "skipped",
+      "skipped",
+      false,
+      { PLAN_HOLD: "true", HOLD_SUITES: "true", ATTEMPT: "2" },
+    ],
+    // A ready pull request whose plan says held: the suite was skipped.
+    [
+      "success",
+      "false",
+      "skipped",
+      "skipped",
+      false,
+      { PLAN_HOLD: "true", HOLD_SUITES: "false", ATTEMPT: "1" },
+    ],
+    // A held event whose plan says not held.
+    [
+      "success",
+      "false",
+      "skipped",
+      "skipped",
+      false,
+      { PLAN_HOLD: "false", HOLD_SUITES: "true", ATTEMPT: "1" },
+    ],
+    [
+      "success",
+      "true",
+      "success",
+      "success",
+      false,
+      { PLAN_HOLD: "", HOLD_SUITES: "false", ATTEMPT: "1" },
+    ],
+    [
+      "success",
+      "true",
+      "success",
+      "success",
+      false,
+      { PLAN_HOLD: "", HOLD_SUITES: "", ATTEMPT: "1" },
+    ],
     // A skipped report job is a suite without its parity proof.
     ["success", "true", "success", "skipped", false],
     ["success", "true", "success", "failure", false],
@@ -1219,20 +1282,34 @@ test("the E2E gate passes only on a green suite with its report, or when nothing
     ["cancelled", "true", "success", "success", false],
     ["skipped", "false", "skipped", "skipped", false],
   ];
-  for (const [CHANGES, E2E_NEEDED, E2E, REPORT, passes] of cases) {
+  for (const [
+    CHANGES,
+    E2E_NEEDED,
+    E2E,
+    REPORT,
+    passes,
+    draft = ready,
+  ] of cases) {
     // The shell that runs a step's script.
     const run = spawnSync(
       "bash",
       ["--noprofile", "--norc", "-eo", "pipefail", "-c", gate.run],
       {
         encoding: "utf8",
-        env: { PATH: process.env.PATH, CHANGES, E2E_NEEDED, E2E, REPORT },
+        env: {
+          PATH: process.env.PATH,
+          CHANGES,
+          E2E_NEEDED,
+          E2E,
+          REPORT,
+          ...draft,
+        },
       },
     );
     assert.equal(
       run.status === 0,
       passes,
-      `${CHANGES}/${E2E_NEEDED}/${E2E}/${REPORT}: ${run.stdout}`,
+      `${CHANGES}/${E2E_NEEDED}/${E2E}/${REPORT}/${JSON.stringify(draft)}: ${run.stdout}`,
     );
   }
 });

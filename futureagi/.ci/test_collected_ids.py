@@ -1782,6 +1782,7 @@ class WorkflowTest(unittest.TestCase):
                             "metrics": value,
                             "executor_base": "false",
                             "update_safety": "true",
+                            "hold": "false",
                         },
                     },
                     "policy-self-test": {"result": "success"},
@@ -1791,14 +1792,7 @@ class WorkflowTest(unittest.TestCase):
             )
 
             def passed(needs=needs):
-                return (
-                    subprocess.run(
-                        ["bash", "-ec", script],
-                        env={**os.environ, "NEEDS": json.dumps(needs)},
-                        capture_output=True,
-                    ).returncode
-                    == 0
-                )
+                return run_backend_gate(script, needs, hold="false", attempt="1")
 
             self.assertTrue(passed())
             for job in list(needs):
@@ -1814,6 +1808,88 @@ class WorkflowTest(unittest.TestCase):
                 needs["changes"]["outputs"][flag] = ""
                 self.assertFalse(passed(), flag)
                 needs["changes"]["outputs"][flag] = previous
+
+    @unittest.skipUnless(shutil.which("jq"), "needs jq")
+    def test_a_held_run_passes_with_no_suite_only_while_the_event_holds(self):
+        gate = WORKFLOW.split("  backend-tests:\n", 1)[1]
+        script = textwrap.dedent(gate.split("        run: |\n", 1)[1])
+        suites = (
+            "plan",
+            "test",
+            "collection",
+            "terminal-parity",
+            "saml-multiworker",
+            "migrated-database",
+            "agentic-eval",
+            "slim-smoke",
+            "update-safety",
+            "code-executor-base-pin",
+        )
+
+        def needs(plan_draft, flags, result):
+            return {
+                **{job: {"result": result} for job in suites},
+                "changes": {
+                    "result": "success",
+                    "outputs": {
+                        **dict.fromkeys(
+                            ("backend", "metrics", "executor_base", "update_safety"),
+                            flags,
+                        ),
+                        "hold": plan_draft,
+                    },
+                },
+                "policy-self-test": {"result": "success"},
+            }
+
+        # HOLD_SUITES (a draft today), plan hold flag, attempt, plan flags,
+        # suite results, passes
+        cases = (
+            # A draft's first run holds every suite.
+            ("true", "true", "1", "false", "skipped", True),
+            # A re-run replays the draft event, maybe after the PR is ready.
+            ("true", "true", "2", "false", "skipped", False),
+            # A ready PR whose plan says draft: the suites were skipped.
+            ("false", "true", "1", "false", "skipped", False),
+            # A draft event whose plan says ready.
+            ("true", "false", "1", "false", "skipped", False),
+            # A draft plan that kept a suite flag.
+            ("true", "true", "1", "true", "success", False),
+            # A ready PR with every suite selected and green.
+            ("false", "false", "1", "true", "success", True),
+            # A ready PR with every suite selected and skipped.
+            ("false", "false", "1", "true", "skipped", False),
+            # No hold flag at all.
+            ("", "false", "1", "true", "success", False),
+            ("false", "", "1", "true", "success", False),
+        )
+        for draft, plan_draft, attempt, flags, result, passes in cases:
+            with self.subTest(
+                draft=draft, plan=plan_draft, attempt=attempt, flags=flags
+            ):
+                self.assertEqual(
+                    run_backend_gate(
+                        script,
+                        needs(plan_draft, flags, result),
+                        hold=draft,
+                        attempt=attempt,
+                    ),
+                    passes,
+                )
+
+
+def run_backend_gate(script, needs, *, hold, attempt):
+    """Whether Backend Tests Pass's verdict script exits 0 for these inputs."""
+    env = {
+        **os.environ,
+        "NEEDS": json.dumps(needs),
+        "HOLD_SUITES": hold,
+        "ATTEMPT": attempt,
+    }
+    return (
+        subprocess.run(["bash", "-ec", script], env=env, capture_output=True).returncode
+        == 0
+    )
 
 
 if __name__ == "__main__":

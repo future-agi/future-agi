@@ -1028,7 +1028,7 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_update_safety_filter_covers_every_scanned_source_change(self):
         text = (ROOT / ".github/workflows/backend-ci.yml").read_text()
         self.assertIn('git show "$policy:$file"', text)
-        self.assertIn('update_safety: ${{ steps.filter.outputs.update_safety }}', text)
+        self.assertIn("|| steps.filter.outputs.update_safety }}", text)
         self.assertIn("if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.update_safety == 'true'", text)
         # Shebang, not suffix, makes this a scanned input. The planner's complete
         # diff fixtures exercise this source outside the old backend roots.

@@ -225,7 +225,8 @@ class ResolverTests(unittest.TestCase):
         scripts = Path(__file__).resolve().parent
         workflow = (scripts.parent / "workflows/e2e-ci.yml").read_text()
         self.assertIn("QUEUE_BASE_REF: ${{ github.event.merge_group.base_ref }}", workflow)
-        self.assertIn("any: ${{ steps.filter.outputs.any }}", workflow)
+        self.assertIn("ANY: ${{ steps.filter.outputs.any }}", workflow)
+        self.assertIn("any: ${{ steps.selected.outputs.any }}", workflow)
         self.assertIn('file=.github/scripts/ci_scope.py', workflow)
         # The planner selects the entire suite unless a path is certified metadata.
         metadata = runpy.run_path(str(scripts / "ci_scope.py"))["METADATA"]
