@@ -99,6 +99,11 @@ POSIX_CLASSES = {
     "[:lower:]": "a-z",
 }
 LOG_TAIL_LINES = 400
+# A member head's check runs are read again only when the head moves, while
+# a check is not green, or after this long (a person may re-run a check).
+CHECK_CACHE_SECONDS = 900
+# Below this many calls left in a rate limit window, wait for its reset.
+RATE_FLOOR = 200
 
 
 def env_int(name: str, default: int) -> int:
@@ -904,6 +909,10 @@ class GitHub:
     def __init__(self, token: str, repo: str):
         self.token, self.repo = token, repo
         self.permissions: dict = {}
+        self.calls = 0
+        # Rate limit per resource (core, graphql, ...) from the last response.
+        self.limits: dict = {}
+        self.check_cache: dict = {}  # head sha -> (monotonic time, runs)
 
     def request(self, method: str, path: str, body=None, raw: bool = False):
         """Returns (status, parsed JSON or text). Raises on any 4xx/5xx it is not told to expect."""
@@ -924,11 +933,14 @@ class GitHub:
             },
         )
         opener = urllib.request.build_opener(NoRedirect)
+        self.calls += 1
         try:
             with opener.open(req, timeout=60) as resp:
                 status, text = resp.status, resp.read().decode(errors="replace")
+                self.note_limits(resp.headers)
         except urllib.error.HTTPError as err:
             status, text = err.code, err.read().decode(errors="replace")
+            self.note_limits(err.headers)
             if status == 302 and raw:
                 # Job logs redirect to a signed URL that must not get our token.
                 with urllib.request.urlopen(
@@ -941,6 +953,14 @@ class GitHub:
             return status, (json.loads(text) if text.strip() else None)
         except ValueError:  # a gateway error page; call() reports the status
             return status, text[:300]
+
+    def note_limits(self, headers):
+        remaining = headers.get("x-ratelimit-remaining") if headers else None
+        if remaining is not None:
+            self.limits[headers.get("x-ratelimit-resource") or "core"] = {
+                "remaining": int(remaining),
+                "reset": int(headers.get("x-ratelimit-reset") or 0),
+            }
 
     def call(self, method: str, path: str, body=None, ok=(200, 201, 204)):
         status, out = self.request(method, path, body)
@@ -1056,15 +1076,36 @@ class GitHub:
                     login: self.permission(login) for login in sorted(m["human_approvers"])
                 }
 
+    def member_check_runs(self, sha: str, required: list, now=time.monotonic) -> list:
+        """A member head's runs, from the cache while they are all green."""
+        hit = self.check_cache.get(sha)
+        if hit and now() - hit[0] < CHECK_CACHE_SECONDS:
+            return hit[1]
+        runs = self.check_runs(sha, required)
+        if all(v == "success" for v in check_states(runs, required).values()):
+            self.check_cache[sha] = (now(), runs)
+        else:
+            self.check_cache.pop(sha, None)
+        return runs
+
+    def forget(self, sha: str):
+        """Drop a head from the cache: the train just re-ran its checks."""
+        self.check_cache.pop(sha, None)
+
     def attach_checks(self, data: dict, required: list, cfg: Config):
-        """Read checks for every rollup, and for each admitted pull request
-        that every other rule lets through."""
+        """Read checks for every rollup (always fresh: a red one may be
+        re-run), and for each admitted pull request that every other rule
+        lets through."""
         repo = data["repository"]
         for node in repo["rollups"]["nodes"]:
             node["_check_runs"] = self.check_runs(node["headRefOid"], required)
+        heads = set()
         for node in repo["admitted"]["nodes"]:
+            heads.add(node["headRefOid"])
             if needs_checks(node, required, cfg):
-                node["_check_runs"] = self.check_runs(node["headRefOid"], required)
+                node["_check_runs"] = self.member_check_runs(node["headRefOid"], required)
+        for sha in set(self.check_cache) - heads:
+            del self.check_cache[sha]
 
     def failed_runs(self, rollup: dict, signal: str) -> list:
         """The workflow runs whose failure turned this rollup red."""
@@ -1373,7 +1414,19 @@ def summary(result: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def backoff_seconds(limits: dict, now: float, floor: int) -> float:
+    """How long to wait for a rate limit reset: 0 while every resource has
+    more than `floor` calls left."""
+    waits = [
+        max(0.0, lim["reset"] - now + 5)
+        for lim in limits.values()
+        if lim["remaining"] < floor
+    ]
+    return max(waits, default=0.0)
+
+
 def tick(reader: GitHub, required: list, cfg: Config, live: Live | None) -> dict:
+    before = reader.calls, live.app.calls if live else 0
     data = reader.gather()
     data["base_red"] = reader.base_red()
     reader.attach_permissions(data, required, cfg)
@@ -1392,6 +1445,13 @@ def tick(reader: GitHub, required: list, cfg: Config, live: Live | None) -> dict
     result["failures"] = failures
     if live:
         execute(result, live, red_runs)
+    result["api"] = {
+        "calls": reader.calls - before[0],
+        "app_calls": (live.app.calls - before[1]) if live else 0,
+        "cached_heads": len(reader.check_cache),
+        "limits": reader.limits,
+        "app_limits": live.app.limits if live else {},
+    }
     return result
 
 
@@ -1448,7 +1508,10 @@ def main(argv=None) -> int:
                 out.write(summary(result))
         if not result["busy"] or time.monotonic() + args.interval > deadline:
             return 0
-        time.sleep(args.interval)
+        wait = backoff_seconds(reader.limits, time.time(), RATE_FLOOR)
+        if wait:
+            print(f"rate limit below {RATE_FLOOR}: waiting {wait:.0f} s", flush=True)
+        time.sleep(min(max(args.interval, wait), max(0.0, deadline - time.monotonic())))
 
 
 if __name__ == "__main__":

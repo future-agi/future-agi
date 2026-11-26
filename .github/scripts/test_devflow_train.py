@@ -262,6 +262,63 @@ class Checks(unittest.TestCase):
             self.assertNotIn("checkRuns", query)
             self.assertNotIn("statusCheckRollup", query)
 
+    def test_member_checks_are_cached_only_while_green(self):
+        reads = []
+        answer = {"runs": green()}
+
+        class Counting(train.GitHub):
+            def check_runs(self, sha, required):
+                reads.append(sha)
+                return answer["runs"]
+
+        gh, clock = Counting("t", "o/r"), [1000.0]
+        now = lambda: clock[0]  # noqa: E731
+        gh.member_check_runs(sha(1), REQUIRED, now)
+        gh.member_check_runs(sha(1), REQUIRED, now)
+        self.assertEqual(reads, [sha(1)], "green on the same head: read once")
+        gh.member_check_runs(sha(2), REQUIRED, now)
+        self.assertEqual(reads, [sha(1), sha(2)], "a new head is read")
+        clock[0] += train.CHECK_CACHE_SECONDS
+        gh.member_check_runs(sha(1), REQUIRED, now)
+        self.assertEqual(reads.count(sha(1)), 2, "the cache expires")
+        gh.forget(sha(1))
+        gh.member_check_runs(sha(1), REQUIRED, now)
+        self.assertEqual(reads.count(sha(1)), 3, "a re-run by the train drops it")
+        answer["runs"] = green()[:2] + [run("Python Lint Pass", status="IN_PROGRESS")]
+        gh.member_check_runs(sha(3), REQUIRED, now)
+        gh.member_check_runs(sha(3), REQUIRED, now)
+        self.assertEqual(reads.count(sha(3)), 2, "pending is never cached")
+        answer["runs"] = green()[:2] + [run("Python Lint Pass", "FAILURE")]
+        gh.member_check_runs(sha(4), REQUIRED, now)
+        gh.member_check_runs(sha(4), REQUIRED, now)
+        self.assertEqual(reads.count(sha(4)), 2, "red is never cached: a re-run may fix it")
+
+    def test_rollup_checks_are_always_fresh(self):
+        reads = []
+
+        class Counting(train.GitHub):
+            def check_runs(self, sha, required):
+                reads.append(sha)
+                return green()
+
+        gh = Counting("t", "o/r")
+        payload = data([pr_node(1)], [rollup_node(70, [(1, sha(1))])])
+        gh.attach_checks(payload, REQUIRED, cfg())
+        gh.attach_checks(payload, REQUIRED, cfg())
+        self.assertEqual(reads, [sha(70), sha(1), sha(70)])
+
+    def test_backoff_waits_for_the_low_resource_reset(self):
+        limits = {"core": {"remaining": 4000, "reset": 2000}, "graphql": {"remaining": 50, "reset": 1300}}
+        self.assertEqual(train.backoff_seconds(limits, 1000, 200), 305)
+        self.assertEqual(train.backoff_seconds({"core": limits["core"]}, 1000, 200), 0)
+        self.assertEqual(train.backoff_seconds({}, 1000, 200), 0)
+
+    def test_rate_limit_headers_are_kept_per_resource(self):
+        gh = train.GitHub("t", "o/r")
+        gh.note_limits({"x-ratelimit-remaining": "17", "x-ratelimit-reset": "99", "x-ratelimit-resource": "graphql"})
+        gh.note_limits({})
+        self.assertEqual(gh.limits, {"graphql": {"remaining": 17, "reset": 99}})
+
     def test_gather_reads_every_page(self):
         pages = {
             train.ADMIT_LABEL: [[pr_node(n) for n in range(1, 51)], [pr_node(n) for n in range(51, 121)]],
