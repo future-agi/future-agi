@@ -123,6 +123,8 @@ function launchOptions(executionId: string): Json {
     limits: LIMITS,
     blocked: null,
     variations_blocked: null,
+    held_back_scenario_keys: null,
+    ship: { path: 'make_default', blocked: null },
   };
 }
 

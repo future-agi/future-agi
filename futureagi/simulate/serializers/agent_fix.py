@@ -20,6 +20,7 @@ from simulate.pydantic_schemas.agent_fix import (
     EvalGrading,
     FailureOwner,
     FixStep,
+    ShipPath,
     Surface,
 )
 from simulate.selectors.agent_fix import (
@@ -276,6 +277,28 @@ class AgentFixReportSerializer(serializers.Serializer):
 class AgentFixFailureSerializer(serializers.Serializer):
     code = serializers.CharField()
     message = serializers.CharField()
+
+
+class AgentFixLaunchBlockedSerializer(AgentFixFailureSerializer):
+    cluster_id = serializers.CharField(
+        allow_null=True,
+        help_text="For issue_epoch_measuring, the issue whose epoch is starting in the"
+        " environment; its page shows it. Null otherwise.",
+    )
+
+
+class AgentFixShipReadinessSerializer(serializers.Serializer):
+    """How an epoch's winner would ship, known before launch."""
+
+    path = serializers.ChoiceField(
+        choices=[one.value for one in ShipPath],
+        help_text="pull_request for a GitHub agent; make_default for an uploaded one.",
+    )
+    blocked = AgentFixFailureSerializer(
+        allow_null=True,
+        help_text="Why a pull request couldn't open now, and what to do; the winner's"
+        " patch can be downloaded either way.",
+    )
 
 
 class AgentFixCheckRunSerializer(serializers.Serializer):
@@ -836,16 +859,30 @@ class AgentFixLaunchLimitsSerializer(serializers.Serializer):
 class AgentFixLaunchOptionsSerializer(serializers.Serializer):
     source_run = AgentFixLaunchSourceRunSerializer()
     environment = AgentFixLaunchEnvironmentSerializer()
-    agent = AgentFixAgentSerializer()
+    agent = AgentFixAgentSerializer(
+        allow_null=True,
+        help_text="Null when neither the run nor its environment has an agent version;"
+        " blocked then says what to do.",
+    )
     scenarios = AgentFixLaunchScenarioSerializer(many=True)
     suggested = AgentFixLaunchSuggestedSerializer()
     surfaces = AgentFixLaunchSurfaceSerializer(many=True)
     defaults = AgentFixLaunchDefaultsSerializer()
     limits = AgentFixLaunchLimitsSerializer()
     # Set when Start must be disabled, with the reason launch would give.
-    blocked = AgentFixFailureSerializer(allow_null=True)
+    blocked = AgentFixLaunchBlockedSerializer(allow_null=True)
     # Set when a launch that first writes variations would be refused, with the reason.
     variations_blocked = AgentFixFailureSerializer(allow_null=True)
+    held_back_scenario_keys = serializers.ListField(
+        child=serializers.CharField(),
+        allow_null=True,
+        help_text="The suggested targets the Epoch holds back to prove its fix, picked as"
+        " launch picks them: empty when too few fail to hold any back, null when the"
+        " Epoch first writes variations, since they are picked with the variations.",
+    )
+    ship = AgentFixShipReadinessSerializer(
+        allow_null=True, help_text="Null for an agent Epoch can't change."
+    )
 
 
 # A person's own coding agent: the brief it fixes a run from, its submitted attempt, and

@@ -55045,6 +55045,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "open_job_id",
         "issue_scenarios",
         "defaults",
+        "ship",
       ],
       type: "object",
       properties: {
@@ -55071,6 +55072,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         defaults: {
           $ref: "#/definitions/AgentFixIssueDefaults",
+        },
+        ship: {
+          $ref: "#/definitions/AgentFixShipReadiness",
         },
       },
     },
@@ -55261,6 +55265,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "limits",
         "blocked",
         "variations_blocked",
+        "held_back_scenario_keys",
+        "ship",
       ],
       type: "object",
       properties: {
@@ -55295,10 +55301,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/AgentFixLaunchLimits",
         },
         blocked: {
-          $ref: "#/definitions/AgentFixFailure",
+          $ref: "#/definitions/AgentFixLaunchBlocked",
         },
         variations_blocked: {
           $ref: "#/definitions/AgentFixFailure",
+        },
+        held_back_scenario_keys: {
+          description:
+            "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        ship: {
+          $ref: "#/definitions/AgentFixShipReadiness",
         },
       },
     },
@@ -103401,6 +103420,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    AgentFixShipReadiness: {
+      required: ["path", "blocked"],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          description:
+            "pull_request for a GitHub agent; make_default for an uploaded one.",
+          type: "string",
+          enum: ["pull_request", "make_default"],
+        },
+        blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+      },
+      "x-nullable": true,
+    },
     AgentFixIssueStatus: {
       required: ["cluster_id", "project_id", "job"],
       type: "object",
@@ -103419,6 +103455,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/AgentFixIssueJob",
         },
       },
+    },
+    AgentFixLaunchBlocked: {
+      required: ["code", "message", "cluster_id"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        cluster_id: {
+          title: "Cluster id",
+          description:
+            "For issue_epoch_measuring, the issue whose epoch is starting in the environment; its page shows it. Null otherwise.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     AgentFixLaunchDefaults: {
       required: [
@@ -118483,6 +118544,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "created_at",
         "agent",
         "last_run",
+        "epoch_pickable",
       ],
       type: "object",
       properties: {
@@ -118579,6 +118641,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         last_run: {
           $ref: "#/definitions/HarnessRunSummary",
+        },
+        epoch_pickable: {
+          title: "Epoch pickable",
+          description:
+            "Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing.",
+          type: "boolean",
         },
       },
     },

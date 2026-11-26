@@ -6,7 +6,9 @@ kind is one more class in ``AGENT_KINDS``.
 """
 
 import io
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+
+from django.db.models import Exists, OuterRef, Q, QuerySet
 
 from simulate.models import (
     AgentFixCandidate,
@@ -29,12 +31,23 @@ from simulate.services.hosted_harness_gateway import (
     store_source_archive,
 )
 
+if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
+
 
 class AgentKind(Protocol):
     # The parts of the agent a fix may change; launch refuses any other.
     surfaces: frozenset[Surface]
 
     def handles(self, environment: HostedHarnessJob) -> bool: ...
+
+    def pickable(
+        self, environments: QuerySet[HostedHarnessJob]
+    ) -> QuerySet[HostedHarnessJob]:
+        """The environments among ``environments`` an epoch can be run on once they are
+        ready: those this kind handles, and those whose own source it would handle that
+        have no agent version yet. In one query."""
+        ...
 
     def require_available(self) -> None:
         """Refuse, with the reason, when this deployment cannot fix this kind of agent."""
@@ -87,6 +100,22 @@ class VersionedSourceAgent:
         return HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_version_id=environment.agent_version_id, source_kind__in=self.EDITABLE
         ).exists()
+
+    def pickable(
+        self, environments: QuerySet[HostedHarnessJob]
+    ) -> QuerySet[HostedHarnessJob]:
+        editable = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            source_kind__in=self.EDITABLE
+        ).values("agent_version_id")
+        # With no agent version (still building, or made before they were kept), the
+        # environment's own source says what its agent is.
+        return environments.filter(
+            Q(agent_version_id__in=editable)
+            | Q(
+                agent_version__isnull=True,
+                payload__source__kind__in=[kind.value for kind in self.EDITABLE],
+            )
+        )
 
     def require_available(self) -> None:
         if not versioning_enabled() or not certify_enabled():
@@ -171,13 +200,55 @@ class VersionedSourceAgent:
 AGENT_KINDS: list[AgentKind] = [VersionedSourceAgent()]
 
 
-def agent_kind(environment: HostedHarnessJob) -> AgentKind:
+def pickable_environments(
+    environments: QuerySet[HostedHarnessJob],
+) -> QuerySet[HostedHarnessJob]:
+    """The environments among ``environments`` an epoch can be picked for: an agent some
+    kind handles, with or without its agent version yet."""
+    found = environments.none()
     for kind in AGENT_KINDS:
-        if kind.handles(environment):
+        found = found | kind.pickable(environments)
+    return found
+
+
+class EpochPickable(TypedDict):
+    epoch_pickable: bool
+
+
+def with_epoch_pickable(
+    environments: QuerySet[HostedHarnessJob],
+) -> "QuerySet[WithAnnotations[HostedHarnessJob, EpochPickable]]":
+    """``environments`` annotated ``epoch_pickable``, in the same query."""
+    return environments.annotate(
+        epoch_pickable=Exists(
+            pickable_environments(
+                HostedHarnessJob.no_workspace_objects.filter(id=OuterRef("id"))
+            )
+        )
+    )
+
+
+def pickable_kind(environment: HostedHarnessJob) -> AgentKind | None:
+    """The kind an epoch on ``environment`` would run as, read without its agent version;
+    None for an agent no kind can change."""
+    one = HostedHarnessJob.no_workspace_objects.filter(id=environment.id)
+    for kind in AGENT_KINDS:
+        if kind.pickable(one).exists():
             return kind
-    raise HostedHarnessError(
+    return None
+
+
+def not_editable() -> HostedHarnessError:
+    return HostedHarnessError(
         "fix_agent_not_editable",
         "Epoch can change an uploaded or GitHub agent; this agent's prompt and tools"
         " run outside Future AGI",
         status_code=422,
     )
+
+
+def agent_kind(environment: HostedHarnessJob) -> AgentKind:
+    for kind in AGENT_KINDS:
+        if kind.handles(environment):
+            return kind
+    raise not_editable()
