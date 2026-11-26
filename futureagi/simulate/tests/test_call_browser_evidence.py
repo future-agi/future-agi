@@ -443,6 +443,32 @@ def test_a_row_s_address_and_words_are_text_and_only_http_or_https_is_a_link(
 
 
 @pytest.mark.django_db
+def test_a_time_that_is_not_a_finite_number_is_none_and_the_answer_still_serves(
+    job, store
+):
+    from rest_framework.renderers import JSONRenderer
+
+    from simulate.serializers.call_detail_v3 import CallBrowserEvidenceSerializer
+
+    # The file comes from the sandbox: JSON as Python reads it takes NaN, Infinity and numbers too large for a float.
+    rows = [
+        _shot(None, at=float("nan")),
+        _shot(None, at=float("inf")),
+        _shot(None, at=float("-inf")),
+        _shot(None, at=1.5),
+        _shot(None, at=10**400),
+    ]
+    text = json.dumps(_no_door_file(_browser(*rows))).replace("1.5", "1e999", 1)
+    assert "1e999" in text
+    end = _file(job, store, None, raw=text.encode())
+
+    shown = be.browser_evidence(_call(job, end))
+
+    assert [row["at"] for row in shown["screenshots"]] == [None] * 5
+    JSONRenderer().render(CallBrowserEvidenceSerializer(shown).data)
+
+
+@pytest.mark.django_db
 def test_a_picture_stored_as_something_other_than_an_image_is_not_shown(job, store):
     odd = _digest("odd")
     _stored(job, odd, content_type="text/html")
