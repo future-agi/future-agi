@@ -152,6 +152,24 @@ class Cascade(unittest.TestCase):
         self.assertEqual({(f["run"], bool(f.get("prior"))) for f in failures}, {(4, False), (2, True)})
 
 
+    def test_a_page_of_cancelled_runs_does_not_hide_the_finished_ones(self):
+        # Red before: one page of 20 was read, so 20 cancelled runs hid both.
+        def dev_run(i, conclusion, minute):
+            at = f"2026-11-26T11:{minute:02d}:00Z"
+            return {"id": i, "conclusion": conclusion, "created_at": at, "updated_at": at, "path": "b"}
+
+        cancelled = [dev_run(100 + i, "cancelled", 59 - i) for i in range(20)]
+        finished = [dev_run(2, "success", 30), dev_run(1, "success", 20)]
+        listing = {"/repos/o/r/actions/workflows/": ("workflow_runs", cancelled + finished, None)}
+        runs, failures = t.collect_dev(FakeApi(listing, size=20))
+        self.assertEqual(([r["id"] for r in runs], failures), ([2, 2], []))
+        # Bounded: runs past DEV_PUSH_PAGES pages are not read.
+        buried = cancelled * t.DEV_PUSH_PAGES + finished
+        api = FakeApi({"/repos/o/r/actions/workflows/": ("workflow_runs", buried, None)}, size=20)
+        self.assertEqual(t.collect_dev(api), ([], []))
+        self.assertEqual(len(api.calls), 2 * t.DEV_PUSH_PAGES)
+
+
 class Escape(unittest.TestCase):
     def history(self, extra):
         base = [commit(i, f"feat: thing (#{1000 + i})") for i in range(300, 0, -1)]
@@ -376,6 +394,8 @@ class Liveness(unittest.TestCase):
         self.assertIn("devflow_tick.py --breaker-only", breaker)
         self.assertIn("ref: ${{ github.event.merge_group.base_ref }}", breaker)
         self.assertIn("- continue-on-error: true", breaker)
+        # Red before: a job-level group made breakers from two groups wait on each other.
+        self.assertNotIn("\n    concurrency:", breaker)
         self.assertNotIn("breaker", text.split("\n  backend-tests:\n", 1)[1].split("\n  breaker:\n")[0])
 
     def test_per_pr_verdicts_and_aggregates_are_not_base_signals(self):

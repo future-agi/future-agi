@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   candidatesFor,
+  hasHumanReviewRequest,
   parseAssignment,
   pickLeastLoaded,
   reassignDue,
@@ -157,6 +158,35 @@ test("reassign is due after 4 working hours with no devflow review from the assi
       [review("bob", "<!-- devflow-review:v1 -->", "2026-11-29T00:00:00Z")],
       now,
     ),
+    true,
+  );
+});
+
+test("a request for the code-owner team is not a human request; any other is", () => {
+  const user = [{ login: "ann" }];
+  const owners = [{ slug: "internal-all-write" }];
+  const none = { requested_reviewers: [], requested_teams: [] };
+  assert.equal(hasHumanReviewRequest(none), false);
+  assert.equal(
+    hasHumanReviewRequest({ ...none, requested_teams: owners }),
+    false,
+  );
+  assert.equal(
+    hasHumanReviewRequest({
+      requested_reviewers: user,
+      requested_teams: owners,
+    }),
+    true,
+  );
+  assert.equal(
+    hasHumanReviewRequest({ ...none, requested_teams: [{ slug: "backend" }] }),
+    true,
+  );
+  assert.equal(
+    hasHumanReviewRequest({
+      ...none,
+      requested_teams: [...owners, { slug: "backend" }],
+    }),
     true,
   );
 });

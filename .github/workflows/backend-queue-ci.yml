@@ -68,16 +68,15 @@ jobs:
     # Base-health breaker after each queue build, so a red base trips it even
     # when nothing lands (pushes to dev also run it, from pr-digest.yml). Not
     # in Backend Tests Pass's needs: it never changes the queue's verdict,
-    # and its step cannot fail the run. The script comes from the target
+    # and its step cannot fail the run. It is idempotent, so it has no
+    # concurrency group: a queued job would wait on one and hold the run
+    # open. The script comes from the target
     # branch's tip (base_ref); the group is unlanded code.
     name: Base-health breaker
     needs: backend
     if: always() && github.repository == 'future-agi/future-agi'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    concurrency:
-      group: devflow-breaker
-      cancel-in-progress: false
     permissions:
       contents: read
       actions: read

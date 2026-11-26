@@ -101,6 +101,9 @@ QUEUE_BRANCH = re.compile(r"^gh-readonly-queue/[^/]+/pr-(\d+)-([0-9a-f]{40})?")
 # Dev push runs of the queue's suites, and the prefix that names their jobs
 # the way the queue does (the queue calls backend-ci.yml as "backend").
 DEV_PUSH_WORKFLOWS = {"backend-ci.yml": "backend / ", "e2e-ci.yml": ""}
+# Pages of dev push runs read to find the two newest finished ones: a burst of
+# cancelled runs (a push cancels the run before it) can fill the first page.
+DEV_PUSH_PAGES = 5
 FIX_REF = re.compile(
     r"\b(?:fix(?:es|ed)?|follow[- ]?ups?(?:\s+(?:to|of|for))?|revert(?:s|ed)?)\s+"
     r"(?:pr\s*)?#(\d+)",
@@ -718,8 +721,13 @@ def collect_dev(api: Api) -> tuple[list[dict], list[dict]]:
     so the run before it is read only when the newest failed."""
     runs, failures = [], []
     for wf, prefix in DEV_PUSH_WORKFLOWS.items():
-        listing = api.get(f"/actions/workflows/{wf}/runs?event=push&branch=dev&status=completed&per_page=20")
-        done = [r for r in listing.get("workflow_runs") or [] if r.get("conclusion") in ("success", "failure")]
+        done = []
+        for page in range(1, DEV_PUSH_PAGES + 1):
+            listing = api.get(f"/actions/workflows/{wf}/runs?event=push&branch=dev&status=completed&per_page=20&page={page}")
+            batch = listing.get("workflow_runs") or []
+            done += [r for r in batch if r.get("conclusion") in ("success", "failure")]
+            if len(done) >= 2 or len(batch) < 20:
+                break
         done.sort(key=lambda r: r["created_at"], reverse=True)
         if not done:
             continue

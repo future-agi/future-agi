@@ -21,7 +21,7 @@ name: PR approval
 #   label, and the pull request goes alone; under CI_SCOPE_MODE=light the
 #   job also adds ci:full and re-runs the head's light Backend CI run in full. When the variable
 #   APPROVAL_MODE_TIGHT is "1", the lowest tier is medium; it never adds
-#   needs-human. Paths that need a person are the floor block in
+#   needs-human. Paths that need a person are the owner lines in
 #   .github/CODEOWNERS: the dev ruleset's code owner review enforces it,
 #   whatever the bot approves.
 #   See .github/scripts/devflow_approval.py.

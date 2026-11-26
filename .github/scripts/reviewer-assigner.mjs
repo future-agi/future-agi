@@ -16,6 +16,7 @@ import { dirname, resolve } from "node:path";
 import {
   REASSIGN_AFTER_MS,
   candidatesFor,
+  hasHumanReviewRequest,
   parseAssignment,
   pickLeastLoaded,
   reassignDue,
@@ -180,12 +181,9 @@ async function assignForPr(prNumber) {
     log(`  draft PR, skipping`);
     return;
   }
-  if (
-    (pr.requested_reviewers?.length ?? 0) > 0 ||
-    (pr.requested_teams?.length ?? 0) > 0
-  ) {
+  if (hasHumanReviewRequest(pr)) {
     log(
-      `  already has reviewers (${pr.requested_reviewers.map((r) => r.login).join(",")} + teams=${pr.requested_teams.length}), skipping`,
+      `  already has reviewers (${pr.requested_reviewers.map((r) => r.login).join(",")} + teams=${pr.requested_teams.map((t) => t.slug).join(",")}), skipping`,
     );
     return;
   }

@@ -19,7 +19,7 @@ verdict's diff-only tier_check and the deterministic risk scan):
 
 In `observe` mode it only writes the decision to the job summary: no
 approval, no label. Paths that need a person are not decided here: the
-floor block in .github/CODEOWNERS is the one source, and GitHub's code owner
+owner lines in .github/CODEOWNERS are the one source, and GitHub's code owner
 review enforces it, whatever the bot approves.
 
     python3 -I devflow_approval.py --repo owner/name --pr 1234 [--mode devflow|observe]
@@ -613,7 +613,7 @@ def main(argv=None) -> int:
             return 0
         body = (
             "Approved automatically: a passing low-tier devflow agent review on this commit. "
-            "Paths in the CODEOWNERS floor still need a code owner. The change still lands "
+            "Paths with a CODEOWNERS owner still need a code owner. The change still lands "
             "only through the dev merge queue and its required checks."
         )
         gh(

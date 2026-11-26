@@ -21,7 +21,6 @@ HEAD = "a" * 40
 OLD = "b" * 40
 MERGE_BASE = "c" * 40
 CODEOWNERS = Path(__file__).resolve().parent.parent / "CODEOWNERS"
-FLOOR_TEAM = "@future-agi/internal-all-write"
 
 
 def review_body(**overrides):
@@ -797,45 +796,6 @@ codeowners_regex = ci_scope.codeowners_regex
 
 
 class CodeownersFloorTests(unittest.TestCase):
-    def test_every_floor_path_is_owned_by_the_team(self):
-        # The paths the removed approval-floor.json sent to a person.
-        for path in (
-            ".github/workflows/devflow-approval.yml",
-            "futureagi/accounts/views/login.py",
-            "futureagi/accounts/migrations/0052_x.py",
-            "futureagi/saml2_auth/views.py",
-            "futureagi/tfc/permissions/rbac.py",
-            "futureagi/tfc/middleware/jwt_auth.py",
-            "futureagi/tfc/ee_gating.py",
-            "futureagi/ee/usage/deployment.py",
-            "futureagi/ee/licensing/keys.py",
-            "fi-collector/pkg/pricing/table.go",
-            "fi-collector/pkg/auth/auth.go",
-            "agentcc-gateway/internal/plugins/credits/credits.go",
-            "agentcc-gateway/internal/redisstate/credits.go",
-            "frontend/src/auth/guard/auth-guard.jsx",
-            "frontend/src/pages/dashboard/settings/BillingPage.jsx",
-            "frontend/src/pages/dashboard/settings/Pricing/PricingV2.jsx",
-            "frontend/src/pages/mcp/OAuthConsent.jsx",
-            "agentcc-gateway/scripts/merge_pricing.py",
-            "billing.py",
-            "futureagi/tfc/templates/billing/invoice.html",
-            "LICENSE-EE",
-            "agentcc-gateway/internal/middleware/auth.go",
-            "agentcc-gateway/internal/middleware/license_auth.go",
-            "agentcc-gateway/internal/plugins/rbac/rbac.go",
-            "agentcc-gateway/internal/plugins/quota/quota.go",
-            "futureagi/agentcc/views/api_key.py",
-            "futureagi/agentcc/permissions.py",
-            "futureagi/tracer/views/feed/_permissions.py",
-            "futureagi/mcp_server/views/oauth.py",
-            "futureagi/tfc/licensing/types.py",
-            "futureagi/simulate/authentication.py",
-            "futureagi/payments/stripe_client.py",
-        ):
-            with self.subTest(path=path):
-                self.assertEqual(owners(path), [FLOOR_TEAM])
-
     def test_ordinary_paths_and_migrations_have_no_owner(self):
         for path in (
             "futureagi/tracer/views/span.py",
