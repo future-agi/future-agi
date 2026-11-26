@@ -1084,7 +1084,8 @@ def execute(result: dict, live: Live, red_runs: dict):
                     live.label(pr, STALE_LABEL)
             live.close(
                 rollup,
-                f"Closed by the batch train: rebuilding. {act.get('why') or ''} Dropped: {act['drop'] or 'none'}.",
+                f"Closed by the batch train: rebuilding{': ' + act['why'] if act.get('why') else ''}."
+                f" Dropped: {act['drop'] or 'none'}.",
             )
         elif kind == "release":
             live.close(
