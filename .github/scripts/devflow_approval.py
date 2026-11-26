@@ -492,11 +492,20 @@ def start_full_run(repo: str, head: str) -> None:
         gh("api", f"repos/{repo}/actions/workflows/backend-ci.yml/runs?event=pull_request&head_sha={head}&per_page=20")
     ).get("workflow_runs") or []
     run = max(runs, key=lambda r: r["created_at"]) if runs else None
-    jobs = []
-    if run:
-        out = gh("api", "--paginate", f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100", "--jq", ".jobs[]")
-        jobs = [json.loads(line) for line in out.splitlines() if line.strip()]
-    action = full_run_action(run, jobs)
+    # needs-human makes later events skip, so wait here (about a minute) for
+    # the changes job to decide the plan rather than leave it to them.
+    for _ in range(12):
+        jobs = []
+        if run:
+            out = gh("api", "--paginate", f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100", "--jq", ".jobs[]")
+            jobs = [json.loads(line) for line in out.splitlines() if line.strip()]
+        action = full_run_action(run, jobs)
+        if action != "wait":
+            break
+        time.sleep(10)
+    else:
+        print(f"::warning::run {run['id']} has not planned after 2 minutes; re-run it after adding ci:full")
+        return
     print(f"full run for {head[:12]}: {action}")
     if action == "cancel-rerun":
         gh("api", "-X", "POST", f"repos/{repo}/actions/runs/{run['id']}/cancel")

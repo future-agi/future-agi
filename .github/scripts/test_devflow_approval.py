@@ -589,6 +589,14 @@ class TierContractTests(unittest.TestCase):
         self.assertEqual(len(writes), 2)
         writes = high("light", [dict(going, created_at="b")], [plan])
         self.assertEqual([w[3] for w in writes[1:]], [f"repos/{REPO}/actions/runs/9/cancel", f"repos/{REPO}/actions/runs/9/rerun"])
+        # A plan never decided: it waits about two minutes, then re-runs nothing.
+        sleeps = []
+        real_sleep, da.time.sleep = da.time.sleep, sleeps.append
+        try:
+            writes = high("light", [dict(going, created_at="b")], [{"name": "changes", "status": "in_progress"}])
+        finally:
+            da.time.sleep = real_sleep
+        self.assertEqual((len(writes), sum(sleeps)), (1, 120))
         # Full mode: only needs-human, no label for the plan and no re-run.
         writes = high("", [dict(done, created_at="b")], [plan])
         self.assertEqual([w[-1] for w in writes], [f"labels[]={da.STOP_LABEL}"])
