@@ -168,6 +168,8 @@ class HarnessCallSerializer(serializers.Serializer):
     )
     script_completed = serializers.BooleanField(required=False)
     target_metrics = HarnessTargetMetricsSerializer(required=False, allow_null=True)
+    # Writes the world applied twice after the agent's answer was lost: the agent's failure, whatever the checks say.
+    duplicate_commits = serializers.IntegerField(min_value=0, required=False)
 
 
 HARNESS_FAILURE_DOMAINS = (

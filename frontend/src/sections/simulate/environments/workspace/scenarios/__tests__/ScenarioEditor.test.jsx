@@ -632,3 +632,26 @@ describe("ScenarioEditor test conditions", () => {
     expect(screen.queryByText("This tool cannot be held")).toBeNull();
   });
 });
+
+describe("ScenarioEditor grading-only fields", () => {
+  it("groups only the fields the environment keeps for grading under one badge", () => {
+    render(
+      <ScenarioEditor
+        open
+        row={ROW}
+        env={ENV}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        scenarioEditing={EDITING}
+        privateFields={["tests", "negative_controls"]}
+      />,
+    );
+    expect(screen.getAllByText("Grading only")).toHaveLength(1);
+    const marked = screen.getByText("How it's marked");
+    const after = (field) =>
+      marked.compareDocumentPosition(screen.getByLabelText(field)) &
+      Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(after("Passes when")).toBeTruthy();
+    expect(after("Sub-goals")).toBeFalsy();
+  });
+});
