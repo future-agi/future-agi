@@ -39,15 +39,22 @@ and the unconditional unique index on Report.attempt_id are checked before any
 write. Plans are expectations, never measurements: the shipping driver's
 independent count(*) / pg_total_relation_size measurement remains authoritative.
 
-Every app_python call has a fixed 180s limit, so no call's work grows with the
-requested scale. Writes go in 2,500-job chunks. Payload verification reads
-10,000 jobs per call. Exact cohort counts are summed over one UUID-range bucket
-per scale block, so the buckets read each row exactly once and also catch
-unexpected extra rows. After the target migrates, qualification's
-large_volume_migrations assertion runs the same bounded slices and buckets on
-the target. It checks that every eligible membership, including the
-soft-deleted ones, carries its own job's root end time with source
-omega_root_end, and that every negative control is still NULL. Runtime evidence
+Every app_python call has a fixed 180s limit, so the payload and cohort reads
+are bounded per call at any accepted scale. Writes go in 2,500-job chunks.
+Payload verification reads 10,000 jobs per call. Exact cohort counts are summed
+over one UUID-range bucket per scale block, so the buckets read each row exactly
+once and also catch unexpected extra rows. Two kinds of count are not
+bucketed, and both grow with the table:
+- PREPARE's whole-table and fixture counts; on a fresh source the fixture
+  count is zero, and it is non-trivial only on resume;
+- the cohort call for bucket 0, which also runs the same whole-table count(*)
+  that the driver's independent measurement runs.
+
+After the target migrates, qualification's large_volume_migrations assertion
+runs the same bounded slices and buckets on the target. It checks that every
+eligible membership, including the soft-deleted ones, carries its own job's root
+end time with source omega_root_end, and that every negative control is still
+NULL. Runtime evidence
 repair skips soft-deleted rows, so only 0118 can fill those 1,000 per block.
 Host code is stdlib; the fixed programs below run in the app container.
 """
