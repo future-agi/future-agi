@@ -587,6 +587,29 @@ export interface TimezoneResponseApi {
   timezone: string;
 }
 
+export type EmailUnsubscribeRequestApiAction =
+  (typeof EmailUnsubscribeRequestApiAction)[keyof typeof EmailUnsubscribeRequestApiAction];
+
+export const EmailUnsubscribeRequestApiAction = {
+  unsubscribe: "unsubscribe",
+  resubscribe: "resubscribe",
+} as const;
+
+export interface EmailUnsubscribeRequestApi {
+  action?: EmailUnsubscribeRequestApiAction;
+}
+
+export type SnoozeRequestApiAction =
+  (typeof SnoozeRequestApiAction)[keyof typeof SnoozeRequestApiAction];
+
+export const SnoozeRequestApiAction = {
+  snooze: "snooze",
+} as const;
+
+export interface SnoozeRequestApi {
+  action?: SnoozeRequestApiAction;
+}
+
 export interface UserOnboardingResultApi {
   role: string;
   goals: string[];
@@ -19411,6 +19434,23 @@ export interface AgentFixIssueScenariosApi {
   limit: number;
 }
 
+/**
+ * pull_request for a GitHub agent; make_default for an uploaded one.
+ */
+export type AgentFixShipReadinessApiPath =
+  (typeof AgentFixShipReadinessApiPath)[keyof typeof AgentFixShipReadinessApiPath];
+
+export const AgentFixShipReadinessApiPath = {
+  pull_request: "pull_request",
+  make_default: "make_default",
+} as const;
+
+export interface AgentFixShipReadinessApi {
+  /** pull_request for a GitHub agent; make_default for an uploaded one. */
+  path: AgentFixShipReadinessApiPath;
+  blocked: AgentFixFailureApi | null;
+}
+
 export interface AgentFixIssuePlanApi {
   issue: AgentFixIssueApi;
   environment: AgentFixIssueEnvironmentApi | null;
@@ -19419,6 +19459,7 @@ export interface AgentFixIssuePlanApi {
   open_job_id: string | null;
   issue_scenarios: AgentFixIssueScenariosApi | null;
   defaults: AgentFixIssueDefaultsApi;
+  ship: AgentFixShipReadinessApi | null;
 }
 
 export type AgentFixIssueRunApiSurfacesItem =
@@ -19479,9 +19520,8 @@ export interface AgentFixAgentApi {
   /** @minLength 1 */
   kind: string;
   version_id: string;
-  version_number: number;
-  /** @minLength 1 */
-  ref: string;
+  version_number: number | null;
+  ref: string | null;
 }
 
 export type AgentFixRunApiState =
@@ -19536,6 +19576,7 @@ export interface AgentFixEpochIssueApi {
   /** @minLength 1 */
   cluster_id: string;
   project_id: string;
+  title: string | null;
 }
 
 export interface AgentFixCheckRunApi {
@@ -19613,6 +19654,8 @@ export interface AgentFixRunApi {
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
+  /** Run from an Error Feed issue, even once the issue is gone. */
+  readonly from_issue?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
@@ -19681,18 +19724,17 @@ export interface AgentFixLaunchApi {
 
 export interface AgentFixLaunchSourceRunApi {
   id: string;
-  number: number;
+  number: number | null;
   /** @minLength 1 */
   state: string;
-  /** @minLength 1 */
-  finished_at: string;
+  finished_at: string | null;
 }
 
 export interface AgentFixLaunchEnvironmentApi {
   id: string;
   /** @minLength 1 */
   name: string;
-  version: number;
+  version: number | null;
 }
 
 export interface AgentFixLaunchScenarioApi {
@@ -19700,10 +19742,9 @@ export interface AgentFixLaunchScenarioApi {
   key: string;
   /** @minLength 1 */
   name: string;
-  passed: boolean;
+  passed: boolean | null;
   failing_sub_goals: string[];
-  /** The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence. */
-  evidence_import_id: string;
+  evidence_import_id: string | null;
 }
 
 export interface AgentFixLaunchSuggestedApi {
@@ -19742,17 +19783,27 @@ export interface AgentFixLaunchLimitsApi {
   scenarios_max: number;
 }
 
+export interface AgentFixLaunchBlockedApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+  cluster_id: string | null;
+}
+
 export interface AgentFixLaunchOptionsApi {
   source_run: AgentFixLaunchSourceRunApi;
   environment: AgentFixLaunchEnvironmentApi;
-  agent: AgentFixAgentApi;
+  agent: AgentFixAgentApi | null;
   scenarios: AgentFixLaunchScenarioApi[];
   suggested: AgentFixLaunchSuggestedApi;
   surfaces: AgentFixLaunchSurfaceApi[];
   defaults: AgentFixLaunchDefaultsApi;
   limits: AgentFixLaunchLimitsApi;
-  blocked: AgentFixFailureApi;
-  variations_blocked: AgentFixFailureApi;
+  blocked: AgentFixLaunchBlockedApi | null;
+  variations_blocked: AgentFixFailureApi | null;
+  held_back_scenario_keys: string[] | null;
+  ship: AgentFixShipReadinessApi | null;
 }
 
 export type AgentFixRunDetailApiState =
@@ -19780,6 +19831,46 @@ export const AgentFixRunDetailApiEvalGrading = {
   done: "done",
   incomplete: "incomplete",
 } as const;
+
+export type AgentFixRunDetailApiScenarioNames = { [key: string]: string };
+
+export type AgentFixCandidateDetailApiOutcome =
+  (typeof AgentFixCandidateDetailApiOutcome)[keyof typeof AgentFixCandidateDetailApiOutcome];
+
+export const AgentFixCandidateDetailApiOutcome = {
+  pending: "pending",
+  rejected: "rejected",
+  finalist: "finalist",
+  winner: "winner",
+} as const;
+
+export interface AgentFixCandidateWordingApi {
+  headline: string;
+  must_pass: string;
+  /** @minimum 0 */
+  must_pass_broken: number;
+  changes: string | null;
+  caveats: string[];
+}
+
+export interface AgentFixCandidateDetailApi {
+  readonly id?: string;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  attempt: number;
+  agent_version_id: string;
+  version_number: number;
+  summary?: string;
+  outcome?: AgentFixCandidateDetailApiOutcome;
+  verdict: AgentFixVerdictApi;
+  readonly check_runs?: readonly AgentFixCheckRunApi[];
+  override?: AgentFixOverrideApi;
+  pull_request_url: string;
+  readonly created_at?: string;
+  wording?: AgentFixCandidateWordingApi;
+}
 
 export interface AgentFixEvalWarningApi {
   /** @minLength 1 */
@@ -19814,14 +19905,18 @@ export interface AgentFixRunDetailApi {
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
+  /** Run from an Error Feed issue, even once the issue is gone. */
+  readonly from_issue?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
-  candidates: AgentFixCandidateApi[];
+  candidates: AgentFixCandidateDetailApi[];
   started_at?: string | null;
   finished_at?: string | null;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
   readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
+  readonly flaky_protected_text?: readonly string[];
+  readonly scenario_names?: AgentFixRunDetailApiScenarioNames;
 }
 
 export interface AgentFixShipApi {
@@ -20528,6 +20623,580 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+/**
+ * World tool to the agent tool it is paired with, as the person reviewed it.
+ */
+export type HarnessReleaseAgentRequestApiPairing = { [key: string]: string };
+
+/**
+ * review: the builder drafts the binding and the person approves its design. run: the binding is drafted and checked without a session, then the measurable cases run.
+ */
+export type HarnessReleaseAgentRequestApiMode =
+  (typeof HarnessReleaseAgentRequestApiMode)[keyof typeof HarnessReleaseAgentRequestApiMode];
+
+export const HarnessReleaseAgentRequestApiMode = {
+  review: "review",
+  run: "run",
+} as const;
+
+export type HarnessAgentApiConnector =
+  (typeof HarnessAgentApiConnector)[keyof typeof HarnessAgentApiConnector];
+
+export const HarnessAgentApiConnector = {
+  livekit: "livekit",
+  vapi: "vapi",
+  retell: "retell",
+  retell_chat: "retell_chat",
+  phone: "phone",
+  auto: "auto",
+  hosted_agent: "hosted_agent",
+} as const;
+
+export type HarnessAgentApiMode =
+  (typeof HarnessAgentApiMode)[keyof typeof HarnessAgentApiMode];
+
+export const HarnessAgentApiMode = {
+  connect_only: "connect_only",
+  environment_backed: "environment_backed",
+  provider_import: "provider_import",
+} as const;
+
+/**
+ * inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.
+ */
+export type HarnessAgentApiCallDirection =
+  (typeof HarnessAgentApiCallDirection)[keyof typeof HarnessAgentApiCallDirection];
+
+export const HarnessAgentApiCallDirection = {
+  inbound: "inbound",
+  outbound: "outbound",
+} as const;
+
+export type SecretReferenceApiManager =
+  (typeof SecretReferenceApiManager)[keyof typeof SecretReferenceApiManager];
+
+export const SecretReferenceApiManager = {
+  "platform-vault": "platform-vault",
+  "platform-config": "platform-config",
+} as const;
+
+export type SecretReferenceApiPurpose =
+  (typeof SecretReferenceApiPurpose)[keyof typeof SecretReferenceApiPurpose];
+
+export const SecretReferenceApiPurpose = {
+  target_provider: "target_provider",
+  simulator_provider: "simulator_provider",
+  source_checkout: "source_checkout",
+} as const;
+
+export interface SecretReferenceApi {
+  manager: SecretReferenceApiManager;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  key: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  version?: string;
+  purpose: SecretReferenceApiPurpose;
+}
+
+export type HarnessAgentApiConfig = { [key: string]: unknown };
+
+export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
+
+/**
+ * How the hosted agent is reached. Omitted for an agent connected on the Agents page: its provider, agent id and stored key are read from the version.
+ */
+export interface HarnessAgentApi {
+  connector: HarnessAgentApiConnector;
+  mode?: HarnessAgentApiMode;
+  /** inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only. */
+  call_direction?: HarnessAgentApiCallDirection;
+  config?: HarnessAgentApiConfig;
+  secret_refs?: HarnessAgentApiSecretRefs;
+}
+
+export interface HarnessReleaseAgentRequestApi {
+  suite_id: string;
+  agent_version_id: string;
+  agent?: HarnessAgentApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+  /**
+   * Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.
+   * @minimum 1
+   * @maximum 8
+   */
+  parallelism?: number;
+  /** World tool to the agent tool it is paired with, as the person reviewed it. */
+  pairing?: HarnessReleaseAgentRequestApiPairing;
+  /** review: the builder drafts the binding and the person approves its design. run: the binding is drafted and checked without a session, then the measurable cases run. */
+  mode?: HarnessReleaseAgentRequestApiMode;
+}
+
+export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
+
+export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
+
+export type HarnessJobInfoApiSource = { [key: string]: string };
+
+export type HarnessJobInfoApiMetadata = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export type HarnessJobInfoApiRuntime = { [key: string]: string };
+
+export interface HarnessJobInfoApi {
+  job_id: string;
+  run_id: string;
+  source: HarnessJobInfoApiSource;
+  metadata: HarnessJobInfoApiMetadata;
+  runtime?: HarnessJobInfoApiRuntime;
+  run_test_id: string;
+  test_execution_id: string;
+}
+
+export type HarnessJobStatusApiCancelConfirmedBy =
+  (typeof HarnessJobStatusApiCancelConfirmedBy)[keyof typeof HarnessJobStatusApiCancelConfirmedBy];
+
+export const HarnessJobStatusApiCancelConfirmedBy = {
+  sandbox_absent: "sandbox_absent",
+  provider_call_ended: "provider_call_ended",
+  cleanup_failed: "cleanup_failed",
+  provider_call_open: "provider_call_open",
+  provider_unchecked: "provider_unchecked",
+  unchecked_no_key: "unchecked_no_key",
+  unchecked_key_rejected: "unchecked_key_rejected",
+  unchecked_no_target: "unchecked_no_target",
+  unchecked_no_calls: "unchecked_no_calls",
+  unchecked_too_many_calls: "unchecked_too_many_calls",
+} as const;
+
+export type HarnessJobStatusApiCancelStatus =
+  (typeof HarnessJobStatusApiCancelStatus)[keyof typeof HarnessJobStatusApiCancelStatus];
+
+export const HarnessJobStatusApiCancelStatus = {
+  requested: "requested",
+  confirmed: "confirmed",
+  unconfirmed: "unconfirmed",
+  cleanup_failed: "cleanup_failed",
+} as const;
+
+export type HarnessJobStatusApiFailure = { [key: string]: unknown };
+
+export interface HarnessJobStatusApi {
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  updated_at: string;
+  attempt: number;
+  completed_scenarios: number;
+  failed_scenarios: number;
+  active_scenarios?: number;
+  queued_scenarios?: number;
+  total_scenarios: number;
+  /** @minLength 1 */
+  deadline_at: string;
+  /** @minLength 1 */
+  cancel_requested_at?: string;
+  /** @minLength 1 */
+  cancel_confirmed_at?: string;
+  cancel_confirmed_by?: HarnessJobStatusApiCancelConfirmedBy;
+  cancel_status?: HarnessJobStatusApiCancelStatus;
+  failure: HarnessJobStatusApiFailure;
+}
+
+export type HarnessJobEventApiPayload = { [key: string]: unknown };
+
+export interface HarnessJobEventApi {
+  /** @minLength 1 */
+  event_id: string;
+  sequence: number;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  type: string;
+  payload: HarnessJobEventApiPayload;
+  /** @minLength 1 */
+  emitted_at: string;
+}
+
+export type HarnessStageOutputApiData = { [key: string]: unknown };
+
+export interface HarnessStageOutputApi {
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  summary: string;
+  /** @minLength 1 */
+  kind: string;
+  data: HarnessStageOutputApiData;
+}
+
+export interface HarnessScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  name: string;
+  instruction?: string;
+  use_case?: string;
+  call_execution_id?: string;
+  /** @minLength 1 */
+  status?: string;
+}
+
+export interface HarnessPlatformApi {
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  url: string;
+}
+
+export interface HarnessDiagnosticsApi {
+  /** @minLength 1 */
+  object_key?: string;
+  /** @minLength 1 */
+  sha256?: string;
+  size: number;
+  /** @minLength 1 */
+  captured_at?: string;
+  final: boolean;
+  error: string;
+}
+
+export interface HarnessRuntimeReadApi {
+  /** @minLength 1 */
+  sandbox_id?: string;
+  diagnostics?: HarnessDiagnosticsApi;
+}
+
+export interface HarnessParallelismApi {
+  requested: number;
+  admitted: number;
+  effective: number;
+  degrade_reasons: string[];
+}
+
+export type HarnessConversationBlockingInputApiOptionsItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessConversationBlockingInputApi {
+  /** @minLength 1 */
+  message_id: string;
+  /**
+   * question_requested or confirmation_requested.
+   * @minLength 1
+   */
+  kind: string;
+  prompt?: string;
+  options?: HarnessConversationBlockingInputApiOptionsItem[];
+  /** True when only one of its options answers it: free text is not an answer. */
+  options_only?: boolean;
+}
+
+export type HarnessConversationMessageApiRole =
+  (typeof HarnessConversationMessageApiRole)[keyof typeof HarnessConversationMessageApiRole];
+
+export const HarnessConversationMessageApiRole = {
+  user: "user",
+  assistant: "assistant",
+  system: "system",
+} as const;
+
+export type HarnessConversationMessageApiKind =
+  (typeof HarnessConversationMessageApiKind)[keyof typeof HarnessConversationMessageApiKind];
+
+export const HarnessConversationMessageApiKind = {
+  message: "message",
+  question: "question",
+  confirmation: "confirmation",
+  status: "status",
+} as const;
+
+export type HarnessConversationMessageApiState =
+  (typeof HarnessConversationMessageApiState)[keyof typeof HarnessConversationMessageApiState];
+
+export const HarnessConversationMessageApiState = {
+  queued: "queued",
+  delivered: "delivered",
+  streaming: "streaming",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type HarnessConversationMessageApiPayload = { [key: string]: unknown };
+
+export interface HarnessConversationMessageApi {
+  message_id: string;
+  /** @minimum 1 */
+  sequence: number;
+  role: HarnessConversationMessageApiRole;
+  kind: HarnessConversationMessageApiKind;
+  state: HarnessConversationMessageApiState;
+  stage: string;
+  content: string;
+  payload: HarnessConversationMessageApiPayload;
+  /** @minLength 1 */
+  invocation_id?: string;
+  /** @minLength 1 */
+  function_call_id?: string;
+  reply_to?: string;
+  created_at: string;
+}
+
+export type HarnessConversationEventReadApiPayload = { [key: string]: unknown };
+
+export interface HarnessConversationEventReadApi {
+  /** @minLength 1 */
+  event_id: string;
+  /** @minimum 1 */
+  sequence: number;
+  /** @minLength 1 */
+  kind: string;
+  message_id?: string;
+  stage: string;
+  /** @minLength 1 */
+  invocation_id?: string;
+  /** @minLength 1 */
+  function_call_id?: string;
+  payload: HarnessConversationEventReadApiPayload;
+  emitted_at: string;
+}
+
+export interface HarnessConversationWindowApi {
+  /** The oldest sequence in this read; read what came before it with `before` set to it. */
+  oldest_sequence: number;
+  /** Items before `oldest_sequence` this read leaves out. */
+  has_older: boolean;
+}
+
+/**
+ * Where `messages` and `events` start, and whether older ones can be read with the history read.
+ */
+export interface HarnessConversationHistoryApi {
+  messages: HarnessConversationWindowApi;
+  events?: HarnessConversationWindowApi;
+}
+
+export interface HarnessConversationRuntimeApi {
+  /** @minLength 1 */
+  state: string;
+  warm_until: string;
+  degraded: boolean;
+  available: boolean;
+}
+
+export interface HarnessConversationReadApi {
+  conversation_id: string;
+  job_id: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+  /** @minLength 1 */
+  active_invocation_id: string;
+  blocking_input: HarnessConversationBlockingInputApi;
+  messages: HarnessConversationMessageApi[];
+  events: HarnessConversationEventReadApi[];
+  /** @minimum 0 */
+  event_watermark: number;
+  history: HarnessConversationHistoryApi;
+  /** On a read with `events_after`, whether more events past the last one here are left to read. */
+  events_has_newer: boolean;
+  runtime: HarnessConversationRuntimeApi;
+}
+
+export interface HarnessConsumptionApi {
+  /** @minimum 0 */
+  text_sim_tokens: number;
+  /** @minimum 0 */
+  voice_sim_minutes: number;
+  /** @minimum 0 */
+  ai_credits: number;
+  /** @minimum 0 */
+  sandbox_seconds: number;
+}
+
+export interface HarnessVersioningFlagsApi {
+  enabled: boolean;
+  nudges_enabled: boolean;
+}
+
+export interface HarnessJobReadApi {
+  job: HarnessJobInfoApi;
+  status: HarnessJobStatusApi;
+  events: HarnessJobEventApi[];
+  stage_outputs: HarnessStageOutputApi[];
+  scenarios: HarnessScenarioApi[];
+  receipts: HarnessJobReadApiReceiptsItem[];
+  platform: HarnessPlatformApi;
+  runtime?: HarnessRuntimeReadApi;
+  parallelism?: HarnessParallelismApi;
+  conversation?: HarnessConversationReadApi;
+  consumption?: HarnessConsumptionApi;
+  usage_limit?: HarnessJobReadApiUsageLimit;
+  versioning?: HarnessVersioningFlagsApi;
+}
+
+export interface HarnessAdaptationApprovedApi {
+  /** The adaptation that was approved. */
+  id: string;
+}
+
+/**
+ * checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists.
+ */
+export type HarnessAdaptationDesignApiState =
+  (typeof HarnessAdaptationDesignApiState)[keyof typeof HarnessAdaptationDesignApiState];
+
+export const HarnessAdaptationDesignApiState = {
+  checking: "checking",
+  awaiting_approval: "awaiting_approval",
+  building: "building",
+  ready: "ready",
+  failed: "failed",
+} as const;
+
+export type HarnessAdaptationDesignApiFailure = { [key: string]: unknown };
+
+/**
+ * What checking the mapping on every case found, once it has: the approval's data.
+ */
+export type HarnessAdaptationDesignApiCheck = { [key: string]: unknown };
+
+export interface HarnessReleaseFitAgentApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface HarnessReleaseFitToolApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description?: string;
+}
+
+export interface HarnessReleaseAgentRuleApi {
+  /** @minLength 1 */
+  id: string;
+  text: string;
+}
+
+export type HarnessAdaptationWorldApiRecords = { [key: string]: number };
+
+export interface HarnessAdaptationWorldApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  title: string;
+  summary: string;
+  /** @minLength 1 */
+  channel: string;
+  /**
+   * The release's digest.
+   * @minLength 1
+   */
+  release: string;
+  records: HarnessAdaptationWorldApiRecords;
+  tools: HarnessReleaseFitToolApi[];
+  rules: HarnessReleaseAgentRuleApi[];
+  people: string[];
+}
+
+export interface HarnessAdaptationCaseApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  title: string;
+}
+
+export type HarnessReleaseFitRowApiKind =
+  (typeof HarnessReleaseFitRowApiKind)[keyof typeof HarnessReleaseFitRowApiKind];
+
+export const HarnessReleaseFitRowApiKind = {
+  matched: "matched",
+  mapped: "mapped",
+  missing: "missing",
+} as const;
+
+export interface HarnessReleaseFitRowApi {
+  /** @minLength 1 */
+  world: string;
+  /** @minLength 1 */
+  agent: string;
+  kind: HarnessReleaseFitRowApiKind;
+}
+
+export interface HarnessReleaseFitCaseApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  title: string;
+}
+
+export interface HarnessReleaseFitResponseApi {
+  agent: HarnessReleaseFitAgentApi;
+  agent_tools: HarnessReleaseFitToolApi[];
+  rows: HarnessReleaseFitRowApi[];
+  platform_actions: HarnessReleaseFitToolApi[];
+  total: number;
+  unmeasured: HarnessReleaseFitCaseApi[];
+}
+
+export interface HarnessReleaseConflictApi {
+  /** @minLength 1 */
+  rule: string;
+  /**
+   * The rule as the world states it.
+   * @minLength 1
+   */
+  policy: string;
+  /**
+   * The agent's instruction, quoted.
+   * @minLength 1
+   */
+  agent: string;
+}
+
+export interface HarnessReleaseConflictsResponseApi {
+  /** False when the instructions couldn't be read against the rules yet. */
+  checked: boolean;
+  conflicts: HarnessReleaseConflictApi[];
+}
+
+export interface HarnessAdaptationDesignApi {
+  /** checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists. */
+  state: HarnessAdaptationDesignApiState;
+  failure: HarnessAdaptationDesignApiFailure;
+  composition_id: string;
+  agent: HarnessReleaseFitAgentApi;
+  world: HarnessAdaptationWorldApi;
+  /** @minLength 1 */
+  suite: string;
+  scenarios: HarnessAdaptationCaseApi[];
+  fit: HarnessReleaseFitResponseApi;
+  conflicts: HarnessReleaseConflictsResponseApi;
+  /** What checking the mapping on every case found, once it has: the approval's data. */
+  check: HarnessAdaptationDesignApiCheck;
+}
+
 export type HarnessEnvironmentApiAgentType =
   (typeof HarnessEnvironmentApiAgentType)[keyof typeof HarnessEnvironmentApiAgentType];
 
@@ -20540,6 +21209,7 @@ export type HarnessEnvironmentApiStatus =
   (typeof HarnessEnvironmentApiStatus)[keyof typeof HarnessEnvironmentApiStatus];
 
 export const HarnessEnvironmentApiStatus = {
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -20585,9 +21255,12 @@ export interface HarnessEnvironmentApi {
   created_at: string;
   agent: HarnessEnvironmentAgentRefApi;
   last_run: HarnessRunSummaryApi;
+  /** Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing. */
+  epoch_pickable: boolean;
 }
 
 export interface HarnessEnvironmentStatusCountsApi {
+  awaiting_approval: number;
   building: number;
   running: number;
   completed: number;
@@ -20629,6 +21302,7 @@ export type HarnessEnvironmentOverviewApiStatus =
   (typeof HarnessEnvironmentOverviewApiStatus)[keyof typeof HarnessEnvironmentOverviewApiStatus];
 
 export const HarnessEnvironmentOverviewApiStatus = {
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -21354,6 +22028,107 @@ export interface HarnessEnvironmentSettingsApi {
   enable_tool_evaluation: boolean;
 }
 
+export interface HarnessCompositionReleaseApi {
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+/**
+ * The environment's agent_policy rules no scenario in this suite grades.
+ */
+export interface HarnessCompositionRuleApi {
+  /** @minLength 1 */
+  id: string;
+  text: string;
+}
+
+export type HarnessCompositionScenarioApiOrigin =
+  (typeof HarnessCompositionScenarioApiOrigin)[keyof typeof HarnessCompositionScenarioApiOrigin];
+
+export const HarnessCompositionScenarioApiOrigin = {
+  base: "base",
+  specialized: "specialized",
+  custom: "custom",
+} as const;
+
+export interface HarnessCompositionScenarioApi {
+  /** @minLength 1 */
+  key: string;
+  origin: HarnessCompositionScenarioApiOrigin;
+  /** @minLength 1 */
+  derived_from: string;
+}
+
+export type HarnessCompositionSuiteApiPolicyProfile = {
+  [key: string]: unknown;
+};
+
+export interface HarnessCompositionSuiteApi {
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  parent_digest: string;
+  policy_profile: HarnessCompositionSuiteApiPolicyProfile;
+  /** The environment's agent_policy rules no scenario in this suite grades. */
+  unscored_agent_rules: HarnessCompositionRuleApi[];
+  scenarios: HarnessCompositionScenarioApi[];
+}
+
+export type HarnessCompositionBindingApiMode =
+  (typeof HarnessCompositionBindingApiMode)[keyof typeof HarnessCompositionBindingApiMode];
+
+export const HarnessCompositionBindingApiMode = {
+  canonical: "canonical",
+  tool_routed: "tool_routed",
+} as const;
+
+export type HarnessCompositionBindingApiAgentToolsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessCompositionBindingApiToolsItem = { [key: string]: unknown };
+
+export interface HarnessCompositionBindingApi {
+  /** @minLength 1 */
+  digest: string;
+  mode: HarnessCompositionBindingApiMode;
+  agent_tools: HarnessCompositionBindingApiAgentToolsItem[];
+  tools: HarnessCompositionBindingApiToolsItem[];
+}
+
+export interface HarnessCompositionAgentApi {
+  agent_definition_id: string;
+  agent_version_id: string;
+  /** @minLength 1 */
+  connector: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  version_name: string;
+}
+
+export type HarnessCompositionProofApiScenarios = { [key: string]: unknown };
+
+export interface HarnessCompositionProofApi {
+  passed: boolean;
+  scenarios: HarnessCompositionProofApiScenarios;
+}
+
+export type HarnessCompositionApiAlignment = { [key: string]: unknown };
+
+export interface HarnessCompositionApi {
+  environment: HarnessCompositionReleaseApi[];
+  suite: HarnessCompositionSuiteApi;
+  binding: HarnessCompositionBindingApi;
+  agent: HarnessCompositionAgentApi;
+  alignment: HarnessCompositionApiAlignment;
+  binding_proof: HarnessCompositionProofApi;
+}
+
 export interface HarnessEnvironmentDetailApi {
   id: string;
   overview: HarnessEnvironmentOverviewApi;
@@ -21364,6 +22139,7 @@ export interface HarnessEnvironmentDetailApi {
   settings: HarnessEnvironmentSettingsApi;
   /** edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab. */
   actors_tab: HarnessEnvironmentDetailApiActorsTab;
+  composition: HarnessCompositionApi;
 }
 
 export interface HarnessEnvironmentRenameApi {
@@ -24237,6 +25013,113 @@ export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   call_execution_count: number;
 }
 
+export type HarnessRunReportApiRunMode =
+  (typeof HarnessRunReportApiRunMode)[keyof typeof HarnessRunReportApiRunMode];
+
+export const HarnessRunReportApiRunMode = {
+  canonical: "canonical",
+  tool_routed: "tool_routed",
+  conversation_only: "conversation_only",
+} as const;
+
+export type HarnessRunReportManifestApiEnvironmentItem = {
+  [key: string]: string;
+};
+
+export type HarnessRunReportManifestApiSuite = { [key: string]: string };
+
+export type HarnessRunReportManifestApiBinding = { [key: string]: string };
+
+export type HarnessRunReportManifestApiBindingProof = { [key: string]: string };
+
+export type HarnessRunReportManifestApiAgent = { [key: string]: string };
+
+export type HarnessRunReportManifestApiSelection = { [key: string]: string };
+
+export type HarnessRunReportManifestApiSimulator = { [key: string]: string };
+
+export type HarnessRunReportManifestApiScorer = { [key: string]: string };
+
+export type HarnessRunReportManifestApiRuntime = { [key: string]: string };
+
+export interface HarnessRunReportManifestApi {
+  /** @minLength 1 */
+  digest: string;
+  environment: HarnessRunReportManifestApiEnvironmentItem[];
+  suite: HarnessRunReportManifestApiSuite;
+  binding: HarnessRunReportManifestApiBinding;
+  binding_proof?: HarnessRunReportManifestApiBindingProof;
+  agent: HarnessRunReportManifestApiAgent;
+  selection: HarnessRunReportManifestApiSelection;
+  simulator: HarnessRunReportManifestApiSimulator;
+  scorer: HarnessRunReportManifestApiScorer;
+  runtime: HarnessRunReportManifestApiRuntime;
+}
+
+export interface HarnessRunReportComparabilityApi {
+  /** @minLength 1 */
+  baseline_run_id: string;
+  comparable: boolean;
+  differing: string[];
+}
+
+export interface HarnessRunReportCoverageApi {
+  runnable: number;
+  suite_scenarios: number;
+  base_scenarios: number;
+  unscorable: string[];
+  extension_tools: string[];
+}
+
+export interface HarnessRunReportUseCaseApi {
+  use_case: string;
+  scenarios: number;
+  trials: number;
+  pass_1: number;
+  pass_k: number;
+}
+
+export type HarnessRunReportScenarioApiOrigin =
+  (typeof HarnessRunReportScenarioApiOrigin)[keyof typeof HarnessRunReportScenarioApiOrigin];
+
+export const HarnessRunReportScenarioApiOrigin = {
+  base: "base",
+  specialized: "specialized",
+  custom: "custom",
+} as const;
+
+export type HarnessRunReportScenarioApiTrialsItem =
+  (typeof HarnessRunReportScenarioApiTrialsItem)[keyof typeof HarnessRunReportScenarioApiTrialsItem];
+
+export const HarnessRunReportScenarioApiTrialsItem = {
+  passed: "passed",
+  failed: "failed",
+  errored: "errored",
+  skipped: "skipped",
+} as const;
+
+export interface HarnessRunReportScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /** @minLength 1 */
+  name: string;
+  use_case: string;
+  origin: HarnessRunReportScenarioApiOrigin;
+  trials: HarnessRunReportScenarioApiTrialsItem[];
+  pass_1: number;
+  passed_all: boolean;
+}
+
+export interface HarnessRunReportApi {
+  run_mode: HarnessRunReportApiRunMode;
+  manifest: HarnessRunReportManifestApi;
+  comparability: HarnessRunReportComparabilityApi;
+  coverage: HarnessRunReportCoverageApi;
+  use_cases: HarnessRunReportUseCaseApi[];
+  scenarios: HarnessRunReportScenarioApi[];
+  environment_faults: number;
+}
+
 export type HarnessScenarioValidationStatusApiState =
   (typeof HarnessScenarioValidationStatusApiState)[keyof typeof HarnessScenarioValidationStatusApiState];
 
@@ -24837,311 +25720,44 @@ export interface HarnessVersionDiffApi {
   snapshot_diff?: HarnessVersionDiffApiSnapshotDiff | null;
 }
 
-export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
+export type HarnessHostedAgentRequestApiModel =
+  (typeof HarnessHostedAgentRequestApiModel)[keyof typeof HarnessHostedAgentRequestApiModel];
 
-export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
-
-export type HarnessJobInfoApiSource = { [key: string]: string };
-
-export type HarnessJobInfoApiMetadata = {
-  [key: string]: { [key: string]: unknown };
-};
-
-export type HarnessJobInfoApiRuntime = { [key: string]: string };
-
-export interface HarnessJobInfoApi {
-  job_id: string;
-  run_id: string;
-  source: HarnessJobInfoApiSource;
-  metadata: HarnessJobInfoApiMetadata;
-  runtime?: HarnessJobInfoApiRuntime;
-  run_test_id: string;
-  test_execution_id: string;
-}
-
-export type HarnessJobStatusApiCancelConfirmedBy =
-  (typeof HarnessJobStatusApiCancelConfirmedBy)[keyof typeof HarnessJobStatusApiCancelConfirmedBy];
-
-export const HarnessJobStatusApiCancelConfirmedBy = {
-  sandbox_absent: "sandbox_absent",
-  provider_call_ended: "provider_call_ended",
-  cleanup_failed: "cleanup_failed",
-  provider_call_open: "provider_call_open",
-  provider_unchecked: "provider_unchecked",
-  unchecked_no_key: "unchecked_no_key",
-  unchecked_key_rejected: "unchecked_key_rejected",
-  unchecked_no_target: "unchecked_no_target",
-  unchecked_no_calls: "unchecked_no_calls",
-  unchecked_too_many_calls: "unchecked_too_many_calls",
+export const HarnessHostedAgentRequestApiModel = {
+  "vertex_ai/gemini-37-flash": "vertex_ai/gemini-3.7-flash",
+  "vertex_ai/gemini-38-flash": "vertex_ai/gemini-3.8-flash",
 } as const;
 
-export type HarnessJobStatusApiCancelStatus =
-  (typeof HarnessJobStatusApiCancelStatus)[keyof typeof HarnessJobStatusApiCancelStatus];
-
-export const HarnessJobStatusApiCancelStatus = {
-  requested: "requested",
-  confirmed: "confirmed",
-  unconfirmed: "unconfirmed",
-  cleanup_failed: "cleanup_failed",
-} as const;
-
-export type HarnessJobStatusApiFailure = { [key: string]: unknown };
-
-export interface HarnessJobStatusApi {
-  /** @minLength 1 */
-  state: string;
-  /** @minLength 1 */
-  stage: string;
-  /** @minLength 1 */
-  updated_at: string;
-  attempt: number;
-  completed_scenarios: number;
-  failed_scenarios: number;
-  active_scenarios?: number;
-  queued_scenarios?: number;
-  total_scenarios: number;
-  /** @minLength 1 */
-  deadline_at: string;
-  /** @minLength 1 */
-  cancel_requested_at?: string;
-  /** @minLength 1 */
-  cancel_confirmed_at?: string;
-  cancel_confirmed_by?: HarnessJobStatusApiCancelConfirmedBy;
-  cancel_status?: HarnessJobStatusApiCancelStatus;
-  failure: HarnessJobStatusApiFailure;
-}
-
-export type HarnessJobEventApiPayload = { [key: string]: unknown };
-
-export interface HarnessJobEventApi {
-  /** @minLength 1 */
-  event_id: string;
-  sequence: number;
-  /** @minLength 1 */
-  stage: string;
-  /** @minLength 1 */
-  type: string;
-  payload: HarnessJobEventApiPayload;
-  /** @minLength 1 */
-  emitted_at: string;
-}
-
-export type HarnessStageOutputApiData = { [key: string]: unknown };
-
-export interface HarnessStageOutputApi {
-  id: string;
-  /** @minLength 1 */
-  title: string;
-  summary: string;
-  /** @minLength 1 */
-  kind: string;
-  data: HarnessStageOutputApiData;
-}
-
-export interface HarnessScenarioApi {
-  /** @minLength 1 */
-  scenario_key: string;
-  scenario_id: string;
-  name: string;
-  instruction?: string;
-  use_case?: string;
-  call_execution_id?: string;
-  /** @minLength 1 */
-  status?: string;
-}
-
-export interface HarnessPlatformApi {
-  run_test_id: string;
-  test_execution_id: string;
-  /** @minLength 1 */
-  url: string;
-}
-
-export interface HarnessDiagnosticsApi {
-  /** @minLength 1 */
-  object_key?: string;
-  /** @minLength 1 */
-  sha256?: string;
-  size: number;
-  /** @minLength 1 */
-  captured_at?: string;
-  final: boolean;
-  error: string;
-}
-
-export interface HarnessRuntimeReadApi {
-  /** @minLength 1 */
-  sandbox_id?: string;
-  diagnostics?: HarnessDiagnosticsApi;
-}
-
-export interface HarnessParallelismApi {
-  requested: number;
-  admitted: number;
-  effective: number;
-  degrade_reasons: string[];
-}
-
-export type HarnessConversationBlockingInputApiOptionsItem = {
-  [key: string]: unknown;
-};
-
-export interface HarnessConversationBlockingInputApi {
-  /** @minLength 1 */
-  message_id: string;
+export interface HarnessHostedAgentRequestApi {
+  suite_id: string;
   /**
-   * question_requested or confirmation_requested.
    * @minLength 1
+   * @maxLength 255
    */
-  kind: string;
-  prompt?: string;
-  options?: HarnessConversationBlockingInputApiOptionsItem[];
-  /** True when only one of its options answers it: free text is not an answer. */
-  options_only?: boolean;
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 65536
+   */
+  instructions: string;
+  model: HarnessHostedAgentRequestApiModel;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+  /**
+   * Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.
+   * @minimum 1
+   * @maximum 8
+   */
+  parallelism?: number;
 }
 
-export type HarnessConversationMessageApiRole =
-  (typeof HarnessConversationMessageApiRole)[keyof typeof HarnessConversationMessageApiRole];
-
-export const HarnessConversationMessageApiRole = {
-  user: "user",
-  assistant: "assistant",
-  system: "system",
-} as const;
-
-export type HarnessConversationMessageApiKind =
-  (typeof HarnessConversationMessageApiKind)[keyof typeof HarnessConversationMessageApiKind];
-
-export const HarnessConversationMessageApiKind = {
-  message: "message",
-  question: "question",
-  confirmation: "confirmation",
-  status: "status",
-} as const;
-
-export type HarnessConversationMessageApiState =
-  (typeof HarnessConversationMessageApiState)[keyof typeof HarnessConversationMessageApiState];
-
-export const HarnessConversationMessageApiState = {
-  queued: "queued",
-  delivered: "delivered",
-  streaming: "streaming",
-  completed: "completed",
-  failed: "failed",
-} as const;
-
-export type HarnessConversationMessageApiPayload = { [key: string]: unknown };
-
-export interface HarnessConversationMessageApi {
-  message_id: string;
-  /** @minimum 1 */
-  sequence: number;
-  role: HarnessConversationMessageApiRole;
-  kind: HarnessConversationMessageApiKind;
-  state: HarnessConversationMessageApiState;
-  stage: string;
-  content: string;
-  payload: HarnessConversationMessageApiPayload;
-  /** @minLength 1 */
-  invocation_id?: string;
-  /** @minLength 1 */
-  function_call_id?: string;
-  reply_to?: string;
-  created_at: string;
-}
-
-export type HarnessConversationEventReadApiPayload = { [key: string]: unknown };
-
-export interface HarnessConversationEventReadApi {
-  /** @minLength 1 */
-  event_id: string;
-  /** @minimum 1 */
-  sequence: number;
-  /** @minLength 1 */
-  kind: string;
-  message_id?: string;
-  stage: string;
-  /** @minLength 1 */
-  invocation_id?: string;
-  /** @minLength 1 */
-  function_call_id?: string;
-  payload: HarnessConversationEventReadApiPayload;
-  emitted_at: string;
-}
-
-export interface HarnessConversationWindowApi {
-  /** The oldest sequence in this read; read what came before it with `before` set to it. */
-  oldest_sequence: number;
-  /** Items before `oldest_sequence` this read leaves out. */
-  has_older: boolean;
-}
-
-/**
- * Where `messages` and `events` start, and whether older ones can be read with the history read.
- */
-export interface HarnessConversationHistoryApi {
-  messages: HarnessConversationWindowApi;
-  events?: HarnessConversationWindowApi;
-}
-
-export interface HarnessConversationRuntimeApi {
-  /** @minLength 1 */
-  state: string;
-  warm_until: string;
-  degraded: boolean;
-  available: boolean;
-}
-
-export interface HarnessConversationReadApi {
-  conversation_id: string;
-  job_id: string;
-  /** @minLength 1 */
-  state: string;
-  /** @minLength 1 */
-  stage: string;
-  /** @minLength 1 */
-  active_invocation_id: string;
-  blocking_input: HarnessConversationBlockingInputApi;
-  messages: HarnessConversationMessageApi[];
-  events: HarnessConversationEventReadApi[];
-  /** @minimum 0 */
-  event_watermark: number;
-  history: HarnessConversationHistoryApi;
-  /** On a read with `events_after`, whether more events past the last one here are left to read. */
-  events_has_newer: boolean;
-  runtime: HarnessConversationRuntimeApi;
-}
-
-export interface HarnessConsumptionApi {
-  /** @minimum 0 */
-  text_sim_tokens: number;
-  /** @minimum 0 */
-  voice_sim_minutes: number;
-  /** @minimum 0 */
-  ai_credits: number;
-  /** @minimum 0 */
-  sandbox_seconds: number;
-}
-
-export interface HarnessVersioningFlagsApi {
-  enabled: boolean;
-  nudges_enabled: boolean;
-}
-
-export interface HarnessJobReadApi {
-  job: HarnessJobInfoApi;
-  status: HarnessJobStatusApi;
-  events: HarnessJobEventApi[];
-  stage_outputs: HarnessStageOutputApi[];
-  scenarios: HarnessScenarioApi[];
-  receipts: HarnessJobReadApiReceiptsItem[];
-  platform: HarnessPlatformApi;
-  runtime?: HarnessRuntimeReadApi;
-  parallelism?: HarnessParallelismApi;
-  conversation?: HarnessConversationReadApi;
-  consumption?: HarnessConsumptionApi;
-  usage_limit?: HarnessJobReadApiUsageLimit;
-  versioning?: HarnessVersioningFlagsApi;
+export interface HarnessHostedAgentResponseApi {
+  /** The composition, an environment id. */
+  id: string;
+  agent_version_id: string;
 }
 
 export type HarnessJobCreateApiSchemaVersion =
@@ -25212,83 +25828,6 @@ export interface HarnessSourceApi {
   endpoint?: string;
   visibility?: HarnessSourceApiVisibility;
   environment_values?: HarnessSourceApiEnvironmentValues;
-}
-
-export type HarnessAgentApiConnector =
-  (typeof HarnessAgentApiConnector)[keyof typeof HarnessAgentApiConnector];
-
-export const HarnessAgentApiConnector = {
-  livekit: "livekit",
-  vapi: "vapi",
-  retell: "retell",
-  retell_chat: "retell_chat",
-  phone: "phone",
-  auto: "auto",
-} as const;
-
-export type HarnessAgentApiMode =
-  (typeof HarnessAgentApiMode)[keyof typeof HarnessAgentApiMode];
-
-export const HarnessAgentApiMode = {
-  connect_only: "connect_only",
-  environment_backed: "environment_backed",
-  provider_import: "provider_import",
-} as const;
-
-/**
- * inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.
- */
-export type HarnessAgentApiCallDirection =
-  (typeof HarnessAgentApiCallDirection)[keyof typeof HarnessAgentApiCallDirection];
-
-export const HarnessAgentApiCallDirection = {
-  inbound: "inbound",
-  outbound: "outbound",
-} as const;
-
-export type SecretReferenceApiManager =
-  (typeof SecretReferenceApiManager)[keyof typeof SecretReferenceApiManager];
-
-export const SecretReferenceApiManager = {
-  "platform-vault": "platform-vault",
-  "platform-config": "platform-config",
-} as const;
-
-export type SecretReferenceApiPurpose =
-  (typeof SecretReferenceApiPurpose)[keyof typeof SecretReferenceApiPurpose];
-
-export const SecretReferenceApiPurpose = {
-  target_provider: "target_provider",
-  simulator_provider: "simulator_provider",
-  source_checkout: "source_checkout",
-} as const;
-
-export interface SecretReferenceApi {
-  manager: SecretReferenceApiManager;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  key: string;
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  version?: string;
-  purpose: SecretReferenceApiPurpose;
-}
-
-export type HarnessAgentApiConfig = { [key: string]: unknown };
-
-export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
-
-export interface HarnessAgentApi {
-  connector: HarnessAgentApiConnector;
-  mode?: HarnessAgentApiMode;
-  /** inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only. */
-  call_direction?: HarnessAgentApiCallDirection;
-  config?: HarnessAgentApiConfig;
-  secret_refs?: HarnessAgentApiSecretRefs;
 }
 
 export type HarnessRuntimeApiIsolation =
@@ -26048,6 +26587,128 @@ export interface HarnessScenarioAmendResponseApi {
   draft?: HarnessScenarioAmendDraftApi;
 }
 
+export interface HarnessReleaseParentApi {
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface HarnessReleaseToolApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  mutates_state: boolean;
+}
+
+export type HarnessReleasePolicyParameterApiType =
+  (typeof HarnessReleasePolicyParameterApiType)[keyof typeof HarnessReleasePolicyParameterApiType];
+
+export const HarnessReleasePolicyParameterApiType = {
+  string: "string",
+  integer: "integer",
+  number: "number",
+  boolean: "boolean",
+} as const;
+
+export type HarnessReleasePolicyParameterApiDefault = {
+  [key: string]: unknown;
+};
+
+export type HarnessReleasePolicyParameterApiAllowedItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessReleasePolicyParameterApi {
+  /** @minLength 1 */
+  name: string;
+  type: HarnessReleasePolicyParameterApiType;
+  default: HarnessReleasePolicyParameterApiDefault;
+  allowed: HarnessReleasePolicyParameterApiAllowedItem[];
+}
+
+export interface HarnessReleasePolicyApi {
+  parameters: HarnessReleasePolicyParameterApi[];
+  agent_rules: HarnessReleaseAgentRuleApi[];
+}
+
+export interface HarnessSuiteOriginsApi {
+  base: number;
+  specialized: number;
+  custom: number;
+}
+
+export type HarnessSuiteSummaryApiPolicyProfile = { [key: string]: unknown };
+
+export interface HarnessSuiteSummaryApi {
+  id: string;
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+  scenario_count: number;
+  origins: HarnessSuiteOriginsApi;
+  policy_profile: HarnessSuiteSummaryApiPolicyProfile;
+}
+
+export type HarnessReleaseCatalogueApiChannel =
+  (typeof HarnessReleaseCatalogueApiChannel)[keyof typeof HarnessReleaseCatalogueApiChannel];
+
+export const HarnessReleaseCatalogueApiChannel = {
+  chat: "chat",
+  voice: "voice",
+} as const;
+
+export interface HarnessReleaseAppApi {
+  /** @minLength 1 */
+  capability: string;
+  /** @minLength 1 */
+  server: string;
+  tools: string[];
+  records: number;
+}
+
+export type HarnessReleaseCatalogueApiRecords = { [key: string]: number };
+
+/**
+ * Null for a release sealed before catalogue metadata existed.
+ */
+export interface HarnessReleaseCatalogueApi {
+  /** @minLength 1 */
+  title: string;
+  summary: string;
+  channel: HarnessReleaseCatalogueApiChannel;
+  records: HarnessReleaseCatalogueApiRecords;
+  apps: HarnessReleaseAppApi[];
+  example_requests: string[];
+}
+
+export interface HarnessReleaseApi {
+  id: string;
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+  system: boolean;
+  parent: HarnessReleaseParentApi;
+  tools: HarnessReleaseToolApi[];
+  policy: HarnessReleasePolicyApi;
+  suites: HarnessSuiteSummaryApi[];
+  catalogue: HarnessReleaseCatalogueApi;
+}
+
+export interface HarnessReleaseListResponseApi {
+  results: HarnessReleaseApi[];
+}
+
+export type HarnessReleaseFitRequestApiPairing = { [key: string]: string };
+
+export interface HarnessReleaseFitRequestApi {
+  suite_id: string;
+  agent_version_id: string;
+  pairing?: HarnessReleaseFitRequestApiPairing;
+}
+
 export type HarnessManifestApiSchemaVersion =
   (typeof HarnessManifestApiSchemaVersion)[keyof typeof HarnessManifestApiSchemaVersion];
 
@@ -26618,6 +27279,7 @@ export const HarnessConversationEventApiKind = {
   tool_result: "tool_result",
   question_requested: "question_requested",
   confirmation_requested: "confirmation_requested",
+  question_answered: "question_answered",
   turn_interrupted: "turn_interrupted",
   turn_completed: "turn_completed",
   checkpoint_committed: "checkpoint_committed",
@@ -46441,6 +47103,49 @@ export type AccountsGcpMarketplaceVerifyTokenCreateBody = {
   "x-gcp-marketplace-token": string;
 };
 
+export type AccountsNotificationsEmailUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsEmailUnsubscribeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsSnoozeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsSnoozeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
 export type AccountsOrganizationMembersListParams = {
   /**
    * @minimum 1
@@ -49053,6 +49758,11 @@ export type SimulateApiAgentFixRunsListParams = {
    * @maximum 100
    */
   limit?: number;
+  /**
+   * Comma-separated fix states to list, any of: queued, running, stopping, ready, no_improvement, not_reproduced, out_of_budget, stopped, failed, too_few_cases.
+   * @minLength 1
+   */
+  state?: string;
 };
 
 export type SimulateApiAgentFixRunsLaunchOptionsParams = {
@@ -49121,6 +49831,7 @@ export type SimulateApiHarnessEnvironmentsListStatus =
   (typeof SimulateApiHarnessEnvironmentsListStatus)[keyof typeof SimulateApiHarnessEnvironmentsListStatus];
 
 export const SimulateApiHarnessEnvironmentsListStatus = {
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -49262,6 +49973,10 @@ export type SimulateApiHarnessEnvironmentsRunPlanParams = {
    * The scenarios the run would select, comma-separated; absent or blank selects every scenario.
    */
   scenario_keys?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsRunsRunReportParams = {
+  baseline?: string;
 };
 
 export type SimulateApiHarnessEnvironmentsValidationStatusParams = {

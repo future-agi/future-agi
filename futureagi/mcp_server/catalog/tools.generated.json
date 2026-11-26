@@ -13658,6 +13658,11 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 100
+          },
+          "state": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Comma-separated fix states to list, any of: queued, running, stopping, ready, no_improvement, not_reproduced, out_of_budget, stopped, failed, too_few_cases."
           }
         },
         "additionalProperties": false,
@@ -13679,7 +13684,8 @@
           "query": [
             "environment_id",
             "page",
-            "limit"
+            "limit",
+            "state"
           ],
           "body": []
         }

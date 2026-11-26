@@ -74,3 +74,31 @@ def _bypass_plan_entitlement_check_for_accounts_tests():
         side_effect=check_feature,
     ):
         yield
+
+
+# A monitor with two alert recipients, for the unsubscribe tests (TH-9836).
+@pytest.fixture
+def monitor(db, organization, workspace):
+    from model_hub.models.ai_model import AIModel
+    from tracer.models.monitor import UserAlertMonitor
+    from tracer.models.project import Project
+
+    project = Project.objects.create(
+        name="Unsub Observe",
+        organization=organization,
+        workspace=workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    return UserAlertMonitor.objects.create(
+        organization=organization,
+        workspace=workspace,
+        project=project,
+        name="Errors",
+        metric_type="count_of_errors",
+        threshold_operator="greater_than",
+        threshold_type="static",
+        critical_threshold_value=0.1,
+        alert_frequency=60,
+        notification_emails=["oncall@example.com", "Lead@Example.com"],
+    )
