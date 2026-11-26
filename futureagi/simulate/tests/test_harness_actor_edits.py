@@ -1146,6 +1146,9 @@ def test_an_action_trigger_without_its_action_is_refused(
         ({"kind": "on_tool", "tool": " "}, "tool"),
         ({"kind": "probability", "p": 0}, "p"),
         ({"kind": "probability", "p": "0.5"}, "p"),
+        ({"kind": "probability", "p": float("nan")}, "p"),
+        ({"kind": "on_keyword", "words": "refund"}, "words"),
+        ({"kind": "on_keyword", "words": [None]}, "words"),
     ],
 )
 def test_a_trigger_the_harness_would_refuse_is_refused_when_written(trigger, field):

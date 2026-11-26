@@ -221,13 +221,15 @@ def _trigger_problems(actor: ActorRecord) -> list[tuple[str, Problem]]:
     if kind == "probability":
         # A chance that is not a number, or outside 0 to 1, is the record schema's to refuse, once.
         chance = trigger.get("p")
-        if "p" not in trigger or (type(chance) in (int, float) and chance == 0):
+        if "p" not in trigger or (
+            type(chance) in (int, float) and (chance != chance or chance == 0)
+        ):
             found.append(("p", "Give a chance above 0% and at most 100%."))
     if kind == "on_keyword":
+        # Words that are not a list of text are the record schema's to refuse, once.
         words = trigger.get("words")
-        if not isinstance(words, list) or not any(
-            isinstance(one, str) and one.strip() for one in words
-        ):
+        listed = isinstance(words, list) and all(isinstance(one, str) for one in words)
+        if "words" not in trigger or (listed and not any(one.strip() for one in words)):
             found.append(("words", "Give the words that bring them in."))
     if kind == "mid_journey":
         # A turn that is not a whole number is the record schema's to refuse; 2.0 reads as 2.
