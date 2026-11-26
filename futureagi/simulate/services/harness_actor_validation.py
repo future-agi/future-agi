@@ -358,9 +358,17 @@ def actor_problems(
         )
         for path, other in broken_references(actor, known, rules)
     ]
-    # A chance of 0 never brings them in, and the runtime refuses it when a scenario is kept.
+    # A trigger the runtime refuses when a scenario is kept: an action trigger with no action, or a chance of 0.
     activation = actor.get("activation")
     trigger = activation.get("trigger") if isinstance(activation, dict) else None
+    if isinstance(trigger, dict) and trigger.get("kind") == "on_tool":
+        if not str(trigger.get("tool") or "").strip():
+            problems.append(
+                problem(
+                    field_at("activation.trigger.tool"),
+                    "Pick the action whose call brings them in.",
+                )
+            )
     if isinstance(trigger, dict) and trigger.get("kind") == "probability":
         chance = trigger.get("p")
         if (

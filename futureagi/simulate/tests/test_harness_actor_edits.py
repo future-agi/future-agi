@@ -1131,3 +1131,19 @@ def test_a_chance_of_0_is_refused_on_every_write_and_a_chance_in_range_is_kept(
         "kind": "probability",
         "p": 0.4,
     }
+
+
+def test_an_action_trigger_without_its_action_is_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-edits-empty-tool")
+    on_tool = {
+        **MANAGER,
+        "activation": {"trigger": {"kind": "on_tool", "tool": "", "on_call": 2}},
+    }
+
+    refused = _add(auth_client, environment, on_tool)
+
+    assert (refused.status_code, refused.json()["error"]) == (400, "actor_invalid")
+    assert "Pick the action" in refused.json()["message"]
+    assert "manager" not in _stored(environment)
