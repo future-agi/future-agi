@@ -721,6 +721,8 @@ export function useRefreshWhenChecked(envId, agentVersions) {
       });
       queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
       queryClient.invalidateQueries({ queryKey: nudgesKey(envId) });
+      // The lock preview plans with the default agent's bundle.
+      queryClient.invalidateQueries({ queryKey: lockPreviewKey(envId) });
     }
     wasPending.current = pending;
   }, [pending, envId, queryClient]);
