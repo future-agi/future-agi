@@ -39,7 +39,7 @@ def get_prompt_template_columns(metrics=None, k_prompts=None):
         for idx in range(len(k_prompts)):
             columns.append(
                 {
-                    "label": f"(T{idx+1}) {metric.name}",
+                    "label": f"(T{idx + 1}) {metric.name}",
                     "value": f"{str(metric.id)}-{idx}",
                     "enabled": True,
                 }

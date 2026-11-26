@@ -198,10 +198,10 @@ const TaskLogs = ({ evalTaskId }) => {
             my: 2,
           }}
         >
-          <Typography fontSize="13px" minWidth={"200px"}>
+          <Typography fontSize="12px" minWidth={"200px"}>
             Success: {data?.success_count ?? data?.successCount}
           </Typography>
-          <Typography fontSize="13px">
+          <Typography fontSize="12px">
             Task Run:{" "}
             {(() => {
               const startTime = data?.start_time ?? data?.startTime;
@@ -213,10 +213,10 @@ const TaskLogs = ({ evalTaskId }) => {
         </Box>
         {/* Second Row */}
         <Box sx={{ display: "flex", mb: 2 }}>
-          <Typography fontSize="13px" minWidth={"200px"}>
+          <Typography fontSize="12px" minWidth={"200px"}>
             Skips: 0
           </Typography>
-          <Typography fontSize="13px">
+          <Typography fontSize="12px">
             Errors: {data?.errors_count ?? data?.errorsCount}
           </Typography>
         </Box>
@@ -240,7 +240,7 @@ const TaskLogs = ({ evalTaskId }) => {
                 width={20}
                 color="warning.main"
               />
-              <Typography fontSize="13px" fontWeight={600}>
+              <Typography fontSize="12px" fontWeight={600}>
                 Runs with warnings: {warningsCount}
               </Typography>
             </Box>

@@ -11,6 +11,10 @@ PROTOCOL_COMPATIBILITY_ALLOWLIST = {
     Path("futureagi/mcp_server/views/oauth.py"): (
         "OAuth 2.0 token endpoints must return RFC-compatible error bodies."
     ),
+    Path("futureagi/tracer/views/insights_evidence.py"): (
+        "The internal Insights evidence broker answers the Omega agent in the "
+        "insights-agent/v2 error shape ({error: {code, message}}) it parses."
+    ),
 }
 
 RAW_ERROR_DEBT_BY_FILE = {

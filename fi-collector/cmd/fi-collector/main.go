@@ -13,7 +13,7 @@
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
 //     FI_INGEST_BUDGET_MIB, FI_OTLP_MAX_BODY_MIB, FI_GRPC_MAX_RECV_MIB,
 //     FI_OTLP_MAX_CONNECTIONS, FI_INGEST_MAX_WAIT, FI_INSERT_CONCURRENCY,
-//     FI_DEAD_LETTER_FILE, ...)
+//     FI_DEAD_LETTER_FILE, FI_ADMIN_ADDR, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -26,10 +26,13 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -56,6 +59,16 @@ type rootConfig struct {
 	PropertyCatalog struct {
 		Mode string `yaml:"mode"`
 	} `yaml:"property_catalog"`
+	Admin struct {
+		Addr string `yaml:"addr"`
+	} `yaml:"admin"`
+}
+
+func resolveAdminAddr(cfg rootConfig) string {
+	if addr := strings.TrimSpace(cfg.Admin.Addr); addr != "" {
+		return addr
+	}
+	return ":9464"
 }
 
 func main() {
@@ -123,6 +136,16 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Sync a newer price table in the background; boot never waits on it.
+	if pricer != nil {
+		url, interval := catalogueSyncSettings(log, os.LookupEnv)
+		if syncer := pricing.NewSyncer(pricer, priceTable, url, interval, log); syncer != nil {
+			go syncer.Run(ctx)
+		} else {
+			log.Info("pricing catalogue sync off; pricing from the loaded table")
+		}
+	}
+
 	opts := []server.Option{server.WithLogger(log)}
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
@@ -178,7 +201,7 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, authenticator, srv, log)
+	go runAdmin(resolveAdminAddr(cfg), writer, authenticator, srv, log)
 
 	startAuthWatchers(ctx, authenticator)
 
@@ -240,6 +263,30 @@ func loadPriceTable(log *slog.Logger, path string) *pricing.Table {
 	return table
 }
 
+// catalogueSyncSettings reads FI_PRICING_CATALOGUE_URL and
+// FI_PRICING_SYNC_INTERVAL. An unset URL syncs from pricing.DefaultCatalogueURL,
+// unless FI_PRICING_JSON pins a file, which the sync would otherwise replace.
+// A URL set to "" turns the sync off.
+func catalogueSyncSettings(log *slog.Logger, lookup func(string) (string, bool)) (string, time.Duration) {
+	url, set := lookup("FI_PRICING_CATALOGUE_URL")
+	if !set {
+		if pinned, _ := lookup("FI_PRICING_JSON"); pinned != "" {
+			url = ""
+		} else {
+			url = pricing.DefaultCatalogueURL
+		}
+	}
+	var interval time.Duration
+	if v, _ := lookup("FI_PRICING_SYNC_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			log.Warn("FI_PRICING_SYNC_INTERVAL is not a duration; using the default", "value", v, "err", err)
+		}
+		interval = d
+	}
+	return url, interval
+}
+
 func loadConfig(log *slog.Logger, path string) rootConfig {
 	cfg := rootConfig{}
 	b, err := os.ReadFile(path)
@@ -268,6 +315,7 @@ func logStarting(log *slog.Logger, cfg rootConfig) {
 	log.Info("starting",
 		"grpc_addr", cfg.Server.GRPCAddr,
 		"http_addr", cfg.Server.HTTPAddr,
+		"admin_addr", resolveAdminAddr(cfg),
 		"ch_url", chURL,
 	)
 }
@@ -319,6 +367,9 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
 		log.Warn("FI_GZIP_INFLIGHT_MIB is no longer read; the ingest budget for every OTLP request is FI_INGEST_BUDGET_MIB", "value", v)
 	}
+	if v := strings.TrimSpace(os.Getenv("FI_ADMIN_ADDR")); v != "" {
+		c.Admin.Addr = v
+	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
 	}
@@ -343,6 +394,9 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 			// mode this knob exists to fix — an operator must see it.
 			log.Warn("ignoring invalid FI_GRPC_MAX_RECV_MIB", "value", v)
 		}
+	}
+	if os.Getenv("FI_MAX_PENDING_ROWS") != "" || c.Server.ObsoleteMaxPendingRows != nil {
+		return fmt.Errorf("FI_MAX_PENDING_ROWS / server.max_pending_rows is obsolete; use FI_INGEST_BUDGET_MIB (byte admission), not a row cap")
 	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v
@@ -447,22 +501,83 @@ func withIngest(body map[string]any, ingest ingestReporter) map[string]any {
 	return body
 }
 
-// runAdmin serves /healthz for container health checks. The ingest budget's
-// use and the OTLP requests refused, by transport, reason and code, are in
-// the body only; they never change the status code.
-func runAdmin(addr string, w *chwriter.Writer, router routingReporter, ingest ingestReporter, log *slog.Logger) {
+// buildInfo identifies the running binary so a benchmark report can name the
+// revision it measured. The VCS fields are present only when the binary was built
+// from a git checkout with VCS stamping; a container build without .git sets
+// FI_BUILD_REVISION instead. Nothing here is secret.
+func buildInfo(getenv func(string) string) map[string]any {
+	info := map[string]any{"go_version": runtime.Version()}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if bi.Main.Path != "" {
+			info["module"] = bi.Main.Path
+		}
+		for _, setting := range bi.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				info["vcs_revision"] = setting.Value
+			case "vcs.time":
+				info["vcs_time"] = setting.Value
+			case "vcs.modified":
+				info["vcs_modified"] = setting.Value
+			}
+		}
+	}
+	if v := getenv("FI_BUILD_REVISION"); v != "" {
+		info["configured_revision"] = v
+	}
+	return info
+}
+
+// runtimeInfo is the CPU and memory the collector process may use, so a
+// benchmark report records the hardware the measured collector ran with.
+// go_memory_limit_bytes is present only when a Go memory limit (GOMEMLIMIT) is
+// set.
+func runtimeInfo() map[string]any {
+	info := map[string]any{"num_cpu": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0), "os": runtime.GOOS, "arch": runtime.GOARCH}
+	if limit := debug.SetMemoryLimit(-1); limit != math.MaxInt64 {
+		info["go_memory_limit_bytes"] = limit
+	}
+	return info
+}
+
+// admissionReporter is the part of the server /healthz reads: the admission
+// limits in force and the current backlog.
+type admissionReporter interface {
+	IngestStats() server.IngestStats
+	Limits() server.Limits
+	Admission() server.Admission
+}
+
+// adminHandler serves /healthz: writer statistics and insert policy, the
+// simulation routing counters, the build the binary identifies as, its CPU and
+// memory limits, the admission limits in force and the current backlog
+// (buffered rows), which a benchmark samples over time.
+func adminHandler(w *chwriter.Writer, router routingReporter, admission admissionReporter) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
+		code, status := 200, "ok"
 		if denom > 100 && s.BatchesFailed*2 > denom {
-			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(withIngest(healthBody("unhealthy", s, router), ingest))
-			return
+			code, status = 503, "unhealthy"
 		}
-		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(withIngest(healthBody("ok", s, router), ingest))
+		body := withIngest(healthBody(status, s, router), admission)
+		body["build"] = buildInfo(os.Getenv)
+		body["runtime"] = runtimeInfo()
+		body["writer"] = w.Policy()
+		if admission != nil {
+			body["limits"] = admission.Limits()
+			body["admission"] = admission.Admission()
+		}
+		rw.WriteHeader(code)
+		_ = json.NewEncoder(rw).Encode(body)
 	})
+	return mux
+}
+
+// runAdmin serves /healthz for container health checks.
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, admission admissionReporter, log *slog.Logger) {
+	mux := adminHandler(w, router, admission)
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Warn("admin server stopped", "err", err)

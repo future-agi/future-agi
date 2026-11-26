@@ -1,7 +1,8 @@
 """Real-ClickHouse parity for the unfiltered aggregate-state route's exactness.
 
-The unfiltered Observe system-metric graph and the unfiltered dashboard span
-widgets read ``spans``'s hourly aggregate projections. Those projections are
+Nonmonetary unfiltered Observe graphs and unfiltered dashboard span widgets
+read ``spans``'s hourly aggregate projections. Observe cost instead reads
+latest-live monetary facts and is compared to that independent oracle. Those projections are
 built per physical part: they carry no latest-version reduction and no
 ``is_deleted`` predicate. On ``ReplacingMergeTree(_version, is_deleted)`` that
 means
@@ -50,6 +51,9 @@ CREATE TABLE spans (
     start_time DateTime64(6, 'UTC'),
     trace_id String,
     id String,
+    name String DEFAULT '',
+    parent_span_id String DEFAULT '',
+    attrs_string Map(LowCardinality(String), String) DEFAULT map(),
     status String DEFAULT 'OK',
     model String DEFAULT '',
     provider String DEFAULT '',
@@ -149,10 +153,10 @@ def ch_client(ch_database):
 
 
 class _LiveAnalytics:
-    """Run the product's statement on the test ClickHouse, projection forced.
+    """Force hourly-state projections, never the monetary latest-row replay.
 
-    ``force_optimize_projection`` makes a plan that stopped using a projection
-    raise instead of quietly returning the base table's numbers.
+    A nonmonetary statement that stops using its projection still raises;
+    cost's separately asserted raw source must retain versions/tombstones.
     """
 
     supports_per_query_read_settings = True
@@ -175,7 +179,10 @@ class _LiveAnalytics:
             settings={
                 **(settings or {}),
                 "optimize_use_projections": 1,
-                "force_optimize_projection": 1,
+                "force_optimize_projection": int(
+                    "graph_monetary_spans" not in query
+                    and not query.lstrip().startswith("EXPLAIN")
+                ),
             },
         )
         names = [name for name, _type in columns]
@@ -261,14 +268,22 @@ def test_unfiltered_graph_claims_exact_only_on_latest_live_numbers(
         assert response["query_status"] == "complete", response
         assert "FINAL" not in analytics.queries[-1].upper()
 
-    # The route's ``cost`` series is the per-span average.
+    # Traffic retains the aggregate-state route. Cost now proves latest-live
+    # monetary facts before taking the per-span mean, independently of traffic.
     count = int(_graph_total(responses["traffic"]))
     average_cost = _graph_total(responses["cost"])
-    expected_count, expected_cost = scenario["product"]
-    assert count == expected_count
-    assert average_cost == pytest.approx(expected_cost / expected_count)
-
+    expected_count, _expected_physical_cost = scenario["product"]
     oracle_count, oracle_cost = oracle
+    assert count == expected_count
+    assert average_cost == pytest.approx(oracle_cost / oracle_count)
+    assert any("countMerge(n)" in query for query in analytics.queries)
+    assert "AS graph_monetary_spans" in analytics.queries[-1]
+    coverage = [point["cost_coverage"] for point in responses["cost"]["data"]]
+    assert sum(point["known_subtotal"] for point in coverage) == pytest.approx(
+        oracle_cost
+    )
+    assert sum(point["known_fact_count"] for point in coverage) == oracle_count
+    assert all(point["unknown_fact_count"] == 0 for point in coverage)
     for metric_id, (product_value, oracle_value) in {
         "traffic": (count, oracle_count),
         "cost": (average_cost, oracle_cost / oracle_count),

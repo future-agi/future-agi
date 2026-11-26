@@ -82,9 +82,12 @@ func (a *bedrockAdapter) buildRequest(ctx context.Context, text string) (*http.R
 }
 
 func (a *bedrockAdapter) parseResponse(body []byte) *guardrails.CheckResult {
+	if err := validateEnvelope(a, body); err != nil {
+		return guardrails.ExecutionFailure(err.Error())
+	}
 	var resp bedrockResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse bedrock response: %v", err)}
+		return guardrails.ExecutionFailure(fmt.Sprintf("failed to parse bedrock response: %v", err))
 	}
 
 	if resp.Action == "NONE" {

@@ -1,20 +1,59 @@
-import React, { useState } from "react";
-import { Box, Button, Typography } from "@mui/material";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
+import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import EscalationSettingsDialog from "./components/EscalationSettingsDialog";
 import { useNavigate } from "react-router-dom";
+import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import PageHeader from "src/components/page-header";
-import { useErrorFeedList } from "src/api/errorFeed/error-feed";
+import {
+  useErrorFeedList,
+  useObserveProjectList,
+} from "src/api/errorFeed/error-feed";
 import ErrorFeedFilters from "./components/ErrorFeedFilters";
 import ErrorFeedTable from "./components/ErrorFeedTable";
+import { deriveFeedPageState } from "./feedPageState";
 import { useErrorFeedApiParams } from "./store";
+
+// Re-read on every visit/focus: a first Observe project is created by SDK
+// instrumentation, not by a mutation this page could invalidate, so a user
+// coming back within the catalog's 5-minute freshness window must still see
+// it. Bounded to this page; no polling.
+const REVALIDATE_ON_ENTRY = {
+  refetchOnMount: "always",
+  refetchOnWindowFocus: "always",
+};
 
 export default function ErrorFeedView() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { currentWorkspaceId } = useWorkspace();
+  const { currentOrganizationId } = useOrganization();
+  useEffect(() => {
+    setSettingsOpen(false);
+  }, [currentWorkspaceId, currentOrganizationId]);
 
   const apiParams = useErrorFeedApiParams();
-  const { data } = useErrorFeedList(apiParams);
-  const totalCount = data?.total ?? 0;
+  const feed = useErrorFeedList(apiParams, REVALIDATE_ON_ENTRY);
+  const catalog = useObserveProjectList(REVALIDATE_ON_ENTRY);
+
+  const pageState = deriveFeedPageState({ catalog, feed });
+  const rows = useMemo(() => feed.data?.data ?? [], [feed.data]);
+  const totalCount = feed.data?.total ?? 0;
+
+  const projectOptions = useMemo(
+    () => [{ value: "", label: "All Projects" }, ...(catalog.data ?? [])],
+    [catalog.data],
+  );
+
+  const handleRetry = useCallback(() => {
+    // Revalidate the composed page, including malformed 200 responses that
+    // render as errors even though React Query marks the request successful.
+    feed.refetch();
+    catalog.refetch();
+  }, [feed, catalog]);
 
   const handleSelect = (clusterId, checked) => {
     setSelected((prev) =>
@@ -68,6 +107,23 @@ export default function ErrorFeedView() {
           description="Track, triage and resolve agent errors: hallucinations, eval failures and pipeline issues."
           actions={
             <>
+              <Tooltip title="Escalation settings" arrow>
+                <span>
+                  <IconButton
+                    aria-label="Escalation settings"
+                    size="small"
+                    disabled={!currentWorkspaceId || !currentOrganizationId}
+                    onClick={() => setSettingsOpen(true)}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      color: "text.secondary",
+                    }}
+                  >
+                    <Iconify icon="solar:settings-linear" width={16} />
+                  </IconButton>
+                </span>
+              </Tooltip>
               <Button
                 variant="outlined"
                 size="small"
@@ -107,6 +163,16 @@ export default function ErrorFeedView() {
         />
       </Box>
 
+      {settingsOpen && (
+        <EscalationSettingsDialog
+          key={`${currentOrganizationId}:${currentWorkspaceId}`}
+          open
+          organizationId={currentOrganizationId}
+          workspaceId={currentWorkspaceId}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
       {/* ── Content ── */}
       <Box
         sx={{
@@ -122,10 +188,16 @@ export default function ErrorFeedView() {
         <ErrorFeedFilters
           selected={selected}
           onClearSelection={handleClearSelection}
+          projectOptions={projectOptions}
         />
 
         {/* Table */}
         <ErrorFeedTable
+          rows={rows}
+          totalCount={totalCount}
+          isLoading={feed.isLoading}
+          pageState={pageState}
+          onRetry={handleRetry}
           selected={selected}
           onSelect={handleSelect}
           onSelectAll={handleSelectAll}

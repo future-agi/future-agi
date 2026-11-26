@@ -12,7 +12,10 @@ from rest_framework.viewsets import ModelViewSet
 from agentcc.models import AgentccOrgConfig
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
 from agentcc.org_config_defaults import default_cost_tracking_config
-from agentcc.serializers.guardrail_policy import AgentccGuardrailPolicySerializer
+from agentcc.serializers.guardrail_policy import (
+    _ORG_CONFIG_EDITOR_CONTEXT,
+    AgentccGuardrailPolicySerializer,
+)
 from agentcc.serializers.org_config import (
     AgentccOrgConfigSerializer,
     AgentccOrgConfigWriteSerializer,
@@ -95,18 +98,23 @@ class AgentccOrgConfigViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             with transaction.atomic():
                 if checks_list:
                     # Upsert a UI guardrails policy for this org
-                    policy, _ = AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
-                        organization=org,
-                        name="__ui_guardrails__",
-                        deleted=False,
-                        defaults={
-                            "checks": [],
-                            "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
-                            "is_active": True,
-                        },
+                    policy, _ = (
+                        AgentccGuardrailPolicy.no_workspace_objects.get_or_create(
+                            organization=org,
+                            name="__ui_guardrails__",
+                            deleted=False,
+                            defaults={
+                                "checks": [],
+                                "scope": AgentccGuardrailPolicy.SCOPE_GLOBAL,
+                                "is_active": True,
+                            },
+                        )
                     )
                     policy_serializer = AgentccGuardrailPolicySerializer(
-                        policy, data={"checks": checks_list}, partial=True
+                        policy,
+                        data={"checks": checks_list},
+                        partial=True,
+                        context={"org_config_editor": _ORG_CONFIG_EDITOR_CONTEXT},
                     )
                     policy_serializer.is_valid(raise_exception=True)
                     policy_serializer.save()

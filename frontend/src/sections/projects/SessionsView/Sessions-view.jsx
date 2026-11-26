@@ -1,3 +1,4 @@
+import { getDateRangeDisplayEnd } from "src/components/custom-datepicker/dateRange";
 import { Box } from "@mui/material";
 import PropTypes from "prop-types";
 import {
@@ -32,6 +33,10 @@ import { buildAddEvalsDraft } from "../LLMTracing/buildAddEvalsDraft";
 import SelectAllBanner from "../LLMTracing/SelectAllBanner";
 import { getSelectionCountState } from "../LLMTracing/listTotalMetadata";
 import { singleProjectIdFromFilters } from "../LLMTracing/GraphSection/graphFilterUtils";
+import { toBackendFilters } from "../LLMTracing/common";
+import { askLink, insightsReportLink } from "../observeHandoff";
+import { SESSION_FILTER_FIELDS } from "../observeFilterConfig";
+import { viewSeed } from "../observeScope";
 
 // Lazy-load graph
 const PrimaryGraph = lazy(
@@ -53,6 +58,13 @@ const SESSION_BULK_ACTIONS = [
     label: "Add to annotation queue",
     icon: "solar:clipboard-list-linear",
   },
+  // Shown to every organization: an environment-only one builds its tests
+  // through its environments, not the legacy Replay.
+  {
+    id: EVIDENCE_ACTION_ID,
+    label: EVIDENCE_COPY.action,
+    icon: "solar:test-tube-linear",
+  },
 ];
 
 // Session-specific
@@ -66,6 +78,12 @@ import {
 } from "./ReplaySessions/store";
 import { REPLAY_ACTION_ID, REPLAY_TYPES } from "./ReplaySessions/constants";
 import { withoutReplayForRestrictedOrgs } from "./ReplaySessions/replayAccess";
+import CreateEnvironmentTestDialog from "src/sections/simulate/environments/evidence/CreateEnvironmentTestDialog";
+import {
+  EVIDENCE_ACTION_ID,
+  EVIDENCE_COPY,
+} from "src/sections/simulate/environments/evidence/evidence.constants";
+import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -92,43 +110,9 @@ const getLiveSessionGridApi = (gridRef) => {
   return isGridApiLive(api) ? api : null;
 };
 
-// ---------------------------------------------------------------------------
-// Base session filter fields (always available)
-// ---------------------------------------------------------------------------
-const BASE_SESSION_FILTER_FIELDS = [
-  { id: "session_id", name: "Session ID", category: "system", type: "string" },
-  {
-    id: "first_message",
-    name: "First Message",
-    category: "system",
-    type: "string",
-  },
-  {
-    id: "last_message",
-    name: "Last Message",
-    category: "system",
-    type: "string",
-  },
-  { id: "user_id", name: "User ID", category: "system", type: "string" },
-  { id: "duration", name: "Duration", category: "system", type: "number" },
-  { id: "total_cost", name: "Total Cost", category: "system", type: "number" },
-  {
-    id: "total_tokens",
-    name: "Total Tokens",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "total_traces_count",
-    name: "Total Traces",
-    category: "system",
-    type: "number",
-  },
-];
-
 // Build filter fields dynamically from session columns + base fields
 const buildSessionFilterFields = (sessionColumns) => {
-  const baseIds = new Set(BASE_SESSION_FILTER_FIELDS.map((f) => f.id));
+  const baseIds = new Set(SESSION_FILTER_FIELDS.map((f) => f.id));
   const extra = (sessionColumns || [])
     .filter((col) => !baseIds.has(col.id) && col.name)
     .map((col) => {
@@ -145,7 +129,7 @@ const buildSessionFilterFields = (sessionColumns) => {
         type: col.dataType === "number" ? "number" : "string",
       };
     });
-  return [...BASE_SESSION_FILTER_FIELDS, ...extra];
+  return [...SESSION_FILTER_FIELDS, ...extra];
 };
 
 // Default filter and date range
@@ -179,7 +163,7 @@ export const getDateLabel = (dateFilter) => {
   if (!dates || dates.length < 2)
     return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   const start = new Date(dates[0]);
-  const end = new Date(dates[1]);
+  const end = getDateRangeDisplayEnd(dates);
   if (isNaN(start.getTime()) || isNaN(end.getTime()))
     return `Past ${DEFAULT_OBSERVE_LIST_DATE_OPTION}`;
   return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
@@ -270,8 +254,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const sessionFilterFields = useMemo(
     () =>
       projectFilterField
-        ? [...BASE_SESSION_FILTER_FIELDS, projectFilterField]
-        : BASE_SESSION_FILTER_FIELDS,
+        ? [...SESSION_FILTER_FIELDS, projectFilterField]
+        : SESSION_FILTER_FIELDS,
     [projectFilterField],
   );
   const filterChipLabelMap = useMemo(() => {
@@ -309,6 +293,27 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     if (!extraFilters.length) return base;
     return [...base, ...extraFilters];
   }, [userScopeFilter, validatedFilters, extraFilters]);
+
+  // --- Instant eval / Insights ---
+  // Both ask about exactly the sessions the grid shows (Session-grid sends
+  // toBackendFilters(finalFilters), date window included).
+  // Both open with the view's date preset and filters, editable there.
+  const sessionViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "sessions",
+        filters: toBackendFilters(finalFilters),
+        dateFilter,
+      }),
+    [finalFilters, dateFilter],
+  );
+  // Evaluate → Ask a question: the Ask page, about the sessions in view.
+  const openAsk = useCallback(() => {
+    navigate(askLink(observeId, sessionViewSeed));
+  }, [observeId, sessionViewSeed, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(insightsReportLink(observeId, sessionViewSeed));
+  }, [observeId, sessionViewSeed, navigate]);
 
   // --- Column visibility ---
   const [updateObj, setUpdateObj] = useState(initialVisibility);
@@ -806,6 +811,29 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   // clicked; reset on select-all clear, project change, or filter change.
   const [sessionFilterSelectionMode, setSessionFilterSelectionMode] =
     useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  // An import names its sessions one by one: no select-all, and at most the
+  // backend's limit.
+  const bulkActions = useMemo(() => {
+    const picked = (toggledNodes || []).filter(Boolean).length;
+    let disabledReason = null;
+    if (!observeId) disabledReason = EVIDENCE_COPY.actionNoProject;
+    else if (selectAll || sessionFilterSelectionMode)
+      disabledReason = EVIDENCE_COPY.actionAll;
+    else if (picked > MAX_EVIDENCE_SOURCES)
+      disabledReason = EVIDENCE_COPY.actionTooMany;
+    return sessionBulkActions.map((one) =>
+      one.id === EVIDENCE_ACTION_ID
+        ? { ...one, disabled: Boolean(disabledReason), disabledReason }
+        : one,
+    );
+  }, [
+    sessionBulkActions,
+    toggledNodes,
+    selectAll,
+    sessionFilterSelectionMode,
+    observeId,
+  ]);
   useEffect(() => {
     if (!selectAll) setSessionFilterSelectionMode(false);
   }, [selectAll]);
@@ -818,7 +846,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   const handleBulkAction = useCallback(
     (action, event) => {
-      if (action === REPLAY_ACTION_ID) {
+      if (action === EVIDENCE_ACTION_ID) {
+        setEvidenceOpen(true);
+      } else if (action === REPLAY_ACTION_ID) {
         const replayData = {
           project_id: observeId,
           replay_type: REPLAY_MODULES.SESSIONS,
@@ -1110,11 +1140,22 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           });
         }}
         onBulkAction={handleBulkAction}
-        bulkActions={sessionBulkActions}
+        bulkActions={bulkActions}
         onAddEvals={handleAddEvals}
         onAddCustomColumn={() => setOpenCustomColumn(true)}
+        onInstantEval={observeId ? openAsk : undefined}
+        onInsights={observeId ? openInsights : undefined}
       />
 
+      {evidenceOpen ? (
+        <CreateEnvironmentTestDialog
+          open
+          onClose={() => setEvidenceOpen(false)}
+          projectId={observeId}
+          sourceKind="session"
+          ids={(toggledNodes || []).filter(Boolean)}
+        />
+      ) : null}
       <Suspense fallback={null}>
         <AddToQueueDialog
           anchorEl={queueAnchorEl}

@@ -11,7 +11,6 @@ from ee.usage.services.rate_limiter import RateLimiter, RateLimitResult
 
 @pytest.mark.unit
 class TestRateLimiter:
-
     def test_unlimited_always_allowed(self):
         with patch("ee.usage.services.rate_limiter.Entitlements") as mock_ent:
             mock_ent.get_limit.return_value = -1

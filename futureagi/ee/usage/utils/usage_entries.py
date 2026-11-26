@@ -34,7 +34,7 @@ from ee.usage.models.usage import (
     SubscriptionTier,
     SubscriptionTierChoices,
 )
-from model_hub.utils import call_websocket
+from model_hub.utils import call_websocket, dataset_limit
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 from tfc.settings.settings import (
     BUSINESS_MONTHLY_STRIPE_PRICE_ID,
@@ -42,7 +42,6 @@ from tfc.settings.settings import (
     BUSINESS_YEARLY_STRIPE_PRICE_ID,
     BUSINESS_YEARLY_STRIPE_PRICE_IDS_ALL,
 )
-from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.lazy_extras import av
 from tfc.utils.storage import download_audio_from_url, upload_audio_to_s3
@@ -70,6 +69,13 @@ EVALUATOR_CALLS = [
     APICallTypeChoices.TURING_FLASH_EVALUATOR.value,
     APICallTypeChoices.PROTECT_EVALUATOR.value,
     APICallTypeChoices.PROTECT_FLASH_EVALUATOR.value,
+]
+
+# Evaluators that run on the org's own provider key. The provider enforces its
+# own limits on that key, so these get no per-call rate limit on any plan; free
+# plans are still capped by credits (ee.usage.services.metering.check_usage).
+BYOK_EVALUATOR_CALLS = [
+    APICallTypeChoices.JEV_EVALUATOR.value,
 ]
 
 subscription_tier_entries = [
@@ -210,6 +216,10 @@ api_call_type_entries = [
     {
         "name": APICallTypeChoices.TURING_LARGE_EVALUATOR.value,
         "description": "This is the API for turing large evaluator",
+    },
+    {
+        "name": APICallTypeChoices.JEV_EVALUATOR.value,
+        "description": "This is the API for Jev evaluators on the org's own TypeSafe key",
     },
     {
         "name": APICallTypeChoices.TURING_SMALL_EVALUATOR.value,
@@ -1076,8 +1086,9 @@ def create_organization_subscription_if_not_exists(organization):
 
 
 def check_if_api_call_is_rate_limited(organization, api_call_type, source=None):
-    if source == FIX_CHECK_RUN_EVAL_SOURCE:
+    if api_call_type in BYOK_EVALUATOR_CALLS or source == FIX_CHECK_RUN_EVAL_SOURCE:
         return False, {}
+
     # get the subscription tier of the organization
     try:
         create_organization_subscription_if_not_exists(organization)
@@ -1240,24 +1251,24 @@ def check_if_api_call_is_rate_limited(organization, api_call_type, source=None):
         # check if the number of api calls made in the last minute, hour, day,
         # month is greater than the limit
 
-        if api_calls_made_in_last_minute >= minute_limit:
+        if minute_limit is not None and api_calls_made_in_last_minute >= minute_limit:
             config["time"] = "minutely"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "minute"
             return True, config
-        if api_calls_made_in_last_hour >= hour_limit:
+        if hour_limit is not None and api_calls_made_in_last_hour >= hour_limit:
             config["time"] = "hourly"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "hour"
             config["limit"] = hour_limit
             return True, config
-        if api_calls_made_in_last_day >= day_limit:
+        if day_limit is not None and api_calls_made_in_last_day >= day_limit:
             config["time"] = "daily"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "day"
             config["limit"] = day_limit
             return True, config
-        if api_calls_made_in_last_month >= month_limit:
+        if month_limit is not None and api_calls_made_in_last_month >= month_limit:
             config["time"] = "monthly"
             config["title"] = " ".join(call_type.split("_"))
             config["duration"] = "month"
@@ -1392,6 +1403,8 @@ def log_and_deduct_cost_for_api_request(
     source_id=None,
     workspace=None,
 ):
+    from tfc.utils.evaluation_denials import EvaluationDenied
+
     if config is None:
         config = {}
 
@@ -1478,10 +1491,48 @@ def log_and_deduct_cost_for_api_request(
             source_id,
             workspace,
         )
+    except EvaluationDenied:
+        raise
     except Exception as e:
         traceback.print_exc()
         logger.exception(f"Error logging and deducting cost for api call: {str(e)}")
         return None
+
+
+def send_resource_limit_alert(organization, config):
+    """Push the plan-limit upgrade alert to the org's open sessions.
+
+    ``config`` carries the ``resource_name`` and ``limit`` of the refusal. The
+    frontend shows a resource-limit 429 only through this alert, so a route
+    that answers 429 for a reached limit sends it. Never raises: the refusal
+    stands whether or not the alert is delivered.
+    """
+    try:
+        message = WebSocketMessage(
+            alert_title=get_error_message("RESOURCE_ALERT_TITLE").format(
+                config.get("resource_name", "").capitalize()
+            ),
+            alert_description=get_error_message("RESOURCE_ALERT_TEMPLATE").format(
+                config.get("limit", 0), config.get("resource_name", "")
+            ),
+            subscription_title=get_error_message("RESOURCE_SUBS_TITLE").format(
+                config.get("resource_name", "")
+            ),
+            subscription_description=get_error_message("RESOURCE_SUBS_TEMPLATE").format(
+                config.get("resource_name", "")
+            ),
+        )
+        call_websocket(str(organization.id), message=asdict(message))
+    except Exception as e:
+        logger.error(f"Failed to send websocket message: {str(e)}")
+
+
+def send_dataset_limit_alert(organization, limit):
+    """The upgrade alert for a reached dataset limit (see above)."""
+    send_resource_limit_alert(
+        organization,
+        {"resource_name": ResourceTypeChoices.DATASET.value, "limit": limit},
+    )
 
 
 # Function to log resource addition in APICallLog table
@@ -1536,9 +1587,24 @@ def log_and_deduct_cost_for_resource_request(
                         organization, config.get("existing", False)
                     )
                 case APICallTypeChoices.DATASET_ADD.value:
-                    request_status, detail = check_if_dataset_creation_is_allowed(
-                        organization, config
-                    )
+                    check = check_if_dataset_creation_is_allowed(organization, config)
+                    if check.outcome == dataset_limit.DatasetLimitOutcome.UNVERIFIED:
+                        if dataset_limit.dataset_limit_binds(sdk_source):
+                            # The limit was never verified: refuse without
+                            # recording a resource-limit hit or sending the
+                            # upgrade alert.
+                            return None
+                        # A creation the limit does not bind is not stopped
+                        # by a limit that could not be verified either.
+                        request_status, detail = True, {}
+                    elif (
+                        check.outcome == dataset_limit.DatasetLimitOutcome.LIMIT_REACHED
+                    ):
+                        request_status = False
+                        detail = {
+                            "resource_name": ResourceTypeChoices.DATASET.value,
+                            "limit": check.limit,
+                        }
                 case APICallTypeChoices.ROW_ADD.value:
                     request_status, detail = check_if_row_limit_reached(
                         organization, config.get("total_rows")
@@ -1550,15 +1616,6 @@ def log_and_deduct_cost_for_resource_request(
                 case _:
                     logger.error(f"Unhandled api_call_type: {api_call_type}")
                     return None
-
-            if detail.get("error_code") == ApiErrorCode.DATASET_LIMIT_CHECK_FAILED:
-                if not sdk_source:
-                    # The limit was never verified: refuse without recording a
-                    # resource-limit hit or sending the upgrade alert.
-                    return None
-                # SDK uploads are not held to the dataset limit, so a limit
-                # that could not be verified does not stop them either.
-                request_status, detail = True, {}
 
             is_billing_api_call = check_if_api_call_is_billing_api_call(
                 api_call_type, config
@@ -1579,28 +1636,8 @@ def log_and_deduct_cost_for_resource_request(
                     workspace=workspace,
                 )
 
-                # Send websocket message about resource limit
-                try:
-                    message = WebSocketMessage(
-                        alert_title=get_error_message("RESOURCE_ALERT_TITLE").format(
-                            config.get("resource_name", "").capitalize()
-                        ),
-                        alert_description=get_error_message(
-                            "RESOURCE_ALERT_TEMPLATE"
-                        ).format(
-                            config.get("limit", 0), config.get("resource_name", "")
-                        ),
-                        subscription_title=get_error_message(
-                            "RESOURCE_SUBS_TITLE"
-                        ).format(config.get("resource_name", "")),
-                        subscription_description=get_error_message(
-                            "RESOURCE_SUBS_TEMPLATE"
-                        ).format(config.get("resource_name", "")),
-                    )
-                    if not sdk_source:
-                        call_websocket(str(organization.id), message=asdict(message))
-                except Exception as e:
-                    logger.error(f"Failed to send websocket message: {str(e)}")
+                if not sdk_source:
+                    send_resource_limit_alert(organization, config)
 
                 return api_call_log_row
 
@@ -2175,6 +2212,7 @@ def check_if_user_creation_is_allowed(organization, config):
 
 
 def check_if_dataset_creation_is_allowed(organization, config=None):
+    """Check the plan's dataset limit; see ``DatasetLimitOutcome``."""
     from model_hub.models.develop_dataset import Dataset
 
     try:
@@ -2187,12 +2225,13 @@ def check_if_dataset_creation_is_allowed(organization, config=None):
             str(organization.id), "datasets", dataset_count
         )
         if not result.allowed:
-            detail = {
-                "resource_name": ResourceTypeChoices.DATASET.value,
-                "limit": int(result.limit) if result.limit else 0,
-            }
-            return False, detail
-        return True, {}
+            return dataset_limit.DatasetLimitCheck(
+                dataset_limit.DatasetLimitOutcome.LIMIT_REACHED,
+                limit=int(result.limit) if result.limit else 0,
+            )
+        return dataset_limit.DatasetLimitCheck(
+            dataset_limit.DatasetLimitOutcome.ALLOWED
+        )
     except Exception:
         logger.exception(
             "dataset_limit_check_failed", organization_id=str(organization.id)
@@ -2200,8 +2239,12 @@ def check_if_dataset_creation_is_allowed(organization, config=None):
         # Self-hosted has no dataset count limit (Entitlements.can_create
         # allows off-cloud); on cloud the quota is billing, so fail closed.
         if not DeploymentMode.is_cloud():
-            return True, {}
-        return False, {"error_code": ApiErrorCode.DATASET_LIMIT_CHECK_FAILED}
+            return dataset_limit.DatasetLimitCheck(
+                dataset_limit.DatasetLimitOutcome.ALLOWED
+            )
+        return dataset_limit.DatasetLimitCheck(
+            dataset_limit.DatasetLimitOutcome.UNVERIFIED
+        )
 
 
 def check_if_row_limit_reached(organization, row_count):

@@ -159,6 +159,18 @@ describe("PrimaryGraph", () => {
     vi.unstubAllGlobals();
   });
 
+  it("plots a gap for incomplete cost while keeping traffic and disclosure", async () => {
+    axios.post.mockResolvedValue({ data: { result: {
+      metric_name: "cost", query_complete: true, query_status: "complete", query_sampled: false,
+      data: [{ timestamp: "2026-10-20T12:00:00Z", value: 0.625, primary_traffic: 2,
+        cost_coverage: { status: "partial", known_subtotal: 1.25, known_fact_count: 1, unknown_fact_count: 1 } }],
+    } } });
+    renderWithQueryClient(<PrimaryGraph observeIdOverride="project-override" defaultMetric="cost" />);
+    const chart = await screen.findByTestId("apex-chart");
+    expect(chart).not.toHaveAttribute("data-primary-first-y");
+    expect(chart.getAttribute("data-primary-series-name")).toContain("Cost coverage incomplete");
+  });
+
   it("uses observeIdOverride as the graph project id", async () => {
     renderWithQueryClient(
       <PrimaryGraph observeIdOverride="project-override" />,

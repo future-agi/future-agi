@@ -108,7 +108,8 @@ type converseToolResult struct {
 }
 
 type converseToolConfig struct {
-	Tools []converseTool `json:"tools"`
+	ToolChoice map[string]any `json:"toolChoice,omitempty"`
+	Tools      []converseTool `json:"tools"`
 }
 
 type converseTool struct {
@@ -221,6 +222,14 @@ func buildConverseRequest(req *models.ChatCompletionRequest) (*converseRequest, 
 		cr.OutputConfig = &converseOutputConfig{TextFormat: format}
 	}
 
+	if cr.ToolConfig != nil {
+		var mode string
+		if json.Unmarshal(req.ToolChoice, &mode) == nil && mode == "required" {
+			cr.ToolConfig.ToolChoice = map[string]any{"any": struct{}{}}
+		} else if tc := translateToolChoice(req.ToolChoice); tc != nil && tc.Type == "tool" {
+			cr.ToolConfig.ToolChoice = map[string]any{"tool": map[string]string{"name": tc.Name}}
+		}
+	}
 	return cr, modelID
 }
 
@@ -624,7 +633,7 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 				Index:    idx,
 				ID:       e.Start.ToolUse.ToolUseID,
 				Type:     "function",
-				Function: &models.FunctionCall{Name: e.Start.ToolUse.Name, Arguments: ""},
+				Function: &models.FunctionCallDelta{Name: e.Start.ToolUse.Name, Arguments: ""},
 			}}}}},
 		}, false, nil
 
@@ -661,7 +670,7 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 				Created: s.created,
 				Choices: []models.StreamChoice{{Index: 0, Delta: models.Delta{ToolCalls: []models.ToolCallDelta{{
 					Index:    idx,
-					Function: &models.FunctionCall{Arguments: e.Delta.ToolUse.Input},
+					Function: &models.FunctionCallDelta{Arguments: e.Delta.ToolUse.Input},
 				}}}}},
 			}, false, nil
 		}

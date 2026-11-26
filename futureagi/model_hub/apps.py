@@ -22,6 +22,8 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
         "createsuperuser",
         "reset_password",
         "generate_swagger",
+        "provision_sql_reader",
+        "provision_sql_service",
         "grpcrunaioserver",
         "runserver",
         # Read the migration table and the migration files; write nothing.
@@ -54,8 +56,11 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
         "requeue_budget_grouping",
         "requeue_failed_grouping",
         "requeue_investigations",
+        "register_harness_release",
         "register_temporal_schedules",
         "seed_system_evals",
+        "purge_sql_results",
+        "erase_metric_data",
     }
 )
 # Developer tools that only the explicit local mode (./bin/dev manage) may run:

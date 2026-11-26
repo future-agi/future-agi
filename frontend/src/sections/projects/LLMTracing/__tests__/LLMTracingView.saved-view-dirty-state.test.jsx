@@ -18,6 +18,7 @@ const harness = vi.hoisted(() => ({
   filterChipsProps: null,
   filterSetters: {},
   selectedTab: "trace",
+  viewMode: "graph",
   attributes: [],
   dashboardFilterValues: [],
   emptyFilters: [],
@@ -105,7 +106,9 @@ vi.mock("../states", async () => {
   const ReactModule = await import("react");
   const llmState = {
     resetStates: vi.fn(),
-    viewMode: "graph",
+    get viewMode() {
+      return harness.viewMode;
+    },
     setViewMode: vi.fn(),
   };
   const gridState = {
@@ -132,7 +135,14 @@ vi.mock("../states", async () => {
 
 vi.mock("../TraceGrid", async () => {
   const ReactModule = await import("react");
-  return { default: ReactModule.forwardRef((_props, _ref) => null) };
+  return {
+    default: ReactModule.forwardRef(({ compareType, enabled }, _ref) => (
+      <div
+        data-testid={`${compareType}-trace-grid`}
+        data-enabled={String(enabled)}
+      />
+    )),
+  };
 });
 
 vi.mock("../SpanGrid", async () => {
@@ -255,7 +265,12 @@ vi.mock(
 );
 
 const originalRange = ["2026-09-01 00:00:00", "2026-09-10 00:00:00"];
-const newRange = ["2026-09-02 00:00:00", "2026-09-12 00:00:00"];
+// September 2–12 selected in the local calendar: the API upper bound is
+// September 13 at local midnight, serialized as an exact UTC instant.
+const newRange = [
+  new Date(2026, 8, 2).toISOString(),
+  new Date(2026, 8, 13).toISOString(),
+];
 const canonicalFilter = (value) => [
   {
     column_id: "trace_name",
@@ -289,6 +304,7 @@ beforeEach(() => {
   harness.filterSetters = {};
   harness.filterChipsProps = null;
   harness.selectedTab = "trace";
+  harness.viewMode = "graph";
 });
 afterEach(() => {
   cleanup();
@@ -324,7 +340,7 @@ const saveViewButton = () =>
   screen.queryByRole("button", { name: "Save view" });
 
 async function editCustomRange() {
-  fireEvent.click(screen.getByRole("button", { name: "9/1/2026 - 9/10/2026" }));
+  fireEvent.click(screen.getByRole("button", { name: "9/1/2026 - 9/9/2026" }));
   fireEvent.click(
     await screen.findByRole("menuitem", { name: "Custom range" }),
   );
@@ -340,9 +356,71 @@ async function editCustomRange() {
   );
 }
 
+describe("LLMTracingView rendered compare-pane labels", () => {
+  it.each([
+    ["table", "Data"],
+    ["agentGraph", "Data"],
+    ["agentPath", "Data"],
+    ["graph", "Graph"],
+  ])("labels %s panes and preserves tab selection", async (viewMode, noun) => {
+    harness.viewMode = viewMode;
+    harness.observeHeader.activeViewConfig = savedView({
+      display: { viewMode, showCompare: true },
+    });
+    await mountView();
+
+    const primary = screen.getByRole("tab", { name: `Primary ${noun}` });
+    const compare = screen.getByRole("tab", { name: `Comparison ${noun}` });
+    expect(primary).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("primary-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "true",
+    );
+    expect(screen.getByTestId("compare-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "false",
+    );
+
+    const filtersBefore = viewConfig().filters;
+    fireEvent.click(compare);
+    expect(compare).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("compare-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "true",
+    );
+    expect(screen.getByTestId("primary-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "false",
+    );
+    expect(viewConfig().filters).toEqual(filtersBefore);
+
+    fireEvent.click(primary);
+    expect(primary).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("primary-trace-grid")).toHaveAttribute(
+      "data-enabled",
+      "true",
+    );
+  });
+});
+
 describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
   it("keeps Save view hidden for an untouched hydrated custom range", async () => {
     await mountView();
+    expect(viewConfig().display.dateFilter.dateFilter).toEqual(originalRange);
+    expect(saveViewButton()).toBeNull();
+  });
+
+  it("keeps the exact stored bounds and stays clean after opening and accepting the calendar", async () => {
+    await mountView();
+    fireEvent.click(
+      screen.getByRole("button", { name: "9/1/2026 - 9/9/2026" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Custom range" }),
+    );
+    expect(screen.getByLabelText("Start Date")).toHaveValue("2026-09-01");
+    expect(screen.getByLabelText("End Date")).toHaveValue("2026-09-09");
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(viewConfig().display.dateFilter.dateFilter).toEqual(originalRange);
     expect(saveViewButton()).toBeNull();
   });
@@ -374,7 +452,7 @@ describe("LLMTracingView saved-view dirty state (TH-4883)", () => {
   it("switching to a preset still reveals Save view and updates the existing view id", async () => {
     await mountView();
     fireEvent.click(
-      screen.getByRole("button", { name: "9/1/2026 - 9/10/2026" }),
+      screen.getByRole("button", { name: "9/1/2026 - 9/9/2026" }),
     );
     fireEvent.click(await screen.findByRole("menuitem", { name: "Past 7D" }));
     fireEvent.click(await screen.findByRole("button", { name: "Save view" }));

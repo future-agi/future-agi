@@ -1,29 +1,44 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { useFixScenarioRows } from "src/api/simulate-environments/fixRuns";
 
 import {
+  ceilingCards,
   checksLine,
+  describeChecks,
   headline,
   pct,
+  provenOnTargetsOnly,
   verdictCards,
   winnerOf,
 } from "./fixRunView";
+import CheckLine from "./CheckLine";
 import { heldBackTally } from "./scenarioOutcomes";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 const num = { fontVariantNumeric: "tabular-nums" };
 const line = { typography: "s3", color: "text.subtitle" };
 
+// A rate card reads from → to, the gap in points; a cost or reply-time card
+// comes already worded.
+const cardValue = (card) => {
+  // The gap's size; its note says which side did better.
+  if (card.id === "gap") return `${Math.abs(card.value)} pts`;
+  if (card.from != null) return `${card.from}% → ${card.to}%`;
+  return card.value;
+};
+
 function Card({ card }) {
-  const value =
-    card.id === "gap" ? `${card.value} pts` : `${card.from}% → ${card.to}%`;
+  const value = cardValue(card);
   return (
-    <Box sx={{ px: 2, py: 0.875, minWidth: 0 }}>
+    <Box
+      data-testid={`verdict-card-${card.id}`}
+      sx={{ px: 2, py: 0.875, minWidth: 0 }}
+    >
       <Typography noWrap sx={line}>
         {card.label}
       </Typography>
@@ -45,27 +60,25 @@ function Card({ card }) {
           </Typography>
         )}
       </Stack>
-      <Typography noWrap sx={line}>
-        {card.note}
-      </Typography>
+      {/* A why that does not fit on one line reads in full on hover. */}
+      <Tooltip arrow describeChild title={card.note} enterDelay={400}>
+        <Typography noWrap sx={line}>
+          {card.note}
+        </Typography>
+      </Tooltip>
     </Box>
   );
 }
 Card.propTypes = { card: PropTypes.object.isRequired };
 
-const tierIcon = (status) =>
-  ({
-    passed: "solar:check-circle-linear",
-    failed: "solar:close-circle-bold",
-    pending: "solar:clock-circle-linear",
-    skipped: "solar:minus-circle-linear",
-  })[status] || "solar:question-circle-linear";
-
 function Checks({ tiers }) {
   const [all, setAll] = useState(false);
   const failed = tiers.filter((t) => t.status === "failed");
   return (
-    <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+    <Box
+      data-testid="verdict-checks"
+      sx={{ borderTop: "1px solid", borderColor: "divider" }}
+    >
       <Stack
         direction="row"
         alignItems="center"
@@ -99,7 +112,7 @@ function Checks({ tiers }) {
             minWidth: 0,
           }}
         >
-          {failed.map((t) => t.name).join(" · ")}
+          {failed.map((t) => t.label || t.name).join(" · ")}
         </Typography>
         <Button
           size="small"
@@ -132,32 +145,20 @@ function Checks({ tiers }) {
           }}
         >
           {tiers.map((t) => (
-            <Stack
-              key={t.name}
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              sx={{ minWidth: 0 }}
-            >
-              <Iconify
-                icon={tierIcon(t.status)}
-                width={14}
-                sx={{
-                  color:
-                    t.status === "failed" ? BUILD_TONES.red : "text.secondary",
-                  flexShrink: 0,
-                }}
-              />
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
-                {t.name}
-              </Typography>
-              <Typography
-                noWrap
-                sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
-              >
-                {t.detail}
-              </Typography>
-            </Stack>
+            <Box key={t.name} sx={{ minWidth: 0 }}>
+              <CheckLine check={t} variant="s2" noWrap />
+              {/* A tier that holds several checks, such as each ceiling,
+                  shows what each one verified. */}
+              {(t.parts || []).map((part) => (
+                <CheckLine
+                  key={part.name}
+                  check={part}
+                  variant="s2"
+                  noWrap
+                  sx={{ pl: 2.75 }}
+                />
+              ))}
+            </Box>
           ))}
         </Box>
       )}
@@ -166,35 +167,35 @@ function Checks({ tiers }) {
 }
 Checks.propTypes = { tiers: PropTypes.array.isRequired };
 
-function MustPassBreaks({ verdict }) {
-  const counted = verdict.must_pass_regressions || [];
-  const noise = verdict.must_pass_within_noise || [];
-  if (!counted.length && !noise.length) return null;
+// What a reviewer must know before trusting the winner, in the server's words:
+// the pull request lists the same sentences.
+function Caveats({ caveats }) {
+  if (!caveats.length) return null;
   return (
     <Box
-      data-testid="must-pass-breaks"
+      data-testid="verdict-caveats"
       sx={{ px: 2, py: 0.75, borderTop: "1px solid", borderColor: "divider" }}
     >
-      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-        Must-pass breaks
-      </Typography>
-      {counted.map((key) => (
-        <Typography key={key} sx={{ typography: "s2", color: BUILD_TONES.red }}>
-          {key}
-        </Typography>
-      ))}
-      {noise.map((key) => (
-        <Typography
-          key={key}
-          sx={{ typography: "s2", color: "text.secondary" }}
-        >
-          {`${key} · within normal noise, not counted`}
-        </Typography>
+      {caveats.map((caveat) => (
+        <Stack key={caveat} direction="row" spacing={1} alignItems="baseline">
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            width={14}
+            sx={{
+              color: BUILD_TONES.amber,
+              flexShrink: 0,
+              alignSelf: "center",
+            }}
+          />
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            {caveat}
+          </Typography>
+        </Stack>
       ))}
     </Box>
   );
 }
-MustPassBreaks.propTypes = { verdict: PropTypes.object.isRequired };
+Caveats.propTypes = { caveats: PropTypes.arrayOf(PropTypes.string).isRequired };
 
 // Platform evals the winner scores worse on than the base version. They are
 // shown, never counted: the verdict stands on the scenarios' own checks.
@@ -243,8 +244,12 @@ function EvalWarnings({ warnings }) {
 }
 EvalWarnings.propTypes = { warnings: PropTypes.array.isRequired };
 
+// The held-back cases a fix needs to be called verified. The read does not
+// carry it: mirrors HELD_BACK_VERIFIED_MIN in simulate/pydantic_schemas/agent_fix.py.
+const HELD_BACK_VERIFIED_MIN = 4;
+
 // How many held-back scenarios the winner fixed, scenario by scenario as on
-// the Per scenario tab, for a fix held back on too few cases to call it proven.
+// the Scenarios tab, for a fix held back on too few cases to call it proven.
 function HeldBackTally({ fix, winner }) {
   const { before, after, isLoading, isError } = useFixScenarioRows(
     fix,
@@ -261,9 +266,15 @@ function HeldBackTally({ fix, winner }) {
   const scenarios = failing === 1 ? "scenario" : "scenarios";
   return (
     <Typography
-      sx={{ px: 2, mt: -0.75, pb: 1, typography: "s2", color: "text.secondary" }}
+      sx={{
+        px: 2,
+        mt: -0.75,
+        pb: 1,
+        typography: "s2",
+        color: "text.secondary",
+      }}
     >
-      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw`}
+      {`Too few to tell · Fixed ${fixed} of ${failing} failing ${scenarios} it never saw — it takes ${HELD_BACK_VERIFIED_MIN} or more to tell.`}
     </Typography>
   );
 }
@@ -273,16 +284,15 @@ HeldBackTally.propTypes = {
 };
 
 // The design's verdict block: the headline, the cards side by side, the checks
-// on one line, then any must-pass breaks.
+// on one line, then its caveats.
 export default function FixVerdict({ fix }) {
   const winner = winnerOf(fix);
   const text = headline(fix);
   if (!winner || !text) return null;
-  const cards = verdictCards(fix);
+  const cards = [...verdictCards(fix), ...ceilingCards(fix)];
   // Too few held back to call it verified, whatever the verdict says.
   const limited = !!fix.limited_validation;
-  const provenOnTargets = !limited && !winner.verdict.held_back_pass_rate;
-  const heldBack = (fix.request?.held_back_scenario_keys || []).length > 0;
+  const provenOnTargets = provenOnTargetsOnly(fix);
   return (
     <Box
       sx={{
@@ -294,7 +304,12 @@ export default function FixVerdict({ fix }) {
         overflow: "hidden",
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 2, py: 1 }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 2, py: 1 }}
+      >
         {limited && (
           <Box
             component="span"
@@ -312,11 +327,13 @@ export default function FixVerdict({ fix }) {
             Limited validation
           </Box>
         )}
-        <Typography sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.45 }}>
+        <Typography
+          sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.45 }}
+        >
           {text}
         </Typography>
       </Stack>
-      {limited && heldBack && <HeldBackTally fix={fix} winner={winner} />}
+      {limited && <HeldBackTally fix={fix} winner={winner} />}
       {provenOnTargets && (
         <Typography
           sx={{
@@ -353,9 +370,16 @@ export default function FixVerdict({ fix }) {
         ))}
       </Box>
       {winner.verdict.tiers?.length > 0 && (
-        <Checks tiers={winner.verdict.tiers} />
+        <Checks
+          tiers={describeChecks(
+            winner.verdict.tiers,
+            fix.request,
+            winner.verdict,
+            winner.wording,
+          )}
+        />
       )}
-      <MustPassBreaks verdict={winner.verdict} />
+      <Caveats caveats={winner.wording?.caveats || []} />
       {fix.eval_warnings?.length > 0 && (
         <EvalWarnings warnings={fix.eval_warnings} />
       )}

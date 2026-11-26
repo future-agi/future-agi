@@ -158,7 +158,7 @@ const UploadLimitNotification = () => {
               <Typography
                 variant="body2"
                 sx={{
-                  fontSize: "13px",
+                  fontSize: "12px",
                   fontWeight: "400",
                   color: "text.primary",
                 }}

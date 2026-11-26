@@ -63,7 +63,7 @@ export const AgentActionMenu = ({ agent, onDelete }) => {
           <ListItemText
             primary="Delete"
             primaryTypographyProps={{
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: 400,
             }}
           />

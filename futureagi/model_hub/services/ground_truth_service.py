@@ -124,7 +124,9 @@ class GroundTruthService:
             (variable_mapping, "variable"),
             (role_mapping, "role"),
         ):
-            missing = _first_missing_column(source_mapping, gt.columns or [], label=label)
+            missing = _first_missing_column(
+                source_mapping, gt.columns or [], label=label
+            )
             if missing is not None:
                 col, key = missing
                 return ServiceError(

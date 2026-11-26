@@ -3,14 +3,26 @@ import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Box, Stack, Typography, Button, IconButton, Tab } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Link,
+  Tab,
+  Tooltip,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
+import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
+  useDebugAnalysis,
   useRunDetail,
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
@@ -20,10 +32,17 @@ import {
   compareRunsKeyPrefix,
   runAnalyticsKey,
 } from "src/api/simulate-environments/runEvals";
-import { useRerunCallsInRun } from "src/api/simulate-environments/rerunScenarios";
+import {
+  useRerunCallsInRun,
+  useResumeRun,
+} from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
+import ViewerLock from "../../../components/ViewerLock";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import StatusChip from "../StatusChip";
+import { stopLiveLineOf, stopNoteOf, stopTipOf } from "../runStop";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
@@ -37,11 +56,18 @@ import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import LaunchFixDialog from "../../improvements/LaunchFixDialog";
+import {
+  epochTargets,
+  epochTargetsNote,
+  useFixLaunchOptions,
+} from "src/api/simulate-environments/fixRuns";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
+import RunReport from "./RunReport";
 import useCallListNavigation from "./useCallListNavigation";
+import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
 
 /**
@@ -83,7 +109,7 @@ export default function RunDetail({
   // The open call, where it was opened from ("table", "analytics" or "link")
   // and, after a prev/next step, the table page it sits on so the table can
   // follow. Mirrored in `?rowId=`.
-  const { openCall, showCall } = useOpenCallParam({
+  const { openCall, showCall, openById } = useOpenCallParam({
     executionId,
     tableQuery,
     tableShown: tab === "tasks",
@@ -91,6 +117,8 @@ export default function RunDetail({
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [fixLaunching, setFixLaunching] = useState(false);
+  // Set by Run Epoch: the imported failing cases the fix starts from.
+  const [fixTargets, setFixTargets] = useState(null);
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
@@ -103,11 +131,13 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  const openTask = callNav.openRow ?? openCall?.task ?? null;
   // The All Evaluations drawer and the table's eval column menus share one
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
   const evalRun = useRunEvalActions({ envId: env?.id, executionId });
   const rerunInRun = useRerunCallsInRun(executionId);
+  const access = useSimulationAccess();
 
   // The past self-improvement (optimization) runs for this execution — REAL,
   // scoped by test_execution_id. The Trials tab only appears once at least one
@@ -146,10 +176,28 @@ export default function RunDetail({
     );
 
   const status = identity?.runState;
+  // A fix's check run is not one of the user's runs: it has no run number, and
+  // only the fix acts on it, so it offers no Stop, Re-run or Debug failures.
+  const fixRun = identity?.fixRun ?? null;
   // A live run has no final results yet, so its header actions wait for it to
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
+  const stopNotice = stopNoticeOf(identity, live);
+  // The header launches from failing cases without opening the diagnosis drawer.
+  const { options: fixOptions } = useFixLaunchOptions(executionId, {
+    enabled: fixAllowed && !!identity && !live && !fixRun,
+  });
+  const headerLaunchOpen = fixLaunching && !!fixTargets;
+  const diagnosis = useDebugAnalysis(headerLaunchOpen ? executionId : null);
+  const epoch = epochTargets(fixOptions);
+  const importedCount = epoch.imported.length;
+  const canOfferEpoch =
+    fixAllowed &&
+    identity &&
+    !live &&
+    !fixRun &&
+    fixOptions?.scenarios?.some((one) => one.failing_sub_goals?.length);
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
@@ -161,17 +209,22 @@ export default function RunDetail({
     identity?.environmentVersion?.label &&
       `env ${identity.environmentVersion.label}`,
     identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+    identity?.seed != null && `seed ${identity.seed}`,
   ]
     .filter(Boolean)
     .map((label) => ` · ${label}`)
     .join("");
-  // A re-run starts from the versions this run used.
+  // An interrupted run says how far it got and can resume the calls it left.
+  const resumeState = identity?.resume;
+  const resume = useResumeRun(executionId);
+  const lastResume = resumeState?.history?.at(-1);
   const rerunOptions = {
     initialPicks: {
       agent: identity?.pinnedAgentVersion?.id,
       environment: identity?.environmentVersion?.id,
       suite: identity?.suiteVersion?.id,
     },
+    seed: identity?.seed ?? undefined,
   };
 
   // A check run opened from a fix carries the fix page as its way back; it is
@@ -227,7 +280,7 @@ export default function RunDetail({
 
         <Box flex={1} minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={1}>
-            {identity && (
+            {identity && !fixRun && (
               <Box
                 sx={{
                   width: 24,
@@ -246,9 +299,27 @@ export default function RunDetail({
               </Box>
             )}
             <Typography noWrap sx={{ typography: "s1_2", fontWeight: 600 }}>
-              {identity
-                ? `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
-                : "Run complete"}
+              {fixRun ? (
+                <>
+                  {`Check run ${fixRun.label} for `}
+                  <Link
+                    component={RouterLink}
+                    href={paths.dashboard.simulate.environments.improvement(
+                      env.id,
+                      fixRun.id,
+                    )}
+                    color="inherit"
+                    underline="always"
+                  >
+                    this fix
+                  </Link>
+                  {` · agent ${agentLabel}${pinnedLabels}`}
+                </>
+              ) : identity ? (
+                `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
+              ) : (
+                "Run complete"
+              )}
             </Typography>
             {identity?.agentDiffers && (
               <AgentDiffersTag
@@ -256,17 +327,35 @@ export default function RunDetail({
                 environmentVersion={identity.environmentVersion}
               />
             )}
-            {status && <StatusChip status={status} />}
-            <StopRunControl
-              executionId={executionId}
-              stoppable={!!identity?.stoppable}
-              label="Stop simulation"
-            />
+            {status && (
+              <StatusChip status={status} tip={stopTipOf(identity?.stop)} />
+            )}
+            {!fixRun && (
+              <StopRunControl
+                executionId={executionId}
+                stoppable={!!identity?.stoppable}
+                label="Stop simulation"
+              />
+            )}
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
+            {/* Before "started", so a narrow header cuts the date, not this. */}
+            {resumeState?.resumable
+              ? ` · ${resumeState.unfinished} not finished`
+              : ""}
             {startedLabel ? ` · started ${startedLabel}` : ""}
+            {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
+          {identity?.buildNotice && (
+            <Alert
+              severity="warning"
+              sx={{ mt: 1 }}
+              data-testid="run-build-notice"
+            >
+              {identity.buildNotice}
+            </Alert>
+          )}
         </Box>
 
         <ReliabilityHeadline
@@ -276,73 +365,194 @@ export default function RunDetail({
 
         {/* A backed run opens its evals, to grade again or add to; a
             client-only env keeps its store picker. */}
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={() =>
-            backed ? setAllEvalsOpen(true) : setAddingEvals(true)
-          }
-          // A re-grade reads as running, but its evals stay reachable so the
-          // drawer can say why they are locked until grading finishes.
-          disabled={live && executionStatus !== "evaluating"}
-          startIcon={
-            <Iconify
-              icon={
-                backed ? "solar:play-circle-linear" : "solar:add-circle-linear"
-              }
-              width={15}
-            />
-          }
+        <ViewerLock
+          locked={!backed && !access.canEdit}
+          title={WORKSPACE_COPY.viewer.evals}
         >
-          {backed ? "Run evals" : "Add evals"}
-        </Button>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={exportResults}
-          disabled={live || exporting}
-          startIcon={
-            <Iconify icon="solar:download-minimalistic-linear" width={15} />
-          }
-        >
-          {exporting ? "Exporting…" : "Export"}
-        </Button>
-        {hasTickableCalls === false && (
           <Button
             variant="outlined"
             size="small"
-            disabled={live || runStarting}
-            startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
             onClick={() =>
-              onStartRun?.(
-                identity?.scenarioIds || undefined,
-                identity?.trials || 1,
-                rerunOptions,
-              )
+              backed ? setAllEvalsOpen(true) : setAddingEvals(true)
+            }
+            // A re-grade reads as running, but its evals stay reachable so the
+            // drawer can say why they are locked until grading finishes.
+            disabled={
+              (!backed && !access.canEdit) ||
+              (live && executionStatus !== "evaluating")
+            }
+            startIcon={
+              <Iconify
+                icon={
+                  backed
+                    ? "solar:play-circle-linear"
+                    : "solar:add-circle-linear"
+                }
+                width={15}
+              />
             }
           >
-            Run again
+            {backed ? "Run evals" : "Add evals"}
           </Button>
-        )}
-        <Button
-          variant="contained"
-          color="primary"
-          size="small"
-          onClick={() => setDebugging(true)}
-          disabled={live}
-          startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+        </ViewerLock>
+        <ViewerLock
+          locked={!access.canEdit}
+          title={WORKSPACE_COPY.viewer.export}
         >
-          Debug failures
-        </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={exportResults}
+            disabled={!access.canEdit || live || exporting}
+            startIcon={
+              <Iconify icon="solar:download-minimalistic-linear" width={15} />
+            }
+          >
+            {exporting ? "Exporting…" : "Export"}
+          </Button>
+        </ViewerLock>
+        {resumeState?.resumable && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!access.canRun || live || resume.isPending}
+              startIcon={<Iconify icon="solar:play-linear" width={15} />}
+              onClick={() => resume.mutate()}
+            >
+              {resume.isPending ? "Resuming…" : "Resume"}
+            </Button>
+          </ViewerLock>
+        )}
+        {hasTickableCalls === false && !fixRun && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!access.canRun || live || runStarting}
+              startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
+              onClick={() =>
+                onStartRun?.(
+                  identity?.scenarioIds || undefined,
+                  identity?.trials || 1,
+                  rerunOptions,
+                )
+              }
+            >
+              Run again
+            </Button>
+          </ViewerLock>
+        )}
+        {canOfferEpoch && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Tooltip
+              describeChild
+              title={
+                !access.canRun
+                  ? ""
+                  : importedCount
+                    ? `Starts an epoch from the ${importedCount} failing scenario${importedCount === 1 ? "" : "s"} that came from imported evidence.`
+                    : "Start from this run’s failing scenarios without requesting a diagnosis."
+              }
+            >
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={!access.canRun}
+                onClick={() => {
+                  setFixTargets({
+                    keys: importedCount ? epoch.keys : undefined,
+                    note: importedCount
+                      ? epochTargetsNote(epoch)
+                      : undefined,
+                  });
+                  setFixLaunching(true);
+                }}
+                startIcon={
+                  <Iconify icon="solar:magic-stick-3-linear" width={15} />
+                }
+              >
+                Run Epoch
+              </Button>
+            </Tooltip>
+          </ViewerLock>
+        )}
+        {!fixRun && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => setDebugging(true)}
+              disabled={!access.canRun || live}
+              startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            >
+              Debug failures
+            </Button>
+          </ViewerLock>
+        )}
       </Stack>
       {creditBanner}
+
+      {stopNotice?.live && (
+        <Typography
+          data-testid="run-stop-notice"
+          sx={{
+            mx: 2,
+            mt: 1.5,
+            px: 1.5,
+            py: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            typography: "s2",
+            color: "text.secondary",
+            flexShrink: 0,
+          }}
+        >
+          {stopNotice.body}
+        </Typography>
+      )}
+      {stopNotice && !stopNotice.live && (
+        <Alert
+          data-testid="run-stop-notice"
+          severity={stopNotice.bad ? "warning" : "info"}
+          icon={
+            <Iconify
+              icon={
+                stopNotice.bad
+                  ? "solar:danger-triangle-linear"
+                  : "solar:stop-circle-linear"
+              }
+              width={16}
+            />
+          }
+          sx={{
+            mx: 2,
+            mt: 1.5,
+            flexShrink: 0,
+          }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {stopNotice.title}
+          </Typography>
+          <Typography sx={{ typography: "s2", mt: 0.25 }}>
+            {stopNotice.body}
+          </Typography>
+        </Alert>
+      )}
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <Box sx={{ p: 2 }}>
           <CustomTabs
             value={tab}
             onChange={(_, v) => setTab(v)}
-            sx={{ boxShadow: "none", borderBottom: "1px solid", borderColor: "divider", mb: 2 }}
+            sx={{
+              boxShadow: "none",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              mb: 2,
+            }}
           >
             <Tab value="tasks" label={`Test runs (${stats.total})`} />
             {hasTrials && (
@@ -358,6 +568,7 @@ export default function RunDetail({
               />
             )}
             <Tab value="analytics" label="Analytics" />
+            {env?.composition && <Tab value="report" label="Report" />}
           </CustomTabs>
 
           {tab === "tasks" && (
@@ -389,21 +600,23 @@ export default function RunDetail({
               // refilled in place) or as a new simulation, through the same
               // start as any run: that one opens the new run.
               onRerunScenarios={
-                onStartRun
+                onStartRun && !fixRun
                   ? (keys, trials) => onStartRun(keys, trials, rerunOptions)
                   : null
               }
-              onRerunInRun={rerunInRun.mutate}
+              onRerunInRun={fixRun ? null : rerunInRun.mutate}
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
-                live
-                  ? "Wait for this run to finish before re-running calls"
-                  : runStarting
-                    ? "Starting the run…"
-                    : rerunInRun.isPending
-                      ? "Starting the re-run…"
-                      : null
+                !access.canRun
+                  ? WORKSPACE_COPY.viewer.run
+                  : live
+                    ? "Wait for this run to finish before re-running calls"
+                    : runStarting
+                      ? "Starting the run…"
+                      : rerunInRun.isPending
+                        ? "Starting the re-run…"
+                        : null
               }
             />
           )}
@@ -442,6 +655,10 @@ export default function RunDetail({
               }
               onOpenCalls={openCallsWith}
             />
+          )}
+
+          {tab === "report" && env?.composition && (
+            <RunReport env={env} executionId={executionId} live={live} />
           )}
         </Box>
       </Box>
@@ -496,7 +713,18 @@ export default function RunDetail({
       )}
 
       <CallDrawer
-        task={openCall?.task ?? null}
+        task={openTask}
+        trials={trialsOf(callNav.rows, openTask)}
+        onPickTrial={(id) => {
+          const row = callNav.rows.find((one) => one.id === id);
+          if (row)
+            showCall({
+              task: row,
+              source: openCall?.source ?? "table",
+              page: openCall?.page ?? null,
+            });
+        }}
+        onOpenTrial={openById}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}
@@ -513,6 +741,7 @@ export default function RunDetail({
         stats={stats}
         onLaunch={() => {
           setDebugging(false);
+          setFixTargets(null);
           setFixLaunching(true);
         }}
         onViewCalls={(callExecutionIds) => {
@@ -527,6 +756,12 @@ export default function RunDetail({
           onClose={() => setFixLaunching(false)}
           envId={env.id}
           sourceRunId={executionId}
+          initialTargets={fixTargets?.keys}
+          initialNote={fixTargets?.note}
+          diagnosisUnavailable={
+            headerLaunchOpen && !diagnosis.isLoading && !diagnosis.loadError &&
+            diagnosis.analysis.status !== "completed"
+          }
         />
       )}
 
@@ -553,6 +788,8 @@ RunDetail.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    // Present on a composition: its runs have a report (environment-releases.md §7.7).
+    composition: PropTypes.object,
   }).isRequired,
   // Client store state — only read for a non-backed env, to drive the
   // fixture-only `AddEvalsDrawer` fallback the same way it always has.
@@ -572,3 +809,17 @@ RunDetail.propTypes = {
   runStarting: PropTypes.bool,
   creditBanner: PropTypes.node,
 };
+
+function stopNoticeOf(identity, live) {
+  const stop = identity?.stop;
+  if (!stop) return null;
+  const voice = Boolean(identity?.voice);
+  if (live) return { live: true, body: stopLiveLineOf(stop, { voice }) };
+  const note = stopNoteOf(stop, { voice });
+  return note
+    ? {
+        ...note,
+        bad: ["unconfirmed", "cleanup_failed"].includes(stop.status),
+      }
+    : null;
+}

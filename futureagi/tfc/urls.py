@@ -28,6 +28,7 @@ from drf_yasg.views import get_schema_view
 from tfc.capabilities.views import CapabilitiesView
 from tfc.ee_loader import has_ee
 from tfc.views.deployment import DeploymentInfoView
+from tfc.views.host_update_status import HostUpdateStatusView
 from tfc.views.health import (
     AuthenticatedHealthView,
     HealthCheckView,
@@ -138,6 +139,11 @@ urlpatterns = [
         "api/traces/span-attribute-detail/",
         SpanAttributeDetailView.as_view(),
         name="span-attribute-detail",
+    ),
+    path(
+        "api/host-update-status/",
+        HostUpdateStatusView.as_view(),
+        name="host-update-status",
     ),
     path(
         "api/deployment-info/",

@@ -147,7 +147,9 @@ from model_hub.utils.annotation_queue_helpers import (
 )
 from model_hub.utils.utils import send_message_to_channel
 from simulate.models.test_execution import CallTranscript
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+from tfc.utils import email_unsubscribe
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import (
@@ -283,9 +285,11 @@ def _queue_item_export_prefetches():
     return (
         Prefetch(
             "call_execution__transcripts",
-            queryset=CallTranscript.objects.filter(
-                speaker_role__in=get_displayable_transcript_roles(),
-                deleted=False,
+            queryset=with_speakers(
+                CallTranscript.objects.filter(
+                    speaker_role__in=get_displayable_transcript_roles(),
+                    deleted=False,
+                )
             ).order_by("start_time_ms"),
             to_attr="_displayable_transcripts",
         ),
@@ -978,6 +982,7 @@ def _send_annotation_discussion_email(*, item, comment, thread, recipient_emails
                 "item_url": _annotation_discussion_url(item),
             },
             recipient_emails,
+            notification_category=email_unsubscribe.ANNOTATION_DISCUSSION,
         )
         logger.info(
             "annotation_discussion_email_sent",

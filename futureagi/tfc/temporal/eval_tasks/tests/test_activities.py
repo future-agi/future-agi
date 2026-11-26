@@ -53,6 +53,90 @@ async def test_exact_selection_budget_error_is_retryable(monkeypatch):
     assert "Narrow the time range" in str(captured.value)
 
 
+def _busy_lease_env(monkeypatch, outcomes, *, lease_seconds=60):
+    """Drive reconcile_eval_task_activity through a scripted lease sequence."""
+    import tfc.temporal.eval_tasks.activities as activities
+    import tracer.services.eval_tasks.sampling.service as sampling_service
+    from tracer.services.eval_tasks.sampling.errors import SamplingReconcileBusy
+
+    class NoopHeartbeater:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    def fake_sync_to_async(function, **_kwargs):
+        async def invoke(*args, **kwargs):
+            return function(*args, **kwargs)
+
+        return invoke
+
+    clock = {"now": 1000.0}
+    calls = []
+
+    async def fake_sleep(seconds):
+        clock["now"] += seconds
+
+    def reconcile(task_id):
+        calls.append(clock["now"])
+        if outcomes(len(calls), clock["now"]):
+            raise SamplingReconcileBusy(
+                "Another sampling reconcile is running for this task. Retry later."
+            )
+        return {"task_id": task_id, "created": 1, "requeued": 0, "dropped": 0}
+
+    monkeypatch.setattr(activities, "Heartbeater", NoopHeartbeater)
+    monkeypatch.setattr(activities, "otel_sync_to_async", fake_sync_to_async)
+    monkeypatch.setattr(activities, "_reconcile_sync", reconcile)
+    monkeypatch.setattr(activities, "_busy_wait", fake_sleep)
+    monkeypatch.setattr(activities, "_busy_clock", lambda: clock["now"])
+    monkeypatch.setattr(
+        sampling_service,
+        "reconcile_lease_duration",
+        lambda: timedelta(seconds=lease_seconds),
+    )
+    return activities, calls, clock
+
+
+@pytest.mark.asyncio
+async def test_stale_busy_lease_is_waited_out_not_failed(monkeypatch):
+    # A killed worker's lease expires 45 s later: the activity must keep
+    # trying inside its own attempt instead of exhausting the retry budget.
+    from tfc.temporal.eval_tasks.types import ReconcileActivityInput
+
+    activities, calls, clock = _busy_lease_env(
+        monkeypatch, lambda _n, now: now < 1045.0, lease_seconds=60
+    )
+    out = await activities.reconcile_eval_task_activity(
+        ReconcileActivityInput(task_id="task-id")
+    )
+    assert out.created == 1
+    assert len(calls) > 1
+    assert clock["now"] >= 1045.0
+
+
+@pytest.mark.asyncio
+async def test_live_renewed_lease_still_reports_retryable_busy(monkeypatch):
+    # Still held after a full lease period plus margin: a live reconcile owns
+    # it, so report the existing retryable busy error rather than waiting on.
+    from temporalio.exceptions import ApplicationError
+
+    from tfc.temporal.eval_tasks.types import ReconcileActivityInput
+
+    activities, calls, clock = _busy_lease_env(
+        monkeypatch, lambda _n, _now: True, lease_seconds=60
+    )
+    with pytest.raises(ApplicationError) as captured:
+        await activities.reconcile_eval_task_activity(
+            ReconcileActivityInput(task_id="task-id")
+        )
+    assert captured.value.non_retryable is False
+    assert captured.value.type == "EvalTaskReadBudgetExceeded"
+    assert clock["now"] >= 1000.0 + 60 + activities._BUSY_LEASE_MARGIN_SECONDS
+    assert len(calls) > 2
+
+
 @pytest.mark.asyncio
 async def test_deterministic_selection_rejection_is_non_retryable(monkeypatch):
     from temporalio.exceptions import ApplicationError

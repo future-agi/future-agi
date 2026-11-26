@@ -62,7 +62,7 @@ services:
 
   # PeerDB's own Temporal (separate from app Temporal)
   peerdb-temporal:
-    image: temporalio/auto-setup:1.29
+    image: temporalio/auto-setup:1.29.7@sha256:f14912b699cf73015ad5c4fc18d522d4b014db90e794039214dfb7c022c2644f
     restart: unless-stopped
     depends_on:
       peerdb-catalog:

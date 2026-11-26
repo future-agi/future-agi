@@ -42,30 +42,57 @@ def test_omega_reel_uses_finding_and_supported_attribution_only():
     receipt = SimpleNamespace(excerpt=excerpt, span_id="span-1", evidence_id="ev-1")
     finding = SimpleNamespace(
         statement="The assistant failed to deliver the requested item",
-        attributions=_RelatedRows([
-            SimpleNamespace(deleted=False, role="decisive", status="supported", span_id="span-1", explanation="The model ignored the requested item"),
-            SimpleNamespace(deleted=False, role="symptom", status="supported", span_id="span-1", explanation="The final reply omitted the item"),
-            SimpleNamespace(deleted=False, role="origin", status="unknown", span_id="span-2"),
-        ]),
+        attributions=_RelatedRows(
+            [
+                SimpleNamespace(
+                    deleted=False,
+                    role="decisive",
+                    status="supported",
+                    span_id="span-1",
+                    explanation="The model ignored the requested item",
+                ),
+                SimpleNamespace(
+                    deleted=False,
+                    role="symptom",
+                    status="supported",
+                    span_id="span-1",
+                    explanation="The final reply omitted the item",
+                ),
+                SimpleNamespace(
+                    deleted=False, role="origin", status="unknown", span_id="span-2"
+                ),
+            ]
+        ),
     )
     report = SimpleNamespace(
         trace_id="trace-1",
-        key_moments=_RelatedRows([SimpleNamespace(
-            deleted=False, kevinified="Unrelated", verbatim="Unrelated",
-            role="origin", span_id="other", status="ok", is_failure=False,
-        )]),
+        key_moments=_RelatedRows(
+            [
+                SimpleNamespace(
+                    deleted=False,
+                    kevinified="Unrelated",
+                    verbatim="Unrelated",
+                    role="origin",
+                    span_id="other",
+                    status="ok",
+                    is_failure=False,
+                )
+            ]
+        ),
         evidence_receipts=_RelatedRows(
             [SimpleNamespace(deleted=False, excerpt="Unrelated", span_id="other")]
         ),
     )
 
     reel = _investigation_reel(
-        report, selected_findings=[(finding, {"decisive": [receipt]})],
-        span_context={("trace-1", "span-1"): {
-            "name": "Recorded operation", "attrs_string": {
-                "input.value": "false", "output.value": "0"
-            },
-        }},
+        report,
+        selected_findings=[(finding, {"decisive": [receipt]})],
+        span_context={
+            ("trace-1", "span-1"): {
+                "name": "Recorded operation",
+                "attrs_string": {"input.value": "false", "output.value": "0"},
+            }
+        },
     )
 
     assert [step["label"] for step in reel] == ["FINDING", "DECISIVE", "SYMPTOM"]
@@ -84,9 +111,14 @@ def test_omega_reel_uses_finding_and_supported_attribution_only():
 
 def test_omega_attribution_without_receipt_is_not_treated_as_false():
     finding = SimpleNamespace(
-        statement="A failed handoff", attributions=_RelatedRows([
-            SimpleNamespace(deleted=False, role="origin", status="supported", span_id="span-1")
-        ]),
+        statement="A failed handoff",
+        attributions=_RelatedRows(
+            [
+                SimpleNamespace(
+                    deleted=False, role="origin", status="supported", span_id="span-1"
+                )
+            ]
+        ),
     )
     reel = _investigation_reel(None, selected_findings=[(finding, {})])
     assert [step["label"] for step in reel] == ["FINDING", "ORIGIN"]
@@ -97,9 +129,14 @@ def test_omega_attribution_without_receipt_is_not_treated_as_false():
 
 def test_recorded_span_read_is_project_scoped_and_rejects_other_trace():
     finding = SimpleNamespace(
-        statement="Failure", attributions=_RelatedRows([
-            SimpleNamespace(deleted=False, role="decisive", status="supported", span_id="span-1")
-        ]),
+        statement="Failure",
+        attributions=_RelatedRows(
+            [
+                SimpleNamespace(
+                    deleted=False, role="decisive", status="supported", span_id="span-1"
+                )
+            ]
+        ),
     )
 
     class Reader:

@@ -31,6 +31,7 @@ const AddExistingDataset = ({
   selectedTraces,
   selectedSpans,
   selectAll,
+  selectAllFilters,
   currentTab,
   onSuccess,
 }) => {
@@ -244,6 +245,12 @@ const AddExistingDataset = ({
       mapping_config,
       new_mapping_config,
       select_all: Boolean(selectAll),
+      // Under select-all the ids below are the deselected rows; the grid's
+      // own filters (time window included) let the server resolve exactly
+      // the rows the grid counted instead of the whole project.
+      ...(selectAll && Array.isArray(selectAllFilters)
+        ? { filters: selectAllFilters }
+        : {}),
       project: observeId,
       ...(currentTab === LLM_TABS.TRACE
         ? {
@@ -260,10 +267,15 @@ const AddExistingDataset = ({
       axios.post(endpoints.project.addExistingDataset, payload),
     onSuccess: (res) => {
       if (res.data?.status) {
+        const isProcessing = res.data?.result?.status !== "completed";
+
         enqueueSnackbar(
           <>
-            <span>Data added successfully</span>
-            {/* {res.data.result.message} */}
+            <span>
+              {isProcessing
+                ? "Rows are being added to the dataset in the background, this can take a while for large selections."
+                : "Data added successfully"}
+            </span>
             <span
               onClick={() =>
                 navigate(`/dashboard/develop/${selectedDataset}?tab=data`, {
@@ -281,7 +293,7 @@ const AddExistingDataset = ({
               View Dataset
             </span>
           </>,
-          { variant: "success" },
+          { variant: isProcessing ? "info" : "success" },
         );
         handleclose();
         if (onSuccess) {
@@ -652,6 +664,7 @@ AddExistingDataset.propTypes = {
   selectedTraces: PropTypes.array,
   selectedSpans: PropTypes.array,
   selectAll: PropTypes.bool,
+  selectAllFilters: PropTypes.array,
   currentTab: PropTypes.string,
   onSuccess: PropTypes.func,
 };

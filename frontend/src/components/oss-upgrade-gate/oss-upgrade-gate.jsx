@@ -11,9 +11,15 @@ import {
   UPGRADE_CTA,
   FEATURES,
   REASONS,
+  UNLOCK,
 } from "./constants";
 
-export default function OSSUpgradeGate({ feature, image, imageDark, reasonCode }) {
+export default function OSSUpgradeGate({
+  feature,
+  image,
+  imageDark,
+  reasonCode,
+}) {
   const router = useRouter();
   const config = FEATURES[feature];
   if (!config) {
@@ -21,19 +27,31 @@ export default function OSSUpgradeGate({ feature, image, imageDark, reasonCode }
     return null;
   }
   const reason = REASONS[reasonCode];
+  const unlock = config.name ? UNLOCK[reasonCode] : undefined;
+  // The card keeps three steps: how to unlock, then what the feature does
+  // (or that past work is kept, for someone who had it).
+  const steps = unlock
+    ? [
+        ...unlock.steps(config.name),
+        ...(unlock.kept ? [config.kept] : config.steps.slice(1)),
+      ].slice(0, 3)
+    : config.steps;
+  const toLicense = !unlock && reason?.toLicense;
   return (
     <FeatureGateOverlay
       image={image || config.image}
       imageDark={imageDark || config.imageDark}
-      eyebrow={config.eyebrow}
-      title={config.title}
+      eyebrow={unlock && "eyebrow" in unlock ? unlock.eyebrow : config.eyebrow}
+      title={unlock ? unlock.title(config.name) : config.title}
       description={config.description}
-      steps={config.steps}
+      steps={steps}
+      blurFrom={config.blurFrom}
+      blur={config.blur}
       footnote={reason?.note || config.footnote}
-      primaryLabel={reason?.label || UPGRADE_CTA}
-      primaryHref={reason?.toLicense ? undefined : CONTACT_URL}
+      primaryLabel={unlock?.label || reason?.label || UPGRADE_CTA}
+      primaryHref={toLicense ? undefined : CONTACT_URL}
       onPrimary={
-        reason?.toLicense
+        toLicense
           ? () => router.push(paths.dashboard.settings.eeLicenses)
           : undefined
       }

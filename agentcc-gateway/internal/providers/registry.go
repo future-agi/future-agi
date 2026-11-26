@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/gemini"
 	"github.com/futureagi/agentcc-gateway/internal/providers/openai"
 	"github.com/futureagi/agentcc-gateway/internal/providers/speech"
+	"github.com/futureagi/agentcc-gateway/internal/providers/systemone"
 	"github.com/futureagi/agentcc-gateway/internal/routing"
 )
 
@@ -29,6 +32,7 @@ type Registry struct {
 	providers      map[string]Provider
 	modelMap       map[string]string   // model name → provider ID
 	modelProviders map[string][]string // model name → all provider IDs that serve it
+	skipped        map[string]bool     // immutable after startup; unknown provider formats
 	router         *routing.Router     // nil if no routing configured
 }
 
@@ -37,12 +41,18 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 	r := &Registry{
 		providers:      make(map[string]Provider),
 		modelMap:       make(map[string]string),
+		skipped:        make(map[string]bool),
 		modelProviders: make(map[string][]string),
 	}
 
 	for name, pcfg := range cfg.Providers {
 		// Apply provider presets (auto-fill base_url, api_format from type).
 		applyProviderPreset(&pcfg)
+		if !slices.Contains(providerFormats, pcfg.APIFormat) {
+			r.skipped[name] = true
+			slog.Warn("skipping provider with unsupported api_format", "provider", name, "api_format", pcfg.APIFormat)
+			continue
+		}
 
 		// Apply optimized defaults for local/self-hosted providers.
 		applyLocalDefaults(&pcfg)
@@ -78,7 +88,9 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 
 	// Apply explicit model map from config (overrides provider-level).
 	for model, providerID := range cfg.ModelMap {
-		r.modelMap[model] = providerID
+		if !r.skipped[providerID] {
+			r.modelMap[model] = providerID
+		}
 	}
 
 	// Create router if routing config is present or if models have multiple providers.
@@ -87,7 +99,7 @@ func NewRegistry(cfg *config.Config) (*Registry, error) {
 		for id := range r.providers {
 			providerIDs[id] = true
 		}
-		router, err := routing.NewRouter(cfg.Routing, providerIDs, r.modelProviders)
+		router, err := routing.NewRouter(r.activeTargets(cfg.Routing), providerIDs, r.modelProviders)
 		if err != nil {
 			return nil, fmt.Errorf("creating router: %w", err)
 		}
@@ -113,9 +125,32 @@ func (r *Registry) hasMultiProviderModels() bool {
 	return false
 }
 
+// activeTargets drops only targets of deliberately skipped providers. A target
+// naming an unconfigured provider is still a configuration error.
+func (r *Registry) activeTargets(cfg config.RoutingConfig) config.RoutingConfig {
+	if len(r.skipped) == 0 {
+		return cfg
+	}
+	targets := make(map[string][]config.RoutingTargetConfig, len(cfg.Targets))
+	for model, entries := range cfg.Targets {
+		for _, target := range entries {
+			if !r.skipped[target.Provider] {
+				targets[model] = append(targets[model], target)
+			}
+		}
+	}
+	cfg.Targets = targets
+	return cfg
+}
+
+var providerFormats = []string{"openai", "anthropic", "gemini", "google", "bedrock", "cohere", "azure", APIFormatSystemOne, apiFormatTypeSafe, "deepgram", "cartesia"}
+
 func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 	switch cfg.APIFormat {
 	case "openai":
+		if cfg.DecisionProxy == nil && cfg.DecisionDialContext == nil && cfg.Proxy == nil && cfg.DialContext == nil {
+			cfg.DecisionProxy = decisionProxy
+		}
 		return openai.New(name, cfg)
 	case "anthropic":
 		return anthropic.New(name, cfg)
@@ -127,11 +162,31 @@ func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 		return cohere.New(name, cfg)
 	case "azure":
 		return azure.New(name, cfg)
+	case APIFormatSystemOne, apiFormatTypeSafe:
+		// A decision provider takes the operator's proxy. One that comes with
+		// its own dialer (an org's base_url, checked) comes with the proxy
+		// that matches it, or connects directly.
+		if cfg.Proxy == nil && cfg.DialContext == nil {
+			cfg.Proxy = decisionProxy
+		}
+		return systemone.New(name, cfg)
 	case "deepgram", "cartesia":
 		return speech.New(name, cfg)
 	default:
-		return nil, fmt.Errorf("unsupported api_format %q (supported: openai, anthropic, gemini, bedrock, cohere, azure, deepgram, cartesia)", cfg.APIFormat)
+		return nil, fmt.Errorf("unsupported api_format %q (supported: %s)", cfg.APIFormat, strings.Join(providerFormats, ", "))
 	}
+}
+
+// APIFormatSystemOne is the api_format of a structured-decision provider.
+// "typesafe" is accepted as its alias: TypeSafe defined the format.
+const (
+	APIFormatSystemOne = "systemone"
+	apiFormatTypeSafe  = "typesafe"
+)
+
+// IsSystemOneFormat reports whether an api_format names System One.
+func IsSystemOneFormat(apiFormat string) bool {
+	return apiFormat == APIFormatSystemOne || apiFormat == apiFormatTypeSafe
 }
 
 // RegisterProvider adds a provider at runtime (e.g., a2a provider for agent delegation).
@@ -184,25 +239,28 @@ func (r *Registry) Resolve(model string) (Provider, error) {
 
 // ResolveWithRouting finds the provider for a model, using load balancing if available.
 func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
+	return r.ResolveExcluding(model, nil)
+}
+
+// ResolveExcluding retains the model's routing semantics while skipping refused providers.
+func (r *Registry) ResolveExcluding(model string, excluded map[string]bool) (*ResolveResult, error) {
+	return r.ResolveForScope(model, excluded, nil)
+}
+
+// ResolveForScope preserves normal model matching. An independently credentialed
+// adapter can serve a routing target whose operator instance is unhealthy.
+func (r *Registry) ResolveForScope(model string, excluded map[string]bool, independent func(string) bool) (*ResolveResult, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	router := r.router
+	_, explicitModelRequested := r.modelMap[model]
+	r.mu.RUnlock()
 
 	// Try routing first if the model has routing targets. A single target
 	// routes too: it can name the provider and the model_override to send.
-	if r.router != nil && r.router.TargetCount(model) > 0 {
-		var (
-			routingResult *routing.RoutingResult
-			err           error
-		)
-
-		_, explicitModelRequested := r.modelMap[model]
-		if explicitModelRequested {
-			routingResult, err = r.router.SelectExactModel(model)
-		} else {
-			routingResult, err = r.router.Select(model)
-		}
+	if router != nil && router.TargetCount(model) > 0 {
+		routingResult, err := router.SelectForScope(model, excluded, explicitModelRequested, independent)
 		if err == nil {
-			if p, ok := r.providers[routingResult.Target.ProviderID]; ok {
+			if p, ok := r.GetProvider(routingResult.Target.ProviderID); ok {
 				return &ResolveResult{
 					Provider:      p,
 					StrategyName:  routingResult.StrategyName,
@@ -213,13 +271,15 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 		}
 
 		if !explicitModelRequested {
-			return nil, models.ErrServiceUnavailable(err.Error())
+			return nil, models.ErrProvidersUnavailable(err.Error())
 		}
 	}
 
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	// Direct lookup.
 	if providerID, ok := r.modelMap[model]; ok {
-		if p, ok := r.providers[providerID]; ok {
+		if p, ok := r.providers[providerID]; ok && !excluded[providerID] {
 			return &ResolveResult{Provider: p}, nil
 		}
 		return nil, models.ErrInternal(fmt.Sprintf("provider %q configured for model %q but not found", providerID, model))
@@ -228,20 +288,36 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 	// Try prefix match: "openai/gpt-4o" → provider "openai", model "gpt-4o".
 	if idx := strings.Index(model, "/"); idx > 0 {
 		providerID := model[:idx]
-		if p, ok := r.providers[providerID]; ok {
+		if p, ok := r.providers[providerID]; ok && !excluded[providerID] {
 			return &ResolveResult{Provider: p}, nil
 		}
 	}
 
 	// If only one provider is configured, use it as default.
-	if len(r.providers) == 1 {
-		for _, p := range r.providers {
-			return &ResolveResult{Provider: p}, nil
+	if len(r.providers) == 1 && len(r.skipped) == 0 {
+		for id, p := range r.providers {
+			if !excluded[id] {
+				return &ResolveResult{Provider: p}, nil
+			}
 		}
 	}
 
 	return nil, models.ErrNotFound("model_not_found",
 		fmt.Sprintf("model %q not found in any configured provider. Configure model_map or use 'provider/model' format.", model))
+}
+
+// ProvidersFor returns, in ID order, the providers that list model exactly or
+// that config.yaml's model_map maps it to. Nothing is inferred: no routing
+// targets, no "provider/model" guess, no only-provider default.
+func (r *Registry) ProvidersFor(model string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := append([]string(nil), r.modelProviders[model]...)
+	if id, ok := r.modelMap[model]; ok && !slices.Contains(ids, id) {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return slices.Compact(ids)
 }
 
 // ResolveModelName extracts the actual model name (strips provider prefix if present).
@@ -271,11 +347,14 @@ func (r *Registry) ListAllModels() []models.ModelObject {
 	return all
 }
 
-// Close shuts down all providers.
+// Close shuts down the router's background tasks and all providers.
 func (r *Registry) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if r.router != nil {
+		r.router.Close()
+	}
 	for name, p := range r.providers {
 		if err := p.Close(); err != nil {
 			slog.Warn("error closing provider", "name", name, "error", err)
@@ -347,6 +426,11 @@ func applyLocalDefaults(cfg *config.ProviderConfig) {
 // autoDiscoverModels calls GET /v1/models to discover available models from a provider.
 // Returns discovered model IDs, or nil if discovery is disabled or fails.
 func autoDiscoverModels(name string, cfg *config.ProviderConfig) []string {
+	// Decision vendors serve no model listing; their models are configured.
+	if IsSystemOneFormat(cfg.APIFormat) {
+		return nil
+	}
+
 	// Determine if auto-discover is enabled.
 	if cfg.AutoDiscover != nil {
 		if !*cfg.AutoDiscover {
@@ -417,27 +501,40 @@ func connectivityCheck(name, baseURL, pathPrefix string) {
 }
 
 // ReloadRouter rebuilds the load balancing router from new routing config.
-func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig) error {
+func (r *Registry) ReloadRouter(routingCfg config.RoutingConfig, health ...*routing.HealthMonitor) error {
 	r.mu.RLock()
 	providerIDs := make(map[string]bool, len(r.providers))
 	for id := range r.providers {
 		providerIDs[id] = true
 	}
 	modelProviders := r.modelProviders
+	var sharedHealth *routing.HealthMonitor
+	if r.router != nil {
+		sharedHealth = r.router.GetHealthMonitor()
+	}
+	if len(health) > 0 && health[0] != nil {
+		sharedHealth = health[0]
+	}
 	r.mu.RUnlock()
 
-	// Build new router (may be nil if no routing config).
+	// Build a replacement before changing the active router. Keep the same
+	// health monitor across reloads so in-flight request results still count.
 	var newRouter *routing.Router
 	if routingCfg.DefaultStrategy != "" || len(routingCfg.Targets) > 0 {
 		var err error
-		newRouter, err = routing.NewRouter(routingCfg, providerIDs, modelProviders)
+		newRouter, err = routing.NewRouter(r.activeTargets(routingCfg), providerIDs, modelProviders, sharedHealth)
 		if err != nil {
 			return err
 		}
 	}
 
 	r.mu.Lock()
+	oldRouter := r.router
+	newRouter.InheritAdaptiveState(oldRouter, providerIDs)
 	r.router = newRouter
 	r.mu.Unlock()
+	if oldRouter != nil {
+		oldRouter.Close()
+	}
 	return nil
 }

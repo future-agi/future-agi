@@ -720,9 +720,12 @@ export function parseDiff(nameStatus, full) {
 }
 
 function readFileDiffs(base, head) {
+  // Rules, catalog and spec paths are relative to the application root above.
+  // When the app is nested below the git root (e.g. under core/), report both
+  // streams relative to it, or user-visible changes fall through to E9.
   return parseDiff(
-    git(["diff", "--name-status", "-M", `${base}...${head}`]),
-    git(["diff", `${base}...${head}`]),
+    git(["diff", "--relative", "--name-status", "-M", `${base}...${head}`]),
+    git(["diff", "--relative", `${base}...${head}`]),
   );
 }
 

@@ -7,7 +7,7 @@ import { outlinedInputClasses } from "@mui/material/OutlinedInput";
 // ----------------------------------------------------------------------
 
 export function textField(theme) {
-  // Future AGI Design System: 32px fields (small) / 36px (medium), 13px
+  // Future AGI Design System: 32px fields (small) / 36px (medium), 12px
   // values, border.default at rest, border.strong on hover, border.focus plus a
   // soft ring when focused.
   const color = {
@@ -203,7 +203,7 @@ export function textField(theme) {
           flexDirection: "row",
           alignItems: "center",
         },
-        // Design system: the label sits above the field (13/20, 500,
+        // Design system: the label sits above the field (12/18, 500,
         // fg.default, 6px gap), never inside the border. `&&&` outranks the
         // FormLabel shrink/filled transforms above.
         outlined: {

@@ -38,6 +38,44 @@ def _stored_status(row):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("settings", "temp", "tokens"),
+    [
+        ({}, 0.0, 4000),
+        ({"temperature": 0.6}, 0.6, 4000),
+        ({"temperature": 0.0, "max_tokens": 512}, 0.0, 512),
+        ({"temperature": None, "max_tokens": None}, 0.0, 4000),
+    ],
+)
+def test_optional_model_settings_in_runner(optimization, settings, temp, tokens):
+    optimization.model_config = {"model_name": "gpt-4o-mini", **settings}
+    message = {"role": "user", "content": [{"type": "text", "text": "Hi"}]}
+    optimization.messages = [message]
+    optimization.save()
+    view = "model_hub.views.develop_optimiser"
+    with (
+        patch(f"{RUNNER}.close_old_connections"),
+        patch(f"{view}.DevelopOptimizer._calculate_tokens_and_deduct"),
+        patch(f"{view}.LiteLLMModelManager") as model_manager,
+        patch(f"{view}.PromptOptimizer") as prompt_optimizer,
+        patch(f"{view}.LLM") as llm,
+    ):
+        model_manager.return_value.get_provider.return_value = "openai"
+        result = prompt_optimizer.return_value.get_optimized_prompt
+        result.return_value = [{"instruction_template": "Better", "train_score": 1.0}]
+        process_optimization(optimization)
+    assert _stored_status(optimization) == StatusType.COMPLETED.value
+    prompt_optimizer.assert_called_once()
+    assert prompt_optimizer.call_args.kwargs["temperature"] == temp
+    assert prompt_optimizer.call_args.kwargs["max_tokens"] == tokens
+    for key, default in (("temperature", 0.7), ("max_tokens", 1000)):
+        value = settings.get(key)
+        assert llm.call_args.kwargs[key] == (default if value is None else value)
+    optimization.refresh_from_db()
+    assert optimization.model_config == {"model_name": "gpt-4o-mini", **settings}
+
+
+@pytest.mark.django_db
 def test_process_optimization_skips_a_row_another_pass_claimed(optimization):
     """Two passes can hold the same row: one that outlived its time limit is
     still draining its list while the next lists what it has not reached.

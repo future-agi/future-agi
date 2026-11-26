@@ -5,24 +5,33 @@ from __future__ import annotations
 import json
 import logging
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid5
 
+from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
+from django.db.models import FloatField, Sum
+from django.db.models.expressions import RawSQL
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessBuilderTurnUsage,
+    HostedHarnessConversationMessage,
+    HostedHarnessJob,
+)
 from simulate.services.harness_environment import _VOICE_CONNECTORS
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import (
+    PLATFORM_FAILURE_DOMAINS,
+    HostedHarnessError,
+)
 from tfc.ee_gating import is_oss
 
 _ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
 _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
-_NON_BILLABLE_FAILURE_DOMAINS = frozenset(
-    {"infrastructure", "connectivity", "platform_sync"}
-)
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +78,8 @@ def _require_harness_action(organization_id: str, action: str) -> None:
 
 def usage_limit_error(exc: Exception) -> HostedHarnessError | None:
     """A usage refusal as a hosted harness error, for a caller that reads only that shape:
-    the fix engine tells the organization's plan limit apart from the fix's own budget."""
+    the fix engine tells the organization's plan limit apart from the fix's own budget.
+    """
     if is_oss():
         return None
     from ee.usage.exceptions import UsageLimitExceeded
@@ -192,6 +202,16 @@ def record_harness_usage(
     return {"accepted": True}
 
 
+def is_billable_receipt(status: str, call: object, failure_domain: str | None) -> bool:
+    """Whether a result receipt's call is charged: it was not skipped, it ran, and the
+    platform's own infrastructure, connectivity or sync failure did not end it."""
+    return (
+        status != "skipped"
+        and bool(call)
+        and failure_domain not in PLATFORM_FAILURE_DOMAINS
+    )
+
+
 def _billable_records(
     attempt: HostedHarnessAttempt,
     report: dict,
@@ -200,9 +220,11 @@ def _billable_records(
 ):
     cached = getattr(attempt, "_prefetched_objects_cache", {}).get("result_receipts")
     receipts = {
-        receipt.execution.execution_key
-        if receipt.execution_id
-        else receipt.scenario.scenario_key: receipt
+        (
+            receipt.execution.execution_key
+            if receipt.execution_id
+            else receipt.scenario.scenario_key
+        ): receipt
         for receipt in (
             cached
             if cached is not None
@@ -225,14 +247,13 @@ def _billable_records(
                 continue
             receipt_status = historical["status"]
             receipt_body = historical["body"]
-        if receipt_status == "skipped" or not receipt_body.get("call"):
-            continue
-        record_failure_domain = item.get("failure_domain")
-        receipt_failure_domain = (receipt_body.get("failure") or {}).get("domain")
-        if (
-            record_failure_domain in _NON_BILLABLE_FAILURE_DOMAINS
-            or receipt_failure_domain in _NON_BILLABLE_FAILURE_DOMAINS
+        if not is_billable_receipt(
+            receipt_status,
+            receipt_body.get("call"),
+            (receipt_body.get("failure") or {}).get("domain"),
         ):
+            continue
+        if item.get("failure_domain") in PLATFORM_FAILURE_DOMAINS:
             continue
         # Hosted simulator usage is always platform-funded.  Keep the guest field in properties
         # for audit, but never let an untrusted value suppress a billable simulator call.
@@ -376,6 +397,13 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
         if (record := _authoring_stage_record(item)) is not None
     ]
     if not records:
+        if float(spend.get("total_usd") or 0.0) > 0:
+            # Spent but not priceable (no stage reported tokens): billing nothing must not be quiet.
+            logger.error(
+                "authoring spend has no billable stage attempt=%s total_usd=%s",
+                attempt.id,
+                spend.get("total_usd"),
+            )
         return
     stages = [item["stage"] for item in records]
     if len(stages) != len(set(stages)):
@@ -412,29 +440,47 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
 
 
 def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) -> None:
+    _emit_authoring_records(
+        attempt.job,
+        report,
+        key=UUID(str(attempt.id)),
+        timestamp=attempt.created_at,
+        identity={"attempt_id": str(attempt.id)},
+    )
+
+
+def _emit_authoring_records(
+    job: HostedHarnessJob,
+    report: dict,
+    *,
+    key: UUID,
+    timestamp,
+    identity: dict[str, str],
+) -> None:
+    """One authoring usage event per priced record. Each event id derives from ``key`` and
+    the record's stage, so sending a report again is dropped by the consumer as counted."""
     if is_oss():
         return
     from ee.usage.schemas.event_types import BillingEventType
     from ee.usage.schemas.events import UsageEvent
     from ee.usage.services.emitter import emit
 
-    job = attempt.job
     for item in report["records"]:
         if not item["credits"]:
             continue
-        event_id = uuid5(UUID(str(attempt.id)), f"authoring:{item['stage']}")
+        event_id = uuid5(key, f"authoring:{item['stage']}")
         emit(
             UsageEvent(
                 event_id=str(event_id),
                 org_id=str(job.organization_id),
                 event_type=BillingEventType.HARNESS_AUTHORING,
                 amount=item["credits"],
-                timestamp=attempt.created_at,
+                timestamp=timestamp,
                 properties={
                     "source": "rl_environment",
                     "source_id": str(job.id),
                     "harness_job_id": str(job.id),
-                    "attempt_id": str(attempt.id),
+                    **identity,
                     "workspace_id": str(job.workspace_id or ""),
                     "test_execution_id": str(job.test_execution_id or ""),
                     "phase": "authoring",
@@ -448,6 +494,148 @@ def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) ->
                 },
             )
         )
+
+
+_READING_PURPOSES = frozenset({"agent", "scan"})
+
+
+def _reading_records(spend: dict) -> list[dict]:
+    records = [
+        record
+        for item in spend.get("stages") or []
+        if isinstance(item, dict) and (record := _authoring_stage_record(item))
+    ]
+    stages = [record["stage"] for record in records]
+    if len(set(stages)) != len(stages):
+        raise HostedHarnessError(
+            "reading_usage_invalid", "Each reading stage must be reported once."
+        )
+    return records
+
+
+def _log_uncharged_reading(
+    *, subject_id, run_id, purpose, spend: dict, check_id=None
+) -> None:
+    """One line per reading while charging is off: what it would have been charged."""
+    try:
+        stages = [
+            {
+                "stage": record["stage"],
+                "model": record["model"],
+                "tokens_in": record["tokens_in"],
+                "tokens_cached": record["tokens_cached"],
+                "tokens_out": record["tokens_out"],
+                "cost_usd": record["cost_usd"],
+                "credits": record["credits"],
+            }
+            for record in _reading_records(spend)
+        ]
+        unpriced = ""
+    except HostedHarnessError as exc:
+        stages, unpriced = [], exc.code
+    logger.info(
+        "agent_reading_not_charged subject_id=%s purpose=%s run_id=%s check_id=%s "
+        "unpriced=%s stages=%s",
+        subject_id,
+        purpose,
+        run_id,
+        check_id or "",
+        unpriced,
+        json.dumps(stages, cls=DjangoJSONEncoder),
+    )
+
+
+def _reading_event_id(subject_id, purpose: str, check_id, stage: str) -> str:
+    """One charge per stage of one check of a subject: the same on every retry of a
+    step inside the check, new when a new check starts. An agent's reading always
+    has one: the background reading that stores a document passes its own workflow
+    run, and a reading called outside a check takes a new id. Only a scan, which has
+    none, names its subject alone."""
+    name = (
+        f"reading:{purpose}:check:{check_id}:{stage}"
+        if check_id
+        else f"reading:{purpose}:{stage}"
+    )
+    return str(uuid5(UUID(str(subject_id)), name))
+
+
+def record_agent_reading_usage(
+    *,
+    organization_id,
+    workspace_id,
+    subject_id,
+    run_id,
+    purpose: str,
+    spend: dict,
+    check_id: str | None = None,
+) -> dict | None:
+    """Price the model stages of one reading of an agent (``purpose`` "agent", the
+    subject its agent version) or one scan for agents ("scan", the subject its scan),
+    and bill them like a build's authoring. Returns the priced report, or None when
+    nothing was billed.
+
+    Nothing is billed while HARNESS_AGENT_READING_CHARGE_ENABLED is off; one log
+    line says what would have been. Each stage's charge is keyed by the subject, the
+    purpose, the check (``check_id``, fixed when the check starts) and the stage,
+    never the run: a retried step, which reads again under a new run id inside the
+    same check, adds none, and a new check of the same version is its own charge.
+    Without a check (a scan), every attempt at the subject's reading is one charge."""
+    if purpose not in _READING_PURPOSES:
+        raise ValueError(f"unknown reading purpose {purpose!r}")
+    if is_oss() or not isinstance(spend, dict):
+        return None
+    if not settings.HARNESS_AGENT_READING_CHARGE_ENABLED:
+        _log_uncharged_reading(
+            subject_id=subject_id,
+            run_id=run_id,
+            purpose=purpose,
+            spend=spend,
+            check_id=check_id,
+        )
+        return None
+    records = _reading_records(spend)
+    if not records:
+        return None
+    report = {
+        "schema_version": "futureagi.harness-authoring-usage.v1",
+        "records": records,
+    }
+    from ee.usage.schemas.event_types import BillingEventType
+    from ee.usage.schemas.events import UsageEvent
+    from ee.usage.services.emitter import emit
+
+    for item in records:
+        if not item["credits"]:
+            continue
+        emit(
+            UsageEvent(
+                event_id=_reading_event_id(
+                    subject_id, purpose, check_id, item["stage"]
+                ),
+                org_id=str(organization_id),
+                event_type=BillingEventType.HARNESS_AUTHORING,
+                amount=item["credits"],
+                timestamp=timezone.now(),
+                properties={
+                    "source": "agent_reading",
+                    "source_id": str(subject_id),
+                    "reading_run_id": str(run_id),
+                    "reading_check_id": str(check_id or ""),
+                    "reading_purpose": purpose,
+                    "workspace_id": str(workspace_id or ""),
+                    "phase": "reading",
+                    "authoring_stage": item["stage"],
+                    "model": item["model"],
+                    "input_tokens": item["tokens_in"],
+                    "output_tokens": item["tokens_out"],
+                    "cached_input_tokens": item["tokens_cached"],
+                    "raw_cost_usd": item["cost_usd"],
+                    "pricing_source": item["pricing_source"],
+                    "complete": spend.get("complete"),
+                },
+            )
+        )
+    return report
 
 
 def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
@@ -478,6 +666,125 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
                         current.id,
                     )
     price_fix_check_run(current.job_id)
+
+
+# The stage name a builder turn run outside any attempt is priced and billed under.
+BUILDER_TURN_STAGE = "builder-turn"
+
+
+def bill_builder_turn(conversation_id: str, payload: dict) -> None:
+    """Bill a builder chat turn run outside any attempt, priced as a build stage is.
+
+    Such a turn runs in a chat sandbox of its own, so no attempt's ledger covers it. Every
+    ending with usage bills it: success, interrupted and failed alike. One row per command
+    message: a replayed ending finds the row and re-sends only that turn's event, which the
+    consumer drops as counted. A rebuild's turn is metered on its nudge, and an ending with
+    no usage records nothing.
+    """
+    # The fields a rebuild's turn is metered with, so both keep the same ones.
+    from simulate.services.harness_versioning.rebuild import (
+        _USAGE_FIELDS,
+        nudge_for_command,
+    )
+
+    try:
+        usage = payload.get("usage")
+        command_id = payload.get("command_message_id")
+        if not isinstance(usage, dict) or not command_id:
+            return
+        command = (
+            HostedHarnessConversationMessage.no_workspace_objects.select_related(
+                "conversation__job"
+            )
+            .filter(id=command_id, conversation_id=UUID(conversation_id))
+            .first()
+        )
+        if command is None or nudge_for_command(command) is not None:
+            return
+        entry = {field: usage[field] for field in _USAGE_FIELDS if field in usage}
+        if not entry:
+            return
+        job = command.conversation.job
+        with transaction.atomic():
+            turn, created = (
+                HostedHarnessBuilderTurnUsage.no_workspace_objects.get_or_create(
+                    command_message=command,
+                    defaults={
+                        "job": job,
+                        "organization_id": job.organization_id,
+                        "workspace_id": job.workspace_id,
+                        "outcome": str(payload.get("outcome") or "")[:16],
+                        "usage": entry,
+                    },
+                )
+            )
+            if created:
+                turn.report = _builder_turn_report(turn)
+                if turn.report is not None:
+                    turn.save(update_fields=["report", "updated_at"])
+            report = turn.report
+            if report is not None:
+                transaction.on_commit(lambda: emit_builder_turn_usage(turn, report))
+    except Exception:  # noqa: BLE001 - billing must never fail the guest's event delivery
+        logger.exception(
+            "builder turn usage could not be billed conversation=%s", conversation_id
+        )
+
+
+def _builder_turn_report(turn: HostedHarnessBuilderTurnUsage) -> dict | None:
+    """The turn priced as one build stage, or None when it bills nothing."""
+    if is_oss():
+        return None
+    usage = turn.usage
+    if not isinstance(usage.get("models") or [], list):
+        logger.error(
+            "builder turn usage has malformed models command=%s",
+            turn.command_message_id,
+        )
+        return None
+    try:
+        record = _authoring_stage_record(
+            {
+                "stage": BUILDER_TURN_STAGE,
+                "tokens_in": usage.get("tokens_in", 0),
+                "tokens_out": usage.get("tokens_out", 0),
+                "tokens_cached": usage.get("tokens_cached", 0),
+                "models": usage.get("models") or [],
+            }
+        )
+    except HostedHarnessError as exc:
+        # As a build stage that cannot be priced: the usage is kept, nothing is billed.
+        logger.error(
+            "builder turn could not be priced command=%s: %s",
+            turn.command_message_id,
+            exc,
+        )
+        return None
+    if record is None:
+        if float(usage.get("usd") or 0.0) > 0:
+            logger.error(
+                "builder turn spent but reported no tokens command=%s usd=%s",
+                turn.command_message_id,
+                usage.get("usd"),
+            )
+        return None
+    return {
+        "schema_version": "futureagi.harness-authoring-usage.v1",
+        "records": [record],
+    }
+
+
+def emit_builder_turn_usage(turn: HostedHarnessBuilderTurnUsage, report: dict) -> None:
+    _emit_authoring_records(
+        turn.job,
+        report,
+        key=UUID(str(turn.command_message_id)),
+        timestamp=turn.created_at,
+        identity={
+            "command_message_id": str(turn.command_message_id),
+            "turn_outcome": turn.outcome,
+        },
+    )
 
 
 def billed_ai_usd(usd: Decimal) -> Decimal:
@@ -526,7 +833,28 @@ def price_fix_check_run(job_id) -> None:
     )
 
 
-def harness_consumption(job: HostedHarnessJob) -> dict | None:
+def builder_turn_credit_totals(job_ids: list[UUID]) -> dict[UUID, float]:
+    # Expand the frozen records in Postgres; only one total per job leaves the DB.
+    record_sum = RawSQL(
+        "(SELECT COALESCE(SUM((record->>'credits')::numeric), 0) "
+        "FROM jsonb_array_elements(report->'records') AS record)",
+        (),
+        output_field=FloatField(),
+    )
+    return dict(
+        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
+            job_id__in=job_ids, report__isnull=False
+        )
+        .order_by()
+        .values("job_id")
+        .annotate(total=Sum(record_sum))
+        .values_list("job_id", "total")
+    )
+
+
+def harness_consumption(
+    job: HostedHarnessJob, *, turn_totals: dict[UUID, float] | None = None
+) -> dict | None:
     metadata = job.payload.get("metadata") or {}
     legacy_reports = metadata.get(_REPORT_KEY) or {}
     legacy_authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
@@ -571,10 +899,25 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
         for attempt_id, attempt in attempts.items()
         if attempt.sandbox_runtime or attempt_id in legacy_runtimes
     }
-    if not reports and not authoring_reports and not runtimes and not authoring_spend:
+    # Builder turns after a build, each billed on its own outside any attempt: a selected
+    # run's chat turn is billed too, so it is counted too.
+    if turn_totals is None:
+        turn_totals = builder_turn_credit_totals([job.id])
+    turn_credits = turn_totals.get(job.id)
+    if (
+        not reports
+        and not authoring_reports
+        and not runtimes
+        and not authoring_spend
+        and turn_credits is None
+    ):
         return None
 
-    consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
+    consumption: dict[str, Any] = {
+        "text_sim_tokens": 0,
+        "voice_sim_minutes": 0,
+        "ai_credits": 0,
+    }
     for attempt_id, report in reports.items():
         attempt = attempts[attempt_id]
         for item in _billable_records(attempt, report):
@@ -584,11 +927,12 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
                 else "voice_sim_minutes"
             )
             consumption[dimension] += item["amount"]
-    consumption["ai_credits"] = sum(
+    authored_credits: float = sum(
         record["credits"]
         for report in authoring_reports.values()
         for record in report["records"]
     )
+    consumption["ai_credits"] = (turn_credits or 0) + authored_credits
     authoring_estimate_unavailable = False
     if authoring_spend and not is_oss():
         try:

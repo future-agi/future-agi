@@ -56,7 +56,13 @@ def make_same_org_other_workspace_run(organization, user):
         cost=0.02,
         status="OK",
     )
-    return other_workspace, other_project, other_project_version, other_trace, other_span
+    return (
+        other_workspace,
+        other_project,
+        other_project_version,
+        other_trace,
+        other_span,
+    )
 
 
 @pytest.mark.integration

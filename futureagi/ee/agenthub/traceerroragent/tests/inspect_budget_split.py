@@ -29,9 +29,13 @@ from tracer.models.observation_span import ObservationSpan  # type: ignore
 from tracer.models.trace import Trace  # type: ignore
 
 
-def build_tree_for_trace(trace_id: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+def build_tree_for_trace(
+    trace_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     spans = list(
-        ObservationSpan.objects.filter(trace_id=trace_id).order_by("start_time", "created_at")
+        ObservationSpan.objects.filter(trace_id=trace_id).order_by(
+            "start_time", "created_at"
+        )
     )
     id_to_node: dict[str, dict[str, Any]] = {}
     for s in spans:
@@ -136,13 +140,18 @@ def main():
     splitter = BudgetedSubtreeSplitter(token_budget=token_budget)
     batches = splitter.split(roots)
 
-    print(json.dumps({
-        "trace_id": trace_id,
-        "token_budget": token_budget,
-        "estimated_full_tokens": total_tokens,
-        "num_spans": len(id_to_node),
-        "num_batches": len(batches),
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "trace_id": trace_id,
+                "token_budget": token_budget,
+                "estimated_full_tokens": total_tokens,
+                "num_spans": len(id_to_node),
+                "num_batches": len(batches),
+            },
+            indent=2,
+        )
+    )
 
     for i, batch in enumerate(batches, start=1):
         print(f"\n=== BATCH {i}/{len(batches)} ===")
@@ -174,5 +183,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

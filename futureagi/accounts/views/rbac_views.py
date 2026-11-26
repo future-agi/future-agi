@@ -534,9 +534,7 @@ class MemberListAPIView(APIView):
         # workspace_id is NOT used here (it's only for workspace-scoped endpoints).
 
         viewer_membership = get_org_membership(request.user)
-        viewer_org_level = (
-            viewer_membership.level_or_legacy if viewer_membership else 0
-        )
+        viewer_org_level = viewer_membership.level_or_legacy if viewer_membership else 0
 
         # Build pending/expired invites
         invites = self._get_invites(organization, viewer_org_level)

@@ -149,14 +149,18 @@ def _shrinking_pad(length):
     [
         (
             ["AKIAIOSFODNN7EXAMPLE secret=wJalrXUtnFEMIK7MDENGbPxRfiCY"],
-            lambda: _shrinking_pad(ALK_CUT - 40)
-            + "AKIAIOSFODNN7EXAMPLE secret=wJalrXUtnFEMIK7MDENGbPxRfiCY",
+            lambda: (
+                _shrinking_pad(ALK_CUT - 40)
+                + "AKIAIOSFODNN7EXAMPLE secret=wJalrXUtnFEMIK7MDENGbPxRfiCY"
+            ),
         ),
         (
             [POSTGRES + "?token=Q1w2E3r4T5y6U7i8"],
-            lambda: _shrinking_pad(ALK_CUT - len(POSTGRES) - 24 + 6)
-            + POSTGRES
-            + "?token=Q1w2E3r4T5y6U7i8",
+            lambda: (
+                _shrinking_pad(ALK_CUT - len(POSTGRES) - 24 + 6)
+                + POSTGRES
+                + "?token=Q1w2E3r4T5y6U7i8"
+            ),
         ),
         (
             [POSTGRES, "Hx83jdPq20sLm"],
@@ -165,9 +169,11 @@ def _shrinking_pad(length):
         (
             # The cut value starts inside a whole earlier one.
             [POSTGRES[:-3] + "appdb", "appdb_secret_KJH23k4j5h6g7f8d9s0a"],
-            lambda: _shrinking_pad(ALK_CUT - 70)
-            + POSTGRES[:-3]
-            + "appdb_secret_KJH23k4j5h6g7f8d9s0a",
+            lambda: (
+                _shrinking_pad(ALK_CUT - 70)
+                + POSTGRES[:-3]
+                + "appdb_secret_KJH23k4j5h6g7f8d9s0a"
+            ),
         ),
         (
             # A whole value ends with the cut one's start.

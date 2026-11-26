@@ -57,7 +57,10 @@ class EvalScout:
         config = ModelConfigs.TURING_FLASH  # same model as ChauffeurAgent
         self._model_name = config.model_name
         self._is_turing = (
-            any(config.model_name.lower().startswith(p) for p in self.TURING_MODEL_PREFIXES)
+            any(
+                config.model_name.lower().startswith(p)
+                for p in self.TURING_MODEL_PREFIXES
+            )
             or config.provider == self.TURING_PROVIDER
         )
 
@@ -170,7 +173,9 @@ class EvalScout:
         if kb_list:
             parts.append(f"Knowledge Bases ({len(kb_list)}):")
             for kb in kb_list:
-                parts.append(f"  - {kb.get('name', kb.get('id', '?'))}: {kb.get('description', '')}")
+                parts.append(
+                    f"  - {kb.get('name', kb.get('id', '?'))}: {kb.get('description', '')}"
+                )
         else:
             parts.append("Knowledge Bases: none connected")
 
@@ -179,7 +184,9 @@ class EvalScout:
         if mcp_tools:
             parts.append(f"MCP Tools ({len(mcp_tools)}):")
             for tool in mcp_tools:
-                parts.append(f"  - {tool.get('name', '?')}: {tool.get('description', '')}")
+                parts.append(
+                    f"  - {tool.get('name', '?')}: {tool.get('description', '')}"
+                )
         else:
             parts.append("MCP Tools: none connected")
 
@@ -230,22 +237,33 @@ class EvalScout:
 
         result = {
             "complexity": parsed.get("complexity", defaults["complexity"]),
-            "recommended_model": parsed.get("recommended_model", defaults["recommended_model"]),
+            "recommended_model": parsed.get(
+                "recommended_model", defaults["recommended_model"]
+            ),
             "criteria_needs_formalization": bool(
-                parsed.get("criteria_needs_formalization", defaults["criteria_needs_formalization"])
+                parsed.get(
+                    "criteria_needs_formalization",
+                    defaults["criteria_needs_formalization"],
+                )
             ),
             "data_plan": {
-                "sufficient": bool(
-                    parsed.get("data_plan", {}).get("sufficient", True)
+                "sufficient": bool(parsed.get("data_plan", {}).get("sufficient", True)),
+                "needs_drill_down": parsed.get("data_plan", {}).get(
+                    "needs_drill_down", []
                 ),
-                "needs_drill_down": parsed.get("data_plan", {}).get("needs_drill_down", []),
                 "relevant_areas": parsed.get("data_plan", {}).get("relevant_areas", []),
             },
             "resource_plan": {
                 "use_kb": bool(parsed.get("resource_plan", {}).get("use_kb", False)),
-                "kb_query_hints": parsed.get("resource_plan", {}).get("kb_query_hints", []),
-                "use_feedback": bool(parsed.get("resource_plan", {}).get("use_feedback", False)),
-                "use_mcp_tools": parsed.get("resource_plan", {}).get("use_mcp_tools", []),
+                "kb_query_hints": parsed.get("resource_plan", {}).get(
+                    "kb_query_hints", []
+                ),
+                "use_feedback": bool(
+                    parsed.get("resource_plan", {}).get("use_feedback", False)
+                ),
+                "use_mcp_tools": parsed.get("resource_plan", {}).get(
+                    "use_mcp_tools", []
+                ),
             },
             "reasoning": parsed.get("reasoning", defaults["reasoning"]),
         }

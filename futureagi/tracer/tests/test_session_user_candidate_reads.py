@@ -16,6 +16,7 @@ from clickhouse_driver.util.escape import escape_params
 from django.conf import settings as django_settings
 from django.test import override_settings
 
+from conftest import _ch_test_native_client
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
@@ -212,6 +213,7 @@ def _inline_user_metric_rows(sql, params, span_rows, user_id, session_id):
         {
             "columns": columns,
             "rows": tuple(span_rows),
+            "project_id": span_rows[0][0],
             "user_id": user_id,
             "session_id": session_id,
             "raw_user_id": str(uuid.UUID(int=20)),
@@ -224,7 +226,8 @@ def _inline_user_metric_rows(sql, params, span_rows, user_id, session_id):
         WITH spans AS (
             SELECT * FROM values({literals["columns"]}, {literals["rows"][1:-1]})
         ), end_users AS (
-            SELECT toUUID({literals["user_id"]}) AS end_user_id
+            SELECT toUUID({literals["project_id"]}) AS project_id,
+                toUUID({literals["user_id"]}) AS end_user_id
         ), end_user_id_remap AS (
             SELECT toUUID({literals["user_id"]}) AS old_id,
                 toUUID({literals["raw_user_id"]}) AS new_id
@@ -528,7 +531,8 @@ def test_session_aggregate_filter_and_sort_use_narrow_exact_candidate_shape():
 
     assert builder.supports_candidate_first_page() is True
     assert "argMax(tuple(total_tokens), _version).1 AS latest_total_tokens" in sql
-    assert "sum(total_tokens) AS total_tokens" in sql
+    assert "max(member_total_tokens) AS total_tokens" in sql
+    assert "sum(usage_total_tokens) AS member_total_tokens" in sql
     assert "HAVING total_tokens > %(having_" in sql
     assert "ORDER BY total_tokens DESC, session_id DESC" in sql
     assert 10 in params.values()
@@ -2132,25 +2136,13 @@ def test_session_page_enrichments_replay_tombstones_and_resolve_remaps():
         assert "(latest_parent_span_id IS NULL OR latest_parent_span_id = '')" in sql
 
 
-def _ch25_client():
-    host = os.getenv("CH25_HOST")
-    port = int(
-        os.getenv("CH25_NATIVE_PORT")
-        or os.getenv("CH25_TCP_PORT")
-        or os.getenv("CH_PORT")
-        or "9000"
-    )
+@pytest.fixture
+def ch25_client():
+    # Use the same verified native sidecar as the other live CH tests. Setting
+    # CH25_HOST globally would also opt unrelated tests into unguarded DDL.
     database = os.getenv("CH25_DATABASE") or os.getenv("CH_DATABASE") or "test_tfc"
-    if not host:
-        pytest.skip("CH25_HOST is not configured")
-    try:
-        from clickhouse_driver import Client
-
-        client = Client(host=host, port=port, database=database)
-        client.execute("SELECT 1")
-        return client
-    except Exception as exc:
-        pytest.skip(f"disposable ClickHouse 25 is unavailable: {type(exc).__name__}")
+    with _ch_test_native_client(database=database, allow_legacy_ch_port=True) as client:
+        yield client
 
 
 def _dict_rows(rows, columns):
@@ -2159,10 +2151,10 @@ def _dict_rows(rows, columns):
 
 
 @pytest.mark.integration
-def test_user_trace_and_session_candidates_execute_with_alias_remaps():
+def test_user_trace_and_session_candidates_execute_with_alias_remaps(ch25_client):
     """Execute exact CH25 user trace/session reads across both ID cutovers."""
 
-    client = _ch25_client()
+    client = ch25_client
     original_database = client.execute("SELECT currentDatabase()")[0][0]
     database = f"_test_user_candidates_{uuid.uuid4().hex}"
     project_id = str(uuid.uuid4())
@@ -2179,6 +2171,9 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
             """
             CREATE TABLE spans (
                 project_id UUID,
+                observation_type LowCardinality(String),
+                service_name LowCardinality(String),
+                project_version_id Nullable(UUID),
                 trace_id String,
                 id String,
                 start_time DateTime64(6, 'UTC'),
@@ -2189,7 +2184,7 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
                 _version UInt64
             ) ENGINE = ReplacingMergeTree(_version)
             PARTITION BY toDate(start_time)
-            ORDER BY (project_id, toStartOfHour(start_time), trace_id, id, start_time)
+            ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)
             """
         )
         client.execute(
@@ -2254,7 +2249,11 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
                     index + 1,
                 )
             )
-        client.execute("INSERT INTO spans VALUES", span_rows)
+        client.execute(
+            "INSERT INTO spans (project_id, trace_id, id, start_time, parent_span_id, "
+            "trace_session_id, end_user_id, is_deleted, _version) VALUES",
+            span_rows,
+        )
 
         filters = [
             {
@@ -2329,10 +2328,309 @@ def test_user_trace_and_session_candidates_execute_with_alias_remaps():
 
 
 @pytest.mark.integration
-def test_user_pages_ignore_stale_rollup_tombstones_updates_and_reassignments():
+def test_user_candidates_on_production_span_schema_keep_project_and_latest_state(
+    ch25_client,
+):
+    """Run the user trace/session candidate reads on the deployed span schema.
+
+    ``spans`` uses the deployed engine, ``ReplacingMergeTree(_version,
+    is_deleted)``, with its non-nullable ``parent_span_id`` and physical-key
+    ordering; merges are stopped so every version stays on disk. A root that is
+    live and then deleted under the same physical identity must not be read.
+    Another project's rows reuse the same user, session and trace ids and must
+    not change the results, the one-row page, or the session start.
+    """
+
+    client = ch25_client
+    original_database = client.execute("SELECT currentDatabase()")[0][0]
+    database = f"_test_user_candidates_{uuid.uuid4().hex}"
+    project_id, other_project_id = str(uuid.uuid4()), str(uuid.uuid4())
+    old_user_id, new_user_id = str(uuid.uuid4()), str(uuid.uuid4())
+    old_session_id, new_session_id = str(uuid.uuid4()), str(uuid.uuid4())
+    deleted_session_id = str(uuid.uuid4())
+    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    start, end = now - timedelta(days=1), now + timedelta(days=1)
+    trace_ids = (str(uuid.uuid4()), str(uuid.uuid4()))
+    deleted_trace_id = str(uuid.uuid4())
+    other_only_trace_id = str(uuid.uuid4())
+    session_start = now - timedelta(minutes=2)
+
+    try:
+        client.execute(f"CREATE DATABASE {database}")
+        client.execute(f"USE {database}")
+        client.execute(
+            """
+            CREATE TABLE spans (
+                project_id UUID,
+                observation_type LowCardinality(String),
+                service_name LowCardinality(String) DEFAULT '',
+                start_time DateTime64(6, 'UTC'),
+                trace_id String,
+                id String,
+                parent_span_id String DEFAULT '',
+                project_version_id Nullable(UUID),
+                end_user_id Nullable(UUID),
+                trace_session_id Nullable(UUID),
+                is_deleted UInt8 DEFAULT 0,
+                _version UInt64
+            ) ENGINE = ReplacingMergeTree(_version, is_deleted)
+            PARTITION BY toDate(start_time)
+            PRIMARY KEY (project_id, observation_type, service_name, toStartOfHour(start_time))
+            ORDER BY (project_id, observation_type, service_name, toStartOfHour(start_time), trace_id, id)
+            """
+        )
+        client.execute("SYSTEM STOP MERGES spans")
+        client.execute(
+            """
+            CREATE TABLE end_users (
+                project_id UUID,
+                end_user_id UUID,
+                user_id String,
+                user_id_type String,
+                is_deleted UInt8,
+                version DateTime64(6, 'UTC')
+            ) ENGINE = ReplacingMergeTree(version)
+            ORDER BY end_user_id
+            """
+        )
+        for table in ("end_user_id_remap", "trace_session_id_remap"):
+            client.execute(
+                f"""
+                CREATE TABLE {table} (
+                    old_id UUID,
+                    new_id UUID,
+                    version DateTime64(6, 'UTC')
+                ) ENGINE = ReplacingMergeTree(version)
+                ORDER BY old_id
+                """
+            )
+
+        client.execute(
+            "INSERT INTO end_users VALUES",
+            [(project_id, old_user_id, "guest-e3dce503", "custom", 0, now)],
+        )
+        client.execute(
+            "INSERT INTO end_user_id_remap VALUES",
+            [(old_user_id, new_user_id, now)],
+        )
+        client.execute(
+            "INSERT INTO trace_session_id_remap VALUES",
+            [(old_session_id, new_session_id, now)],
+        )
+
+        def root(project, trace_id, span_id, at, session_id, user_id, deleted, version):
+            return (
+                project,
+                trace_id,
+                span_id,
+                at,
+                "",
+                session_id,
+                user_id,
+                deleted,
+                version,
+            )
+
+        span_rows = []
+        for index, (trace_id, end_user_id, session_id) in enumerate(
+            zip(
+                trace_ids,
+                (old_user_id, new_user_id),
+                (old_session_id, new_session_id),
+                strict=True,
+            )
+        ):
+            span_rows.append(
+                root(
+                    project_id,
+                    trace_id,
+                    f"root-{index}",
+                    session_start + timedelta(minutes=index),
+                    session_id,
+                    end_user_id,
+                    0,
+                    index + 1,
+                )
+            )
+        # The newest root in the project: live first, then deleted with a higher
+        # version under the same physical identity.
+        deleted_at = now - timedelta(seconds=30)
+        span_rows.append(
+            root(
+                project_id,
+                deleted_trace_id,
+                "root-deleted",
+                deleted_at,
+                deleted_session_id,
+                old_user_id,
+                0,
+                1,
+            )
+        )
+        span_rows.append(
+            root(
+                project_id,
+                deleted_trace_id,
+                "root-deleted",
+                deleted_at,
+                deleted_session_id,
+                old_user_id,
+                1,
+                2,
+            )
+        )
+        # Another project reusing the same ids: earlier starts for the shared
+        # sessions and a newer root than anything in the requested project.
+        for index, (trace_id, end_user_id, session_id) in enumerate(
+            zip(
+                trace_ids,
+                (old_user_id, new_user_id),
+                (old_session_id, new_session_id),
+                strict=True,
+            )
+        ):
+            span_rows.append(
+                root(
+                    other_project_id,
+                    trace_id,
+                    f"other-root-{index}",
+                    now - timedelta(minutes=30 + index),
+                    session_id,
+                    end_user_id,
+                    0,
+                    5,
+                )
+            )
+        span_rows.append(
+            root(
+                other_project_id,
+                other_only_trace_id,
+                "root-other",
+                now - timedelta(seconds=5),
+                old_session_id,
+                old_user_id,
+                0,
+                5,
+            )
+        )
+        client.execute(
+            "INSERT INTO spans (project_id, trace_id, id, start_time, parent_span_id, "
+            "trace_session_id, end_user_id, is_deleted, _version) VALUES",
+            span_rows,
+        )
+
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [start.isoformat(), end.isoformat()],
+                },
+            },
+            {
+                "column_id": "user_id",
+                "filter_config": {
+                    "col_type": "TRACE_END_USER",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "guest-e3dce503",
+                },
+            },
+        ]
+        builder = TraceListQueryBuilderV2(
+            project_id=project_id,
+            filters=filters,
+            bounded_identity_only=True,
+        )
+
+        def classify(limit):
+            seed_sql, seed_params = builder.build_filter_seed_page(
+                slice_start=start, slice_end=end, limit=limit
+            )
+            seed_raw, seed_columns = client.execute(
+                seed_sql, seed_params, with_column_types=True
+            )
+            seed_rows = _dict_rows(seed_raw, seed_columns)
+            match_sql, match_params = builder.build_filter_match_query_from_seed_rows(
+                seed_rows
+            )
+            match_raw, match_columns = client.execute(
+                match_sql, match_params, with_column_types=True
+            )
+            return seed_rows, _dict_rows(match_raw, match_columns)
+
+        def roots(rows):
+            return {
+                (
+                    row["trace_id"],
+                    row["root_span_id"],
+                    row["start_time"].replace(tzinfo=None),
+                )
+                for row in rows
+            }
+
+        # The requested project's live roots. The other project's roots for the
+        # same trace ids start earlier and carry a higher version, so reading
+        # them would change the canonical root of each trace.
+        live_roots = {
+            (trace_ids[0], "root-0", session_start),
+            (trace_ids[1], "root-1", session_start + timedelta(minutes=1)),
+        }
+        seed_rows, matches = classify(25)
+        assert roots(seed_rows) == live_roots
+        assert roots(matches) == live_roots
+        assert len(matches) == len(trace_ids)
+        assert {row["_root_version"] for row in matches} == {1, 2}
+
+        # The deleted root is the newest in the project; the one-row page is
+        # the newest live root instead.
+        newest_live_root = max(live_roots, key=lambda root_key: root_key[2])
+        one_seed, one_match = classify(1)
+        assert roots(one_seed) == {newest_live_root}
+        assert roots(one_match) == {newest_live_root}
+        assert len(one_match) == 1
+
+        def session_page(page_size):
+            session_builder = SessionListQueryBuilderV2(
+                project_id=project_id,
+                page_size=page_size,
+                filters=[
+                    filters[0],
+                    {
+                        "column_id": "end_user_id",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": "in",
+                            "filter_value": [old_user_id],
+                        },
+                    },
+                ],
+            )
+            session_sql, session_params = session_builder.build_candidate_page_query()
+            session_raw, session_columns = client.execute(
+                session_sql, session_params, with_column_types=True
+            )
+            return _dict_rows(session_raw, session_columns)
+
+        for page_size in (25, 1):
+            sessions = session_page(page_size)
+            assert len(sessions) == 1, page_size
+            assert str(sessions[0]["session_id"]) == old_session_id
+            assert sessions[0]["total_count"] == 1
+            assert sessions[0]["session_start"].replace(tzinfo=None) == session_start
+    finally:
+        client.execute(f"USE {original_database}")
+        client.execute(f"DROP DATABASE IF EXISTS {database}")
+
+
+@pytest.mark.integration
+def test_user_pages_ignore_stale_rollup_tombstones_updates_and_reassignments(
+    ch25_client,
+):
     """Page membership/order comes from latest spans, never insert-only states."""
 
-    client = _ch25_client()
+    client = ch25_client
     project_id = str(uuid.uuid4())
     organization_id = str(uuid.uuid4())
     user_ids = {name: str(uuid.uuid4()) for name in ("a", "b", "c", "d", "e")}
@@ -2552,7 +2850,7 @@ def test_user_pages_ignore_stale_rollup_tombstones_updates_and_reassignments():
 
 
 @pytest.mark.integration
-def test_candidate_reads_on_ch25_preserve_remap_and_tombstone_semantics():
+def test_candidate_reads_on_ch25_preserve_remap_and_tombstone_semantics(ch25_client):
     """Execute every new query against the disposable CH25 schema.
 
     The old physical root is tombstoned after insert; the live root carries the
@@ -2560,7 +2858,7 @@ def test_candidate_reads_on_ch25_preserve_remap_and_tombstone_semantics():
     and deleted or out-of-window content/attributes must stay absent.
     """
 
-    client = _ch25_client()
+    client = ch25_client
     project_id = str(uuid.uuid4())
     organization_id = str(uuid.uuid4())
     old_user_id, new_user_id = str(uuid.uuid4()), str(uuid.uuid4())

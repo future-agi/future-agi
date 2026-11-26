@@ -1,6 +1,26 @@
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import React, { useState, useMemo } from "react";
-import { Box, Typography, Stack, Tab, Tabs, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Button, Alert, Skeleton, CircularProgress, Switch, IconButton } from "@mui/material";
+import {
+  Box,
+  Typography,
+  Stack,
+  Tab,
+  Tabs,
+  Chip,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Button,
+  Alert,
+  Skeleton,
+  CircularProgress,
+  Switch,
+  IconButton,
+} from "@mui/material";
 import Section from "src/components/section";
 import MetricStrip from "src/components/metric-strip";
 import { LoadingScreen } from "src/components/loading-screen";
@@ -23,6 +43,7 @@ import EditGuardrailDialog from "./EditGuardrailDialog";
 import GuardrailAnalyticsTab from "./GuardrailAnalyticsTab";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
 import GuardrailConfigTab from "../settings/GuardrailConfigTab";
+import PoliciesTab from "./PoliciesTab";
 import { writableOrgConfig } from "../utils/orgConfig";
 
 // Tab slug <-> index mapping
@@ -39,6 +60,7 @@ const CHIP_ROLE = {
 const TAB_SLUGS = [
   "overview",
   "configuration",
+  "policies",
   "analytics",
   "feedback",
   "playground",
@@ -47,6 +69,7 @@ const TAB_SLUGS = [
 const TAB_LABELS = [
   "Overview",
   "Rules",
+  "Policies",
   "Analytics",
   "Feedback",
   "Test",
@@ -758,10 +781,13 @@ const LogsTab = ({ gatewayId }) => {
                       CHIP_ROLE[
                         log.status_code === 246
                           ? "warning"
-                          : // The gateway answers a block with 403; 446 is the legacy code.
-                            log.status_code === 403 || log.status_code === 446
+                          : // Every 4xx/5xx is an error. That includes 403, which
+                            // the gateway answers a block with, and the legacy 446.
+                            log.status_code >= 400 && log.status_code < 600
                             ? "error"
-                            : "default"
+                            : log.status_code >= 200 && log.status_code < 300
+                              ? "success"
+                              : "default"
                       ]
                     }
                   />
@@ -856,7 +882,12 @@ const GuardrailManagementSection = () => {
       <Tabs
         value={tab}
         onChange={handleTabChange}
-        sx={{ boxShadow: "none", mb: 3, borderBottom: 1, borderColor: "divider" }}
+        sx={{
+          boxShadow: "none",
+          mb: 3,
+          borderBottom: 1,
+          borderColor: "divider",
+        }}
       >
         {TAB_LABELS.map((label) => (
           <Tab key={label} label={label} />
@@ -867,10 +898,11 @@ const GuardrailManagementSection = () => {
         <OverviewTab guardrails={guardrails} gatewayId={gatewayId} />
       )}
       {tab === 1 && <ConfigTab />}
-      {tab === 2 && <GuardrailAnalyticsTab gatewayId={gatewayId} />}
-      {tab === 3 && <FeedbackSummaryCard />}
-      {tab === 4 && <PlaygroundTab gatewayId={gatewayId} />}
-      {tab === 5 && <LogsTab gatewayId={gatewayId} />}
+      {tab === 2 && <PoliciesTab gatewayId={gatewayId} />}
+      {tab === 3 && <GuardrailAnalyticsTab gatewayId={gatewayId} />}
+      {tab === 4 && <FeedbackSummaryCard />}
+      {tab === 5 && <PlaygroundTab gatewayId={gatewayId} />}
+      {tab === 6 && <LogsTab gatewayId={gatewayId} />}
     </Box>
   );
 };

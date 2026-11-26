@@ -28,6 +28,9 @@ import {
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
 import { withLiveGridApi } from "src/utils/gridApi";
+import ResourceUnavailable from "src/sections/common/ResourceUnavailable/ResourceUnavailable";
+import { getResourceUnavailableKind } from "src/sections/common/ResourceUnavailable/resourceUnavailableKind";
+import { paths } from "src/routes/paths";
 
 // Loading component for tab content
 const TabContentLoader = () => (
@@ -95,6 +98,8 @@ const TAB_TO_ROUTE = {
   traces: { route: "llm-tracing", params: { selectedTab: "trace" } },
   sessions: { route: "sessions", params: {} },
   users: { route: "users", params: {} },
+  query: { route: "query", params: {} },
+  insights: { route: "insights", params: {} },
 };
 
 const ObservePage = React.memo(() => {
@@ -103,7 +108,8 @@ const ObservePage = React.memo(() => {
   const location = useLocation();
   const navigate = useNavigate();
   const { observeId } = useParams();
-  const { data: projectDetail } = useGetProjectDetails(observeId);
+  const { data: projectDetail, error: projectDetailError } =
+    useGetProjectDetails(observeId);
   const { data: savedViewsData } = useGetSavedViews(observeId);
   const queryClient = useQueryClient();
 
@@ -142,10 +148,14 @@ const ObservePage = React.memo(() => {
     // would be replaced by `tab=sessions` (or `tab=users`), wiping the
     // active-view-id needed by Save view.
     if (tab && tab.startsWith("view-")) return;
-    if (currentRouteSegment === "sessions") {
+    if (currentRouteSegment === "query") {
+      setActiveTab("query");
+    } else if (currentRouteSegment === "sessions") {
       setActiveTab("sessions");
     } else if (currentRouteSegment === "users") {
       setActiveTab("users");
+    } else if (currentRouteSegment === "insights") {
+      setActiveTab("insights");
     } else if (currentRouteSegment === "llm-tracing") {
       const selectedTab = params.get("selectedTab");
       if (selectedTab === "spans") {
@@ -363,6 +373,24 @@ const ObservePage = React.memo(() => {
     );
   }
 
+  // The legacy 400 can also mean a transient failure. Keep cached content in
+  // that case, but honor a definitive refusal even after a successful load.
+  const projectUnavailableKind = getResourceUnavailableKind(projectDetailError, {
+    acceptLegacy400: !projectDetail,
+  });
+  if (projectUnavailableKind) {
+    return (
+      <Box sx={containerStyles}>
+        <ResourceUnavailable
+          kind={projectUnavailableKind}
+          resourceLabel="project"
+          backTo={paths.dashboard.observe}
+          backLabel="Back to Observe"
+        />
+      </Box>
+    );
+  }
+
   return (
     <Box sx={containerStyles}>
       {/* Header Section */}
@@ -388,6 +416,8 @@ const ObservePage = React.memo(() => {
           activeTab={activeTab}
           onTabChange={handleTabChange}
           projectSource={projectDetail?.source}
+          // The Ask page (Instant eval) has no list config to save as a view.
+          canSaveView={currentRouteSegment !== "ask"}
         />
       </Paper>
 

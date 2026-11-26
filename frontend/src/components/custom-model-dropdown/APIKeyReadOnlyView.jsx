@@ -39,7 +39,7 @@ const APIKeyReadOnlyView = ({
   const readOnlyKeyTextStyles = {
     wordBreak: "break-all",
     color: "text.primary",
-    fontSize: "13px",
+    fontSize: "12px",
   };
 
   const jsonReadOnlyBoxStyles = {

@@ -1,12 +1,30 @@
 import PropTypes from "prop-types";
-import { useEffect, useReducer, useRef } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
+import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
-import { CONSOLE_COPY } from "../build.constants";
-import { Turn, Working } from "./ConsoleTurn";
+import { CONSOLE_COPY, LIST_PADDING } from "../build.constants";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import ViewerLock from "../../components/ViewerLock";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
+import KeepPlace from "./KeepPlace";
+import OlderChat, { GapLine, WithoutSteps } from "./OlderChat";
+import SearchStatus from "./SearchStatus";
+import useOpenAtMessage from "./useOpenAtMessage";
+import useReaderScroll from "./useReaderScroll";
+import { JumpToLatestBar, StopOrbit } from "./BuilderProgress";
+import { Turn } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
 // with a server-side transcription path. Kept for that follow-up.
 // import VoiceInput from "./VoiceInput";
@@ -23,13 +41,34 @@ function composerReducer(state, action) {
         ? state
         : { ...state, scaffolds: [...state.scaffolds, action.text] };
     case "unscaffold":
-      return { ...state, scaffolds: state.scaffolds.filter((_, i) => i !== action.index) };
+      return {
+        ...state,
+        scaffolds: state.scaffolds.filter((_, i) => i !== action.index),
+      };
     case "clear":
       return INITIAL;
     default:
       return state;
   }
 }
+
+// Tight on purpose: rows are about 34px, so anything wider pulls back someone
+// reading the last few rows.
+const NEAR_BOTTOM_PX = 8;
+
+// Things worth reading. Tool rows and other progress only keep the ship flying,
+// or the new-message ping would replace it almost at once. Rebuild and rollback
+// cards are their own system turns, with no steps.
+const MESSAGE_KINDS = new Set(["note", "ask", "error"]);
+
+const countMessages = (turns) =>
+  (turns || []).reduce(
+    (total, turn) =>
+      total +
+      (turn.role === "system" ? 1 : 0) +
+      (turn.steps || []).filter((s) => MESSAGE_KINDS.has(s.kind)).length,
+    0,
+  );
 
 /**
  * The console, as a chat.
@@ -49,6 +88,9 @@ function composerReducer(state, action) {
  * `onCollapse` adds a collapse button to the header. `active` is false while
  * the console is collapsed (mounted but hidden); it skips the auto-scroll then
  * and jumps to the latest turn once the console is shown again.
+ *
+ * Scrolling up stops the list following new events, so the user keeps their
+ * place; a bar above the composer shows work continuing or a new message.
  */
 export default function BuilderConsole({
   turns,
@@ -61,36 +103,151 @@ export default function BuilderConsole({
   preComposer,
   frozen = false,
   frozenReason,
+  answerWithOptions = false,
   onCollapse,
   collapseRef,
   active = true,
 }) {
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
+  const { canEdit } = useSimulationAccess();
   const { draft, scaffolds } = state;
+  const theme = useTheme();
   const listRef = useRef(null);
+  // Where the held messages and steps start.
+  const starts = (turns || []).filter((turn) => turn.role === "history");
+  // Messages and steps load one at a time, the one that starts lower first, so
+  // neither shows for long without the other it belongs with.
+  const loadsFirst = (turn) =>
+    starts
+      .slice(starts.indexOf(turn) + 1)
+      .every((lower) => !lower.hasOlder || lower.failed);
+  const autoLoads = (turn) => {
+    if (turn.id === "gap") return reader.movedDown;
+    if (turn.afterGap && reader.movedDown) return false;
+    return reader.movedUp && (turn.id === "older-around" || loadsFirst(turn));
+  };
+  const lastScrollRef = useRef({ top: 0, height: 0 });
+  const [following, setFollowing] = useState(true);
+  const messageCount = countMessages(turns);
+  const [seenMessages, setSeenMessages] = useState(messageCount);
 
   useEffect(
-    () => subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
+    () =>
+      subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
     [],
   );
+  // Reading by hand ends a search for a message.
+  const reader = useReaderScroll(listRef, () => search.stop());
+  const search = useOpenAtMessage({
+    active,
+    listRef,
+    count: turns?.length ?? 0,
+    older: starts.find((turn) => turn.id === "older-messages"),
+    onFound: (target) => {
+      const list = listRef.current;
+      setFollowing(false);
+      reader.startOwnScroll();
+      list.scrollTo?.({
+        top: target.offsetTop - list.offsetTop,
+        behavior: "smooth",
+      });
+    },
+    onLatest: () => {
+      setFollowing(true);
+      scrollToLatest();
+    },
+  });
+  const { startOwnScroll } = reader;
+  const scrollToLatest = useCallback(() => {
+    startOwnScroll();
+    // Scroll only the message list. scrollIntoView would also scroll every
+    // ancestor, including the collapsing column's clip box mid-animation.
+    const list = listRef.current;
+    list?.scrollTo?.({ top: list.scrollHeight, behavior: "smooth" });
+  }, [startOwnScroll]);
 
   // Follow the transcript only as it grows, not when a card's state changes.
   const count = turns?.length ?? 0;
   const lastTurn = turns?.[count - 1];
   const lastId = lastTurn?.id;
   const lastSteps = lastTurn?.steps?.length;
+  const from = starts.map((turn) => `${turn.id} ${turn.oldest}`).join();
+  const drawn = useRef({ from });
   useEffect(() => {
-    if (!active) return;
-    // Scroll only the message list. scrollIntoView would also scroll every
-    // ancestor, including the collapsing column's clip box mid-animation.
+    // Older ones loading above leave the list where it is (see KeepPlace).
+    const was = drawn.current;
+    drawn.current = { from, lastId, lastSteps };
+    if (
+      was.from !== from &&
+      was.lastId === lastId &&
+      was.lastSteps === lastSteps
+    )
+      return;
+    if (!active || !following) return;
+    scrollToLatest();
+  }, [
+    count,
+    from,
+    lastId,
+    lastSteps,
+    running,
+    canStop,
+    active,
+    following,
+    scrollToLatest,
+  ]);
+
+  // Sending from any path (composer, a question card, Stop) and reopening the
+  // console both return to the latest turn. Adjusted during render, so the next
+  // paint already follows.
+  // Older messages and steps loaded above are not new ones, whatever they hold.
+  const [prev, setPrev] = useState({ running, active, from });
+  if (prev.from !== from) {
+    setSeenMessages(messageCount);
+    setPrev({ ...prev, from });
+  } else if (prev.running !== running || prev.active !== active) {
+    // Reopened to show a message, it goes to that message instead.
+    const reopened = active && !prev.active;
+    if ((running && !prev.running) || reopened)
+      setFollowing(!(reopened && search.asked));
+    if (running && !prev.running) search.stop();
+    setPrev({ running, active, from });
+  }
+
+  const handleScroll = () => {
     const list = listRef.current;
-    list?.scrollTo?.({ top: list.scrollHeight, behavior: "smooth" });
-  }, [count, lastId, lastSteps, running, canStop, active]);
+    if (!list || !active) return;
+    const { scrollTop, scrollHeight, clientHeight } = list;
+    if (scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_PX) {
+      // Not on the way up: the first steps of a smooth scroll to an earlier message are still near the bottom.
+      if (scrollTop >= lastScrollRef.current.top) setFollowing(true);
+    } else if (
+      scrollTop < lastScrollRef.current.top &&
+      scrollHeight === lastScrollRef.current.height
+    ) {
+      // Only moving up counts as leaving: a big event can land mid smooth scroll
+      // and put the list far from the bottom without the user doing anything. A
+      // changed height means text rewrapped and moved the list, not the user.
+      setFollowing(false);
+      setSeenMessages(messageCount);
+      reader.scrolled(true);
+    } else if (
+      scrollTop > lastScrollRef.current.top &&
+      scrollHeight === lastScrollRef.current.height
+    ) {
+      reader.scrolled(false);
+    }
+    lastScrollRef.current = { top: scrollTop, height: scrollHeight };
+  };
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It
   // blocks the composer exactly like `running`, but persists across turns.
-  const blocked = running || frozen;
-  const reason = frozenReason || CONSOLE_COPY.frozen;
+  const locked = frozen || !canEdit;
+  // An open question that takes only its options holds the composer too, saying so.
+  const blocked = running || locked || answerWithOptions;
+  const reason = !canEdit
+    ? WORKSPACE_COPY.viewer.chat
+    : frozenReason || CONSOLE_COPY.frozen;
 
   const hasContent = draft.trim() || scaffolds.length > 0;
 
@@ -99,11 +256,17 @@ export default function BuilderConsole({
   // agent). Distinct from `blocked`, so the composer stays usable while waiting.
   // `working` narrows it when Stop also covers work that only waits.
   const busy = running || working;
+  const hasNewMessage = !following && messageCount > seenMessages;
+  const showJump = !following && (hasNewMessage || busy);
+  // One button: Stop while there's something to stop, Send as soon as the user types.
+  const showStop = onStop && (canStop || running) && !locked && !hasContent;
 
   const send = () => {
     const text = draft.trim();
     const scaffoldText = scaffolds.join(". ");
-    const combined = [scaffoldText, text].filter(Boolean).join(scaffoldText && text ? ". " : "");
+    const combined = [scaffoldText, text]
+      .filter(Boolean)
+      .join(scaffoldText && text ? ". " : "");
     if (!combined || blocked) return;
     dispatch({ type: "clear" });
     onSend?.(combined);
@@ -113,15 +276,27 @@ export default function BuilderConsole({
     <Stack sx={{ height: "100%", minWidth: 0 }}>
       {/* Same height as the workspace tab rail, so the two headers line up. */}
       <Stack
-        direction="row" alignItems="center" spacing={1}
+        direction="row"
+        alignItems="center"
+        spacing={1}
         sx={{
-          flexShrink: 0, pl: 2, pr: 1, height: ENV_TAB_RAIL_HEIGHT, boxSizing: "content-box",
-          borderBottom: "1px solid", borderColor: "divider",
+          flexShrink: 0,
+          pl: 2,
+          pr: 1,
+          height: ENV_TAB_RAIL_HEIGHT,
+          boxSizing: "content-box",
+          borderBottom: "1px solid",
+          borderColor: "divider",
         }}
       >
         <Box
           sx={{
-            width: 24, height: 24, borderRadius: "4px", display: "grid", placeItems: "center", flexShrink: 0,
+            width: 24,
+            height: 24,
+            borderRadius: "4px",
+            display: "grid",
+            placeItems: "center",
+            flexShrink: 0,
             bgcolor: "action.selected",
             color: "text.secondary",
           }}
@@ -129,14 +304,29 @@ export default function BuilderConsole({
           <Iconify icon="solar:chat-round-line-linear" width={13} />
         </Box>
         <Box flex={1} minWidth={0}>
-          <Typography noWrap sx={{ typography: "s1", color: "text.secondary" }}>
-            {frozen ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
+          <Typography
+            role="status"
+            noWrap
+            sx={{ typography: "s1", color: "text.secondary" }}
+          >
+            {locked
+              ? reason
+              : stopping
+                ? CONSOLE_COPY.stopping
+                : busy
+                  ? CONSOLE_COPY.working
+                  : CONSOLE_COPY.idle}
           </Typography>
         </Box>
         {onCollapse && (
           // Only while open, so the tooltip can't linger over the right pane
           // after a click hides the console.
-          <CustomTooltip show={active} size="small" arrow title={CONSOLE_COPY.collapse}>
+          <CustomTooltip
+            show={active}
+            size="small"
+            arrow
+            title={CONSOLE_COPY.collapse}
+          >
             <IconButton
               ref={collapseRef}
               aria-label={CONSOLE_COPY.collapse}
@@ -150,38 +340,94 @@ export default function BuilderConsole({
         )}
       </Stack>
 
+      <SearchStatus looking={search.looking} />
       {/* overflow-wrap is inherited, so every message, note, error and tool row
           below breaks a long unbroken token (a URL, an id, pasted JSON) instead
           of pushing out of the chat column. */}
       <Box
         ref={listRef}
         data-testid="builder-console-list"
-        sx={{ flex: 1, minWidth: 0, overflowY: "auto", overflowWrap: "anywhere", px: 3, py: 3 }}
+        onScroll={handleScroll}
+        {...reader.listProps}
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          overflowY: "auto",
+          overflowWrap: "anywhere",
+          p: LIST_PADDING,
+        }}
       >
-        <Stack spacing={3}>
-          {(turns || []).length === 0 && !busy ? (
-            <Stack alignItems="center" spacing={1} sx={{ py: 6, opacity: 0.7 }}>
-              <Box
-                sx={{
-                  width: 36, height: 36, borderRadius: "50%", display: "grid", placeItems: "center",
-                  bgcolor: "action.selected",
-                  color: "text.secondary",
-                }}
+        <KeepPlace
+          listRef={listRef}
+          from={from}
+          following={following}
+          duration={theme.transitions.duration.standard}
+        >
+          <Stack spacing={3}>
+            {(turns || []).length === 0 && !busy ? (
+              <Stack
+                alignItems="center"
+                spacing={1}
+                sx={{ py: 6, opacity: 0.7 }}
               >
-                <Iconify icon="solar:chat-round-line-linear" width={17} />
-              </Box>
-              <Typography sx={{ typography: "s1", color: "text.secondary", textAlign: "center", maxWidth: 320 }}>
-                {CONSOLE_COPY.empty}
-              </Typography>
-            </Stack>
-          ) : (
-            <>
-              {(turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)}
-              {busy && <Working label={CONSOLE_COPY.workingDot} />}
-            </>
-          )}
-        </Stack>
+                <Box
+                  sx={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: "50%",
+                    display: "grid",
+                    placeItems: "center",
+                    bgcolor: "action.selected",
+                    color: "text.secondary",
+                  }}
+                >
+                  <Iconify icon="solar:chat-round-line-linear" width={17} />
+                </Box>
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    color: "text.secondary",
+                    textAlign: "center",
+                    maxWidth: 320,
+                  }}
+                >
+                  {CONSOLE_COPY.empty}
+                </Typography>
+              </Stack>
+            ) : (
+              (turns || []).map((turn) =>
+                turn.role === "history" ? (
+                  <Fragment key={turn.id}>
+                    {turn.withoutSteps && <WithoutSteps aboveBar={showJump} />}
+                    <OlderChat
+                      turn={turn}
+                      listRef={listRef}
+                      aboveBar={showJump}
+                      auto={active && !search.asked && autoLoads(turn)}
+                    />
+                    {turn.kind === "gap" && <GapLine />}
+                  </Fragment>
+                ) : (
+                  <Turn key={turn.id} turn={turn} />
+                ),
+              )
+            )}
+          </Stack>
+        </KeepPlace>
       </Box>
+
+      <Box role="status" sx={visuallyHidden}>
+        {hasNewMessage ? CONSOLE_COPY.newMessage : ""}
+      </Box>
+      {showJump && (
+        <JumpToLatestBar
+          hasNewMessage={hasNewMessage}
+          onClick={() => {
+            search.stop();
+            setFollowing(true);
+          }}
+        />
+      )}
 
       {/* Slot for anything a caller wants to pin above the composer (the intake
           questionnaire or the selection-context chip drops in here). */}
@@ -190,7 +436,9 @@ export default function BuilderConsole({
       <Box sx={{ px: 3, pb: 3, pt: 1 }}>
         <Box
           sx={{
-            p: 1.5, borderRadius: "8px", border: "1px solid",
+            p: 1.5,
+            borderRadius: "8px",
+            border: "1px solid",
             borderColor: "divider",
             bgcolor: "background.paper",
             transition: "border-color 0.15s ease",
@@ -198,22 +446,40 @@ export default function BuilderConsole({
           }}
         >
           {scaffolds.length > 0 && (
-            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}
+            >
               {scaffolds.map((s, i) => (
                 <Stack
                   key={`${s}-${i}`}
-                  direction="row" alignItems="center" spacing={0.5}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
                   sx={{
-                    pl: 1, pr: 0.5, py: 0.25, borderRadius: "4px",
+                    pl: 1,
+                    pr: 0.5,
+                    py: 0.25,
+                    borderRadius: "4px",
                     bgcolor: "action.selected",
                     maxWidth: "100%",
                   }}
                 >
-                  <Iconify icon="solar:magic-stick-3-linear" width={12} sx={{ color: "text.secondary", flexShrink: 0 }} />
+                  <Iconify
+                    icon="solar:magic-stick-3-linear"
+                    width={12}
+                    sx={{ color: "text.secondary", flexShrink: 0 }}
+                  />
                   <Typography
                     sx={{
-                      typography: "s3", fontWeight: 500, color: "text.secondary",
-                      maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      typography: "s3",
+                      fontWeight: 500,
+                      color: "text.secondary",
+                      maxWidth: 260,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
                   >
                     {s}
@@ -224,7 +490,11 @@ export default function BuilderConsole({
                     onClick={() => dispatch({ type: "unscaffold", index: i })}
                     sx={{ p: 0, ml: 0.25 }}
                   >
-                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: "text.disabled" }} />
+                    <Iconify
+                      icon="solar:close-circle-linear"
+                      width={13}
+                      sx={{ color: "text.disabled" }}
+                    />
                   </IconButton>
                 </Stack>
               ))}
@@ -237,18 +507,35 @@ export default function BuilderConsole({
             multiline
             maxRows={8}
             variant="standard"
-            placeholder={frozen ? reason : CONSOLE_COPY.placeholder}
+            placeholder={
+              locked
+                ? reason
+                : answerWithOptions
+                  ? CONSOLE_COPY.answerWithOptions
+                  : CONSOLE_COPY.placeholder
+            }
             value={draft}
             disabled={blocked}
             onChange={(e) => dispatch({ type: "draft", value: e.target.value })}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
             }}
-            InputProps={{ disableUnderline: true, sx: { typography: "m3", px: 0.5, py: 0.5 } }}
+            InputProps={{
+              disableUnderline: true,
+              sx: { typography: "m3", px: 0.5, py: 0.5 },
+            }}
           />
 
           {/* Row 2: toolbar — flex-spacer · stop · send. */}
-          <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.25}
+            sx={{ mt: 0.5, pl: 0.25 }}
+          >
             {/* Voice input disabled for now: the Web Speech API is blocked in
                 Brave, so it only works in Chrome/Edge/Safari. Re-enable once a
                 server-side transcription endpoint (record -> /audio/transcriptions)
@@ -257,37 +544,52 @@ export default function BuilderConsole({
 
             <Box flex={1} />
 
-            {onStop && canStop && !frozen && (
-              <IconButton
-                aria-label="Stop"
-                title={CONSOLE_COPY.stop}
-                disabled={running || stopping}
-                onClick={onStop}
-                size="small"
-                sx={{
-                  mr: 0.5,
-                  color: "text.secondary",
-                  border: "1px solid", borderColor: "divider",
-                }}
-              >
-                <Iconify icon="solar:stop-bold" width={13} />
-              </IconButton>
+            {showStop ? (
+              <Box sx={{ position: "relative", display: "inline-flex" }}>
+                {busy && <StopOrbit />}
+                <IconButton
+                  aria-label="Stop"
+                  title={CONSOLE_COPY.stop}
+                  disabled={running || stopping}
+                  onClick={onStop}
+                  size="small"
+                  sx={{
+                    color: "text.secondary",
+                    border: "1px solid",
+                    borderColor: busy ? "transparent" : "divider",
+                  }}
+                >
+                  <Iconify icon="solar:stop-bold" width={13} />
+                </IconButton>
+              </Box>
+            ) : (
+              <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.chat}>
+                <IconButton
+                  aria-label="Send"
+                  disabled={!hasContent || blocked}
+                  onClick={send}
+                  size="small"
+                  sx={{
+                    bgcolor:
+                      hasContent && !blocked ? "primary.main" : undefined,
+                    color:
+                      hasContent && !blocked
+                        ? "primary.contrastText"
+                        : undefined,
+                    "&:hover": {
+                      bgcolor:
+                        hasContent && !blocked ? "primary.dark" : undefined,
+                    },
+                    "&.Mui-disabled": {
+                      bgcolor: "action.selected",
+                      color: "text.disabled",
+                    },
+                  }}
+                >
+                  <Iconify icon="solar:arrow-up-bold" width={15} />
+                </IconButton>
+              </ViewerLock>
             )}
-
-            <IconButton
-              aria-label="Send"
-              disabled={!hasContent || blocked}
-              onClick={send}
-              size="small"
-              sx={{
-                bgcolor: hasContent && !blocked ? "primary.main" : undefined,
-                color: hasContent && !blocked ? "primary.contrastText" : undefined,
-                "&:hover": { bgcolor: hasContent && !blocked ? "primary.dark" : undefined },
-                "&.Mui-disabled": { bgcolor: "action.selected", color: "text.disabled" },
-              }}
-            >
-              <Iconify icon="solar:arrow-up-bold" width={15} />
-            </IconButton>
           </Stack>
         </Box>
       </Box>
@@ -307,8 +609,13 @@ BuilderConsole.propTypes = {
   preComposer: PropTypes.node,
   frozen: PropTypes.bool,
   frozenReason: PropTypes.string,
+  // The open question takes only one of its options; free text is held.
+  answerWithOptions: PropTypes.bool,
   onCollapse: PropTypes.func,
   // Attached to the collapse button so focus can return to it on reopen.
-  collapseRef: PropTypes.oneOfType([PropTypes.func, PropTypes.shape({ current: PropTypes.any })]),
+  collapseRef: PropTypes.oneOfType([
+    PropTypes.func,
+    PropTypes.shape({ current: PropTypes.any }),
+  ]),
   active: PropTypes.bool,
 };

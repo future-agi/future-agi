@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -96,6 +97,10 @@ func (a *Authenticator) AuthenticateGRPC(ctx context.Context) (context.Context, 
 
 	result, err := a.Authenticate(ctx, apiKey, secretKey)
 	if err != nil {
+		if errors.Is(err, ErrKeyExpired) {
+			a.log.Warn("grpc auth failed", "err", err)
+			return nil, status.Error(codes.Unauthenticated, ExpiredKeyMessage)
+		}
 		if errors.Is(err, ErrUnauthenticated) {
 			a.log.Warn("grpc auth failed", "err", err)
 			return nil, status.Error(codes.Unauthenticated, "authentication failed")
@@ -127,8 +132,8 @@ func (a *Authenticator) KnownGRPCCredentials(md metadata.MD) bool {
 	if apiKey == "" || secretKey == "" {
 		return false
 	}
-	_, status := a.cache.peek(CacheKey(apiKey, secretKey))
-	return status != "miss"
+	entry, status := a.cache.peek(CacheKey(apiKey, secretKey))
+	return status != "miss" && !entry.result.Expired(time.Now())
 }
 
 func firstMD(md metadata.MD, key string) string {

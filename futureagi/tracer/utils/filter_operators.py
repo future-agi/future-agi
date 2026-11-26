@@ -66,6 +66,8 @@ SESSION_NUMERIC_MEMBERSHIP_COLUMNS = frozenset(
 FIELD_TYPE_ALIASES: dict[str, str] = dict(_CONTRACT["fieldTypes"]["aliases"])
 FILTER_COLUMN_TYPES: set[str] = set(_CONTRACT["columnTypes"]["allowed"])
 COL_TYPE_ALIASES: dict[str, str] = dict(_CONTRACT["columnTypes"]["aliases"])
+METRIC_FIELD_COLUMN_TYPE = "METRIC_FIELD"
+METRIC_FIELD_ID_PREFIX = "metric_field:"
 
 # Structured-array membership is compiled into bound ClickHouse IN sets inside
 # each bounded classifier query. Keep both the element count and bound string

@@ -545,8 +545,9 @@ class SpanAttributeKeysView(APIView):
                     "continuation" if advance_project_batch else page_read.browse_status
                 )
                 if published_has_more:
-                    appended_digests = page_read.appended_key_digests or (
-                        page_read.seen_key_digests[len(seen_state.digests) :]
+                    appended_digests = (
+                        page_read.appended_key_digests
+                        or (page_read.seen_key_digests[len(seen_state.digests) :])
                     )
                     seen_reference = persist_attribute_cursor_seen_state(
                         seen_state,

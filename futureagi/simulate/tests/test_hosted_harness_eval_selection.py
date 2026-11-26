@@ -233,9 +233,9 @@ def test_cap_filler_names_are_still_catalog_keys():
     """
     known = offerable_eval_names()
     for name in [*CAP_FILLERS, ONE_TOO_MANY]:
-        assert (
-            name in known
-        ), f"{name} is no longer offered; update CAP_FILLERS/ONE_TOO_MANY"
+        assert name in known, (
+            f"{name} is no longer offered; update CAP_FILLERS/ONE_TOO_MANY"
+        )
 
 
 # --- A failed read of the eval definitions is never memoised -------------------
@@ -358,8 +358,7 @@ def test_pick_winner_breaks_a_tie_between_two_of_a_tenants_own_templates_by_crea
 
     assert harness_evals._pick_winner([older, newer]).id == "newer"
     assert harness_evals._pick_winner([newer, older]).id == "newer", (
-        "the newest must win regardless of which element the candidate "
-        "list puts first"
+        "the newest must win regardless of which element the candidate list puts first"
     )
 
 
@@ -1665,6 +1664,101 @@ def test_receipt_dispatches_evaluations_when_only_the_tool_switch_is_on(
 
     assert created is True
     dispatch.assert_called_once()
+
+
+@pytest.mark.parametrize("code", ["worker_limits_not_enforced", "actor_missing"])
+@pytest.mark.django_db
+def test_a_trial_held_as_the_scenario_s_problem_is_never_graded_by_platform_evals(
+    organization, django_capture_on_commit_callbacks, code
+):
+    """A call that ran but whose trial the harness held as the scenario's problem (its checks
+    were not graded) is never graded against the agent by platform evals or the tool judge."""
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness import canonical_digest
+    from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key=f"held-{code}")
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Held trial",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "held",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert provision.status_code == 200, provision.content
+    provisioned = provision.json()["result"]
+    job.refresh_from_db()
+    job.run_test.enable_tool_evaluation = True
+    job.run_test.save(update_fields=["enable_tool_evaluation"])
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["held"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "held",
+        "scenario_id": provisioned["scenarios"][0]["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": None,
+        "status": "errored",
+        "sub_goals": [],
+        "evaluations": [],
+        "call": {
+            "started_at": "2026-11-12T09:00:00+00:00",
+            "ended_at": "2026-11-12T09:00:30+00:00",
+            "duration_ms": 30000,
+            "turns": 3,
+            "transcript_artifact": None,
+            "recording_artifacts": [],
+        },
+        "failure": {
+            "stage": "running",
+            "domain": "simulator",
+            "code": code,
+            "message": "inconclusive: scenario problem, not the agent's: held",
+            "retryable": False,
+        },
+    }
+    receipt["digest"] = canonical_digest(receipt)
+
+    with (
+        patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+        ) as dispatch,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        _, created = ingest_result_receipt(capability.attempt, receipt)
+
+    assert created is True
+    call = (
+        job.scenario_registrations.select_related("call_execution").get().call_execution
+    )
+    assert call.status == CallExecution.CallStatus.COMPLETED
+    dispatch.assert_not_called()
+    call.refresh_from_db()
+    assert call.call_metadata.get("eval_completed") is True
 
 
 @pytest.mark.django_db

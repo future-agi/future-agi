@@ -9,11 +9,13 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
 import { useSharedIssue } from "../sharedIssueContext";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
+import { formatLatency } from "src/sections/projects/LLMTracing/formatters";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2/VoiceDetailDrawerV2";
@@ -47,8 +49,8 @@ function AggregateBar({ agg, showTurns }) {
     ...(showTurns
       ? [{ label: "Avg turns", value: formatOrDash(agg.avg_turns, 1) }]
       : []),
-    { label: "P50 latency", value: `${(agg.p50_latency / 1000).toFixed(1)}s` },
-    { label: "P95 latency", value: `${(agg.p95_latency / 1000).toFixed(1)}s` },
+    { label: "P50 latency", value: formatLatency(agg.p50_latency) },
+    { label: "P95 latency", value: formatLatency(agg.p95_latency) },
   ];
 
   return (
@@ -182,8 +184,7 @@ function TracesGrid({ rows, onRowClick }) {
         field: "latency_ms",
         width: 110,
         sortable: true,
-        valueFormatter: (p) =>
-          p.value != null ? `${p.value.toLocaleString()}ms` : "—",
+        valueFormatter: (p) => (p.value != null ? formatLatency(p.value) : "—"),
         cellStyle: { fontSize: "12px", textAlign: "right" },
         headerClass: "ag-right-aligned-header",
       },

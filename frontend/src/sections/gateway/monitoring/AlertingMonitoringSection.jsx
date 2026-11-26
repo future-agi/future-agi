@@ -276,7 +276,7 @@ const ChannelsTab = ({ channels, onDelete, isDeleting }) => (
                 </Typography>
                 <Typography
                   variant="body2"
-                  sx={{ fontFamily: "monospace", fontSize: "13px" }}
+                  sx={{ fontFamily: "monospace", fontSize: "12px" }}
                 >
                   {maskUrl(ch.url || ch.endpoint || ch.webhook_url)}
                 </Typography>

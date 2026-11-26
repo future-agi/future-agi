@@ -9,8 +9,8 @@ import (
 )
 
 // KeyAuth returns middleware that validates API keys from the Authorization
-// header before any handler runs. Routes that do not start with "/v1/" are
-// passed through without authentication (health checks, admin routes, etc.).
+// header before any handler runs. Only explicitly public health/discovery
+// routes and the separately authenticated admin namespace bypass API-key auth.
 //
 // If keyStore is nil, auth is considered disabled and all requests pass through.
 func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.Handler {
@@ -21,8 +21,7 @@ func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.H
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip auth for non-API routes (health, admin, etc.).
-			if !strings.HasPrefix(r.URL.Path, "/v1/") {
+			if isPublicOrSeparatelyAuthenticatedPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -38,13 +37,7 @@ func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.H
 				return
 			}
 
-			rawKey := extractRequestAPIKey(r)
-			if rawKey == "" {
-				models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
-				return
-			}
-
-			if keyStore.Authenticate(rawKey) == nil {
+			if !anyKeyAuthenticates(keyStore, extractRequestAPIKeys(r)) {
 				models.WriteError(w, models.ErrUnauthorized("Invalid or missing API key"))
 				return
 			}
@@ -54,12 +47,71 @@ func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.H
 	}
 }
 
-func extractRequestAPIKey(r *http.Request) string {
-	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
-		return strings.TrimPrefix(authHeader, "Bearer ")
+func isPublicOrSeparatelyAuthenticatedPath(path string) bool {
+	switch path {
+	case "/healthz", "/readyz", "/livez", "/.well-known/agent.json":
+		return true
+	default:
+		return strings.HasPrefix(path, "/-/")
 	}
-	if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
-		return apiKey
+}
+
+// anyKeyAuthenticates reports whether at least one candidate key is valid.
+func anyKeyAuthenticates(keyStore *auth.KeyStore, candidates []string) bool {
+	for _, key := range candidates {
+		if keyStore.Authenticate(key) != nil {
+			return true
+		}
 	}
-	return ""
+	return false
+}
+
+// AuthenticateRequestAPIKey returns the first valid candidate in KeyAuth order.
+// Use this only for routes whose sole authentication gate is KeyAuth; handlers
+// with their own credential precedence must retain that narrower contract.
+func AuthenticateRequestAPIKey(keyStore *auth.KeyStore, r *http.Request) (*auth.APIKey, string) {
+	for _, raw := range extractRequestAPIKeys(r) {
+		if key := keyStore.Authenticate(raw); key != nil {
+			return key, raw
+		}
+	}
+	return nil, ""
+}
+
+// AuthorizationAPIKey parses the schemes accepted by KeyAuth. The boolean
+// reports a recognized scheme, even with an empty key, so callers preserving
+// credential precedence cannot silently fall through to a different identity.
+func AuthorizationAPIKey(header string) (string, bool) {
+	for _, scheme := range []string{"Bearer ", "Token "} {
+		if len(header) >= len(scheme) && strings.EqualFold(header[:len(scheme)], scheme) {
+			return strings.TrimSpace(header[len(scheme):]), true
+		}
+	}
+	return "", false
+}
+
+// extractRequestAPIKeys returns every gateway key the request carries, in
+// each form a supported client sends it: an Authorization Bearer or Token
+// scheme (matched case-insensitively, like the MCP handler), x-api-key,
+// Gemini's x-goog-api-key and ?key=, and the Cartesia SDK's ?api_key=.
+// KeyAuth lets a request through when any of them authenticates, because
+// handlers prefer different forms (GenAIHandler reads ?key= and
+// x-goog-api-key before Authorization). Each handler still authenticates
+// with its own extraction, so passing here never grants access by itself.
+func extractRequestAPIKeys(r *http.Request) []string {
+	var keys []string
+	add := func(key string) {
+		if key != "" {
+			keys = append(keys, key)
+		}
+	}
+	if key, ok := AuthorizationAPIKey(r.Header.Get("Authorization")); ok {
+		add(key)
+	}
+	add(r.Header.Get("x-api-key"))
+	add(r.Header.Get("x-goog-api-key"))
+	query := r.URL.Query()
+	add(query.Get("key"))
+	add(query.Get("api_key"))
+	return keys
 }

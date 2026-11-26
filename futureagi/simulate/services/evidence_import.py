@@ -1,0 +1,929 @@
+"""Making an evidence import: the Observe sessions or calls or the dataset rows
+a person picked, or transcripts they added, frozen for one environment so a
+test can be drafted from them.
+
+Nothing here drafts a scenario or starts a run.
+"""
+
+from __future__ import annotations
+
+import json
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Any
+
+import structlog
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+
+from model_hub.models.develop_dataset import Dataset
+from simulate.models import (
+    EvidenceImport,
+    EvidenceImportCase,
+    HarnessSuiteMember,
+    HostedHarnessJob,
+)
+from simulate.pydantic_schemas.evidence_import import DatasetColumns
+from simulate.selectors.dataset_evidence import MEDIA_TYPES, dataset_columns
+from simulate.selectors.evidence_import import (
+    OPEN_CASE_STATUSES,
+    RETRIED_LATER,
+    ROW_NOT_FOUND,
+    SOURCE_NOT_FOUND,
+    content_digest,
+    current_evidence,
+    evidence_digest,
+    import_evidence,
+    import_rows,
+    stored_transcripts,
+    transcript_evidence,
+)
+from simulate.services.evidence_drafts import CATALOGUE
+from simulate.services.harness_versioning import archives, drafts
+from simulate.services.harness_versioning.versions import suite_documents
+from simulate.services.hosted_harness import DELETE_CANCEL_REASON, HostedHarnessError
+from simulate.utils.transcript_parse import (
+    Format,
+    ParsedTranscript,
+    TranscriptError,
+    parse_transcript,
+)
+from tracer.models.project import Project
+from tracer.selectors.observe_evidence import SourceEvidence, SourceKind
+
+logger = structlog.get_logger(__name__)
+
+# The environment's record of recent adds, keyed by request key, beside Save's own.
+EVIDENCE_ADDS = "evidence_adds"
+# Save refusals a later Save from the unsaved changes could not clear either: the whole add is refused and rolled back,
+# so no open draft is left to block Fix my agent and the cases can be added again.
+_REFUSE_WHOLE_ADD = frozenset({"draft_not_runnable"})
+
+
+def create_evidence_import(
+    *,
+    environment: HostedHarnessJob,
+    project: Project,
+    source_kind: SourceKind,
+    source_ids: list[str],
+    user,
+    source_issue=None,
+) -> tuple[EvidenceImport, dict[str, SourceEvidence]]:
+    """Freeze ``source_ids`` as an import for ``environment``, each with a
+    fingerprint of what it holds now (blank when part of it could not be read).
+    ``source_issue`` is the Error Feed issue they are traces of, when an epoch is
+    run from it. Returns the import and the evidence it was made from, so the
+    caller can show it without reading Observe again."""
+    evidence = import_evidence(project, source_kind, source_ids)
+    with transaction.atomic():
+        environment = _lock(environment.id)
+        evidence_import = EvidenceImport.objects.create(
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            environment=environment,
+            project=project,
+            source_issue=source_issue,
+            agent_version_id=environment.agent_version_id,
+            source_kind=source_kind,
+            created_by=user,
+        )
+        _store_cases(
+            evidence_import,
+            [
+                _case(evidence_import, position, source_id, evidence.get(source_id))
+                for position, source_id in enumerate(source_ids)
+            ],
+        )
+    return evidence_import, evidence
+
+
+def create_dataset_import(
+    *,
+    environment: HostedHarnessJob,
+    dataset: Dataset,
+    columns: DatasetColumns,
+    row_ids: list[str],
+    production: bool,
+    user,
+) -> tuple[EvidenceImport, dict[str, SourceEvidence]]:
+    """Freeze ``row_ids`` of ``dataset`` as an import for ``environment``, read
+    through ``columns``, each row with a fingerprint of what it holds now, as an
+    Observe import's sources are. Nothing of the rows is stored: they are read
+    again on every view. ``production`` is what the person said about where
+    they come from. A column that is not the dataset's, or holds media, refuses
+    the import."""
+    _check_columns(dataset, columns)
+    evidence = import_rows(dataset, columns, row_ids)
+    with transaction.atomic():
+        environment = _lock(environment.id)
+        evidence_import = EvidenceImport.objects.create(
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            environment=environment,
+            dataset=dataset,
+            dataset_columns=columns.model_dump(mode="json"),
+            agent_version_id=environment.agent_version_id,
+            source_kind=EvidenceImport.SourceKind.DATASET,
+            declared_production=production,
+            created_by=user,
+        )
+        _store_cases(
+            evidence_import,
+            [
+                _case(
+                    evidence_import,
+                    position,
+                    row_id,
+                    evidence.get(row_id),
+                    missing=ROW_NOT_FOUND,
+                )
+                for position, row_id in enumerate(row_ids)
+            ],
+        )
+    return evidence_import, evidence
+
+
+def _check_columns(dataset: Dataset, columns: DatasetColumns) -> None:
+    """Refuses a picked column the dataset does not have, and one whose cells
+    are audio, images or documents: an import reads text only."""
+    picked = {
+        "conversation": [columns.conversation],
+        "labels": columns.labels,
+        "expected": [columns.expected] if columns.expected is not None else [],
+    }
+    live = dataset_columns(dataset, [one for ids in picked.values() for one in ids])
+    for role, ids in picked.items():
+        for column_id in map(str, ids):
+            column = live.get(column_id)
+            if column is None:
+                raise HostedHarnessError(
+                    "dataset_column_not_found",
+                    "A picked column is no longer in this dataset; pick the "
+                    "columns again",
+                    details={"column": role},
+                )
+            if column.data_type in MEDIA_TYPES:
+                raise HostedHarnessError(
+                    "dataset_column_media",
+                    f'Column "{column.name}" holds {column.data_type}, not text: '
+                    "rows whose conversation is only audio cannot be imported yet",
+                    details={"column": role},
+                )
+
+
+@dataclass(frozen=True)
+class TranscriptInput:
+    """One transcript as a person pasted or uploaded it."""
+
+    name: str
+    form: Format
+    text: str
+
+
+def create_transcript_import(
+    *,
+    environment: HostedHarnessJob,
+    transcripts: list[TranscriptInput],
+    production: bool,
+    user,
+) -> EvidenceImport:
+    """Store ``transcripts`` as an import for ``environment``, one case each.
+    Only their redacted text is stored, cut to the import's size, and it lives
+    until the import is deleted. ``production`` is what the person said about
+    where they come from. A transcript that cannot be read refuses the whole
+    import, naming it and its line."""
+    parsed = [_parsed(number, one) for number, one in enumerate(transcripts, 1)]
+    stored, redaction = stored_transcripts(
+        [(one.name, read) for one, read in zip(transcripts, parsed, strict=True)]
+    )
+    with transaction.atomic():
+        environment = _lock(environment.id)
+        evidence_import = EvidenceImport.objects.create(
+            organization_id=environment.organization_id,
+            workspace_id=environment.workspace_id,
+            environment=environment,
+            agent_version_id=environment.agent_version_id,
+            source_kind=EvidenceImport.SourceKind.TRANSCRIPT,
+            declared_production=production,
+            redaction=redaction.model_dump(mode="json"),
+            created_by=user,
+        )
+        _store_cases(
+            evidence_import,
+            [
+                EvidenceImportCase(
+                    evidence_import=evidence_import,
+                    position=position,
+                    source_id=(source_id := f"transcript-{position + 1}"),
+                    content_digest=content_digest(transcript_evidence(one, source_id)),
+                    transcript=one.model_dump(mode="json"),
+                )
+                for position, one in enumerate(stored)
+            ],
+        )
+    return evidence_import
+
+
+def _parsed(number: int, transcript: TranscriptInput) -> ParsedTranscript:
+    try:
+        return parse_transcript(transcript.text, transcript.form)
+    except TranscriptError as error:
+        raise HostedHarnessError(
+            "transcript_unreadable",
+            f"Transcript {number} ({transcript.name}): {error}",
+            details={"transcript": number, "line": error.line},
+        ) from None
+
+
+def _case(
+    evidence_import: EvidenceImport,
+    position: int,
+    source_id: str,
+    evidence: SourceEvidence | None,
+    *,
+    missing: str = SOURCE_NOT_FOUND,
+) -> EvidenceImportCase:
+    if evidence is None:
+        return EvidenceImportCase(
+            evidence_import=evidence_import,
+            position=position,
+            source_id=source_id,
+            status=EvidenceImportCase.Status.UNAVAILABLE,
+            reason=missing,
+        )
+    return EvidenceImportCase(
+        evidence_import=evidence_import,
+        position=position,
+        source_id=source_id,
+        digest=evidence_digest(evidence),
+        content_digest=content_digest(evidence),
+    )
+
+
+def _lock(environment_id) -> HostedHarnessJob:
+    """The environment, read again and held until the transaction commits, so two
+    imports of one source made at once cannot both propose it, and a discard waits
+    for either. Refused once it is deleted or being deleted: what the request read
+    may predate that, and one deleted while it runs only stops later, with nothing
+    to delete what an import stores meanwhile."""
+    locked = (
+        HostedHarnessJob.no_workspace_objects.select_for_update(of=("self",))
+        .filter(id=environment_id)
+        .first()
+    )
+    if locked is None or locked.cancel_reason == DELETE_CANCEL_REASON:
+        raise HostedHarnessError(
+            "environment_not_found", "Environment not found", status_code=404
+        )
+    return locked
+
+
+# Cases one already in the environment repeats: still to draft or add, or added.
+# A blocked case is not repeated: importing its source again is how a person
+# retries it, and the new case supersedes it (``_store_cases``).
+_REPEATED_STATUSES = (
+    EvidenceImportCase.Status.PENDING,
+    EvidenceImportCase.Status.DRAFTED,
+    EvidenceImportCase.Status.ADDED,
+)
+
+
+def _stale_drafts(environment: HostedHarnessJob) -> Q:
+    """Drafted cases add-to-suite refuses: drafted on an environment that changed
+    since. Drafting takes only waiting cases, so importing the source again is how
+    such a case is drafted anew, and it is not one a new import repeats."""
+    current = (
+        drafts.fresh_draft(environment, "environment")
+        or environment.environment_version
+    )
+    if current is None:
+        return Q(pk__in=[])
+    return Q(status=EvidenceImportCase.Status.DRAFTED) & ~Q(
+        environment_hash=current.hash
+    )
+
+
+def _gone_from_suite(environment: HostedHarnessJob) -> Q:
+    """Added cases whose scenario the suite no longer holds: the unsaved change they
+    were added in was discarded, or the scenario was removed since. Importing the
+    source again is how such a case comes back, so it is not one a new import
+    repeats."""
+    draft = drafts.fresh_draft(environment, "suite")
+    if draft is not None:
+        held = {
+            str(one["scenario_key"])
+            for one in (draft.documents or {}).get("scenarios") or []
+            if isinstance(one, dict) and one.get("scenario_key")
+        }
+    else:
+        held = set(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=environment.suite_version_id
+            ).values_list("scenario_key", flat=True)
+        )
+    return Q(status=EvidenceImportCase.Status.ADDED) & ~Q(scenario_key__in=held)
+
+
+def sources_awaiting_review(
+    environment: HostedHarnessJob,
+    *,
+    project: Project,
+    source_kind: SourceKind,
+    source_ids: list[str],
+) -> set[str]:
+    """Those of ``source_ids`` (Observe sources of ``project``) that another import
+    of ``environment`` still drafts or reviews: a case of the same source waiting
+    to be drafted, or drafted on the environment as it is. Read from the cases
+    alone, without their fingerprints, so a source that changed since, one whose
+    fingerprint is blank, or Observe being unreachable never hides one. Ask it
+    before importing: an import retires a waiting case whose source changed."""
+    return set(
+        EvidenceImportCase.no_workspace_objects.filter(
+            evidence_import__environment_id=environment.id,
+            evidence_import__deleted=False,
+            evidence_import__source_kind=source_kind,
+            evidence_import__project_id=project.id,
+            source_id__in=source_ids,
+            status__in=(
+                EvidenceImportCase.Status.PENDING,
+                EvidenceImportCase.Status.DRAFTED,
+            ),
+            duplicate_of__isnull=True,
+        )
+        .exclude(_stale_drafts(environment))
+        .values_list("source_id", flat=True)
+    )
+
+
+def _source_key(evidence_import: EvidenceImport, source_id: str) -> tuple | None:
+    """What names one source across imports: an Observe session or call by its
+    project and id, a dataset row by its dataset and id. A transcript has no source to name."""
+    if evidence_import.source_kind == EvidenceImport.SourceKind.TRANSCRIPT:
+        return None
+    scope = (
+        evidence_import.dataset_id
+        if evidence_import.source_kind == EvidenceImport.SourceKind.DATASET
+        else evidence_import.project_id
+    )
+    return (evidence_import.source_kind, scope, source_id)
+
+
+@dataclass
+class _Held:
+    """The environment's cases holding the source or the conversation of a new
+    case, earliest first, by source key and by content digest."""
+
+    by_source: dict[tuple, list[EvidenceImportCase]]
+    by_digest: dict[str, list[EvidenceImportCase]]
+    superseded: set = field(default_factory=set)
+
+    def of(
+        self, evidence_import: EvidenceImport, case: EvidenceImportCase
+    ) -> list[EvidenceImportCase]:
+        """The held cases ``case`` repeats: by its source, else by its content."""
+        key = _source_key(evidence_import, case.source_id)
+        return (self.by_source.get(key) if key else None) or self.by_digest.get(
+            case.content_digest, []
+        )
+
+
+def _held(
+    evidence_import: EvidenceImport,
+    cases: list[EvidenceImportCase],
+    statuses,
+    *,
+    leaving=(),
+) -> _Held:
+    """The environment's cases in ``statuses`` (in imports still kept, no repeat
+    themselves, no stale draft, and no added case the suite no longer holds) that
+    hold the source or the conversation of
+    ``cases``."""
+    held = _Held(by_source={}, by_digest={})
+    digests = {case.content_digest for case in cases if case.content_digest}
+    keyed = {
+        key for case in cases if (key := _source_key(evidence_import, case.source_id))
+    }
+    if not digests and not keyed:
+        return held
+    same_source = Q()
+    for kind, scope, source_id in keyed:
+        scope_field = (
+            "evidence_import__dataset_id"
+            if kind == EvidenceImport.SourceKind.DATASET
+            else "evidence_import__project_id"
+        )
+        same_source |= Q(
+            evidence_import__source_kind=kind,
+            source_id=source_id,
+            **{scope_field: scope},
+        )
+    found = (
+        EvidenceImportCase.objects.filter(
+            same_source | Q(content_digest__in=digests),
+            evidence_import__environment_id=evidence_import.environment_id,
+            evidence_import__deleted=False,
+            status__in=statuses,
+            duplicate_of__isnull=True,
+        )
+        .exclude(pk__in=leaving)
+        .exclude(_stale_drafts(evidence_import.environment))
+        .exclude(_gone_from_suite(evidence_import.environment))
+        .select_related("evidence_import")
+        .order_by("evidence_import__created_at", "position")
+    )
+    # A blocked case is superseded by a retry even if the source was repaired.
+    # Only originals that would hold a new case need a fresh fingerprint.
+    stale: set[Any] = set()
+    if statuses == _REPEATED_STATUSES:
+        by_import = defaultdict(list)
+        for case in found:
+            if case.evidence_import.source_kind != EvidenceImport.SourceKind.TRANSCRIPT:
+                by_import[case.evidence_import_id].append(case)
+        for originals in by_import.values():
+            owner = originals[0].evidence_import
+            if owner.source_kind == EvidenceImport.SourceKind.DATASET:
+                current = current_evidence(owner, originals)
+            else:
+                try:
+                    with transaction.atomic():
+                        current = current_evidence(owner, originals)
+                except Exception as exc:  # noqa: BLE001 - historical Observe reads are best effort
+                    logger.warning(
+                        "evidence_observe_read_failed",
+                        import_id=str(owner.id),
+                        error_type=type(exc).__name__,
+                    )
+                    stale.update(original.id for original in originals)
+                    continue
+            for original in originals:
+                source = current.get(original.source_id)
+                if (
+                    source is None
+                    or not original.digest
+                    or evidence_digest(source) != original.digest
+                ):
+                    stale.add(original.id)
+                    if (
+                        original.status == EvidenceImportCase.Status.PENDING
+                        and _source_key(owner, original.source_id) in keyed
+                    ):
+                        held.superseded.add(original.id)
+    for case in found:
+        if case.id in stale:
+            continue
+        if key := _source_key(case.evidence_import, case.source_id):
+            held.by_source.setdefault(key, []).append(case)
+        if case.content_digest:
+            held.by_digest.setdefault(case.content_digest, []).append(case)
+    return held
+
+
+def _store_cases(
+    evidence_import: EvidenceImport, cases: list[EvidenceImportCase]
+) -> None:
+    """Saves ``cases``, each one the environment already holds marked a duplicate
+    of that case: the same source, or the same conversation (content digest), in
+    an open or added case of another import, or earlier in this one. The case it
+    repeats is proposed once and keeps it as one more source. A new case that
+    retries a blocked one (the same source or conversation, matched the same way,
+    whatever the kind of either source) supersedes it: the blocked case is
+    discarded as retried, only once the new case is saved, and the cases that
+    repeated it repeat the new case instead. Run in the caller's transaction,
+    under the environment's lock."""
+    readable = [
+        case for case in cases if case.status == EvidenceImportCase.Status.PENDING
+    ]
+    repeated = _held(evidence_import, readable, _REPEATED_STATUSES)
+    blocked = _held(evidence_import, readable, (EvidenceImportCase.Status.BLOCKED,))
+    # Each blocked case retried, and the new case that retries it.
+    retried: dict = {}
+    for case in readable:
+        if originals := repeated.of(evidence_import, case):
+            case.status = EvidenceImportCase.Status.DUPLICATE
+            case.duplicate_of_id = originals[0].id
+            continue
+        if case.content_digest:
+            repeated.by_digest[case.content_digest] = [case]
+        for old in blocked.of(evidence_import, case):
+            retried.setdefault(old.id, case.id)
+    EvidenceImportCase.objects.bulk_create(cases)
+    if repeated.superseded:
+        EvidenceImportCase.objects.filter(id__in=repeated.superseded).update(
+            status=EvidenceImportCase.Status.DISCARDED,
+            reason=RETRIED_LATER,
+            updated_at=timezone.now(),
+        )
+    if not retried:
+        return
+    now = timezone.now()
+    EvidenceImportCase.objects.filter(
+        id__in=retried, status=EvidenceImportCase.Status.BLOCKED
+    ).update(
+        status=EvidenceImportCase.Status.DISCARDED,
+        reason=RETRIED_LATER,
+        updated_at=now,
+    )
+    # "Already imported" never points at a discarded case: a case that repeated the
+    # blocked one now repeats its retry, and counts as one more source of it.
+    for old, new in retried.items():
+        EvidenceImportCase.objects.filter(duplicate_of_id=old).update(
+            duplicate_of_id=new, updated_at=now
+        )
+
+
+def discard_evidence_import(evidence_import: EvidenceImport) -> bool:
+    """Discard what a person no longer wants of ``evidence_import``. Nothing of
+    it added: the import is deleted, and a transcript's stored text with it.
+    Some of it added: only its cases not added are discarded, so the added
+    scenarios keep their provenance, and the import counts as finished. Refused
+    while the builder drafts its cases. Returns whether the import was deleted.
+
+    Under the environment's lock first, as creating an import and adding to the
+    suite take it: an import made meanwhile never repeats a case being discarded,
+    and a case added meanwhile is seen as added."""
+    with transaction.atomic():
+        _lock(evidence_import.environment_id)
+        locked = EvidenceImport.no_workspace_objects.select_for_update().get(
+            id=evidence_import.id
+        )
+        if locked.drafting_job_id is not None:
+            raise HostedHarnessError(
+                "evidence_drafting_busy",
+                "This import's cases are being drafted; discard it once drafting ends",
+                status_code=409,
+            )
+        cases = EvidenceImportCase.objects.filter(evidence_import=locked)
+        list(cases.select_for_update(of=("self",)).values_list("id", flat=True))
+        if not cases.filter(status=EvidenceImportCase.Status.ADDED).exists():
+            _promote_duplicates(locked, cases)
+            locked.delete()
+            return True
+        leaving = cases.filter(status__in=OPEN_CASE_STATUSES)
+        _promote_duplicates(locked, leaving)
+        leaving.update(
+            status=EvidenceImportCase.Status.DISCARDED, updated_at=timezone.now()
+        )
+        return False
+
+
+def discard_open_cases(evidence_import: EvidenceImport) -> None:
+    """Discard the import's cases still to draft, add or retry, and keep the import
+    with what it added and what it repeats: a person kept only some of its drafts, or
+    its drafts can go no further. Under the environment's lock, as a discard is."""
+    with transaction.atomic():
+        _lock(evidence_import.environment_id)
+        leaving = EvidenceImportCase.objects.filter(
+            evidence_import=evidence_import, status__in=OPEN_CASE_STATUSES
+        )
+        list(leaving.select_for_update(of=("self",)).values_list("id", flat=True))
+        _promote_duplicates(evidence_import, leaving)
+        leaving.update(
+            status=EvidenceImportCase.Status.DISCARDED, updated_at=timezone.now()
+        )
+
+
+def _promotion_candidates(duplicates):
+    """Choose one version per source before replacing any departing originals."""
+    groups = defaultdict(list)
+    for case in duplicates:
+        key = _source_key(case.evidence_import, case.source_id)
+        groups[key or case.id].append(case)
+
+    # Only competing fingerprints need a source read. Read each with the mapping
+    # of its own import; a newer import need not match a row that was reverted.
+    by_import = defaultdict(list)
+    for group in groups.values():
+        if len({case.digest for case in group}) > 1:
+            for case in group:
+                by_import[case.evidence_import_id].append(case)
+    matching = set()
+    for cases in by_import.values():
+        owner = cases[0].evidence_import
+        if owner.source_kind == EvidenceImport.SourceKind.DATASET:
+            current = current_evidence(owner, cases)
+        else:
+            try:
+                with transaction.atomic():
+                    current = current_evidence(owner, cases)
+            except Exception as exc:  # noqa: BLE001 - historical Observe reads are best effort
+                logger.warning(
+                    "evidence_observe_read_failed",
+                    import_id=str(owner.id),
+                    error_type=type(exc).__name__,
+                )
+                continue
+        for case in cases:
+            source = current.get(case.source_id)
+            if source is not None and evidence_digest(source) == case.digest:
+                matching.add(case.id)
+    for group in groups.values():
+        preferred = next((case for case in group if case.id in matching), group[0])
+        yield preferred, group
+
+
+def _promote_duplicates(evidence_import: EvidenceImport, leaving) -> None:
+    """Relink repeats to a surviving original or promote one remaining version."""
+    duplicates = (
+        EvidenceImportCase.objects.select_for_update(of=("self",))
+        .filter(duplicate_of__in=leaving)
+        .exclude(evidence_import=evidence_import)
+        .filter(evidence_import__deleted=False)
+        .select_related("evidence_import")
+        .order_by("evidence_import__created_at", "position")
+    )
+    by_import = defaultdict(list)
+    for case in duplicates:
+        by_import[case.evidence_import_id].append(case)
+    held = {
+        owner: _held(
+            cases[0].evidence_import, cases, _REPEATED_STATUSES, leaving=leaving
+        )
+        for owner, cases in by_import.items()
+    }
+    by_departing: dict[Any, Any] = {}
+    by_digest: dict[Any, Any] = {}
+    now = timezone.now()
+    for preferred, group in _promotion_candidates(duplicates):
+        current = held[preferred.evidence_import_id].of(
+            preferred.evidence_import, preferred
+        )
+        first = (
+            current[0]
+            if current
+            else by_digest.get(preferred.content_digest)
+            or by_departing.get(preferred.duplicate_of_id)
+            or preferred
+        )
+        by_departing.setdefault(preferred.duplicate_of_id, first)
+        if preferred.content_digest:
+            by_digest.setdefault(preferred.content_digest, first)
+        for case in group:
+            if first is case:
+                case.status = EvidenceImportCase.Status.PENDING
+                case.duplicate_of_id = None
+            else:
+                case.duplicate_of_id = first.id
+            case.updated_at = now
+            case.save(update_fields=["status", "duplicate_of", "updated_at"])
+
+
+def add_to_suite(
+    evidence_import: EvidenceImport,
+    case_ids: list[str],
+    *,
+    expected: dict[str, drafts.DraftRef],
+    idempotency_key: str,
+    user,
+    for_agent_fix: bool = False,
+) -> bool:
+    """Add the drafted scenarios of ``case_ids`` to the environment's suite, in one
+    transaction under the environment's lock. ``expected`` is the unsaved changes
+    the person saw; any edit since refuses. When they saw none, the suite is saved
+    as well, so no open draft is left to block Fix my agent; beside other edits it
+    joins the draft only, since nobody else's changes are made live for them, and
+    so it does where a Save must be validated first or a validation runs. A
+    refused save leaves everything as it was. The same ``idempotency_key`` repeats
+    the first answer, so a retry after a lost response is not refused. Returns
+    whether it was saved.
+
+    The import is read again under the lock: a discard that committed while this
+    add waited for it deletes the import and leaves its cases drafted, and nothing
+    of a discarded import is added."""
+    wanted = {str(case_id) for case_id in case_ids}
+    with transaction.atomic():
+        locked = (
+            HostedHarnessJob.no_workspace_objects.select_for_update(of=("self",))
+            .select_related("environment_version", "suite_version")
+            .get(id=evidence_import.environment_id)
+        )
+        if not EvidenceImport.no_workspace_objects.filter(
+            id=evidence_import.id, deleted=False
+        ).exists():
+            raise HostedHarnessError(
+                "evidence_import_not_found",
+                "Evidence import not found",
+                status_code=404,
+            )
+        earlier = _earlier_add(locked, evidence_import, wanted, idempotency_key)
+        if earlier is not None:
+            return earlier
+        seen = {
+            piece: expected.get(piece, drafts.NO_DRAFT) for piece in drafts.DRAFT_PIECES
+        }
+        if drafts.draft_refs(locked) != seen:
+            raise HostedHarnessError(
+                "draft_changed",
+                "The unsaved changes moved since the review opened; look at them "
+                "and add again",
+                status_code=409,
+            )
+        cases = list(
+            EvidenceImportCase.objects.select_for_update()
+            .filter(
+                evidence_import=evidence_import,
+                id__in=wanted,
+                status=EvidenceImportCase.Status.DRAFTED,
+            )
+            .order_by("position")
+        )
+        if not wanted or len(cases) != len(wanted):
+            raise HostedHarnessError(
+                "evidence_case_not_drafted",
+                "Only this import's drafted cases can be added",
+                status_code=409,
+            )
+        environment_version = (
+            drafts.fresh_draft(locked, "environment") or locked.environment_version
+        )
+        if environment_version is None or any(
+            case.environment_hash != environment_version.hash for case in cases
+        ):
+            raise HostedHarnessError(
+                "evidence_draft_stale",
+                "The environment changed since these cases were drafted; draft "
+                "them again",
+                status_code=409,
+            )
+        pieces = {"suite", "environment"} if _checks(cases) else {"suite"}
+        write = drafts.record_draft(
+            locked,
+            _with_cases(locked, environment_version, cases),
+            origin="manual",
+            user=user,
+            expected=seen,
+            pieces=pieces,
+        )
+        if write is None or write.suite is None:
+            raise HostedHarnessError(
+                "drafts_unavailable",
+                "This environment keeps no unsaved changes, so imported cases "
+                "cannot be added",
+                status_code=409,
+            )
+        EvidenceImportCase.objects.filter(id__in=[case.id for case in cases]).update(
+            status=EvidenceImportCase.Status.ADDED, updated_at=timezone.now()
+        )
+        from simulate.services.harness_scenario_actions import live_validation
+
+        # Where the Save cannot be made now (it must go through Validate, a validation of the defaults runs, or any
+        # other refusal), the cases wait in the unsaved changes as they do beside other edits, to be saved from there.
+        # The checks only skip an attempt bound to be refused; the savepoint keeps the cases whatever refuses.
+        saved = (
+            all(ref == drafts.NO_DRAFT for ref in seen.values())
+            and (for_agent_fix or not drafts.must_validate(locked))
+            and live_validation(locked) is None
+        )
+        if saved:
+            saved = _save_added(
+                locked, write, idempotency_key, user, for_agent_fix=for_agent_fix
+            )
+        _record_add(locked.id, evidence_import, wanted, saved, idempotency_key)
+        transaction.on_commit(lambda: drafts.retire_chat_runtime(locked))
+    return saved
+
+
+def _save_added(
+    locked: HostedHarnessJob,
+    write: drafts.DraftWrite,
+    idempotency_key: str,
+    user,
+    *,
+    for_agent_fix: bool = False,
+) -> bool:
+    """Save the drafts the add wrote; a Save refused for now is undone alone and leaves them unsaved."""
+    try:
+        with transaction.atomic():
+            drafts.save_drafts(
+                locked,
+                {
+                    piece: drafts.SaveRequest(
+                        expected_parent_id=draft.parent_id,
+                        expected_revision=draft.revision,
+                    )
+                    for piece, draft in (
+                        ("environment", write.environment),
+                        ("suite", write.suite),
+                    )
+                    if draft is not None
+                },
+                idempotency_key=idempotency_key,
+                user=user,
+                for_agent_fix=for_agent_fix,
+            )
+    except HostedHarnessError as refused:
+        if refused.status_code >= 500 or refused.code in _REFUSE_WHOLE_ADD:
+            raise
+        logger.info(
+            "evidence_add_left_unsaved",
+            environment_id=str(locked.id),
+            code=refused.code,
+        )
+        return False
+    return True
+
+
+def _earlier_add(
+    environment: HostedHarnessJob,
+    evidence_import: EvidenceImport,
+    wanted: set[str],
+    idempotency_key: str,
+) -> bool | None:
+    """What an earlier add under ``idempotency_key`` answered, or None for a new
+    key. The key cannot repeat an add of other cases."""
+    metadata = (environment.payload or {}).get("metadata") or {}
+    earlier = (metadata.get(EVIDENCE_ADDS) or {}).get(idempotency_key)
+    if not isinstance(earlier, dict):
+        return None
+    if (
+        earlier.get("import") != str(evidence_import.id)
+        or set(earlier.get("cases") or ()) != wanted
+    ):
+        raise HostedHarnessError(
+            "idempotency_key_reused",
+            "This request key was already used to add other cases; add again",
+            status_code=409,
+        )
+    return bool(earlier.get("saved"))
+
+
+def _record_add(
+    environment_id,
+    evidence_import: EvidenceImport,
+    wanted: set[str],
+    saved: bool,
+    idempotency_key: str,
+) -> None:
+    """Keep the answer under ``idempotency_key`` with the newest adds, as Save
+    keeps its own. Read again first: Save may have written the payload since."""
+    locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+        id=environment_id
+    )
+    payload = dict(locked.payload or {})
+    metadata = dict(payload.get("metadata") or {})
+    adds = {
+        key: entry
+        for key, entry in (metadata.get(EVIDENCE_ADDS) or {}).items()
+        if isinstance(entry, dict)
+    }
+    adds[idempotency_key] = {
+        "import": str(evidence_import.id),
+        "cases": sorted(wanted),
+        "saved": saved,
+        "at": timezone.now().isoformat(),
+    }
+    newest = sorted(adds.items(), key=lambda item: str(item[1].get("at") or ""))
+    metadata[EVIDENCE_ADDS] = dict(newest[-drafts.DRAFT_SAVES_KEPT :])
+    payload["metadata"] = metadata
+    locked.payload = payload
+    locked.save(update_fields=["payload", "updated_at"])
+
+
+def _with_cases(
+    environment: HostedHarnessJob,
+    environment_version,
+    cases: list[EvidenceImportCase],
+) -> bytes:
+    """The environment's authoring tree with each case's scenario folder added to
+    its suite (the open draft's, else the default's)."""
+    suite = dict(
+        drafts.piece_files(
+            environment,
+            "suite",
+            drafts.fresh_draft(environment, "suite") or environment.suite_version,
+        )
+    )
+    documents = suite_documents(suite)
+    for case in cases:
+        files = archives.read_archive(archives.get_archive(case.proposal_object_key))
+        suite.update(files)
+        document = json.loads(files[f"scenarios/{case.scenario_key}/scenario.json"])
+        documents.append(
+            {
+                **document,
+                "scenario_key": case.scenario_key,
+                "folder": f"scenarios/{case.scenario_key}",
+            }
+        )
+    suite["scenarios.json"] = json.dumps(documents, indent=2).encode()
+    environment_files = dict(
+        drafts.piece_files(environment, "environment", environment_version)
+    )
+    if added := _checks(cases):
+        catalogue = json.loads(environment_files[CATALOGUE])
+        known = {one.get("name") for one in catalogue.get("sub_goals") or []}
+        catalogue["sub_goals"] = [
+            *(catalogue.get("sub_goals") or []),
+            *(one for one in added if one.get("name") not in known),
+        ]
+        environment_files[CATALOGUE] = json.dumps(catalogue, indent=2).encode()
+    return archives.pack_archive(archives.compose(environment_files, suite))
+
+
+def _checks(cases: list[EvidenceImportCase]) -> list[dict]:
+    """The checks the cases add, each name once."""
+    found: dict[str, dict] = {}
+    for case in cases:
+        for one in case.new_sub_goals or []:
+            found.setdefault(one.get("name"), one)
+    return list(found.values())

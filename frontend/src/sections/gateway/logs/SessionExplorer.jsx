@@ -27,7 +27,12 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import useSessions from "./hooks/useSessions";
-import { formatCost } from "../utils/formatters";
+import {
+  formatCost,
+  isUnpriced,
+  UNPRICED_LABEL,
+  UNPRICED_TOOLTIP,
+} from "../utils/formatters";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -181,7 +186,18 @@ function SessionDetail({ sessionId, onRequestClick }) {
               </Typography>
             </TableCell>
             <TableCell sx={{ fontVariantNumeric: "tabular-nums" }}>
-              {formatCost(req.cost)}
+              {isUnpriced(req) ? (
+                <Tooltip title={UNPRICED_TOOLTIP} placement="top" arrow>
+                  <Chip
+                    label={UNPRICED_LABEL}
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                  />
+                </Tooltip>
+              ) : (
+                formatCost(req.cost)
+              )}
             </TableCell>
           </TableRow>
         ))}

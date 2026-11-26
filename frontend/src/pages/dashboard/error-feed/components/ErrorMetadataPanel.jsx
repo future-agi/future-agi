@@ -202,17 +202,21 @@ const STATUS_OPTIONS = [
   },
 ];
 
-function StatusDropdown({ clusterId, current }) {
+export function StatusDropdown({ clusterId, current }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const updateIssue = useUpdateErrorFeedIssue();
   const theme = useTheme();
   const cur =
-    STATUS_OPTIONS.find((s) => s.value === current) || STATUS_OPTIONS[0];
+    STATUS_OPTIONS.find((s) => s.value === current) ||
+    STATUS_OPTIONS.find((s) => s.value === "for_review");
   const curColors = statusColors(theme, cur.role);
 
   return (
     <>
       <Box
+        component="button"
+        type="button"
+        aria-label="Change status"
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
@@ -248,8 +252,6 @@ function StatusDropdown({ clusterId, current }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
             minWidth: 150,
             mt: 0.5,
           },
@@ -269,28 +271,27 @@ function StatusDropdown({ clusterId, current }) {
           </Typography>
         </Box>
         <Divider sx={{ borderColor: "divider" }} />
-        {STATUS_OPTIONS.filter((option) => option.value !== current).map(
-          (option) => {
-            const statusColor = statusColors(theme, option.role).fg;
-            return (
-              <MenuItem
-                key={option.value}
-                onClick={() => {
-                  updateIssue.mutate({ clusterId, status: option.value });
-                  setAnchorEl(null);
-                }}
-                sx={{ gap: 1, py: 0.75 }}
-              >
-                <Iconify
-                  icon={option.icon}
-                  width={16}
-                  sx={{ color: statusColor }}
-                />
-                <Typography fontSize="12px">{option.label}</Typography>
-              </MenuItem>
-            );
-          },
-        )}
+        {STATUS_OPTIONS.map((option) => {
+          const statusColor = statusColors(theme, option.role).fg;
+          return (
+            <MenuItem
+              key={option.value}
+              selected={option.value === current}
+              onClick={() => {
+                updateIssue.mutate({ clusterId, status: option.value });
+                setAnchorEl(null);
+              }}
+              sx={{ gap: 1, py: 0.75 }}
+            >
+              <Iconify
+                icon={option.icon}
+                width={16}
+                sx={{ color: statusColor }}
+              />
+              <Typography fontSize="12px">{option.label}</Typography>
+            </MenuItem>
+          );
+        })}
       </Menu>
     </>
   );
@@ -384,8 +385,6 @@ function SeverityDropdown({ current, onChange }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
             minWidth: 200,
             mt: 0.5,
           },
@@ -536,8 +535,6 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
             minWidth: 200,
             mt: 0.5,
           },
@@ -907,7 +904,7 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
           justifyContent="space-between"
         >
           <Stack gap={0.2}>
-            <Typography fontSize="13px" fontWeight={600} color="text.primary">
+            <Typography fontSize="12px" fontWeight={600} color="text.primary">
               Create Linear Issue
             </Typography>
             <Typography fontSize="12px" color="text.secondary">

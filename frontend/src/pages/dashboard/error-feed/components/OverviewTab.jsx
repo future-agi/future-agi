@@ -20,6 +20,7 @@ import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph
 import AgentPath from "src/sections/projects/LLMTracing/GraphSection/AgentPath";
 import GraphSkeleton from "src/sections/projects/LLMTracing/GraphSection/GraphSkeleton";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
+import { formatLatency } from "src/sections/projects/LLMTracing/formatters";
 import { statusColors } from "src/utils/runStatus";
 import { seriesColor } from "src/theme/data-colors";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
@@ -504,7 +505,7 @@ function EventsUsersChart({
               <Skeleton width={28} height={14} sx={{ borderRadius: "4px" }} />
             ) : (
               <Typography
-                fontSize="13px"
+                fontSize="12px"
                 fontWeight={600}
                 color="text.primary"
                 sx={{ fontFeatureSettings: "'tnum'", lineHeight: 1 }}
@@ -621,7 +622,7 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
             {/* Top row: trace ID + time */}
             <Stack direction="row" alignItems="center" gap={0.75} mb={0.4}>
               <Typography
-                fontSize="13px"
+                fontSize="12px"
                 fontWeight={500}
                 color="text.primary"
                 sx={{ flex: 1, minWidth: 0 }}
@@ -653,7 +654,7 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
                   sx={{ color: "text.disabled" }}
                 />
                 <Typography fontSize="12px" color="text.disabled">
-                  {t.summary.latency_ms}ms
+                  {formatLatency(t.summary.latency_ms)}
                 </Typography>
               </Stack>
               <Stack direction="row" alignItems="center" gap={0.3}>
@@ -1318,7 +1319,7 @@ function ReelStep({ step, isFailReel, isLast }) {
       </Box>
       <Typography
         component="span"
-        fontSize="13px"
+        fontSize="12px"
         color="text.primary"
         sx={{ lineHeight: 1.5, flex: 1, minWidth: 0 }}
       >
@@ -1718,7 +1719,7 @@ function TraceEvidence({
     shortId && { icon: "solar:graph-linear", text: shortId, mono: true },
     summary.latency_ms != null && {
       icon: "solar:clock-circle-linear",
-      text: `${summary.latency_ms}ms`,
+      text: formatLatency(summary.latency_ms),
     },
     tokens != null && { icon: "solar:notes-linear", text: `${tokens} tok` },
     cost != null && {

@@ -5,6 +5,7 @@ import math
 import uuid
 from io import BytesIO
 
+from tfc.utils.media_tools import require_ffmpeg
 from tfc.utils.storage import audio_bytes_from_url_or_base64, upload_audio_to_s3
 
 
@@ -109,6 +110,7 @@ def create_utterance_segments(audio_input, turns):
     turns = deduplicate_utterance_turns(turns)
     if not turns:
         raise ValueError("No conversation utterances available")
+    require_ffmpeg("splitting call audio for error localization", ffprobe=True)
     raw = (
         audio_input
         if isinstance(audio_input, bytes)

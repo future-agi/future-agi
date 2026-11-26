@@ -107,9 +107,11 @@ class Command(BaseCommand):
             if creator is None:
                 # SpanNotes/agent-auto can be annotator-less; fall back to
                 # one of the org's members via the organization owner.
-                creator = sample.organization.owner if hasattr(
-                    sample.organization, "owner"
-                ) else None
+                creator = (
+                    sample.organization.owner
+                    if hasattr(sample.organization, "owner")
+                    else None
+                )
             if creator is None:
                 stats["skipped_no_scope"] += len(scores)
                 continue

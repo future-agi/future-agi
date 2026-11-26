@@ -74,7 +74,7 @@ const MetricToggle = ({ label, checked, onChange }) => (
   >
     <Typography
       sx={{
-        fontSize: 13,
+        fontSize: 12,
         fontFamily: "'IBM Plex Sans', sans-serif",
         color: "text.primary",
         overflow: "hidden",
@@ -183,8 +183,6 @@ const TraceDisplayPanel = ({
             maxHeight: 560,
             mt: 0.5,
             p: 1,
-            border: "1px solid",
-            borderColor: "divider",
             borderRadius: "8px",
           },
         },
@@ -221,7 +219,7 @@ const TraceDisplayPanel = ({
       >
         <Typography
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontFamily: "'IBM Plex Sans', sans-serif",
             color: "text.primary",
           }}
@@ -246,7 +244,7 @@ const TraceDisplayPanel = ({
           <Typography
             noWrap
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.primary",
               flex: 1,
@@ -291,7 +289,7 @@ const TraceDisplayPanel = ({
                 width={16}
                 sx={{ color: cfg.color, flexShrink: 0 }}
               />
-              <Typography sx={{ fontSize: 13 }}>{st.label}</Typography>
+              <Typography sx={{ fontSize: 12 }}>{st.label}</Typography>
             </MenuItem>
           );
         })}
@@ -361,7 +359,7 @@ const TraceDisplayPanel = ({
             onClose();
           }}
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontFamily: "'IBM Plex Sans', sans-serif",
             color: "text.primary",
             py: 0.5,
@@ -376,7 +374,7 @@ const TraceDisplayPanel = ({
               onClose();
             }}
             sx={{
-              fontSize: 13,
+              fontSize: 12,
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.link",
               py: 0.5,

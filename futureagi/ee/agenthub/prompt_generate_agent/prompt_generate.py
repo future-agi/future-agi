@@ -36,6 +36,7 @@ from analytics.utils import (
     track_mixpanel_event,
 )
 from model_hub.utils import call_websocket
+
 try:
     from ee.usage.models.usage import APICallStatusChoices
 except ImportError:

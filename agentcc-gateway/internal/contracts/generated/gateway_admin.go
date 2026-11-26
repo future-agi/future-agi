@@ -24,6 +24,7 @@ type GuardrailCheck struct {
 	Enabled             *bool                  `json:"enabled,omitempty"`
 	Action              *string                `json:"action,omitempty"`
 	ConfidenceThreshold *float64               `json:"confidence_threshold,omitempty"`
+	ConfigurationError  *string                `json:"configuration_error,omitempty"`
 	Config              map[string]interface{} `json:"config,omitempty"`
 }
 
@@ -32,6 +33,16 @@ type GuardrailConfig struct {
 	FailOpen     *bool                      `json:"fail_open,omitempty"`
 	TimeoutMs    *int                       `json:"timeout_ms,omitempty"`
 	Checks       map[string]*GuardrailCheck `json:"checks,omitempty"`
+	KeyPolicies  []*KeyGuardrailPolicy      `json:"key_policies,omitempty"`
+}
+
+type KeyGuardrailPolicy struct {
+	ID       string                     `json:"id"`
+	Name     *string                    `json:"name,omitempty"`
+	Mode     *string                    `json:"mode,omitempty"`
+	Priority *int                       `json:"priority,omitempty"`
+	KeyIds   []string                   `json:"key_ids"`
+	Checks   map[string]*GuardrailCheck `json:"checks,omitempty"`
 }
 
 type ConditionalRoute struct {

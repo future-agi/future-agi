@@ -3,11 +3,9 @@ from agentic_eval.core_evals.fi_evals.grounded.similarity import Comparator
 
 
 class AnswerSimilarity(GroundedEvaluator):
-
     @property
     def required_args(self):
         return ["response", "expected_response"]
-
 
     def __init__(self, comparator: Comparator, failure_threshold: float | None = None):
         """
@@ -21,7 +19,4 @@ class AnswerSimilarity(GroundedEvaluator):
             >>> AnswerSimilarity(comparator=CosineSimilarity(), failure_threshold=0.8)
 
         """
-        super().__init__(
-            comparator=comparator, failure_threshold=failure_threshold
-        )
-
+        super().__init__(comparator=comparator, failure_threshold=failure_threshold)

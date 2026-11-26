@@ -89,7 +89,6 @@ def workspace_context(workspace, organization=None, user=None):
 
 
 class WorkspaceContextMiddleware(MiddlewareMixin):
-
     def process_request(self, request):
         """Start every request from an empty model-manager scope.
 

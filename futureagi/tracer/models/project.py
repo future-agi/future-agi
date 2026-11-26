@@ -14,6 +14,10 @@ from tfc.utils.base_model import (
     BaseModelManager,
     NoWorkspaceFilterManager,
 )
+from tracer.services.derived_metrics.pg_response_hooks import (
+    PgResponseManagerMixin,
+    pg_response_save,
+)
 
 PROJECT_TYPES = (
     ("experiment", "Experiment"),
@@ -31,7 +35,7 @@ class ProjectSourceChoices(Enum):
         return [(tag.value, tag.name.replace("_", " ").title()) for tag in cls]
 
 
-class _WithoutSimulationProjects:
+class _WithoutSimulationProjects(PgResponseManagerMixin):
     # The project managers leave out simulation projects; with_simulation does not.
     def get_queryset(self):
         return super().get_queryset().filter(simulation_agent__isnull=True)
@@ -46,6 +50,10 @@ class ProjectAllObjectsManager(_WithoutSimulationProjects, AllObjectsManager):
 
 
 class ProjectNoWorkspaceManager(_WithoutSimulationProjects, NoWorkspaceFilterManager):
+    pass
+
+
+class PgResponseUnfilteredManager(PgResponseManagerMixin, models.Manager):
     pass
 
 
@@ -73,8 +81,15 @@ class Project(BaseModel):
         max_length=20, choices=PROJECT_TYPES, null=False, blank=False
     )
     metadata = models.JSONField(null=True, blank=True)
+    # Server-owned fence for materialization racing source deletion.
+    analysis_source_generation = models.PositiveBigIntegerField(
+        default=0, db_default=0, editable=False
+    )
     config = models.JSONField(default=list, null=True, blank=True)
     session_config = models.JSONField(default=list, null=True, blank=True)
+    sampling_contact_attribute = models.CharField(
+        max_length=200, default="", db_default="", blank=True
+    )
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
@@ -102,13 +117,14 @@ class Project(BaseModel):
     objects = ProjectManager()
     all_objects = ProjectAllObjectsManager()
     no_workspace_objects = ProjectNoWorkspaceManager()
-    with_simulation = models.Manager()
+    with_simulation = PgResponseUnfilteredManager()
 
     def clean(self):
         super().clean()
         if self.metadata is None:
             self.metadata = {}  # Ensure metadata is a dictionary
 
+    @pg_response_save
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)

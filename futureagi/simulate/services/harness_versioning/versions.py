@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 from django.conf import settings
 from django.db import transaction
@@ -30,6 +30,9 @@ from simulate.models.harness_versioning import ArchiveLayout, HashKind, VersionS
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.harness_versioning import archives, diffs, hashing
 from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.validation import Validation
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +73,19 @@ MEMBER_FIELDS = (
     "keywords",
     "background_noise",
     "max_turns",
+    "actors",
+    # Who talked before the run, what starts it, the world's faults and the scenario's own actor limits: each
+    # changes what a scenario tests, so an edit to one alone is a change.
+    "pre_run",
+    "history",
+    "starts_with",
+    "faults",
+    "limits",
+    # Where each requirement comes from, and the wrong behaviours its checks must fail: read by the lifecycle.
+    "sources",
+    "negative_controls",
+    # A must-pass case gates its run's verdict.
+    "must_pass",
 )
 
 
@@ -100,6 +116,10 @@ class Pieces:
 
 def versioning_enabled() -> bool:
     return bool(getattr(settings, "HARNESS_VERSIONING_ENABLED", False))
+
+
+def actors_enabled() -> bool:
+    return bool(getattr(settings, "HARNESS_ACTORS_ENABLED", False))
 
 
 def environment_head(job: HostedHarnessJob) -> HostedHarnessJob | None:
@@ -157,6 +177,47 @@ def _sub_goals(files: Mapping[str, bytes]) -> list[dict[str, Any]]:
     return [goal for goal in value or [] if isinstance(goal, dict) and goal.get("name")]
 
 
+class DroppedRecord(TypedDict):
+    """A scenario a rebuild dropped, as the suite version keeps it."""
+
+    name: str
+    # As the harness wrote them: names by kind (tools, sub-goals).
+    capabilities: dict[str, list[str]]
+    missing: dict[str, list[str]]
+    agent_version: str
+    reason: str
+    last_suite_version: str
+    restore_failed: str
+    content_digest: str
+
+
+def dropped_documents(suite: Mapping[str, bytes]) -> dict[str, DroppedRecord]:
+    """Each scenario a rebuild dropped for a removed capability, by key: what it needed, what was
+    gone, the agent version, the reason and the last suite version that held it. Its last content
+    stays in the archive; a digest of it tells two records apart."""
+    from simulate.services.canonical_json import canonical_digest
+
+    body = _json(suite, "dropped.json")
+    held = body.get("scenarios") if isinstance(body, dict) else None
+    if not isinstance(held, dict):
+        return {}
+    found: dict[str, DroppedRecord] = {}
+    for key, record in held.items():
+        if not isinstance(record, dict):
+            continue
+        found[str(key)] = DroppedRecord(
+            name=str(record.get("name") or key),
+            capabilities=record.get("capabilities") or {},
+            missing=record.get("missing") or {},
+            agent_version=str(record.get("agent_version") or ""),
+            reason=str(record.get("reason") or ""),
+            last_suite_version=str(record.get("last_suite_version") or ""),
+            restore_failed=str(record.get("restore_failed") or ""),
+            content_digest=canonical_digest(record.get("content") or {}),
+        )
+    return found
+
+
 def suite_documents(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
     """The suite's scenarios, from its index or else from each folder's document."""
     listed = _json(suite, "scenarios.json")
@@ -188,14 +249,53 @@ def _stage_outputs(pair_body: bytes) -> list[dict[str, Any]]:
     return authoring_stage_outputs_from_archive(pair_body)
 
 
+def run_contract(
+    job: HostedHarnessJob,
+    split: archives.SplitArchive,
+    *,
+    built: bool,
+    full_build: bool = True,
+) -> dict[str, Any]:
+    """The contract a version runs with, as its readers show it; recorded beside the authored one, which diffs
+    compare.
+
+    A build can amend the authored contract while it builds (a tool served from the agent's tools service instead
+    of imported, say) and seals the amended one, so a version a full build sealed from this tree has the sealed
+    contract. A save (``full_build`` False) reseals, and any other version records, the author's entries again, so
+    each tool it did not change is reached as the default version runs it, recorded here so a later read stops at
+    this version instead of walking back through its ancestry.
+    """
+    from simulate.selectors.environment_documents import (
+        reach_as_built,
+        version_contract,
+    )
+
+    default = job.environment_version
+    authored = _json(split.environment, "contract.json")
+    authored = authored if isinstance(authored, dict) else {}
+    sealed = _json(split.sealed, archives.SEALED_CONTRACT) if built else None
+    if isinstance(sealed, dict) and sealed:
+        return sealed if full_build else reach_as_built(job, sealed, authored, default)
+    if default is not None and default.contract_hash_raw == hashing.contract_hash_raw(
+        split.environment
+    ):
+        inherited = version_contract(job)
+        if inherited:
+            return inherited
+    return reach_as_built(job, authored, authored, default)
+
+
 def prepare_pieces(
     job: HostedHarnessJob,
     split: archives.SplitArchive,
     *,
     outputs: list[dict[str, Any]],
     authoring_revision: str,
+    built: bool = False,
+    full_build: bool = True,
 ) -> Pieces:
-    """Pack, key and hash both pieces and their readable documents; stores nothing."""
+    """Pack, key and hash both pieces and their readable documents; stores nothing. ``built``: the archive's sealed
+    bundle was sealed from this tree, by a full build unless ``full_build`` is False (a save's reseal)."""
     payload = job.payload or {}
     connector = str((payload.get("agent") or {}).get("connector") or "")
     environment_body = archives.pack_archive(split.environment)
@@ -205,20 +305,33 @@ def prepare_pieces(
     )
     suite_key = archives.suite_key(job.organization_id, job.id, suite_body)
     contract = _json(split.environment, "contract.json") or {}
+    from simulate.selectors.environment_documents import RUN_CONTRACT_VERSION
+
+    runs_with = run_contract(job, split, built=built, full_build=full_build)
     sub_goals = _sub_goals(split.environment)
     scenarios = suite_documents(split.suite)
     environment_documents = {
         "contract": contract,
+        # Only where it differs from the authored contract, so a version's diff still compares authored ones.
+        **(
+            {"run_contract": runs_with, "run_contract_version": RUN_CONTRACT_VERSION}
+            if runs_with != contract
+            else {}
+        ),
         "sub_goals": sub_goals,
         "sub_goal_digests": hashing.sub_goal_digests(sub_goals),
+        "actor_digests": hashing.actor_digests(split.environment),
+        "actor_names": hashing.actor_names(split.environment),
         "file_digests": _file_digests(split.environment),
         "stage_outputs": [
             one for one in outputs if one.get("kind") not in SUITE_OUTPUT_KINDS
         ],
         "authoring_revisions": [authoring_revision],
     }
+    dropped = dropped_documents(split.suite)
     suite_documents_ = {
         "scenarios": scenarios,
+        **({"dropped": dropped} if dropped else {}),
         "coverage": _json(split.suite, "coverage.json"),
         "stage_outputs": [
             one for one in outputs if one.get("kind") in SUITE_OUTPUT_KINDS
@@ -274,7 +387,7 @@ def _sealed(
     return {**previous, **split.sealed}
 
 
-def _next_number(model: Any, job: HostedHarnessJob) -> int:
+def next_number(model: Any, job: HostedHarnessJob) -> int:
     # The base manager: no workspace or soft-delete filter may hide a used number.
     highest = model._base_manager.filter(job=job).aggregate(top=Max("version_number"))
     return int(highest["top"] or 0) + 1
@@ -289,18 +402,15 @@ def _land(
     hash_kind: str = HashKind.TREE_V1,
 ) -> tuple[Any, bool]:
     """An active version with this hash: the existing one, or a new one numbered next."""
-    existing = (
-        # The base manager, so historical models in a migration work too.
-        model._base_manager.filter(
-            deleted=False,
-            job=job,
-            hash=hash,
-            hash_kind=hash_kind,
-            status=VersionStatus.ACTIVE,
-        )
-        .order_by("-version_number")
-        .first()
+    # The base manager, so historical models in a migration work too.
+    found = model._base_manager.filter(
+        deleted=False,
+        job=job,
+        hash=hash,
+        hash_kind=hash_kind,
+        status=VersionStatus.ACTIVE,
     )
+    existing = found.order_by("-version_number").first()
     if existing is not None:
         return existing, False
     created = model._base_manager.create(
@@ -308,7 +418,7 @@ def _land(
         organization_id=job.organization_id,
         workspace_id=job.workspace_id,
         status=VersionStatus.ACTIVE,
-        version_number=_next_number(model, job),
+        version_number=next_number(model, job),
         hash=hash,
         hash_kind=hash_kind,
         **values,
@@ -343,6 +453,32 @@ def _refuse_retired_keys(
     Only keys new to the environment's default suite are checked, compared as
     normalised tokens, so a scenario the default already holds is never refused.
     """
+    from simulate.services.harness_starting_records import scenario_token
+
+    # Archiving changes no draft, so the default suite can still hold an archived case: an edit
+    # that carries it is not adding it.
+    held = {
+        scenario_token(key)
+        for key in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=job.suite_version_id
+        ).values_list("scenario_key", flat=True)
+    }
+    archived = archived_keys(
+        job,
+        [
+            doc
+            for doc in documents
+            if scenario_token(doc.get("scenario_key")) not in held
+        ],
+    )
+    if archived:
+        raise HostedHarnessError(
+            "scenario_key_archived",
+            ", ".join(archived)
+            + (" is" if len(archived) == 1 else " are")
+            + " archived; restore it instead of adding a new scenario with its key",
+            status_code=422,
+        )
     retired = retired_keys(job, documents)
     if retired:
         raise HostedHarnessError(
@@ -355,17 +491,19 @@ def _refuse_retired_keys(
 
 
 def retired_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[str]:
-    """The dropped scenarios' keys that documents new to the default suite reuse."""
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    """The dropped scenarios' keys that documents new to the default suite reuse; a removed scenario restored under
+    its own key (`restored_from`) reuses its key by right."""
+    from simulate.services.harness_scenarios import restores_own_key
+    from simulate.services.harness_starting_records import scenario_token
 
     keys = {
-        _scenario_token(doc.get("scenario_key"))
+        scenario_token(doc.get("scenario_key"))
         for doc in documents
-        if str(doc.get("scenario_key") or "").strip()
+        if str(doc.get("scenario_key") or "").strip() and not restores_own_key(doc)
     } - {""}
     if job.suite_version_id is not None:
         keys -= {
-            _scenario_token(key)
+            scenario_token(key)
             for key in HarnessSuiteMember.no_workspace_objects.filter(
                 suite_version_id=job.suite_version_id
             ).values_list("scenario_key", flat=True)
@@ -380,7 +518,7 @@ def retired_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list
             documents_.get("scenarios") if isinstance(documents_, dict) else None
         )
         keys -= {
-            _scenario_token(doc.get("scenario_key"))
+            scenario_token(doc.get("scenario_key"))
             for doc in scenarios or []
             if isinstance(doc, dict)
         }
@@ -391,7 +529,28 @@ def retired_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list
         for key in HostedHarnessScenario._base_manager.filter(
             job=job, deleted=True
         ).values_list("scenario_key", flat=True)
-        if _scenario_token(key) in keys
+        if scenario_token(key) in keys
+    )
+
+
+def archived_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[str]:
+    """Archived scenarios' keys that documents new to the default suite reuse."""
+    from simulate.services.harness_starting_records import scenario_token
+
+    keys = {
+        scenario_token(doc.get("scenario_key"))
+        for doc in documents
+        if str(doc.get("scenario_key") or "").strip()
+    }
+    keys -= {""}
+    if not keys:
+        return []
+    return sorted(
+        key
+        for key in HostedHarnessScenario._base_manager.filter(
+            job=job, deleted=False, archived_at__isnull=False
+        ).values_list("scenario_key", flat=True)
+        if scenario_token(key) in keys
     )
 
 
@@ -415,7 +574,7 @@ def _refuse_taken_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -
 def taken_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[str]:
     """The keys of rows other scenarios hold that the documents ask for."""
     from simulate.services.harness_scenarios import _default_member_rows
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     if job.suite_version_id is None:
         return []
@@ -425,19 +584,19 @@ def taken_keys(job: HostedHarnessJob, documents: list[dict[str, Any]]) -> list[s
     held = {
         token: row.scenario_key
         for key_token, row in paired.items()
-        if (token := _scenario_token(row.scenario_key)) != key_token
+        if (token := scenario_token(row.scenario_key)) != key_token
     }
     return sorted(
         {
             held[token]
             for doc in documents
-            if (token := _scenario_token(doc.get("scenario_key"))) in held
+            if (token := scenario_token(doc.get("scenario_key"))) in held
             and token not in paired
         }
     )
 
 
-def _member_rows(
+def member_rows(
     job: HostedHarnessJob, documents: list[dict[str, Any]]
 ) -> list[tuple[HostedHarnessScenario, dict[str, Any]]]:
     from simulate.services.harness_scenarios import pair_scenarios
@@ -455,11 +614,30 @@ def _proved_at(proof: Mapping[str, Any]) -> datetime | None:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
+# Fields a scenario only has when it uses them; empty is the same as absent, so a member stored before they were kept
+# compares equal to the same scenario now.
+OPTIONAL_MEMBER_FIELDS = (
+    "pre_run",
+    "history",
+    "starts_with",
+    "faults",
+    "limits",
+    "sources",
+    "negative_controls",
+    "must_pass",
+)
+
+
 def _member_content(document: Mapping[str, Any]) -> dict[str, Any]:
-    return {field: document[field] for field in MEMBER_FIELDS if field in document}
+    return {
+        field: document[field]
+        for field in MEMBER_FIELDS
+        if field in document
+        and not (field in OPTIONAL_MEMBER_FIELDS and not document[field])
+    }
 
 
-def _add_members(
+def add_members(
     suite_version: HarnessSuiteVersion,
     paired: list[tuple[HostedHarnessScenario, dict[str, Any]]],
 ) -> None:
@@ -477,6 +655,53 @@ def _add_members(
     )
 
 
+def suite_cases(suite_version: HarnessSuiteVersion) -> list[tuple[str, Any, Any]]:
+    """Each case of a suite version as ``(key, scenario row id, content)``.
+
+    A candidate is paired with identity rows only when Save promotes it, so until then its cases are its own
+    documents, under the keys that pairing will give them and with no row. Writes nothing.
+    """
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite_version
+        ).values_list("scenario_key", "scenario_id", "content")
+    )
+    if members or suite_version.status != VersionStatus.CANDIDATE:
+        return members
+    from simulate.services.harness_scenarios import plan_pairs
+
+    documents = [
+        dict(one)
+        for one in (suite_version.documents or {}).get("scenarios") or []
+        if isinstance(one, Mapping)
+    ]
+    return [
+        (planned.key, None, _member_content(planned.doc))
+        for planned in plan_pairs(suite_version.job, documents, exact=True)
+    ]
+
+
+def with_actor_digests(
+    version: HarnessEnvironmentVersion, documents: Mapping[str, Any]
+) -> dict[str, Any]:
+    """A version's documents with its actor digests. A version saved before they were recorded has its cast read
+    from its own files, so an actor it already had never reads as added."""
+    documents = dict(documents or {})
+    if (
+        "actor_digests" not in documents or "actor_names" not in documents
+    ) and version.archive_object_key:
+        try:
+            files = archives.read_archive(
+                archives.get_archive(version.archive_object_key)
+            )
+        except (S3Error, HostedHarnessError):
+            # Its files are gone or unreadable: its cast is unknown, as before.
+            return documents
+        documents.setdefault("actor_digests", hashing.actor_digests(files))
+        documents["actor_names"] = hashing.actor_names(files)
+    return documents
+
+
 def environment_change(
     base: HarnessEnvironmentVersion | None,
     contract: Any,
@@ -485,7 +710,7 @@ def environment_change(
     """The environment documents' diff against ``base``, and its summary."""
     diff = None
     if base is not None:
-        previous = base.documents or {}
+        previous = with_actor_digests(base, base.documents)
         diff = diffs.environment_diff(
             previous_contract=previous.get("contract"),
             contract=contract,
@@ -493,6 +718,10 @@ def environment_change(
             sub_goals=documents.get("sub_goal_digests") or {},
             previous_files=previous.get("file_digests"),
             files=documents.get("file_digests") or {},
+            previous_actors=previous.get("actor_digests"),
+            actors=documents.get("actor_digests"),
+            previous_actor_names=previous.get("actor_names"),
+            actor_names=documents.get("actor_names"),
         )
     return diff, diffs.summarize_environment(diff)
 
@@ -501,56 +730,315 @@ def suite_change(
     base: HarnessSuiteVersion | None,
     scenarios: list[dict[str, Any]],
     origin: str,
+    dropped: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
-    """The scenarios' diff against ``base``, and its summary."""
+    """The scenarios' diff against ``base``, and its summary. ``dropped`` is the new suite's
+    ``documents.dropped``: a scenario it records was removed for that reason, and one ``base``
+    recorded that is back was restored."""
     diff = None
     if base is not None:
         diff = diffs.suite_diff(
             (base.documents or {}).get("scenarios") or [],
             scenarios,
             removed_reason=REMOVED_REASONS.get(origin, "removed"),
+            dropped=dropped,
+            was_dropped=(base.documents or {}).get("dropped"),
         )
     return diff, diffs.summarize_suite(diff)
+
+
+def proof_passes(entry: object) -> bool:
+    """Whether a saved proof counts as proved: only a format-2 proof that ran says so. An older entry's `holds` was
+    never a proof of the checks (its case reads Kept as written)."""
+    return (
+        isinstance(entry, Mapping)
+        and entry.get("format") == 2
+        and entry.get("proved") is True
+    )
+
+
+def _validation_status(proofs: Mapping[str, Any], keys: list[str]) -> str:
+    holding = [key for key in keys if proof_passes(proofs.get(key))]
+    if keys and len(holding) == len(keys):
+        return HarnessSuiteValidation.Status.PASSED
+    if holding:
+        return HarnessSuiteValidation.Status.PARTIAL
+    return HarnessSuiteValidation.Status.FAILED
+
+
+LegacyVerdict = Literal["entry", "certified", "decided", "none"]
+
+
+def legacy_verdict(entry: object, certified: bool) -> LegacyVerdict:
+    """What a legacy pair's record says about one key, the one rule for it: validated by its entry (`entry`: an
+    older proof that held, or a mark an unreached re-proof kept), validated by the pair's certification with no proof
+    of its own (`certified`: none, or one the validation never reached), ended by a format-2 proof that ran
+    (`decided`, whatever it found), or not validated (`none`)."""
+    if not isinstance(entry, Mapping):
+        return "certified" if certified else "none"
+    if entry.get("legacy_validated") is True:
+        return "entry"
+    incomplete = entry.get("blocked_reason") == "validation_incomplete"
+    if entry.get("format") == 2 and not incomplete:
+        return "decided"
+    if entry.get("format") != 2 and entry.get("holds") is True:
+        return "entry"
+    return "certified" if certified and incomplete else "none"
+
+
+def _legacy_validated(entry: object, certified: bool) -> bool:
+    """Whether a legacy pair validated this key before a format-2 proof."""
+    return legacy_verdict(entry, certified) in ("entry", "certified")
+
+
+# On a proof entry: each other agent version's latest entry of the case, by agent version id, oldest first.
+OTHER_AGENTS = "other_agents"
+# How many other agent versions' entries a case keeps beside the default's; the oldest go first.
+OTHER_AGENTS_KEPT = 3
+
+
+def other_agents(
+    previous: object, made_with: Mapping[str, str], *, default: object = None
+) -> dict[str, dict[str, Any]]:
+    """The case's entries made with other agent versions, the one being replaced included, so moving the default
+    back to a version that proved the case reads that version's own proof. The ``default`` agent version's entry is
+    always kept, and at most the newest `OTHER_AGENTS_KEPT` others."""
+    if not isinstance(previous, dict) or not made_with:
+        return {}
+    agent = made_with["agent_version_id"]
+    kept = {
+        key: one
+        for key, one in (previous.get(OTHER_AGENTS) or {}).items()
+        if key != agent and isinstance(one, dict)
+    }
+    earlier = previous.get("agent_version_id")
+    if earlier and str(earlier) != agent:
+        kept.pop(str(earlier), None)
+        kept[str(earlier)] = {
+            key: one for key, one in previous.items() if key != OTHER_AGENTS
+        }
+    others = [key for key in kept if key != str(default)]
+    for key in others[: max(len(others) - OTHER_AGENTS_KEPT, 0)]:
+        del kept[key]
+    return {OTHER_AGENTS: kept} if kept else {}
+
+
+def record_proofs(
+    suite_version: HarnessSuiteVersion,
+    environment_version: HarnessEnvironmentVersion,
+    proofs: object,
+    job: HostedHarnessJob | None,
+) -> HarnessSuiteValidation | None:
+    """Record a validation's proofs of this pair, replacing earlier entries key by key.
+
+    A certification proves every member, so there is no origin or session-time filter. Locked,
+    because a prove-only and a with-certify job can finish on one pair. An incoming
+    ``validation_incomplete`` entry never replaces an existing one: the case was not reached.
+    """
+    from simulate.services.harness_starting_records import scenario_token
+
+    if not isinstance(proofs, dict):
+        return None
+    members = suite_cases(suite_version)
+    by_token = {scenario_token(key): key for key, _, _ in members}
+    incoming = {
+        by_token[scenario_token(key)]: value
+        for key, value in proofs.items()
+        if isinstance(value, dict) and scenario_token(key) in by_token
+    }
+    with transaction.atomic():
+        validation, _ = HarnessSuiteValidation.no_workspace_objects.get_or_create(
+            suite_version=suite_version,
+            environment_version=environment_version,
+            defaults={
+                "status": HarnessSuiteValidation.Status.FAILED,
+                "proofs": {},
+                "job": job,
+                "proved_at": timezone.now(),
+            },
+        )
+        validation = (
+            HarnessSuiteValidation.no_workspace_objects.select_for_update().get(
+                id=validation.id
+            )
+        )
+        merged = (
+            dict(validation.proofs or {}) if isinstance(validation.proofs, dict) else {}
+        )
+        certified = suite_version.lifecycle_legacy and (
+            HarnessAssembledBundle._base_manager.filter(
+                suite_version_id=suite_version.id,
+                environment_version_id=environment_version.id,
+                state=HarnessAssembledBundle.State.READY,
+            ).exists()
+        )
+        made_with = (
+            {
+                "agent_version_id": str(job.agent_version_id),
+                "job_id": str(job.id),
+            }
+            if job is not None and job.agent_version_id
+            else {}
+        )
+        # A validation job's environment holds the default; a save records on the environment itself.
+        default_agent = (
+            HostedHarnessJob.no_workspace_objects.filter(id=job.environment_id)
+            .values_list("agent_version_id", flat=True)
+            .first()
+            if job is not None and job.environment_id
+            else getattr(job, "agent_version_id", None)
+        )
+        for key, entry in incoming.items():
+            if entry.get("blocked_reason") == "validation_incomplete" and key in merged:
+                continue
+            # Each entry keeps the agent version it was proved with: a partial validation by
+            # another agent version replaces only its own keys, and keeps the entry it replaces.
+            entry = {
+                **entry,
+                **made_with,
+                **other_agents(merged.get(key), made_with, default=default_agent),
+            }
+            if (
+                suite_version.lifecycle_legacy
+                and entry.get("blocked_reason") == "validation_incomplete"
+                and _legacy_validated(merged.get(key), certified)
+            ):
+                # The case was not reached: it keeps the fact that legacy validated it on this pair
+                # (the lifecycle reads it as legacy validated). A re-proof that ran and failed ends it.
+                entry = {**entry, "legacy_validated": True}
+            merged[key] = entry
+        validation.proofs = merged
+        validation.status = _validation_status(merged, [key for key, _, _ in members])
+        validation.job = job
+        validation.proved_at = timezone.now()
+        validation.save(
+            update_fields=["proofs", "status", "job", "proved_at", "updated_at"]
+        )
+    _store_file_sources(suite_version, environment_version, members, incoming)
+    from simulate.services.harness_readiness.release import record_proof_release_checks
+
+    record_proof_release_checks(environment_version)
+    return validation
+
+
+def _store_file_sources(
+    suite_version: HarnessSuiteVersion,
+    environment_version: HarnessEnvironmentVersion,
+    members: list[tuple[str, Any, Any]],
+    incoming: Mapping[str, Any],
+) -> None:
+    """Resolve each member's file sources once and keep the result on its scenario row."""
+    from simulate.services.harness_scenario_sources import stored_file_results
+
+    for key, scenario_id, content in members:
+        sources = (
+            (content or {}).get("sources") if isinstance(content, Mapping) else None
+        )
+        if (
+            scenario_id is None
+            or not isinstance(sources, list)
+            or not any(
+                isinstance(one, Mapping) and one.get("kind") == "file"
+                for one in sources
+            )
+        ):
+            continue
+        proof = incoming.get(key) or {}
+        results = stored_file_results(
+            sources,
+            archive_key=environment_version.archive_object_key,
+            proof_sources=proof.get("sources") or [],
+        )
+        HostedHarnessScenario.no_workspace_objects.filter(id=scenario_id).update(
+            sources=[
+                dict(one)
+                for one in sources
+                if isinstance(one, Mapping) and one.get("kind") != "file"
+            ]
+            + results
+        )
 
 
 def _carried_proofs(
     environment_version: HarnessEnvironmentVersion,
     paired: list[tuple[HostedHarnessScenario, dict[str, Any]]],
 ) -> dict[str, Any]:
-    """Earlier proofs against this environment version for scenarios that did not change.
+    """Earlier proofs against this environment version for scenarios that did not change: each case's newest proof
+    made on the same content, whichever suite version made it.
 
-    An extend proves only its new scenarios; the others keep the proofs they already have.
+    An extend proves only its new scenarios, and a validated candidate only its changed ones; the others keep the
+    proofs they already have.
     """
-    previous = (
-        HarnessSuiteValidation.no_workspace_objects.filter(
-            environment_version=environment_version
-        )
-        .order_by("-proved_at")
-        .first()
-    )
-    if previous is None or not isinstance(previous.proofs, dict):
-        return {}
 
     def proved(content: Mapping[str, Any]) -> dict[str, Any]:
-        # A rename keeps the key and what the proof checked.
-        return {field: value for field, value in content.items() if field != "name"}
+        # A rename keeps the key and what the proof checked; so does a grounding edit, which only
+        # its own resolution can break.
+        return {
+            field: value
+            for field, value in content.items()
+            if field not in ("name", "sources")
+        }
 
-    contents = {
-        member.scenario_key: proved(member.content or {})
-        for member in HarnessSuiteMember.no_workspace_objects.filter(
-            suite_version_id=previous.suite_version_id
-        )
+    wanted = {
+        row.scenario_key: proved(_member_content(document)) for row, document in paired
     }
     carried: dict[str, Any] = {}
-    for row, document in paired:
-        proof = previous.proofs.get(row.scenario_key)
-        if (
-            isinstance(proof, dict)
-            and row.scenario_key in contents
-            and contents[row.scenario_key] == proved(_member_content(document))
-        ):
-            carried[row.scenario_key] = proof
+    for previous in HarnessSuiteValidation.no_workspace_objects.filter(
+        environment_version=environment_version
+    ).order_by("-proved_at"):
+        if not isinstance(previous.proofs, dict):
+            continue
+        open_keys = [
+            key for key in wanted if key not in carried and key in previous.proofs
+        ]
+        if not open_keys:
+            continue
+        contents = {
+            member.scenario_key: proved(member.content or {})
+            for member in HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=previous.suite_version_id, scenario_key__in=open_keys
+            )
+        }
+        for key in open_keys:
+            proof = previous.proofs[key]
+            # A case a validation never reached keeps looking for an older proof that did.
+            reached = isinstance(proof, dict) and (
+                proof.get("blocked_reason") != "validation_incomplete"
+                or proof.get("legacy_validated") is True
+            )
+            if reached and contents.get(key) == wanted[key]:
+                carried[key] = proof
+        if len(carried) == len(wanted):
+            break
     return carried
+
+
+def control_ran(control: Mapping[str, Any]) -> bool:
+    """Whether a negative control ran. ALK writes `ran`; a proof saved before it did ran the control exactly when it
+    recorded a verdict (`failed` true or false), never when it left `failed` empty."""
+    if "ran" in control:
+        return control["ran"] is True
+    return control.get("failed") is not None
+
+
+def build_proofs(suite: Mapping[str, bytes]) -> dict[str, Any]:
+    """A build's proofs of its cases, case by case the newer of two: the one its certify made on the sealed runtime
+    (`scenario-proofs.json`, live where a running service served a step) and the one its authoring made offline
+    (`proofs.json`). The live one wins when their times are equal or either has none."""
+    offline = _json(suite, "proofs.json")
+    live = _json(suite, "scenario-proofs.json")
+    offline = offline if isinstance(offline, dict) else {}
+    live = live if isinstance(live, dict) else {}
+    merged = dict(offline)
+    for key, entry in live.items():
+        earlier = offline.get(key)
+        made, other = (
+            _proved_at(entry) if isinstance(entry, Mapping) else None,
+            _proved_at(earlier) if isinstance(earlier, Mapping) else None,
+        )
+        if made is None or other is None or made >= other:
+            merged[key] = entry
+    return merged
 
 
 def _validation(
@@ -570,11 +1058,11 @@ def _validation(
     # TODO: require each proof's environment_hash once ALK writes it.
     if not isinstance(proofs, dict) or not paired:
         return
-    from simulate.services.hosted_harness_gateway import _scenario_token
+    from simulate.services.harness_starting_records import scenario_token
 
     cutoff = proved_since - PROOF_CLOCK_SKEW
     by_token = {
-        _scenario_token(key): value
+        scenario_token(key): value
         for key, value in proofs.items()
         if isinstance(value, dict)
         and (proved := _proved_at(value)) is not None
@@ -589,21 +1077,15 @@ def _validation(
         )
     kept: dict[str, Any] = _carried_proofs(environment_version, paired)
     for row, document in paired:
-        proof = by_token.get(_scenario_token(row.scenario_key)) or by_token.get(
-            _scenario_token(document.get("scenario_key"))
+        proof = by_token.get(scenario_token(row.scenario_key)) or by_token.get(
+            scenario_token(document.get("scenario_key"))
         )
         if proof is not None:
             kept[row.scenario_key] = proof
     if not kept:
         return
     keys = [row.scenario_key for row, _ in paired]
-    holding = [key for key in keys if kept.get(key, {}).get("holds") is True]
-    if len(holding) == len(keys):
-        status = HarnessSuiteValidation.Status.PASSED
-    elif holding:
-        status = HarnessSuiteValidation.Status.PARTIAL
-    else:
-        status = HarnessSuiteValidation.Status.FAILED
+    status = _validation_status(kept, keys)
     HarnessSuiteValidation.no_workspace_objects.update_or_create(
         suite_version=suite_version,
         environment_version=environment_version,
@@ -665,7 +1147,12 @@ def record_authoring(
     pair_key = archives.pair_key(job.organization_id, job.id, pair_body)
     revision = authoring_content_digest(pair_body)
     pieces = prepare_pieces(
-        job, split, outputs=_stage_outputs(pair_body), authoring_revision=revision
+        job,
+        split,
+        outputs=_stage_outputs(pair_body),
+        authoring_revision=revision,
+        # Only a build seals this archive's own bundle; an edit carries an older one.
+        built=origin in PROVED_ORIGINS and SEALED_MANIFEST in split.sealed,
     )
     if origin in USER_ORIGINS:
         # Refused before anything is uploaded; checked again under the lock below.
@@ -728,7 +1215,9 @@ def record_authoring(
                 "created_by": user,
             },
         )
-        suite_diff, suite_summary = suite_change(base_suite, documents, origin)
+        suite_diff, suite_summary = suite_change(
+            base_suite, documents, origin, pieces.suite_documents.get("dropped")
+        )
         suite_version, suite_created = _land(
             HarnessSuiteVersion,
             locked,
@@ -748,18 +1237,23 @@ def record_authoring(
             note_revision(environment_version, revision)
         if not suite_created:
             note_revision(suite_version, revision)
-        paired = _member_rows(locked, documents)
+        paired = member_rows(locked, documents)
         if suite_created:
-            _add_members(suite_version, paired)
+            add_members(suite_version, paired)
         if origin in PROVED_ORIGINS and proved_since is not None:
             _validation(
                 suite_version,
                 environment_version,
-                _json(split.suite, "proofs.json"),
+                build_proofs(split.suite),
                 paired,
                 locked,
                 proved_since,
             )
+        elif paired:
+            # An edit proves nothing new; its unchanged cases keep their proofs on this version.
+            carried = _carried_proofs(environment_version, paired)
+            if carried:
+                record_proofs(suite_version, environment_version, carried, locked)
 
         if origin in PROVED_ORIGINS and SEALED_MANIFEST in split.sealed:
             # Only a build seals a bundle for this pair; edits carry an older one.
@@ -1027,7 +1521,7 @@ def _cached_sealed(
     return (files, bundle.object_key) if files is not None else (None, "")
 
 
-def _default_pair(
+def pair_archive(
     job: HostedHarnessJob,
     metadata: Mapping[str, Any],
     environment_version: HarnessEnvironmentVersion,
@@ -1199,7 +1693,7 @@ def move_agent(
                 agent_version_id=outgoing,
                 replace=False,
             )
-        pair = _default_pair(
+        pair = pair_archive(
             locked, metadata, environment_version, suite_version, "agent"
         )
         metadata["authoring_object_key"] = pair.key
@@ -1236,10 +1730,18 @@ def move_agent(
 
 def _move_agent_default(
     locked: HostedHarnessJob, version_id: Any, expected_default_id: Any, user: Any
-) -> HostedHarnessJob:
+) -> tuple[HostedHarnessJob, Validation | None]:
     from simulate.models import AgentVersion
-    from simulate.services.harness_agent_versions import hand_move, require_agent_pick
+    from simulate.services.harness_agent_versions import (
+        _record_activation,
+        hand_move,
+        require_agent_pick,
+    )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
+    from simulate.services.harness_versioning.validation import (
+        drop_waiting_moves,
+        gate_agent_move,
+    )
 
     # Locked, so a concurrent discard sees this move before its in-use check.
     require_agent_pick(
@@ -1250,10 +1752,17 @@ def _move_agent_default(
     )
     current = locked.agent_version
     if current is not None and current.id == version_id:
-        return locked
+        # Kept by hand: a move still waiting on a validation never lands.
+        drop_waiting_moves(locked, version_id)
+        return locked, None
     if (current.id if current is not None else None) != expected_default_id:
         raise _conflict("agent", current)
     version = AgentVersion.no_workspace_objects.get(id=version_id)
+    validation = gate_agent_move("hand", locked, version, user=user)
+    if validation is not None:
+        # Moved by the validation once the pairing passes; shown on the version.
+        _record_activation(version.id, {str(locked.id): "validating"})
+        return locked, validation
     move_agent(locked, version, moved=hand_move(user, version.id))
     schedule_environment_nudge(
         locked.id,
@@ -1267,7 +1776,7 @@ def _move_agent_default(
         version.id,
         getattr(user, "id", None),
     )
-    return locked
+    return locked, validation
 
 
 def require_not_busy(locked: HostedHarnessJob, piece: str) -> None:
@@ -1389,7 +1898,7 @@ def set_defaults(
         schedule_reconcile(locked.id)
 
 
-def _lock_environment(environment: HostedHarnessJob) -> HostedHarnessJob:
+def lock_environment(environment: HostedHarnessJob) -> HostedHarnessJob:
     locked = (
         HostedHarnessJob.no_workspace_objects.select_for_update()
         .filter(id=environment.id)
@@ -1426,6 +1935,25 @@ def _offer_reapply(locked: HostedHarnessJob, piece: str, version: Any) -> None:
     )
 
 
+def move_agent_default(
+    environment: HostedHarnessJob,
+    version_id: Any,
+    *,
+    expected_default_id: Any,
+    user: Any = None,
+) -> tuple[HostedHarnessJob, Validation | None]:
+    """Make an agent version the environment's default by hand.
+
+    Where the pairing with the default environment and suite can be validated and is
+    not yet, nothing moves now: the validation is returned and moves the default once
+    it passes. Refusals are ``move_default``'s.
+    """
+    with transaction.atomic():
+        locked = lock_environment(environment)
+        require_not_busy(locked, "agent")
+        return _move_agent_default(locked, version_id, expected_default_id, user)
+
+
 def move_default(
     environment: HostedHarnessJob,
     piece: str,
@@ -1441,20 +1969,27 @@ def move_default(
     one transaction.
     """
     from simulate.services.harness_versioning.drafts import require_no_rebuild
-    from simulate.services.hosted_harness import _not_pickable
+    from simulate.services.hosted_harness import not_pickable
 
+    if piece == "agent":
+        return move_agent_default(
+            environment, version_id, expected_default_id=expected_default_id, user=user
+        )[0]
     model = HarnessEnvironmentVersion if piece == "environment" else HarnessSuiteVersion
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         require_not_busy(locked, piece)
-        if piece == "agent":
-            return _move_agent_default(locked, version_id, expected_default_id, user)
         require_no_rebuild(locked, piece=piece)
-        version = model.no_workspace_objects.filter(
+        versions = model.no_workspace_objects.filter(
             job=locked, id=version_id, status=VersionStatus.ACTIVE
-        ).first()
+        )
+        if piece == "suite":
+            # A suite version private to a fix never becomes the default. The model is
+            # HarnessSuiteVersion here; mypy checks the lookup on both models.
+            versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
+        version = versions.first()
         if version is None:
-            raise _not_pickable(piece)
+            raise not_pickable(piece)
         current = getattr(locked, f"{piece}_version")
         # A repeated click after the move succeeded is the same no-op.
         if current is not None and current.id == version.id:
@@ -1462,9 +1997,15 @@ def move_default(
         if (current.id if current is not None else None) != expected_default_id:
             raise _conflict(piece, current)
         environment_version = (
-            version if piece == "environment" else locked.environment_version
+            version
+            if isinstance(version, HarnessEnvironmentVersion)
+            else locked.environment_version
         )
-        suite_version = version if piece == "suite" else locked.suite_version
+        suite_version = (
+            version
+            if isinstance(version, HarnessSuiteVersion)
+            else locked.suite_version
+        )
         if suite_version is None:
             raise HostedHarnessError(
                 "version_not_pickable",
@@ -1473,12 +2014,10 @@ def move_default(
                 details={"piece": piece},
             )
         if environment_version is None:
-            raise _not_pickable(piece)
+            raise not_pickable(piece)
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
-        pair = _default_pair(
-            locked, metadata, environment_version, suite_version, piece
-        )
+        pair = pair_archive(locked, metadata, environment_version, suite_version, piece)
         set_defaults(
             locked,
             payload,

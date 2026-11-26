@@ -8,21 +8,6 @@ import (
 // redacted replaces a credential wherever one is found.
 const redacted = "REDACTED"
 
-// sensitiveQueryParams are query parameter names whose value is a credential.
-var sensitiveQueryParams = map[string]bool{
-	"key":              true,
-	"api_key":          true,
-	"apikey":           true,
-	"access_token":     true,
-	"token":            true,
-	"password":         true,
-	"secret":           true,
-	"sig":              true,
-	"signature":        true,
-	"x-goog-api-key":   true,
-	"subscription-key": true,
-}
-
 // trailingPunctuation ends a sentence rather than a URL.
 const trailingPunctuation = `.,;:)]}>"'`
 
@@ -70,7 +55,9 @@ func isSchemeByte(b byte) bool {
 }
 
 func isURLTerminator(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '"' || b == '\'' || b == '<' || b == '>' || b == '\\' || b == ','
+	// Commas and apostrophes can occur inside URL components. Leave surrounding
+	// punctuation to redactURL, which separates it only at the end of the token.
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '"' || b == '<' || b == '>' || b == '\\'
 }
 
 // redactURL rewrites one URL with its credentials removed.
@@ -85,36 +72,45 @@ func redactURL(raw string) string {
 	}
 	raw, trailing := raw[:end], raw[end:]
 
+	raw, _, _ = strings.Cut(raw, "#")
 	u, err := url.Parse(raw)
 	if err != nil {
-		// Unreadable, so there is no telling which part is the credential.
-		if i := strings.IndexByte(raw, '?'); i >= 0 {
-			return raw[:i+1] + redacted + trailing
-		}
-		return raw + trailing
+		return redactUnparseable(raw) + trailing
 	}
 
 	if u.User != nil {
-		if _, set := u.User.Password(); set {
-			u.User = url.UserPassword(u.User.Username(), redacted)
-		}
+		u.User = url.User(redacted)
 	}
 
-	if q := u.Query(); len(q) > 0 {
-		changed := false
-		for name, values := range q {
-			if !sensitiveQueryParams[strings.ToLower(name)] {
-				continue
-			}
+	if u.RawQuery != "" {
+		q := u.Query()
+		for _, values := range q {
 			for i := range values {
 				values[i] = redacted
 			}
-			changed = true
 		}
-		if changed {
-			u.RawQuery = q.Encode()
-		}
+		u.RawQuery = q.Encode()
 	}
 
 	return u.String() + trailing
+}
+
+// redactUnparseable removes what a URL that does not parse may hold. There is
+// no telling which part of the userinfo or the query is the credential, so
+// both go whole.
+func redactUnparseable(raw string) string {
+	if i := strings.Index(raw, "://"); i >= 0 {
+		authority := raw[i+len("://"):]
+		end := strings.IndexAny(authority, "/?#")
+		if end < 0 {
+			end = len(authority)
+		}
+		if at := strings.LastIndexByte(authority[:end], '@'); at >= 0 {
+			raw = raw[:i+len("://")] + redacted + authority[at:]
+		}
+	}
+	if i := strings.IndexByte(raw, '?'); i >= 0 {
+		return raw[:i+1] + redacted
+	}
+	return raw
 }

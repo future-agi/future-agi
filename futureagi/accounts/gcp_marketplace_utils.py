@@ -162,8 +162,7 @@ def verify_marketplace_token(token: str) -> tuple[str, str, str]:
         # aud is the likeliest misconfiguration and the library only says the
         # token is bad. Name what arrived, so one failure gives the answer.
         raise ValueError(
-            f"{exc} (token aud={_unverified_audience(token)!r}, "
-            f"accepted={accepted})"
+            f"{exc} (token aud={_unverified_audience(token)!r}, accepted={accepted})"
         ) from exc
 
     # verify_token checks signature, exp and aud. Issuer is not among them.
@@ -403,7 +402,9 @@ def _link_orphan_entitlements(gcp_account: GCPMarketplaceAccount) -> int:
     if live and gcp_account.organization_id:
         from accounts.gcp_marketplace_events import _apply_plan
 
-        newest = max(live, key=lambda row: (row.effective_at or row.created_at, row.created_at))
+        newest = max(
+            live, key=lambda row: (row.effective_at or row.created_at, row.created_at)
+        )
         _apply_plan(newest)
 
     if linked:

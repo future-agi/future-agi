@@ -39,7 +39,6 @@ class PromptLabelSerializer(serializers.ModelSerializer):
 
         target_name = attrs.get("name")
         if target_name is None and self.instance is not None:
-
             return attrs
 
         existing_qs = PromptLabel.no_workspace_objects.filter(

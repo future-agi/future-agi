@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Box, Stack, Typography, Grid } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
@@ -20,6 +21,7 @@ import {
   degradeReasonCopy,
 } from "../../parallelism.constants";
 import SideDrawer from "../../components/SideDrawer";
+import { AGENT_VERSIONS_PARAM } from "../helpers/useWorkspaceTab";
 import AgentVersionsPanel from "../agents/AgentVersionsPanel";
 import { GroupHeading, Fact } from "./OverviewPrimitives";
 import AgentSummarySection from "./AgentSummarySection";
@@ -66,6 +68,17 @@ export default function OverviewPanel({
   backedWorld,
 }) {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+  // Also open while the URL asks for it, so it opens on a mounted Overview too.
+  const [params, setParams] = useSearchParams();
+  const agentDrawerShown =
+    agentDrawerOpen || params.get(AGENT_VERSIONS_PARAM) === "open";
+  const closeAgentDrawer = () => {
+    setAgentDrawerOpen(false);
+    if (!params.has(AGENT_VERSIONS_PARAM)) return;
+    const next = new URLSearchParams(params);
+    next.delete(AGENT_VERSIONS_PARAM);
+    setParams(next, { replace: true });
+  };
   // Agent versions are managed on real data, so only while versioning is on.
   const canManageVersions = !locked && Boolean(env.versioning?.enabled);
   const surface = getSurface(env.surface);
@@ -167,9 +180,7 @@ export default function OverviewPanel({
             bgcolor: "background.neutral",
           }}
         >
-          <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
-          >
+          <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
             {PARALLELISM_COPY.degradedTitle(
               parallelism.effective,
               parallelism.requested,
@@ -208,7 +219,12 @@ export default function OverviewPanel({
           scratch env arrives carrying a derived world, so the same checklist
           would render every step pre-complete — skip it there. */}
       {!agentConnected && !hasDerivedWorld && (
-        <NextStepsChecklist env={env} envState={envState} onGo={onGo} scenarioCount={counts?.scenarios} />
+        <NextStepsChecklist
+          env={env}
+          envState={envState}
+          onGo={onGo}
+          scenarioCount={counts?.scenarios}
+        />
       )}
 
       {/* CapabilityGraph moved to the Contract tab — that's where the shape of
@@ -270,8 +286,8 @@ export default function OverviewPanel({
           never leaves the tab. Not kept mounted while closed. */}
       {canManageVersions && (
         <SideDrawer
-          open={agentDrawerOpen}
-          onClose={() => setAgentDrawerOpen(false)}
+          open={agentDrawerShown}
+          onClose={closeAgentDrawer}
           width={{ xs: "100%", sm: 720, md: 880 }}
         >
           <Stack sx={{ height: "100%", minHeight: 0 }}>

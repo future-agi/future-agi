@@ -34,6 +34,7 @@ def gt_table(monkeypatch):
     # Django settings), so point them at the test compose CH on
     # localhost:19000 before construction.
     from django.conf import settings
+
     ch = getattr(settings, "CLICKHOUSE", {}) or {}
     monkeypatch.setenv("CH_HOST", str(ch.get("CH_HOST") or "localhost"))
     monkeypatch.setenv("CH_PORT", str(ch.get("CH_PORT") or "19000"))
@@ -82,9 +83,13 @@ def stub_text_model(monkeypatch):
 
 
 def _insert_gt_vector(
-    db: ClickHouseVectorDB, *,
-    eval_id: str, organization_id: str, workspace_id: str,
-    column_name: str = "input", item_value: str = "hello",
+    db: ClickHouseVectorDB,
+    *,
+    eval_id: str,
+    organization_id: str,
+    workspace_id: str,
+    column_name: str = "input",
+    item_value: str = "hello",
     vector: list[float] | None = None,
 ) -> str:
     metadata: dict[str, Any] = {
@@ -106,7 +111,8 @@ def _insert_gt_vector(
 
 
 def test_ch_retrieve_does_not_leak_across_organizations(
-    gt_table, stub_text_model,
+    gt_table,
+    stub_text_model,
 ):
     """Vectors written under org A's ``organization_id`` are invisible to
     a retrieval call scoped to org B - even though both rows share the
@@ -116,13 +122,17 @@ def test_ch_retrieve_does_not_leak_across_organizations(
     ws_a, ws_b = str(uuid.uuid4()), str(uuid.uuid4())
 
     a_item = _insert_gt_vector(
-        gt_table, eval_id=eval_id,
-        organization_id=org_a, workspace_id=ws_a,
+        gt_table,
+        eval_id=eval_id,
+        organization_id=org_a,
+        workspace_id=ws_a,
         item_value="tenant-A-answer",
     )
     b_item = _insert_gt_vector(
-        gt_table, eval_id=eval_id,
-        organization_id=org_b, workspace_id=ws_b,
+        gt_table,
+        eval_id=eval_id,
+        organization_id=org_b,
+        workspace_id=ws_b,
         item_value="tenant-B-answer",
     )
 
@@ -131,7 +141,8 @@ def test_ch_retrieve_does_not_leak_across_organizations(
         inputs=["query"],
         input_cols=["input"],
         table_name=GROUND_TRUTH_TABLE_NAME,
-        organization_id=org_a, workspace_id=ws_a,
+        organization_id=org_a,
+        workspace_id=ws_a,
         top_k=10,
     )
     b_results = EmbeddingManager().retrieve_avg_rag_based_examples(
@@ -139,7 +150,8 @@ def test_ch_retrieve_does_not_leak_across_organizations(
         inputs=["query"],
         input_cols=["input"],
         table_name=GROUND_TRUTH_TABLE_NAME,
-        organization_id=org_b, workspace_id=ws_b,
+        organization_id=org_b,
+        workspace_id=ws_b,
         top_k=10,
     )
 
@@ -157,7 +169,8 @@ def test_ch_retrieve_does_not_leak_across_organizations(
 
 
 def test_ch_retrieve_isolates_workspaces_within_same_org(
-    gt_table, stub_text_model,
+    gt_table,
+    stub_text_model,
 ):
     """Two workspaces under the same org get independent CH results -
     matching the partial UniqueConstraint we hold on the PG side."""
@@ -166,13 +179,17 @@ def test_ch_retrieve_isolates_workspaces_within_same_org(
     ws_a, ws_b = str(uuid.uuid4()), str(uuid.uuid4())
 
     _insert_gt_vector(
-        gt_table, eval_id=eval_id,
-        organization_id=org, workspace_id=ws_a,
+        gt_table,
+        eval_id=eval_id,
+        organization_id=org,
+        workspace_id=ws_a,
         item_value="workspace-A-answer",
     )
     _insert_gt_vector(
-        gt_table, eval_id=eval_id,
-        organization_id=org, workspace_id=ws_b,
+        gt_table,
+        eval_id=eval_id,
+        organization_id=org,
+        workspace_id=ws_b,
         item_value="workspace-B-answer",
     )
 
@@ -181,7 +198,8 @@ def test_ch_retrieve_isolates_workspaces_within_same_org(
         inputs=["query"],
         input_cols=["input"],
         table_name=GROUND_TRUTH_TABLE_NAME,
-        organization_id=org, workspace_id=ws_a,
+        organization_id=org,
+        workspace_id=ws_a,
         top_k=10,
     )
     b_results = EmbeddingManager().retrieve_avg_rag_based_examples(
@@ -189,7 +207,8 @@ def test_ch_retrieve_isolates_workspaces_within_same_org(
         inputs=["query"],
         input_cols=["input"],
         table_name=GROUND_TRUTH_TABLE_NAME,
-        organization_id=org, workspace_id=ws_b,
+        organization_id=org,
+        workspace_id=ws_b,
         top_k=10,
     )
 
@@ -210,13 +229,17 @@ def test_ch_retrieve_omits_soft_deleted_rows(gt_table, stub_text_model):
     ws = str(uuid.uuid4())
 
     _insert_gt_vector(
-        gt_table, eval_id=eval_id,
-        organization_id=org, workspace_id=ws,
+        gt_table,
+        eval_id=eval_id,
+        organization_id=org,
+        workspace_id=ws,
         item_value="live-answer",
     )
     _insert_gt_vector(
-        gt_table, eval_id=eval_id,
-        organization_id=org, workspace_id=ws,
+        gt_table,
+        eval_id=eval_id,
+        organization_id=org,
+        workspace_id=ws,
         item_value="gone-answer",
     )
 
@@ -232,7 +255,8 @@ def test_ch_retrieve_omits_soft_deleted_rows(gt_table, stub_text_model):
         inputs=["query"],
         input_cols=["input"],
         table_name=GROUND_TRUTH_TABLE_NAME,
-        organization_id=org, workspace_id=ws,
+        organization_id=org,
+        workspace_id=ws,
         top_k=10,
     )
 

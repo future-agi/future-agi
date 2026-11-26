@@ -181,7 +181,7 @@ const TurnCell = ({ turn, colors, content, isPlaceholder }) => {
       <Typography
         component="div"
         sx={{
-          fontSize: 13,
+          fontSize: 12,
           color: "text.primary",
           lineHeight: 1.5,
           whiteSpace: "pre-wrap",
@@ -399,7 +399,7 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
       >
         <Typography
           sx={{
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: 600,
             color: "text.primary",
             flexShrink: 0,

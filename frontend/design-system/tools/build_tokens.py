@@ -60,7 +60,7 @@ def resolve(tokens, value, theme, semantic):
     def sub(match):
         ref = match.group(1)
         if ref.startswith("color."):
-            return semantic[theme][ref[len("color."):]]
+            return semantic[theme][ref[len("color.") :]]
         return primitive(tokens, ref)
 
     previous = None
@@ -91,11 +91,12 @@ def css_var(name):
 
 # ---------------------------------------------------------------- contrast
 
+
 def rgba(value):
     value = value.strip()
     if value.startswith("#"):
         h = value[1:]
-        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)) + (1.0,)
+        return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4)) + (1.0,)
     m = re.match(r"rgba?\(([^)]+)\)", value)
     parts = [p.strip() for p in m.group(1).split(",")]
     r, g, b = (float(p) for p in parts[:3])
@@ -106,8 +107,11 @@ def rgba(value):
 def over(top, bottom):
     r1, g1, b1, a = rgba(top)
     r2, g2, b2, _ = rgba(bottom)
-    mix = lambda x, y: round(x * a + y * (1 - a))
-    return "#%02X%02X%02X" % (mix(r1, r2), mix(g1, g2), mix(b1, b2))
+
+    def mix(x, y):
+        return round(x * a + y * (1 - a))
+
+    return f"#{mix(r1, r2):02X}{mix(g1, g2):02X}{mix(b1, b2):02X}"
 
 
 def luminance(hex_value):
@@ -143,13 +147,27 @@ PAIRS = [
     ("border.strong", "bg.surface", 1.4, "Input border visible"),
     ("border.focus", "bg.surface", 3.0, "Focus ring (non-text, 3:1)"),
     ("control.checked", "bg.surface", 3.0, "Checked control visible (non-text, 3:1)"),
-    ("control.onChecked", "control.checked", 3.0, "Tick on checked control (non-text, 3:1)"),
+    (
+        "control.onChecked",
+        "control.checked",
+        3.0,
+        "Tick on checked control (non-text, 3:1)",
+    ),
     ("control.thumb", "control.track", 1.4, "Switch thumb on track (reference)"),
     ("fg.disabled", "bg.surface", 0, "Disabled text (exempt; listed for reference)"),
 ]
 for role in ("success", "warning", "danger", "info", "neutral", "discovery"):
-    PAIRS.append((f"status.{role}.fg", f"status.{role}.bg", 4.5, f"{role.title()} badge text"))
-    PAIRS.append((f"status.{role}.onSolid", f"status.{role}.solid", 4.5, f"{role.title()} solid label"))
+    PAIRS.append(
+        (f"status.{role}.fg", f"status.{role}.bg", 4.5, f"{role.title()} badge text")
+    )
+    PAIRS.append(
+        (
+            f"status.{role}.onSolid",
+            f"status.{role}.solid",
+            4.5,
+            f"{role.title()} solid label",
+        )
+    )
 
 
 def contrast(semantic):
@@ -169,6 +187,7 @@ def contrast(semantic):
 
 
 # ---------------------------------------------------------------- writers
+
 
 def write_css(tokens, semantic, shadows):
     def block(theme):
@@ -202,7 +221,11 @@ def write_css(tokens, semantic, shadows):
 
     type_classes = []
     for name, role in font["role"].items():
-        family = "var(--ds-font-mono)" if role.get("family") == "mono" else "var(--ds-font-sans)"
+        family = (
+            "var(--ds-font-mono)"
+            if role.get("family") == "mono"
+            else "var(--ds-font-sans)"
+        )
         decl = [
             f"font-family: {family}",
             f"font-size: {role['size']}px",
@@ -216,25 +239,25 @@ def write_css(tokens, semantic, shadows):
             decl.append("font-variant-numeric: tabular-nums")
         type_classes.append(f".ds-text-{name} {{ {'; '.join(decl)}; }}")
 
-    css = f"""/* Future AGI Design System tokens v{tokens['$meta']['version']}.
+    css = f"""/* Future AGI Design System tokens v{tokens["$meta"]["version"]}.
    Generated from frontend/design-system/tokens/tokens.json by `yarn tokens:build`.
    Do not edit by hand: change tokens.json and rebuild. */
 
 :root,
 [data-theme="light"] {{
 {chr(10).join(static)}
-{block('light')}
+{block("light")}
   color-scheme: light;
 }}
 
 [data-theme="dark"] {{
-{block('dark')}
+{block("dark")}
   color-scheme: dark;
 }}
 
 @media (prefers-color-scheme: dark) {{
   :root:not([data-theme]) {{
-{block('dark')}
+{block("dark")}
     color-scheme: dark;
   }}
 }}
@@ -247,8 +270,14 @@ def write_css(tokens, semantic, shadows):
 def write_js(tokens, semantic, shadows, rows):
     payload = {
         "tokens": tokens,
-        "light": {**semantic["light"], **{f"shadow.{k}": v for k, v in shadows["light"].items()}},
-        "dark": {**semantic["dark"], **{f"shadow.{k}": v for k, v in shadows["dark"].items()}},
+        "light": {
+            **semantic["light"],
+            **{f"shadow.{k}": v for k, v in shadows["light"].items()},
+        },
+        "dark": {
+            **semantic["dark"],
+            **{f"shadow.{k}": v for k, v in shadows["dark"].items()},
+        },
         "contrast": rows,
     }
     (ROOT / "tokens.js").write_text(
@@ -260,62 +289,110 @@ def write_js(tokens, semantic, shadows, rows):
 def write_mui(tokens, semantic, shadows):
     def palette(theme):
         s = semantic[theme]
+
         def status(role):
             return {
-                "lighter": s[f"status.{role}.bg"], "light": s[f"status.{role}.border"],
-                "main": s[f"status.{role}.solid"], "dark": s[f"status.{role}.fg"],
-                "darker": s[f"status.{role}.fg"], "contrastText": s[f"status.{role}.onSolid"],
+                "lighter": s[f"status.{role}.bg"],
+                "light": s[f"status.{role}.border"],
+                "main": s[f"status.{role}.solid"],
+                "dark": s[f"status.{role}.fg"],
+                "darker": s[f"status.{role}.fg"],
+                "contrastText": s[f"status.{role}.onSolid"],
             }
+
         return {
             "mode": theme,
             "primary": {
-                "lighter": s["accent.subtle"], "light": s["accent.border"],
-                "main": s["action.primaryBg"], "dark": s["action.primaryBgHover"],
-                "darker": s["fg.link"], "contrastText": s["action.primaryFg"],
+                "lighter": s["accent.subtle"],
+                "light": s["accent.border"],
+                "main": s["action.primaryBg"],
+                "dark": s["action.primaryBgHover"],
+                "darker": s["fg.link"],
+                "contrastText": s["action.primaryFg"],
             },
             "secondary": {
-                "lighter": s["accent.subtle"], "light": s["accent.border"],
-                "main": s["accent.solid"], "dark": s["accent.solidHover"],
-                "darker": s["accent.fg"], "contrastText": s["accent.onSolid"],
+                "lighter": s["accent.subtle"],
+                "light": s["accent.border"],
+                "main": s["accent.solid"],
+                "dark": s["accent.solidHover"],
+                "darker": s["accent.fg"],
+                "contrastText": s["accent.onSolid"],
             },
-            "success": status("success"), "warning": status("warning"),
-            "error": status("danger"), "info": status("info"),
-            "grey": {k: v for k, v in tokens["primitive"]["gray"].items()},
+            "success": status("success"),
+            "warning": status("warning"),
+            "error": status("danger"),
+            "info": status("info"),
+            "grey": dict(tokens["primitive"]["gray"]),
             "text": {
-                "primary": s["fg.default"], "secondary": s["fg.secondary"],
-                "tertiary": s["fg.tertiary"], "subtitle": s["fg.tertiary"],
-                "muted": s["fg.secondary"], "disabled": s["fg.disabled"],
+                "primary": s["fg.default"],
+                "secondary": s["fg.secondary"],
+                "tertiary": s["fg.tertiary"],
+                "subtitle": s["fg.tertiary"],
+                "muted": s["fg.secondary"],
+                "disabled": s["fg.disabled"],
                 "link": s["fg.link"],
             },
             "background": {
-                "default": s["bg.canvas"], "paper": s["bg.surface"],
-                "neutral": s["bg.subtle"], "subtle": s["bg.subtle"],
-                "accent": s["bg.muted"], "muted": s["bg.muted"],
-                "overlay": s["bg.overlay"], "inverse": s["bg.inverse"],
+                "default": s["bg.canvas"],
+                "paper": s["bg.surface"],
+                "neutral": s["bg.subtle"],
+                "subtle": s["bg.subtle"],
+                "accent": s["bg.muted"],
+                "muted": s["bg.muted"],
+                "overlay": s["bg.overlay"],
+                "inverse": s["bg.inverse"],
             },
             "divider": s["border.default"],
             "border": {
-                "subtle": s["border.subtle"], "default": s["border.default"],
-                "hover": s["border.strong"], "strong": s["border.strong"],
-                "focus": s["border.focus"], "selected": s["border.selected"],
+                "subtle": s["border.subtle"],
+                "default": s["border.default"],
+                "hover": s["border.strong"],
+                "strong": s["border.strong"],
+                "focus": s["border.focus"],
+                "selected": s["border.selected"],
             },
             "action": {
-                "active": s["icon.default"], "hover": s["bg.hover"],
-                "selected": s["bg.selected"], "focus": s["bg.pressed"],
-                "disabled": s["fg.disabled"], "disabledBackground": s["bg.muted"],
-                "hoverOpacity": 0.04, "selectedOpacity": 0.06, "disabledOpacity": 0.48,
+                "active": s["icon.default"],
+                "hover": s["bg.hover"],
+                "selected": s["bg.selected"],
+                "focus": s["bg.pressed"],
+                "disabled": s["fg.disabled"],
+                "disabledBackground": s["bg.muted"],
+                "hoverOpacity": 0.04,
+                "selectedOpacity": 0.06,
+                "disabledOpacity": 0.48,
             },
-            "status": {role: {k: s[f"status.{role}.{k}"] for k in ("fg", "bg", "border", "solid", "onSolid")}
-                       for role in ("success", "warning", "danger", "info", "neutral", "discovery")},
+            "status": {
+                role: {
+                    k: s[f"status.{role}.{k}"]
+                    for k in ("fg", "bg", "border", "solid", "onSolid")
+                }
+                for role in (
+                    "success",
+                    "warning",
+                    "danger",
+                    "info",
+                    "neutral",
+                    "discovery",
+                )
+            },
             "data": [s[f"data.{i}"] for i in range(1, 9)],
-            "control": {k: s[f"control.{k}"] for k in ("checked", "onChecked", "track", "thumb")},
+            "dataMono": [s[f"dataMono.{i}"] for i in range(1, 9)],
+            "dataBrand": [s[f"dataBrand.{i}"] for i in range(1, 5)],
+            "control": {
+                k: s[f"control.{k}"] for k in ("checked", "onChecked", "track", "thumb")
+            },
         }
 
     roles = tokens["font"]["role"]
 
     def variant(name):
         r = roles[name]
-        out = {"fontSize": f"{r['size'] / 16}rem", "lineHeight": f"{r['line']}px", "fontWeight": r["weight"]}
+        out = {
+            "fontSize": f"{r['size'] / 16}rem",
+            "lineHeight": f"{r['line']}px",
+            "fontWeight": r["weight"],
+        }
         if r["tracking"] != "0":
             out["letterSpacing"] = r["tracking"]
         if r.get("case") == "uppercase":
@@ -326,15 +403,22 @@ def write_mui(tokens, semantic, shadows):
 
     typography = {
         "fontFamily": tokens["font"]["family"]["sans"],
-        "fontWeightRegular": 400, "fontWeightMedium": 500,
-        "fontWeightSemiBold": 600, "fontWeightBold": 600,
-        "h1": variant("title-lg"), "h2": variant("title-md"),
-        "h3": variant("title-sm"), "h4": variant("title-sm"),
-        "h5": variant("title-xs"), "h6": variant("title-xs"),
+        "fontWeightRegular": 400,
+        "fontWeightMedium": 500,
+        "fontWeightSemiBold": 600,
+        "fontWeightBold": 600,
+        "h1": variant("title-lg"),
+        "h2": variant("title-md"),
+        "h3": variant("title-sm"),
+        "h4": variant("title-sm"),
+        "h5": variant("title-xs"),
+        "h6": variant("title-xs"),
         "subtitle1": {**variant("label-md"), "fontSize": "0.875rem"},
         "subtitle2": variant("label-md"),
-        "body1": variant("body-md"), "body2": variant("body-sm"),
-        "caption": variant("caption"), "overline": variant("overline"),
+        "body1": variant("body-md"),
+        "body2": variant("body-sm"),
+        "caption": variant("caption"),
+        "overline": variant("overline"),
         "button": {**variant("label-md"), "textTransform": "none"},
     }
     for name in roles:
@@ -347,9 +431,11 @@ def write_mui(tokens, semantic, shadows):
         v = variant(role)
         typography[name] = {"fontSize": v["fontSize"], "lineHeight": v["lineHeight"]}
         if name == "subheader":
-            typography[name].update(fontWeight=v["fontWeight"], letterSpacing=v.get("letterSpacing", "0"))
+            typography[name].update(
+                fontWeight=v["fontWeight"], letterSpacing=v.get("letterSpacing", "0")
+            )
 
-    module = f"""/* Future AGI Design System v{tokens['$meta']['version']} — MUI v5 mapping.
+    module = f"""/* Future AGI Design System v{tokens["$meta"]["version"]} — MUI v5 mapping.
    Generated from frontend/design-system/tokens/tokens.json by `yarn tokens:build`.
    Do not edit by hand: change tokens.json and rebuild.
 
@@ -371,11 +457,11 @@ export function dsPalette(mode) {{
 
 export const dsTypography = {json.dumps(typography, indent=2)};
 
-export const dsShape = {{ borderRadius: {tokens['radius']['md']} }};
+export const dsShape = {{ borderRadius: {tokens["radius"]["md"]} }};
 
-export const dsRadius = {json.dumps({k: v for k, v in tokens['radius'].items() if not k.startswith('$')})};
+export const dsRadius = {json.dumps({k: v for k, v in tokens["radius"].items() if not k.startswith("$")})};
 
-export const dsSize = {json.dumps(tokens['size'], indent=2)};
+export const dsSize = {json.dumps(tokens["size"], indent=2)};
 
 const shadows = {json.dumps(shadows, indent=2)};
 
@@ -389,7 +475,7 @@ export function dsCustomShadows(mode) {{
   }};
 }}
 
-export const dsMotion = {json.dumps(tokens['motion'], indent=2)};
+export const dsMotion = {json.dumps(tokens["motion"], indent=2)};
 """
     THEME_TOKENS.write_text(module)
 
@@ -401,11 +487,19 @@ def main():
     write_css(tokens, semantic, shadows)
     write_js(tokens, semantic, shadows, rows)
     write_mui(tokens, semantic, shadows)
-    print(f"Wrote tokens.css, tokens.js, src/theme/ds-tokens.js ({len(semantic['light'])} colour tokens per theme)")
+    print(
+        f"Wrote tokens.css, tokens.js, src/theme/ds-tokens.js ({len(semantic['light'])} colour tokens per theme)"
+    )
     width = max(len(r["what"]) for r in rows)
     for r in rows:
-        mark = "" if r["min"] == 0 or (r["light"] >= r["min"] and r["dark"] >= r["min"]) else "  <-- below minimum"
-        print(f"  {r['what']:<{width}}  light {r['light']:>5}  dark {r['dark']:>5}{mark}")
+        mark = (
+            ""
+            if r["min"] == 0 or (r["light"] >= r["min"] and r["dark"] >= r["min"])
+            else "  <-- below minimum"
+        )
+        print(
+            f"  {r['what']:<{width}}  light {r['light']:>5}  dark {r['dark']:>5}{mark}"
+        )
     if failures:
         print("\nContrast failures:\n  " + "\n  ".join(failures))
         sys.exit(1)

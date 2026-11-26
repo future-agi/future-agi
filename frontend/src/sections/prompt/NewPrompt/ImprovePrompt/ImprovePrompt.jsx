@@ -259,11 +259,7 @@ const ImprovePromptDrawer = (props) => {
           gap: theme.spacing(2),
         }}
       >
-        <Typography
-          variant="subtitle2"
-          color="text.primary"
-          fontSize="0.8125rem"
-        >
+        <Typography variant="subtitle2" color="text.primary" fontSize="0.75rem">
           Improve Existing Prompt
         </Typography>
         <Box sx={{ display: "flex", gap: 0.8, alignItems: "center" }}>

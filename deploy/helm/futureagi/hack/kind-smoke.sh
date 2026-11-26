@@ -159,7 +159,7 @@ triggers=$(kubectl -n "$ns" exec "statefulset/$release-postgres" -- sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM pg_trigger WHERE tgname LIKE '"'"'fi_cdc_%'"'"'"')
 [ "${triggers:-0}" -gt 0 ] || fail "no outbox CDC capture triggers in Postgres"
 kubectl -n "$ns" exec "statefulset/$release-temporal" -- \
-  temporal schedule list --address 127.0.0.1:7233 | grep -q outbox-cdc-drain ||
+  temporal schedule list --address 127.0.0.1:7233 | grep outbox-cdc-drain >/dev/null ||
   fail "the outbox CDC drain schedule is not registered"
 echo "ok   ClickHouse schema, $triggers CDC triggers, Temporal schedules"
 
@@ -185,15 +185,33 @@ before=$(kubectl -n "$ns" get secret "$release-secrets" -o jsonpath='{.data.SECR
 helm upgrade "$release" "$chart" --namespace "$ns" --reuse-values \
   --set-string backend.podAnnotations.smoke/upgraded="$(date +%s)" \
   --set-string secrets.extra.SMOKE_REVISION=upgraded \
+  --set-string fiCollector.extraEnv.FI_ADMIN_ADDR=:9500 \
   --wait --timeout "$timeout"
 after=$(kubectl -n "$ns" get secret "$release-secrets" -o jsonpath='{.data.SECRET_KEY}')
 [ -n "$before" ] && [ "$before" = "$after" ] || fail "SECRET_KEY changed on upgrade"
 kubectl -n "$ns" get "job/$release-bootstrap" -o jsonpath='{.status.succeeded}' | grep -qx 1 ||
   fail "the pre-upgrade bootstrap job did not succeed"
-kubectl -n "$ns" logs "job/$release-bootstrap" | grep -qF "first admin $admin_email already exists: left unchanged" ||
+kubectl -n "$ns" logs "job/$release-bootstrap" | grep -F "first admin $admin_email already exists: left unchanged" >/dev/null ||
   fail "the pre-upgrade bootstrap job did not leave the first admin as it was"
 kubectl -n "$ns" rollout status "deploy/$release-backend" --timeout=5m
 helm test "$release" --namespace "$ns" --timeout 5m
+
+say "a receiver cannot take the saved admin port: no new revision or Pod"
+revision() { helm history "$release" --namespace "$ns" --max 1 | awk 'NR == 2 {print $1}'; }
+collector_pods() {
+  kubectl -n "$ns" get pods -l "app.kubernetes.io/instance=$release,app.kubernetes.io/component=fi-collector" \
+    -o go-template='{{range .items}}{{if not .metadata.deletionTimestamp}}{{.metadata.uid}}{{"\n"}}{{end}}{{end}}' | sort
+}
+rev=$(revision)
+pods=$(collector_pods)
+[ -n "$pods" ] || fail "no running collector Pod"
+if helm upgrade "$release" "$chart" --namespace "$ns" --reuse-values \
+  --set-string fiCollector.extraEnv.FI_HTTP_ADDR=:9500 >"$work/refused.txt" 2>&1; then
+  fail "helm upgrade accepted the saved admin port for OTLP HTTP"
+fi
+grep -qF 'FI_ADMIN_ADDR conflicts with FI_HTTP_ADDR on port 9500' "$work/refused.txt" ||
+  fail "upgrade did not identify the conflicting listeners"
+[ "$(revision)" = "$rev" ] && [ "$(collector_pods)" = "$pods" ] || fail "the refused upgrade changed the revision or collector Pod"
 
 say "rollback puts the previous revision's Secret back"
 helm rollback "$release" "$installed" --namespace "$ns" --wait --timeout "$timeout"

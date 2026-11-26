@@ -15,13 +15,14 @@ rewrite and ``_v2_rewrite_exclude`` stays empty.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
 from tracer.services.clickhouse.query_builders.trace_detail import (
     TraceDetail,
     TraceDetailHandler,
+    compute_trace_capture_coverage,
     compute_trace_summary_and_graph,
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
@@ -30,6 +31,7 @@ from tracer.services.eval_tiles import build_eval_rollup
 from tracer.utils.helper import _normalize_eval_output_type
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from uuid import UUID
 
     from rest_framework.request import Request
@@ -38,6 +40,9 @@ if TYPE_CHECKING:
     from tracer.views.trace import TraceView
 
 logger = structlog.get_logger(__name__)
+
+# Marks an exhausted iterator in the explicit-stack tree walk below.
+_EXHAUSTED = object()
 
 
 def _parse_output_str_list(raw) -> list[str]:
@@ -271,7 +276,12 @@ def retrieve_trace_detail_ch(
             "total_tokens": row.get("total_tokens"),
             "response_time": None,
             "eval_id": None,
-            "cost": row.get("cost"),
+            "cost": (
+                None
+                if span_attrs.get("fi.cost.kind") == "unknown"
+                and span_attrs.get("fi.usage.contribution") != "none"
+                else row.get("cost")
+            ),
             "status": row.get("status"),
             "status_message": row.get("status_message"),
             "tags": _parse_json(row.get("tags"), default=[]),
@@ -520,16 +530,22 @@ def retrieve_trace_detail_ch(
                 },
             )
 
-    # Clean up internal fields
-    def _clean_entry(entry):
+    # Clean up internal fields. A stack of child iterators visits the entries
+    # in the recursive walk's order (each root's subtree, then each orphan's)
+    # without one Python frame per tree level, so a parent chain as long as
+    # the span cap cannot reach the interpreter recursion limit.
+    clean_pending: list[Iterator[dict[str, Any]]] = [
+        iter(orphan_spans),
+        iter(root_spans),
+    ]
+    while clean_pending:
+        item = next(clean_pending[-1], _EXHAUSTED)
+        if item is _EXHAUSTED:
+            clean_pending.pop()
+            continue
+        entry = cast("dict[str, Any]", item)
         del entry["_parent_id"]
-        for child in entry["children"]:
-            _clean_entry(child)
-
-    for entry in root_spans:
-        _clean_entry(entry)
-    for entry in orphan_spans:
-        _clean_entry(entry)
+        clean_pending.append(iter(entry["children"]))
 
     observation_spans_response = root_spans + orphan_spans
 
@@ -560,9 +576,13 @@ def retrieve_trace_detail_ch(
             "tags": root_obs.get("tags") or [],
         }
 
-    return {
+    result: TraceDetail = {
         "trace": trace_data,
         "observation_spans": observation_spans_response,
         "summary": summary,
         "graph": graph,
     }
+    capture = compute_trace_capture_coverage(observation_spans_response)
+    if capture is not None:
+        result["capture_coverage"] = capture
+    return result

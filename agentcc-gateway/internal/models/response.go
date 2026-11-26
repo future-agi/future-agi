@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"reflect"
+	"time"
 )
 
 // ChatCompletionResponse represents an OpenAI-compatible chat completion response.
@@ -94,13 +95,34 @@ type Usage struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
+// UnmarshalJSON normalizes input/output token aliases while preserving provider extras.
 func (u *Usage) UnmarshalJSON(data []byte) error {
 	type Alias Usage
-	var a Alias
+	var a struct {
+		Alias
+		PromptTokens     *int `json:"prompt_tokens"`
+		CompletionTokens *int `json:"completion_tokens"`
+		InputTokens      *int `json:"input_tokens"`
+		OutputTokens     *int `json:"output_tokens"`
+	}
 	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
-	*u = Usage(a)
+	*u = Usage(a.Alias)
+	// An explicit zero in the canonical spelling must win over its alias.
+	if a.PromptTokens != nil {
+		u.PromptTokens = *a.PromptTokens
+	} else if a.InputTokens != nil {
+		u.PromptTokens = *a.InputTokens
+	}
+	if a.CompletionTokens != nil {
+		u.CompletionTokens = *a.CompletionTokens
+	} else if a.OutputTokens != nil {
+		u.CompletionTokens = *a.OutputTokens
+	}
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	}
 	extra, err := captureExtra(data, reflect.TypeFor[Usage]())
 	if err != nil {
 		return err
@@ -138,6 +160,14 @@ type StreamChunk struct {
 	// that sends its citations on the last chunk rather than in a whole
 	// response needs this to reach a streaming caller. See passthrough.go.
 	Extra map[string]json.RawMessage `json:"-"`
+
+	// Acknowledgement marks a chunk sent on the upstream's acknowledgement,
+	// before any output: the Responses route's response.created. It is sent
+	// at once, but the routing latency is measured to the next chunk.
+	Acknowledgement bool `json:"-"`
+	// ReceivedAt is when the provider read this chunk from upstream, if it
+	// records it, so latency is not stretched by a slow client downstream.
+	ReceivedAt time.Time `json:"-"`
 }
 
 func (c *StreamChunk) UnmarshalJSON(data []byte) error {
@@ -183,10 +213,26 @@ type Delta struct {
 }
 
 type ToolCallDelta struct {
-	Index    int           `json:"index"`
-	ID       string        `json:"id,omitempty"`
-	Type     string        `json:"type,omitempty"`
-	Function *FunctionCall `json:"function,omitempty"`
+	Index    int                `json:"index"`
+	ID       string             `json:"id,omitempty"`
+	Type     string             `json:"type,omitempty"`
+	Function *FunctionCallDelta `json:"function,omitempty"`
+}
+
+// FunctionCallDelta is the function part of one streamed tool-call delta.
+//
+// It is not FunctionCall: a complete call always has a name, but a stream
+// sends the name once, on the first delta of a call, and every later delta
+// carries only an arguments fragment. Name is omitempty so that an
+// arguments-only delta goes out without a "name" key, as OpenAI sends it.
+// Writing "name":"" instead tells a client that accumulates the call that its
+// name is now empty, and the call is lost.
+//
+// Arguments is not omitempty: the first delta of a call carries
+// "arguments":"" in the OpenAI shape, and clients append it either way.
+type FunctionCallDelta struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments"`
 }
 
 // ModelObject represents a model in the /v1/models response.

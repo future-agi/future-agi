@@ -15,6 +15,8 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useMetricsEnabled } from "src/sections/derived-metrics/useMetricsEnabled";
+import { useHostUpdateAccess } from "src/api/hostUpdates/host-update-status";
 import { useRestrictSimulateToEnvironments } from "src/hooks/useRestrictSimulateToEnvironments";
 import {
   ROLES,
@@ -108,6 +110,7 @@ export function useNavData() {
   // Orgs created after the cutoff see only Environments in Simulate.
   const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
   const agentsPath = agentsSidebarPath(usePathname());
+  const { enabled: metricsEnabled } = useMetricsEnabled();
   const data = useMemo(() => {
     const buildItems = [
       {
@@ -227,6 +230,15 @@ export function useNavData() {
               });
             },
           },
+          ...(metricsEnabled
+            ? [
+                {
+                  title: "Metrics",
+                  path: paths.dashboard.metrics.root,
+                  icon: <Iconify icon="mdi:chart-line" />,
+                },
+              ]
+            : []),
           {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,
@@ -306,7 +318,13 @@ export function useNavData() {
     });
 
     return sections;
-  }, [isOwner, isAdmin, agentsPath, restrictSimulateToEnvironments]);
+  }, [
+    isOwner,
+    isAdmin,
+    agentsPath,
+    restrictSimulateToEnvironments,
+    metricsEnabled,
+  ]);
   return data;
 }
 
@@ -382,6 +400,7 @@ const SettingsIcons = {
 export function useNavSettingsData() {
   const { user } = useAuthContext();
   const { isCloud } = useDeploymentMode();
+  const { allowed: hostUpdatesAllowed } = useHostUpdateAccess();
   const { currentWorkspaceRole } = useWorkspace();
 
   const { data: workspaces = [] } = useWorkspacesList({
@@ -452,11 +471,11 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Providers,
       });
     }
-    // Falcon AI Connectors — same access as integrations
+    // Connectors (tools for Chat) — same access as integrations
     if (canAccess(RoutesName.integrations)) {
       wsSettingsItems.push({
-        title: "Falcon AI Connectors",
-        path: "/dashboard/settings/falcon-ai-connectors",
+        title: "Connectors",
+        path: "/dashboard/settings/connectors",
         icon: SettingsIcons.Integrations,
       });
     }
@@ -520,6 +539,13 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Keys,
       });
     }
+    if (hostUpdatesAllowed) {
+      orgItems.push({
+        title: "Updates",
+        path: paths.dashboard.settings.updates,
+        icon: <Iconify icon="mdi:update" />,
+      });
+    }
     if (wsEnabled && canAccess(RoutesName.workspace)) {
       orgItems.push({
         title: "Workspaces",
@@ -555,6 +581,7 @@ export function useNavSettingsData() {
     wsEnabled,
     workspaces,
     isCloud,
+    hostUpdatesAllowed,
   ]);
 
   return sections;

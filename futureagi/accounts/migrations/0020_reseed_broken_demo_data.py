@@ -67,8 +67,10 @@ def reseed_broken_demo_data(apps, schema_editor):
         # Use a savepoint so we can roll back just this org on failure
         # without aborting the entire migration.
         #
-        # The trace seeder can return an error instead of raising. Verify
-        # the result and roll back if the reseed didn't produce rows.
+        # NOTE: upload_demo_dataset / create_demo_traces_and_spans swallow
+        # their own exceptions, so we can't rely on them raising. Instead
+        # we verify the result after calling them and manually roll back
+        # the savepoint if the reseed didn't produce rows.
         try:
             sid = transaction.savepoint()
 
@@ -85,10 +87,10 @@ def reseed_broken_demo_data(apps, schema_editor):
 
             # Re-seed
             upload_demo_dataset(org_id, user_id)
-            # The publication outbox does not exist until accounts.0029.
-            create_demo_traces_and_spans(str(org_id), publish=False)
+            create_demo_traces_and_spans(str(org_id))
 
-            # Verify the reseed produced rows before committing the repair.
+            # Verify reseed actually worked — the functions swallow errors
+            # so we must check the result ourselves.
             new_demo = (
                 Dataset.objects.filter(
                     organization_id=org_id,

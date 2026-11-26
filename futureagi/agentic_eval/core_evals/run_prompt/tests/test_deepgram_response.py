@@ -60,6 +60,12 @@ def _convert(seconds: float) -> bytes:
             side_effect=ImportError("audio extra not installed"),
         ) as load_extra,
         patch("pydub.AudioSegment.from_file", side_effect=_from_file),
+        # from_file is faked above, so the test needs no ffmpeg on PATH.
+        patch(
+            "agentic_eval.core_evals.run_prompt.other_services.deepgram_response."
+            "require_ffmpeg",
+            return_value="/usr/bin/ffmpeg",
+        ),
     ):
         pcm = _load_and_convert_audio(run_prompt)
 
@@ -95,3 +101,26 @@ def test_deepgram_short_audio_is_padded_to_minimum_duration_with_pydub():
 def test_deepgram_audio_at_or_above_minimum_is_not_padded(seconds):
     pcm = _convert(seconds=seconds)
     assert len(pcm) == int(_BYTES_PER_SECOND * seconds)
+
+
+def test_deepgram_without_ffmpeg_names_the_missing_tool(tmp_path, monkeypatch):
+    """No ffmpeg in the image: a named error, not "Failed to convert audio"
+    around pydub's FileNotFoundError."""
+    from agentic_eval.core_evals.run_prompt.other_services.deepgram_response import (
+        _load_and_convert_audio,
+    )
+    from tfc.utils.media_tools import MediaToolUnavailable
+
+    monkeypatch.setenv("PATH", str(tmp_path))
+    run_prompt = SimpleNamespace(
+        _get_input_audio_from_messages=lambda: _wav_base64(0.5)
+    )
+    with (
+        patch("pydub.AudioSegment.from_file") as from_file,
+        pytest.raises(MediaToolUnavailable) as caught,
+    ):
+        _load_and_convert_audio(run_prompt)
+    message = str(caught.value)
+    assert message.startswith("ffmpeg is not installed in this backend image")
+    assert "Deepgram speech-to-text" in message
+    from_file.assert_not_called()

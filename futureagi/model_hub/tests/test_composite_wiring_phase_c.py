@@ -273,7 +273,7 @@ class TestTraceSpanCompositeBranch:
             patch.object(
                 tracer_eval, "_execute_composite_on_span", return_value={"value": 0.5}
             ) as mock_composite,
-            patch.object(tracer_eval.CustomEvalConfig.objects, "get") as mock_cfg_get,
+            patch.object(tracer_eval.CustomEvalConfig.objects, "using") as mock_cfg_db,
             patch.object(
                 tracer_eval.ObservationSpan.objects, "select_related"
             ) as mock_span_select,
@@ -286,7 +286,7 @@ class TestTraceSpanCompositeBranch:
             fake_config = MagicMock()
             fake_config.eval_template = aggregated_composite
             fake_config.eval_template.template_type = "composite"
-            mock_cfg_get.return_value = fake_config
+            mock_cfg_db.return_value.get.return_value = fake_config
 
             result = tracer_eval._execute_evaluation(
                 observation_span_id="span-1",
@@ -296,6 +296,8 @@ class TestTraceSpanCompositeBranch:
                 run_params={"input": "hello"},
             )
 
+        # The config is read from the primary (TH-3119).
+        mock_cfg_db.assert_called_once_with("default")
         mock_composite.assert_called_once()
         assert result == {"value": 0.5}
 
@@ -315,9 +317,7 @@ class TestTraceSpanCompositeBranch:
         fake_config.model = None
 
         with (
-            patch.object(
-                tracer_eval.CustomEvalConfig.objects, "get", return_value=fake_config
-            ),
+            patch.object(tracer_eval.CustomEvalConfig.objects, "using") as mock_cfg_db,
             patch(
                 "model_hub.views.utils.evals.run_eval_func",
                 return_value={
@@ -330,6 +330,7 @@ class TestTraceSpanCompositeBranch:
                 },
             ),
         ):
+            mock_cfg_db.return_value.get.return_value = fake_config
             logger_kwargs = tracer_eval._execute_composite_on_span(
                 observation_span_id="span-1",
                 custom_eval_config_id="cfg-1",
@@ -338,6 +339,8 @@ class TestTraceSpanCompositeBranch:
                 observation_span=fake_span,
             )
 
+        # The config is read from the primary (TH-3119).
+        mock_cfg_db.assert_called_once_with("default")
         assert not logger_kwargs.get("error")
         assert "[leaf-child]" in logger_kwargs["output_str"]
         assert "leaf reason" in logger_kwargs["output_str"]

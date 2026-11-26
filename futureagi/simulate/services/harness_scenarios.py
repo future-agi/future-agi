@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import count
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from django.contrib.postgres.expressions import ArraySubquery
@@ -26,6 +26,11 @@ from django.utils import timezone
 
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.test_execution import CallExecution
+from simulate.types import ScenarioCallActor
+
+if TYPE_CHECKING:
+    from simulate.services.harness_actor_rules import ActorRecord
+    from simulate.services.scenario_faults import FaultTarget
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -83,6 +88,12 @@ FIELDS: tuple[dict[str, Any], ...] = (
     {
         "value": "background_noise",
         "label": "Background",
+        "type": "enum",
+        "category": "conditions",
+    },
+    {
+        "value": "actors",
+        "label": "Actors",
         "type": "enum",
         "category": "conditions",
     },
@@ -502,6 +513,123 @@ def _orm_path(field: str) -> str:
     return _ALIASES.get(head, head)
 
 
+# The filter's value for a scenario that includes no actor.
+NO_CALL_ACTOR = "none"
+SIMULATED_USER_ONLY = "Simulated user only"
+
+
+def call_actor_entries(raw: object) -> list[ScenarioCallActor] | None:
+    """A scenario's actors as `{id, instruction, trigger, knowledge, actions}`, the fields a run reads. A missing
+    trigger stays missing (the actor's own activation then applies), never stored as an empty one.
+    """
+    entries: list[ScenarioCallActor] = [
+        cast(
+            ScenarioCallActor,
+            {
+                "id": str(one["id"]),
+                "instruction": str(one.get("instruction") or ""),
+                **(
+                    {"trigger": one["trigger"]}
+                    if isinstance(one.get("trigger"), dict) and one["trigger"]
+                    else {}
+                ),
+                **(
+                    {"knowledge": one["knowledge"]}
+                    if isinstance(one.get("knowledge"), list)
+                    else {}
+                ),
+                **(
+                    {"actions": one["actions"]}
+                    if isinstance(one.get("actions"), list)
+                    else {}
+                ),
+            },
+        )
+        for one in (raw if isinstance(raw, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
+    return entries or None
+
+
+def actor_ids_named(doc: Any) -> set[str]:
+    """Every actor id a scenario names: in its actors, its pre-run sessions (their actors and each line's speaker) and
+    its event start. The one list every reader of a scenario's actors uses."""
+    if not isinstance(doc, dict):
+        return set()
+    named = [
+        (one.get("id") if isinstance(one, dict) else one)
+        for one in doc.get("actors") or []
+    ]
+    for session in doc.get("pre_run") or []:
+        if isinstance(session, dict):
+            named += list(session.get("actors") or [])
+            named += [
+                (one or {}).get("actor")
+                for one in session.get("thread") or []
+                if isinstance(one, dict)
+            ]
+    starts = doc.get("starts_with")
+    if isinstance(starts, dict):
+        named.append(starts.get("actor"))
+    return {str(one) for one in named if one and not isinstance(one, (dict, list))}
+
+
+def actor_reference_problems(doc: dict[str, Any], known: set[str]) -> list[str]:
+    """Why a scenario names an actor the environment does not list, or nothing: in its actors, its pre-run sessions or
+    its event start. Refused when the scenario is saved, the same rule the builder keeps.
+    """
+    name = str(doc.get("name") or doc.get("scenario_key") or "a scenario")
+    missing = sorted(one for one in actor_ids_named(doc) if one not in known)
+    return [f"{name}: {one} is not an actor in this environment" for one in missing]
+
+
+def with_sessions_to_rewrite(
+    doc: dict[str, Any], before: dict[str, Any] | None
+) -> dict[str, Any]:
+    """A scenario whose pre-run session changed its situation (who, where, about) since it was written: that session's
+    thread is cleared, so the next seal writes it again from its actors; a thread is never kept for a situation that
+    no longer matches."""
+    sessions = doc.get("pre_run")
+    if not isinstance(sessions, list):
+        return doc
+    old = (before or {}).get("pre_run") if isinstance(before, dict) else None
+    old = old if isinstance(old, list) else []
+
+    def shape(one: object) -> object:
+        """What a session was written from: who is in it, where, and about what."""
+        if not isinstance(one, dict):
+            return None
+        return (one.get("actors"), one.get("where"), one.get("about"))
+
+    kept = []
+    for index, session in enumerate(sessions):
+        if not isinstance(session, dict):
+            kept.append(session)
+            continue
+        earlier = old[index] if index < len(old) else None
+        if earlier is not None and shape(session) != shape(earlier):
+            session = {**session, "fingerprint": "", "thread": []}
+        kept.append(session)
+    return {**doc, "pre_run": kept}
+
+
+def call_actor_choice_labels(listing: object) -> dict[str, str]:
+    """How the filter names each actor, and scenarios with none of them."""
+    labels = {NO_CALL_ACTOR: SIMULATED_USER_ONLY}
+    for one in (
+        listing.get("call_actors") if isinstance(listing, dict) else None
+    ) or []:
+        if isinstance(one, dict) and one.get("id"):
+            labels[str(one["id"])] = str(one.get("name") or one["id"])
+    return labels
+
+
+def _call_actor_match(value: str) -> Q:
+    if value == NO_CALL_ACTOR:
+        return Q(actors__isnull=True)
+    return Q(actors__contains=[{"id": value}])
+
+
 def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
     """A scenario document's values as an identity row stores them."""
     noise = doc.get("background_noise")
@@ -516,6 +644,10 @@ def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
         "persona": persona or None,
         "coverage": doc.get("coverage") or None,
         "sub_goals": doc.get("sub_goals") or None,
+        "actors": call_actor_entries(doc.get("actors")),
+        "faults": doc.get("faults")
+        if isinstance(doc.get("faults"), list) and doc.get("faults")
+        else None,
         # Older suites carry keywords on the persona.
         "keywords": (
             doc.get("keywords")
@@ -559,7 +691,7 @@ def _rows_held(
     used: set[Any] = set()
 
     def take(index: int, row: HostedHarnessScenario | None) -> None:
-        if row is not None and row.id not in used:
+        if row is not None and row.id not in used and may_take_back(row, docs[index]):
             held_rows[index] = row
             used.add(row.id)
 
@@ -574,7 +706,7 @@ def _rows_held(
         take(index, by_key.get(key_of(docs[index])))
     owner = {
         key_of(doc): doc.get("name")
-        for doc, row in zip(docs, held_rows)
+        for doc, row in zip(docs, held_rows, strict=False)
         if row is not None
     }
     for index, doc in enumerate(docs):
@@ -618,9 +750,12 @@ def index_scenarios(
     docs: list[dict[str, Any]],
     prune: bool = False,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> int:
     """Persist the authored suite so it can be queried, and return how many rows it holds."""
-    return len(pair_scenarios(job, docs, prune=prune, exact=exact))
+    return len(
+        pair_scenarios(job, docs, prune=prune, exact=exact, strict_keys=strict_keys)
+    )
 
 
 @dataclass(frozen=True)
@@ -633,13 +768,54 @@ class PlannedPair:
     doc: dict[str, Any]
 
 
+def restores_own_key(document: Mapping[str, Any]) -> bool:
+    """Whether a scenario is a removed one restored under its own key (`restored_from.key` is its `scenario_key`):
+    the only scenario that takes back a key the environment gave before, with its row and history."""
+    restored = document.get("restored_from")
+    key = str(document.get("scenario_key") or "").strip()
+    return (
+        bool(key)
+        and isinstance(restored, Mapping)
+        and str(restored.get("key") or "").strip() == key
+    )
+
+
+def may_take_back(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
+    """Whether a document may be written into ``row``: any live row, but a removed or archived one only when the
+    document restores it under its own key or comes back exactly as it was, never a new case that shares its key."""
+    if not row.deleted and row.archived_at is None:
+        return True
+    return restores_own_key(doc) or _comes_back_as_it_was(row, doc)
+
+
+def _comes_back_as_it_was(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
+    """Whether a document is the removed scenario ``row`` back exactly as its last saved suite held it, as a rebuild
+    restores one whose capability returned: the same case, so it keeps its row. A row no saved suite ever held (an
+    environment from before versions) has nothing to compare with, so it is read as before."""
+    from simulate.models import HarnessSuiteMember
+    from simulate.services.harness_versioning.versions import _member_content
+
+    last = (
+        HarnessSuiteMember.no_workspace_objects.filter(scenario_id=row.id)
+        .order_by("-suite_version__created_at")
+        .values_list("content", flat=True)
+        .first()
+    )
+    return last is None or last == _member_content(doc)
+
+
 def plan_pairs(
     job: HostedHarnessJob,
     docs: list[dict[str, Any]],
     *,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> list[PlannedPair]:
     """The identity row, key and number each document is written to; writes nothing.
+
+    With ``strict_keys`` a document takes the row with exactly its scenario key, dropped
+    ones included, and nothing else: a sealed suite names its scenarios by key, so another
+    spelling or the same name is another scenario.
 
     With ``exact`` (the default for an environment head that has versions) a document
     that carries a scenario key matches the row the default suite links to the document
@@ -654,7 +830,9 @@ def plan_pairs(
         return []
     from simulate.services.hosted_harness_gateway import _scenario_token
 
-    if exact is None:
+    if strict_keys:
+        exact = False
+    elif exact is None:
         exact = (
             getattr(job, "environment_id", None) is None
             and getattr(job, "environment_version_id", None) is not None
@@ -680,7 +858,13 @@ def plan_pairs(
     taken = max(
         (row.number for row in existing.values() if row.number is not None), default=0
     )
-    held_rows = [None] * len(docs) if exact else _rows_held(rows, docs)
+    held_rows = (
+        [existing.get(doc["scenario_key"]) for doc in docs]
+        if strict_keys
+        else [None] * len(docs)
+        if exact
+        else _rows_held(rows, docs)
+    )
     keys = {row.scenario_key for row in rows}
     # Every key given out, by a row or by this suite, so a repeat gets one nobody holds.
     given = keys | {str(doc.get("scenario_key") or "").strip() for doc in docs}
@@ -699,6 +883,14 @@ def plan_pairs(
             )
         elif exact:
             held = by_token.get(_scenario_token(doc.get("name")))
+        if (
+            exact
+            and held is not None
+            and held.id not in owned
+            and not may_take_back(held, doc)
+        ):
+            # A new case whose key or name a removed one held: a fresh key and row, never the old one's history.
+            held = None
         if (
             exact
             and held is not None
@@ -755,6 +947,7 @@ def pair_scenarios(
     docs: list[dict[str, Any]],
     prune: bool = False,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> list[tuple[HostedHarnessScenario, dict[str, Any]]]:
     """Persist the authored suite and return the identity row each document was written to.
 
@@ -764,7 +957,7 @@ def pair_scenarios(
     seen: set[str] = set()
     # A scenario listed twice is planned twice under one key: both write one row.
     written: dict[str, HostedHarnessScenario] = {}
-    for planned in plan_pairs(job, docs, exact=exact):
+    for planned in plan_pairs(job, docs, exact=exact, strict_keys=strict_keys):
         seen.add(planned.key)
         fields = {
             "number": planned.number,
@@ -788,9 +981,12 @@ def pair_scenarios(
     # soft-deleted even when history points at it, so old Runs retain their foreign key
     # while active-suite reads and new Run selection no longer expose it.
     if prune:
+        # An archived row keeps its identity, runs and evidence: it is never pruned.
         HostedHarnessScenario.no_workspace_objects.filter(job=job).exclude(
             scenario_key__in=seen
-        ).update(deleted=True, deleted_at=timezone.now())
+        ).exclude(archived_at__isnull=False).update(
+            deleted=True, deleted_at=timezone.now()
+        )
     return pairs
 
 
@@ -877,6 +1073,9 @@ def _default_member_rows(
 class ScenarioRows(list):
     """Draft scenario rows, read the way the list, coverage and catalogue read rows."""
 
+    # The draft they come from: its id and revision.
+    draft: dict[str, Any] | None = None
+
     def values(self, *paths: str) -> list[dict[str, Any]]:
         return [{path: _row_value(row, path) for path in paths} for row in self]
 
@@ -922,6 +1121,11 @@ def _filtered_rows(rows: ScenarioRows, params) -> ScenarioRows:
         def matches(
             row: HostedHarnessScenario, path=path, field=field, values=values
         ) -> bool:
+            if field == "actors":
+                ids = {str(one.get("id")) for one in row.actors or []}
+                return any(
+                    not ids if one == NO_CALL_ACTOR else one in ids for one in values
+                )
             held = _row_value(row, path)
             if field in _LIST_FIELDS:
                 return isinstance(held, list) and any(one in held for one in values)
@@ -936,6 +1140,14 @@ def apply_filters(queryset: QuerySet, params) -> QuerySet:
     if isinstance(queryset, ScenarioRows):
         return _filtered_rows(queryset, params)
     for field, path, values, negated in _filter_terms(params):
+        if field == "actors":
+            matches = Q()
+            for value in values:
+                matches |= _call_actor_match(value)
+            queryset = (
+                queryset.exclude(matches) if negated else queryset.filter(matches)
+            )
+            continue
         lookup = (
             f"{path}__contains"
             if _BY_VALUE[field]["value"] in _LIST_FIELDS
@@ -984,7 +1196,11 @@ def apply_search(queryset: QuerySet, term: str) -> QuerySet:
     return queryset.filter(matches)
 
 
-def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, Any]]:
+def field_catalogue(
+    queryset: QuerySet,
+    spoken: bool = True,
+    call_actor_labels: dict[str, str] | Callable[[], dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     """The panel's `fields`, with each enum's values and counts over the whole filtered suite."""
     enums = [field for field in FIELDS if field["type"] == "enum"]
     paths = {field["value"]: _orm_path(field["value"]) for field in enums}
@@ -992,12 +1208,17 @@ def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, A
     for row in queryset.values(*set(paths.values())):
         for value, path in paths.items():
             held = row.get(path)
+            if value == "actors":
+                held = [one.get("id") for one in held or []] or [NO_CALL_ACTOR]
             for one in held if isinstance(held, list) else [held]:
                 text = str(one or "").strip()
                 if text:
                     counts = tally[value]
                     counts[text] = counts.get(text, 0) + 1
 
+    # A suite where no scenario includes an actor has nothing to filter on.
+    if set(tally["actors"]) <= {NO_CALL_ACTOR}:
+        tally["actors"] = {}
     catalogue: list[dict[str, Any]] = []
     for field in FIELDS:
         if not spoken and field["value"] in VOICE_ONLY_FIELDS:
@@ -1014,6 +1235,14 @@ def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, A
             for name, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
         ]
         entry["counts"] = counts
+        if field["value"] == "actors":
+            # Reached only when the suite has actors: naming them reads the environment's files.
+            labels = (
+                call_actor_labels()
+                if callable(call_actor_labels)
+                else call_actor_labels
+            )
+            entry["choice_labels"] = labels or call_actor_choice_labels(None)
         catalogue.append(entry)
     return catalogue
 
@@ -1108,9 +1337,23 @@ def level_labels_for(
     return labels
 
 
-def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
-    """One list row. Safe on a scenario indexed before any call was made."""
+def scenario_row(
+    row: HostedHarnessScenario,
+    *,
+    targets: list[FaultTarget] | None,
+    fault_targets: list[FaultTarget],
+    actor_cast: list[ActorRecord],
+) -> dict[str, Any]:
+    """One list row. Safe on a scenario indexed before any call was made. Its actors are resolved against the
+    environment's cast, its faults against ``fault_targets`` as the harness applies them, and a scenario that cannot
+    work on this agent as set says why (``targets`` is ``door_targets``)."""
+    # Imported here: harness_tool_reach loads hosted_harness, whose import chain reaches back to this module.
+    from simulate.services.harness_actor_labels import resolved_scenario_actors
+    from simulate.services.harness_tool_reach import door_problem
+    from simulate.services.scenario_faults import resolved_faults
+
     persona = row.persona or {}
+    actors = call_actor_entries(row.actors) or []
     return {
         "id": str(row.id),
         "scenario_id": str(row.scenario_id) if row.scenario_id else None,
@@ -1124,6 +1367,14 @@ def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:
         "persona": persona,
         "coverage": row.coverage or {},
         "sub_goals": row.sub_goals or [],
+        "actors": [
+            {**entry, **resolved}
+            for entry, resolved in zip(
+                actors, resolved_scenario_actors(actors, actor_cast), strict=True
+            )
+        ],
+        "faults": resolved_faults(row.faults, fault_targets),
+        "door_problem": door_problem(faults=row.faults, actors=actors, targets=targets),
         "keywords": row.keywords or [],
         "background_noise": row.background_noise,
         "max_turns": row.max_turns,

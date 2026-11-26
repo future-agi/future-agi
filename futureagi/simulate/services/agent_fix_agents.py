@@ -6,7 +6,9 @@ kind is one more class in ``AGENT_KINDS``.
 """
 
 import io
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
+
+from django.db.models import Exists, OuterRef, Q, QuerySet
 
 from simulate.models import (
     AgentFixCandidate,
@@ -29,12 +31,23 @@ from simulate.services.hosted_harness_gateway import (
     store_source_archive,
 )
 
+if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
+
 
 class AgentKind(Protocol):
     # The parts of the agent a fix may change; launch refuses any other.
     surfaces: frozenset[Surface]
 
     def handles(self, environment: HostedHarnessJob) -> bool: ...
+
+    def pickable(
+        self, environments: QuerySet[HostedHarnessJob]
+    ) -> QuerySet[HostedHarnessJob]:
+        """The environments among ``environments`` an epoch can be run on once they are
+        ready: those this kind handles, and those whose own source it would handle that
+        have no agent version yet. In one query."""
+        ...
 
     def require_available(self) -> None:
         """Refuse, with the reason, when this deployment cannot fix this kind of agent."""
@@ -88,11 +101,27 @@ class VersionedSourceAgent:
             agent_version_id=environment.agent_version_id, source_kind__in=self.EDITABLE
         ).exists()
 
+    def pickable(
+        self, environments: QuerySet[HostedHarnessJob]
+    ) -> QuerySet[HostedHarnessJob]:
+        editable = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            source_kind__in=self.EDITABLE
+        ).values("agent_version_id")
+        # With no agent version (still building, or made before they were kept), the
+        # environment's own source says what its agent is.
+        return environments.filter(
+            Q(agent_version_id__in=editable)
+            | Q(
+                agent_version__isnull=True,
+                payload__source__kind__in=[kind.value for kind in self.EDITABLE],
+            )
+        )
+
     def require_available(self) -> None:
         if not versioning_enabled() or not certify_enabled():
             raise HostedHarnessError(
                 "fix_unavailable",
-                "Fix my agent needs agent versions and new version builds turned on",
+                "Epoch needs agent versions and new version builds turned on",
                 status_code=422,
             )
 
@@ -140,7 +169,9 @@ class VersionedSourceAgent:
             "picks": VersionPicks(
                 agent_version_id=agent_version_id,
                 environment_version_id=source_run.environment_version_id,
-                suite_version_id=source_run.suite_version_id,
+                # The fix's own suite once it wrote variations, else the failed run's.
+                suite_version_id=fix_run.suite_version_id
+                or source_run.suite_version_id,
             )
         }
 
@@ -157,21 +188,68 @@ class VersionedSourceAgent:
                 " there",
                 status_code=422,
             )
+        # Only over the version the fix was made on: a default that moved since would
+        # lose that change.
         return make_default(
-            candidate.agent_version, candidate.fix_run.environment, user=user
+            candidate.agent_version,
+            candidate.fix_run.environment,
+            user=user,
+            expected_default_id=candidate.fix_run.base_agent_version_id,
         )
 
 
 AGENT_KINDS: list[AgentKind] = [VersionedSourceAgent()]
 
 
+def pickable_environments(
+    environments: QuerySet[HostedHarnessJob],
+) -> QuerySet[HostedHarnessJob]:
+    """The environments among ``environments`` an epoch can be picked for: an agent some
+    kind handles, with or without its agent version yet."""
+    found = environments.none()
+    for kind in AGENT_KINDS:
+        found = found | kind.pickable(environments)
+    return found
+
+
+class EpochPickable(TypedDict):
+    epoch_pickable: bool
+
+
+def with_epoch_pickable(
+    environments: QuerySet[HostedHarnessJob],
+) -> "QuerySet[WithAnnotations[HostedHarnessJob, EpochPickable]]":
+    """``environments`` annotated ``epoch_pickable``, in the same query."""
+    return environments.annotate(
+        epoch_pickable=Exists(
+            pickable_environments(
+                HostedHarnessJob.no_workspace_objects.filter(id=OuterRef("id"))
+            )
+        )
+    )
+
+
+def pickable_kind(environment: HostedHarnessJob) -> AgentKind | None:
+    """The kind an epoch on ``environment`` would run as, read without its agent version;
+    None for an agent no kind can change."""
+    one = HostedHarnessJob.no_workspace_objects.filter(id=environment.id)
+    for kind in AGENT_KINDS:
+        if kind.pickable(one).exists():
+            return kind
+    return None
+
+
+def not_editable() -> HostedHarnessError:
+    return HostedHarnessError(
+        "fix_agent_not_editable",
+        "Epoch can change an uploaded or GitHub agent; this agent's prompt and tools"
+        " run outside Future AGI",
+        status_code=422,
+    )
+
+
 def agent_kind(environment: HostedHarnessJob) -> AgentKind:
     for kind in AGENT_KINDS:
         if kind.handles(environment):
             return kind
-    raise HostedHarnessError(
-        "fix_agent_not_editable",
-        "Fix my agent can change an uploaded or GitHub agent; this agent's prompt and tools"
-        " run outside Future AGI",
-        status_code=422,
-    )
+    raise not_editable()

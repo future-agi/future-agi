@@ -15,6 +15,7 @@ deserializes `attributes_extra`. Each test asserts:
   2. arithmetic outputs match a hand-computed expected value
   3. structural fields (transcript ordering, message_count, etc.) match
 """
+
 from __future__ import annotations
 
 import pytest
@@ -40,10 +41,12 @@ def _import_provider_module():
     function-scoped fixture; pytest collection cost is negligible.
     """
     from tracer.services import observability_providers
+
     return observability_providers
 
 
 # ─── Vapi fixtures ───────────────────────────────────────────────────────────
+
 
 def _vapi_basic_call(**overrides):
     """The shape `_process_vapi_logs` expects, drawn from real production
@@ -88,9 +91,9 @@ def _vapi_basic_call(**overrides):
             {
                 "role": "user",
                 "message": "Hello, can you help me?",
-                "time": 1773816575961,   # ms epoch — large int that previously stringified
+                "time": 1773816575961,  # ms epoch — large int that previously stringified
                 "secondsFromStart": 1.5,  # float
-                "duration": 932,          # int(ms) — the canonical crashing value
+                "duration": 932,  # int(ms) — the canonical crashing value
             },
             {
                 "role": "bot",
@@ -114,6 +117,7 @@ def _vapi_basic_call(**overrides):
 
 # ─── Vapi consumer tests ─────────────────────────────────────────────────────
 
+
 class TestProcessVapiLogs:
     """The function that crashed in production with `str / int` —
     these tests pin every code path that does arithmetic on a nested-array leaf.
@@ -124,7 +128,7 @@ class TestProcessVapiLogs:
         result = mod.ObservabilityService._process_vapi_logs(_vapi_basic_call())
         assert result["call_id"] == "call_test_123"
         assert result["status"] == "completed"
-        assert result["duration_seconds"] == 90    # 10:01:30 - 10:00:00
+        assert result["duration_seconds"] == 90  # 10:01:30 - 10:00:00
         assert result["cost_cents"] == pytest.approx(2.34)
 
     def test_transcript_excludes_first_message_and_skips_system_role(self):
@@ -179,20 +183,30 @@ class TestProcessVapiLogs:
 
     def test_zero_cost_is_preserved(self):
         mod = _import_provider_module()
-        result = mod.ObservabilityService._process_vapi_logs(
-            _vapi_basic_call(cost=0)
-        )
+        result = mod.ObservabilityService._process_vapi_logs(_vapi_basic_call(cost=0))
         assert result["cost_cents"] == 0
 
     def test_zero_duration_messages_dont_crash_div_by_zero(self):
         """Boundary: total_talk == 0 → talk_ratio is None (avoid div/0)."""
         mod = _import_provider_module()
-        log = _vapi_basic_call(messages=[
-            {"role": "user", "message": "Hi",
-             "time": 1, "secondsFromStart": 0.0, "duration": 0},
-            {"role": "bot", "message": "Hi",
-             "time": 2, "secondsFromStart": 1.0, "duration": 0},
-        ])
+        log = _vapi_basic_call(
+            messages=[
+                {
+                    "role": "user",
+                    "message": "Hi",
+                    "time": 1,
+                    "secondsFromStart": 0.0,
+                    "duration": 0,
+                },
+                {
+                    "role": "bot",
+                    "message": "Hi",
+                    "time": 2,
+                    "secondsFromStart": 1.0,
+                    "duration": 0,
+                },
+            ]
+        )
         result = mod.ObservabilityService._process_vapi_logs(log)
         assert result["talk_ratio"] is None  # total_talk == 0 → None
 
@@ -227,6 +241,7 @@ class TestProcessVapiLogs:
 
 # ─── Retell fixtures ─────────────────────────────────────────────────────────
 
+
 def _retell_basic_call(**overrides):
     """Retell shape — the consumer reads `transcript_with_tool_calls[i].words[j].{start,end}`
     where the leaves are float seconds. This was the second-most-common
@@ -238,7 +253,7 @@ def _retell_basic_call(**overrides):
         "call_status": "ended",
         # ms-epoch ints
         "start_timestamp": 1773816575000,
-        "end_timestamp":   1773816665000,
+        "end_timestamp": 1773816665000,
         "duration_ms": 90000,
         "to_number": "+15555550100",
         "from_number": "+15555550000",
@@ -249,7 +264,7 @@ def _retell_basic_call(**overrides):
         "metadata": {"campaign": "Q2"},
         "call_analysis": {"call_summary": "Successful booking"},
         "call_cost": {
-            "stt_cost": 1.5,    # cents
+            "stt_cost": 1.5,  # cents
             "llm_cost": 3.0,
             "tts_cost": 1.2,
             "combined_cost": 5.7,
@@ -259,11 +274,11 @@ def _retell_basic_call(**overrides):
                 "role": "agent",
                 "content": "Hello, this is Sales Agent.",
                 "words": [
-                    {"word": "Hello,",  "start": 0.5,  "end": 0.8},
-                    {"word": "this",    "start": 0.85, "end": 1.0},
-                    {"word": "is",      "start": 1.05, "end": 1.15},
-                    {"word": "Sales",   "start": 1.20, "end": 1.50},
-                    {"word": "Agent.",  "start": 1.55, "end": 1.95},
+                    {"word": "Hello,", "start": 0.5, "end": 0.8},
+                    {"word": "this", "start": 0.85, "end": 1.0},
+                    {"word": "is", "start": 1.05, "end": 1.15},
+                    {"word": "Sales", "start": 1.20, "end": 1.50},
+                    {"word": "Agent.", "start": 1.55, "end": 1.95},
                 ],
                 "metadata": {"channel": 0},
             },
@@ -289,6 +304,7 @@ def _retell_basic_call(**overrides):
 
 
 # ─── Retell consumer tests ───────────────────────────────────────────────────
+
 
 class TestProcessRetellLogs:
     def test_normal_call_no_type_errors(self):
@@ -413,6 +429,7 @@ class TestProcessRetellLogs:
 
 # ─── Cross-provider type-fragility regression ────────────────────────────────
 
+
 class TestTypeFragilityRegression:
     """If anyone reintroduces the typed-JSON array-leaf stringification
     (or otherwise hands the consumers str-typed numerics), these tests
@@ -433,11 +450,22 @@ class TestTypeFragilityRegression:
     # the test readable and avoids a homemade JSONPointer.
     _VAPI_STR_LEAF_MUTATORS = [
         # `duration` → divided by 1000; the original incident.
-        ("messages[1].duration", lambda lg: (lg["messages"][1].__setitem__("duration", "932"), lg)[1]),
+        (
+            "messages[1].duration",
+            lambda lg: (lg["messages"][1].__setitem__("duration", "932"), lg)[1],
+        ),
         # `secondsFromStart` → used in `timedelta(seconds=start_time + duration)`.
-        ("messages[1].secondsFromStart", lambda lg: (lg["messages"][1].__setitem__("secondsFromStart", "1.5"), lg)[1]),
+        (
+            "messages[1].secondsFromStart",
+            lambda lg: (lg["messages"][1].__setitem__("secondsFromStart", "1.5"), lg)[
+                1
+            ],
+        ),
         # `time` (ms-epoch) → passed to `datetime.fromtimestamp(time / 1000)`.
-        ("messages[1].time", lambda lg: (lg["messages"][1].__setitem__("time", "1773816575961"), lg)[1]),
+        (
+            "messages[1].time",
+            lambda lg: (lg["messages"][1].__setitem__("time", "1773816575961"), lg)[1],
+        ),
         # Top-level `cost` → consumer does `cost * 100 if cost else None`.
         # Not a nested-array leaf (so the CH typed-JSON bug doesn't affect it
         # today), but the class doc claims "every numeric leaf the consumer
@@ -445,8 +473,11 @@ class TestTypeFragilityRegression:
         ("cost (top-level)", lambda lg: (lg.__setitem__("cost", "0.0234"), lg)[1]),
     ]
 
-    @pytest.mark.parametrize("leaf_name,mutate", _VAPI_STR_LEAF_MUTATORS,
-                             ids=[name for name, _ in _VAPI_STR_LEAF_MUTATORS])
+    @pytest.mark.parametrize(
+        "leaf_name,mutate",
+        _VAPI_STR_LEAF_MUTATORS,
+        ids=[name for name, _ in _VAPI_STR_LEAF_MUTATORS],
+    )
     def test_vapi_numeric_leaf_as_string_raises_typeerror(self, leaf_name, mutate):
         mod = _import_provider_module()
         log = mutate(_vapi_basic_call())
@@ -455,24 +486,45 @@ class TestTypeFragilityRegression:
 
     _RETELL_STR_LEAF_MUTATORS = [
         # `words[0].start` → passed to `timedelta(seconds=seconds_from_start)`.
-        ("words[0].start",
-         lambda lg: (lg["transcript_with_tool_calls"][0]["words"][0].__setitem__("start", "0.5"), lg)[1]),
+        (
+            "words[0].start",
+            lambda lg: (
+                lg["transcript_with_tool_calls"][0]["words"][0].__setitem__(
+                    "start", "0.5"
+                ),
+                lg,
+            )[1],
+        ),
         # `words[-1].end` → passed to `timedelta(seconds=end_time)` AND
         # `round(end_time, 2)` in the message dict. Distinct codepath from
         # the start leaf; needs its own assertion.
-        ("words[-1].end",
-         lambda lg: (lg["transcript_with_tool_calls"][0]["words"][-1].__setitem__("end", "1.95"), lg)[1]),
+        (
+            "words[-1].end",
+            lambda lg: (
+                lg["transcript_with_tool_calls"][0]["words"][-1].__setitem__(
+                    "end", "1.95"
+                ),
+                lg,
+            )[1],
+        ),
         # `start_timestamp` → divided by 1000 at the top of the function.
-        ("start_timestamp",
-         lambda lg: (lg.__setitem__("start_timestamp", "1773816575000"), lg)[1]),
+        (
+            "start_timestamp",
+            lambda lg: (lg.__setitem__("start_timestamp", "1773816575000"), lg)[1],
+        ),
         # `end_timestamp` → divided by 1000, then `int(ended_at - started_at)`.
         # If only start was mutated this would never crash on end-side arithmetic.
-        ("end_timestamp",
-         lambda lg: (lg.__setitem__("end_timestamp", "1773816665000"), lg)[1]),
+        (
+            "end_timestamp",
+            lambda lg: (lg.__setitem__("end_timestamp", "1773816665000"), lg)[1],
+        ),
     ]
 
-    @pytest.mark.parametrize("leaf_name,mutate", _RETELL_STR_LEAF_MUTATORS,
-                             ids=[name for name, _ in _RETELL_STR_LEAF_MUTATORS])
+    @pytest.mark.parametrize(
+        "leaf_name,mutate",
+        _RETELL_STR_LEAF_MUTATORS,
+        ids=[name for name, _ in _RETELL_STR_LEAF_MUTATORS],
+    )
     def test_retell_numeric_leaf_as_string_raises_typeerror(self, leaf_name, mutate):
         mod = _import_provider_module()
         log = mutate(_retell_basic_call())

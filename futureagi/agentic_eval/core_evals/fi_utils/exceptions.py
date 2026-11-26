@@ -1,9 +1,5 @@
-
-
 class CustomException(Exception):
-    def __init__(
-        self, message: str | None = None, extra_info: dict | None = None
-    ):
+    def __init__(self, message: str | None = None, extra_info: dict | None = None):
         self.message = message
         self.extra_info = extra_info
         super().__init__(self.message)
@@ -34,6 +30,12 @@ class MediaNotAccessibleError(ValueError):
             f"The file could not be downloaded — please ensure "
             f"the URL is valid and accessible."
         )
+
+
+class EvalConfigError(ValueError):
+    """Raised when an eval's own configuration cannot run, for example a
+    custom eval with no rule prompt. Its message is the backend's own text,
+    so callers may show it to users."""
 
 
 class CodeEvalSetupError(ValueError):

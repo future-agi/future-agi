@@ -27,6 +27,13 @@ def test_audio_prompt_requires_evidence_and_does_not_penalize_backchannels():
     assert "ordinary overlap alone is not evidence" in SYSTEM_PROMPT
 
 
+def _spoken(rows):
+    """Rows as the transcript read returns them: each with who spoke it (nobody here), as its annotation gives."""
+    for row in rows:
+        row.speaker_name, row.actor_id = "", None
+    return rows
+
+
 @pytest.mark.parametrize(
     "provider,direction,agent_role",
     [
@@ -56,7 +63,7 @@ def test_snapshot_uses_ui_role_resolution_and_recording_offset(
         call_metadata={"call_direction": direction, "recording_offset_ms": 250},
         provider_call_data={provider: {"id": "test"}},
     )
-    call.transcripts.exclude.return_value = rows
+    call.transcripts.exclude.return_value.annotate.return_value = _spoken(rows)
     config = SimpleNamespace(
         mapping={
             "output": "call.voice_recording",
@@ -180,7 +187,9 @@ def test_snapshot_deduplicates_provider_partial_and_final_rows():
         call_metadata={},
         provider_call_data={"livekit": {"id": "test"}},
     )
-    call.transcripts.exclude.return_value = [partial, final]
+    call.transcripts.exclude.return_value.annotate.return_value = _spoken(
+        [partial, final]
+    )
     config = SimpleNamespace(mapping={"conversation": "voice_recording"})
 
     snapshot = simulation_audio_snapshot(call, config, {"conversation": "audio"})

@@ -11,6 +11,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _ffmpeg_on_path():
+    """subprocess is mocked in every test here, so no real ffmpeg is needed;
+    report it as installed (tfc/utils/tests/test_media_tools.py covers the
+    missing case)."""
+    with patch("tfc.utils.storage.require_ffmpeg", return_value="/usr/bin/ffmpeg"):
+        yield
+
+
 class TestDetectAudioFormatTimeout:
     """detect_audio_format should timeout after 10 seconds."""
 

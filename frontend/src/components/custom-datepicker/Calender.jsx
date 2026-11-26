@@ -61,7 +61,7 @@ export default function Calendar({
           sx={{ border: "1px solid var(--border-light)" }}
           onClick={onPrevMonth}
         >
-          <Iconify icon="solar:alt-arrow-left-linear" sx={{ fontSize: 13 }} />{" "}
+          <Iconify icon="solar:alt-arrow-left-linear" sx={{ fontSize: 12 }} />{" "}
           {/* smaller icon */}
         </IconButton>
 

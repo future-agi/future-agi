@@ -13,7 +13,7 @@ import subprocess
 import tarfile
 import tempfile
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 
 import structlog
 from django.conf import settings
@@ -25,6 +25,7 @@ from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
     HostedHarnessJob,
+    SimulateEvalConfig,
     TestExecution,
 )
 from simulate.pydantic_schemas.agent_fix import (
@@ -38,14 +39,20 @@ from simulate.selectors.agent_fix import (
     check_run_parallelism,
     committed_usd,
     fix_lineage,
+    graded_check_runs,
+    is_graded_label,
     ran_at,
+    worst_case_usd_per_execution,
 )
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_runs import close_fix_run
+from simulate.services.harness_evals import runnable_eval_configs
+from simulate.services.harness_run_evals import queue_evals_for_finished_calls
 from simulate.services.harness_usage import require_harness_call_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
+    fail_unscheduled,
     run_idempotency_key,
 )
 from simulate.temporal.client import start_hosted_harness_gateway_workflow
@@ -62,6 +69,9 @@ _ENDING_STATES = {
     Ending.FAILED: AgentFixRun.State.FAILED,
 }
 MAX_PATCH_BYTES = 2 * 1024 * 1024
+# The engine asks once more for a check run that failed on the platform's side, under its
+# label with this suffix and the same repeat: either one is the same check.
+AGAIN_SUFFIX = "-again"
 
 
 def _locked_running(fix_run_id: Any) -> AgentFixRun:
@@ -74,7 +84,7 @@ def _locked_running(fix_run_id: Any) -> AgentFixRun:
     if locked.source_run_id is None:
         raise HostedHarnessError(
             "fix_source_deleted",
-            "the run this fix started from was deleted",
+            "the run this epoch started from was deleted",
             status_code=409,
         )
     return locked
@@ -89,12 +99,69 @@ def source_archive(fix_run: AgentFixRun) -> bytes:
         if fix_run.source_run_id is None:
             raise HostedHarnessError(
                 "fix_source_deleted",
-                "the run this fix started from was deleted",
+                "the run this epoch started from was deleted",
                 status_code=409,
             )
         body = agent_kind(fix_run.environment).source_archive(fix_run)
         _put(key, body, "application/gzip")
     return body
+
+
+class ChangedFile(NamedTuple):
+    path: str
+    added: int
+    removed: int
+
+
+def patch_files(patch: bytes) -> list[ChangedFile]:
+    """Each file a git patch changes, in its order, with its added and removed lines, as
+    git itself counts them: a path reads as written, never quoted, and a line is a line
+    whatever characters it holds. A binary file counts no lines."""
+    if not patch.strip():
+        return []
+    with tempfile.TemporaryDirectory(prefix="agent-fix-numstat-") as cwd:
+        counted = subprocess.run(
+            ["git", "-c", "core.quotePath=false", "apply", "--numstat", "-z"],
+            cwd=cwd,
+            input=patch,
+            env=dict(os.environ),
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout
+    fields = counted.split(b"\0")
+    files, at = [], 0
+    while at < len(fields):
+        entry = fields[at]
+        at += 1
+        if not entry:
+            continue
+        added, removed, path = entry.split(b"\t", 2)
+        if not path:
+            # A rename names its old path, then its new one.
+            path, at = fields[at + 1], at + 2
+        files.append(
+            ChangedFile(
+                path.decode("utf-8", "replace"),
+                int(added) if added.isdigit() else 0,
+                int(removed) if removed.isdigit() else 0,
+            )
+        )
+    return files
+
+
+def counted_files(fix_run: AgentFixRun, patch: bytes) -> list[ChangedFile] | None:
+    """The patch's files; None, said in the log, when git could not count them. What
+    reads them then has no change line, and nothing else stops."""
+    try:
+        return patch_files(patch)
+    except (subprocess.SubprocessError, ValueError) as exc:
+        logger.warning(
+            "agent_fix_patch_not_counted",
+            fix_run=str(fix_run.id),
+            error=type(exc).__name__,
+        )
+        return None
 
 
 def add_candidate(
@@ -123,6 +190,9 @@ def add_candidate(
         prepared = kind.prepare_candidate(fix_run, files, attempt)
         patch_key = _object_key(fix_run, f"candidate-{attempt}.patch")
         _put(patch_key, patch, "text/x-diff")
+        # Counted here, outside the fix's lock too, so reading the candidate never
+        # reads its patch.
+        counted = counted_files(fix_run, patch)
         try:
             with transaction.atomic():
                 locked = _locked_running(fix_run.id)
@@ -132,6 +202,9 @@ def add_candidate(
                     attempt=attempt,
                     agent_version=version,
                     patch_object_key=patch_key,
+                    changed_files=None
+                    if counted is None
+                    else [list(one) for one in counted],
                     summary=summary[:4000],
                 )
         except IntegrityError as exc:
@@ -274,14 +347,28 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
     executions = len(request.scenario_keys) * request.trials
     if not replay:
         # Before the usage check, which counts against the organization's quota.
-        _require_budget(fix_run, executions)
+        _require_budget(fix_run, executions, request.label)
         require_harness_call_usage(environment)
     with transaction.atomic():
         locked = _locked_running(fix_run.id)
         if finished is not None:
+            # Read under the fix's lock: the same request, sent twice at once, adopts once.
+            adopted_by = (
+                HostedHarnessJob.no_workspace_objects.filter(id=finished.id)
+                .values_list("graded_for_id", flat=True)
+                .get()
+            )
+            if is_graded_label(request.label) and adopted_by != locked.id:
+                # This retry's winner grades it: its evals are new spend, held against
+                # this fix's limit as its own graded runs' are.
+                _require_budget(locked, executions, request.label, read_again=True)
+                HostedHarnessJob.no_workspace_objects.filter(id=finished.id).update(
+                    graded_for=locked
+                )
+                finished.graded_for = locked
             return finished
         if not replay:
-            _require_budget(locked, executions)
+            _require_budget(locked, executions, request.label)
         run, created = create_selected_harness_run(
             environment,
             scenario_keys=request.scenario_keys,
@@ -298,7 +385,7 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
                 fix_label=request.label
             )
             run.fix_label = request.label
-            transaction.on_commit(lambda: _dispatch(run))
+            transaction.on_commit(lambda: dispatch_run(run))
     return run
 
 
@@ -316,8 +403,9 @@ def _finished_earlier(
     parallelism: int,
 ) -> HostedHarnessJob | None:
     """The same check, finished by a failed fix this one retries: the user paid for it
-    once, so it is read again instead of run again. Same label, versions, scenarios, trials
-    and parallelism; a run that failed or was canceled is run again."""
+    once, so it is read again instead of run again. Same label (or the label the engine asked
+    again under), versions, scenarios, trials and parallelism; a run that failed or was
+    canceled is run again."""
     earlier = fix_lineage(fix_run)[1:]
     picks = options.get("picks")
     if not earlier or picks is None:
@@ -332,7 +420,7 @@ def _finished_earlier(
     )
     for run in HostedHarnessJob.no_workspace_objects.filter(
         fix_run_id__in=earlier,
-        fix_label=request.label,
+        fix_label__in=(request.label, f"{request.label}{AGAIN_SUFFIX}"),
         state=HostedHarnessJob.State.COMPLETED,
         deleted=False,
     ).order_by("-created_at"):
@@ -348,7 +436,7 @@ def _finished_earlier(
     return None
 
 
-def _dispatch(run: HostedHarnessJob) -> None:
+def dispatch_run(run: HostedHarnessJob) -> None:
     """Start the check run's workflow; if it cannot start, the run fails at once instead of
     waiting queued for a workflow that will never come."""
     retry = run.payload["retry"]
@@ -367,22 +455,9 @@ def _dispatch(run: HostedHarnessJob) -> None:
 
 def _fail_unscheduled(run: HostedHarnessJob) -> None:
     message = "the check run could not be scheduled"
-    now = timezone.now()
     with transaction.atomic():
-        marked = HostedHarnessJob.no_workspace_objects.filter(
-            id=run.id, state=HostedHarnessJob.State.QUEUED
-        ).update(
-            state=HostedHarnessJob.State.FAILED,
-            current_stage="failed",
-            terminal_at=now,
-            failure={
-                "domain": "infrastructure",
-                "stage": "queued",
-                "code": "scheduler_unavailable",
-                "message": message,
-            },
-        )
-        if marked:
+        now = fail_unscheduled(run, message)
+        if now is not None:
             TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
                 status=TestExecution.ExecutionStatus.FAILED,
                 completed_at=now,
@@ -390,19 +465,85 @@ def _fail_unscheduled(run: HostedHarnessJob) -> None:
             )
 
 
-def _worst_case_per_execution() -> Decimal:
-    return Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION)
-
-
-def _require_budget(fix_run: AgentFixRun, executions: int) -> None:
+def _require_budget(
+    fix_run: AgentFixRun, executions: int, label: str, *, read_again: bool = False
+) -> None:
     budget = Decimal(str(fix_run.request["budget_usd"]))
-    needed = committed_usd(fix_run) + executions * _worst_case_per_execution()
+    worst = worst_case_usd_per_execution(fix_run, graded=is_graded_label(label))
+    if read_again:
+        # A run read again from the failed fix: that fix paid its simulation.
+        worst -= worst_case_usd_per_execution(fix_run, graded=False)
+        if worst <= 0:
+            return
+    needed = committed_usd(fix_run) + executions * worst
     if needed > budget:
         raise HostedHarnessError(
             "fix_budget_exhausted",
             f"this check would bring the fix to ${needed:.2f} of its ${budget:.2f} budget",
             status_code=402,
         )
+
+
+def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
+    """Queue the platform's evals of the baseline and the winner's final check, the runs its
+    warnings compare. A fix's check runs are graded only now, so a fix with no winner pays
+    for none. Called inside the report's transaction: the jobs start once it commits."""
+    configs = list(
+        runnable_eval_configs(fix_run.environment.run_test_id).order_by(
+            "created_at", "id"
+        )
+    )
+    if not configs:
+        return
+    winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)
+    base, final = graded_check_runs(fix_run, winner)
+    configs = _evals_within_budget(fix_run, configs, [*base, *final])
+    if not configs:
+        return
+    for run in (*base, *final):
+        execution = run.test_execution
+        if execution is None:
+            continue
+        # Every config in one pass: queueing one reopens a call's eval side, so a
+        # call per config would leave all but the first config ungraded.
+        try:
+            queue_evals_for_finished_calls(execution, configs)
+        except ValueError:
+            # A cancelled run is never graded; its evals read as not finished.
+            logger.warning(
+                "agent_fix_grading_not_queued",
+                fix_run=str(fix_run.id),
+                run=str(run.id),
+                exc_info=True,
+            )
+
+
+def _evals_within_budget(
+    fix_run: AgentFixRun,
+    configs: list[SimulateEvalConfig],
+    runs: list[HostedHarnessJob],
+) -> list[SimulateEvalConfig]:
+    """The evals a winner's grading may queue on ``runs`` within the fix's limit: the
+    oldest first, as many as fit at their worst case on every execution graded. Each check
+    run held the evals the environment had when it was admitted; one added since was held
+    by none, so it is graded only if what is left of the limit covers it."""
+    executions = sum(run.scenario_count for run in runs if run.test_execution_id)
+    per_eval = executions * Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL)
+    if per_eval <= 0:
+        return configs
+    budget = Decimal(str(fix_run.request["budget_usd"]))
+    # What the fix holds without any eval's reserve: the evals queued here are priced
+    # below, from this same list, so no eval is counted twice or from another read.
+    left = budget - committed_usd(fix_run, eval_count=0)
+    fitting = max(0, min(len(configs), int(left / per_eval)))
+    if fitting < len(configs):
+        logger.warning(
+            "agent_fix_grading_over_budget",
+            fix_run=str(fix_run.id),
+            graded=[str(one.id) for one in configs[:fitting]],
+            not_graded=[str(one.id) for one in configs[fitting:]],
+        )
+    return configs[:fitting]
 
 
 def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
@@ -418,9 +559,19 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
             locked.plan = report.plan.model_dump(mode="json")
         if report.diagnosis is not None:
             locked.diagnosis = report.diagnosis.model_dump(mode="json")
+        if report.lost_models or report.last_error:
+            locked.engine_notes = _engine_notes(locked.engine_notes, report)
         if report.ending is not None:
             locked.report = report.model_dump(
-                mode="json", exclude={"candidates", "step", "plan", "diagnosis"}
+                mode="json",
+                exclude={
+                    "candidates",
+                    "step",
+                    "plan",
+                    "diagnosis",
+                    "lost_models",
+                    "last_error",
+                },
             )
         locked.save(
             update_fields=[
@@ -430,6 +581,7 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
                 "diagnosis",
                 "heartbeat_at",
                 "report",
+                "engine_notes",
                 "updated_at",
             ]
         )
@@ -447,6 +599,7 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
             AgentFixCandidate.no_workspace_objects.filter(
                 fix_run=locked, id=report.winner_candidate_id
             ).update(outcome=CandidateOutcome.WINNER, updated_at=timezone.now())
+            _grade_winner(locked, report.winner_candidate_id)
         if report.ending is not None:
             # A launch that died left candidates no later report names: none of them won.
             AgentFixCandidate.no_workspace_objects.filter(
@@ -461,6 +614,28 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
         _ENDING_STATES[report.ending],
         failure=_ending_failure(locked, report),
     )
+
+
+LAST_ERROR_CHARS = 500
+
+
+def _engine_notes(
+    stored: dict[str, Any] | None, report: EngineReport
+) -> dict[str, Any]:
+    """Every model a launch lost, with when it was first reported lost, for the next
+    launch's brief, and the last error an engine sent, for the failure of a fix whose
+    launches all stopped. The engine names its brief's models again in every report, so
+    a model already noted keeps its time."""
+    stored = stored or {}
+    now = timezone.now().isoformat()
+    lost = dict(stored.get("lost_models") or {})
+    for model in report.lost_models:
+        lost.setdefault(model, now)
+    return {
+        "lost_models": lost,
+        "last_error": (report.last_error or "")[:LAST_ERROR_CHARS]
+        or stored.get("last_error"),
+    }
 
 
 def _ending_failure(
@@ -481,7 +656,7 @@ def _ending_failure(
     )
     return {
         "code": "fix_engine_failed",
-        "message": "the improvement engine hit an error it could not recover from",
+        "message": "the engine hit an error it could not recover from",
     }
 
 

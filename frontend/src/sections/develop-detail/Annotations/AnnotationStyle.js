@@ -46,7 +46,7 @@ export const LabelButton = styled(Typography)(({ theme }) => ({
   borderRadius: "6px",
   color: theme.palette.text.primary,
   cursor: "pointer",
-  fontSize: "13px",
+  fontSize: "12px",
   fontWeight: typography.fontWeightRegular,
   lineHeight: 1.6,
   padding: "6px 8px",

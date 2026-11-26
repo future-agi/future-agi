@@ -4,7 +4,7 @@ Kept free of Django imports so ``workflows.py`` can import them inside the
 Temporal sandbox.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # How a workflow run ended (distinct from the EvalTask DB status enum).
 WF_STATUS_COMPLETED = "completed"
@@ -33,6 +33,14 @@ class EvalTaskWorkflowInput:
     # skips the first reap on a CAN hop anyway (``already_reconciled``); a
     # finalize wait's reap on such a hop applies the blind floor.
     workflow_confirmed_stopped: bool = False
+    # Seconds without a heartbeat after which an eval's attempt is given up
+    # (its worker died) and retried; None keeps the default five minutes.
+    # Instant eval sets a minute, since a person is watching the run.
+    heartbeat_s: int | None = None
+    # Bounded cache of entries given back once because their worker was lost.
+    # Legacy hops honour these IDs; the recovery activity also caps retries
+    # durably by the entry's attempts, including IDs omitted from this cache.
+    lost_entry_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -59,6 +67,12 @@ class ContinuousDrainState:
     # again after an idle poll that still finds undrained work; leaving this
     # out of the CAN state is what keeps the floor on those hops.
     workflow_confirmed_stopped: bool = False
+    # See ``EvalTaskWorkflowInput.lost_entry_ids``.
+    lost_entry_ids: list[str] = field(default_factory=list)
+    # A DB outage during pause cleanup must not lose the known, unstarted IDs
+    # or the pause signal when the deferred loop rolls its history over.
+    pending_requeue_ids: list[str] = field(default_factory=list)
+    pause_requested: bool = False
 
 
 @dataclass
@@ -67,11 +81,18 @@ class ReconcileActivityInput:
 
 
 @dataclass
+class CheckedReconcileInput(ReconcileActivityInput):
+    # Missing on historical commands. Only a patched first pass sends True.
+    require_running: bool = False
+
+
+@dataclass
 class ReconcileActivityOutput:
     task_id: str
     created: int
     requeued: int
     dropped: int
+    inactive_status: str | None = None
 
 
 @dataclass
@@ -114,9 +135,15 @@ class ReapInput:
 
 
 @dataclass
+class CheckedReapInput(ReapInput):
+    require_running: bool = False
+
+
+@dataclass
 class ReapOutput:
     requeued: int
     failed: int
+    inactive_status: str | None = None
 
 
 @dataclass
@@ -157,6 +184,7 @@ class SetStatusOutput:
     task_id: str
     changed: bool
     status: str
+    first_reconcile_at: str | None = None
 
 
 @dataclass
@@ -196,12 +224,14 @@ __all__ = [
     "EvalTaskWorkflowInput",
     "EvalTaskWorkflowOutput",
     "ContinuousDrainState",
+    "CheckedReconcileInput",
     "ReconcileActivityInput",
     "ReconcileActivityOutput",
     "ClaimBatchInput",
     "ClaimBatchOutput",
     "RunEntryInput",
     "RunEntryOutput",
+    "CheckedReapInput",
     "ReapInput",
     "ReapOutput",
     "TaskStateInput",

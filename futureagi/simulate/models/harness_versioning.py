@@ -19,6 +19,8 @@ from tfc.utils.base_model import BaseModel
 
 class VersionStatus(models.TextChoices):
     DRAFT = "draft", "Draft"
+    # Built from a reviewed draft and waiting for its validation; never a default and never runnable.
+    CANDIDATE = "candidate", "Candidate"
     ACTIVE = "active", "Active"
     DISCARDED = "discarded", "Discarded"
 
@@ -30,6 +32,7 @@ class VersionOrigin(models.TextChoices):
     CHAT = "chat", "Chat"
     BACKFILL = "backfill", "Backfill"
     EXTEND = "extend", "Extend"
+    FIX = "fix", "Fix"
 
 
 class HashKind(models.TextChoices):
@@ -47,6 +50,8 @@ class DiscardReason(models.TextChoices):
     USER = "user", "User"
     SET_ASIDE_BY_REBUILD = "set_aside_by_rebuild", "Set aside by rebuild"
     REBUILD_RESTORED = "rebuild_restored", "Rebuild restored"
+    SUPERSEDED = "superseded", "Superseded"
+    EXPIRED = "expired", "Expired"
 
 
 class _HarnessPieceVersion(BaseModel):
@@ -86,6 +91,8 @@ class _HarnessPieceVersion(BaseModel):
         related_name="children",
     )
     summary = models.CharField(max_length=1024, blank=True, default="")
+    # A name a person gave the version when saving it. Never an identity: it may repeat and may change.
+    name = models.CharField(max_length=80, blank=True, default="", db_default="")
     diff = models.JSONField(null=True, blank=True)
     # Secret-safe snapshots of this piece's stage outputs, served without the object store.
     documents = models.JSONField(default=dict, blank=True)
@@ -134,6 +141,9 @@ class HarnessEnvironmentVersion(_HarnessPieceVersion):
         blank=True,
         related_name="+",
     )
+    # The per-tool and per-action certification a combined archive holds, kept once
+    # read so the archive is not opened for it again.
+    certification_files = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_harness_environment_version"
@@ -167,9 +177,22 @@ class HarnessSuiteVersion(_HarnessPieceVersion):
         max_length=71, db_index=True, blank=True, default=""
     )
     scenario_count = models.PositiveSmallIntegerField(default=0)
+    # Active or candidate at the lifecycle's deploy: its cases validated before proofs were recorded.
+    # True for a version validated, if at all, before proofs were recorded. The database default is true, for rows an
+    # older release writes without the column; this release always writes the value itself (false for a new one).
+    lifecycle_legacy = models.BooleanField(default=False, db_default=True)
     authored_against = models.ForeignKey(
         HarnessEnvironmentVersion,
         on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # Set on a suite version private to one "Fix my agent" run: its failing cases and
+    # their variations. It never becomes the default and is listed nowhere.
+    fix_run = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="+",
@@ -296,6 +319,8 @@ class HarnessAgentVersionRuntime(BaseModel):
         CREDENTIALS = "credentials", "Credentials"
         PROVIDER_SYNC = "provider_sync", "Provider sync"
         BACKFILL = "backfill", "Backfill"
+        CONNECT = "connect", "Connect"
+        SYNC = "sync", "Sync"
         FIX = "fix", "Fix my agent"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -538,6 +563,9 @@ class HarnessAssembledBundle(BaseModel):
     sha256 = models.CharField(max_length=64, null=True, blank=True)
     size = models.BigIntegerField(null=True, blank=True)
     certificate = models.JSONField(null=True, blank=True)
+    # The per-tool and per-action certification the sealed bundle holds, kept beside it
+    # so readiness never reads the archive for them.
+    certification_files = models.JSONField(null=True, blank=True)
     warnings = models.JSONField(default=list, blank=True)
     built_by_attempt = models.ForeignKey(
         "simulate.HostedHarnessAttempt",

@@ -20,6 +20,8 @@ import {
   convertFiltersToPayload,
   evalUsesChoiceThreshold,
   isSpanAttrFilterValid,
+  notificationPayload,
+  allowStoredNoEmails,
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import AlertFilterBar from "./AlertFilterBar";
@@ -31,7 +33,10 @@ import ChipsInput from "../../../../components/ChipsInput/ChipsInput";
 import { enqueueSnackbar } from "notistack";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { LoadingButton } from "@mui/lab";
-import { useCreateAlertMutation } from "../useCreateAlertMutation";
+import {
+  alertEventFields,
+  useCreateAlertMutation,
+} from "../useCreateAlertMutation";
 import PropTypes from "prop-types";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAlertStore } from "../store/useAlertStore";
@@ -68,16 +73,19 @@ export default function AlertSettingsForm({
 
   const buildFormValues = useCallback(
     () =>
-      getDefaultAlertConfigValues({
-        ...(openSheetView && alertRuleDetails),
-        name: openSheetView
-          ? duplicateAlertName || alertRuleDetails?.name || ""
-          : "",
-        ...(alertType &&
-          !openSheetView && {
-            metricType: alertType,
-          }),
-      }),
+      allowStoredNoEmails(
+        getDefaultAlertConfigValues({
+          ...(openSheetView && alertRuleDetails),
+          name: openSheetView
+            ? duplicateAlertName || alertRuleDetails?.name || ""
+            : "",
+          ...(alertType &&
+            !openSheetView && {
+              metricType: alertType,
+            }),
+        }),
+        Boolean(openSheetView && !duplicateAlertName),
+      ),
     [openSheetView, alertRuleDetails, duplicateAlertName, alertType],
   );
 
@@ -89,7 +97,7 @@ export default function AlertSettingsForm({
     reset,
     setError,
     trigger,
-    formState: { errors, isDirty },
+    formState: { errors, isDirty, defaultValues },
   } = useForm({
     defaultValues: buildFormValues(),
     resolver: zodResolver(AlertConfigValidationSchema),
@@ -362,11 +370,7 @@ export default function AlertSettingsForm({
         variant: "success",
       });
       trackEvent(Events.createAlertConfirmed, {
-        [PropertyName.formFields]: {
-          ...variables,
-          metricType,
-          thresholdType: variables?.threshold_type,
-        },
+        [PropertyName.formFields]: alertEventFields(variables, metricType),
       });
       handleCloseCreateAlert();
       refreshGrid();
@@ -382,14 +386,6 @@ export default function AlertSettingsForm({
     const { observation_type, span_attributes_filters } =
       convertFiltersToPayload(data?.filters);
 
-    const isSlack = data?.notification?.method === "slack";
-    const notificationPayload = {
-      notification_emails: isSlack ? [] : data?.notification?.emails ?? [],
-      slack_webhook_url: isSlack
-        ? data?.notification?.slack?.webhookUrl ?? ""
-        : "",
-      slack_notes: isSlack ? data?.notification?.slack?.notes ?? "" : "",
-    };
     if (
       selectedMetricOptions?.length > 0 &&
       data?.metric_type === "evaluation_metrics" &&
@@ -402,6 +398,11 @@ export default function AlertSettingsForm({
     }
 
     const isUpdate = Boolean(openSheetView && !duplicateAlertName);
+    const notificationFields = notificationPayload(
+      data?.notification,
+      defaultValues?.notification,
+      isUpdate,
+    );
     // Send the choice only for an eval known to take one. While the eval list
     // is unresolved an update leaves it out: the server keeps the stored choice
     // for a Pass/Fail eval and drops it for a score eval, where resending it
@@ -434,7 +435,7 @@ export default function AlertSettingsForm({
             threshold_metric_value: data?.threshold_metric_value,
           }),
       }),
-      ...notificationPayload,
+      ...notificationFields,
       ...(data?.threshold_type === "percentage_change" && {
         auto_threshold_time_window: data?.auto_threshold_time_window,
       }),
@@ -1153,6 +1154,26 @@ export default function AlertSettingsForm({
                     fullWidth
                     multiline
                     rows={4}
+                  />
+                </Stack>
+              </ShowComponent>
+              <ShowComponent
+                condition={selectedNotificationMethod === "webhook"}
+              >
+                <Stack
+                  sx={{
+                    padding: 3,
+                    gap: 3,
+                  }}
+                >
+                  <FormTextFieldV2
+                    control={control}
+                    required
+                    placeholder="Enter webhook URL (e.g. https://example.com/webhook)"
+                    fieldName="notification.webhook.url"
+                    label="Webhook URL"
+                    size="small"
+                    fullWidth
                   />
                 </Stack>
               </ShowComponent>

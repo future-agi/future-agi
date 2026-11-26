@@ -16,20 +16,25 @@ import os
 from datetime import datetime
 
 import structlog
+from redis.exceptions import NoScriptError, RedisError
+
 from ee.usage.schemas.events import CheckResult, UpgradeCTA
 from ee.usage.services.config import BillingConfig
 from ee.usage.services.emitter import get_redis
-from redis.exceptions import RedisError
 
 logger = structlog.get_logger(__name__)
 
 _lua_sha: str | None = None
 
 
-def _get_lua_sha() -> str:
-    """Load and cache the Lua check script SHA."""
+def _get_lua_sha(*, reload: bool = False) -> str:
+    """Load and cache the Lua check script SHA.
+
+    ``reload=True`` loads the script again, for when Redis has dropped it
+    (a restart or SCRIPT FLUSH empties the script cache).
+    """
     global _lua_sha
-    if _lua_sha is None:
+    if _lua_sha is None or reload:
         script_path = os.path.join(
             os.path.dirname(__file__), "..", "lua", "check_quota.lua"
         )
@@ -38,28 +43,45 @@ def _get_lua_sha() -> str:
     return _lua_sha
 
 
+def _eval_check_quota(usage_key: str, limit: float, amount: float):
+    """Run the quota check script, loading it again once if Redis lost it."""
+    args = (1, usage_key, str(limit), str(amount))
+    try:
+        return get_redis().evalsha(_get_lua_sha(), *args)
+    except NoScriptError:
+        logger.warning("check_quota_script_missing_reloading")
+        return get_redis().evalsha(_get_lua_sha(reload=True), *args)
+
+
 def _get_current_period() -> str:
     """Get current billing period as YYYY-MM string."""
     return datetime.utcnow().strftime("%Y-%m")
 
 
-def _get_cached_plan(org_id: str) -> str:
+def _get_cached_plan(org_id: str, *, use_cache: bool = True) -> str:
     """Get org's plan from Redis cache, or fetch from DB and cache (5 min TTL)."""
     cache_key = f"plan:{org_id}"
-    try:
-        r = get_redis()
-        cached = r.get(cache_key)
-        if cached:
-            return cached if isinstance(cached, str) else cached.decode()
-    except RedisError:
-        logger.warning("plan_cache_read_failed", org_id=org_id)
-        r = None
+    r = None
+    if use_cache:
+        try:
+            r = get_redis()
+            cached = r.get(cache_key)
+            if cached:
+                return cached if isinstance(cached, str) else cached.decode()
+        except RedisError:
+            logger.warning("plan_cache_read_failed", org_id=org_id)
+            r = None
 
     # Fetch from DB (one query, only on cache miss)
     from ee.usage.models.usage import OrganizationSubscription
 
+    rows = (
+        OrganizationSubscription.objects
+        if use_cache
+        else OrganizationSubscription.objects.using("default")
+    )
     plan = (
-        OrganizationSubscription.objects.filter(organization_id=org_id, deleted=False)
+        rows.filter(organization_id=org_id, deleted=False)
         .values_list("plan", flat=True)
         .first()
     )
@@ -169,12 +191,8 @@ def check_usage(org_id: str, event_type: str, amount: float = 0) -> CheckResult:
 
         if free_allowance_native > 0:
             usage_key = f"usage:{org_id}:{dimension}:{period}"
-            result = get_redis().evalsha(
-                _get_lua_sha(),
-                1,
-                usage_key,
-                str(free_allowance_native),
-                str(resolved_amount),
+            result = _eval_check_quota(
+                usage_key, free_allowance_native, resolved_amount
             )
             current = float(result)
 

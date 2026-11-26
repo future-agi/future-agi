@@ -423,7 +423,10 @@ def publish_severity(
         cluster = TraceErrorGroup.no_workspace_objects.select_for_update().get(
             pk=job.issue.cluster_id
         )
-        from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+        from tracer.services.feed_alerts.events import (
+            issue_snapshot,
+            record_issue_event,
+        )
 
         alert_before = issue_snapshot(cluster)
         cluster.severity_assessment_status = job.state

@@ -40,9 +40,7 @@ ANONYMOUS_PERSONA_ID = "00000000-0000-4000-8000-000000001022"
         ),
     ],
 )
-def test_persona_routes_reject_anonymous_before_work(
-    api_client, method, path, body
-):
+def test_persona_routes_reject_anonymous_before_work(api_client, method, path, body):
     request = getattr(api_client, method)
 
     if body is None:
@@ -313,9 +311,7 @@ class TestPersonaCRUD:
     def test_create_ignores_unknown_body_field(self, auth_client):
         response = auth_client.post(
             "/simulate/api/personas/",
-            self._create_payload(
-                name="Persona With Extras", legacy_extra="ignore me"
-            ),
+            self._create_payload(name="Persona With Extras", legacy_extra="ignore me"),
             format="json",
         )
 
@@ -336,9 +332,7 @@ class TestPersonaCRUD:
         )
 
         assert response.status_code == status.HTTP_201_CREATED
-        persona = Persona.no_workspace_objects.get(
-            id=response.json()["result"]["id"]
-        )
+        persona = Persona.no_workspace_objects.get(id=response.json()["result"]["id"])
         assert persona.workspace_id == workspace.id
         assert persona.workspace_id != other_workspace.id
 
@@ -352,9 +346,7 @@ class TestPersonaCRUD:
         assert data["result"]["name"] == source_persona.name
 
     def test_retrieve_persona_not_found_returns_404(self, auth_client):
-        response = auth_client.get(
-            f"/simulate/api/personas/{ANONYMOUS_PERSONA_ID}/"
-        )
+        response = auth_client.get(f"/simulate/api/personas/{ANONYMOUS_PERSONA_ID}/")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -363,9 +355,7 @@ class TestPersonaCRUD:
     ):
         _, hidden_persona = other_workspace_persona
 
-        response = auth_client.get(
-            f"/simulate/api/personas/{hidden_persona.id}/"
-        )
+        response = auth_client.get(f"/simulate/api/personas/{hidden_persona.id}/")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -432,9 +422,7 @@ class TestPersonaCRUD:
         assert hidden_persona.description == "Persona owned by a different workspace"
 
     def test_destroy_soft_deletes_persona(self, auth_client, source_persona):
-        response = auth_client.delete(
-            f"/simulate/api/personas/{source_persona.id}/"
-        )
+        response = auth_client.delete(f"/simulate/api/personas/{source_persona.id}/")
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
         source_persona.refresh_from_db()
@@ -446,9 +434,7 @@ class TestPersonaCRUD:
     ):
         _, hidden_persona = other_workspace_persona
 
-        response = auth_client.delete(
-            f"/simulate/api/personas/{hidden_persona.id}/"
-        )
+        response = auth_client.delete(f"/simulate/api/personas/{hidden_persona.id}/")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         hidden_persona.refresh_from_db()
@@ -538,9 +524,7 @@ class TestPersonaActionRoutes:
         assert "value" in first_choice
         assert "label" in first_choice
 
-    def test_duplicate_viewset_action_success(
-        self, auth_client, source_persona
-    ):
+    def test_duplicate_viewset_action_success(self, auth_client, source_persona):
         response = auth_client.post(
             f"/simulate/api/personas/{source_persona.id}/duplicate/",
             {"name": "Duplicated Persona"},

@@ -1,5 +1,7 @@
 import traceback
+from typing import Any
 
+from django.db.models import Prefetch
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -11,6 +13,7 @@ from rest_framework.views import APIView
 
 from accounts.utils import get_request_organization
 from simulate.models import CallExecution, CallTranscript
+from simulate.selectors.call_transcripts import with_speakers
 from simulate.serializers.response.test_execution import ErrorResponseSerializer
 from simulate.serializers.test_execution import (
     CallBranchAnalysisResponseSerializer,
@@ -62,20 +65,24 @@ class CallTranscriptView(APIView):
             )
 
             # Get all transcripts for this call
-            transcripts = CallTranscript.objects.filter(
-                call_execution=call_execution,
-                speaker_role__in=get_displayable_transcript_roles(),
+            transcripts = with_speakers(
+                CallTranscript.objects.filter(
+                    call_execution=call_execution,
+                    speaker_role__in=get_displayable_transcript_roles(),
+                )
             ).order_by("start_time_ms")
 
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-            rows = SpeakerRoleResolver.align_transcript_rows(
-                CallTranscriptSerializer(transcripts, many=True).data,
-                provider=SpeakerRoleResolver.detect_provider(
-                    call_execution.provider_call_data
-                ),
-                is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
-            )
+            rows: Any = CallTranscriptSerializer(transcripts, many=True).data
+            if rows:
+                rows = SpeakerRoleResolver.align_transcript_rows(
+                    rows,
+                    provider=SpeakerRoleResolver.detect_provider(
+                        call_execution.provider_call_data
+                    ),
+                    is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
+                )
 
             return Response(
                 {
@@ -125,7 +132,12 @@ class TestExecutionTranscriptsView(APIView):
                 test_execution_id=test_execution_id,
                 test_execution__run_test__organization=user_organization,
                 test_execution__run_test__deleted=False,
-            ).prefetch_related("transcripts", "scenario")
+            ).prefetch_related(
+                Prefetch(
+                    "transcripts", queryset=with_speakers(CallTranscript.objects.all())
+                ),
+                "scenario",
+            )
 
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
@@ -141,15 +153,19 @@ class TestExecutionTranscriptsView(APIView):
                 ]
                 transcripts.sort(key=lambda x: x.start_time_ms)
 
-                rows = SpeakerRoleResolver.align_transcript_rows(
-                    CallTranscriptSerializer(transcripts, many=True).data,
-                    provider=SpeakerRoleResolver.detect_provider(
-                        call_execution.provider_call_data
-                    ),
-                    is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
-                )
+                rows: Any = CallTranscriptSerializer(transcripts, many=True).data
+                if rows:
+                    rows = SpeakerRoleResolver.align_transcript_rows(
+                        rows,
+                        provider=SpeakerRoleResolver.detect_provider(
+                            call_execution.provider_call_data
+                        ),
+                        is_outbound=SpeakerRoleResolver.detect_is_outbound(
+                            call_execution
+                        ),
+                    )
 
-                call_data = {
+                call_data: dict[str, Any] = {
                     "call_execution_id": str(call_execution.id),
                     "phone_number": call_execution.phone_number,
                     "status": call_execution.status,

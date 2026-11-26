@@ -277,7 +277,9 @@ def test_context_project_and_custom_sort(navigation_context_call):
     query, params = service.execute_ch_query.call_args.args
     assert params["project_id"] == PROJECT_ID
     assert "ORDER BY total_tokens ASC, session_id ASC" in query
-    assert "sum(total_tokens) AS total_tokens" in query
+    assert "sum(usage_total_tokens) AS member_total_tokens" in query
+    assert "LEFT JOIN session_usage USING (project_id, session_id)" in query
+    assert "max(member_total_tokens) AS total_tokens" in query
 
 
 def test_context_cannot_pin_a_different_authorized_project(navigation_context_call):
@@ -461,12 +463,24 @@ def test_inline_navigation_literal_neighbors_reuse_existing_adversarial_fixture(
             cursor_mode=False,
             sort_params=[{"column_id": "total_cost", "direction": "asc"}],
         )
-    service.execute_ch_query.side_effect = lambda sql, params, **_: SimpleNamespace(
-        data=_inline_execute(chdb, sql, params, rows, remaps)
-    )
+    adapter_errors = []
+
+    def execute_inline(sql, params, **_):
+        try:
+            return _inline_execute(chdb, sql, params, rows, remaps, as_driver=True)
+        except Exception as exc:  # noqa: BLE001 - the view converts read errors to absent neighbors
+            adapter_errors.append(exc)
+            raise
+
+    service.execute_ch_query.side_effect = execute_inline
     # The requested new alias 300 must select canonical survivor 200.
     current = 103 if case == "latest_outside" else 300
-    assert call(context, str(UUID(int=current))) == tuple(
+    with mock.patch("tracer.utils.session.logger.exception") as navigation_error:
+        neighbors = call(context, str(UUID(int=current)))
+    assert not adapter_errors, adapter_errors
+    navigation_error.assert_not_called()
+    assert service.execute_ch_query.call_count >= 2  # canonical lookup, then list read
+    assert neighbors == tuple(
         str(UUID(int=value)) if value else None for value in expected
     )
 
@@ -549,8 +563,8 @@ def test_inline_navigation_uses_only_authorized_workspace_projects(
         start.isoformat(),
         end.isoformat(),
     ]
-    service.execute_ch_query.side_effect = lambda sql, params, **_: SimpleNamespace(
-        data=_inline_execute(chdb, sql, params, rows, remaps)
+    service.execute_ch_query.side_effect = lambda sql, params, **_: _inline_execute(
+        chdb, sql, params, rows, remaps, as_driver=True
     )
     assert call(context, str(UUID(int=300))) == (
         str(UUID(int=107)),

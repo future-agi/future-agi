@@ -18,17 +18,25 @@ view wraps.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict, cast
 
 from tracer.services.clickhouse.query_builders.trace_usage import (
-    is_repeated_usage_summary,
+    CaptureCoverage,
+    capture_coverage_from_counts,
+    repeated_usage_summary_ids,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from rest_framework.request import Request
 
     from tracer.services.clickhouse.query_service import AnalyticsQueryService
     from tracer.views.trace import TraceView
+
+
+# Marks an exhausted iterator in the explicit-stack tree walk below.
+_EXHAUSTED = object()
 
 
 class TraceDetail(TypedDict):
@@ -38,6 +46,33 @@ class TraceDetail(TypedDict):
     observation_spans: list[dict[str, Any]]
     summary: dict[str, Any]
     graph: dict[str, Any]
+    capture_coverage: NotRequired[CaptureCoverage]
+
+
+def compute_trace_capture_coverage(
+    spans_tree: list[dict[str, Any]],
+) -> CaptureCoverage | None:
+    """Inspect the already-selected tree without copying content or summaries.
+
+    The readers own identity and latest-live selection. In particular, equal
+    child totals neither identify requests nor prove complete source capture.
+    """
+    pending = list(spans_tree)
+    source_summary_present = False
+    request_count = 0
+    while pending:
+        entry = pending.pop()
+        span = entry.get("observation_span") or entry.get("observationSpan") or {}
+        attrs = span.get("span_attributes") or {}
+        nonadditive = attrs.get("fi.usage.contribution") == "none"
+        source_summary_present |= nonadditive and attrs.get("fi.usage.scope") == "turn"
+        if not nonadditive and span.get("observation_type") == "llm":
+            request_count += 1
+        pending.extend(entry.get("children", []))
+    return capture_coverage_from_counts(
+        source_summary_present=source_summary_present,
+        request_count=request_count,
+    )
 
 
 def compute_trace_summary_and_graph(
@@ -51,57 +86,89 @@ def compute_trace_summary_and_graph(
     call this so the two interchangeable paths cannot drift in the totals or the
     graph shape. Works with both PG and CH span dicts.
     """
-    all_spans = []
-    graph_nodes = []
-    graph_edges = []
+    all_spans: list[dict[str, Any]] = []
+    graph_nodes: list[dict[str, Any]] = []
+    graph_edges: list[dict[str, Any]] = []
 
-    def walk(entries, parent_id=None):
-        for entry in entries:
-            span = entry.get("observation_span") or entry.get("observationSpan") or {}
-            span_id = span.get("id", "")
-            child_spans = [
-                child.get("observation_span") or child.get("observationSpan") or {}
-                for child in entry.get("children", [])
-            ]
-            all_spans.append(
-                {
-                    "span": span,
-                    "parent_id": parent_id,
-                    "usage_summary": is_repeated_usage_summary(span, child_spans),
-                }
-            )
-            graph_nodes.append(
-                {
-                    "id": span_id,
-                    "name": span.get("name", ""),
-                    "type": span.get("observation_type", "unknown"),
-                    "latency_ms": span.get("latency_ms") or span.get("latency") or 0,
-                    "tokens": span.get("total_tokens") or 0,
-                    "status": span.get("status"),
-                }
-            )
-            if parent_id:
-                graph_edges.append({"from": parent_id, "to": span_id})
-            children = entry.get("children", [])
-            if children:
-                walk(children, parent_id=span_id)
+    # Pre-order with siblings in order, the sequence of a recursive walk, kept
+    # on an explicit stack of child iterators so a deep span tree does not
+    # reach the interpreter recursion limit. An entry met again inside its own
+    # subtree is a cycle, which a recursive walk can only end with
+    # RecursionError; raise that at once instead of looping forever.
+    pending: list[tuple[Iterator[dict[str, Any]], Any, int | None]] = [
+        (iter(spans_tree), None, None)
+    ]
+    open_entries: set[int] = set()
+    while pending:
+        entries, parent_id, owner = pending[-1]
+        item = next(entries, _EXHAUSTED)
+        if item is _EXHAUSTED:
+            pending.pop()
+            if owner is not None:
+                open_entries.discard(owner)
+            continue
+        entry = cast("dict[str, Any]", item)
+        if id(entry) in open_entries:
+            raise RecursionError("span tree contains a cycle")
+        span = entry.get("observation_span") or entry.get("observationSpan") or {}
+        span_id = span.get("id", "")
+        all_spans.append(
+            {
+                "span": span,
+                "parent_id": parent_id,
+            }
+        )
+        graph_nodes.append(
+            {
+                "id": span_id,
+                "name": span.get("name", ""),
+                "type": span.get("observation_type", "unknown"),
+                "latency_ms": span.get("latency_ms") or span.get("latency") or 0,
+                "tokens": span.get("total_tokens") or 0,
+                "status": span.get("status"),
+            }
+        )
+        if parent_id:
+            graph_edges.append({"from": parent_id, "to": span_id})
+        children = entry.get("children", [])
+        if children:
+            open_entries.add(id(entry))
+            pending.append((iter(children), span_id, id(entry)))
 
-    walk(spans_tree)
+    usage_rows = [
+        {**item["span"], "parent_span_id": item["parent_id"] or ""}
+        for item in all_spans
+    ]
+    repeated_ids = repeated_usage_summary_ids(usage_rows)
 
     total_tokens = 0
     total_prompt = 0
     total_completion = 0
     total_cost = 0.0
+    cost_unknown = False
     error_count = 0
     type_counts = {}
     root_latencies = []
 
     for item in all_spans:
         sp = item["span"]
-        if not item["usage_summary"]:
+        attrs = sp.get("span_attributes") or {}
+        if (
+            sp.get("observation_type") == "llm" or sp.get("id") not in repeated_ids
+        ) and attrs.get("fi.usage.contribution") != "none":
             total_tokens += sp.get("total_tokens") or 0
             total_prompt += sp.get("prompt_tokens") or 0
             total_completion += sp.get("completion_tokens") or 0
+            if attrs.get("fi.cost.kind") == "unknown" and (
+                (sp.get("total_tokens") or 0) > 0
+                or (sp.get("prompt_tokens") or 0) > 0
+                or (sp.get("completion_tokens") or 0) > 0
+                or sp.get("observation_type") == "llm"
+                or attrs.get("fi.usage.scope") == "turn"
+            ):
+                # A partial sum is not a verified charge. Legacy rows without
+                # this marker retain their existing zero-cost behavior.
+                cost_unknown = True
             total_cost += sp.get("cost") or 0.0
         if sp.get("status") == "ERROR":
             error_count += 1
@@ -116,7 +183,7 @@ def compute_trace_summary_and_graph(
         "total_tokens": total_tokens,
         "total_prompt_tokens": total_prompt,
         "total_completion_tokens": total_completion,
-        "total_cost": total_cost,
+        "total_cost": None if cost_unknown else total_cost,
         "error_count": error_count,
         "span_type_counts": type_counts,
     }
@@ -168,9 +235,13 @@ class TraceDetailHandler:
             }
         )
         summary, graph = compute_trace_summary_and_graph(observation_spans_response)
-        return {
+        result: TraceDetail = {
             "trace": trace_data,
             "observation_spans": observation_spans_response,
             "summary": summary,
             "graph": graph,
         }
+        capture = compute_trace_capture_coverage(observation_spans_response)
+        if capture is not None:
+            result["capture_coverage"] = capture
+        return result

@@ -397,13 +397,68 @@ class _UniqExact:
         return len(self.values)
 
 
+class _SumIf:
+    def __init__(self):
+        self.total = 0
+
+    def step(self, value, include):
+        if include and value is not None:
+            self.total += value
+
+    def finalize(self):
+        return self.total
+
+
 def _sqlite_metric_sql(sql):
-    # Replace only CH-only syntax/functions; execute both real generated
-    # reductions against the same pre-replayed latest_spans/remap fixtures.
-    tail = sql[_cte(sql, "eu_survivor_map")[1] :].split("SETTINGS", 1)[0]
+    # Exercise the generated fused-window/member reduction against the same
+    # explicitly pre-replayed latest_spans/remap fixture. The CH-only monetary
+    # proof runs through real CH25 coverage suites; here the fixture supplies
+    # its already-qualified compact flags, just as this module's docstring says.
+    monetary, after_monetary = _cte(sql, "graph_monetary_spans")
+    assert "AS graph_usage_states" in monetary
+    assert "ARRAY JOIN graph_usage_state.1 AS graph_own_span" in monetary
+    assert monetary.count("FROM latest_spans") == 1
+    assert "AS graph_cost_flags" in monetary
+    match_marker = "toUInt8(ifNull(("
+    assert match_marker in monetary
+    expression_start = monetary.index(match_marker) + len("toUInt8(ifNull(")
+    depth = 0
+    expression_end = None
+    for offset in range(expression_start, len(monetary)):
+        depth += (monetary[offset] == "(") - (monetary[offset] == ")")
+        if depth == 0:
+            expression_end = offset
+            break
+    assert expression_end is not None
+    output_match = monetary[expression_start + 1 : expression_end]
+    tail = sql[after_monetary:].split("SETTINGS", 1)[0].lstrip(" ,\n")
+    # The fixture already is the explicitly latest-live relation and carries
+    # the compact flags the graph-membership cases precompile. Preserve the
+    # real generated output-membership predicate (curated live dimension for
+    # fused, independently declared selected users for two-stage) and execute
+    # it against the same end_users/remap relations as the oracle.
+    canonical_user = (
+        "if(id_remap.survivor_id IS NULL "
+        f"OR id_remap.survivor_id = toUUID('{NIL}'), "
+        "rs.end_user_id, id_remap.survivor_id)"
+    )
+    query = (
+        "WITH graph_monetary_spans AS ("
+        f"SELECT {canonical_user} AS end_user_id, rs.trace_id, rs.start_time, "
+        "rs.latency_ms, rs.cost, rs.total_tokens, rs.prompt_tokens, "
+        "rs.completion_tokens, rs.status, rs.user_member_match_0, "
+        "rs.user_member_match_1, 1 AS graph_cost_known, "
+        "0 AS graph_cost_unknown, "
+        f"toUInt8(ifNull(({output_match}), 0)) AS graph_output_match "
+        "FROM latest_spans AS rs "
+        "LEFT JOIN eu_survivor_map AS id_remap "
+        "ON rs.end_user_id = id_remap.any_id)\n" + tail
+    )
     return (
-        tail.replace(" FINAL", "")
+        query.replace(" FINAL", "")
         .replace("%(project_id)s", ":project_id")
+        .replace("rs.graph_cost_flags.1", "rs.graph_cost_known")
+        .replace("rs.graph_cost_flags.2", "rs.graph_cost_unknown")
         # SQLite gives input column names precedence over SELECT aliases.
         .replace("GROUP BY end_user_id, trace_id", "GROUP BY 1, 2")
     )
@@ -472,12 +527,14 @@ def test_generated_sql_fused_window_matches_declared_users_and_nested_metrics(
         db.row_factory = sqlite3.Row
         db.create_function("if", 3, lambda condition, yes, no: yes if condition else no)
         db.create_function("toUUID", 1, lambda value: value)
+        db.create_function("toUInt8", 1, int)
         db.create_function("isNotNull", 1, lambda value: value is not None)
         db.create_function("notEmpty", 1, lambda value: bool(value))
         db.create_function("toStartOfDay", 1, lambda value: value[:10])
         db.create_function("greatest", 2, max)
         db.create_aggregate("countIf", 1, _CountIf)
         db.create_aggregate("uniqExact", 1, _UniqExact)
+        db.create_aggregate("sumIf", 2, _SumIf)
         db.executescript("""
             CREATE TABLE latest_spans(end_user_id TEXT, trace_id TEXT, start_time TEXT,
                 latency_ms REAL, cost REAL, total_tokens REAL, prompt_tokens REAL,

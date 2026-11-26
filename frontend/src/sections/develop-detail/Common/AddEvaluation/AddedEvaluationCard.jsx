@@ -113,7 +113,7 @@ const AddedEvaluationCard = ({
             variant="body2"
             color="text.primary"
             fontWeight={600}
-            fontSize="13px"
+            fontSize="12px"
           >
             {name}
           </Typography>

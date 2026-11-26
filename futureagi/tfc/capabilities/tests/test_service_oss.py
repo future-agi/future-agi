@@ -9,11 +9,13 @@ from __future__ import annotations
 import pytest
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.capabilities.errors import CapabilityDenied
 from tfc.capabilities.registry import (
     FEATURE_REGISTRY,
     MANAGED_SERVICE_FEATURES,
     OSS_BASELINE_FEATURES,
+    OSS_LOCKED_FEATURES,
     PAID_FEATURES,
 )
 from tfc.licensing.types import (
@@ -22,17 +24,12 @@ from tfc.licensing.types import (
     DeploymentLocation,
 )
 
+preserve_capability_service = capability_testing.preserve_capability_service
+
 
 @pytest.fixture(autouse=True)
-def oss_flavor():
+def oss_flavor(preserve_capability_service):
     """Configure the capability service as an OSS image (no EE code)."""
-    service.configure(
-        flavor=DeploymentFlavor.OSS,
-        location=DeploymentLocation.SELF_HOSTED,
-        license_resolver=None,
-        cloud_plan_resolver=None,
-    )
-    yield
     service.configure(
         flavor=DeploymentFlavor.OSS,
         location=DeploymentLocation.SELF_HOSTED,
@@ -50,9 +47,7 @@ class TestOSSBaseline:
         assert decision.allowed is True
         assert decision.feature_id == feature_id
 
-    @pytest.mark.parametrize(
-        "feature_id", sorted(MANAGED_SERVICE_FEATURES | {"error_feed"})
-    )
+    @pytest.mark.parametrize("feature_id", sorted(OSS_LOCKED_FEATURES))
     def test_locked_features_denied_on_oss_image(self, feature_id: str):
         decision = service.check(feature_id)
         assert decision.allowed is False
@@ -60,7 +55,7 @@ class TestOSSBaseline:
 
     @pytest.mark.parametrize(
         "feature_id",
-        sorted(PAID_FEATURES - MANAGED_SERVICE_FEATURES - {"error_feed"}),
+        sorted(PAID_FEATURES - OSS_LOCKED_FEATURES),
     )
     def test_unlocked_paid_features_allowed_on_oss_image(self, feature_id: str):
         decision = service.check(feature_id)
@@ -101,6 +96,13 @@ class TestRegistryConsistency:
 
     def test_managed_services_are_paid(self):
         assert MANAGED_SERVICE_FEATURES <= PAID_FEATURES
+
+    def test_managed_services_and_error_feed_are_oss_locked(self):
+        assert MANAGED_SERVICE_FEATURES | {"error_feed"} <= OSS_LOCKED_FEATURES
+
+    def test_instant_eval_and_insights_are_oss_locked_and_jev_is_not(self):
+        assert {"instant_eval", "insights"} <= OSS_LOCKED_FEATURES
+        assert "jev_models" not in OSS_LOCKED_FEATURES
 
     def test_no_feature_in_both_categories(self):
         for f in FEATURE_REGISTRY.values():

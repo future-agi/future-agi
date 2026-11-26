@@ -28,7 +28,11 @@ import React, {
 import { useNavigate, useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import { useSnackbar } from "notistack";
-import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import {
+  useFeatureLocked,
+  CAPABILITY,
+  useFeatureDenied,
+} from "src/hooks/useCapabilities";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -63,7 +67,24 @@ import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
+import CustomTagInput from "./CustomTagInput";
+import { withPendingTag } from "./tagUtils";
+import JevOutputConfig from "./JevOutputConfig";
+import {
+  buildJevMapping,
+  getJevValidationErrors,
+  hasExtraJevMessages,
+  orderChoiceScores,
+} from "../utils/jevMapping";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import { getEvalTags } from "./evalTags";
+import useDecisionModels from "src/api/evaluations/decision-models";
+import {
+  findDecisionGroup,
+  isDecisionModel,
+  isJevDecisionModel,
+  isNativeJevModel,
+} from "../utils/decisionModels";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -138,6 +159,9 @@ const EvalDetailPage = () => {
     CAPABILITY.TURING_MODELS,
   );
   const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  // Only a confirmed denial locks Jev: not while capabilities load, and not
+  // when their fetch fails (self-hosted always allows Jev; the server checks).
+  const jevLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
   // Confirmed denial (loaded AND not allowed). Seed the default model raw and
   // only strip it on confirmed denial, so entitled users don't lose the
@@ -166,6 +190,7 @@ const EvalDetailPage = () => {
     if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
   }, [fagiModelsDenied, model]);
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
+  const [jevMapping, setJevMapping] = useState({});
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
@@ -178,6 +203,7 @@ const EvalDetailPage = () => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [tags, setTags] = useState([]);
+  const [customTagInput, setCustomTagInput] = useState("");
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [templateFormat, setTemplateFormat] = useState(
@@ -346,6 +372,7 @@ const EvalDetailPage = () => {
           }
           setCodeLanguage(config.language || "python");
           setModel(config.model || evalData.model || "turing_large");
+          setJevMapping(config.jev_mapping || {});
           setOutputType(
             evalData.output_type ||
               evalData.output_type_normalized ||
@@ -359,7 +386,13 @@ const EvalDetailPage = () => {
           {
             const scored = evalData.choice_scores;
             if (scored && Object.keys(scored).length > 0) {
-              setChoiceScores(scored);
+              // Authored order (see the initial-load effect below).
+              setChoiceScores(
+                orderChoiceScores(
+                  scored,
+                  config.jev_mapping?.choice?.labels || evalData.choices,
+                ),
+              );
             } else if (
               Array.isArray(evalData.choices) &&
               evalData.choices.length > 0
@@ -393,17 +426,15 @@ const EvalDetailPage = () => {
               config.error_localizer_enabled ??
               false,
           );
-          setTags(evalData.tags || evalData.eval_tags || []);
+          setTags(getEvalTags(evalData));
           if (config.messages && config.messages.length > 0) {
             setMessages(config.messages);
           } else if (evalData.eval_type === "llm" && promptText) {
             setMessages([{ role: "system", content: promptText }]);
           }
-          if (config.few_shot_examples || config.fewShotExamples) {
-            setFewShotExamples(
-              config.few_shot_examples || config.fewShotExamples || [],
-            );
-          }
+          setFewShotExamples(
+            config.few_shot_examples || config.fewShotExamples || [],
+          );
         }
         setIsDirty(false);
         setTimeout(() => {
@@ -415,10 +446,17 @@ const EvalDetailPage = () => {
       // Load version config into the form
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
+      // Description and tags belong to the eval, not to a version snapshot.
+      setTags(getEvalTags(evalData));
+      setDescription(evalData?.description || "");
+      setCustomTagInput("");
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          next.set("v", String(versionToLoad.version_number));
+          next.set(
+            "v",
+            String(versionToLoad.version_number ?? versionToLoad.versionNumber),
+          );
           return next;
         },
         { replace: true },
@@ -476,6 +514,7 @@ const EvalDetailPage = () => {
       }
       setCodeLanguage(config.language || "python");
       setModel(config.model || versionToLoad.model || "turing_large");
+      setJevMapping(config.jev_mapping || {});
       {
         const outputMap = {
           "Pass/Fail": "pass_fail",
@@ -496,18 +535,21 @@ const EvalDetailPage = () => {
         );
       }
       setPassThreshold(config.passThreshold ?? config.pass_threshold ?? 0.5);
-      setChoiceScores(config.choiceScores || config.choice_scores || {});
+      setChoiceScores(
+        orderChoiceScores(
+          config.choiceScores || config.choice_scores || {},
+          config.jev_mapping?.choice?.labels || config.choices,
+        ),
+      );
       setMultiChoice(config.multiChoice ?? config.multi_choice ?? false);
       if (config.messages && config.messages.length > 0) {
         setMessages(config.messages);
       } else if (evalData.eval_type === "llm" && promptText) {
         setMessages([{ role: "system", content: promptText }]);
       }
-      if (config.few_shot_examples || config.fewShotExamples) {
-        setFewShotExamples(
-          config.few_shot_examples || config.fewShotExamples || [],
-        );
-      }
+      setFewShotExamples(
+        config.few_shot_examples || config.fewShotExamples || [],
+      );
       setCheckInternet(config.check_internet ?? false);
       setAgentMode(config.agent_mode || "agent");
       setSummaryType(resolve_summary_type(config.summary));
@@ -603,6 +645,7 @@ const EvalDetailPage = () => {
             "python",
         );
         setModel(config.model || evalData.model || "turing_large");
+        setJevMapping(config.jev_mapping || {});
         setOutputType(
           evalData.output_type ||
             evalData.output_type_normalized ||
@@ -616,7 +659,14 @@ const EvalDetailPage = () => {
         {
           const scored = evalData.choice_scores;
           if (scored && Object.keys(scored).length > 0) {
-            setChoiceScores(scored);
+            // jsonb returns choice_scores keys shortest first; show and save
+            // them in the order the author saved.
+            setChoiceScores(
+              orderChoiceScores(
+                scored,
+                config.jev_mapping?.choice?.labels || evalData.choices,
+              ),
+            );
           } else if (
             Array.isArray(evalData.choices) &&
             evalData.choices.length > 0
@@ -650,17 +700,15 @@ const EvalDetailPage = () => {
             config.error_localizer_enabled ??
             false,
         );
-        setTags(evalData.tags || evalData.eval_tags || []);
+        setTags(getEvalTags(evalData));
         if (config.messages && config.messages.length > 0) {
           setMessages(config.messages);
         } else if (evalData.eval_type === "llm" && promptText) {
           setMessages([{ role: "system", content: promptText }]);
         }
-        if (config.few_shot_examples || config.fewShotExamples) {
-          setFewShotExamples(
-            config.few_shot_examples || config.fewShotExamples || [],
-          );
-        }
+        setFewShotExamples(
+          config.few_shot_examples || config.fewShotExamples || [],
+        );
         setIsDirty(false);
         initialLoadDone.current = true;
         // Release the populating guard after React flushes this batch so
@@ -778,8 +826,66 @@ const EvalDetailPage = () => {
     return [...new Set([...requiredKeys, ...templateVars])];
   }, [instructions, evalData, evalType, isComposite, compositeDetail]);
 
+  // The existing mapping/editor props retain their legacy names on the wire.
+  const isJevModel = isDecisionModel(model);
+  const decisionCatalog = useDecisionModels(isJevModel);
+  const decisionGroup = findDecisionGroup(decisionCatalog.data || [], model);
+  const decisionLabel = isNativeJevModel(model)
+    ? "Jev"
+    : decisionGroup?.label || "This decision model";
+  const decisionLocked = isJevDecisionModel(model) && jevLocked;
+  const effectiveConfig = useMemo(
+    () =>
+      viewingVersion
+        ? viewingVersion.config_snapshot || viewingVersion.configSnapshot || {}
+        : evalData?.config || {},
+    [viewingVersion, evalData],
+  );
+  const jevPayload = useMemo(
+    () =>
+      isJevModel
+        ? { jev_mapping: buildJevMapping(outputType, choiceScores, jevMapping) }
+        : {},
+    [isJevModel, outputType, choiceScores, jevMapping],
+  );
+  const jevMessages =
+    evalType === "llm" ? messages : effectiveConfig.messages || [];
+  const jevErrors = isJevModel
+    ? getJevValidationErrors({
+        modelLabel: decisionLabel,
+        modelGroup: decisionGroup,
+        mapping: jevPayload.jev_mapping,
+        config: {
+          ...effectiveConfig,
+          // Only agent evals use agent_mode; an LLM judge drafted on the
+          // Agents tab keeps a stale "agent" value that the backend ignores.
+          agent_mode: undefined,
+          check_internet: checkInternet,
+          few_shot_examples: fewShotExamples,
+          ...(evalType === "agent"
+            ? {
+                agent_mode: agentMode,
+                tools: build_tools_payload(connectorIds),
+                knowledge_bases: knowledgeBaseIds,
+                data_injection: buildDataInjection(contextOptions),
+              }
+            : {}),
+        },
+        multiChoice,
+        choiceScores,
+        inputDataTypes: evalData?.input_data_types,
+        messages: jevMessages,
+      })
+    : [];
+  const jevError = jevErrors[0];
+  const jevTestBlocked = Boolean(jevError || decisionLocked);
+
   // Save version
   const handleSaveVersion = useCallback(async () => {
+    if (jevError) {
+      enqueueSnackbar(jevError, { variant: "error" });
+      return;
+    }
     if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
         "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
@@ -807,8 +913,10 @@ const EvalDetailPage = () => {
           ? { type: "custom", custom: "" }
           : { type: summaryType };
       const tools = build_tools_payload(connectorIds);
+      const tagsToSave = withPendingTag(tags, customTagInput);
       // Update the template first
       const payload = {
+        ...jevPayload,
         instructions:
           evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
@@ -820,7 +928,7 @@ const EvalDetailPage = () => {
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
         multi_choice: multiChoice,
         description: description || null,
-        tags,
+        tags: tagsToSave,
         check_internet: checkInternet,
         mode: evalType === "agent" ? agentMode : undefined,
         tools: evalType === "agent" ? tools : undefined,
@@ -835,10 +943,13 @@ const EvalDetailPage = () => {
         few_shot_examples: evalType === "llm" ? fewShotExamples : undefined,
       };
       await updateEval.mutateAsync(payload);
+      setTags(tagsToSave);
+      setCustomTagInput("");
 
       // Build a config snapshot for the version so it captures the full state
       const configSnapshot = {
-        ...(evalData?.config || {}),
+        ...(isJevModel ? effectiveConfig : evalData?.config || {}),
+        ...jevPayload,
         rule_prompt: evalType === "code" ? "" : instructions,
         code: evalType === "code" ? code : undefined,
         language: evalType === "code" ? codeLanguage : undefined,
@@ -896,6 +1007,12 @@ const EvalDetailPage = () => {
       );
     }
   }, [
+    jevError,
+    jevPayload,
+    isJevModel,
+    effectiveConfig,
+    templateFormat,
+    isComposite,
     evalType,
     agentEvalLocked,
     fagiLocked,
@@ -910,6 +1027,7 @@ const EvalDetailPage = () => {
     multiChoice,
     description,
     tags,
+    customTagInput,
     checkInternet,
     agentMode,
     summaryType,
@@ -973,6 +1091,12 @@ const EvalDetailPage = () => {
 
   // Test evaluation — auto-saves current config before running
   const handleTestEvaluation = useCallback(async () => {
+    if (jevTestBlocked) {
+      enqueueSnackbar(jevError || "Not included in your plan", {
+        variant: "error",
+      });
+      return;
+    }
     if (fagiLocked && evalType !== "code" && !model && !isComposite) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
       setOpenModelMenuSignal((n) => n + 1);
@@ -992,6 +1116,7 @@ const EvalDetailPage = () => {
             : { type: summaryType };
         const tools = build_tools_payload(connectorIds);
         await updateEval.mutateAsync({
+          ...jevPayload,
           instructions:
             evalType === "code" ? undefined : instructions || undefined,
           code: evalType === "code" ? code : undefined,
@@ -1042,6 +1167,11 @@ const EvalDetailPage = () => {
       setIsTesting(false);
     }
   }, [
+    jevError,
+    jevTestBlocked,
+    jevPayload,
+    templateFormat,
+    enqueueSnackbar,
     evalId,
     evalType,
     fagiLocked,
@@ -1456,6 +1586,8 @@ const EvalDetailPage = () => {
                 {!isComposite && evalType === "agent" && (
                   <InstructionEditor
                     openModelMenuSignal={openModelMenuSignal}
+                    outputType={outputType}
+                    choiceCount={Object.keys(choiceScores || {}).length}
                     value={instructions}
                     onChange={(v) => {
                       setInstructions(v);
@@ -1512,6 +1644,8 @@ const EvalDetailPage = () => {
                   <>
                     <LLMPromptEditor
                       openModelMenuSignal={openModelMenuSignal}
+                      outputType={outputType}
+                      choiceCount={Object.keys(choiceScores || {}).length}
                       messages={messages}
                       onMessagesChange={(msgs) => {
                         setMessages(msgs);
@@ -1532,6 +1666,8 @@ const EvalDetailPage = () => {
                       modelSelectorDisabled={false}
                     />
                     <FewShotExamples
+                      isJevModel={isJevModel}
+                      modelLabel={decisionLabel}
                       selectedDatasets={fewShotExamples}
                       onChange={(v) => {
                         setFewShotExamples(v);
@@ -1557,6 +1693,23 @@ const EvalDetailPage = () => {
                     }}
                     datasetColumns={datasetColumns}
                     disabled={isSystemEval}
+                  />
+                )}
+
+                {isJevModel && !isComposite && evalType !== "code" && (
+                  <JevOutputConfig
+                    outputType={outputType}
+                    choiceScores={choiceScores}
+                    mapping={jevMapping}
+                    onChange={(next) => {
+                      setJevMapping(next);
+                      markDirty();
+                    }}
+                    errors={jevErrors}
+                    hasExtraMessages={hasExtraJevMessages(jevMessages)}
+                    disabled={isSystemEval}
+                    locked={decisionLocked}
+                    modelLabel={decisionLabel}
                   />
                 )}
 
@@ -1606,6 +1759,8 @@ const EvalDetailPage = () => {
                     </Box>
                   ) : (
                     <OutputTypeConfig
+                      isJevModel={isJevModel}
+                      modelLabel={decisionLabel}
                       outputType={outputType}
                       onOutputTypeChange={(v) => {
                         setOutputType(v);
@@ -1813,6 +1968,23 @@ const EvalDetailPage = () => {
                         );
                       })()}
                     </Box>
+                    {!isSystemEval && (
+                      <CustomTagInput
+                        value={customTagInput}
+                        onChange={(next) => {
+                          setCustomTagInput(next);
+                          // Save is gated on isDirty, so typing has to count or
+                          // an uncommitted tag could never be saved.
+                          markDirty();
+                        }}
+                        onAdd={(newTag) => {
+                          setTags((prev) =>
+                            prev.includes(newTag) ? prev : [...prev, newTag],
+                          );
+                          markDirty();
+                        }}
+                      />
+                    )}
                   </Box>
                 )}
               </Box>
@@ -1948,6 +2120,7 @@ const EvalDetailPage = () => {
                         size="small"
                         onClick={handleTestEvaluation}
                         disabled={
+                          jevTestBlocked ||
                           isTesting ||
                           !isPlaygroundReady ||
                           needsTemplateVariable ||
@@ -1987,6 +2160,7 @@ const EvalDetailPage = () => {
                           size="small"
                           onClick={handleSaveVersion}
                           disabled={
+                            Boolean(jevError) ||
                             isSaving ||
                             !isDirty ||
                             needsTemplateVariable ||

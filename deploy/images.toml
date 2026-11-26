@@ -54,9 +54,9 @@ architectures = ["amd64", "arm64"]
 name = "futureagi/frontend"
 runs = "The web UI: the React app served by nginx"
 setups = "Distributed, Helm (Standalone serves the same files from `futureagi/standalone`)"
-ports = "80"
+ports = "80 HTTP, 443 HTTPS (optional); Helm: 8080 HTTP, 8443 HTTPS container port, 443 HTTPS Service port"
 user = "root master, `nginx` (101) workers"
-health_check = "`GET /` on :80"
+health_check = "`GET /` on the enabled HTTP listener (:80 by default), otherwise the HTTPS listener (:443 by default); Helm probes :8080 or :8443"
 architectures = ["amd64", "arm64"]
 
 [[image]]
@@ -72,9 +72,9 @@ architectures = ["amd64", "arm64"]
 name = "futureagi/agentcc-gateway"
 runs = "The LLM gateway"
 setups = "Distributed, Helm (binary bundled in `standalone`)"
-ports = "8080"
+ports = "8080 HTTP, 8443 HTTPS (optional)"
 user = "65532"
-health_check = "`GET /healthz` on :8080"
+health_check = "`GET /healthz` on :8080 by default; set HEALTHCHECK_URL=https://127.0.0.1:8443/healthz for HTTPS-only; Helm readiness /readyz and liveness /livez use the active listener"
 architectures = ["amd64", "arm64"]
 
 [[image]]

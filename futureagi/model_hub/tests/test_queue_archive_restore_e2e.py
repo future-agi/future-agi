@@ -11,6 +11,7 @@ These tests pin down the contract:
   - POST .../automation-rules/<id>/evaluate/ on a rule whose queue is
     archived returns 409.
 """
+
 from datetime import timedelta
 from unittest.mock import patch
 from types import SimpleNamespace

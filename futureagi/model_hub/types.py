@@ -57,6 +57,9 @@ class ThirtyDayDataPoint(BaseModel):
 class EvalListItem(BaseModel):
     """Single item in the eval template list response."""
 
+    jev_mapping: dict | None = None
+    model: str | None = None
+
     id: str
     name: str
     template_type: Literal["single", "composite"]
@@ -105,6 +108,10 @@ class EvalCreateRequest(BaseModel):
     class Config:
         extra = "forbid"
 
+    jev_mapping: dict | None = None
+    multi_choice: bool = False
+    input_data_types: dict | None = None
+
     name: str = Field(min_length=0, max_length=255, default="")
     is_draft: bool = False
     eval_type: Literal["llm", "code", "agent"] = "llm"
@@ -133,9 +140,7 @@ class EvalCreateRequest(BaseModel):
     data_injection: dict | None = (
         None  # {variables_only, dataset_row, trace_context, ...}
     )
-    summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom: str}
-    )
+    summary: dict | None = None  # {type: short|long|concise|custom, custom: str}
     # Error Localization — mirrors EvalUpdateRequest. Without this here the
     # FE's create payload (which always includes the toggle value) is
     # rejected by `extra="forbid"`.
@@ -159,6 +164,8 @@ class EvalCreateResponse(BaseModel):
 
 class EvalDetailResponse(BaseModel):
     """Response schema for GET /model-hub/eval-templates/{id}/detail/"""
+
+    jev_mapping: dict | None = None
 
     id: str
     name: str
@@ -198,6 +205,9 @@ class EvalUpdateRequest(BaseModel):
 
     class Config:
         extra = "forbid"
+
+    jev_mapping: dict | None = None
+    input_data_types: dict | None = None
 
     name: str | None = None
     eval_type: Literal["llm", "code", "agent"] | None = None
@@ -272,6 +282,8 @@ class PlaygroundEvalResponse(BaseModel):
 class EvalVersionItem(BaseModel):
     """Single version in the version list."""
 
+    jev_mapping: dict | None = None
+
     id: str
     version_number: int
     is_default: bool
@@ -304,6 +316,8 @@ class EvalVersionListResponse(BaseModel):
 
 class CreateVersionRequest(BaseModel):
     """Request for POST /model-hub/eval-templates/{id}/versions/create/"""
+
+    jev_mapping: dict | None = None
 
     criteria: str | None = None
     model: str | None = None

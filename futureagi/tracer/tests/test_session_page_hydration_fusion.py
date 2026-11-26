@@ -57,10 +57,12 @@ def test_page_hydration_carries_the_union_of_the_three_payloads(cls):
     for projection in (
         "min(start_time) AS session_start",
         "max(end_time) AS session_end",
-        "sum(cost) AS root_total_cost",
+        "fi.cost.kind",
+        "AS root_total_cost",
         "sum(total_tokens) AS root_total_tokens",
-        "sum(trace_cost) AS member_total_cost",
-        "sum(trace_tokens) AS member_total_tokens",
+        "countIf(isNull(usage_cost)) > 0",
+        "AS member_total_cost",
+        "sum(usage_total_tokens) AS member_total_tokens",
         "uniqExact(trace_id) AS traces_count",
         ") AS total_cost",
         ") AS total_tokens",
@@ -90,6 +92,11 @@ def test_page_hydration_reads_the_page_roots_once(cls):
     # its two consumers never repeat the member scan.
     assert sql.count("candidate_member_identities AS (") == 1
     assert sql.count(") AS member_rollup_rows") == 1
+    # A relational CTE alone does not reuse its root-admission work in CH25.
+    # Keep the finite, project-qualified scope behind a scalar subquery too.
+    assert sql.count(") AS hydration_member_scope_rows") == 1
+    assert "SELECT DISTINCT project_id, session_id FROM resolved_roots" in sql
+    assert "SELECT DISTINCT project_id, session_id FROM hydration_member_scope" in sql
     # The only content the member pass reads is the page's message inputs.
     assert sql.count("argMax(tuple(input),") == 2
     # The hydrations this replaces are gone, not merely unused.

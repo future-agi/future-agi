@@ -4,13 +4,26 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
+from clickhouse_connect.driver.exceptions import (
+    DatabaseError as ConnectDatabaseError,
+)
+from clickhouse_connect.driver.exceptions import (
+    OperationalError as ConnectOperationalError,
+)
+from clickhouse_driver.errors import ErrorCodes
+from clickhouse_driver.errors import NetworkError as DriverNetworkError
+from clickhouse_driver.errors import ServerException as DriverServerException
+from clickhouse_driver.errors import SocketTimeoutError as DriverSocketTimeoutError
+from structlog.testing import capture_logs
 
 from tracer.services.annotation_label_source import (
     AnnotationLabelScoresProjectPG,
 )
+from tracer.services.clickhouse import attribute_reads
 from tracer.services.clickhouse.attribute_cursor_state import AttributeCursorSeenState
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_READ_MAX_PROJECTS,
@@ -24,7 +37,12 @@ from tracer.services.clickhouse.filter_value_reads import (
     FilterValueRead,
     SessionFilterValueCursorPageRead,
 )
+from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 from tracer.views import dashboard as dashboard_view
+
+_REAL_RETAINED_WINDOW_START = attribute_reads.AttributeReadSelector.__dict__[
+    "retained_window_start"
+]
 
 
 def _uuid(index: int) -> str:
@@ -96,11 +114,21 @@ def _request(params):
     )
 
 
+RETAINED_SPAN_AGE = timedelta(days=3)
+
+
 def _install_scope_and_seen_state(monkeypatch, projects: _ProjectQuery):
     monkeypatch.setattr(
         dashboard_view,
         "project_queryset_for_request",
         lambda _request: projects._clone(),
+    )
+    # The span_system lane bounds a first workspace page at the retained
+    # spans boundary (ClickHouse part metadata); keep these tests storage-free.
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector,
+        "retained_window_start",
+        lambda _self, _project_ids, *, window_end: window_end - RETAINED_SPAN_AGE,
     )
     monkeypatch.setattr(
         dashboard_view,
@@ -1124,3 +1152,964 @@ def test_workspace_categorical_annotation_uses_only_configured_values(monkeypatc
     assert result["query_complete"] is True
     assert result["browse_status"] == "exhausted"
     assert result["has_more"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("retained_age", "expected_age"),
+    [
+        (RETAINED_SPAN_AGE, RETAINED_SPAN_AGE),
+        # No active span part before the window: an empty interval, not 1970.
+        (None, timedelta(microseconds=1)),
+    ],
+)
+def test_workspace_span_system_walk_starts_at_retained_span_boundary(
+    monkeypatch, retained_age, expected_age
+):
+    """A workspace Project picker must not walk empty slices back to 1970.
+
+    The fixed-scope lane already starts at the retained-data boundary; the
+    batched workspace lane used the Unix epoch, which made the picker issue
+    dozens of sequential empty continuation requests per chain.
+    """
+
+    project_ids = [_uuid(index) for index in range(1, 3)]
+    projects = _ProjectQuery(project_ids, [])
+    _install_scope_and_seen_state(monkeypatch, projects)
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector,
+        "retained_window_start",
+        lambda _self, _project_ids, *, window_end: (
+            None if retained_age is None else window_end - retained_age
+        ),
+    )
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    windows = []
+
+    def read_page(_analytics, **kwargs):
+        windows.append((kwargs["window_start"], kwargs["window_end"]))
+        return FilterValueCursorPageRead(
+            (),
+            kwargs["window_start"],
+            kwargs["window_end"],
+            True,
+            kwargs["window_end"] - timedelta(minutes=5),
+            None,
+            None,
+            (),
+            "continuation",
+        )
+
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_span_system_filter_value_cursor_page",
+        read_page,
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "Project",
+        SimpleNamespace(
+            objects=SimpleNamespace(
+                filter=lambda **_kwargs: SimpleNamespace(values_list=lambda *_args: [])
+            )
+        ),
+    )
+    params = {
+        "metric_name": "project",
+        "metric_type": "system_metric",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 10,
+    }
+
+    first = _result(_invoke(params))
+    if retained_age is not None:
+        assert first["next_cursor"]
+        _result(_invoke({**params, "cursor": first["next_cursor"]}))
+        assert len(windows) == 2
+
+    assert windows
+    start, end = windows[0]
+    assert start > datetime(1971, 1, 1, tzinfo=UTC)
+    assert end - start == expected_age
+    # The continuation resumes the frozen window from the signed cursor.
+    assert all(window == windows[0] for window in windows)
+
+
+# Text a ClickHouse error may echo back; it must never reach the logs.
+_LEAKY_DETAIL = "SELECT min(min_time) FROM system.parts WHERE secret-value-42"
+
+
+def _executor_raising(exc):
+    class _Executor:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def execute(self, *_args, **_kwargs):
+            raise exc
+
+    return _Executor
+
+
+class _UnavailableClientExecutor:
+    def __init__(self, *_args, **_kwargs):
+        raise DriverNetworkError(f"connect refused: {_LEAKY_DETAIL}")
+
+
+class _EmptyResultExecutor:
+    """Returns an envelope the selector rejects as IncompleteLatestStateReplay."""
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def execute(self, *_args, **_kwargs):
+        return None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "executor",
+    [
+        pytest.param(
+            _executor_raising(DriverNetworkError(_LEAKY_DETAIL)),
+            id="driver-network-error",
+        ),
+        pytest.param(
+            _executor_raising(DriverSocketTimeoutError(_LEAKY_DETAIL)),
+            id="driver-socket-timeout",
+        ),
+        pytest.param(
+            _executor_raising(
+                DriverServerException(_LEAKY_DETAIL, code=ErrorCodes.UNKNOWN_TABLE)
+            ),
+            id="driver-server-exception",
+        ),
+        pytest.param(
+            _executor_raising(
+                DriverServerException(_LEAKY_DETAIL, code=ErrorCodes.TIMEOUT_EXCEEDED)
+            ),
+            id="driver-server-timeout",
+        ),
+        pytest.param(
+            _executor_raising(ConnectOperationalError(_LEAKY_DETAIL)),
+            id="connect-operational-error",
+        ),
+        pytest.param(
+            _executor_raising(ConnectDatabaseError(_LEAKY_DETAIL)),
+            id="connect-database-error",
+        ),
+        pytest.param(
+            _executor_raising(ReadDeadlineExceeded(_LEAKY_DETAIL)),
+            id="read-deadline-exceeded",
+        ),
+        pytest.param(
+            _executor_raising(TimeoutError(_LEAKY_DETAIL)),
+            id="builtin-timeout",
+        ),
+        pytest.param(
+            _executor_raising(ConnectionResetError(_LEAKY_DETAIL)),
+            id="connection-reset",
+        ),
+        pytest.param(
+            _executor_raising(RuntimeError(_LEAKY_DETAIL)),
+            id="unexpected-client-error",
+        ),
+        pytest.param(_EmptyResultExecutor, id="incomplete-latest-state-replay"),
+        pytest.param(_UnavailableClientExecutor, id="client-unavailable"),
+    ],
+)
+def test_workspace_span_system_retained_lookup_failure_falls_back_to_epoch(
+    monkeypatch, executor
+):
+    """A failed retained-part lookup must not fail the workspace picker.
+
+    It is only an optimisation of the first page's lower bound, so any error
+    from it falls back to the pre-floor walk from 1970 and logs one sanitized
+    warning.
+    """
+
+    project_ids = [_uuid(index) for index in range(1, 3)]
+    projects = _ProjectQuery(project_ids, [])
+    _install_scope_and_seen_state(monkeypatch, projects)
+    # Run the real selector lookup against a client that fails.
+    monkeypatch.setattr(
+        attribute_reads.AttributeReadSelector,
+        "retained_window_start",
+        _REAL_RETAINED_WINDOW_START,
+    )
+    monkeypatch.setattr(attribute_reads, "V2AttributeQueryExecutor", executor)
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    windows = []
+
+    def read_page(_analytics, **kwargs):
+        windows.append((kwargs["window_start"], kwargs["window_end"]))
+        return FilterValueCursorPageRead(
+            (),
+            kwargs["window_start"],
+            kwargs["window_end"],
+            True,
+            kwargs["window_end"] - timedelta(minutes=5),
+            None,
+            None,
+            (),
+            "continuation",
+        )
+
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_span_system_filter_value_cursor_page",
+        read_page,
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "Project",
+        SimpleNamespace(
+            objects=SimpleNamespace(
+                filter=lambda **_kwargs: SimpleNamespace(values_list=lambda *_args: [])
+            )
+        ),
+    )
+    params = {
+        "metric_name": "project",
+        "metric_type": "system_metric",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 10,
+    }
+
+    with capture_logs() as logs:
+        first = _result(_invoke(params))
+
+    assert first["next_cursor"]
+    assert len(windows) == 1
+    assert windows[0][0] == datetime(1970, 1, 1, tzinfo=UTC)
+    # The continuation keeps the epoch window from the signed cursor.
+    _result(_invoke({**params, "cursor": first["next_cursor"]}))
+    assert windows[1] == windows[0]
+
+    # Exactly one warning: the selector's own read-budget warning, or the
+    # picker's fallback warning for every other failure class.
+    warnings = [entry for entry in logs if entry["log_level"] == "warning"]
+    assert [entry["event"] for entry in warnings] in (
+        ["attribute_retained_window_metadata_budget_exceeded"],
+        ["dashboard_filter_value_retained_window_lookup_failed"],
+    )
+    # The class names the failure without echoing driver text.
+    error_class = warnings[0].get("error_class")
+    assert isinstance(error_class, str) and error_class.isidentifier()
+    assert "secret-value-42" not in repr(logs)
+    assert "system.parts" not in repr(logs)
+
+
+class _PickerDriver:
+    """Expose the leased native send boundary without a server."""
+
+    def __init__(self):
+        self.connection = SimpleNamespace(
+            connected=True,
+            socket=Mock(gettimeout=Mock(return_value=30.0)),
+            connect_timeout=3.0,
+            sync_request_timeout=5.0,
+            send_receive_timeout=30.0,
+            context=SimpleNamespace(),
+            send_query=self.send_query,
+        )
+
+    def execute(self, query, params, *, settings, with_column_types):
+        self.connection.context.settings = settings
+        return self.connection.send_query(query, params)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fallback", [False, True], ids=["retained", "epoch"])
+def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
+    from tracer.services.clickhouse import client as native_client
+    from tracer.services.clickhouse import read_budget
+    from tracer.services.clickhouse.v2 import query_service
+
+    now = [0.0]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    monkeypatch.setattr(read_budget, "time", clock)
+    monkeypatch.setattr(native_client, "time", clock)
+    # Sequence the virtual clock; the held-driver test below uses real threads.
+    monkeypatch.setattr(
+        dashboard_view, "Thread", lambda *, target, **_: SimpleNamespace(start=target)
+    )
+    monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", 1450)
+    owners = {_uuid(201): _uuid(301), _uuid(202): _uuid(302)}
+    _install_scope_and_seen_state(monkeypatch, _ProjectQuery([], []))
+    load_seen = dashboard_view.load_attribute_cursor_seen_state
+
+    def prepare_seen(*args, **kwargs):
+        now[0] += 0.1  # Handoff after metadata, on the same request wall.
+        return load_seen(*args, **kwargs)
+
+    monkeypatch.setattr(
+        dashboard_view, "load_attribute_cursor_seen_state", prepare_seen
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "project_queryset_for_request",
+        lambda request: _ProjectQuery([owners[str(request.workspace.pk)]], []),
+    )
+    monkeypatch.setattr(
+        attribute_reads.AttributeReadSelector,
+        "retained_window_start",
+        _REAL_RETAINED_WINDOW_START,
+    )
+    calls = []
+
+    class Driver(_PickerDriver):
+        def send_query(self, query, params):
+            if "system.parts" not in query:
+                return [], []
+            seconds = self.connection.send_receive_timeout
+            server_cap = self.connection.context.settings["max_execution_time"]
+            calls.append((seconds, server_cap))
+            if fallback:
+                # The native stall consumes its entire allowance, not a fraction.
+                now[0] += 1.0 if seconds is None else seconds
+                raise DriverNetworkError(_LEAKY_DETAIL)
+            return [(datetime(2020, 1, 1, tzinfo=UTC),)], [
+                ("retained_start", "DateTime")
+            ]
+
+    client = native_client.ClickHouseClient(server_enforced_readonly=False)
+    monkeypatch.setattr(client, "_create_client", lambda: Driver())
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
+    reads = []
+
+    class Analytics:
+        def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            assert "PREWHERE project_id IN %(project_ids)s" in query
+            ids = params["project_ids"]
+            reads.append((ids, timeout_ms))
+            return SimpleNamespace(data=[{"val": item} for item in ids])
+
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", Analytics)
+    params = {
+        "metric_name": "name",
+        "metric_type": "system_metric",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 1,
+    }
+
+    def invoke(workspace_id, **extra):
+        request = _request({**params, **extra})
+        request.workspace = SimpleNamespace(id=workspace_id, pk=workspace_id)
+        return dashboard_view.DashboardViewSet.filter_values.__wrapped__(
+            dashboard_view.DashboardViewSet(),
+            request,
+        )
+
+    cursors = []
+    with capture_logs() as logs:
+        for workspace_id, project_id in owners.items():
+            page = _result(invoke(workspace_id))
+            assert page["values"] == [{"value": project_id, "label": project_id}]
+            assert datetime.fromisoformat(page["query_window_start"]) == datetime(
+                1970 if fallback else 2020, 1, 1, tzinfo=UTC
+            )
+            assert reads[-1][0] == (project_id,)
+            assert reads[-1][1] >= 1000
+            cursors.append(page["next_cursor"])
+        assert all(cursors)
+        before = len(reads)
+        assert invoke(_uuid(202), cursor=cursors[0]).status_code == 400
+        assert len(reads) == before
+    assert len(calls) == 2
+    for transport, server in calls:
+        assert 0 < server <= 0.175
+        assert transport == pytest.approx(server)
+    assert all("query" not in entry and "error" not in entry for entry in logs)
+    assert "system.parts" not in repr(logs) and "secret-value-42" not in repr(logs)
+    with capture_logs() as ordinary:
+        client.execute_read("SELECT 1")
+    assert any(entry.get("query") == "SELECT 1" for entry in ordinary)
+
+
+@pytest.mark.unit
+def test_near_reserve_skips_retained_worker_before_page_handoff(monkeypatch):
+    from tracer.services.clickhouse import read_budget
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.v2 import query_service
+
+    now = [0.0]
+    monkeypatch.setattr(read_budget, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", 1120)
+    project = _uuid(1)
+    _install_scope_and_seen_state(monkeypatch, _ProjectQuery([project], []))
+    worker = Mock(side_effect=AssertionError("metadata should not be admitted"))
+    monkeypatch.setattr(dashboard_view, "Thread", worker)
+    parent = None
+
+    def read_projects(deadline, read):
+        nonlocal parent
+        parent = deadline
+        return read()
+
+    monkeypatch.setattr(dashboard_view, "_run_filter_value_pg_read", read_projects)
+    load_seen = dashboard_view.load_attribute_cursor_seen_state
+
+    def prepare_seen(*args, **kwargs):
+        now[0] += 0.1
+        return load_seen(*args, **kwargs)
+
+    monkeypatch.setattr(
+        dashboard_view, "load_attribute_cursor_seen_state", prepare_seen
+    )
+    entries = []
+
+    class Driver(_PickerDriver):
+        def send_query(self, query, params):
+            assert "PREWHERE project_id IN %(project_ids)s" in query
+            assert params["project_ids"] == (project,)
+            entries.append(parent.remaining_ms())
+            return [("scoped name",)], [("val", "String")]
+
+    client = ClickHouseClient(server_enforced_readonly=False)
+    monkeypatch.setattr(client, "_create_client", Driver)
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
+    page = _result(
+        _invoke(
+            {
+                "metric_name": "name",
+                "metric_type": "system_metric",
+                "source": "traces",
+                "project_ids": [],
+                "search": "",
+                "page_size": 1,
+            }
+        )
+    )
+    worker.assert_not_called()
+    assert entries == [1020]
+    assert page["values"] == [{"value": "scoped name", "label": "scoped name"}]
+    assert datetime.fromisoformat(page["query_window_start"]) == datetime(
+        1970, 1, 1, tzinfo=UTC
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("wall_ms", [1_450, 2_750], ids=["low-surplus", "metadata-cap"])
+@pytest.mark.parametrize(
+    "share_permit", [False, True], ids=["isolated", "shared-control"]
+)
+def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
+    monkeypatch, share_permit, wall_ms
+):
+    from concurrent.futures import Future
+    from contextlib import nullcontext
+    from threading import Event, Thread, current_thread
+    from time import monotonic
+
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+    from tracer.services.clickhouse.v2 import query_service
+
+    project = _uuid(1)
+    _install_scope_and_seen_state(monkeypatch, _ProjectQuery([project], []))
+    monkeypatch.setattr(
+        attribute_reads.AttributeReadSelector,
+        "retained_window_start",
+        _REAL_RETAINED_WINDOW_START,
+    )
+    parent = None
+
+    def read_projects(deadline, read):
+        nonlocal parent
+        parent = deadline
+        return read()
+
+    monkeypatch.setattr(dashboard_view, "_run_filter_value_pg_read", read_projects)
+    # In the low-surplus case only 450 ms is available beyond the reserve,
+    # even before preparation. The metadata driver stays held past waiter expiry.
+    reserve_ms = 1_000
+    monkeypatch.setattr(
+        dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", wall_ms
+    )
+    metadata_entered, release_metadata, page_entered = Event(), Event(), Event()
+    metadata_threads = []
+    page_budgets = []
+
+    class Driver(_PickerDriver):
+        def send_query(self, query, params):
+            if "system.parts" in query:
+                metadata_threads.append(current_thread())
+                metadata_entered.set()
+                assert release_metadata.wait(timeout=10), (
+                    "metadata gate was not released"
+                )
+                return [(None,)], [("retained_start", "Nullable(DateTime)")]
+            assert "PREWHERE project_id IN %(project_ids)s" in query
+            assert params["project_ids"] == (project,)
+            page_budgets.append(parent.remaining_ms())
+            page_entered.set()
+            return [("scoped name",)], [("val", "String")]
+
+    client = ClickHouseClient(server_enforced_readonly=False, pool_size=1)
+    if share_permit:
+        monkeypatch.setattr(
+            client, "_retained_lookup_admission", client._read_admission
+        )
+    monkeypatch.setattr(client, "_create_client", Driver)
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    response = Future()
+
+    def request_page():
+        try:
+            result = _invoke(
+                {
+                    "metric_name": "name",
+                    "metric_type": "system_metric",
+                    "source": "traces",
+                    "project_ids": [],
+                    "search": "",
+                    "page_size": 1,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - propagate request failures to the test
+            response.set_exception(exc)
+        else:
+            response.set_result(result)
+
+    request_thread = Thread(target=request_page, daemon=True)
+    request_thread.start()
+    try:
+        assert metadata_entered.wait(timeout=5), "request did not reach metadata driver"
+        parent_end = parent.started + parent.total_ms / 1000
+        # Stop waiting just after the reserve boundary, while a blocked page
+        # still has time to complete normally once we release metadata.
+        wait_seconds = max(0, parent_end - reserve_ms / 1000 - monotonic()) + 0.01
+        missed_page = "page did not enter while metadata was held"
+        expected = (
+            pytest.raises(AssertionError, match=missed_page)
+            if share_permit
+            else nullcontext()
+        )
+        with expected:
+            assert page_entered.wait(wait_seconds), missed_page
+            assert page_budgets[0] >= reserve_ms
+
+        if not share_permit:
+            fallback = dashboard_view._batched_span_system_retained_window_start(
+                [project],
+                window_end=datetime.now(UTC),
+                deadline=ReadDeadline.start(wall_ms),
+            )
+            assert fallback == epoch
+            assert len(metadata_threads) == 1  # No second native lookup was queued.
+            metadata_threads[0].join(timeout=max(0, parent_end - monotonic()))
+            assert metadata_threads[0].is_alive()
+    finally:
+        release_metadata.set()
+        request_thread.join(timeout=5)
+        for worker in metadata_threads:
+            worker.join(
+                timeout=5
+            )  # Also works when metadata ran inline on the old path.
+        assert not request_thread.is_alive()
+        assert not any(worker.is_alive() for worker in metadata_threads)
+
+    page = _result(response.result(timeout=0))
+    assert datetime.fromisoformat(page["query_window_start"]) == epoch
+    assert page["values"] == [{"value": "scoped name", "label": "scoped name"}]
+    if share_permit:
+        # The same page really did run after release; only the reserve was lost.
+        assert len(page_budgets) == 1 and page_budgets[0] < reserve_ms
+
+
+@pytest.mark.unit
+def test_held_retained_lookup_allows_process_exit():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    program = """
+from datetime import UTC, datetime
+from threading import Event
+from unittest.mock import patch
+import django
+django.setup()
+from tracer.views import dashboard
+from tracer.services.clickhouse.read_budget import ReadDeadline
+entered = Event()
+def hold(*args, **kwargs):
+    entered.set()
+    Event().wait()  # No release: this worker must not be joined at shutdown.
+with patch.object(dashboard, 'AttributeReadSelector') as selector:
+    selector.return_value.retained_window_start.side_effect = hold
+    result = dashboard._batched_span_system_retained_window_start(
+        ['00000000-0000-0000-0000-000000000001'], window_end=datetime.now(UTC),
+        deadline=ReadDeadline.start(2000),
+    )
+    assert entered.is_set() and result == datetime(1970, 1, 1, tzinfo=UTC)
+"""
+    subprocess.run(
+        [sys.executable, "-c", program],
+        cwd=Path(__file__).resolve().parents[2],
+        env={
+            **os.environ,
+            "DJANGO_SETTINGS_MODULE": "tfc.settings.test",
+            "NO_STARTUP_DB_MUTATIONS": "true",
+        },
+        check=True,
+        timeout=30,
+    )
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _install_v2_client(monkeypatch, **kwargs):
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.v2 import query_service
+
+    client = ClickHouseClient(**kwargs)
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
+    return client
+
+
+def _wait_for_idle_retained_slot():
+    from time import monotonic, sleep
+
+    stop = monotonic() + 5
+    while monotonic() < stop:
+        if dashboard_view._RETAINED_LOOKUP_SLOT.acquire(blocking=False):
+            dashboard_view._RETAINED_LOOKUP_SLOT.release()
+            return
+        sleep(0.01)
+    raise AssertionError("retained lookup worker did not release its slot")
+
+
+def _lookup_events(logs):
+    return [
+        entry
+        for entry in logs
+        if entry["log_level"] in {"info", "warning"}
+        and "retained_window" in entry["event"]
+    ]
+
+
+@pytest.mark.unit
+def test_server_readonly_lane_skips_retained_lookup_before_taking_slot(monkeypatch):
+    """A readonly=1 server profile refuses every client setting, so the
+    bounded metadata read can never be sent there. Skip it up front with a
+    distinct reason instead of starting a worker that always fails."""
+
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    client = _install_v2_client(monkeypatch, server_enforced_readonly=True)
+    monkeypatch.setattr(
+        client, "_create_client", Mock(side_effect=AssertionError("native read"))
+    )
+    # Record a started worker but still run it, so the slot is always released.
+    worker = Mock(side_effect=lambda *, target, **_: SimpleNamespace(start=target))
+    monkeypatch.setattr(dashboard_view, "Thread", worker)
+
+    with capture_logs() as logs:
+        start = dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)],
+            window_end=datetime.now(UTC),
+            deadline=ReadDeadline.start(10_000),
+        )
+
+    assert start == _EPOCH
+    worker.assert_not_called()
+    assert [
+        (entry["event"], entry.get("reason")) for entry in _lookup_events(logs)
+    ] == [
+        (
+            "dashboard_filter_value_retained_window_lookup_skipped",
+            "server_enforced_readonly",
+        )
+    ]
+    # The slot stays free for a lane that can run the lookup.
+    assert dashboard_view._RETAINED_LOOKUP_SLOT.acquire(blocking=False)
+    dashboard_view._RETAINED_LOOKUP_SLOT.release()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("leader_result", "joiner_offset", "joiner_expected"),
+    [
+        pytest.param("retained", timedelta(seconds=1), "retained", id="retained"),
+        # The earlier lookup could not see parts between its end and ours.
+        pytest.param(None, timedelta(seconds=1), "epoch", id="empty-earlier-lookup"),
+        # The lookup covered this whole window and found no part in it.
+        pytest.param(None, -timedelta(seconds=1), "empty", id="empty-covering-lookup"),
+    ],
+)
+def test_concurrent_first_pages_join_the_in_flight_retained_lookup(
+    monkeypatch, leader_result, joiner_offset, joiner_expected
+):
+    from concurrent.futures import Future
+    from threading import Event, Thread
+
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    _install_v2_client(monkeypatch, server_enforced_readonly=False)
+    leader_end = datetime.now(UTC)
+    joiner_end = leader_end + joiner_offset
+    retained = leader_end - RETAINED_SPAN_AGE
+    entered, release, two_waiters = Event(), Event(), Event()
+    lookups = []
+
+    def lookup(_self, _project_ids, *, window_end):
+        lookups.append(window_end)
+        entered.set()
+        assert release.wait(timeout=5)
+        return retained if leader_result == "retained" else None
+
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector, "retained_window_start", lookup
+    )
+    waits = []
+
+    class CountingFuture(Future):
+        def result(self, timeout=None):
+            waits.append(timeout)
+            if len(waits) >= 2:
+                two_waiters.set()
+            return super().result(timeout=timeout)
+
+    monkeypatch.setattr(dashboard_view, "Future", CountingFuture)
+    results = {}
+
+    def first_page(name, window_end):
+        results[name] = dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)],
+            window_end=window_end,
+            deadline=ReadDeadline.start(10_000),
+        )
+
+    leader = Thread(target=first_page, args=("leader", leader_end), daemon=True)
+    joiner = Thread(target=first_page, args=("joiner", joiner_end), daemon=True)
+    leader.start()
+    try:
+        assert entered.wait(timeout=5), "leader did not start its lookup"
+        joiner.start()
+        # The joiner waits on the leader's read instead of skipping the floor.
+        joined = two_waiters.wait(timeout=0.5)
+        release.set()
+        joiner.join(timeout=5)
+        leader.join(timeout=5)
+    finally:
+        release.set()
+        _wait_for_idle_retained_slot()
+
+    expected = {
+        "retained": retained,
+        "epoch": _EPOCH,
+        "empty": joiner_end - timedelta(microseconds=1),
+    }[joiner_expected]
+    assert joined, "the concurrent first page did not join the in-flight lookup"
+    assert results == {
+        "leader": retained
+        if leader_result == "retained"
+        else leader_end - timedelta(microseconds=1),
+        "joiner": expected,
+    }
+    assert lookups == [leader_end]  # One native lookup served both pages.
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("parent_ms", "cap_seconds"),
+    [
+        pytest.param(30_000, 0.75, id="metadata-cap"),
+        # (2000 - 1000 reserve - 100 handoff) // 2
+        pytest.param(2_000, 0.45, id="half-the-surplus"),
+    ],
+)
+def test_retained_lookup_waiter_never_waits_past_its_cap(
+    monkeypatch, parent_ms, cap_seconds
+):
+    from concurrent.futures import Future
+    from threading import Event
+
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    _install_v2_client(monkeypatch, server_enforced_readonly=False)
+    release = Event()
+
+    def held(_self, _project_ids, *, window_end):
+        assert release.wait(timeout=5)
+        return window_end - RETAINED_SPAN_AGE
+
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector, "retained_window_start", held
+    )
+    waits = []
+
+    class RecordingFuture(Future):
+        def result(self, timeout=None):
+            waits.append(timeout)
+            return super().result(timeout=0)  # Expire now; record the request.
+
+    monkeypatch.setattr(dashboard_view, "Future", RecordingFuture)
+    try:
+        start = dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)],
+            window_end=datetime.now(UTC),
+            deadline=ReadDeadline.start(parent_ms),
+        )
+    finally:
+        release.set()
+        _wait_for_idle_retained_slot()
+
+    assert start == _EPOCH
+    assert len(waits) == 1
+    assert cap_seconds - 0.1 < waits[0] <= cap_seconds
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(DriverNetworkError(_LEAKY_DETAIL), id="driver-network-error"),
+        pytest.param(
+            DriverSocketTimeoutError(_LEAKY_DETAIL), id="driver-socket-timeout"
+        ),
+        pytest.param(
+            DriverServerException(_LEAKY_DETAIL, code=ErrorCodes.TIMEOUT_EXCEEDED),
+            id="driver-server-timeout",
+        ),
+        pytest.param(
+            DriverServerException(_LEAKY_DETAIL, code=ErrorCodes.UNKNOWN_TABLE),
+            id="driver-server-exception",
+        ),
+        pytest.param("too-many-simultaneous-queries", id="server-busy"),
+    ],
+)
+def test_retained_lookup_failures_through_native_client_fall_back_once(
+    monkeypatch, error
+):
+    """Drive the real client's retained-read path, not a replaced executor."""
+
+    from tracer.services.clickhouse import client as native_client
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    if error == "too-many-simultaneous-queries":
+        error = DriverServerException(
+            _LEAKY_DETAIL, code=native_client._TOO_MANY_SIMULTANEOUS_QUERIES_CODE
+        )
+    # Run the worker inline so the test owns its ordering and logs.
+    monkeypatch.setattr(
+        dashboard_view, "Thread", lambda *, target, **_: SimpleNamespace(start=target)
+    )
+    monkeypatch.setattr(
+        attribute_reads.AttributeReadSelector,
+        "retained_window_start",
+        _REAL_RETAINED_WINDOW_START,
+    )
+    sends = []
+
+    class Driver(_PickerDriver):
+        def send_query(self, query, params):
+            sends.append(query)
+            raise error
+
+    client = _install_v2_client(monkeypatch, server_enforced_readonly=False)
+    monkeypatch.setattr(client, "_create_client", Driver)
+
+    with capture_logs() as logs:
+        start = dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)],
+            window_end=datetime.now(UTC),
+            deadline=ReadDeadline.start(10_000),
+        )
+
+    assert start == _EPOCH
+    # The optional read is never retried, even on a busy server.
+    assert len(sends) == 1 and "system.parts" in sends[0]
+    events = _lookup_events(logs)
+    assert len(events) == 1
+    assert events[0]["event"] in {
+        "attribute_retained_window_metadata_budget_exceeded",
+        "dashboard_filter_value_retained_window_lookup_failed",
+    }
+    assert isinstance(events[0].get("error_class"), str)
+    assert "secret-value-42" not in repr(logs)
+    assert "system.parts" not in repr(logs)
+    _wait_for_idle_retained_slot()
+
+
+@pytest.mark.unit
+def test_fixed_scope_first_page_bounds_a_stalled_retained_lookup(monkeypatch):
+    """The fixed-scope lane must not wait on the optional lookup unbounded."""
+
+    from concurrent.futures import Future
+    from threading import Event, Thread
+
+    project = _uuid(1)
+    _install_scope_and_seen_state(monkeypatch, _ProjectQuery([project], []))
+    _install_v2_client(monkeypatch, server_enforced_readonly=False)
+    entered, release = Event(), Event()
+
+    def stalled(_self, _project_ids, *, window_end):
+        entered.set()
+        release.wait(timeout=10)
+        return window_end - RETAINED_SPAN_AGE
+
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector, "retained_window_start", stalled
+    )
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    windows = []
+
+    def read_page(_analytics, **kwargs):
+        windows.append(kwargs["window_start"])
+        return FilterValueCursorPageRead(
+            ("customer-ended-call",),
+            kwargs["window_start"],
+            kwargs["window_end"],
+            False,
+            kwargs["window_start"],
+            None,
+            None,
+            (),
+            "exhausted",
+        )
+
+    monkeypatch.setattr(
+        dashboard_view, "read_span_system_filter_value_cursor_page", read_page
+    )
+    response = Future()
+
+    def request_page():
+        try:
+            result = _invoke(
+                {
+                    "metric_name": "ended_reason",
+                    "metric_type": "system_metric",
+                    "source": "traces",
+                    "project_ids": [project],
+                    "search": "",
+                    "page_size": 10,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - propagate request failures to the test
+            response.set_exception(exc)
+        else:
+            response.set_result(result)
+
+    Thread(target=request_page, daemon=True).start()
+    try:
+        assert entered.wait(timeout=5), "fixed-scope page did not look up the floor"
+        # The waiter gives up at its cap; the held driver does not hold the page.
+        page = _result(response.result(timeout=3))
+    finally:
+        release.set()
+        _wait_for_idle_retained_slot()
+
+    assert windows == [_EPOCH]
+    assert page["values"] == [
+        {"value": "customer-ended-call", "label": "customer-ended-call"}
+    ]

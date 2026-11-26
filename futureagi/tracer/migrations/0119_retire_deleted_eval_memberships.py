@@ -24,6 +24,28 @@ from django.utils import timezone
 
 _BATCH = 200
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["data_migration"],
+    "tables": [
+        "postgres:tracer_error_cluster_traces",
+        "postgres:tracer_eval_logger",
+        "postgres:tracer_trace_error_group",
+    ],
+    "mitigation": (
+        "Retires live eval memberships whose eval result is soft-deleted in one UPDATE, "
+        "then recounts every live eval-source issue in id-ordered keyset pages of 200 with "
+        "bulk_update. atomic=False commits each page; a re-run is a no-op and the reverse is "
+        "a no-op. tracer_eval_logger is only read through joins; trace, session and span "
+        "tables are never joined. Qualified with the error-feed reference workload in the "
+        "real upgrade rehearsal, which measures duration, disk, WAL and temp growth and the "
+        "automatic restore."
+    ),
+    "reviewer": "NVJKKartik",
+    "review": "https://github.com/future-agi/future-agi/pull/3623#discussion_r4448157010",
+    "large_volume_rehearsal": True,
+}
+
 
 def _impact(avg_score):
     """Mirrors ``eval_clustering._score_to_impact`` at the time of writing."""

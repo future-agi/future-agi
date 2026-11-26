@@ -44,12 +44,20 @@ class ResponseLoader(BaseLoader):
             # Check for mandatory columns in raw_instance
             if self.col_response not in raw_instance:
                 raise KeyError(f"'{self.col_response}' not found in provided data.")
-            if self.col_query in raw_instance and not isinstance(raw_instance.get(self.col_query), str):
+            if self.col_query in raw_instance and not isinstance(
+                raw_instance.get(self.col_query), str
+            ):
                 raise TypeError(f"'{self.col_query}' is not of type string.")
-            if self.col_context in raw_instance and not isinstance(raw_instance.get(self.col_context), str):
+            if self.col_context in raw_instance and not isinstance(
+                raw_instance.get(self.col_context), str
+            ):
                 raise TypeError(f"'{self.col_context}' is not of type string.")
-            if self.col_expected_response in raw_instance and not isinstance(raw_instance.get(self.col_expected_response), str):
-                raise TypeError(f"'{self.col_expected_response}' is not of type string.")
+            if self.col_expected_response in raw_instance and not isinstance(
+                raw_instance.get(self.col_expected_response), str
+            ):
+                raise TypeError(
+                    f"'{self.col_expected_response}' is not of type string."
+                )
             # Create a processed instance with mandatory fields
             processed_instance = {
                 "response": raw_instance[self.col_response],
@@ -58,7 +66,9 @@ class ResponseLoader(BaseLoader):
                 "expected_response": raw_instance.get(self.col_expected_response, None),
             }
             # removing keys with None values
-            processed_instance = {k: v for k, v in processed_instance.items() if v is not None}
+            processed_instance = {
+                k: v for k, v in processed_instance.items() if v is not None
+            }
             # Store the results
             self._processed_dataset.append(processed_instance)
 
@@ -76,7 +86,7 @@ class ResponseLoader(BaseLoader):
         for raw_dataset in self._raw_dataset:
             raw_dataset_dict = asdict(raw_dataset)
             processed_instance = {
-                "response": raw_dataset_dict['prompt_response'],
+                "response": raw_dataset_dict["prompt_response"],
             }
             self._processed_dataset.append(processed_instance)
         return self._processed_dataset

@@ -572,7 +572,7 @@ const EditTaskDrawerV2Content = ({
                         <Typography
                           variant="body2"
                           color="text.disabled"
-                          sx={{ fontSize: "13px" }}
+                          sx={{ fontSize: "12px" }}
                         >
                           No evaluations configured
                         </Typography>

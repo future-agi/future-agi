@@ -399,8 +399,10 @@ def test_add_rows_from_file_rejects_ssrf_url_for_image_column(
     upload_calls = []
     monkeypatch.setattr(
         "model_hub.views.develop_dataset.upload_image_to_s3",
-        lambda *a, **kw: upload_calls.append((a, kw))
-        or "https://s3.bucket/should-not-be-reached.png",
+        lambda *a, **kw: (
+            upload_calls.append((a, kw))
+            or "https://s3.bucket/should-not-be-reached.png"
+        ),
     )
 
     response = auth_client.post(
@@ -410,8 +412,7 @@ def test_add_rows_from_file_rejects_ssrf_url_for_image_column(
             "file": _csv_file(
                 name="ssrf_rows.csv",
                 content=(
-                    b"image_col,other\n"
-                    b"http://169.254.169.254/latest/meta-data/,x\n"
+                    b"image_col,other\nhttp://169.254.169.254/latest/meta-data/,x\n"
                 ),
             ),
         },

@@ -23,6 +23,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import (
     CellStatus,
@@ -377,9 +378,7 @@ class TestAddRunPromptColumnView:
             "config": config,
         }
 
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ):
+        with patch("model_hub.tasks.run_prompt.process_prompts_single.apply_async"):
             response = auth_client.post(
                 "/model-hub/develops/add_run_prompt_column/",
                 payload,
@@ -1437,6 +1436,64 @@ class TestRetrieveRunPromptOptionsView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_retrieve_run_prompt_options_keeps_model_status_per_request(
+        self, auth_client, organization
+    ):
+        """Test that each options response has its own model availability."""
+        catalog_before = [model.copy() for model in AVAILABLE_MODELS]
+        model_name = next(
+            model["model_name"]
+            for model in AVAILABLE_MODELS
+            if model.get("providers") == "openai" and model.get("mode") == "chat"
+        )
+        ApiKey.objects.create(
+            provider="openai", organization=organization, key="test-api-key"
+        )
+        other_organization = Organization.objects.create(
+            name="Other Model Organization"
+        )
+        other_user = User.objects.create_user(
+            email="othermodel@example.com",
+            password="testpassword123",
+            name="Other Model User",
+            organization=other_organization,
+        )
+        other_workspace = Workspace.objects.create(
+            name="Other Model Workspace",
+            organization=other_organization,
+            is_default=True,
+            created_by=other_user,
+        )
+        other_client = APIClient()
+        other_client.force_authenticate(user=other_user)
+
+        first_response = auth_client.get(
+            "/model-hub/develops/retrieve_run_prompt_options/"
+        )
+        set_workspace_context(
+            workspace=other_workspace, organization=other_organization
+        )
+        second_response = other_client.get(
+            "/model-hub/develops/retrieve_run_prompt_options/"
+        )
+
+        assert first_response.status_code == status.HTTP_200_OK
+        assert second_response.status_code == status.HTTP_200_OK
+        first_model = next(
+            model
+            for model in first_response.data["result"]["models"]
+            if model["model_name"] == model_name
+        )
+        second_model = next(
+            model
+            for model in second_response.data["result"]["models"]
+            if model["model_name"] == model_name
+        )
+        assert first_model["is_available"] is True
+        assert second_model["is_available"] is False
+        assert AVAILABLE_MODELS == catalog_before
+        assert all("is_available" not in model for model in AVAILABLE_MODELS)
+
     def test_retrieve_run_prompt_options_unauthenticated(self):
         """Test that unauthenticated users cannot retrieve options."""
         client = APIClient()
@@ -1645,7 +1702,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "List items"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "List items"}],
+                    }
                 ],
                 "output_format": "array",
             },
@@ -1657,11 +1717,16 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Calculate total"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Calculate total"}],
+                    }
                 ],
                 "output_format": "number",
             },
-            lambda self, ds: self._assert_column_data_type(ds, "Number Output", "integer"),
+            lambda self, ds: self._assert_column_data_type(
+                ds, "Number Output", "integer"
+            ),
         ),
         (
             "output_format_object",
@@ -1669,7 +1734,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Return JSON"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Return JSON"}],
+                    }
                 ],
                 "output_format": "object",
             },
@@ -1692,7 +1760,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Generate text"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Generate text"}],
+                    }
                 ],
                 "output_format": "string",
                 "run_prompt_config": {"temperature": 0.2, "max_tokens": 500},
@@ -1712,7 +1783,9 @@ class TestAddRunPromptColumnConfigVariations:
                 "output_format": "string",
                 "concurrency": 10,
             },
-            lambda self, ds: self._assert_run_prompter_attrs("Concurrent Run", concurrency=10),
+            lambda self, ds: self._assert_run_prompter_attrs(
+                "Concurrent Run", concurrency=10
+            ),
         ),
         (
             "response_format",
@@ -1720,7 +1793,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Analyze this"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Analyze this"}],
+                    }
                 ],
                 "output_format": "object",
                 "response_format": _RESPONSE_FORMAT_SCHEMA,
@@ -1751,7 +1827,10 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "user", "content": [{"type": "text", "text": "Creative text"}]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Creative text"}],
+                    }
                 ],
                 "output_format": "string",
                 "run_prompt_config": {
@@ -1793,10 +1872,22 @@ class TestAddRunPromptColumnConfigVariations:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "system", "content": [{"type": "text", "text": "Assistant"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "First question"}]},
-                    {"role": "assistant", "content": [{"type": "text", "text": "First answer"}]},
-                    {"role": "user", "content": [{"type": "text", "text": "Follow up"}]},
+                    {
+                        "role": "system",
+                        "content": [{"type": "text", "text": "Assistant"}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "First question"}],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "First answer"}],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Follow up"}],
+                    },
                 ],
                 "output_format": "string",
             },
@@ -1819,9 +1910,7 @@ class TestAddRunPromptColumnConfigVariations:
             "name": column_name,
             "config": config,
         }
-        with patch(
-            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
-        ):
+        with patch("model_hub.tasks.run_prompt.process_prompts_single.apply_async"):
             response = auth_client.post(
                 "/model-hub/develops/add_run_prompt_column/",
                 payload,
@@ -2287,7 +2376,10 @@ class TestRunPromptSerializerValidation:
             {
                 "model": "gpt-4",
                 "messages": [
-                    {"role": "invalid_role", "content": [{"type": "text", "text": "Test"}]}
+                    {
+                        "role": "invalid_role",
+                        "content": [{"type": "text", "text": "Test"}],
+                    }
                 ],
                 "output_format": "string",
             },
@@ -3819,3 +3911,512 @@ class TestRunPromptToolPayload:
 
         assert payload["tools"][0]["type"] == "function"
         assert payload["tools"][0]["function"]["parameters"] == self.PARAMETERS
+
+
+# ==================== TH-2356: literal TTS script boundary ====================
+
+TTS_PHRASE = "record audio with script"
+TTS_AUDIO_URL = "https://audio.example/th-2356.mp3"
+TTS_EMPTY_SCRIPT_ERROR = "Enter text to synthesize speech."
+TTS_PREVIOUS_AUDIO_URL = "https://audio.example/th-2356-previous-run.mp3"
+
+
+def _tts_wav():
+    import io
+    import wave
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(8000)
+        wav.writeframes(b"\x00\x00" * 2000)
+    return buffer.getvalue()
+
+
+TTS_WAV = _tts_wav()
+TTS_UPLOAD = (
+    "agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.audio_processor."
+    "upload_audio_to_s3"
+)
+TTS_ORG_KEY = "sk-th2356-org-level-synthetic"
+TTS_WORKSPACE_KEY = "sk-th2356-workspace-level-synthetic"
+
+
+def tts_messages(user_text):
+    return [
+        {"role": "system", "content": [{"type": "text", "text": TTS_PHRASE}]},
+        {"role": "user", "content": [{"type": "text", "text": user_text}]},
+    ]
+
+
+def tts_config(user_text):
+    return {
+        "model": "openai/tts-1",
+        "messages": tts_messages(user_text),
+        "output_format": "audio",
+        "run_prompt_config": {
+            "modelName": "openai/tts-1",
+            "modelType": "tts",
+            "voice": "alloy",
+            "voice_id": "alloy",
+            "format": "mp3",
+        },
+    }
+
+
+@pytest.fixture
+def openai_provider_key(db, organization):
+    return ApiKey.objects.create(
+        provider="openai", organization=organization, key="sk-th2356-synthetic"
+    )
+
+
+@pytest.fixture
+def speech_boundary():
+    """Patch the provider call and AudioProcessor.format_audio_output.
+
+    The formatter stub replaces the upload and the duration, cost and
+    metadata steps; the storage-failure tests keep the real formatter.
+    """
+    from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.audio_processor import (
+        AudioProcessor,
+    )
+
+    with (
+        patch("litellm.speech", return_value=MagicMock(content=b"ID3 fake")) as speech,
+        patch.object(
+            AudioProcessor,
+            "format_audio_output",
+            return_value=(TTS_AUDIO_URL, {"metadata": {}}),
+        ) as upload,
+    ):
+        yield speech, upload
+
+
+@pytest.mark.django_db
+class TestLiteralTTSScriptRoutes:
+    """Real routes and persistence; provider call and audio formatter patched."""
+
+    def _preview(self, client, dataset, user_text):
+        return client.post(
+            "/model-hub/develops/preview_run_prompt_column/",
+            {
+                "dataset_id": str(dataset.id),
+                "name": "TTS Preview",
+                "first_n_rows": 1,
+                "config": tts_config(user_text),
+            },
+            format="json",
+        )
+
+    @pytest.mark.parametrize(
+        ("cell_value", "expected_script"),
+        [("welcome", "Hello, welcome."), (TTS_PHRASE, f"Hello, {TTS_PHRASE}.")],
+    )
+    def test_preview_speaks_resolved_user_script_only(
+        self,
+        auth_client,
+        dataset,
+        input_column,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        cell_value,
+        expected_script,
+    ):
+        speech, upload = speech_boundary
+        Cell.objects.create(
+            dataset=dataset, column=input_column, row=row, value=cell_value
+        )
+
+        response = self._preview(auth_client, dataset, "Hello, {{Input Column}}.")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["responses"] == [TTS_AUDIO_URL]
+        speech.assert_called_once()
+        kwargs = speech.call_args.kwargs
+        assert kwargs["input"] == expected_script
+        assert kwargs["model"] == "openai/tts-1"
+        assert kwargs["voice"] == "alloy"
+        assert kwargs["format"] == "mp3"
+        assert kwargs["api_key"] == "sk-th2356-synthetic"
+        assert upload.call_args.kwargs["input_text"] == expected_script
+
+    def test_preview_whitespace_variable_fails_before_provider_call(
+        self,
+        auth_client,
+        dataset,
+        input_column,
+        row,
+        openai_provider_key,
+        speech_boundary,
+    ):
+        speech, upload = speech_boundary
+        Cell.objects.create(dataset=dataset, column=input_column, row=row, value="  ")
+
+        response = self._preview(auth_client, dataset, "{{Input Column}}")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["responses"] == [TTS_EMPTY_SCRIPT_ERROR]
+        speech.assert_not_called()
+        upload.assert_not_called()
+
+    def test_preview_of_other_org_dataset_is_denied_before_provider_call(
+        self, auth_client, openai_provider_key, speech_boundary
+    ):
+        speech, _ = speech_boundary
+        other_org = Organization.objects.create(name="TTS Other Org")
+        other_user = User.objects.create_user(
+            email="tts-other@example.com",
+            password="testpassword123",
+            name="TTS Other",
+            organization=other_org,
+        )
+        other_ws = Workspace.objects.create(
+            name="TTS Other WS",
+            organization=other_org,
+            is_default=True,
+            created_by=other_user,
+        )
+        other_dataset = Dataset.objects.create(
+            name="TTS Other Dataset",
+            organization=other_org,
+            workspace=other_ws,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        Row.objects.create(dataset=other_dataset, order=0)
+
+        response = self._preview(auth_client, other_dataset, "Hello, welcome.")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        speech.assert_not_called()
+
+    def _saved_tts_column(self, dataset, organization, workspace, row):
+        """A saved TTS column whose row already holds an earlier run's audio."""
+        run_prompter = RunPrompter.objects.create(
+            name="TTS Column",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            status=StatusType.NOT_STARTED.value,
+            model="openai/tts-1",
+            messages=tts_messages("Hello, {{Input Column}}."),
+            output_format="audio",
+            run_prompt_config=tts_config("")["run_prompt_config"],
+        )
+        column = Column.objects.create(
+            name="TTS Column",
+            dataset=dataset,
+            data_type=DataTypeChoices.AUDIO.value,
+            source=SourceChoices.RUN_PROMPT.value,
+            source_id=str(run_prompter.id),
+        )
+        previous = Cell.objects.create(
+            dataset=dataset,
+            column=column,
+            row=row,
+            value=TTS_PREVIOUS_AUDIO_URL,
+            status=CellStatus.PASS.value,
+        )
+        return run_prompter, column, previous
+
+    @pytest.mark.parametrize(
+        ("cell_value", "expected_status", "expected_value", "speaks"),
+        [
+            ("welcome", CellStatus.PASS.value, TTS_AUDIO_URL, "Hello, welcome."),
+            (TTS_PHRASE, CellStatus.PASS.value, TTS_AUDIO_URL, f"Hello, {TTS_PHRASE}."),
+        ],
+    )
+    def test_saved_column_rerun_speaks_user_script_and_keeps_stored_messages(
+        self,
+        dataset,
+        organization,
+        workspace,
+        input_column,
+        row,
+        openai_provider_key,
+        speech_boundary,
+        cell_value,
+        expected_status,
+        expected_value,
+        speaks,
+    ):
+        from model_hub.views.run_prompt import RunPrompts
+
+        speech, _ = speech_boundary
+        Cell.objects.create(
+            dataset=dataset, column=input_column, row=row, value=cell_value
+        )
+        run_prompter, column, previous = self._saved_tts_column(
+            dataset, organization, workspace, row
+        )
+        stored_messages = json.loads(json.dumps(run_prompter.messages))
+
+        with (
+            patch(
+                "model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None
+            ),
+            patch("model_hub.views.run_prompt.close_old_connections"),
+        ):
+            runner = RunPrompts(run_prompter.id)
+            runner.load_run_prompt_id()
+            runner.process_row(row, column, edit_mode=True)
+
+        cell = Cell.objects.get(dataset=dataset, column=column, row=row)
+        assert cell.id == previous.id
+        assert cell.status == expected_status
+        assert cell.value == expected_value
+        speech.assert_called_once()
+        assert speech.call_args.kwargs["input"] == speaks
+        run_prompter.refresh_from_db()
+        assert run_prompter.messages == stored_messages
+
+    def test_saved_column_system_only_script_row_fails_without_provider_call(
+        self,
+        dataset,
+        organization,
+        workspace,
+        input_column,
+        row,
+        openai_provider_key,
+        speech_boundary,
+    ):
+        from model_hub.views.run_prompt import RunPrompts
+
+        speech, upload = speech_boundary
+        Cell.objects.create(dataset=dataset, column=input_column, row=row, value=" ")
+        run_prompter, column, previous = self._saved_tts_column(
+            dataset, organization, workspace, row
+        )
+        run_prompter.messages = tts_messages("{{Input Column}}")
+        run_prompter.save()
+
+        with (
+            patch(
+                "model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None
+            ),
+            patch("model_hub.views.run_prompt.close_old_connections"),
+        ):
+            runner = RunPrompts(run_prompter.id)
+            runner.load_run_prompt_id()
+            runner.process_row(row, column, edit_mode=True)
+
+        cell = Cell.objects.get(dataset=dataset, column=column, row=row)
+        assert cell.id == previous.id
+        assert cell.status == CellStatus.ERROR.value
+        assert TTS_EMPTY_SCRIPT_ERROR in cell.value
+        assert TTS_PREVIOUS_AUDIO_URL not in cell.value
+        assert TTS_PREVIOUS_AUDIO_URL not in str(cell.value_infos)
+        assert TTS_PHRASE not in cell.value
+        speech.assert_not_called()
+        upload.assert_not_called()
+
+    # -- Storage failure (AC-12) ---------------------------------------------
+
+    def test_preview_storage_failure_is_reported_not_returned_as_audio(
+        self, auth_client, dataset, input_column, row, openai_provider_key
+    ):
+        Cell.objects.create(
+            dataset=dataset, column=input_column, row=row, value="welcome"
+        )
+
+        with (
+            patch("litellm.speech", return_value=MagicMock(content=TTS_WAV)) as speech,
+            patch(TTS_UPLOAD, side_effect=Exception("storage unavailable")),
+        ):
+            response = self._preview(auth_client, dataset, "Hello, {{Input Column}}.")
+
+        assert response.status_code == status.HTTP_200_OK
+        [result] = response.json()["result"]["responses"]
+        assert "storage unavailable" in result
+        assert not result.startswith("http")
+        speech.assert_called_once()
+
+    def test_saved_column_storage_failure_replaces_previous_audio_with_error(
+        self, dataset, organization, workspace, input_column, row, openai_provider_key
+    ):
+        from model_hub.views.run_prompt import RunPrompts
+
+        Cell.objects.create(
+            dataset=dataset, column=input_column, row=row, value="welcome"
+        )
+        run_prompter, column, previous = self._saved_tts_column(
+            dataset, organization, workspace, row
+        )
+
+        with (
+            patch(
+                "model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None
+            ),
+            patch("model_hub.views.run_prompt.close_old_connections"),
+            patch("litellm.speech", return_value=MagicMock(content=TTS_WAV)),
+            patch(TTS_UPLOAD, side_effect=Exception("storage unavailable")),
+        ):
+            runner = RunPrompts(run_prompter.id)
+            runner.load_run_prompt_id()
+            runner.process_row(row, column, edit_mode=True)
+
+        cell = Cell.objects.get(id=previous.id)
+        assert cell.status == CellStatus.ERROR.value
+        assert "storage unavailable" in cell.value
+        assert TTS_PREVIOUS_AUDIO_URL not in cell.value
+        assert TTS_PREVIOUS_AUDIO_URL not in str(cell.value_infos)
+
+
+def _tts_member(organization, workspace):
+    """An org Member with write access to one workspace only."""
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    member = User.objects.create_user(
+        email=f"tts-member-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="TTS Member",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    org_membership, _ = OrganizationMembership.no_workspace_objects.update_or_create(
+        user=member,
+        organization=organization,
+        defaults={
+            "role": OrganizationRoles.MEMBER,
+            "level": Level.MEMBER,
+            "is_active": True,
+        },
+    )
+    WorkspaceMembership.no_workspace_objects.update_or_create(
+        user=member,
+        workspace=workspace,
+        defaults={
+            "role": OrganizationRoles.WORKSPACE_ADMIN,
+            "level": Level.WORKSPACE_ADMIN,
+            "organization_membership": org_membership,
+            "is_active": True,
+        },
+    )
+    return member
+
+
+def _tts_jwt_client(user, organization, workspace):
+    """Authenticate through the real token and workspace checks."""
+    client = APIClient()
+    login = client.post(
+        "/accounts/token/",
+        {"email": user.email, "password": "testpassword123"},
+        format="json",
+    )
+    assert login.status_code == status.HTTP_200_OK, login.data
+    client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {login.data['access']}",
+        HTTP_X_ORGANIZATION_ID=str(organization.id),
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    return client
+
+
+@pytest.mark.django_db
+class TestLiteralTTSRealAuth:
+    """Workspace access and provider-key choice through the real auth path."""
+
+    @pytest.fixture
+    def other_workspace(self, organization, user):
+        return Workspace.objects.create(
+            name="TTS Other Workspace",
+            organization=organization,
+            is_default=False,
+            created_by=user,
+        )
+
+    def _preview(self, client, dataset_id):
+        return client.post(
+            "/model-hub/develops/preview_run_prompt_column/",
+            {
+                "dataset_id": str(dataset_id),
+                "name": "TTS Preview",
+                "first_n_rows": 1,
+                "config": tts_config("Hello, {{Input Column}}."),
+            },
+            format="json",
+        )
+
+    def _dataset_in(self, organization, workspace):
+        ds = Dataset.objects.create(
+            name="TTS Workspace Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        col = Column.objects.create(
+            name="Input Column",
+            dataset=ds,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+        ds.column_order = [str(col.id)]
+        ds.save()
+        row = Row.objects.create(dataset=ds, order=0)
+        Cell.objects.create(dataset=ds, column=col, row=row, value="welcome")
+        return ds
+
+    def test_inaccessible_same_org_workspace_is_denied_before_provider_call(
+        self, organization, workspace, other_workspace, speech_boundary
+    ):
+        speech, upload = speech_boundary
+        member = _tts_member(organization, workspace)
+        other_dataset = self._dataset_in(organization, other_workspace)
+        client = _tts_jwt_client(member, organization, other_workspace)
+
+        response = self._preview(client, other_dataset.id)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        speech.assert_not_called()
+        upload.assert_not_called()
+
+    def test_dataset_from_another_workspace_is_not_found_before_provider_call(
+        self, organization, workspace, other_workspace, speech_boundary
+    ):
+        speech, upload = speech_boundary
+        member = _tts_member(organization, workspace)
+        other_dataset = self._dataset_in(organization, other_workspace)
+        client = _tts_jwt_client(member, organization, workspace)
+
+        response = self._preview(client, other_dataset.id)
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        speech.assert_not_called()
+        upload.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("with_workspace_key", "expected_key"),
+        [(True, TTS_WORKSPACE_KEY), (False, TTS_ORG_KEY)],
+    )
+    def test_workspace_key_wins_over_org_key(
+        self, organization, workspace, speech_boundary, with_workspace_key, expected_key
+    ):
+        speech, _ = speech_boundary
+        ApiKey.no_workspace_objects.create(
+            provider="openai",
+            organization=organization,
+            workspace=None,
+            key=TTS_ORG_KEY,
+        )
+        if with_workspace_key:
+            ApiKey.no_workspace_objects.create(
+                provider="openai",
+                organization=organization,
+                workspace=workspace,
+                key=TTS_WORKSPACE_KEY,
+            )
+        member = _tts_member(organization, workspace)
+        dataset = self._dataset_in(organization, workspace)
+        client = _tts_jwt_client(member, organization, workspace)
+
+        response = self._preview(client, dataset.id)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["responses"] == [TTS_AUDIO_URL]
+        assert speech.call_args.kwargs["api_key"] == expected_key
+        assert speech.call_args.kwargs["input"] == "Hello, welcome."

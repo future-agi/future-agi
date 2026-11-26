@@ -16,8 +16,8 @@
 #
 # Options:
 #   --destination DIR     where the .tgz goes (default: the current directory)
-#   --version X.Y.Z       fail unless Chart.yaml has this version and
-#                         appVersion vX.Y.Z
+#   --version VERSION     fail unless Chart.yaml has this version and
+#                         appVersion vVERSION (X.Y.Z or X.Y.Z-beta.N/-rc.N)
 #   --no-digests          stamp no digest: a dry run, e.g. before the images
 #                         exist
 #   --digests-from-local  take each digest from the local Docker daemon (the
@@ -85,7 +85,11 @@ done
 
 version=$(sed -nE 's/^version: *"?([^" #]+)"?.*/\1/p' "$chart/Chart.yaml")
 app_version=$(sed -nE 's/^appVersion: *"?([^" #]+)"?.*/\1/p' "$chart/Chart.yaml")
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Chart.yaml version '$version' is not X.Y.Z"
+# Preserve the stable grammar; prereleases match the release workflows' bounded
+# SemVer integers exactly (no leading zero, metadata or arbitrary OCI suffix).
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+  [[ "$version" =~ ^(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})\.(0|[1-9][0-9]{0,17})-(beta|rc)\.(0|[1-9][0-9]{0,17})$ ]] ||
+  fail "Chart.yaml version '$version' is not X.Y.Z or X.Y.Z-beta.N/-rc.N"
 [ "$app_version" = "v$version" ] || fail "Chart.yaml appVersion '$app_version' must be v$version"
 if [ -n "$expected_version" ] && [ "${expected_version#v}" != "$version" ]; then
   fail "Chart.yaml has version $version, not ${expected_version#v}"

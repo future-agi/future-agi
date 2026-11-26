@@ -62,22 +62,30 @@ export const AlertConfigValidationSchema = z
     ),
     notification: z
       .object({
-        method: z.enum(["email", "slack"], {
+        method: z.enum(["email", "slack", "webhook"], {
           required_error: "Select notification method",
         }),
         emails: z
           .array(z.string().email("Invalid email address"))
           .max(5, "To add more email id's contact sales")
           .optional(),
+        // Set by allowStoredNoEmails for an edit of an alert stored without
+        // recipients.
+        keepNoEmails: z.boolean().optional(),
         slack: z
           .object({
             webhookUrl: z.string().optional(),
             notes: z.string().optional(),
           })
           .optional(),
+        webhook: z
+          .object({
+            url: z.string().optional(),
+          })
+          .optional(),
       })
       .superRefine((notif, ctx) => {
-        if (notif.method === "email") {
+        if (notif.method === "email" && !notif.keepNoEmails) {
           if (!notif.emails || notif.emails.length === 0) {
             ctx.addIssue({
               path: ["emails"],
@@ -101,6 +109,25 @@ export const AlertConfigValidationSchema = z
                 path: ["slack", "webhookUrl"],
                 code: "custom",
                 message: "Invalid Slack webhook URL",
+              });
+            }
+          }
+        }
+
+        if (notif.method === "webhook") {
+          if (!notif.webhook || !notif.webhook.url) {
+            ctx.addIssue({
+              path: ["webhook", "url"],
+              code: "custom",
+              message: "Webhook URL is required",
+            });
+          } else {
+            const urlPattern = /^(https?:\/\/)[^\s/$.?#].[^\s]*$/i;
+            if (!urlPattern.test(notif.webhook.url)) {
+              ctx.addIssue({
+                path: ["webhook", "url"],
+                code: "custom",
+                message: "Invalid webhook URL",
               });
             }
           }
@@ -303,6 +330,11 @@ export function getThresholdValueDefaults(metricType, thresholdType) {
 }
 
 export function getDefaultAlertConfigValues(existingConfig = {}) {
+  const webhookUrl = readAlertField(
+    existingConfig,
+    "webhookUrl",
+    "webhook_url",
+  );
   const slackWebhookUrl = readAlertField(
     existingConfig,
     "slackWebhookUrl",
@@ -372,12 +404,15 @@ export function getDefaultAlertConfigValues(existingConfig = {}) {
       scaleDefaults.warning,
     ),
     notification: {
-      method: slackWebhookUrl ? "slack" : "email",
+      method: webhookUrl ? "webhook" : slackWebhookUrl ? "slack" : "email",
       emails: notificationEmails || [],
       slack: {
         webhookUrl: slackWebhookUrl || "",
         notes:
           readAlertField(existingConfig, "slackNotes", "slack_notes") || "",
+      },
+      webhook: {
+        url: webhookUrl || "",
       },
     },
   };

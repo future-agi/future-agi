@@ -73,6 +73,7 @@ const VoiceDrawerHeader = ({
   idLabel = "Call ID",
   copyTooltip = "Copy Call ID",
   copyToastMessage = "Call ID copied",
+  leading = null,
 }) => {
   // Keyboard: ArrowUp = previous call, ArrowDown = next call.
   // Arrows (not j/k) because TranscriptView owns j/k for turn-level nav inside a call.
@@ -134,6 +135,7 @@ const VoiceDrawerHeader = ({
         spacing={1.5}
         sx={{ minWidth: 0, flex: 1 }}
       >
+        {leading}
         <Stack
           direction="row"
           alignItems="center"
@@ -258,6 +260,8 @@ VoiceDrawerHeader.propTypes = {
   idLabel: PropTypes.string,
   copyTooltip: PropTypes.string,
   copyToastMessage: PropTypes.string,
+  // Shown before the call ID, e.g. a trial picker.
+  leading: PropTypes.node,
 };
 
 export default React.memo(VoiceDrawerHeader);

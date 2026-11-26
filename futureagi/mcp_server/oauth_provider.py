@@ -15,6 +15,7 @@ from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizationParams,
     RefreshToken,
+    TokenError,
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
@@ -124,10 +125,12 @@ class FutureAGIOAuthProvider:
         from accounts.models.workspace import Workspace
 
         user = await sync_to_async(
-            lambda: User.objects.all()
-            .select_related("organization")
-            .order_by("created_at")
-            .first()
+            lambda: (
+                User.objects.all()
+                .select_related("organization")
+                .order_by("created_at")
+                .first()
+            )
         )()
 
         if not user:
@@ -135,9 +138,11 @@ class FutureAGIOAuthProvider:
 
         org = user.organization
         workspace = await sync_to_async(
-            lambda: Workspace.objects.all()
-            .filter(organization=org, is_default=True, is_active=True)
-            .first()
+            lambda: (
+                Workspace.objects.all()
+                .filter(organization=org, is_default=True, is_active=True)
+                .first()
+            )
         )()
 
         # Generate authorization code
@@ -232,8 +237,23 @@ class FutureAGIOAuthProvider:
     ) -> OAuthToken:
         from mcp_server.oauth_utils import generate_oauth_token, generate_refresh_token
 
-        # Delete used code
-        await sync_to_async(cache.delete)(f"{CODE_PREFIX}{authorization_code.code}")
+        # Consume the code before minting tokens. The SDK token handler loads the
+        # code and then calls this method, so two concurrent exchanges can both
+        # pass the load. The cache delete is atomic (Redis DEL) and reports
+        # whether this caller removed the key, so only one exchange wins.
+        consumed = await sync_to_async(cache.delete)(
+            f"{CODE_PREFIX}{authorization_code.code}"
+        )
+        if not consumed:
+            logger.warning(
+                "oauth_code_replay_rejected",
+                client_id=authorization_code.client_id,
+                user_id=authorization_code.user_id,
+            )
+            raise TokenError(
+                error="invalid_grant",
+                error_description="authorization code already used",
+            )
 
         # Generate access token
         access_token_str, expires_at = await sync_to_async(generate_oauth_token)(

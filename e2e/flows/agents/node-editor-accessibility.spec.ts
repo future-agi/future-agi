@@ -11,10 +11,10 @@ type Graph = { result: { id: string; name: string; active_version: {
   id: string; status: string; nodes: Array<{ id: string; name: string }>;
 } } };
 
-test('AGENT-E2E-002: node editor actions are named and remain guarded for viewers', {
+test('AGENT-E2E-004: node editor actions are named and remain guarded for viewers', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'AGENT-E2E-002', area: 'agents',
+    id: 'AGENT-E2E-004', area: 'agents',
     userGoal: 'Identify node deletion and editor close actions by hover or keyboard without allowing a viewer to delete the saved draft.',
     steps: [
       'seed one uniquely named draft and prompt node through the public API',

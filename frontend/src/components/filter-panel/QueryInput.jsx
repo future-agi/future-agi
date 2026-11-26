@@ -121,7 +121,7 @@ function EnumValuePicker({
         }}
       >
         {value.length === 0 ? (
-          <Typography sx={{ fontSize: 13, color: "text.disabled", flex: 1 }}>
+          <Typography sx={{ fontSize: 12, color: "text.disabled", flex: 1 }}>
             Select values...
           </Typography>
         ) : (
@@ -240,7 +240,7 @@ function EnumValuePicker({
                 sx={{ p: 0, flexShrink: 0 }}
               />
               <Typography
-                sx={{ fontSize: 13, color: "text.primary", fontWeight: 500 }}
+                sx={{ fontSize: 12, color: "text.primary", fontWeight: 500 }}
               >
                 Select all matching in list ({filtered.length})
               </Typography>
@@ -401,7 +401,7 @@ function FilterRow({
             value: newField?.type === "enum" ? [] : "",
           });
         }}
-        sx={{ minWidth: 100, fontSize: 13, height: 30 }}
+        sx={{ minWidth: 100, fontSize: 12, height: 30 }}
       >
         {filterFields.map((f) => (
           <MenuItem
@@ -422,7 +422,7 @@ function FilterRow({
         onChange={(e) =>
           onChange(index, { ...filter, operator: e.target.value })
         }
-        sx={{ minWidth: 110, fontSize: 13, height: 30 }}
+        sx={{ minWidth: 110, fontSize: 12, height: 30 }}
       >
         {operators.map((op) => (
           <MenuItem key={op.value} value={op.value}>
@@ -455,7 +455,7 @@ function FilterRow({
           }
           sx={{
             minWidth: 100,
-            "& .MuiInputBase-root": { fontSize: 13, height: 30 },
+            "& .MuiInputBase-root": { fontSize: 12, height: 30 },
           }}
         />
       )}
@@ -1229,7 +1229,7 @@ const QueryInput = forwardRef(function QueryInput(
       key={i}
       component="span"
       sx={{
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: 600,
         color: p.color,
         mr: 0.5,
@@ -1369,7 +1369,7 @@ const QueryInput = forwardRef(function QueryInput(
         popper: { sx: { zIndex: 1500 } },
         paper: {
           sx: {
-            fontSize: 13,
+            fontSize: 12,
             mt: 0.5,
             borderRadius: "8px",
           },
@@ -1388,7 +1388,7 @@ const QueryInput = forwardRef(function QueryInput(
             {...rest}
             sx={{
               ...rest.sx,
-              fontSize: 13,
+              fontSize: 12,
               py: 0.5,
               px: 1.5,
               display: "flex",
@@ -1501,7 +1501,7 @@ const QueryInput = forwardRef(function QueryInput(
             ),
             sx: {
               ...params.InputProps.sx,
-              fontSize: 13,
+              fontSize: 12,
               fontFamily: "monospace",
               flexWrap: "wrap",
               gap: 0.25,

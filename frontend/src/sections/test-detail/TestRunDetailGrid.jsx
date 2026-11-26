@@ -1,11 +1,21 @@
 import { Box } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import "src/utils/ag-grid-setup";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
+  FINISHED_RUN_STATUSES,
   getColumnDefsSignature,
   getSelectedCallExecutionIdsFilter,
   getTestRunDetailColumnQuery,
   getTestRunDetailGridColumnDefs,
+  readFinalRunKpis,
   replaceToolOutputIdsWithNames,
   TestRunLoadingStatus,
   TEST_RUN_DETAIL_DEFAULT_PLACEHOLDER_COLUMNS,
@@ -28,7 +38,6 @@ import { useTestDetail } from "./context/TestDetailContext";
 import SingleImageViewerProvider from "../develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
 import { getComplexFilterValidation } from "src/components/ComplexFilter/common";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
-import { useShallow } from "zustand/react/shallow";
 import PropTypes from "prop-types";
 import "./test-detail.css";
 import { postProcessPopup } from "../develop-detail/DataTab/common";
@@ -87,9 +96,16 @@ const TestRunDetailGrid = () => {
   const queryClient = useQueryClient();
   const { executionId } = useParams();
   const { setGridApi } = useTestDetail();
-  const setStatus = useShallow(useTestExecutionStore.getState().setStatus);
   const isRefreshingRef = useRef(false);
   const timeoutRef = useRef(null);
+  // The execution this mounted grid shows. A read made for another execution,
+  // or after the grid unmounted, must not write rows into it.
+  const currentExecutionRef = useRef(null);
+  // This grid's claim on the run status in the store (`claimStatus`).
+  const [statusReader] = useState(() => ({}));
+  // The finish whose final KPIs this page already reads, so overlapping reads
+  // that all see the run finished read them once.
+  const settledRunRef = useRef(null);
   const visibleReasonColumnsRef = useRef(new Set());
   const [_, setRowIndex] = useUrlState("rowIndex");
   const { columnDef, setColumnDef } = useTestDetailStoreShallow((state) => ({
@@ -160,6 +176,75 @@ const TestRunDetailGrid = () => {
       .filter(Boolean);
   }, [filters]);
 
+  // Opening another execution starts over: no polling, no finish seen, and
+  // no status or final count until this execution's own reads answer.
+  useLayoutEffect(() => {
+    currentExecutionRef.current = executionId;
+    isRefreshingRef.current = false;
+    settledRunRef.current = null;
+    useTestExecutionStore.getState().claimStatus(executionId, statusReader);
+    return () => {
+      currentExecutionRef.current = null;
+    };
+  }, [executionId, statusReader]);
+
+  const isCurrentGrid = useCallback(
+    () => currentExecutionRef.current === executionId,
+    [executionId],
+  );
+
+  // A read publishes the run status while its execution is on screen, also
+  // after the user leaves Call Details. It stops once another execution opens,
+  // the user leaves the run, or a newer grid mounts.
+  const ownsRunStatus = useCallback(() => {
+    const executionStore = useTestExecutionStore.getState();
+    // A page unmounting in the commit that mounted this grid can reset the
+    // store after the claim (CallLogsGrid resets it in a passive cleanup).
+    // A grid still on screen claims again; an unmounted one cannot.
+    if (executionStore.statusReader === null && isCurrentGrid()) {
+      executionStore.claimStatus(executionId, statusReader);
+      return true;
+    }
+    return (
+      executionStore.statusExecutionId === executionId &&
+      executionStore.statusReader === statusReader
+    );
+  }, [executionId, statusReader, isCurrentGrid]);
+
+  // Publishes a status read for this execution. A running status starts
+  // polling and drops the final count of an earlier finish. The first finished
+  // status, on a return visit too, reads the final KPIs once. Polling stops
+  // only when a poll reads every cached block finished (refreshRowsManual).
+  const trackRunStatus = useCallback(
+    (status) => {
+      if (!ownsRunStatus()) return;
+      const executionStore = useTestExecutionStore.getState();
+      executionStore.setStatus(executionId, status);
+      const runStatus = status?.toLowerCase();
+      if (TestRunLoadingStatus.includes(runStatus)) {
+        isRefreshingRef.current = true;
+        settledRunRef.current = null;
+        if (executionStore.kpisUpdateCountAtFinish !== null) {
+          executionStore.setKpisUpdateCountAtFinish(executionId, null);
+        }
+      } else if (
+        FINISHED_RUN_STATUSES.includes(runStatus) &&
+        !settledRunRef.current
+      ) {
+        const settle = {};
+        settledRunRef.current = settle;
+        // The read lands in the KPI cache even if the user leaves the tab.
+        readFinalRunKpis(queryClient, executionId).catch((error) => {
+          logger.warn("Failed to read the final KPIs of the run", { error });
+          if (settledRunRef.current === settle && ownsRunStatus()) {
+            useTestExecutionStore.getState().markFinalKpisFailed(executionId);
+          }
+        });
+      }
+    },
+    [executionId, queryClient, ownsRunStatus],
+  );
+
   const dataSource = useMemo(
     () => {
       // Hide stale overlay immediately when datasource changes (search/filter change)
@@ -184,8 +269,12 @@ const TestRunDetailGrid = () => {
           try {
             const { data } = await queryClient.fetchQuery(query);
             const status = data?.status;
-            if (TestRunLoadingStatus.includes(status?.toLowerCase())) {
-              isRefreshingRef.current = true;
+            if (status) trackRunStatus(status);
+            // AG Grid holds a load slot until a read succeeds or fails, so a
+            // read for a superseded grid fails without showing its rows.
+            if (!isCurrentGrid()) {
+              params.fail();
+              return;
             }
             const totalRows = data?.count ?? 0;
             params.api.setGridOption("context", {
@@ -202,8 +291,6 @@ const TestRunDetailGrid = () => {
             ) {
               setColumnDef(applyReasonColumnVisibility(newColDefs));
             }
-
-            setStatus(data?.status);
 
             const updatedRows = replaceToolOutputIdsWithNames(data.results);
 
@@ -247,14 +334,21 @@ const TestRunDetailGrid = () => {
           } catch (error) {
             logger.warn("Failed to get test run detail", { error });
             params.fail();
-            params.api.showNoRowsOverlay();
+            if (isCurrentGrid()) params.api.showNoRowsOverlay();
           }
         },
         getRowId: (data) => data.id,
       };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [executionId, queryClient, debouncedSearchQuery, validatedFilters],
+    [
+      executionId,
+      queryClient,
+      debouncedSearchQuery,
+      validatedFilters,
+      trackRunStatus,
+      isCurrentGrid,
+    ],
   );
 
   const applyReasonColumnVisibility = useCallback((colDefs) => {
@@ -281,9 +375,11 @@ const TestRunDetailGrid = () => {
 
   const refreshRowsManual = useCallback(async () => {
     if (!gridRef?.current?.api) return;
-    const totalPages = Object.keys(
-      gridRef?.current?.api?.getCacheBlockState(),
-    ).length;
+    // A run with no call rows has no cached block; read page 0 for its status.
+    const totalPages = Math.max(
+      Object.keys(gridRef?.current?.api?.getCacheBlockState()).length,
+      1,
+    );
 
     // const filters = useTestDetailStore.getState().filters || [];
     const search = useTestDetailStore.getState().search;
@@ -305,6 +401,9 @@ const TestRunDetailGrid = () => {
     validatedFilters.push(...callExecutionIdsFilters);
 
     let status;
+    // Rows read while the run was still making calls keep that state until a
+    // later poll reads them again.
+    let everyBlockFinished = true;
     for (let pageNumber = 0; pageNumber < totalPages; pageNumber++) {
       try {
         const query = getTestRunDetailColumnQuery(
@@ -315,9 +414,15 @@ const TestRunDetailGrid = () => {
         );
 
         const d = await query.queryFn();
+        // A sweep goes on after the user leaves Call Details; the rows it
+        // reads update nothing once the grid is gone.
+        if (!ownsRunStatus()) return;
         const data = d.data;
 
         status = data?.status;
+        if (!FINISHED_RUN_STATUSES.includes(status?.toLowerCase())) {
+          everyBlockFinished = false;
+        }
         const updatedRows = replaceToolOutputIdsWithNames(data.results);
         const rows = updatedRows?.map((row) => ({
           ...row,
@@ -327,8 +432,6 @@ const TestRunDetailGrid = () => {
         const columns = data?.column_order || [];
 
         queryClient.setQueryData(query.queryKey, d);
-
-        setStatus(data?.status);
 
         const currentColumnDef = useTestDetailStore.getState().columnDef;
         const newColDefs = getTestRunDetailGridColumnDefs(columns);
@@ -351,19 +454,22 @@ const TestRunDetailGrid = () => {
           gridRef?.current?.api?.applyServerSideTransaction(transaction);
         logger.debug("res", res);
       } catch (e) {
+        everyBlockFinished = false;
         logger.error("Error:", e);
       }
     }
-    setStatus(status);
-    if (TestRunLoadingStatus.includes(status?.toLowerCase())) {
-      isRefreshingRef.current = true;
-    } else {
-      isRefreshingRef.current = false;
-      queryClient.invalidateQueries({
-        queryKey: ["test-execution-detail", executionId],
-      });
-    }
-  }, [executionId, queryClient, setStatus, applyReasonColumnVisibility]);
+    // No page read a status: keep the store and keep polling. A failed read
+    // skips the check above, so check again.
+    if (!status || !ownsRunStatus()) return;
+    trackRunStatus(status);
+    if (everyBlockFinished) isRefreshingRef.current = false;
+  }, [
+    executionId,
+    queryClient,
+    applyReasonColumnVisibility,
+    trackRunStatus,
+    ownsRunStatus,
+  ]);
 
   const onRowSelectionChanged = useCallback(({ api, context }) => {
     const totalRowCount = context?.totalRowCount;

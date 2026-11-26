@@ -18,6 +18,9 @@ import { useDevelopSelectedRowsStoreShallow } from "../states";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { getCreatedRowsDatasetId } from "./createDatasetRowsResponse";
+import CreateEnvironmentTestDialog from "src/sections/simulate/environments/evidence/CreateEnvironmentTestDialog";
+import { EVIDENCE_COPY } from "src/sections/simulate/environments/evidence/evidence.constants";
+import { MAX_EVIDENCE_SOURCES } from "src/api/simulate-environments/evidenceImports";
 
 const DevelopDataSelectionActive = () => {
   const { dataset } = useParams();
@@ -26,6 +29,7 @@ const DevelopDataSelectionActive = () => {
   const [isDuplicate, setIsDuplicate] = useState(false);
   const [isDelete, setIsDelete] = useState(false);
   const [isRunEval, setIsRunEval] = useState(false);
+  const [isEvidence, setIsEvidence] = useState(false);
   const [noOfCopies, setNoOfCopies] = useState(0);
   const [anchorEl, setAnchorEl] = React.useState(null);
   const [anchorElSubmenu, setAnchorElSubmenu] = React.useState(null);
@@ -239,6 +243,13 @@ const DevelopDataSelectionActive = () => {
     }
   }, [toggledNodes, selectAll, gridApi]);
 
+  // An import names its rows one by one: no select-all, and at most the
+  // backend's limit.
+  let evidenceBlocked = null;
+  if (selectAll) evidenceBlocked = EVIDENCE_COPY.actionAll;
+  else if (toggledNodes.length > MAX_EVIDENCE_SOURCES)
+    evidenceBlocked = EVIDENCE_COPY.actionTooMany;
+
   return (
     <>
       <SelectionBar
@@ -279,6 +290,13 @@ const DevelopDataSelectionActive = () => {
                 setTargetDatasetId={setTargetDatasetId}
               />
             ),
+          },
+          {
+            label: EVIDENCE_COPY.action,
+            icon: "solar:test-tube-linear",
+            disabled: Boolean(evidenceBlocked),
+            tooltip: evidenceBlocked ?? undefined,
+            onClick: () => setIsEvidence(true),
           },
           {
             label: "Delete",
@@ -323,6 +341,16 @@ const DevelopDataSelectionActive = () => {
           <DuplicateRowAction setNoOfCopies={setNoOfCopies} />
         </CustomDialog>
       )}
+
+      {isEvidence ? (
+        <CreateEnvironmentTestDialog
+          open
+          onClose={() => setIsEvidence(false)}
+          datasetId={dataset}
+          sourceKind="dataset"
+          ids={toggledNodes}
+        />
+      ) : null}
 
       {isDelete && (
         <CustomDialog

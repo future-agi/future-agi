@@ -108,6 +108,217 @@ def no_clickhouse():
         yield
 
 
+@pytest.mark.parametrize(
+    "delete_path", ["pending-proof", "stale-policy", "removed-evaluator"]
+)
+@pytest.mark.parametrize("retirement_fails", [False, True])
+def test_sampling_retires_requeued_memberships_atomically(
+    issue_with_three, eval_task, monkeypatch, settings, delete_path, retirement_fails
+):
+    """A completed linked eval can be requeued before sampling excludes it.
+
+    The existing retirement contract above also applies to PENDING rows. CH
+    streams are controlled here; all eval/membership/issue writes use real PG.
+    """
+    from django.db import connection, transaction
+
+    from tracer.models.eval_sampling import EvalSamplingCohort
+    from tracer.models.observation_span import EvalEntryStatus
+    from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
+    from tracer.services.eval_tasks import entries
+    from tracer.services.eval_tasks.reconciler import _requeue_and_drop
+    from tracer.services.eval_tasks.sampling import pending, service
+
+    assert connection.vendor == "postgresql"
+    settings.EVAL_SAMPLING_CLOSED_SETTLE_SECONDS = 0
+    now = timezone.now()
+    eval_task.row_type = "traces"
+    eval_task.sampling_policy = {
+        "version": 1,
+        "sampling_unit": "session",
+        "mode": "closed",
+        "window": {
+            "start": (now - timedelta(days=1)).isoformat(),
+            "end": (now - timedelta(seconds=1)).isoformat(),
+        },
+        "default": {"target_n": 1},
+    }
+    eval_task.save()
+    policy, version = service.task_policy(eval_task, now=now)
+    EvalSamplingCohort.objects.create(
+        task=eval_task,
+        policy_version=version,
+        policy=policy,
+        frozen_at=now,
+        complete=True,
+    )
+    issue, evals = issue_with_three
+    target, completed, unrelated = evals
+    EvalLogger.objects.filter(pk=unrelated.pk).update(
+        eval_task_id=str(uuid.uuid4()), status=EvalEntryStatus.PENDING
+    )
+    EvalLogger.objects.filter(pk=target.pk).update(
+        config_hash="previous-evaluator-revision",
+        output_metadata={
+            "_task_selection": {
+                "sampling": {
+                    "policy_version": "previous-policy"
+                    if delete_path == "stale-policy"
+                    else version
+                }
+            }
+        },
+    )
+    with transaction.atomic():
+        assert _requeue_and_drop(
+            eval_task,
+            resolved=ResolvedRowSet(
+                (str(target.trace_id),), (str(target.trace_id),), True
+            ),
+        ) == (1, 0)
+    target.refresh_from_db()
+    assert target.status == EvalEntryStatus.PENDING
+    assert ErrorClusterTraces.objects.filter(eval_logger=target).exists()
+    if delete_path == "removed-evaluator":
+        eval_task.evals.clear()
+    monkeypatch.setattr(service, "sampling_clock", lambda: now)
+    # No discovery page: isolate the three sampling-owned removal paths, not
+    # the reconciler's existing retirement path for discovered candidates.
+    monkeypatch.setattr(service, "stream_query", lambda *_: iter(()))
+    monkeypatch.setattr(pending, "read_current_rows", lambda *_: {})
+    untouched = list(
+        EvalLogger.objects.filter(pk__in=[completed.pk, unrelated.pk])
+        .order_by("pk")
+        .values("id", "status", "deleted", "output_metadata", "eval_task_id")
+    )
+    if retirement_fails:
+        retire = entries.retire_eval_memberships
+
+        def fail_after_retirement(results):
+            retire(results)
+            raise RuntimeError("retirement rollback control")
+
+        monkeypatch.setattr(entries, "retire_eval_memberships", fail_after_retirement)
+        with pytest.raises(RuntimeError, match="retirement rollback control"):
+            service.reconcile_policy(eval_task)
+        assert EvalLogger.objects.filter(pk=target.pk).exists()
+        assert ErrorClusterTraces.objects.filter(eval_logger=target).exists()
+        issue.refresh_from_db()
+        assert (issue.error_count, issue.total_events, issue.unique_traces) == (3, 3, 3)
+        monkeypatch.setattr(entries, "retire_eval_memberships", retire)
+
+    result = service.reconcile_policy(eval_task)
+    assert result.dropped == 1
+    assert EvalLogger.all_objects.get(pk=target.pk).deleted
+    assert not ErrorClusterTraces.objects.filter(eval_logger=target).exists()
+    assert ErrorClusterTraces.all_objects.get(eval_logger=target).deleted
+    assert set(
+        ErrorClusterTraces.objects.filter(cluster=issue).values_list(
+            "eval_logger_id", flat=True
+        )
+    ) == {completed.pk, unrelated.pk}
+    issue.refresh_from_db()
+    assert (
+        issue.error_count,
+        issue.total_events,
+        issue.unique_traces,
+        issue.deleted,
+    ) == (2, 2, 2, False)
+    assert (
+        list(
+            EvalLogger.objects.filter(pk__in=[completed.pk, unrelated.pk])
+            .order_by("pk")
+            .values("id", "status", "deleted", "output_metadata", "eval_task_id")
+        )
+        == untouched
+    )
+    first_updated = issue.updated_at
+    assert service.reconcile_policy(eval_task).dropped == 0
+    issue.refresh_from_db()
+    assert issue.updated_at == first_updated
+
+
+@pytest.mark.django_db(transaction=True)
+def test_sampling_stale_retirement_uses_bounded_fenced_pages(
+    issue_with_three, eval_task, monkeypatch, settings
+):
+    from django.db import connection
+
+    from tracer.models.observation_span import EvalEntryStatus
+    from tracer.services.eval_tasks import recalculate
+    from tracer.services.eval_tasks.sampling import pending, service
+
+    issue, evals = issue_with_three
+    now = timezone.now()
+    settings.EVAL_SAMPLING_CLOSED_SETTLE_SECONDS = 0
+    eval_task.sampling_policy = {
+        "version": 1,
+        "sampling_unit": "session",
+        "mode": "closed",
+        "window": {
+            "start": (now - timedelta(days=1)).isoformat(),
+            "end": (now - timedelta(seconds=1)).isoformat(),
+        },
+        "default": {"target_n": 1},
+    }
+    eval_task.save()
+    EvalLogger.objects.filter(pk__in=[ev.pk for ev in evals]).update(
+        status=EvalEntryStatus.PENDING
+    )
+    monkeypatch.setattr(service, "sampling_clock", lambda: now)
+    monkeypatch.setattr(service, "stream_query", lambda *_: iter(()))
+    monkeypatch.setattr(pending, "read_current_rows", lambda *_: {})
+    # A baseline without the page helper must fail on its bulk-delete behavior,
+    # not on a missing test-control constant.
+    monkeypatch.setattr(service, "BATCH_SIZE", 2, raising=False)
+    original = recalculate.drop_pending_entries
+    pages = []
+
+    def retire(results):
+        assert connection.in_atomic_block
+        count = results.count()
+        assert 0 < count <= 2
+        pages.append(count)
+        return original(results)
+
+    monkeypatch.setattr(recalculate, "drop_pending_entries", retire)
+    assert not connection.in_atomic_block
+    assert service.reconcile_policy(eval_task).dropped == 3
+    assert not connection.in_atomic_block
+    assert pages == [2, 1]
+    assert not ErrorClusterTraces.objects.filter(cluster=issue).exists()
+    assert TraceErrorGroup.all_objects.get(pk=issue.pk).deleted
+
+
+def test_sampling_retirement_advances_past_a_busy_recalculation(
+    issue_with_three, monkeypatch
+):
+    from django.db import transaction
+
+    from tracer.models.observation_span import EvalEntryStatus
+    from tracer.services.eval_tasks import recalculate
+    from tracer.services.eval_tasks.sampling import service
+
+    _, evals = issue_with_three
+    results = EvalLogger.objects.filter(pk__in=[ev.pk for ev in evals])
+    results.update(status=EvalEntryStatus.PENDING)
+    expected = sorted(ev.pk for ev in evals)
+    seen = []
+    drop = recalculate.drop_pending_entries
+
+    def skip_first(page):
+        (pk,) = page.values_list("pk", flat=True)
+        assert pk not in seen  # fail immediately rather than spin on a skipped row
+        seen.append(pk)
+        return 0 if pk == expected[0] else drop(page)
+
+    monkeypatch.setattr(service, "BATCH_SIZE", 1)
+    monkeypatch.setattr(recalculate, "drop_pending_entries", skip_first)
+    assert service._retire_pending_pages(results, write=transaction.atomic) == 2
+    assert seen == expected
+    assert list(results.values_list("pk", flat=True)) == expected[:1]
+
+
 def test_deleting_one_eval_retires_its_membership_and_recounts(issue_with_three):
     issue, evals = issue_with_three
 
@@ -260,9 +471,8 @@ def _chain_root(node) -> str | None:
 def _raw_eval_deletes(source: str) -> list[tuple[int, str | None]]:
     """(line, receiver) of deletes of eval results without the service.
 
-    Three shapes: ``EvalLogger.<manager>....update(deleted=True)``,
-    ``EvalLogger.<manager>....delete()`` (a soft delete on ``BaseModel``), and,
-    in a module that imports ``EvalLogger``, any ``<x>.deleted = True``.
+    Direct or straight-line aliased ``EvalLogger`` queryset ``update``/``delete``
+    calls and, in a module importing ``EvalLogger``, ``<x>.deleted = True``.
     """
     tree = ast.parse(source)
     imports_eval_logger = any(
@@ -270,6 +480,40 @@ def _raw_eval_deletes(source: str) -> list[tuple[int, str | None]]:
         for n in ast.walk(tree)
     )
     hits = []
+    # Track straight-line queryset aliases in their lexical scope too. In
+    # particular, ``stale = EvalLogger.objects.filter(...); stale.update(...)``
+    # must not evade the same gate as an inline queryset.
+    aliases_at_call = {}
+
+    class QuerysetAliases(ast.NodeVisitor):
+        def __init__(self):
+            self.aliases = {"EvalLogger"}
+
+        def visit_FunctionDef(self, node):
+            outer = self.aliases
+            self.aliases = {"EvalLogger"}
+            for statement in node.body:
+                self.visit(statement)
+            self.aliases = outer
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Assign(self, node):
+            self.generic_visit(node)
+            is_eval = _chain_root(node.value) in self.aliases
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    if is_eval:
+                        self.aliases.add(target.id)
+                    else:
+                        self.aliases.discard(target.id)
+
+        def visit_Call(self, node):
+            if isinstance(node.func, ast.Attribute):
+                aliases_at_call[id(node)] = _chain_root(node.func.value) in self.aliases
+            self.generic_visit(node)
+
+    QuerysetAliases().visit(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             sets_deleted = node.func.attr == "update" and any(
@@ -278,9 +522,10 @@ def _raw_eval_deletes(source: str) -> list[tuple[int, str | None]]:
                 and kw.value.value is True
                 for kw in node.keywords
             )
-            if (
-                sets_deleted or node.func.attr == "delete"
-            ) and _chain_root(node.func.value) == "EvalLogger":
+            if (sets_deleted or node.func.attr == "delete") and (
+                _chain_root(node.func.value) == "EvalLogger"
+                or aliases_at_call.get(id(node), False)
+            ):
                 hits.append((node.lineno, "EvalLogger"))
         elif (
             imports_eval_logger
@@ -308,11 +553,10 @@ _NOT_EVAL_RESULTS = {
 def test_every_eval_delete_goes_through_the_service():
     """A raw delete of an eval result leaves Feed ghosts again.
 
-    It catches the three shapes ``_raw_eval_deletes`` lists. It cannot catch an
-    aliased import, ``apps.get_model``, a reverse-manager update, a queryset held
-    in a variable (``qs = EvalLogger...; qs.update(...)``) or a ``.deleted = True``
-    on an instance in a module that does not import ``EvalLogger``; those need
-    review.
+    It catches the shapes ``_raw_eval_deletes`` lists, including straight-line
+    local queryset aliases. It is not a dataflow analyzer: aliased imports,
+    ``apps.get_model``, reverse managers, control-flow-dependent aliases and
+    instance assignments without an ``EvalLogger`` import still need review.
     """
     root = pathlib.Path(__file__).resolve().parents[2]
     service = root / "tracer" / "services" / "eval_tasks" / "entries.py"
@@ -502,10 +746,10 @@ def test_retire_and_revive_each_record_an_alert_event(
 ):
     issue, evals = issue_with_three
     cfg = evals[0].custom_eval_config
-    with patch(
-        "tracer.services.feed_alerts.events.record_issue_event"
-    ) as record:
-        soft_delete_eval_results(EvalLogger.objects.filter(id__in=[e.id for e in evals]))
+    with patch("tracer.services.feed_alerts.events.record_issue_event") as record:
+        soft_delete_eval_results(
+            EvalLogger.objects.filter(id__in=[e.id for e in evals])
+        )
         retire = record.call_args.kwargs
         assert retire["source_key"].startswith(f"eval-retire:{issue.pk}:")
         assert retire["before"]["occurrences"] == 3
@@ -526,6 +770,15 @@ def test_retire_and_revive_each_record_an_alert_event(
     "source, expected",
     [
         ("EvalLogger.objects.filter(id=1).delete()", True),
+        ("stale = EvalLogger.objects.filter(id=1)\nstale.update(deleted=True)", True),
+        ("qs = EvalLogger.objects.all()\npage = qs.filter(id=1)\npage.delete()", True),
+        ("qs = EvalLogger.objects.all()\nqs = Trace.objects.all()\nqs.delete()", False),
+        (
+            "def first():\n qs = EvalLogger.objects.all()\ndef second():\n qs.delete()",
+            False,
+        ),
+        ("qs = EvalLogger.objects.all()\nsoft_delete_eval_results(qs)", False),
+        ("def action(rows=EvalLogger.objects.all().delete()):\n pass", True),
         ("EvalLogger.objects.filter(id=1).update(deleted=True)", True),
         (
             "from tracer.models.observation_span import EvalLogger\n"

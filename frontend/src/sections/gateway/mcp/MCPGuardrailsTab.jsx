@@ -37,6 +37,15 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
   const [newRateTool, setNewRateTool] = useState("");
   const [newRateLimit, setNewRateLimit] = useState("");
 
+  // Compare list contents, not lengths: the tab stays mounted while hidden, so a
+  // same-length list change from the server must still refresh the form.
+  const savedBlockedToolsKey = JSON.stringify(
+    guardrailsConfig.blocked_tools ?? [],
+  );
+  const savedAllowedServersKey = JSON.stringify(
+    guardrailsConfig.allowed_servers ?? [],
+  );
+
   useEffect(() => {
     setForm({
       enabled: guardrailsConfig.enabled || false,
@@ -49,8 +58,8 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
     setIsDirty(false);
   }, [
     guardrailsConfig.enabled,
-    guardrailsConfig.blocked_tools?.length,
-    guardrailsConfig.allowed_servers?.length,
+    savedBlockedToolsKey,
+    savedAllowedServersKey,
     guardrailsConfig.validate_inputs,
     guardrailsConfig.validate_outputs,
     JSON.stringify(guardrailsConfig.tool_rate_limits),
@@ -288,7 +297,7 @@ const MCPGuardrailsTab = ({ config, mcpStatus, gatewayId }) => {
                   <Typography
                     variant="body2"
                     fontWeight={600}
-                    sx={{ fontFamily: "monospace", fontSize: 13, flex: 1 }}
+                    sx={{ fontFamily: "monospace", fontSize: 12, flex: 1 }}
                   >
                     {tool}
                   </Typography>

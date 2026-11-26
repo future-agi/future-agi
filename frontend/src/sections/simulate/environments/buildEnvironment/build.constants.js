@@ -25,22 +25,68 @@ export const DERIVING_LABEL = {
 };
 
 // The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
-// Runs, Improvements and Versions are left out — an environment that is still
-// building (or failed to build) has no runs, no fixes and no versions yet.
-const NOT_WHILE_BUILDING = new Set(["runs", "improvements", "versions"]);
-export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => !NOT_WHILE_BUILDING.has(t.id));
+// Actors, Runs, Improvements, Versions and Alignment are left out — an
+// environment that is still building (or failed to build) has no draft, runs,
+// fixes, versions or composition yet.
+const NOT_WHILE_BUILDING = new Set([
+  "actors",
+  "runs",
+  "improvements",
+  "versions",
+  "composition",
+]);
+export const BUILDING_TABS = WORKSPACE_TABS.filter(
+  (t) => !NOT_WHILE_BUILDING.has(t.id),
+);
+
+export const JUMP_BAR_HEIGHT = 32;
+// The chat list's padding, in theme spacing.
+export const LIST_PADDING = 3;
 
 export const CONSOLE_COPY = {
+  answerWithOptions: "Answer with the options above",
   working: "Working on your last message…",
   idle: "Ask, correct, or steer what it builds",
-  empty: "Answer the questions below to kick things off. You can also just start typing.",
+  empty:
+    "Answer the questions below to kick things off. You can also just start typing.",
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
-  workingDot: "Working…",
+  stopping: "Stopping…",
+  jumpToLatest: "Jump to latest",
+  newMessage: "New message",
+  jumpWorking: "Still working. Jump to latest",
+  jumpNewMessage: "New message. Jump to latest",
   frozen: "Environment is still being built",
   stop: "Stop the current turn",
   collapse: "Collapse chat",
+  older: {
+    events: {
+      load: "Load earlier steps",
+      loading: "Loading earlier steps…",
+      failed: "Couldn't load the earlier steps.",
+      end: "Start of the builder's steps",
+    },
+    messages: {
+      load: "Load earlier messages",
+      loading: "Loading earlier messages…",
+      failed: "Couldn't load the earlier messages.",
+      end: "Start of the chat",
+    },
+    gap: {
+      load: "Load the next messages",
+      loading: "Loading the next messages…",
+      failed: "Couldn't load the next messages.",
+    },
+    gapHere: "Some messages here aren't loaded",
+    withoutSteps: "The builder's steps aren't shown for these messages.",
+    retry: "Try again",
+  },
+  search: {
+    looking: "Looking for that message…",
+    missing: "That message isn't in this chat, so it can't be shown.",
+    failed: "Couldn't load the earlier messages. Try again.",
+  },
 };
 
 export const PIPELINE_CHECKS_COPY = {

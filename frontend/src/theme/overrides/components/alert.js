@@ -11,7 +11,7 @@ const ROLE = {
 };
 
 // Design system banner: status tint fill, matching tint border, icon in the
-// status text colour, 13px message in fg.default, radius.lg. Every variant
+// status text colour, 12px message in fg.default, radius.lg. Every variant
 // (standard / outlined / filled) renders the same calm banner.
 export function alert(theme) {
   const rootStyles = (ownerState) => {
@@ -27,7 +27,8 @@ export function alert(theme) {
       [`& .${alertClasses.icon}`]: {
         padding: 0,
         marginRight: 10,
-        marginTop: 2,
+        // A 16px icon centred on the message's first 18px line.
+        marginTop: 1,
         fontSize: 16,
         opacity: 1,
         color: s.fg,

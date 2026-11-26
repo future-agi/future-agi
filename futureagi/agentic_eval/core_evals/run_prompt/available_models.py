@@ -2451,6 +2451,47 @@ OSS_AVAILABLE_MODELS = [
         "pricing": {"input_per_1M_tokens": 1, "output_per_1M_tokens": 5},
     },
     {
+        "model_name": "claude-sonnet-5-5",
+        "providers": "anthropic",
+        "api_key_name": "ANTHROPIC_API_KEY",
+        "mode": "chat",
+        "best_for": [
+            "Balanced speed and intelligence",
+            "Agentic coding and tool use",
+            "Customer-facing AI agents",
+        ],
+        "use_case": [
+            "Agent workflows",
+            "Data analysis, planning, and report generation",
+            "Customer support and conversational AI",
+        ],
+        "context_window": 1000000,
+        "pricing": {"input_per_1M_tokens": 2, "output_per_1M_tokens": 10},
+        "notes": "Claude Sonnet 5.5; Anthropic list price, as the gateway prices it.",
+    },
+    {
+        "model_name": "claude-haiku-5-5",
+        "providers": "anthropic",
+        "api_key_name": "ANTHROPIC_API_KEY",
+        "mode": "chat",
+        "best_for": [
+            "Fastest, cheapest tier",
+            "High-volume processing",
+            "Rapid data extraction and labeling",
+        ],
+        "use_case": [
+            "Real-time chatbots",
+            "Bulk text processing",
+            "Classification and routing",
+        ],
+        "context_window": 1000000,
+        "pricing": {"input_per_1M_tokens": 0.1, "output_per_1M_tokens": 0.5},
+        "notes": (
+            "Claude Haiku 5.5; Anthropic list price for prompts up to 100K "
+            "tokens ($0.50 / $2.50 per 1M beyond), as the gateway prices it."
+        ),
+    },
+    {
         "model_name": "mistral/mistral-small",
         "providers": "mistral",
         "api_key_name": "MISTRAL_API_KEY",
@@ -4029,7 +4070,11 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "chat",
-        "best_for": ["latest Flash GA", "multimodal understanding", "adaptive thinking"],
+        "best_for": [
+            "latest Flash GA",
+            "multimodal understanding",
+            "adaptive thinking",
+        ],
         "use_case": [
             "fast inference",
             "agentic AI tasks",
@@ -4050,7 +4095,11 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "chat",
-        "best_for": ["agentic and coding tasks", "multimodal understanding", "thinking"],
+        "best_for": [
+            "agentic and coding tasks",
+            "multimodal understanding",
+            "thinking",
+        ],
         "use_case": [
             "code generation and repair",
             "agent orchestration",
@@ -4222,7 +4271,11 @@ OSS_AVAILABLE_MODELS = [
         "providers": "gemini",
         "api_key_name": "GEMINI_API_KEY",
         "mode": "image_generation",
-        "best_for": ["cost-effective image generation", "text-to-image", "image editing"],
+        "best_for": [
+            "cost-effective image generation",
+            "text-to-image",
+            "image editing",
+        ],
         "use_case": ["batch image generation", "creative iteration"],
         "cutoff": "01-2025",
         "latency": 100,

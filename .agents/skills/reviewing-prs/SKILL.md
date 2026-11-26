@@ -140,9 +140,14 @@ reported as pre-existing — not deleted from the review because CI happens not 
 | A `pyproject.toml` configures `[tool.ruff]` and `.py` files changed               | `ruff check` and `ruff format --check` on the changed files. A new F405 or F821 is a probable runtime `NameError` — treat it as P0 until you prove otherwise. |
 | A file under a `migrations/` directory changed                                    | `makemigrations --check --dry-run` with the test settings. A second leaf node blocks.                                                                         |
 | Any test file changed                                                             | Run the PR's own new tests. A failing new test ends the review until it is fixed.                                                                             |
-| `frontend/package.json` defines the scripts, and serializers or contracts changed | `yarn lint`, and the contract check the repo defines (`yarn contracts:check`).                                                                                |
+| Frontend source files changed, and `frontend/package.json` defines the script     | `yarn lint` on the frontend.                                                                                                                                  |
+| Serializers or contracts changed, and `frontend/package.json` defines the scripts | The contract check the repo defines (`yarn contracts:check`).                                                                                                 |
 
-Never cite `yarn type-check` as evidence: without a `tsconfig.json` it is a no-op and proves nothing.
+When frontend sources or their type-check configuration change, inspect `frontend/package.json` and
+its referenced TypeScript project on the revisions under review. Run `yarn type-check` in `frontend/`
+through cloud CI and compare base and head diagnostics to identify any new errors. Cite the result
+for the TypeScript sources included on the tested revision. With `checkJs: false`, JavaScript is not
+type-checked by default. A missing project, a no-op script or a skipped run is not a pass.
 
 State in the review what you ran and what you did not run, with the predicate that decided it.
 
@@ -152,9 +157,10 @@ Trace the main changed path end to end yourself first — inputs, the branch tha
 written, the value read back. Then fan out.
 
 The rules live in [references/standards-checklist.md](references/standards-checklist.md), grouped by
-lens; load the section for the lens you are working, not the whole file. Dispatch one subagent per
-lens when subagents are available, each carrying that lens's section; otherwise work the lenses
-yourself in this order.
+lens; load the section for the lens you are working, not the whole file. Every lens also loads the
+**Every lens** section at the top and the Severity and attribution rules at the foot. Dispatch one
+subagent per lens when subagents are available, each carrying those plus its lens's sections;
+otherwise work the lenses yourself in this order.
 
 | Lens                   | Checklist sections                                              |
 | ---------------------- | --------------------------------------------------------------- |
@@ -231,7 +237,9 @@ Nothing reaches GitHub until the user answers that question.
 - **P0 — blocks.** Broken new code this PR introduced, the open build cannot deploy or migrate, data
   loss or corruption.
 - **P1 — blocks.** A verified correctness or contract bug: wrong value recorded, response drift, a
-  crash on a scheduled path, undeclared E2E coverage on a behaviour change.
+  crash on a scheduled path, undeclared E2E coverage on a behaviour change. Also an introduced
+  instance from the banned-pattern tables of standard `12`, subject to each pattern's stated
+  exceptions. Signals and meta-rules do not block just because they cite `12`.
 - **P2 / P3 — should fix, does not block.** Edge cases, performance, consistency, hygiene.
 - **Severity is not blocking.** A pre-existing P1 in a file this PR touches is a judgement call —
   "fix it while you are in here" or "file it urgently" — but the block is anchored on what this PR
@@ -248,7 +256,7 @@ Each of these means: go back to the step named and do it.
 | "A flow exists in that area, so it's covered."                                          | Coverage is per pinned surface, not per area. Step 3 answers this; guessing does not.                     |
 | "It's only a refactor."                                                                 | Run `git diff -w`. A refactor that drops a handler, a prop or a branch is a behaviour change.             |
 | "The migration is trivial."                                                             | Trivial migrations take locks, dangle leaves, and depend on enterprise-only apps. Run the gate.           |
-| "Type-check passed."                                                                    | Without a `tsconfig.json` it is a no-op. Never cite it.                                                   |
+| "Type-check passed, so the frontend is correct."                                        | A pass covers the configured type check only. It does not prove runtime behavior or that other gates passed. |
 | "I'll post it and fix the wording later."                                               | It goes out under a human's name. Show it, get the yes, then post.                                        |
 | "Since this is already merged, these are tickets rather than findings."                 | Merge status changes the remedy, not the severity or the attribution. Report them at their real severity. |
 | "CI doesn't run that gate, so it's not on this PR."                                     | Attribute it, don't delete it. Pre-existing is a label; silence is a miss.                                |

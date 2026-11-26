@@ -5,6 +5,15 @@
 
 const BASE_VERSION_ID = "agv-8";
 
+// The fix's scenarios: the key a call carries and the name the read stores.
+const SCENARIOS = [
+  { key: "late-cancel", name: "Late cancellation" },
+  { key: "late-cancel-2", name: "Late cancellation, repeat caller" },
+  { key: "late-cancel-3", name: "Late cancellation, angry caller" },
+  { key: "on-time-cancel", name: "Cancellation with notice" },
+  { key: "refund-window", name: "Refund window" },
+];
+
 const tiers = (overrides = {}) => [
   { name: "static", status: "passed", detail: "1 file changed, 6 lines" },
   {
@@ -77,6 +86,18 @@ const candidate = (fixId, attempt, outcome, extra = {}) => ({
   ],
   pull_request_url: "",
   created_at: `2026-10-29T08:${String(10 + attempt).padStart(2, "0")}:05Z`,
+  // The server's words for it, as the pull request says them; never composed here.
+  wording: {
+    headline:
+      outcome === "rejected"
+        ? "Target pass rate 0% → 0%."
+        : "Held-back pass rate 17% → 83%. No must-pass scenario broke.",
+    must_pass:
+      outcome === "rejected" ? "" : "None of the 9 must-pass scenarios broke.",
+    must_pass_broken: 0,
+    changes: "Changes instructions.md: 3 lines added, 1 removed.",
+    caveats: [],
+  },
   ...extra,
 });
 
@@ -131,6 +152,7 @@ const fix = (id, order, overrides = {}) => ({
   retryable: false,
   limited_validation: false,
   eval_warnings: [],
+  scenario_names: Object.fromEntries(SCENARIOS.map((s) => [s.key, s.name])),
   check_runs: [
     {
       run_id: `rt-${id}`,
@@ -154,8 +176,19 @@ const finishedCandidates = (id) => [
   candidate(id, 3, "winner", {
     verdict: {
       ...candidate(id, 3, "winner").verdict,
-      must_pass_regressions: ["on-time-cancel"],
-      must_pass_within_noise: ["refund-window"],
+      // As the engine names them: "<scenario key>: <check>".
+      must_pass_regressions: ["on-time-cancel: escalated"],
+      must_pass_within_noise: ["refund-window: policy_cited"],
+    },
+    wording: {
+      ...candidate(id, 3, "winner").wording,
+      headline:
+        "Held-back pass rate 17% → 83%. No must-pass scenario broke (1 moved within normal noise).",
+      must_pass:
+        "None of the 9 must-pass scenarios broke (1 moved within normal noise).",
+      caveats: [
+        "Must-pass scenario “Refund window” passed less often, within normal noise, so it was not counted.",
+      ],
     },
   }),
 ];
@@ -251,6 +284,10 @@ export const FIX_RUN_FIXTURES = [
     report: { ending: "ready", summary: "Proven on the targets only." },
     candidates: finishedCandidates("fix-ready-no-held").map((c) => ({
       ...c,
+      wording: {
+        ...c.wording,
+        headline: "Target pass rate 33% → 100%. No must-pass scenario broke.",
+      },
       verdict: {
         ...c.verdict,
         held_back_pass_rate: null,
@@ -375,13 +412,6 @@ export function fixturePatch(candidateId) {
 
 // Per-scenario results of each check run (GET /simulate/v3/test-executions/
 // {id}/calls/ mapped by mapCallRow), for the Per scenario tab.
-const SCENARIOS = [
-  { key: "late-cancel", name: "Late cancellation" },
-  { key: "late-cancel-2", name: "Late cancellation, repeat caller" },
-  { key: "late-cancel-3", name: "Late cancellation, angry caller" },
-  { key: "on-time-cancel", name: "Cancellation with notice" },
-  { key: "refund-window", name: "Refund window" },
-];
 
 const BASELINE = {
   "late-cancel": "failed",
@@ -497,6 +527,7 @@ const LAUNCH_SCENARIOS = [
 }));
 
 export function fixtureLaunchOptions(sourceRunId) {
+  const failing = LAUNCH_SCENARIOS.filter((s) => s.failing_sub_goals.length);
   return {
     source_run: {
       id: sourceRunId,
@@ -531,13 +562,34 @@ export function fixtureLaunchOptions(sourceRunId) {
       { id: "settings", label: "Settings", allowed: true, reason: null },
       { id: "code", label: "Code", allowed: true, reason: null },
     ],
-    defaults: { surfaces: ["prompt"], budget_credits: 1500, max_minutes: 150 },
+    // A GitHub agent is not traced: the run's spans show no model it called.
+    defaults: {
+      surfaces: ["prompt"],
+      budget_credits: 1500,
+      max_minutes: 150,
+      allowed_models: [],
+      agent_cost_metered: false,
+      agent_calls_unmeasured: false,
+      reply_latency_margin_pct: 25,
+      cost_margin_pct: 25,
+    },
     limits: {
       budget_credits_max: 50000,
       max_minutes_max: 1440,
+      scenarios_min: 3,
+      cases_min: 12,
+      variations_per_case: 3,
+      verified_cases_min: 6,
       scenarios_max: 200,
     },
     blocked: null,
+    variations_blocked: null,
+    // Below cases_min the epoch writes variations first and picks them after.
+    held_back_scenario_keys:
+      failing.length < 12
+        ? null
+        : failing.slice(0, Math.floor(failing.length / 3)).map((s) => s.key),
+    ship: { path: "pull_request", blocked: null },
   };
 }
 
@@ -576,7 +628,10 @@ export function fixtureLaunch(envId, body) {
 
 // One check run's calls as the run-results calls endpoint returns them: raw
 // rows, paged.
-export function fixtureRunCalls(testExecutionId, { page = 1, page_size = 200 } = {}) {
+export function fixtureRunCalls(
+  testExecutionId,
+  { page = 1, page_size = 200 } = {},
+) {
   const rows = fixtureRunTasks(testExecutionId).map((t) => ({
     id: t.id,
     source_scenario_key: t.sourceScenarioKey,
@@ -606,6 +661,9 @@ export function fixtureRetry(fixId) {
     created_at: new Date().toISOString(),
     started_at: null,
   };
-  store = [created, ...store.map((f) => (f.id === fixId ? { ...f, retryable: false } : f))];
+  store = [
+    created,
+    ...store.map((f) => (f.id === fixId ? { ...f, retryable: false } : f)),
+  ];
   return clone(created);
 }

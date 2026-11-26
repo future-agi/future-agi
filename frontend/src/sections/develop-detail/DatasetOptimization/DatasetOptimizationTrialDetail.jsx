@@ -9,6 +9,7 @@ import {
 } from "@mui/material";
 import { useQuery } from "@tanstack/react-query";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import axios, { endpoints } from "src/utils/axios";
 import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";

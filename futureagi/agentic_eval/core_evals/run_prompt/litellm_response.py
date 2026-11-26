@@ -9,7 +9,10 @@ from model_hub.queries.tts_voices import resolve_voice_id
 
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 
-from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
+from agentic_eval.core_evals.run_prompt.litellm_models import (
+    LiteLLMModelManager,
+    MissingProviderKeyError,
+)
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.queries.tts_voices import resolve_voice_id
 from model_hub.utils import call_websocket
@@ -25,6 +28,7 @@ import requests
 import base64
 import copy
 import io
+from tfc.utils.media_tools import MediaToolUnavailable
 
 import structlog
 
@@ -746,6 +750,11 @@ class RunPrompt:
         # Ensure OpenAI Whisper gets a recognized file extension; convert if needed
         try:
             detected = (detect_audio_format(audio_bytes) or "").lower()
+        except MediaToolUnavailable as exc:
+            # No ffmpeg in this image: send the audio unconverted and let the
+            # provider decode it, as before, but say why it was not converted.
+            logger.warning("stt_audio_not_converted", reason=str(exc))
+            detected = ""
         except Exception:
             detected = ""
         allowed = {
@@ -1277,9 +1286,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -2988,9 +2997,9 @@ class RunPrompt:
                             if tool_call.function.name:
                                 tc["function"]["name"] += tool_call.function.name
                             if tool_call.function.arguments:
-                                tc["function"][
-                                    "arguments"
-                                ] += tool_call.function.arguments
+                                tc["function"]["arguments"] += (
+                                    tool_call.function.arguments
+                                )
 
         except Exception as e:
             if "value must be a string" in str(e):
@@ -3216,6 +3225,10 @@ class RunPrompt:
             # Convert to legacy format (response, value_info)
             return handler_response.to_value_info()
 
+        except MissingProviderKeyError:
+            # Expected setup failure: preserve the type for the run boundary.
+            # Logging here would multiply the warning for multi-row runs.
+            raise
         except Exception as e:
             context = ErrorContext(
                 model=self.model,
@@ -3228,7 +3241,6 @@ class RunPrompt:
                 template_id=template_id,
             )
             concise_error = handle_api_error(e, logger, context)
-            logger.error(f"[NEW] An error occurred: {concise_error}")
             raise Exception(concise_error) from e
 
     async def _litellm_response_async_new(
@@ -3312,6 +3324,10 @@ class RunPrompt:
             # Convert to legacy format (response, value_info)
             return handler_response.to_value_info()
 
+        except MissingProviderKeyError:
+            # Expected setup failure: preserve the type for the run boundary.
+            # Logging here would multiply the warning for multi-row runs.
+            raise
         except Exception as e:
             context = ErrorContext(
                 model=self.model,
@@ -3324,7 +3340,6 @@ class RunPrompt:
                 template_id=template_id,
             )
             concise_error = handle_api_error(e, logger, context)
-            logger.error(f"[NEW] An error occurred: {concise_error}")
             raise Exception(concise_error) from e
 
     # =========================================================================

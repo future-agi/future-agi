@@ -294,12 +294,14 @@ def test_bool_takes_precedence_over_int_for_any_output_type():
 # ── Source-level regression guards ───────────────────────────────────────
 
 
-def test_helper_is_called_from_exactly_seven_dispatch_sites():
+def test_helper_is_called_from_exactly_six_dispatch_sites():
     """Pins call-site count so future edits cannot drop a dispatcher silently."""
     calls = re.findall(r"_dual_write_eval_value\(", EVAL_PY)
-    # 1 helper definition + 7 call sites = 8 occurrences total.
-    assert len(calls) == 8, (
-        f"Expected 1 def + 7 calls of _dual_write_eval_value, found {len(calls)}"
+    # 1 helper definition + 6 call sites = 7 occurrences total. The seventh
+    # site was the module-level _run_evaluation, deleted as dead code (it had
+    # no caller; EvaluationRunner._run_evaluation is a different function).
+    assert len(calls) == 7, (
+        f"Expected 1 def + 6 calls of _dual_write_eval_value, found {len(calls)}"
     )
 
 

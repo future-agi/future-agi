@@ -57,6 +57,7 @@ from ee.voice.services.voice_engine import VoiceServiceBlueprint
 from tfc.utils.slack import send_critical_slack_notification
 from tfc.utils.storage import download_audio_from_url, upload_audio_to_s3
 from tracer.models.observability_provider import ProviderChoices
+from tracer.utils.attribute_accessor import vapi_customer
 
 logger = structlog.get_logger(__name__)
 
@@ -90,6 +91,7 @@ def _update_recording_payload(
         target = artifact_keys.get(key)
         if target and url:
             target[0][target[1]] = url
+
 
 # User-facing error messages for VAPI API HTTP status codes.
 # 429 is deliberately excluded -- it is handled by _make_api_request_with_retry in the base class.
@@ -1848,9 +1850,7 @@ class VapiService(VoiceServiceBlueprint):
             system_phone_number = str(
                 (call_data.get("phoneNumber") or {}).get("twilioPhoneNumber") or ""
             )
-            customer_phone_number = str(
-                (call_data.get("customer") or {}).get("number") or ""
-            )
+            customer_phone_number = str(vapi_customer(call_data).get("number") or "")
 
             return FAGICallData(
                 call_id=str(call_data.get("id") or ""),
@@ -2262,7 +2262,7 @@ class VapiService(VoiceServiceBlueprint):
                     if isinstance(call_phone_obj, dict)
                     else ""
                 )
-                call_customer_number = call.get("customer", {}).get("number", "")
+                call_customer_number = vapi_customer(call).get("number", "")
 
                 phone_match = False
                 if (
@@ -2527,7 +2527,9 @@ class VapiService(VoiceServiceBlueprint):
         if main_recording_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, main_recording_url, "recording",
+                    call_id_str,
+                    main_recording_url,
+                    "recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
@@ -2548,7 +2550,9 @@ class VapiService(VoiceServiceBlueprint):
         if stereo_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, stereo_url, "stereo_recording",
+                    call_id_str,
+                    stereo_url,
+                    "stereo_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
@@ -2569,7 +2573,9 @@ class VapiService(VoiceServiceBlueprint):
         if assistant_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, assistant_url, "assistant_recording",
+                    call_id_str,
+                    assistant_url,
+                    "assistant_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
@@ -2590,7 +2596,9 @@ class VapiService(VoiceServiceBlueprint):
         if customer_url:
             try:
                 s3_url, payload_bytes = await convert_audio_url_to_s3_async_with_size(
-                    call_id_str, customer_url, "customer_recording",
+                    call_id_str,
+                    customer_url,
+                    "customer_recording",
                     provider=vapi_provider,
                     api_key=self.api_key,
                     vapi_call_id=vapi_call_id,
@@ -2786,9 +2794,7 @@ class VapiService(VoiceServiceBlueprint):
                 for msg in messages:
                     raw_role = msg.get("speaker_role") or msg.get("role", "unknown")
                     content = msg.get("content") or msg.get("message", "")
-                    role = raw_role_to_db_role.get(
-                        (raw_role or "").lower(), raw_role
-                    )
+                    role = raw_role_to_db_role.get((raw_role or "").lower(), raw_role)
 
                     role_lower = role.lower()
                     has_content = bool(content and content.strip())

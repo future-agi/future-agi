@@ -23,7 +23,7 @@ import { useForm, useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { customModelValidation } from "./validation";
-import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
+import { trackEvent, Events } from "src/utils/Mixpanel";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import ConfigureCustomModel from "./ConfigureCustomModel";
 import APIKeyForm from "src/components/custom-model-dropdown/APIKeyForm";
@@ -51,7 +51,6 @@ import {
   inferAzureEndpointType,
 } from "./helper";
 
-import logger from "src/utils/logger";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import Image from "src/components/image";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
@@ -134,7 +133,6 @@ const AddCustomModalForm = ({
   });
 
   const onSubmit = (data) => {
-    logger.debug(data);
     let configJson = {};
 
     if (data.modelProvider === MODEL_PROVIDERS.CUSTOM) {
@@ -232,12 +230,10 @@ const AddCustomModalForm = ({
     };
 
     trackEvent(Events.customModelAdded, {
-      [PropertyName.formFields]: {
-        payload,
-      },
+      model_provider: data.modelProvider,
+      operation: edit ? "edit" : "create",
     });
 
-    // console.log("Formatted Data:", payload);
     mutate(payload);
   };
 
