@@ -8,7 +8,9 @@ the Actions and git history, decides three things and says them in one
 Slack message:
 
 - Breaker: the same job failed on merge-queue builds of >= 3 different pull
-  requests inside the window, or on the newest dev push run. Groups are
+  requests inside the window, or on the newest dev push run and also on the
+  run before it or on one queue pull request (one red dev run alone is a
+  flake until it repeats). Groups are
   cumulative, so a failure that an entry ahead in its group explains (that
   entry failed the job, or a later build without it passed) is not counted.
   The base is probably red: an open issue with
@@ -17,7 +19,8 @@ Slack message:
   the job no longer trips and a later queue build of its workflow passed.
 - Escape rate: reverts and fix-forwards among the last 100 first-parent
   merges on dev, read from each pull request's title and description. Above
-  the threshold the tight-approval mode is wanted. When devflow-review/v1
+  2% the tight-approval mode is wanted, and it stays wanted until the rate
+  is below 1.5% (APPROVAL_MODE_TIGHT is the current state). When devflow-review/v1
   reviews exist, also one rate per review engine.
 - Digest: landings, queue red rate by class, queue p90, runner wait p95,
   escape rate, review quality per engine (findings fixed vs answered away
@@ -31,6 +34,10 @@ The repo variable APPROVAL_MODE_TIGHT can only be written with a token that
 has the Variables permission, which GITHUB_TOKEN never has. With
 DEVFLOW_VARS_TOKEN set the script writes it; without it the script only
 reports the signal. It never pauses the merge queue.
+
+The base-red issues (public on this repo) and every Slack post need the
+repository variable DEVFLOW_HEARTBEAT=live. Without it a tick only prints,
+and the workflows put that in the job summary.
 
 All functions that decide are pure and take plain dicts, so the tests feed
 recorded shapes. Only `Api` and `main` touch the network or git.
@@ -58,7 +65,8 @@ BREAKER_MIN_PRS = 3
 STATS_WINDOW = timedelta(hours=24)
 WAIT_WINDOW = timedelta(hours=1)
 ESCAPE_WINDOW = 100
-ESCAPE_THRESHOLD = 0.02
+ESCAPE_THRESHOLD = 0.02  # tight mode starts above this rate
+ESCAPE_EXIT = 0.015  # and ends below this one
 ESCAPE_HISTORY = 400
 # A filtered run listing returns at most this many results; split the window.
 LISTING_CAP = 1000
@@ -156,10 +164,13 @@ def wants_jobs(run: dict, now: datetime, breaker_only: bool) -> bool:
     return not breaker_only and now - parse_ts(run["created_at"]) <= WAIT_WINDOW
 
 
-def queue_failures(runs: list[dict], jobs_by_run: dict[int, list[dict]], prefix: str = "", dev: bool = False) -> list[dict]:
+def queue_failures(
+    runs: list[dict], jobs_by_run: dict[int, list[dict]], prefix: str = "", dev: bool = False, prior: bool = False
+) -> list[dict]:
     """{job, pr, at, workflow, run} per completed failed job, whether or not its
     run is done. `prefix` names a dev push run's jobs as the queue names them;
-    `dev` marks the failures of the dev push run."""
+    `dev` marks the failures of a dev push run, and `prior` those of the run
+    before the newest one."""
     out = []
     for r in runs:
         for j in jobs_by_run.get(r["id"], []):
@@ -170,7 +181,8 @@ def queue_failures(runs: list[dict], jobs_by_run: dict[int, list[dict]], prefix:
             ):
                 out.append({
                     "job": prefix + j["name"], "pr": None if dev else pr_number(r), "workflow": r.get("path"),
-                    "at": j.get("completed_at") or r["updated_at"], "run": r["id"], **({"dev": True} if dev else {}),
+                    "at": j.get("completed_at") or r["updated_at"], "run": r["id"],
+                    **({"dev": True} if dev else {}), **({"prior": True} if prior else {}),
                 })
     return out
 
@@ -233,26 +245,33 @@ def independent(failures: list[dict], runs: list[dict], jobs_by_run: dict[int, l
 
 def detect_breaker(failures: list[dict], now: datetime) -> list[dict]:
     """failures: {job, pr, at} per failed job on a merge-queue run, and
-    {job, dev: True, at} per failed job on the newest dev push run.
+    {job, dev: True, at} per failed job on the newest dev push run (with
+    prior: True, on the dev push run before it).
 
-    Returns one entry per job name failing for >= BREAKER_MIN_PRS different
-    pull requests inside the window, or on the dev push run (then "dev" is
-    True), worst first. Give it independent() failures.
+    Returns one entry per job name, worst first, that failed inside the window
+    for >= BREAKER_MIN_PRS different pull requests, or on the newest dev push
+    run and also on the run before it ("dev": 2) or on one queue pull request
+    ("dev": 1). One red dev run alone is a flake until it repeats. The run
+    before the newest counts at any age. Give it independent() failures.
     """
     prs_by_job: dict[str, set[int]] = defaultdict(set)
-    dev_jobs = set()
+    dev_jobs, prior_jobs = set(), set()
     for f in failures:
-        if now - parse_ts(f["at"]) > BREAKER_WINDOW:
+        if f.get("prior"):
+            prior_jobs.add(f["job"])
+        elif now - parse_ts(f["at"]) > BREAKER_WINDOW:
             continue
-        if f.get("dev"):
+        elif f.get("dev"):
             dev_jobs.add(f["job"])
         elif f["pr"] is not None:
             prs_by_job[f["job"]].add(f["pr"])
-    tripped = [
-        {"job": job, "prs": sorted(prs_by_job[job]), **({"dev": True} if job in dev_jobs else {})}
-        for job in set(prs_by_job) | dev_jobs
-        if job in dev_jobs or len(prs_by_job[job]) >= BREAKER_MIN_PRS
-    ]
+    tripped = []
+    for job in set(prs_by_job) | dev_jobs:
+        dev = 2 if job in prior_jobs else 1
+        if job in dev_jobs and (dev == 2 or prs_by_job[job]):
+            tripped.append({"job": job, "prs": sorted(prs_by_job[job]), "dev": dev})
+        elif len(prs_by_job[job]) >= BREAKER_MIN_PRS:
+            tripped.append({"job": job, "prs": sorted(prs_by_job[job])})
     return sorted(tripped, key=lambda t: (-len(t["prs"]), t["job"]))
 
 
@@ -327,7 +346,12 @@ def review_verdict(body: str) -> dict | None:
     return verdict if isinstance(verdict, dict) and verdict.get("schema") == "devflow-review/v1" else None
 
 
-def escape_rate(commits: list[dict], details: dict[int, dict] | None = None) -> dict:
+def tight_wanted(rate: float, tight_now: bool) -> bool:
+    """Hysteresis: enter tight mode above 2%, leave it below 1.5%."""
+    return rate >= ESCAPE_EXIT if tight_now else rate > ESCAPE_THRESHOLD
+
+
+def escape_rate(commits: list[dict], details: dict[int, dict] | None = None, tight_now: bool = False) -> dict:
     """commits: newest-first first-parent {sha, subject, body} on dev.
 
     details: {pr: {"body", "engine"}} read from the API (the description a
@@ -337,7 +361,7 @@ def escape_rate(commits: list[dict], details: dict[int, dict] | None = None) -> 
     A revert is an escape by its title. A fix-forward has a fix: title and
     references an earlier landing: "fixes/follow-up to/reverts #N" in the
     title or description, or any "#N" in the title. The escaped pull
-    request is #N.
+    request is #N. `tight_now` is APPROVAL_MODE_TIGHT today (see tight_wanted).
     """
     details = details or {}
     lands = [landing(c) for c in commits]
@@ -364,7 +388,7 @@ def escape_rate(commits: list[dict], details: dict[int, dict] | None = None) -> 
     total = len(window)
     rate = len(escapes) / total if total else 0.0
     return {
-        "count": len(escapes), "total": total, "rate": rate, "tight": rate > ESCAPE_THRESHOLD,
+        "count": len(escapes), "total": total, "rate": rate, "tight": tight_wanted(rate, tight_now),
         "escapes": escapes, "by_engine": by_engine([land["own"] for _, land in window], escapes, details),
     }
 
@@ -534,7 +558,7 @@ def render_digest(
     )
     lines.append(f"- queue run time p90: {fmt_dur(stats['queue_p90_s'])}")
     lines.append(f"- runner job wait p95 (1h): {fmt_dur(stats['runner_p95_s'])}")
-    flag = " :warning: above 2%, tight approval wanted" if esc["tight"] else ""
+    flag = " :warning: tight approval wanted (on above 2%, off below 1.5%)" if esc["tight"] else ""
     lines.append(f"- escape rate (last {esc['total']} merges): {pct(esc['rate'])} ({esc['count']}){flag}")
     for name, e in (esc.get("by_engine") or {}).items():
         lines.append(f"  - reviewed by `{name}`: {pct(e['rate'])} ({e['count']} of {e['total']})")
@@ -667,19 +691,22 @@ def collect_queue(api: Api, now: datetime, breaker_only: bool):
 
 
 def collect_dev(api: Api) -> tuple[list[dict], list[dict]]:
-    """(runs, failures) of the newest finished dev push run of each queue suite.
-    Only the newest counts: a later green push run clears a dev trip."""
+    """(runs, failures) of the two newest finished dev push runs of each queue
+    suite; runs holds only the newest. A green newest run clears a dev trip,
+    so the run before it is read only when the newest failed."""
     runs, failures = [], []
     for wf, prefix in DEV_PUSH_WORKFLOWS.items():
         listing = api.get(f"/actions/workflows/{wf}/runs?event=push&branch=dev&status=completed&per_page=20")
         done = [r for r in listing.get("workflow_runs") or [] if r.get("conclusion") in ("success", "failure")]
+        done.sort(key=lambda r: r["created_at"], reverse=True)
         if not done:
             continue
-        newest = max(done, key=lambda r: r["created_at"])
-        runs.append(newest)
-        if newest["conclusion"] == "failure":
-            jobs = {newest["id"]: api.get_all(f"/actions/runs/{newest['id']}/jobs?filter=latest&per_page=100", "jobs")}
-            failures += queue_failures([newest], jobs, prefix, dev=True)
+        runs.append(done[0])
+        for rank, run in enumerate(done[:2]):
+            if run["conclusion"] != "failure":
+                break
+            jobs = {run["id"]: api.get_all(f"/actions/runs/{run['id']}/jobs?filter=latest&per_page=100", "jobs")}
+            failures += queue_failures([run], jobs, prefix, dev=True, prior=rank == 1)
     return runs, failures
 
 
@@ -760,7 +787,7 @@ def signal_breaker(api: Api, breaker: list[dict], issues: list[dict]) -> list[di
     for b in new:
         api.call("POST", f"/repos/{api.repo}/issues", {
             "title": BREAKER_TITLE + b["job"], "labels": [BREAKER_LABEL],
-            "body": f"`{b['job']}` failed in the last 2 hours on {trip_where(b)}. "
+            "body": f"`{b['job']}` failed on {trip_where(b)}. "
                     "Groups behind a failing entry are not counted.\n"
                     "Likely a base problem, not the PRs. The batch train pauses while this issue is open. "
                     "The breaker closes it when the job stops tripping and a later queue build passes; "
@@ -779,7 +806,8 @@ def close_resolved(api: Api, resolved: list[dict]) -> None:
 
 def trip_where(b: dict) -> str:
     where = [f"{len(b['prs'])} independent merge-queue PRs ({', '.join(f'#{n}' for n in b['prs'])})"] if b["prs"] else []
-    return " and ".join(where + (["the newest dev push run"] if b.get("dev") else []))
+    dev = {1: ["the newest dev push run"], 2: ["the two newest dev push runs"]}.get(b.get("dev"), [])
+    return " and ".join(where + dev)
 
 
 def breaker_line(b: dict) -> str:
@@ -820,28 +848,35 @@ def run_breaker(api: Api, now: datetime, runs, failures, jobs_by_run, dry: bool)
 def main(argv: list[str]) -> int:
     dry = "--dry-run" in argv
     breaker_only = "--breaker-only" in argv
+    # The public base-red issues and the Slack posts start only with
+    # DEVFLOW_HEARTBEAT=live; until then a tick writes its job summary only.
+    live = os.environ.get("DEVFLOW_HEARTBEAT") == "live"
+    slack = os.environ.get("SLACK_WEBHOOK_URL") if live else None
     repo, token = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_TOKEN"]
     api, now = Api(repo, token), datetime.now(timezone.utc)
     runs, failures, jobs_by_run = collect_queue(api, now, breaker_only)
+    if not live:
+        print("DEVFLOW_HEARTBEAT is not live: no base-red issue and no Slack post.")
     # Every push and every queue build: a new trip is filed once (the open
     # issue is the dedupe), and only that is posted.
-    breaker, new = run_breaker(api, now, runs, failures, jobs_by_run, dry)
+    breaker, new = run_breaker(api, now, runs, failures, jobs_by_run, dry or not live)
     if breaker_only:
         print("\n".join(breaker_line(b) for b in breaker) or "base health: no trip")
-        if new and os.environ.get("SLACK_WEBHOOK_URL"):
-            post_slack(os.environ["SLACK_WEBHOOK_URL"], "\n".join(breaker_line(b) for b in new))
+        if new and slack:
+            post_slack(slack, "\n".join(breaker_line(b) for b in new))
         return 0
     stats = queue_stats(runs, jobs_by_run, now)
     commits = git_first_parent(ESCAPE_HISTORY)
     window = [land["own"] for land in map(landing, commits[:ESCAPE_WINDOW]) if land["own"]]
-    first = escape_rate(commits)
+    tight_now = os.environ.get("APPROVAL_MODE_TIGHT") == "1"
+    first = escape_rate(commits, tight_now=tight_now)
     details = pr_details(api, window + [r for e in first["escapes"] for r in e["refs"]])
-    esc = escape_rate(commits, details)
+    esc = escape_rate(commits, details, tight_now)
     # Culprits found only through a description need their engine too.
     late = {r for e in esc["escapes"] for r in e["refs"]} - set(details)
     if late:
         details.update(pr_details(api, sorted(late)))
-        esc = escape_rate(commits, details)
+        esc = escape_rate(commits, details, tight_now)
     landings = len(api.get_all(f"/commits?sha=dev&since={iso(now - timedelta(hours=1))}&per_page=100"))
     dirty = dirty_share(open_pr_mergeables(api))
     try:
@@ -860,10 +895,11 @@ def main(argv: list[str]) -> int:
     vars_token = os.environ.get("DEVFLOW_VARS_TOKEN")
     if vars_token:
         set_variable(api, vars_token, "1" if esc["tight"] else "0")
-    elif esc["tight"]:
-        print(f"::warning::escape rate {pct(esc['rate'])} is above 2%; set {VARIABLE_NAME}=1 (no DEVFLOW_VARS_TOKEN to do it)")
-    if os.environ.get("SLACK_WEBHOOK_URL"):
-        post_slack(os.environ["SLACK_WEBHOOK_URL"], text)
+    elif esc["tight"] != tight_now:
+        want = "1" if esc["tight"] else "0"
+        print(f"::warning::escape rate {pct(esc['rate'])}: set {VARIABLE_NAME}={want} (no DEVFLOW_VARS_TOKEN to do it)")
+    if slack:
+        post_slack(slack, text)
     return 0
 
 

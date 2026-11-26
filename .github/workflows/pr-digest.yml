@@ -56,6 +56,10 @@ jobs:
       actions: read
       pull-requests: read
       issues: write
+    defaults:
+      run:
+        # bash -eo pipefail: a tick that fails is not hidden by its tee.
+        shell: bash
     steps:
       - name: Script from the pushed commit
         uses: actions/checkout@v4
@@ -79,6 +83,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Issues and Slack posts only when "live"; otherwise the summary only.
+          DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
         run: python3 -I .github/scripts/devflow_tick.py --breaker-only | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@v4
@@ -93,9 +99,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
           # Optional. A token with the Variables permission lets the tick set
-          # APPROVAL_MODE_TIGHT; without it the tick only warns.
+          # APPROVAL_MODE_TIGHT; without it the tick only warns. The current
+          # value is the hysteresis state (on above 2%, off below 1.5%).
           DEVFLOW_VARS_TOKEN: ${{ secrets.DEVFLOW_VARS_TOKEN }}
+          APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}
         run: |
           git fetch origin dev
           python3 -I .github/scripts/devflow_tick.py | tee -a "$GITHUB_STEP_SUMMARY"

@@ -90,11 +90,12 @@ jobs:
           sparse-checkout: .github/scripts
       # No secrets in this file (a group can hold fork code): the trip files
       # the base-red issue here, and the hourly digest on dev carries the
-      # Slack line.
+      # Slack line. Both only with DEVFLOW_HEARTBEAT=live.
       - continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
         run: |
           set -o pipefail
           # The first group after this file lands still has a base without it.

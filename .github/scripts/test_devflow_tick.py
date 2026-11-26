@@ -5,7 +5,7 @@ import pathlib
 import sys
 import unittest
 import urllib.parse
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import devflow_tick as t  # noqa: E402
@@ -92,29 +92,64 @@ class Cascade(unittest.TestCase):
         jobs = {r["id"]: shard_failed() for r in runs}
         self.assertEqual(self.trips(runs, jobs), [{"job": SHARD, "prs": [10, 11, 12]}])
 
-    def test_the_dev_push_run_trips_by_itself(self):
-        dev_run = {"id": 50, "path": ".github/workflows/backend-ci.yml", "conclusion": "failure",
-                   "created_at": "2026-11-26T11:00:00Z", "updated_at": "2026-11-26T11:30:00Z"}
-        dev = t.queue_failures([dev_run], {50: [{"name": "pytest shard 3", "status": "completed",
-                                                 "conclusion": "failure", "completed_at": "2026-11-26T11:30:00Z"},
-                                                {"name": "Backend Tests Pass", "status": "completed",
-                                                 "conclusion": "failure", "completed_at": "2026-11-26T11:31:00Z"}]},
-                               "backend / ", dev=True)
+    def dev_failures(self, run_id=50, at="2026-11-26T11:30:00Z", prior=False):
+        dev_run = {"id": run_id, "path": ".github/workflows/backend-ci.yml", "conclusion": "failure",
+                   "created_at": "2026-11-26T11:00:00Z", "updated_at": at}
+        return t.queue_failures([dev_run], {run_id: [{"name": "pytest shard 3", "status": "completed",
+                                                      "conclusion": "failure", "completed_at": at},
+                                                     {"name": "Backend Tests Pass", "status": "completed",
+                                                      "conclusion": "failure", "completed_at": at}]},
+                                "backend / ", dev=True, prior=prior)
+
+    def test_one_red_dev_push_run_alone_does_not_trip(self):
+        # 6 of the last 40 dev push runs failed E2E and 5 Backend, mostly one
+        # run at a time: a single red dev run is a flake until it repeats.
+        dev = self.dev_failures()
         self.assertEqual([f["job"] for f in dev], [SHARD])
-        self.assertEqual(self.trips([], {}, dev), [{"job": SHARD, "prs": [], "dev": True}])
-        # A cascade alone still does not trip, and the dev run joins it.
+        self.assertEqual(self.trips([], {}, dev), [])
+        self.assertEqual(self.trips([], {}, self.dev_failures(51, prior=True)), [], "the older run alone")
+
+    def test_the_two_newest_dev_push_runs_red_on_the_same_job_trip(self):
+        both = self.dev_failures() + self.dev_failures(49, "2026-11-26T11:10:00Z", prior=True)
+        self.assertEqual(self.trips([], {}, both), [{"job": SHARD, "prs": [], "dev": 2}])
+        self.assertIn("the two newest dev push runs", t.breaker_line(self.trips([], {}, both)[0]))
+        # The run before the newest counts whatever its age; the newest must be recent.
+        old_prior = self.dev_failures() + self.dev_failures(49, "2026-11-26T06:00:00Z", prior=True)
+        self.assertEqual(self.trips([], {}, old_prior), [{"job": SHARD, "prs": [], "dev": 2}])
+        stale = self.dev_failures(at="2026-11-26T09:00:00Z") + self.dev_failures(49, "2026-11-26T08:00:00Z", prior=True)
+        self.assertEqual(self.trips([], {}, stale), [])
+
+    def test_one_red_dev_run_and_one_independent_queue_failure_trip(self):
+        dev = self.dev_failures()
+        # A cascade counts once: two groups, one independent failure (#10).
         runs = [group(1, 10, "1" * 40), group(2, 11, "2" * 40, base="1" * 40)]
         jobs = {r["id"]: shard_failed() for r in runs}
-        self.assertEqual(self.trips(runs, jobs, dev), [{"job": SHARD, "prs": [10], "dev": True}])
+        self.assertEqual(self.trips(runs, jobs, dev), [{"job": SHARD, "prs": [10], "dev": 1}])
         self.assertIn("the newest dev push run", t.breaker_line(self.trips(runs, jobs, dev)[0]))
+        self.assertEqual(self.trips(runs, jobs), [], "the queue failure alone")
 
-    def test_only_the_newest_finished_dev_push_run_counts(self):
-        older = {"id": 1, "conclusion": "failure", "created_at": "2026-11-26T10:00:00Z", "updated_at": "2026-11-26T10:30:00Z", "path": "b"}
-        newer = dict(older, id=2, conclusion="success", created_at="2026-11-26T11:00:00Z")
-        cancelled = dict(older, id=3, conclusion="cancelled", created_at="2026-11-26T11:30:00Z")
+    def test_the_two_newest_finished_dev_push_runs_count(self):
+        def dev_run(i, conclusion, created):
+            return {"id": i, "conclusion": conclusion, "created_at": created, "updated_at": created, "path": "b"}
+
+        shard = [{"name": "pytest shard 3", "status": "completed", "conclusion": "failure",
+                  "completed_at": "2026-11-26T11:00:00Z"}]
+        older = dev_run(1, "failure", "2026-11-26T10:00:00Z")
+        newer = dev_run(2, "success", "2026-11-26T11:00:00Z")
+        cancelled = dev_run(3, "cancelled", "2026-11-26T11:30:00Z")
         api = FakeApi({"/repos/o/r/actions/workflows/": ("workflow_runs", [older, newer, cancelled], None)}, size=10)
         runs, failures = t.collect_dev(api)
-        self.assertEqual(([r["id"] for r in runs], failures), ([2, 2], []))
+        self.assertEqual(([r["id"] for r in runs], failures), ([2, 2], []), "a green newest run clears it")
+        newest = dev_run(4, "failure", "2026-11-26T11:40:00Z")
+        lists = {"/repos/o/r/actions/workflows/": ("workflow_runs", [older, newer, newest, cancelled], None),
+                 "/repos/o/r/actions/runs/4/jobs": ("jobs", shard, None)}
+        runs, failures = t.collect_dev(FakeApi(lists, size=10))
+        self.assertEqual({(f["run"], bool(f.get("prior"))) for f in failures}, {(4, False)}, "run 2 before it passed")
+        newer["conclusion"] = "failure"
+        lists["/repos/o/r/actions/runs/2/jobs"] = ("jobs", shard, None)
+        runs, failures = t.collect_dev(FakeApi(lists, size=10))
+        self.assertEqual([r["id"] for r in runs], [4, 4])
+        self.assertEqual({(f["run"], bool(f.get("prior"))) for f in failures}, {(4, False), (2, True)})
 
 
 class Escape(unittest.TestCase):
@@ -136,6 +171,18 @@ class Escape(unittest.TestCase):
     def test_three_escapes_is_above_two_percent(self):
         extra = [commit(920 + i, f"fix: z (#{2010 + i})", "fixes #1100") for i in range(3)]
         self.assertTrue(t.escape_rate(self.history(extra))["tight"])
+
+    def test_tight_mode_enters_above_two_percent_and_leaves_below_one_and_a_half(self):
+        for rate, now_tight, want in (
+            (0.021, False, True), (0.02, False, False), (0.015, False, False),
+            (0.02, True, True), (0.015, True, True), (0.0149, True, False), (0.0, True, False),
+        ):
+            with self.subTest(rate=rate, now_tight=now_tight):
+                self.assertEqual(t.tight_wanted(rate, now_tight), want)
+        two = [commit(930 + i, f"fix: z (#{2020 + i})", "fixes #1100") for i in range(2)]
+        self.assertFalse(t.escape_rate(self.history(two))["tight"], "2% does not enter")
+        self.assertTrue(t.escape_rate(self.history(two), tight_now=True)["tight"], "2% does not leave")
+        self.assertFalse(t.escape_rate(self.history(two[:1]), tight_now=True)["tight"], "1% leaves")
 
     def test_issue_numbers_are_not_prs(self):
         out = t.escape_rate(self.history([commit(903, "fix: y (#2002)", "Fixes #5")]))
@@ -329,6 +376,79 @@ class Liveness(unittest.TestCase):
         self.assertEqual(t.resolved_trips([issue], [{"job": "backend", "prs": [1, 2, 3]}], bad, [green_after]), [])
         # An idle queue closes nothing.
         self.assertEqual(t.resolved_trips([issue], [], [], []), [])
+
+
+class Recorder(t.Api):
+    """Answers every GET with an empty list; records every write."""
+
+    def __init__(self, repo, token):
+        super().__init__(repo, token)
+        self.writes = []
+
+    def request(self, method, url, body=None, token=None):
+        if method != "GET":
+            self.writes.append((method, url))
+            return {}, ""
+        return [], ""
+
+
+class Heartbeat(unittest.TestCase):
+    """DEVFLOW_HEARTBEAT=live is the only switch for the public base-red
+    issues and the Slack posts; without it a tick writes its summary only."""
+
+    def tick(self, argv, env):
+        from unittest import mock
+
+        at = t.iso(datetime.now(UTC) - timedelta(minutes=10))
+        failures = [{"job": "backend / pytest shard 3", "pr": n, "at": at, "workflow": "w", "run": n} for n in (1, 2, 3)]
+        api = {}
+
+        def make(repo, token):
+            api["x"] = Recorder(repo, token)
+            return api["x"]
+
+        with (
+            mock.patch.dict("os.environ", {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "t",
+                                           "SLACK_WEBHOOK_URL": "https://hooks.example/x", **env}, clear=True),
+            mock.patch.object(t, "Api", make),
+            mock.patch.object(t, "collect_queue", return_value=([], failures, {})),
+            mock.patch.object(t, "collect_dev", return_value=([], [])),
+            mock.patch.object(t, "git_first_parent", return_value=[]),
+            mock.patch.object(t, "pr_details", return_value={}),
+            mock.patch.object(t, "open_pr_mergeables", return_value=[]),
+            mock.patch.object(t, "collect_flaky", return_value=[]),
+            mock.patch.object(t, "post_slack") as slack,
+            mock.patch("sys.stdout"),
+        ):
+            self.assertEqual(t.main(argv), 0)
+        return api["x"].writes, slack.call_count
+
+    def test_without_the_heartbeat_a_trip_files_and_posts_nothing(self):
+        for argv in (["--breaker-only"], []):
+            for env in ({}, {"DEVFLOW_HEARTBEAT": "dry"}):
+                with self.subTest(argv=argv, env=env):
+                    self.assertEqual(self.tick(argv, env), ([], 0))
+
+    def test_a_live_heartbeat_files_the_trip_and_posts(self):
+        writes, posts = self.tick(["--breaker-only"], {"DEVFLOW_HEARTBEAT": "live"})
+        self.assertIn(("POST", "/repos/o/r/issues"), writes)
+        self.assertEqual(posts, 1)
+        writes, posts = self.tick([], {"DEVFLOW_HEARTBEAT": "live"})
+        self.assertIn(("POST", "/repos/o/r/issues"), writes)
+        self.assertEqual(posts, 1, "the digest")
+
+    def test_every_tick_step_passes_the_heartbeat(self):
+        root = pathlib.Path(__file__).parents[1] / "workflows"
+        digest = (root / "pr-digest.yml").read_text().split("\n  tick:\n", 1)[1].split("\n  tick-tests:\n", 1)[0]
+        queue = (root / "backend-queue-ci.yml").read_text().split("\n  breaker:\n", 1)[1]
+        for name, text, steps in (("pr-digest", digest, 2), ("backend-queue-ci", queue, 1)):
+            with self.subTest(workflow=name):
+                self.assertEqual(text.count("DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}"), steps)
+                self.assertEqual(text.count("python3 -I .github/scripts/devflow_tick.py"), steps)
+        self.assertIn("APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}", digest)
+        # bash -eo pipefail: a failing tick is not hidden by its tee.
+        self.assertIn("    defaults:\n      run:\n", digest)
+        self.assertIn("        shell: bash\n", digest)
 
 
 class Stats(unittest.TestCase):
