@@ -64,7 +64,7 @@ function ValueRow({ row, pending, canEdit, onChange, onRemove, onUndo }) {
         </Typography>
         {row.required && <Pill>Required</Pill>}
         {row.madeByEnvironment && <Pill>Made by the test environment</Pill>}
-        {changed && <Pill tone="primary">Changed</Pill>}
+        {changed && <Pill tone="primary">{row.added ? "New" : "Changed"}</Pill>}
         <Box sx={{ flex: 1 }} />
         {canEdit && (removed || changed) && (
           <Button size="small" onClick={() => onUndo(row.name)}>
@@ -152,6 +152,8 @@ ValueRow.propTypes = {
     madeByEnvironment: PropTypes.bool,
     // A voice provider's key (Vapi, Retell, LiveKit): changed, never removed.
     providerKey: PropTypes.bool,
+    // Added in this draft, not yet saved.
+    added: PropTypes.bool,
   }).isRequired,
   pending: PropTypes.oneOf(["set", "remove", null]),
   canEdit: PropTypes.bool,
@@ -264,7 +266,7 @@ export default function AgentValuesTab() {
   const madeByEnvironment = values.data?.madeByEnvironment ?? [];
   const missing = values.data?.missingRequired ?? [];
   const summary = draftSummary(draft, rows);
-  const added = summary.added.map((name) => ({ name }));
+  const added = summary.added.map((name) => ({ name, added: true }));
 
   const save = () => {
     change.mutate(changeBody(draft), {

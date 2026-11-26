@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { act, fireEvent, render, screen } from "src/utils/test-utils";
+import { act, fireEvent, render, screen, within } from "src/utils/test-utils";
 import AgentValuesTab from "../AgentValuesTab";
 
 const auth = { role: "Owner" };
@@ -126,6 +126,30 @@ describe("AgentValuesTab", () => {
       kind: "credentials",
       secret_values: { DB_URL: "pg://new" },
     });
+  });
+
+  it("marks an added name as new and a changed one as changed", () => {
+    render(<AgentValuesTab />);
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "REDIS_URL" },
+    });
+    fireEvent.change(screen.getByLabelText("Value"), {
+      target: { value: "redis://x" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    fireEvent.change(screen.getByLabelText("New value for DB_URL"), {
+      target: { value: "pg://new" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Keep" }));
+
+    expect(
+      within(screen.getByTestId("agent-value-REDIS_URL")).getByText("New"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("agent-value-DB_URL")).getByText("Changed"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Adds REDIS_URL")).toBeInTheDocument();
   });
 
   it("refuses a new value under a name the environment makes", () => {
