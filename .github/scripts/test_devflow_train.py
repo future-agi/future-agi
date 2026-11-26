@@ -85,7 +85,8 @@ def pr_node(
                     "state": "APPROVED",
                     "commit": {"oid": head},
                     "author": {"__typename": "Bot", "login": "github-actions"},
-                }
+                },
+                verdict_review(head),
             ]
         },
         "comments": {"nodes": []},
@@ -108,6 +109,7 @@ def verdict_review(
     when="2026-11-26T11:00:00Z",
     needs_person=False,
     login="reviewer",
+    tier_check="low",
 ):
     body = {
         "schema": "devflow-review/v1",
@@ -117,6 +119,8 @@ def verdict_review(
         "needs_person": needs_person,
         "findings": [],
     }
+    if tier_check is not None:
+        body["tier_check"] = {"tier": tier_check, "engine": "x", "input": "diff"}
     return {
         "state": "COMMENTED",
         "authorAssociation": assoc,
@@ -194,7 +198,8 @@ def cfg(**over):
             "max_batch": 6,
             "max_rollups": 4,
             "queue_builds": 6,
-            "require_verdict": False,
+            "require_verdict": True,
+            "tight": False,
             **over,
         }
     )
@@ -419,29 +424,91 @@ class Exclusions(unittest.TestCase):
             "matches ee/**", self.reason(node, cfg(high_globs=(".github/**", "ee/**")))
         )
 
+    def with_verdict(self, *reviews, **over):
+        node = pr_node(1, **over)
+        node["reviews"]["nodes"][-1:] = list(reviews)
+        return node
+
     def test_verdict_tier(self):
-        node = pr_node(1)
-        node["reviews"]["nodes"].append(verdict_review(sha(1), tier="high"))
+        node = self.with_verdict(verdict_review(sha(1), tier="high"))
         self.assertEqual(self.reason(node), "review tier high: goes alone")
-        node["reviews"]["nodes"][-1] = verdict_review(sha(1), needs_person=True)
-        self.assertEqual(self.reason(node), "review tier low: goes alone")
-        node["reviews"]["nodes"][-1] = verdict_review(sha(1), verdict="changes")
+        node = self.with_verdict(verdict_review(sha(1), verdict="changes"))
         self.assertEqual(self.reason(node), "review verdict changes")
 
+    def test_contract_1_medium_is_never_treated_as_low(self):
+        medium = "medium tier: waits for an approval"
+        for review in (
+            verdict_review(sha(1), tier="medium"),
+            verdict_review(sha(1), tier_check="medium"),
+            verdict_review(sha(1), needs_person=True),
+        ):
+            node = self.with_verdict(review)
+            with self.subTest(review=review["body"][-160:]):
+                # The bot's approval is on the head; medium still waits for a person.
+                self.assertIn(medium, self.reason(node))
+        self.assertIn(medium, self.reason(pr_node(1), cfg(tight=True)), "tight: low is medium")
+
+    def test_medium_needs_a_writer_who_is_not_the_author_nor_a_bot(self):
+        def approval(login, kind="User"):
+            return {
+                "state": "APPROVED",
+                "commit": {"oid": sha(1)},
+                "author": {"__typename": kind, "login": login},
+            }
+
+        verdict = verdict_review(sha(1), tier="medium")
+        cases = [
+            ([approval("author-a")], {"author-a": "admin"}, False),
+            ([approval("devbot", "Bot")], {"devbot": "write"}, False),
+            ([approval("reader")], {"reader": "read"}, False),
+            ([approval("Writer")], {"writer": "write"}, True),
+            ([approval("boss")], {"boss": "admin"}, True),
+        ]
+        for approvals, permissions, eligible in cases:
+            node = self.with_verdict(verdict, *approvals)
+            node["_permissions"] = permissions
+            with self.subTest(approvals=approvals):
+                self.assertEqual(self.reason(node) is None, eligible, self.reason(node))
+        stale = self.with_verdict(verdict, {**approval("w"), "commit": {"oid": sha(7)}})
+        stale["_permissions"] = {"w": "write"}
+        self.assertIsNotNone(self.reason(stale), "the approval must be on this head")
+
+    def test_contract_2_unknown_tier_is_high(self):
+        for tier in ("Medium", "", None, "critical", ["low"], 1):
+            with self.subTest(tier=tier):
+                self.assertEqual(train.final_tier({"tier": tier, "tier_check": {"tier": "low"}, "needs_person": False}), "high")
+                self.assertEqual(train.final_tier({"tier": "low", "tier_check": {"tier": tier}, "needs_person": False}), "high")
+        self.assertEqual(train.final_tier({"tier": "low", "needs_person": False}), "high", "missing tier_check")
+        node = self.with_verdict(verdict_review(sha(1), tier_check=None))
+        self.assertEqual(self.reason(node), "review tier high: goes alone")
+
+    def test_contract_3_ordinal_max(self):
+        def tier(a, b):
+            return train.final_tier({"tier": a, "tier_check": {"tier": b}, "needs_person": False})
+
+        self.assertEqual(tier("low", "medium"), "medium")
+        self.assertEqual(tier("medium", "low"), "medium")
+        self.assertEqual(tier("medium", "high"), "high")
+        self.assertEqual(tier("high", "medium"), "high")
+        self.assertEqual(tier("low", "low"), "low")
+
     def test_missing_or_stale_verdict(self):
-        stale = pr_node(1)
-        stale["reviews"]["nodes"].append(verdict_review(sha(42), tier="high"))
-        self.assertIsNone(
-            self.reason(stale), "a stale verdict counts as missing; lenient by default"
-        )
+        stale = self.with_verdict(verdict_review(sha(42)))
+        self.assertEqual(self.reason(stale), "no review verdict on this head")
         self.assertEqual(
-            self.reason(stale, cfg(require_verdict=True)),
-            "no review verdict on this head",
+            train.Config().require_verdict, True, "required unless set to false"
         )
-        self.assertEqual(
-            self.reason(pr_node(1), cfg(require_verdict=True)),
-            "no review verdict on this head",
+
+    def test_verdict_off_applies_the_medium_rule(self):
+        # The operator opt-out: no verdict needs a person's approval, not the bot's.
+        node = self.with_verdict()
+        off = cfg(require_verdict=False)
+        self.assertIn("medium tier", self.reason(node, off))
+        node["reviews"]["nodes"].append(
+            {"state": "APPROVED", "commit": {"oid": sha(1)}, "author": {"__typename": "User", "login": "w"}}
         )
+        node["_permissions"] = {"w": "write"}
+        self.assertIsNone(self.reason(node, off))
 
     def test_red_label_holds_only_on_the_red_head(self):
         node = pr_node(1, labels=(train.ADMIT_LABEL, train.RED_LABEL))

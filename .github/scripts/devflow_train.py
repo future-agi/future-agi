@@ -72,6 +72,9 @@ HIGH_LABELS = ("needs-human", "autopilot-high")
 BRANCH_PREFIX = "chore/devflow-train-"
 BASE = "dev"
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+WRITE = {"admin", "write"}
+# Tier contract v2: ordinal, and anything else (case, empty, null) is high.
+TIERS = ("low", "medium", "high")
 ACTIONS_LOGIN = "github-actions"
 POLICY_FILE = ".github/pr-autopilot.yml"
 # Always goes alone: a change to CI would change the batch's own checks.
@@ -105,9 +108,12 @@ class Config:
         self.max_rollups = env_int("DEVFLOW_TRAIN_MAX_ROLLUPS", 4)
         # max_entries_to_build on the dev queue ruleset (27819469).
         self.queue_builds = env_int("DEVFLOW_TRAIN_QUEUE_BUILDS", 6)
+        # Off only as an explicit operator opt-out; see member_tier().
         self.require_verdict = (
-            os.environ.get("DEVFLOW_TRAIN_REQUIRE_VERDICT", "") == "true"
+            os.environ.get("DEVFLOW_TRAIN_REQUIRE_VERDICT", "") != "false"
         )
+        # APPROVAL_MODE_TIGHT=1: the minimum final tier is medium.
+        self.tight = os.environ.get("APPROVAL_MODE_TIGHT", "") == "1"
         self.train_login = bot_login(
             os.environ.get("DEVFLOW_TRAIN_LOGIN") or "futureagi-devflow-train[bot]"
         )
@@ -234,6 +240,37 @@ def parse_verdict(reviews: list) -> dict | None:
     return None
 
 
+def tier_rank(tier) -> int:
+    return TIERS.index(tier) if isinstance(tier, str) and tier in TIERS else 2
+
+
+def final_tier(verdict: dict, tight: bool = False) -> str:
+    """The ordinal max of the reviewer's tier and the diff-only tier_check (a
+    missing one is high). Low that asks for a person, or tight mode, is at
+    least medium. The deterministic path scan is high_path and code_owned."""
+    check = verdict.get("tier_check")
+    ranks = [
+        tier_rank(verdict.get("tier")),
+        tier_rank(check.get("tier") if isinstance(check, dict) else None),
+    ]
+    if verdict.get("needs_person") is not False or tight:
+        ranks.append(1)
+    return TIERS[max(ranks)]
+
+
+def human_approvers(reviews: list, head: str, author: str) -> set:
+    """Logins, lower case, that approved this head and are neither a bot nor the author."""
+    return {
+        lower_login(r)
+        for r in reviews
+        if r.get("state") == "APPROVED"
+        and (r.get("commit") or {}).get("oid") == head
+        and (r.get("author") or {}).get("__typename") != "Bot"
+        and not ((r.get("author") or {}).get("login") or "").endswith("[bot]")
+        and lower_login(r) not in ("", author.lower())
+    }
+
+
 def approved_on_head(reviews: list, head: str, by: str | None = None) -> bool:
     return any(
         r.get("state") == "APPROVED"
@@ -311,6 +348,11 @@ def member_view(node: dict, required: list) -> dict:
         "in_queue": bool(node.get("isInMergeQueue")),
         "review_decision": node.get("reviewDecision"),
         "approved_on_head": approved_on_head(reviews, head),
+        "human_approvers": human_approvers(
+            reviews, head, bot_login((node.get("author") or {}).get("login"))
+        ),
+        # Approver -> repository permission, from GitHub.attach_permissions.
+        "permissions": node.get("_permissions") or {},
         "verdict": latest_verdict(
             reviews,
             bot_login((node.get("author") or {}).get("login")),
@@ -354,14 +396,18 @@ def exclusion(m: dict, cfg: Config, reserved: dict) -> str | None:
         return f"high-risk path ({hit}): goes alone"
     if m["review_decision"] != "APPROVED" or not m["approved_on_head"]:
         return "not approved on this head"
-    verdict = m["verdict"]
-    if verdict is not None and verdict.get("head") == m["head_sha"]:
-        if verdict.get("tier") != "low" or verdict.get("needs_person"):
-            return f"review tier {verdict.get('tier')}: goes alone"
-        if verdict.get("verdict") != "pass":
-            return f"review verdict {verdict.get('verdict')}"
-    elif cfg.require_verdict:
+    tier = member_tier(m, cfg)
+    if tier is None:
         return "no review verdict on this head"
+    if tier == "high":
+        return "review tier high: goes alone"
+    if m["verdict"] is not None and m["verdict"].get("verdict") != "pass":
+        return f"review verdict {m['verdict'].get('verdict')}"
+    if tier == "medium" and not writer_approved(m):
+        return (
+            "medium tier: waits for an approval on this head by a person"
+            " with write access who is not the author"
+        )
     # Last, and the only rule that costs API calls (see needs_checks).
     bad = {name: state for name, state in m["checks"].items() if state != "success"}
     if bad:
@@ -369,6 +415,19 @@ def exclusion(m: dict, cfg: Config, reserved: dict) -> str | None:
             f"{k}={v}" for k, v in sorted(bad.items())
         )
     return None
+
+
+def member_tier(m: dict, cfg: Config) -> str | None:
+    """Final tier on this head, or None when a verdict is required and missing.
+    With require_verdict off, no verdict gets the medium rule."""
+    verdict = m["verdict"]
+    if verdict is not None and verdict.get("head") == m["head_sha"]:
+        return final_tier(verdict, cfg.tight)
+    return None if cfg.require_verdict else "medium"
+
+
+def writer_approved(m: dict) -> bool:
+    return any(m["permissions"].get(login) in WRITE for login in m["human_approvers"])
 
 
 def needs_checks(node: dict, required: list, cfg: Config) -> bool:
@@ -767,6 +826,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 class GitHub:
     def __init__(self, token: str, repo: str):
         self.token, self.repo = token, repo
+        self.permissions: dict = {}
 
     def request(self, method: str, path: str, body=None, raw: bool = False):
         """Returns (status, parsed JSON or text). Raises on any 4xx/5xx it is not told to expect."""
@@ -867,6 +927,30 @@ class GitHub:
                     }
                 )
         return runs
+
+    def permission(self, login: str) -> str:
+        """A login's repository permission (admin, write, read or none), once per run."""
+        if login not in self.permissions:
+            status, out = self.request(
+                "GET",
+                f"repos/{self.repo}/collaborators/{urllib.parse.quote(login)}/permission",
+            )
+            if status == 404:
+                self.permissions[login] = "none"
+            elif status == 200:
+                self.permissions[login] = out.get("permission") or "none"
+            else:
+                raise RuntimeError(f"permission of {login}: {status} {str(out)[:300]}")
+        return self.permissions[login]
+
+    def attach_permissions(self, data: dict, required: list, cfg: Config):
+        """Approvers' permissions, only where the tier is medium."""
+        for node in data["repository"]["admitted"]["nodes"]:
+            m = member_view(node, required)
+            if m["human_approvers"] and member_tier(m, cfg) == "medium":
+                node["_permissions"] = {
+                    login: self.permission(login) for login in sorted(m["human_approvers"])
+                }
 
     def attach_checks(self, data: dict, required: list, cfg: Config):
         """Read checks for every rollup, and for each admitted pull request
@@ -1179,6 +1263,7 @@ def summary(result: dict) -> str:
 
 def tick(reader: GitHub, required: list, cfg: Config, live: Live | None) -> dict:
     data = reader.gather()
+    reader.attach_permissions(data, required, cfg)
     reader.attach_checks(data, required, cfg)
     red_runs, failures = {}, {}
     for node in data["repository"]["rollups"]["nodes"]:
