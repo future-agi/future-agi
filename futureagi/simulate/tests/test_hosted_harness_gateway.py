@@ -4804,6 +4804,8 @@ class _ExportWorld:
         customer_domains=("agent.example.com",),
         stale_mark=None,
         library_missing=(),
+        environment_values=None,
+        agent_config=None,
     ):
         from model_hub.models.ai_model import AIModel
         from simulate.models import AgentDefinition, RunTest
@@ -4877,6 +4879,13 @@ class _ExportWorld:
             "endpoint": "https://agent.example.com",
             "visibility": "public",
         }
+        if environment_values:
+            payload["source"]["environment_values"] = dict(environment_values)
+        if agent_config:
+            payload["agent"]["config"] = {
+                **(payload["agent"].get("config") or {}),
+                **agent_config,
+            }
         payload["security"]["allowed_egress_domains"] = list(customer_domains)
         payload["agent"]["secret_refs"] = {
             alias: {
@@ -5407,6 +5416,77 @@ def test_an_untraced_agent_is_measured_through_names_its_own_exporters_never_rea
     # The agent's own endpoint, when it set one, reaches it as it gave it.
     assert world.secrets == {**_INGEST_PAIR, **(declared or {})}
     assert world.domains >= {"collector.example.com"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, where",
+    [
+        ("untraced-env", "environment_values"),
+        ("untraced-config", "agent_config"),
+    ],
+)
+def test_a_model_base_url_set_outside_the_run_s_secrets_is_measured_too(
+    tag, where, organization, workspace, user, settings, monkeypatch
+):
+    """A model base URL the run sets as a plain environment value, or the agent's
+    config holds, is a model host as a secret one is; a CRM URL beside it is not."""
+    declared = {
+        "OPENAI_BASE_URL": "https://Models.example.test/v1",
+        "CRM_BASE_URL": "https://crm.example.test",
+    }
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="none",
+        **{where: declared},
+    ).launch()
+
+    assert (
+        world.mark["FI_SIMULATION_MODEL_HOSTS"]
+        == "gateway.example.test,models.example.test"
+    )
+
+
+def test_an_internationalized_model_host_is_measured_by_its_ascii_name():
+    """The run's mark carries ASCII only: a model host in another script is named by
+    its IDNA A-label, and one with no such form is left out, never the whole mark."""
+    from simulate.services.hosted_harness_gateway import _model_hosts
+
+    hosts = _model_hosts(
+        {
+            "OPENAI_BASE_URL": "https://модели.example.test/v1",
+            "LLM_BASE_URL": "https://broken..example.test/v1",
+        },
+        {"AGENTCC_BASE_URL": "https://gateway.example.test"},
+    )
+
+    assert hosts == ("gateway.example.test", "xn--d1acjlcm.example.test")
+
+
+@pytest.mark.django_db
+def test_an_internationalized_model_host_keeps_the_run_measured(
+    organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="untraced-idna",
+        instrumentation="none",
+        environment_values={"OPENAI_BASE_URL": "https://Модели.example.test/v1"},
+    ).launch()
+
+    assert (
+        world.mark["FI_SIMULATION_MODEL_HOSTS"]
+        == "gateway.example.test,xn--d1acjlcm.example.test"
+    )
 
 
 @pytest.mark.django_db

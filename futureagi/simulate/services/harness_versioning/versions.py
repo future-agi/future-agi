@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import PurePosixPath
 from typing import Any
 
 from django.conf import settings
@@ -169,19 +170,103 @@ def _sub_goals(files: Mapping[str, bytes]) -> list[dict[str, Any]]:
     return [goal for goal in value or [] if isinstance(goal, dict) and goal.get("name")]
 
 
-def suite_documents(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
-    """The suite's scenarios, from its index or else from each folder's document."""
-    listed = _json(suite, "scenarios.json")
-    if isinstance(listed, list):
-        return [one for one in listed if isinstance(one, dict)]
-    found: list[dict[str, Any]] = []
+@dataclass(frozen=True)
+class PlacedScenario:
+    """One scenario of a suite: its record, the physical folder it is in ("" when no
+    folder answers to it alone) and that folder's ``scenario.json``."""
+
+    record: dict[str, Any]
+    folder: str
+    document: dict[str, Any] | None
+
+
+def folder_name(value: object) -> str:
+    """The folder a ``folder`` value names, in any of its spellings."""
+    return PurePosixPath(str(value or "").strip()).name
+
+
+def _recorded_folder(record: dict[str, Any], folder: str) -> dict[str, Any]:
+    """The record with the folder it is in: its own ``folder`` when that names it,
+    else ``scenarios/<folder>``, never another folder its document names."""
+    if not folder or folder_name(record.get("folder")) == folder:
+        return record
+    return {**record, "folder": f"scenarios/{folder}"}
+
+
+def placed_scenarios(suite: Mapping[str, bytes]) -> list[PlacedScenario]:
+    """The suite's scenarios, from its index or else from each folder's document, each
+    with the folder it is in. Every reader (a Save, the backfill) places a scenario by
+    this one rule, so they record the same ``folder`` for it.
+
+    An index entry is in the folder its ``folder`` names exactly; else in the one
+    folder spelled like its ``folder`` or its key up to case and separator; else in the
+    one folder whose document carries its name in that spelling. A spelling more than
+    one folder answers to places the entry in neither, so two distinct folders never
+    read as one. A record read from a folder is in that folder, apart from the
+    document's own key and name, so two folders whose documents share a key or a name
+    stay two scenarios.
+    """
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    documents: dict[str, dict[str, Any]] = {}
     for path in sorted(suite):
         parts = path.split("/")
         if len(parts) == 3 and parts[2] == "scenario.json":
             document = _json(suite, path)
             if isinstance(document, dict):
-                found.append({"scenario_key": parts[1], **document})
-    return found
+                documents.setdefault(parts[1], document)
+    listed = _json(suite, "scenarios.json")
+    if not isinstance(listed, list):
+        return [
+            PlacedScenario(
+                _recorded_folder({"scenario_key": folder, **document}, folder),
+                folder,
+                document,
+            )
+            for folder, document in documents.items()
+        ]
+
+    def answering(pairs: Iterable[tuple[str, str]]) -> dict[str, str]:
+        """Each spelling to the folder answering to it, when only one does."""
+        held: dict[str, set[str]] = {}
+        for token, folder in pairs:
+            if token:
+                held.setdefault(token, set()).add(folder)
+        return {token: min(found) for token, found in held.items() if len(found) == 1}
+
+    by_token = answering((_scenario_token(folder), folder) for folder in documents)
+    by_name = answering(
+        (_scenario_token(document.get("name")), folder)
+        for folder, document in documents.items()
+    )
+    placed = []
+    for entry in (one for one in listed if isinstance(one, dict)):
+        named = folder_name(entry.get("folder"))
+        folder = next(
+            (
+                found
+                for found in (
+                    named if named in documents else None,
+                    by_token.get(_scenario_token(entry.get("folder"))),
+                    by_token.get(_scenario_token(entry.get("scenario_key"))),
+                    by_name.get(_scenario_token(entry.get("name"))),
+                )
+                if found
+            ),
+            "",
+        )
+        placed.append(
+            PlacedScenario(
+                _recorded_folder(entry, folder), folder, documents.get(folder)
+            )
+        )
+    return placed
+
+
+def suite_documents(suite: Mapping[str, bytes]) -> list[dict[str, Any]]:
+    """The suite's scenarios, from its index or else from each folder's document, each
+    recording the folder it is in as ``placed_scenarios`` places it."""
+    return [one.record for one in placed_scenarios(suite)]
 
 
 def _file_digests(environment: Mapping[str, bytes]) -> dict[str, str]:
@@ -627,13 +712,8 @@ def _carried_proofs(
     )
     if previous is None or not isinstance(previous.proofs, dict):
         return {}
-
-    def proved(content: Mapping[str, Any]) -> dict[str, Any]:
-        # A rename keeps the key and what the proof checked.
-        return {field: value for field, value in content.items() if field != "name"}
-
     contents = {
-        member.scenario_key: proved(member.content or {})
+        member.scenario_key: member.content or {}
         for member in HarnessSuiteMember.no_workspace_objects.filter(
             suite_version_id=previous.suite_version_id
         )
@@ -644,10 +724,32 @@ def _carried_proofs(
         if (
             isinstance(proof, dict)
             and row.scenario_key in contents
-            and contents[row.scenario_key] == proved(_member_content(document))
+            and _proves_the_same(contents[row.scenario_key], _member_content(document))
         ):
             carried[row.scenario_key] = proof
     return carried
+
+
+def _proves_the_same(before: Mapping[str, Any], now: Mapping[str, Any]) -> bool:
+    """Whether a proof of ``before`` still proves ``now``.
+
+    A rename keeps the key and what the proof checked. A folder is compared by the
+    folder it names, and only when both record one: a member stored before the folder
+    was recorded, or under another spelling of it, is the same scenario.
+    """
+    both = bool(before.get("folder")) and bool(now.get("folder"))
+
+    def proved(content: Mapping[str, Any]) -> dict[str, Any]:
+        kept = {
+            field: value
+            for field, value in content.items()
+            if field not in {"name", "folder"}
+        }
+        if both:
+            kept["folder"] = folder_name(content.get("folder"))
+        return kept
+
+    return proved(before) == proved(now)
 
 
 def _validation(

@@ -12,6 +12,7 @@ import copy
 import logging
 import re
 import uuid
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from django.conf import settings
@@ -1226,50 +1227,88 @@ _ORDINAL_WORDS = {
 
 
 def scenarios_meant(
-    said: Any, suite: list[dict], numbering: dict[int, str] | None = None
+    said: Any, suite: list[dict], numbering: dict[int, Any] | None = None
 ) -> list[str]:
     """Scenario names from "4", "12-30", "12, 15, 18" or a name; `numbering` maps stored numbers."""
-    by_number = numbering or {
-        position: str(one.get("name") or "") for position, one in enumerate(suite, 1)
-    }
-    known = {str(one.get("name") or "") for one in suite}
-    keys = {
-        str(one.get("scenario_key") or ""): str(one.get("name") or "") for one in suite
-    }
+    names: list[str] = []
+    for one in scenario_entries_meant(said, suite, numbering)[0]:
+        name = str(one.get("name") or "")
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def scenario_entries_meant(
+    said: Any, suite: list[dict], numbering: Mapping[int, Any] | None = None
+) -> tuple[list[dict], list[str]]:
+    """The suite entries "4", "12-30", "12, 15, 18" or a name or key means, each once,
+    and the parts more than one entry answers to.
+
+    ``numbering`` maps a stored number to the entry it was given, to a name or key, or
+    to None when no single entry holds it; without it a number is a place in the suite.
+    A part two entries share means neither: a change or drop by it could reach the
+    other one.
+    """
+    by_number: Mapping[int, Any] = numbering or dict(enumerate(suite, 1))
     from simulate.services.hosted_harness_gateway import _scenario_token
 
-    # Older suites carry no scenario_key, so a row's hyphenated key must still find its name.
-    loose = {
-        _scenario_token(label): str(one.get("name") or "")
-        for one in suite
-        for label in (one.get("name"), one.get("scenario_key"))
-        if label
-    }
-    found: list[str] = []
+    found: list[dict] = []
+    shared: list[str] = []
 
-    def take(name: str) -> None:
-        if name and name not in found:
-            found.append(name)
+    def take(one: dict) -> None:
+        if not any(one is held for held in found):
+            found.append(one)
+
+    def answering(label: str) -> list[dict]:
+        # A name, then a key, then either in any spelling: older suites carry no
+        # scenario_key, so a row's hyphenated key must still find its scenario.
+        token = _scenario_token(label)
+        for matches in (
+            lambda one: str(one.get("name") or "") == label,
+            lambda one: str(one.get("scenario_key") or "") == label,
+            lambda one: (
+                bool(token)
+                and token
+                in {
+                    _scenario_token(one.get("name")),
+                    _scenario_token(one.get("scenario_key")),
+                }
+            ),
+        ):
+            if label and (hits := [one for one in suite if matches(one)]):
+                return hits
+        return []
+
+    def by_label(part: str, label: str) -> bool:
+        hits = answering(label)
+        if len(hits) > 1 and part not in shared:
+            shared.append(part)
+        elif len(hits) == 1:
+            take(hits[0])
+        return bool(hits)
+
+    def numbered(part: str, number: int) -> None:
+        if number not in by_number:
+            return
+        meant = by_number[number]
+        if isinstance(meant, dict):
+            take(meant)
+        elif meant is None:
+            if part not in shared:
+                shared.append(part)
+        else:
+            by_label(part, str(meant))
 
     for piece in said if isinstance(said, (list, tuple)) else [said]:
         for part in re.split(r"[,\s]+(?:and\s+)?", str(piece or "").strip()):
             part = part.strip().strip(".")
-            if not part:
-                continue
-            if part in known:
-                take(part)
-                continue
-            if part in keys:
-                take(keys[part])
-                continue
-            if _scenario_token(part) in loose:
-                take(loose[_scenario_token(part)])
+            if not part or by_label(part, part):
                 continue
             span = re.fullmatch(r"(\d+)\s*(?:-|–|to|through)\s*(\d+)", part)
             if span:
                 low, high = sorted((int(span.group(1)), int(span.group(2))))
                 for number in range(low, high + 1):
-                    take(by_number.get(number, ""))
+                    numbered(part, number)
                 continue
             # "#4", "4th", "the fourth".
             plain = re.sub(
@@ -1277,11 +1316,61 @@ def scenarios_meant(
             )
             plain = re.sub(r"(?<=\d)(?:st|nd|rd|th)$", "", plain, flags=re.IGNORECASE)
             if plain.isdigit():
-                take(by_number.get(int(plain), ""))
+                numbered(part, int(plain))
                 continue
             if plain.lower() in _ORDINAL_WORDS:
-                take(by_number.get(_ORDINAL_WORDS[plain.lower()], ""))
-    return found
+                numbered(part, _ORDINAL_WORDS[plain.lower()])
+    return found, shared
+
+
+def _entry_of_row(row: HostedHarnessScenario, suite: list[dict]) -> dict | str | None:
+    """The suite entry a numbered row holds: the one in the row's folder, else the one
+    under its key (and its name, when several share the key); else the row's name or
+    key, read as a name. None when more than one entry is the row's."""
+    from simulate.services.harness_versioning.versions import folder_name
+
+    folder = folder_name(row.folder)
+    held = [one for one in suite if folder and folder_name(one.get("folder")) == folder]
+    if not held:
+        held = [
+            one
+            for one in suite
+            if str(one.get("scenario_key") or "") == row.scenario_key
+        ]
+        if len(held) > 1:
+            held = [one for one in held if str(one.get("name") or "") == row.name]
+    if len(held) == 1:
+        return held[0]
+    return None if held else (row.name or row.scenario_key)
+
+
+def _draft_numbering(pairs: list[dict], suite: list[dict]) -> dict[int, Any]:
+    """Each number a suite draft shows, to the entry it was planned for.
+
+    The pairs are planned one per entry, in order, so a pair is its entry's while the
+    two still line up; otherwise it is the one entry under the key or name it was
+    planned for, None when several share that, or the key itself, read as a name."""
+
+    def said(one: Mapping[str, Any]) -> str:
+        return str(one.get("scenario_key") or one.get("name") or "")
+
+    if len(pairs) == len(suite) and all(
+        str(pair.get("doc_key") or "") == said(one)
+        for pair, one in zip(pairs, suite, strict=True)
+    ):
+        return {pair["number"]: one for pair, one in zip(pairs, suite, strict=True)}
+    numbering: dict[int, Any] = {}
+    for pair in pairs:
+        key = str(pair.get("doc_key") or "")
+        held = [one for one in suite if key and said(one) == key]
+        numbering[pair["number"]] = (
+            held[0]
+            if len(held) == 1
+            else None
+            if held
+            else (key or str(pair.get("key") or ""))
+        )
+    return numbering
 
 
 def _scenario_row(reg, number: int | None = None) -> dict:
@@ -2626,7 +2715,6 @@ class HostedHarnessProvider:
                 ]
             from simulate.services.harness_versioning import drafts
             from simulate.services.hosted_harness import HostedHarnessError
-            from simulate.services.hosted_harness_gateway import _scenario_token
 
             # Where drafts apply, an edit goes to the unsaved changes, on top of them.
             on_draft = drafts.drafts_apply(job)
@@ -2640,19 +2728,9 @@ class HostedHarnessProvider:
                 if suite_draft is not None:
                     documents = suite_draft.documents or {}
                     suite = [dict(one) for one in documents.get("scenarios") or []]
-                    by_token = {
-                        _scenario_token(one.get("scenario_key") or one.get("name")): one
-                        for one in suite
-                    }
-                    draft_numbering = {
-                        pair["number"]: str(
-                            (by_token.get(_scenario_token(pair["doc_key"])) or {}).get(
-                                "name"
-                            )
-                            or pair["key"]
-                        )
-                        for pair in documents.get("pairs") or []
-                    }
+                    draft_numbering = _draft_numbering(
+                        list(documents.get("pairs") or []), suite
+                    )
             if not suite:
                 return Response(
                     {
@@ -2661,23 +2739,37 @@ class HostedHarnessProvider:
                     },
                     status=status.HTTP_409_CONFLICT,
                 )
-            by_name = {str(one.get("name") or ""): one for one in suite}
             receipts: list[AmendReceipt] = []
             touched = False
-            changed: set[str] = set()
-            # One change may name many scenarios; each gets its own receipt.
-            spread = []
-            for change in changes:
-                said = change.get("scenarios") or change.get("scenario")
-                # Resolve numbers against stored numbering, not list position.
-                numbering = draft_numbering or {
-                    row.number: row.name or row.scenario_key
+            # The entries this amend changed, by identity: two may share a name.
+            changed: set[int] = set()
+            # Resolve numbers against stored numbering, not list position, each to the
+            # entry its row or pair holds, never to whichever entry shares its name.
+            numbering = draft_numbering
+            if not numbering:
+                numbering = {
+                    row.number: _entry_of_row(row, suite)
                     for row in HostedHarnessScenario.no_workspace_objects.filter(
                         job=job, number__isnull=False
                     )
                 }
-                meant = scenarios_meant(said, suite, numbering or None)
-                if not meant:
+            # One change may name many scenarios; each gets its own receipt.
+            spread: list[tuple[dict, dict]] = []
+            for change in changes:
+                said = change.get("scenarios") or change.get("scenario")
+                meant, shared = scenario_entries_meant(said, suite, numbering or None)
+                # Refused before anything changes, so a drop never prunes a guess.
+                receipts.extend(
+                    {
+                        "scenario": part,
+                        "outcome": "refused",
+                        "why": "more than one scenario answers to that, so nothing changed",
+                        "code": "scenario_unknown",
+                        "field": None,
+                    }
+                    for part in shared
+                )
+                if not meant and not shared:
                     receipts.append(
                         {
                             "scenario": str(change.get("scenario") or ""),
@@ -2688,15 +2780,14 @@ class HostedHarnessProvider:
                         }
                     )
                     continue
-                spread.extend({**change, "scenario": name} for name in meant)
+                spread.extend((change, one) for one in meant)
             # Read once, and only when a change sets a scenario's faults.
             fault_targets: list[FaultTarget] | None = None
             cast: list[ActorRecord] = []
             targets_read = False
-            for change in spread:
-                name = str(change.get("scenario") or "")
-                target = by_name.get(name)
-                if target is None:
+            for change, target in spread:
+                name = str(target.get("name") or target.get("scenario_key") or "")
+                if not any(one is target for one in suite):
                     receipts.append(
                         {
                             "scenario": name,
@@ -2721,7 +2812,6 @@ class HostedHarnessProvider:
                         )
                         continue
                     suite = [one for one in suite if one is not target]
-                    by_name.pop(name, None)
                     touched = True
                     receipts.append(
                         {
@@ -2800,7 +2890,7 @@ class HostedHarnessProvider:
                             continue
                     target[field] = change.get("value")
                     touched = True
-                    changed.add(name)
+                    changed.add(id(target))
                     receipts.append(
                         {
                             "scenario": name,
@@ -2846,7 +2936,7 @@ class HostedHarnessProvider:
                     )
                     target["persona"] = persona
                     touched = True
-                    changed.add(name)
+                    changed.add(id(target))
                     receipts.append(
                         {
                             "scenario": name,
@@ -2877,7 +2967,7 @@ class HostedHarnessProvider:
 
                 rejected = []
                 for one in (
-                    [one for one in suite if str(one.get("name") or "") in changed]
+                    [one for one in suite if id(one) in changed]
                     if scenario_edit_problems
                     else ()
                 ):

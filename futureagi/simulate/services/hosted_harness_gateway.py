@@ -1680,17 +1680,46 @@ _MODEL_BASE_URL_ALIAS = re.compile(
 
 
 def _model_hosts(
-    secrets_map: Mapping[str, Any], simulator_env: Mapping[str, Any]
+    secrets_map: Mapping[str, Any],
+    simulator_env: Mapping[str, Any],
+    payload: Mapping[str, Any] | None = None,
 ) -> tuple[str, ...]:
-    """The hosts the agent's model calls go to that the sandbox would not know as model APIs:
-    the platform's model gateway, and the host of any model base URL the agent declares."""
+    """The hosts the agent's model calls go to that the sandbox would not know as model
+    APIs: the platform's model gateway, and the host of any model base URL the agent
+    declares, in the run's resolved secrets, its non-secret environment values or the
+    agent's config.
+
+    Only hostnames, and only for measurement: nothing here widens what the sandbox may
+    reach.
+    """
+    payload = payload or {}
+    declared = (
+        secrets_map,
+        (payload.get("source") or {}).get("environment_values"),
+        (payload.get("agent") or {}).get("config"),
+    )
     hosts = {_hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))}
     hosts.update(
         _hostname_from_url(value)
-        for alias, value in secrets_map.items()
+        for values in declared
+        if isinstance(values, Mapping)
+        for alias, value in values.items()
         if _MODEL_BASE_URL_ALIAS.fullmatch(str(alias).upper())
     )
-    return tuple(sorted(host for host in hosts if host))
+    return tuple(
+        sorted({wire for host in hosts if host and (wire := _wire_host(host))})
+    )
+
+
+def _wire_host(host: str) -> str | None:
+    """The host as a request names it: an internationalized name as its IDNA A-label,
+    since the run's mark carries ASCII only, or None when it has no such form. One host
+    that cannot be written so is left out; it never costs the run its mark."""
+    try:
+        wire = host.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return None
+    return wire if wire.isascii() and wire.isprintable() else None
 
 
 def _simulation_mark(
@@ -2850,7 +2879,9 @@ class HostedHarnessGateway:
             max_egress_domains=self.client.max_egress_domains,
         )
         simulation_mark, mark_accepted = _simulation_mark(
-            job, export_plan, model_hosts=_model_hosts(secrets_map, simulator_env)
+            job,
+            export_plan,
+            model_hosts=_model_hosts(secrets_map, simulator_env, payload),
         )
         if not mark_accepted:
             # A guest must never get our key without the dictionary that says what to do
@@ -6391,10 +6422,9 @@ def _scenario_token(value: object) -> str:
     return Path(str(value or "").strip()).name.lower().replace("-", "_")
 
 
-def _suite_tokens(suite: list[dict]) -> set[str]:
+def _entry_tokens(one: dict) -> set[str]:
     return {
         token
-        for one in suite
         for field in ("name", "scenario_key", "folder")
         if (token := _scenario_token(one.get(field)))
     }
@@ -6409,24 +6439,58 @@ def _document_tokens(folder: str, document: object) -> set[str]:
     return tokens - {""}
 
 
-def _scenario_folder_kept(folder: str, document: object, tokens: set[str]) -> bool:
-    """A folder goes only when its own scenario.json names a scenario the suite no longer has."""
-    if not isinstance(document, dict):
-        return True
-    return bool(_document_tokens(folder, document) & tokens)
+def _pinned_folder(one: dict, folders: set[str]) -> str | None:
+    """The physical folder a suite entry names exactly, when the suite has it."""
+    named = Path(str(one.get("folder") or "").strip()).name
+    return named if named in folders else None
 
 
-def _edit_for(folder: str, document: object, suite: list[dict]) -> dict | None:
-    own = _document_tokens(folder, document)
-    return next(
-        (
-            one
-            for one in suite
-            if {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
-            & own
-        ),
-        None,
+def _folder_entries(
+    suite: list[dict], documents: Mapping[str, object]
+) -> dict[str, dict] | None:
+    """Each scenario folder's one suite entry, or None when the suite cannot be matched
+    to its folders one to one.
+
+    ``documents`` holds every folder with its ``scenario.json`` (None when it has none
+    or it cannot be read). An entry is the folder its ``folder`` names exactly; else
+    the folder its key names exactly; else the one folder left whose name or document
+    answers to its name, key or folder in any spelling. Two entries taking one folder,
+    an entry more than one folder left answers to, or an entry no folder answers to
+    (when the suite has folders) make the whole answer None, so nothing is dropped or
+    edited on a guess. A folder no entry takes is not in the answer.
+    """
+    folders = set(documents)
+    taken: dict[str, dict] = {}
+    rest = list(suite)
+    tiers = (
+        lambda one, free: {_pinned_folder(one, folders)} & free,
+        lambda one, free: {str(one.get("scenario_key") or "").strip()} & free,
+        lambda one, free: {
+            folder
+            for folder in free
+            if _document_tokens(folder, documents[folder]) & _entry_tokens(one)
+        },
     )
+    for answers in tiers:
+        free = folders - set(taken)
+        claims: dict[str, dict] = {}
+        left = []
+        for one in rest:
+            found = answers(one, free)
+            if len(found) > 1:
+                return None
+            if not found:
+                left.append(one)
+                continue
+            folder = found.pop()
+            # The same scenario listed twice is one scenario; two others are not.
+            if claims.setdefault(folder, one) != one:
+                return None
+        taken.update(claims)
+        rest = left
+    if rest and folders:
+        return None
+    return taken
 
 
 def _provider_profile_bytes(agent_version: Any) -> bytes | None:
@@ -6564,28 +6628,36 @@ def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -
 
 
 def _push_scenarios_to_sandbox(sandbox: Any, suite: list[dict]) -> None:
-    tokens = _suite_tokens(suite)
     listed = sandbox.process.exec(
         "ls -1 /work/authoring/scenarios 2>/dev/null", timeout=60
     )
     present = sorted(name for name in (listed.result or "").split() if name)
+    documents: dict[str, object] = {}
     for folder in present:
         read = sandbox.process.exec(
             f"cat /work/authoring/scenarios/{shlex.quote(folder)}/scenario.json",
             timeout=60,
         )
         try:
-            document = json.loads(read.result or "") if not read.exit_code else None
+            documents[folder] = (
+                json.loads(read.result or "") if not read.exit_code else None
+            )
         except ValueError:
-            document = None
-        if not _scenario_folder_kept(folder, document, tokens):
+            documents[folder] = None
+    entries = _folder_entries(suite, documents)
+    if entries is None:
+        # Nothing is removed or edited on a guess; the archive already refused it.
+        raise ValueError("the suite does not match the workspace's folders one to one")
+    for folder in present:
+        document = documents[folder]
+        if not isinstance(document, dict):
+            continue
+        edit = entries.get(folder)
+        if edit is None:
             sandbox.process.exec(
                 f"rm -rf /work/authoring/scenarios/{shlex.quote(folder)}",
                 timeout=60,
             )
-            continue
-        edit = _edit_for(folder, document, suite)
-        if edit is None or not isinstance(document, dict):
             continue
         document.update(
             {
@@ -6818,21 +6890,17 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
                 documents[parts[1]] = json.loads(data.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
                 documents[parts[1]] = None
-    tokens = _suite_tokens(suite)
+    # Each entry is one folder and each folder one entry's, or nothing is rewritten.
+    entries = _folder_entries(
+        suite, {folder: documents.get(folder) for folder in folders}
+    )
+    if entries is None:
+        return None
     kept = {
         folder
         for folder in folders
-        if _scenario_folder_kept(folder, documents.get(folder), tokens)
+        if folder in entries or not isinstance(documents.get(folder), dict)
     }
-    held = set().union(
-        *(_document_tokens(folder, documents.get(folder)) for folder in kept)
-    )
-    if folders and any(
-        not {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
-        & held
-        for one in suite
-    ):
-        return None
 
     out = io.BytesIO()
     written: set[tuple[str, ...]] = set()
@@ -6847,7 +6915,7 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
                 continue
             if parts[:1] == ("scenarios",) and parts[2:] == ("scenario.json",):
                 document = documents.get(parts[1])
-                edit = _edit_for(parts[1], document, suite)
+                edit = entries.get(parts[1])
                 if isinstance(document, dict) and edit is not None:
                     document = {
                         **document,

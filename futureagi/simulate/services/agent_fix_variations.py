@@ -511,14 +511,16 @@ def _private_suite(
     variations: dict[str, str] = {}
     for document in suite_documents(suite):
         written_key = str(document.get("scenario_key") or document.get("name") or "")
-        # The first of its key, name or folder that names a variation of a failing case.
+        # The first of its folder, key or name that names a variation of a failing
+        # case. The folder first: two folders whose documents share a key or a name
+        # are two variations.
         match = next(
             (
                 found
                 for spelling in (
+                    document.get("folder"),
                     written_key,
                     document.get("name"),
-                    document.get("folder"),
                 )
                 if (found := _VARIATION_TOKEN.fullmatch(_scenario_token(spelling)))
                 and found["parent"] in parents

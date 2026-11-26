@@ -109,7 +109,8 @@ def _command(environment, cases, sequence):
             "_origin": evidence_drafts.ORIGIN,
             "_evidence_import_id": str(cases[0].evidence_import_id),
             "_case_ids": [str(case.id) for case in cases],
-            # As start_drafting keeps it: the scenarios the turn starts from.
+            # As start_drafting kept it before the start was taken when the
+            # sandbox composes its workspace: a count only, taken at queueing.
             "_starting_scenarios": len(
                 (environment.suite_version.documents or {}).get("scenarios") or []
             ),
@@ -118,10 +119,12 @@ def _command(environment, cases, sequence):
     return conversation, command
 
 
-def _save(conversation, command, storage, names, *, contract=None, **files):
+def _save(
+    conversation, command, storage, names, *, contract=None, kept=NAMES[:2], **files
+):
     """The builder's save of its workspace, as the sandbox makes it."""
     body = with_authoring_basis(
-        _authoring([*NAMES[:2], *names], contract=contract, **files),
+        _authoring([*kept, *names], contract=contract, **files),
         command.payload["_environment_revision"],
     )
     key, digest = _put_conversation_checkpoint(conversation, storage, body)
@@ -349,6 +352,72 @@ def test_a_turn_queued_before_the_count_was_kept_still_lands(
     assert counted["scenarios"] == 3
 
 
+def test_the_start_is_the_workspace_the_sandbox_composed(
+    environment, cases, storage, user
+):
+    """Someone's edit after the turn was queued and before its sandbox composed its
+    workspace (a scenario dropped) is in the workspace the builder starts from, so
+    the turn starts from 1 scenario and adds only the case's."""
+    conversation, command = _command(environment, cases, 18)
+    _other_edit(environment, user)
+    drafts.compose_workspace(environment, conversation)
+    key_one = evidence_drafts.scenario_key_for(cases[0])
+    key, digest = _save(conversation, command, storage, [key_one], kept=NAMES[:1])
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 18)
+
+    assert {
+        k: v
+        for k, v in _counted(logs).items()
+        if k in ("started", "scenarios", "added", "unmatched")
+    } == {"started": 1, "scenarios": 2, "added": 1, "unmatched": 0}
+
+
+def test_an_edit_after_the_sandbox_composed_never_moves_the_start(
+    environment, cases, storage, user
+):
+    """A sandbox composed again after someone's edit (a restart) keeps the start
+    its first composition took."""
+    conversation, command = _command(environment, cases, 19)
+    drafts.compose_workspace(environment, conversation)
+    _other_edit(environment, user)
+    drafts.compose_workspace(environment, conversation)
+    key, digest = _save(conversation, command, storage, ["cancel_far_ahead_fee"])
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 19)
+
+    assert {k: v for k, v in _counted(logs).items() if k in ("started", "added")} == {
+        "started": 2,
+        "added": 1,
+    }
+
+
+def test_a_scenario_replaced_under_another_name_counts_as_added(
+    environment, cases, storage
+):
+    """The turn dropped one scenario it started from and wrote one under a name no
+    case asked for: one added, and no case took it, though the count is unchanged."""
+    conversation, command = _command(environment, cases, 20)
+    drafts.compose_workspace(environment, conversation)
+    key, digest = _save(
+        conversation, command, storage, ["cancel_far_ahead_fee"], kept=NAMES[:1]
+    )
+    _end_turn(conversation, command)
+
+    with capture_logs() as logs:
+        _promote(conversation, command, key, digest, 20)
+
+    assert {
+        k: v
+        for k, v in _counted(logs).items()
+        if k in ("started", "scenarios", "added", "unmatched", "drafted")
+    } == {"started": 2, "scenarios": 2, "added": 1, "unmatched": 1, "drafted": 0}
+
+
 @pytest.mark.parametrize("analyzer", ["missing", "finds nothing"])
 def test_the_landing_logs_no_name_the_builder_wrote(
     environment, cases, storage, analyzer, django_capture_on_commit_callbacks
@@ -374,6 +443,71 @@ def test_the_landing_logs_no_name_the_builder_wrote(
 
     assert [c.status for c in _refreshed(cases)] == ["blocked", "blocked"]
     assert "jane" not in json.dumps(logs, default=str).lower()
+
+
+def test_a_suite_read_from_its_folders_keeps_each_folder_apart_from_its_key():
+    from simulate.services.harness_versioning.versions import suite_documents
+
+    same = json.dumps({"scenario_key": "refund", "name": "refund"}).encode()
+
+    read = suite_documents(
+        {
+            "scenarios/refund_a/scenario.json": same,
+            "scenarios/refund_b/scenario.json": same,
+        }
+    )
+
+    assert [(one["folder"], one["scenario_key"], one["name"]) for one in read] == [
+        ("scenarios/refund_a", "refund", "refund"),
+        ("scenarios/refund_b", "refund", "refund"),
+    ]
+
+
+def test_folders_differing_only_in_spelling_are_two_scenarios_at_the_start():
+    """The start counts ``refund-a`` and ``refund_a`` as two scenarios, so a turn that
+    replaces one never reads as having added nothing."""
+    identity = evidence_drafts._identity
+
+    assert identity({"folder": "scenarios/refund-a"}) != identity(
+        {"folder": "scenarios/refund_a"}
+    )
+    assert identity({"folder": "refund_a"}) == identity(
+        {"folder": "scenarios/refund_a"}
+    )
+
+
+def test_a_case_takes_the_folder_named_for_it_never_a_copy_carrying_its_key(
+    environment, cases, storage
+):
+    """A suite with no index is read from its folders. The builder also wrote a
+    copy of the case's scenario under another folder, keeping its key: the case
+    takes its own folder, by the folder's name."""
+    conversation, command = _command(environment, cases, 17)
+    key_one = evidence_drafts.scenario_key_for(cases[0])
+    files = archives.read_archive(_authoring([*NAMES[:2], key_one]))
+    files.pop("scenarios.json")
+    files["scenarios/zz_copy/scenario.json"] = json.dumps(
+        {"name": "A copy", "scenario_key": key_one, "instruction": "copied"}
+    ).encode()
+    files["scenarios/zz_copy/ready.py"] = b"def ready(world):\n    return True\n"
+    body = with_authoring_basis(
+        archives.pack_archive(files), command.payload["_environment_revision"]
+    )
+    key, digest = _put_conversation_checkpoint(conversation, storage, body)
+    HostedHarnessConversation.no_workspace_objects.filter(id=conversation.id).update(
+        latest_workspace_object_key=key, latest_workspace_digest=digest
+    )
+    _end_turn(conversation, command)
+
+    _promote(conversation, command, key, digest, 17)
+
+    drafted = _refreshed(cases)[0]
+    assert (drafted.status, drafted.scenario_name) == ("drafted", key_one)
+    proposal = archives.read_archive(archives.get_archive(drafted.proposal_object_key))
+    assert (
+        json.loads(proposal[f"scenarios/{key_one}/scenario.json"])["instruction"]
+        == f"call about {key_one}"
+    )
 
 
 def test_an_injected_environment_change_keeps_nothing(environment, cases, storage):

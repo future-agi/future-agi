@@ -155,16 +155,21 @@ class TestStart:
             conversation__job=environment
         ).exists()
 
-    def test_the_turn_keeps_how_many_scenarios_it_starts_from(
+    def test_the_turn_keeps_what_its_sandbox_composed_it_from(
         self, environment, cases, user, scheduled
     ):
-        """The sandbox composes the suite draft over the default, so the command
-        keeps that suite's count (a draft that dropped one of two scenarios)."""
+        """The start is taken when the sandbox composes the suite draft over the
+        default, not when the turn is queued: an edit in between (a draft that
+        dropped one of two scenarios) is in it."""
+        conversation = _start(cases, user)
+        assert "_starting_scenarios" not in _command(conversation).payload
         _other_edit(environment, user)
 
-        command = _command(_start(cases, user))
+        drafts.compose_workspace(environment, conversation)
 
-        assert command.payload["_starting_scenarios"] == 1
+        payload = _command(conversation).payload
+        assert payload["_starting_scenarios"] == 1
+        assert len(payload["_starting_keys"]) == 1
 
     def test_a_second_draft_while_one_runs_is_refused(self, cases, user, scheduled):
         _start(cases[:1], user)
@@ -367,7 +372,9 @@ class TestTheTurnCannotReachTheEnvironment:
         _end_turn(conversation, command)
 
         _promote(conversation, command, key, digest, 70)
-        evidence_drafts.forget(str(cases[0].evidence_import_id))
+        evidence_drafts.forget(
+            str(cases[0].evidence_import_id), job_id=str(conversation.job_id)
+        )
 
         parent.refresh_from_db()
         assert (
@@ -404,11 +411,15 @@ class TestSettleAndForget:
 
         with django_capture_on_commit_callbacks(execute=True):
             _promote(conversation, command, key, digest, 71)
-        scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
+        scheduled.forget.assert_called_once_with(
+            str(cases[0].evidence_import_id), job_id=str(conversation.job_id)
+        )
         with patch(
             "simulate.services.hosted_harness_gateway.HostedHarnessGateway"
         ) as gateway:
-            evidence_drafts.forget(str(cases[0].evidence_import_id))
+            evidence_drafts.forget(
+                str(cases[0].evidence_import_id), job_id=str(conversation.job_id)
+            )
 
         gateway.return_value._delete_chat_sandbox.assert_called_once()
         assert not any(_gone(conversation).values())
@@ -443,7 +454,9 @@ class TestSettleAndForget:
             (c.status, c.reason.split(" Builder's reply")[0])
             for c in EvidenceImportCase.objects.filter(id__in=[c.id for c in cases])
         } == {("blocked", evidence_drafts.TURN_FAILED)}
-        scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
+        scheduled.forget.assert_called_once_with(
+            str(cases[0].evidence_import_id), job_id=str(conversation.job_id)
+        )
         lease.refresh_from_db()
         assert lease.state == "expired"
 
@@ -521,6 +534,100 @@ class TestSettleAndForget:
         } == {evidence_drafts.TIMED_OUT}
         assert not any(_gone(conversation).values())
 
+    def test_a_late_cleanup_never_deletes_a_newer_drafting(
+        self, cases, user, scheduled, django_capture_on_commit_callbacks
+    ):
+        """A repeated delivery of a settled turn's cleanup, after the person drafted
+        again, leaves the new drafting job and its chat alone."""
+        first = _start(cases, user)
+        with django_capture_on_commit_callbacks(execute=True):
+            evidence_drafts.turn_ended(str(first.id), str(_command(first).id), "failed")
+        late = scheduled.forget.call_args
+        evidence_drafts.forget(*late.args, **late.kwargs)
+        assert not any(_gone(first).values())
+        EvidenceImportCase.objects.filter(id__in=[c.id for c in cases]).update(
+            status="pending", reason=""
+        )
+        second = _start(cases, user)
+
+        evidence_drafts.forget(*late.args, **late.kwargs)
+
+        kept = _gone(second)
+        assert kept["job"] and kept["conversation"] and kept["messages"]
+        assert (
+            EvidenceImport.objects.get(id=cases[0].evidence_import_id).drafting_job_id
+            == second.job_id
+        )
+
+    def test_a_cleanup_queued_without_its_job_is_left_to_the_sweep(
+        self, cases, user, scheduled, monkeypatch
+    ):
+        """One queued before cleanups named their job cannot tell a newer drafting
+        from the settled one, so it deletes nothing."""
+        from simulate.tasks import evidence_drafts as tasks
+
+        monkeypatch.setattr(tasks, "close_old_connections", lambda: None)
+        conversation = _start(cases, user)
+
+        tasks.forget_evidence_drafting._original_func(str(cases[0].evidence_import_id))
+
+        assert _gone(conversation)["job"]
+
+    def test_each_cleanup_is_scheduled_for_its_own_job(self):
+        from simulate.tasks import evidence_drafts as tasks
+
+        with patch.object(tasks.forget_evidence_drafting, "apply_async") as apply:
+            tasks.schedule_forget("import-1", job_id="job-a")
+
+        assert apply.call_args.kwargs["args"] == ["import-1", "job-a"]
+        assert apply.call_args.kwargs["task_id"] == "evidence-forget-import-1-job-a"
+
+    @pytest.mark.parametrize("landed, timed_out", [(1, 1), (2, 0)])
+    def test_the_sweep_never_blocks_a_case_that_landed_while_it_ran(
+        self, cases, user, scheduled, landed, timed_out
+    ):
+        """A landing that drafts cases after the sweep read them as waiting, just
+        before its timeout write, keeps them drafted; only cases still waiting block."""
+        from django.db import connection
+
+        conversation = _start(cases[:2], user)
+        HostedHarnessJob._base_manager.filter(id=conversation.job_id).update(
+            created_at=timezone.now()
+            - evidence_drafts.DRAFTING_TIMEOUT
+            - timedelta(minutes=1)
+        )
+        table = EvidenceImportCase._meta.db_table
+        drafted = [case.id for case in cases[:landed]]
+        injected = []
+
+        def land_first(execute, sql, params, many, context):
+            if (
+                not injected
+                and sql.lstrip().upper().startswith("UPDATE")
+                and table in sql
+            ):
+                injected.append(sql)
+                EvidenceImportCase.objects.filter(id__in=drafted).update(
+                    status="drafted", reason=""
+                )
+            return execute(sql, params, many, context)
+
+        with connection.execute_wrapper(land_first):
+            swept = evidence_drafts.sweep()
+
+        assert injected
+        statuses = {
+            case.id: (case.status, case.reason)
+            for case in EvidenceImportCase.objects.filter(
+                id__in=[c.id for c in cases[:2]]
+            )
+        }
+        assert {statuses[case_id] for case_id in drafted} == {("drafted", "")}
+        assert [statuses[case.id] for case in cases[:2] if case.id not in drafted] == [
+            ("blocked", evidence_drafts.TIMED_OUT)
+        ] * (2 - landed)
+        assert swept["timed_out"] == timed_out
+
     def test_a_young_turn_is_left_to_finish(self, cases, user, scheduled):
         conversation = _start(cases, user)
 
@@ -541,7 +648,9 @@ class TestSettleAndForget:
         )
 
         with pytest.raises(OSError):
-            evidence_drafts.forget(str(cases[0].evidence_import_id))
+            evidence_drafts.forget(
+                str(cases[0].evidence_import_id), job_id=str(conversation.job_id)
+            )
         assert _gone(conversation)["job"]
 
         storage.remove_object = lambda _bucket, key: storage.objects.pop(key, None)
@@ -812,12 +921,16 @@ class TestDeletedWhileDrafting:
             django_capture_on_commit_callbacks(execute=True),
         ):
             delete_environment(environment)
-        scheduled.forget.assert_called_once_with(str(cases[0].evidence_import_id))
+        scheduled.forget.assert_called_once_with(
+            str(cases[0].evidence_import_id), job_id=str(conversation.job_id)
+        )
 
         with patch(
             "simulate.services.hosted_harness_gateway.HostedHarnessGateway"
         ) as gateway:
-            evidence_drafts.forget(str(cases[0].evidence_import_id))
+            evidence_drafts.forget(
+                str(cases[0].evidence_import_id), job_id=str(conversation.job_id)
+            )
 
         gateway.return_value._delete_chat_sandbox.assert_called_once()
         assert not any(_gone(conversation).values())

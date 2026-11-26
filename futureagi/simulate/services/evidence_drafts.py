@@ -15,7 +15,7 @@ import json
 import uuid
 from datetime import timedelta
 from pathlib import PurePosixPath
-from typing import cast
+from typing import TypedDict, cast
 
 import structlog
 from django.db import transaction
@@ -34,7 +34,10 @@ from simulate.models.harness_versioning import HashKind
 from simulate.selectors.evidence_import import source_noun
 from simulate.services.harness_usage import require_harness_authoring
 from simulate.services.harness_versioning import archives, drafts
-from simulate.services.harness_versioning.versions import suite_documents
+from simulate.services.harness_versioning.versions import (
+    folder_name,
+    suite_documents,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 from tracer.utils.pii_scrubber import find_pii, find_pii_basic, redact
 
@@ -74,6 +77,21 @@ UNOFFERED_ENDPOINTS = ("publish", "run_start")
 REPLY_CHARS = 2000
 # The reason column is a CharField, so its max_length is always set.
 REASON_LENGTH = cast(int, EvidenceImportCase._meta.get_field("reason").max_length)
+
+
+class DraftingPayload(TypedDict, total=False):
+    """The platform's part of an evidence turn's command payload."""
+
+    _origin: str
+    _evidence_import_id: str
+    _case_ids: list[str]
+    _author_id: str
+    # The suite the turn's sandbox composed its workspace with, kept the first time it
+    # is composed: how many scenarios it held, and each one's identity. A command no
+    # sandbox composed yet has neither; one from before identities were kept has only
+    # the count, taken when it was queued.
+    _starting_scenarios: int
+    _starting_keys: list[str]
 
 
 def is_evidence_command(command: HostedHarnessConversationMessage | None) -> bool:
@@ -228,7 +246,13 @@ def land(
             "takes its scenarios when this turn ends",
             status_code=409,
         )
-    payload = command.payload or {}
+    # As stored now: the start is kept on the command after it was queued.
+    stored = (
+        HostedHarnessConversationMessage._base_manager.filter(id=command.id)
+        .values_list("payload", flat=True)
+        .first()
+    )
+    payload = cast(DraftingPayload, stored or command.payload or {})
     with transaction.atomic():
         cases = list(
             EvidenceImportCase.objects.select_for_update().filter(
@@ -245,6 +269,7 @@ def land(
                 archive,
                 _last_words(conversation, command),
                 started=payload.get("_starting_scenarios"),
+                starting_keys=payload.get("_starting_keys"),
             )
         import_id = str(payload.get("_evidence_import_id") or "")
 
@@ -254,7 +279,7 @@ def land(
             from simulate.services.harness_versioning.rebuild import _expire_chat_lease
 
             _expire_chat_lease(conversation)
-            forget_later(import_id)
+            forget_later(import_id, job_id=str(conversation.job_id))
 
         transaction.on_commit(close)
 
@@ -266,9 +291,11 @@ def _settle(
     last_words: str,
     *,
     started: int | None,
+    starting_keys: list[str] | None = None,
 ) -> None:
-    """``started`` is how many scenarios the suite the turn started from held, as
-    its command keeps it; None for a command from before it was kept."""
+    """``started`` is how many scenarios the suite the turn's workspace was composed
+    with held, and ``starting_keys`` each one's identity, as its command keeps them;
+    None for a command from before they were kept."""
     files = archives.read_archive(archive)
     basis = (
         drafts.fresh_draft(environment, "environment")
@@ -292,19 +319,10 @@ def _settle(
         _block(cases, ENVIRONMENT_CHANGED)
         return
     documents = suite_documents(split.suite)
-    by_token = {
-        _token(spelling): document
-        for document in documents
-        for spelling in (
-            document.get("scenario_key"),
-            document.get("name"),
-            document.get("folder"),
-        )
-        if spelling
-    }
+    claimed: set[str] = set()
     for case in cases:
         key = scenario_key_for(case)
-        document = by_token.get(_token(key))
+        document = _document_named(documents, key=key)
         proposal = _proposal(split.suite, document, key) if document else None
         if document is None or proposal is None:
             _block([case], _with_reply(NO_SCENARIO, last_words))
@@ -321,6 +339,7 @@ def _settle(
         case.proposal_object_key = object_key
         case.environment_hash = basis.hash
         case.new_sub_goals = [one for one in added if one.get("name") in named]
+        claimed.add(_identity(document))
         case.save(
             update_fields=[
                 "status",
@@ -334,7 +353,13 @@ def _settle(
             ]
         )
     drafted = sum(c.status == EvidenceImportCase.Status.DRAFTED for c in cases)
-    grown = None if started is None else max(0, len(documents) - started)
+    grown, unmatched = _additions(
+        documents,
+        started=started,
+        starting_keys=starting_keys,
+        claimed=claimed,
+        drafted=drafted,
+    )
     # Counts only: a scenario's name is model text written from the evidence. A
     # turn whose reply says it drafted while its cases block shows here as
     # scenarios added that no case took, as folders a valid index leaves out (a
@@ -346,7 +371,7 @@ def _settle(
         started=started,
         scenarios=len(documents),
         added=grown,
-        unmatched=None if grown is None else max(0, grown - drafted),
+        unmatched=unmatched,
         unindexed=max(0, _folders(split.suite) - len(documents)),
         drafted=drafted,
         blocked=sum(c.status == EvidenceImportCase.Status.BLOCKED for c in cases),
@@ -361,11 +386,61 @@ def _folders(suite: dict[str, bytes]) -> int:
     )
 
 
-def _scenarios_at_start(environment: HostedHarnessJob) -> int:
-    """How many scenarios the suite a drafting sandbox starts from holds: the
-    suite draft over the saved suite, as the sandbox composes its workspace."""
-    basis = drafts.fresh_draft(environment, "suite") or environment.suite_version
-    return len((basis.documents or {}).get("scenarios") or []) if basis else 0
+def _additions(
+    documents: list[dict],
+    *,
+    started: int | None,
+    starting_keys: list[str] | None,
+    claimed: set[str],
+    drafted: int,
+) -> tuple[int | None, int | None]:
+    """How many scenarios the turn added, and how many of those no case took.
+
+    Added are the scenarios whose identity the composed workspace did not hold, so a
+    turn that drops one scenario and adds another under a new name adds one. A
+    command from before identities were kept counts net growth over its count."""
+    if starting_keys is not None:
+        new = {_identity(one) for one in documents} - set(starting_keys) - {""}
+        return len(new), len(new - claimed)
+    if started is None:
+        return None, None
+    grown = max(0, len(documents) - started)
+    return grown, max(0, grown - drafted)
+
+
+def _identity(document: dict) -> str:
+    """A scenario's identity in a suite: the folder it was read from, spelled as it
+    is, so two folders that differ only in case or separator stay two; else its key,
+    else its name."""
+    if folder := folder_name(document.get("folder")):
+        return f"scenarios/{folder}"
+    return _token(document.get("scenario_key") or document.get("name"))
+
+
+def record_start(
+    conversation: HostedHarnessConversation, *, suite: dict[str, bytes]
+) -> None:
+    """Keep, on an evidence turn's command, the suite its sandbox's workspace was just
+    composed with: how many scenarios and which. Only the first composition counts:
+    a sandbox composed again later, after someone's edit, never moves it."""
+    command = _drafting_command(conversation)
+    if command is None or "_starting_keys" in (command.payload or {}):
+        return
+    documents = suite_documents(suite)
+    with transaction.atomic():
+        locked = (
+            HostedHarnessConversationMessage._base_manager.select_for_update()
+            .filter(id=command.id)
+            .first()
+        )
+        if locked is None or "_starting_keys" in (locked.payload or {}):
+            return
+        payload = dict(locked.payload or {})
+        payload["_starting_scenarios"] = len(documents)
+        payload["_starting_keys"] = sorted({_identity(one) for one in documents} - {""})
+        HostedHarnessConversationMessage._base_manager.filter(id=locked.id).update(
+            payload=payload
+        )
 
 
 def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
@@ -399,6 +474,18 @@ def _added_checks(environment, basis, files, prepared) -> list[dict] | None:
         return None
     names = {one.get("name") for one in existing}
     return [one for one in new.get("sub_goals") or [] if one.get("name") not in names]
+
+
+def _document_named(documents: list[dict], *, key: str) -> dict | None:
+    """The one document that names ``key``: by its folder first, then its own key,
+    then its name. Two documents naming it the same way are ambiguous, and neither
+    is taken."""
+    token = _token(key)
+    for field in ("folder", "scenario_key", "name"):
+        named = [one for one in documents if _token(one.get(field)) == token]
+        if named:
+            return named[0] if len(named) == 1 else None
+    return None
 
 
 def _token(value: object) -> str:
@@ -566,9 +653,8 @@ def start_drafting(
                 "_origin": ORIGIN,
                 "_evidence_import_id": str(locked.id),
                 "_case_ids": [str(case.id) for case in cases],
-                # Kept now, so an edit while the turn drafts never moves what
-                # the landing counts its added scenarios against.
-                "_starting_scenarios": _scenarios_at_start(environment),
+                # What the turn starts from is kept when its sandbox composes its
+                # workspace (record_start), not now: an edit before then is in it.
                 **({"_author_id": str(user.id)} if user is not None else {}),
             },
         )
@@ -679,37 +765,45 @@ def turn_ended(conversation_id: str, command_id: str, outcome: str) -> None:
         last_words = _last_words(command.conversation, command)
         _block(cases, _with_reply(TURN_FAILED, last_words))
         import_id = str(payload.get("_evidence_import_id") or "")
-        transaction.on_commit(lambda: forget_later(import_id))
+        job_id = str(command.conversation.job_id)
+        transaction.on_commit(lambda: forget_later(import_id, job_id=job_id))
 
 
-def forget_later(evidence_import_id: str) -> None:
-    """Delete the drafting job now; the sweep finishes it if this cannot."""
+def forget_later(evidence_import_id: str, *, job_id: str) -> None:
+    """Delete the drafting job ``job_id`` now; the sweep finishes it if this cannot."""
     from simulate.tasks.evidence_drafts import schedule_forget
 
     if not evidence_import_id:
         return
     try:
-        schedule_forget(evidence_import_id)
+        schedule_forget(evidence_import_id, job_id=job_id)
     except Exception:  # noqa: BLE001 - the sweep deletes it on its next pass
         logger.exception(
             "evidence_forget_schedule_failed", evidence_import=evidence_import_id
         )
 
 
-def forget(evidence_import_id: str) -> None:
-    """Delete an import's drafting job and everything its chat left: the sandbox,
-    the checkpoints, the chat's rows (messages, events, transcripts, lease) and the
-    job. Each step is safe to repeat, so a pass that stops part way is finished by
-    the next."""
+def forget(evidence_import_id: str, *, job_id: str) -> None:
+    """Delete an import's drafting job ``job_id`` and everything its chat left: the
+    sandbox, the checkpoints, the chat's rows (messages, events, transcripts, lease)
+    and the job. Each step is safe to repeat, so a pass that stops part way is
+    finished by the next. Nothing happens unless ``job_id`` is still the import's
+    drafting job: a late or repeated cleanup never deletes a newer drafting."""
     from simulate.services.hosted_harness_gateway import HostedHarnessGateway
     from tfc.settings.settings import UPLOAD_BUCKET_NAME
     from tfc.utils.storage_client import get_storage_client
 
     # A deleted import too: its environment's deletion leaves its drafting here.
-    evidence_import = EvidenceImport._base_manager.filter(id=evidence_import_id).first()
-    if evidence_import is None or evidence_import.drafting_job_id is None:
+    with transaction.atomic():
+        evidence_import = (
+            EvidenceImport._base_manager.select_for_update()
+            .filter(id=evidence_import_id, drafting_job_id=job_id)
+            .first()
+        )
+    if evidence_import is None:
         return
-    job_id = evidence_import.drafting_job_id
+    # A new drafting starts only once this job is deleted, so every delete below
+    # targets this job and its chat alone.
     conversation = HostedHarnessConversation._base_manager.filter(job_id=job_id).first()
     if conversation is not None:
         lease = HostedHarnessConversationLease._base_manager.filter(
@@ -776,8 +870,14 @@ def sweep() -> dict[str, int]:
             job = evidence_import.drafting_job
             if job is None or job.created_at > stale_before:
                 continue
-            _block(list(waiting), TIMED_OUT)
-            timed_out += 1
+            # One conditional write: a case its landing drafted since the read above
+            # is no longer pending, so it keeps its draft.
+            if waiting.update(
+                status=EvidenceImportCase.Status.BLOCKED,
+                reason=TIMED_OUT[:REASON_LENGTH],
+                updated_at=timezone.now(),
+            ):
+                timed_out += 1
         forgotten += _forgotten(evidence_import)
     return {"timed_out": timed_out, "forgotten": forgotten}
 
@@ -786,7 +886,7 @@ def _forgotten(evidence_import: EvidenceImport) -> int:
     """1 once the import's drafting is forgotten, 0 when that failed and the next
     sweep tries again. One import's failure never stops the rest."""
     try:
-        forget(str(evidence_import.id))
+        forget(str(evidence_import.id), job_id=str(evidence_import.drafting_job_id))
     except Exception:  # noqa: BLE001 - logged; the next sweep tries again
         logger.exception(
             "evidence_forget_failed", evidence_import=str(evidence_import.id)

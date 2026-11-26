@@ -2170,6 +2170,223 @@ def test_an_index_entry_finds_its_folder_by_key():
     assert scenario["instruction"] == "ask for a refund"
 
 
+def test_two_folders_sharing_a_key_keep_their_own_folders_and_rows():
+    """A document's own folder field never replaces the folder it was read from, and
+    each folder takes the row recorded for it, though both share a key and a name."""
+    from types import SimpleNamespace as Row
+
+    def document(said):
+        return json.dumps(
+            {
+                "scenario_key": "refund",
+                "name": "Refund",
+                "folder": "scenarios/copied_from",
+                "instruction": said,
+            }
+        ).encode()
+
+    suite = {
+        "scenarios/refund_a/scenario.json": document("first"),
+        "scenarios/refund_b/scenario.json": document("second"),
+    }
+
+    scenarios = _archive_scenarios(suite)
+    match = match_members(
+        [
+            Row(id=2, scenario_key="refund", name="Refund", folder="refund_b"),
+            Row(
+                id=1, scenario_key="refund", name="Refund", folder="scenarios/refund_a"
+            ),
+        ],
+        scenarios,
+    )
+
+    assert [(one["folder"], one["instruction"]) for one in scenarios] == [
+        ("scenarios/refund_a", "first"),
+        ("scenarios/refund_b", "second"),
+    ]
+    assert [(row.id, position) for row, _, position in match.pairs] == [(1, 1), (2, 2)]
+    assert match.scenarios_without_row == 0
+
+
+def test_an_index_entry_naming_its_folder_by_path_takes_that_folder():
+    suite = {
+        "scenarios.json": json.dumps(
+            [{"folder": "scenarios/refund_b", "scenario_key": "refund"}]
+        ).encode(),
+        "scenarios/refund-b/scenario.json": json.dumps(
+            {"instruction": "lookalike"}
+        ).encode(),
+        "scenarios/refund_b/scenario.json": json.dumps({"instruction": "own"}).encode(),
+    }
+
+    [scenario] = _archive_scenarios(suite)
+
+    assert (scenario["folder"], scenario["instruction"]) == (
+        "scenarios/refund_b",
+        "own",
+    )
+
+
+def test_an_index_entry_keeps_its_own_spelling_of_the_folder_it_names():
+    """Member content compared against the index later must match it exactly."""
+    from simulate.services.harness_versioning.versions import _member_content
+
+    entry = {"scenario_key": "refund", "folder": "scenarios/refund"}
+    suite = {
+        "scenarios.json": json.dumps([entry]).encode(),
+        "scenarios/refund/scenario.json": json.dumps({"instruction": "x"}).encode(),
+    }
+
+    [scenario] = _archive_scenarios(suite)
+
+    assert scenario["folder"] == "scenarios/refund"
+    assert _member_content(scenario)["folder"] == "scenarios/refund"
+
+
+def test_a_suite_without_an_index_reads_the_same_folder_in_both_readers():
+    """The backfill and a later Save read an index-less suite to the same member."""
+    from simulate.services.harness_versioning.versions import (
+        _member_content,
+        suite_documents,
+    )
+
+    suite = {
+        "scenarios/refund/scenario.json": json.dumps(
+            {"name": "Refund", "instruction": "x"}
+        ).encode()
+    }
+
+    [archived] = _archive_scenarios(suite)
+    [read] = suite_documents(suite)
+
+    assert archived["folder"] == "scenarios/refund"
+    assert _member_content(archived) == _member_content(read)
+
+
+@pytest.mark.parametrize(
+    "suite",
+    [
+        {
+            "scenarios.json": json.dumps([{"name": "Refund"}]).encode(),
+            "scenarios/refund/scenario.json": json.dumps(
+                {"name": "Refund", "instruction": "x"}
+            ).encode(),
+        },
+        {
+            "scenarios/refund/scenario.json": json.dumps(
+                {"name": "Refund", "folder": "refund", "instruction": "x"}
+            ).encode()
+        },
+        {
+            "scenarios.json": json.dumps(
+                [{"name": "Refund", "folder": "scenarios/refund"}]
+            ).encode(),
+            "scenarios/refund/scenario.json": json.dumps(
+                {"name": "Refund", "folder": "refund", "instruction": "x"}
+            ).encode(),
+        },
+    ],
+    ids=["index-without-folder", "folder-spelled-bare", "index-and-document-differ"],
+)
+def test_the_backfill_and_a_save_record_the_same_folder(suite):
+    """Both readers place a scenario by one rule, so a backfilled member and the next
+    Save's member name its folder the same way."""
+    from simulate.services.harness_versioning.versions import suite_documents
+
+    archived = _archive_scenarios(suite)
+    read = suite_documents(suite)
+
+    assert [one.get("folder") for one in archived] == [
+        one.get("folder") for one in read
+    ]
+    assert all(one.get("folder") for one in read)
+
+
+def test_folders_differing_only_in_spelling_are_never_read_as_one():
+    """``refund-a`` and ``refund_a`` are two folders: an entry spelled like both is
+    placed in neither, rather than taking whichever sorts first."""
+    from simulate.services.harness_versioning.versions import suite_documents
+
+    entry = {"scenario_key": "Refund_A"}
+    suite = {
+        "scenarios.json": json.dumps([entry]).encode(),
+        "scenarios/refund-a/scenario.json": json.dumps(
+            {"instruction": "dash"}
+        ).encode(),
+        "scenarios/refund_a/scenario.json": json.dumps(
+            {"instruction": "underscore"}
+        ).encode(),
+    }
+
+    [archived] = _archive_scenarios(suite)
+
+    assert "instruction" not in archived
+    assert "folder" not in archived
+    assert suite_documents(suite) == [entry]
+
+
+def test_an_upgrade_keeps_the_proofs_of_unchanged_scenarios(monkeypatch):
+    """A member stored before folders were recorded, or under a bare spelling of its
+    folder, is the same scenario as the one now read with ``scenarios/<name>``."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_versioning import versions
+
+    class _Rows(list):
+        def filter(self, **_):
+            return self
+
+        def order_by(self, *_):
+            return self
+
+        def first(self):
+            return self[0] if self else None
+
+    proof = {"holds": True, "proved_at": "2026-11-01T00:00:00+00:00"}
+    stored = {
+        "refund": {"name": "Refund", "instruction": "x"},
+        "cancel": {"name": "Cancel", "instruction": "y", "folder": "cancel"},
+        "moved": {"name": "Moved", "instruction": "z", "folder": "elsewhere"},
+        "edited": {"name": "Edited", "instruction": "old"},
+    }
+    monkeypatch.setattr(
+        versions.HarnessSuiteValidation,
+        "no_workspace_objects",
+        _Rows(
+            [SimpleNamespace(proofs=dict.fromkeys(stored, proof), suite_version_id=1)]
+        ),
+    )
+    monkeypatch.setattr(
+        versions.HarnessSuiteMember,
+        "no_workspace_objects",
+        _Rows(
+            SimpleNamespace(scenario_key=key, content=content)
+            for key, content in stored.items()
+        ),
+    )
+    now = {
+        "refund": {"name": "Refund", "instruction": "x", "folder": "scenarios/refund"},
+        "cancel": {"name": "Cancel", "instruction": "y", "folder": "scenarios/cancel"},
+        "moved": {"name": "Moved", "instruction": "z", "folder": "scenarios/moved"},
+        "edited": {
+            "name": "Edited",
+            "instruction": "new",
+            "folder": "scenarios/edited",
+        },
+    }
+
+    carried = versions._carried_proofs(
+        object(),
+        [
+            (SimpleNamespace(scenario_key=key), document)
+            for key, document in now.items()
+        ],
+    )
+
+    assert set(carried) == {"refund", "cancel"}
+
+
 class TestReReviewFindings:
     def test_a_run_pinned_earlier_takes_its_environment_versions_agent(
         self, user, workspace, storage
