@@ -2077,6 +2077,42 @@ describe("RunDetail Debug failures needs connected calls and a failure", () => {
     expect(diagnosed.request).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [5, 0, false],
+    [15, 1, true],
+  ])(
+    "a failed diagnosis on a run with %i connected and %i failing offers Try again: %s",
+    async (connected, failed, retryable) => {
+      withCounts(connected, failed);
+      const hook = debugHook({
+        ...ANALYSIS,
+        status: "failed",
+        errorMessage: "Debug analysis failed",
+        goals: [],
+        oneOffs: [],
+      });
+      useDebugAnalysis.mockReturnValue(hook);
+      const user = userEvent.setup();
+      renderDetail();
+
+      await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+      expect(screen.getByText(/Debug analysis failed/)).toBeInTheDocument();
+      if (retryable) {
+        await user.click(screen.getByRole("button", { name: "Try again" }));
+        expect(hook.request).toHaveBeenCalledTimes(1);
+      } else {
+        // A retry would be refused: the run needs more connected calls first.
+        expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+        expect(
+          screen.getByText(
+            "Debug analysis failed. You need at least 15 connected calls to debug failures.",
+          ),
+        ).toBeInTheDocument();
+      }
+    },
+  );
+
   it("a rule refusal says why and offers no Try again", async () => {
     withCounts(15, 1);
     useDebugAnalysis.mockReturnValue(

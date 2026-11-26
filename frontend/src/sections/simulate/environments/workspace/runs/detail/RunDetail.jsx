@@ -771,6 +771,7 @@ export default function RunDetail({
         onClose={() => setDebugging(false)}
         executionId={executionId}
         stats={stats}
+        blockedReason={ruleBlocked}
         onLaunch={() => {
           setDebugging(false);
           setFixTargets(null);

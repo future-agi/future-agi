@@ -42,6 +42,7 @@ export default function FixMyAgentDrawer({
   onClose,
   executionId,
   stats,
+  blockedReason,
   onLaunch,
   onViewCalls,
 }) {
@@ -84,8 +85,12 @@ export default function FixMyAgentDrawer({
             refused: !!DEBUG_FAILURES_REFUSALS[requestError.code],
           }
         : analysis;
-    return withCallContext(base, citedCalls);
-  }, [analysis, requestError, citedCalls]);
+    // A failed diagnosis of a run the rule blocks is not read again, so a retry
+    // would do nothing: the rule's reason is the next step instead.
+    const retryBlockedBy =
+      base.status === "failed" && !base.refused ? blockedReason || null : null;
+    return withCallContext({ ...base, retryBlockedBy }, citedCalls);
+  }, [analysis, requestError, citedCalls, blockedReason]);
 
   // Once diagnosed, the header counts what the diagnosis counts, so they agree.
   // Before that only the run's failing count shows: it holds errored calls, which
@@ -216,6 +221,8 @@ FixMyAgentDrawer.propTypes = {
   stats: PropTypes.shape({
     failed: PropTypes.number,
   }),
+  // Why the rule blocks a new diagnosis of this run, or null.
+  blockedReason: PropTypes.string,
   onLaunch: PropTypes.func,
   onViewCalls: PropTypes.func,
 };

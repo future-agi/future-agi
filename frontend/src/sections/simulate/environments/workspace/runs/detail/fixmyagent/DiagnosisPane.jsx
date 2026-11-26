@@ -104,6 +104,9 @@ function summaryOf({ summary }, visibleGoalCount) {
     : `Your agent held every goal on ${plural(measuredCalls, "call")}.`;
 }
 
+// The failure text ends as a sentence, so the rule's reason can follow it.
+const sentence = (text) => (/[.!?]$/.test(text) ? text : `${text}.`);
+
 export default function DiagnosisPane({
   analysis,
   isLoading,
@@ -139,11 +142,17 @@ export default function DiagnosisPane({
         <EmptyState
           icon="solar:danger-triangle-linear"
           title="Couldn't finish the diagnosis"
-          body={analysis.errorMessage || "Couldn't read this run. Try again."}
+          body={
+            analysis.retryBlockedBy
+              ? `${sentence(analysis.errorMessage || "Couldn't read this run")} ${analysis.retryBlockedBy}`
+              : analysis.errorMessage || "Couldn't read this run. Try again."
+          }
           action={
-            <Button variant="outlined" size="small" onClick={onRetry}>
-              Try again
-            </Button>
+            !analysis.retryBlockedBy && (
+              <Button variant="outlined" size="small" onClick={onRetry}>
+                Try again
+              </Button>
+            )
           }
         />
       </Box>
@@ -217,6 +226,7 @@ DiagnosisPane.propTypes = {
     isWorking: PropTypes.bool,
     errorMessage: PropTypes.string,
     refused: PropTypes.bool,
+    retryBlockedBy: PropTypes.string,
     groupingPending: PropTypes.bool,
     summary: PropTypes.shape({
       measuredCalls: PropTypes.number,
