@@ -115,6 +115,13 @@ class MergeLandings(unittest.TestCase):
         out = t.escape_rate(self.history([merge(905, 2004, "feat: build on #1150")]))
         self.assertEqual(out["count"], 0)
 
+    def test_planned_follow_ups_in_ci_or_chore_work_are_not_escapes(self):
+        for title in ("ci(backend): record the shard services", "chore(frontend): tidy npm lock entries"):
+            with self.subTest(title=title):
+                extra = [merge(907, 2006, title)]
+                out = t.escape_rate(self.history(extra), {2006: {"body": "Follow-up to #1150.", "engine": None}})
+                self.assertEqual(out["count"], 0)
+
     def test_the_description_from_the_api_counts(self):
         # A merge commit carries only the title; "Follow-up to #N" is in the description.
         extra = [merge(906, 2005, "fix(gateway): tidy selection")]

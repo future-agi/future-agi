@@ -224,9 +224,10 @@ def escape_rate(commits: list[dict], details: dict[int, dict] | None = None) -> 
     merge commit does not carry, and the review engine); may be partial.
     The window is the newest ESCAPE_WINDOW commits. Older commits only tell
     which #N are pull requests, so "fixes #N" on an issue is not counted.
-    A revert is an escape by its title. A fix-forward references an earlier
-    pull request with "fixes/follow-up to/reverts #N" anywhere, or, in a
-    fix: or revert title, with any "#N". The escaped pull request is #N.
+    A revert is an escape by its title. A fix-forward has a fix: title and
+    references an earlier landing: "fixes/follow-up to/reverts #N" in the
+    title or description, or any "#N" in the title. The escaped pull
+    request is #N.
     """
     details = details or {}
     lands = [landing(c) for c in commits]
@@ -236,9 +237,13 @@ def escape_rate(commits: list[dict], details: dict[int, dict] | None = None) -> 
     for c, land in window:
         own = land["own"]
         text = f"{land['text']}\n{(details.get(own) or {}).get('body') or ''}"
-        refs = {int(n) for n in FIX_REF.findall(text)}
         revert = bool(REVERT_TITLE.match(land["title"]))
+        refs = set()
+        # Only a fix or a revert can be a fix-forward: a ci: or chore: title
+        # that says "follow-up to #N" is planned work (13 of 100 on dev read
+        # that way before this rule, 4 with it).
         if revert or FIX_TITLE.match(land["title"]):
+            refs = {int(n) for n in FIX_REF.findall(text)}
             refs |= {int(n) for n in PR_REF.findall(land["title"])}
         refs = {n for n in refs if n in known and n != own and (own is None or n < own)}
         if revert or refs:
