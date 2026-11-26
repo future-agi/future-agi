@@ -273,6 +273,8 @@ def _plan_lock(
             "build finishes.",
             status_code=409,
         )
+    # An update's rebuild moves the default when it lands.
+    require_no_rebuild(job)
     if releases is None:
         current = _locked_release(job.environment_version_id, job.suite_version_id)
         current_label = current.label if current is not None else None
@@ -338,7 +340,6 @@ def lock_release(
     """Lock the default pair the caller saw. A newer default refuses the lock."""
     with transaction.atomic():
         locked = _lock_environment(environment)
-        require_no_rebuild(locked)
         for piece, seen in (
             ("environment", environment_version_id),
             ("suite", suite_version_id),
