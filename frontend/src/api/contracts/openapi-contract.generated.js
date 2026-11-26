@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1382,
+  endpointCount: 1383,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -1203,31 +1203,119 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    "/accounts/notifications/snooze/": {
+    "/accounts/notifications/email/unsubscribe/": {
       get: {
-        operationId: "accounts_notifications_snooze_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        operationId: "accounts_notifications_email_unsubscribe_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             type: "string",
           },
           400: {
-            $ref: "#/definitions/AccountsErrorResponse",
+            type: "string",
           },
-          401: {
-            $ref: "#/definitions/AccountsErrorResponse",
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
           },
-          403: {
-            $ref: "#/definitions/AccountsErrorResponse",
+        },
+      },
+      post: {
+        operationId: "accounts_notifications_email_unsubscribe_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmailUnsubscribeRequest",
+        },
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
           },
-          404: {
-            $ref: "#/definitions/AccountsErrorResponse",
+        },
+        responses: {
+          200: {
+            type: "string",
           },
-          500: {
-            $ref: "#/definitions/AccountsErrorResponse",
+          400: {
+            type: "string",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/accounts/notifications/snooze/": {
+      get: {
+        operationId: "accounts_notifications_snooze_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          days: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "string",
+          },
+          400: {
+            type: "string",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "accounts_notifications_snooze_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SnoozeRequest",
+        },
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          days: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "string",
+          },
+          400: {
+            type: "string",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -1238,28 +1326,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/accounts/notifications/unsubscribe/": {
       get: {
         operationId: "accounts_notifications_unsubscribe_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             type: "string",
           },
           400: {
-            $ref: "#/definitions/AccountsErrorResponse",
-          },
-          401: {
-            $ref: "#/definitions/AccountsErrorResponse",
-          },
-          403: {
-            $ref: "#/definitions/AccountsErrorResponse",
-          },
-          404: {
-            $ref: "#/definitions/AccountsErrorResponse",
-          },
-          500: {
-            $ref: "#/definitions/AccountsErrorResponse",
+            type: "string",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -64959,6 +65042,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "open_job_id",
         "issue_scenarios",
         "defaults",
+        "ship",
       ],
       type: "object",
       properties: {
@@ -64985,6 +65069,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         defaults: {
           $ref: "#/definitions/AgentFixIssueDefaults",
+        },
+        ship: {
+          $ref: "#/definitions/AgentFixShipReadiness",
         },
       },
     },
@@ -65175,6 +65262,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "limits",
         "blocked",
         "variations_blocked",
+        "held_back_scenario_keys",
+        "ship",
       ],
       type: "object",
       properties: {
@@ -65209,10 +65298,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/AgentFixLaunchLimits",
         },
         blocked: {
-          $ref: "#/definitions/AgentFixFailure",
+          $ref: "#/definitions/AgentFixLaunchBlocked",
         },
         variations_blocked: {
           $ref: "#/definitions/AgentFixFailure",
+        },
+        held_back_scenario_keys: {
+          description:
+            "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        ship: {
+          $ref: "#/definitions/AgentFixShipReadiness",
         },
       },
     },
@@ -65554,7 +65656,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         candidates: {
           type: "array",
           items: {
-            $ref: "#/definitions/AgentFixCandidate",
+            $ref: "#/definitions/AgentFixCandidateDetail",
           },
         },
         started_at: {
@@ -65586,6 +65688,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Eval grading",
           type: "string",
           enum: ["none", "pending", "done", "incomplete"],
+          readOnly: true,
+        },
+        flaky_protected_text: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        scenario_names: {
+          title: "Scenario names",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
           readOnly: true,
         },
       },
@@ -76864,6 +76983,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         config: {
           $ref: "#/definitions/PromptConfig",
+        },
+      },
+    },
+    EmailUnsubscribeRequest: {
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["unsubscribe", "resubscribe"],
         },
       },
     },
@@ -108710,6 +108839,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SnoozeRequest: {
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["snooze"],
+        },
+      },
+    },
     SourceBranchesResponse: {
       required: ["status", "result"],
       type: "object",
@@ -117826,6 +117965,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    AgentFixShipReadiness: {
+      required: ["path", "blocked"],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          description:
+            "pull_request for a GitHub agent; make_default for an uploaded one.",
+          type: "string",
+          enum: ["pull_request", "make_default"],
+        },
+        blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+      },
+      "x-nullable": true,
+    },
     AgentFixIssueStatus: {
       required: ["cluster_id", "project_id", "job"],
       type: "object",
@@ -117876,6 +118032,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    AgentFixLaunchBlocked: {
+      required: ["code", "message", "cluster_id"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        cluster_id: {
+          title: "Cluster id",
+          description:
+            "For issue_epoch_measuring, the issue whose epoch is starting in the environment; its page shows it. Null otherwise.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     AgentFixLaunchDefaults: {
       required: [
@@ -118395,6 +118576,74 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Measured automatically",
           type: "boolean",
           default: false,
+        },
+      },
+    },
+    AgentFixCandidateDetail: {
+      required: [
+        "attempt",
+        "agent_version_id",
+        "version_number",
+        "verdict",
+        "pull_request_url",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        attempt: {
+          title: "Attempt",
+          type: "integer",
+          maximum: 32767,
+          minimum: 0,
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["pending", "rejected", "finalist", "winner"],
+        },
+        verdict: {
+          $ref: "#/definitions/AgentFixVerdict",
+        },
+        check_runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
+        override: {
+          $ref: "#/definitions/AgentFixOverride",
+        },
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        wording: {
+          $ref: "#/definitions/AgentFixCandidateWording",
         },
       },
     },
@@ -132945,6 +133194,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "created_at",
         "agent",
         "last_run",
+        "epoch_pickable",
       ],
       type: "object",
       properties: {
@@ -133041,6 +133291,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         last_run: {
           $ref: "#/definitions/HarnessRunSummary",
+        },
+        epoch_pickable: {
+          title: "Epoch pickable",
+          description:
+            "Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing.",
+          type: "boolean",
         },
       },
     },
@@ -158695,6 +158951,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           "x-nullable": true,
+        },
+      },
+    },
+    AgentFixCandidateWording: {
+      required: [
+        "headline",
+        "must_pass",
+        "must_pass_broken",
+        "changes",
+        "caveats",
+      ],
+      type: "object",
+      properties: {
+        headline: {
+          title: "Headline",
+          type: "string",
+        },
+        must_pass: {
+          title: "Must pass",
+          type: "string",
+        },
+        must_pass_broken: {
+          title: "Must pass broken",
+          type: "integer",
+          minimum: 0,
+        },
+        changes: {
+          title: "Changes",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        caveats: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },

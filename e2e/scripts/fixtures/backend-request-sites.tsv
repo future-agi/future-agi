@@ -13,7 +13,12 @@ demo/walkthrough.demo.ts	send request.fetch `${E2E.apiUrl}${S}${path}`	1	backend
 flows/agents/call-log-eval-columns.spec.ts	factory req=request	1	collector
 flows/alerts/view-trace-scoping.spec.ts	factory req=request	1	collector
 flows/annotations/catalog-score-lifecycle.spec.ts	binding page,request,actor,probe	1	backendRequestContext
+flows/annotations/digest-email-links.spec.ts	binding page,actor,probe,request	1	backendRequestContext
+flows/annotations/digest-email-links.spec.ts	send request.post expiredSnooze	1	reviewed first-hop expression
 flows/annotations/session-score-lifecycle.spec.ts	binding browser,request,scopeActors:scopes,scopeProbe:probe	1	backendRequestContext
+flows/auth/email-unsubscribe-guards.spec.ts	binding page,actor,probe,request	1	backendRequestContext
+flows/auth/email-unsubscribe-guards.spec.ts	send request.post link	1	reviewed first-hop expression
+flows/auth/email-unsubscribe-guards.spec.ts	send request.post valid	2	reviewed first-hop expression
 flows/auth/first-run-existing-account.spec.ts	factory req=pwRequest	1	ApiClient
 flows/auth/google-signin.spec.ts	factory context=browser	1	browser; not an API context
 flows/auth/google-signin.spec.ts	factory req=pwRequest	1	ApiClient

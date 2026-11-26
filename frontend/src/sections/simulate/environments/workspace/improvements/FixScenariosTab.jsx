@@ -96,7 +96,12 @@ export default function FixScenariosTab({ fix, candidateId }) {
   }
 
   // The candidate's verdict says which drops count as broken.
-  const outcomes = scenarioOutcomes(before, after, candidate?.verdict);
+  const outcomes = scenarioOutcomes(
+    before,
+    after,
+    candidate?.verdict,
+    fix.scenario_names,
+  );
   const rows = outcomes.map((r) => ({
     ...r,
     set: scenarioSetOf(fix.request, r.key),

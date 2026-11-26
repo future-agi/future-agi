@@ -44,6 +44,10 @@ interface CandidateRow {
   id: string;
   attempt: number;
   tried: string;
+  // What its patch changes, from the server, and the engine's note on its
+  // last round; empty when the server has none.
+  changes: string;
+  notes: string;
   // The candidate's own check run, for its Open run.
   run: AgentFixCheckRunApi | null;
   target: CandidateTarget | null;
@@ -136,7 +140,7 @@ export default function CandidatesTable({
         <TableHead>
           <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
             <TableCell>Candidate</TableCell>
-            <TableCell>What it tried</TableCell>
+            <TableCell>What it changes</TableCell>
             <Tooltip
               arrow
               describeChild
@@ -214,12 +218,23 @@ export default function CandidatesTable({
                       </Typography>
                     </TableCell>
                     <TableCell sx={{ maxWidth: 360 }}>
-                      <Tooltip arrow title={row.tried} enterDelay={400}>
+                      {/* What its patch changes; the engine's own note on its
+                          last round reads on hover, labelled as such. */}
+                      <Tooltip
+                        arrow
+                        title={
+                          row.notes
+                            ? `Notes from Epoch on its last change: ${row.notes}`
+                            : ""
+                        }
+                        enterDelay={400}
+                      >
+                        {/* Wraps: the counts at its end are never the part cut. */}
                         <Typography
-                          noWrap
+                          data-testid="candidate-changes"
                           sx={{ typography: "s2", color: "text.secondary" }}
                         >
-                          {row.tried || "—"}
+                          {row.changes || "—"}
                         </Typography>
                       </Tooltip>
                     </TableCell>
