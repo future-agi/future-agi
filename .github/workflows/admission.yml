@@ -1,7 +1,8 @@
 # Admission gate for outside pull requests.
 #
 # Deterministic checks (no LLM) that enforce CONTRIBUTION_POLICY.md before any human or
-# AI reviewer spends time on a PR. Members/owners and the bypass list are skipped.
+# AI reviewer spends time on a PR. Members/owners, authors with write access and the bypass
+# list are skipped.
 #
 # Outcome: one sticky comment listing what's missing, plus a label:
 #   admitted           all checks passed
@@ -60,7 +61,18 @@ jobs:
             const author = pr.user.login;
             const bypass = process.env.BYPASS.split(',').map(s => s.trim()).filter(Boolean);
 
-            if (['MEMBER', 'OWNER', 'COLLABORATOR'].includes(assoc) || bypass.includes(author) || author.endsWith('[bot]')) {
+            let trusted = ['MEMBER', 'OWNER', 'COLLABORATOR'].includes(assoc) || bypass.includes(author) || author.endsWith('[bot]');
+            if (!trusted) {
+              // An org member with private membership shows as CONTRIBUTOR to
+              // this token, so ask for the author's permission on the repo.
+              try {
+                const { data } = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: author });
+                trusted = ['admin', 'maintain', 'write'].includes(data.role_name || data.permission);
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+            }
+            if (trusted) {
               core.info(`skip: ${author} (${assoc})`);
               core.setOutput('verdict', 'skip');
               return;

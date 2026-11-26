@@ -463,6 +463,63 @@ def bootstrap(workflow):
     return textwrap.dedent(step.split("        run: |\n", 1)[1]).strip()
 
 
+ADMISSION_HARNESS = r"""
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const out = { asked: 0 };
+const permission = process.env.PERMISSION;
+const github = {
+  rest: { pulls: { listFiles() {} }, repos: { getCollaboratorPermissionLevel: async () => {
+    out.asked += 1;
+    if (permission === "404") { const e = new Error("Not Found"); e.status = 404; throw e; }
+    const [perm, role] = permission.split("/");
+    return { data: { permission: perm, role_name: role } };
+  } } },
+  paginate: async () => { throw new Error("CHECKS_RAN"); },
+};
+const core = { info() {}, warning() {}, setFailed() {}, setOutput(k, v) { out[k] = v; } };
+const context = { repo: { owner: "o", repo: "r" }, payload: { pull_request: {
+  number: 1, author_association: process.env.ASSOC, user: { login: "someone" },
+  body: "", title: "feat: x", created_at: "2026-11-26T00:00:00Z",
+} } };
+new AsyncFunction("require", "github", "context", "core", process.env.SCRIPT)(require, github, context, core)
+  .catch((e) => { out.error = e.message; })
+  .then(() => console.log(JSON.stringify(out)));
+"""
+
+
+class Admission(unittest.TestCase):
+    """admission.yml's github-script, run in node with a fake API."""
+
+    def test_an_author_with_write_access_is_skipped_whatever_the_association(self):
+        # GitHub reports an org member with private membership as CONTRIBUTOR
+        # to GITHUB_TOKEN, so the association alone sent them to admission.
+        text = (SCRIPTS.parent / "workflows/admission.yml").read_text()
+        script = textwrap.dedent(text.split("          script: |\n", 1)[1])
+        for assoc, permission, skipped, asked in (
+            ("CONTRIBUTOR", "write/write", True, 1),
+            ("CONTRIBUTOR", "admin/admin", True, 1),
+            ("CONTRIBUTOR", "write/maintain", True, 1),
+            ("CONTRIBUTOR", "read/triage", False, 1),
+            ("CONTRIBUTOR", "read/read", False, 1),
+            ("NONE", "404", False, 1),
+            ("MEMBER", "read/read", True, 0),
+        ):
+            with self.subTest(assoc=assoc, permission=permission):
+                run = subprocess.run(
+                    ["node", "-e", ADMISSION_HARNESS],
+                    env={"PATH": os.environ["PATH"], "SCRIPT": script, "ASSOC": assoc, "PERMISSION": permission,
+                         "BYPASS": "", "SMALL_FIX_MAX_LINES": "50", "SMALL_FIX_MAX_FILES": "3",
+                         "LARGE_PR_LINES": "800", "POLICY_SINCE": "2026-09-04T00:00:00Z"},
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                out = json.loads(run.stdout)
+                self.assertEqual(out.get("verdict") == "skip", skipped, out)
+                self.assertEqual(out.get("error"), None if skipped else "CHECKS_RAN", out)
+                self.assertEqual(out["asked"], asked)
+
+
 class CandidateScope(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
