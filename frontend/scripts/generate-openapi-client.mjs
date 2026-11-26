@@ -141,6 +141,10 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixOverride: ["by"],
   // A candidate whose patch could not be read has no change line.
   AgentFixCandidateWording: ["changes"],
+  // A coding agent's brief nothing refuses has no refusal; a run with no agent version
+  // has no agent. An attempt's verdict has no ending or failure before it ends.
+  AgentFixCodingAgentBrief: ["agent", "blocked"],
+  AgentFixAttemptVerdict: ["failure"],
 };
 
 function isAgentFixIssueSchema(name) {

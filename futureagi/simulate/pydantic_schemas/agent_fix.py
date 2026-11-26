@@ -546,7 +546,9 @@ class CodingAgentBrief(BaseModel):
 
     source_run: LaunchSourceRun
     environment: LaunchEnvironment
-    agent: AgentIdentity
+    # None when neither the run nor its environment has an agent version: launch
+    # options' refusal blocks the brief then.
+    agent: AgentIdentity | None
     # The commit a GitHub agent's change must build on; "" for an uploaded agent.
     base_commit: str
     # The agent's files as the run ran them: the submitted tree holds each it keeps,

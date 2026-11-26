@@ -1043,6 +1043,24 @@ class TestLineage:
 
 
 class TestBrief:
+    def test_a_run_with_no_agent_version_says_why_and_names_no_agent(
+        self, auth_client, environment, source_run
+    ):
+        HostedHarnessJob.no_workspace_objects.filter(
+            id__in=[environment.id, source_run.id]
+        ).update(agent_version=None)
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={**environment.payload, "source": {"kind": "github"}}
+        )
+
+        response = _source_route(auth_client, "brief", source_run.test_execution_id)
+
+        assert response.status_code == 200, response.content
+        body = response.json()
+        assert body["agent"] is None
+        # The launch's own refusal, as launch options give it.
+        assert body["blocked"]["code"] == "environment_agent_unversioned"
+
     def test_never_names_a_held_back_case_and_says_how_to_submit(
         self, auth_client, both_failing
     ):
@@ -1697,8 +1715,19 @@ def held_everywhere(both_failing):
             ],
         },
     )
+    # The run that checked the candidate on the held-back case: its calls are that case's.
+    _check(attempt, label="c1-held-back", keys=(HELD,))
     attempt.refresh_from_db()
     return attempt
+
+
+def _held_back_check_run(attempt):
+    run = HostedHarnessJob.no_workspace_objects.get(
+        fix_run=attempt, fix_label="c1-held-back"
+    )
+    # Without its execution the reads below prove nothing.
+    assert run.test_execution_id
+    return run
 
 
 class TestNoHeldBackCaseInAnyRead:
@@ -1766,6 +1795,7 @@ class TestNoHeldBackCaseInAnyRead:
         # The name the reads would give it; a blank one would prove nothing below.
         name = _read_name(held_everywhere, HELD)
         assert name
+        held_run = _held_back_check_run(held_everywhere)
         for read, response in reads.items():
             assert response.status_code == 200, (read, response.content)
             text = json.dumps(response.json())
@@ -1773,6 +1803,8 @@ class TestNoHeldBackCaseInAnyRead:
             assert f"trace-of-{HELD}" not in text, read
             assert HELD_ONLY_SUB_GOAL not in text, read
             assert name not in text, read
+            # Nor a way to the calls of the run that checked it.
+            assert str(held_run.test_execution_id) not in text, read
         # The reads still carry the case the coding agent was given, by key and name.
         detail = reads["detail"].json()
         assert SEEN in json.dumps(detail)
@@ -1816,6 +1848,9 @@ class TestNoHeldBackCaseInAnyRead:
         ).json()
 
         assert detail["request"]["held_back_scenario_keys"] == [HELD]
+        assert str(_held_back_check_run(held_everywhere).test_execution_id) in (
+            json.dumps(detail)
+        )
         assert HELD_ONLY_SUB_GOAL in detail["request"]["failing_sub_goals"]
         assert detail["scenario_names"][HELD] == _read_name(held_everywhere, HELD)
         # Its candidate's words name it too, and give the held-back pass rate.

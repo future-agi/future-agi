@@ -585,9 +585,15 @@ def hidden_epoch(data: Mapping[str, Any], held_back: set[str]) -> dict[str, Any]
         if "scenario_names" in data
         else {}
     )
+    runs = (
+        {"check_runs": _unlinked(data["check_runs"], held_back)}
+        if "check_runs" in data
+        else {}
+    )
     return {
         **data,
         **names,
+        **runs,
         "request": {
             **request,
             "target_scenario_keys": [
@@ -622,10 +628,21 @@ def hidden_epoch(data: Mapping[str, Any], held_back: set[str]) -> dict[str, Any]
                 if candidate["verdict"]
                 else None,
                 "override": _hidden_override(candidate["override"], held_back),
+                "check_runs": _unlinked(candidate["check_runs"], held_back),
             }
             for candidate in data["candidates"]
         ],
     }
+
+
+def _unlinked(
+    runs: list[Mapping[str, Any]], held_back: set[str]
+) -> list[Mapping[str, Any]]:
+    """An Epoch's check runs, with no way to their results when it holds a case back: a
+    run that checked one leads to that case's calls, and the read can't tell which did."""
+    if not held_back:
+        return list(runs)
+    return [{**run, "run_id": None, "test_execution_id": None} for run in runs]
 
 
 def _hidden_override(

@@ -917,7 +917,11 @@ class AgentFixOutsideAttemptsSerializer(serializers.Serializer):
 class AgentFixCodingAgentBriefSerializer(serializers.Serializer):
     source_run = AgentFixLaunchSourceRunSerializer()
     environment = AgentFixLaunchEnvironmentSerializer()
-    agent = AgentFixAgentSerializer()
+    agent = AgentFixAgentSerializer(
+        allow_null=True,
+        help_text="Null when neither the run nor its environment has an agent version;"
+        " the brief is blocked then.",
+    )
     base_commit = serializers.CharField(
         allow_blank=True,
         help_text="The commit a GitHub agent's change must start from; blank for an "

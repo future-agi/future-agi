@@ -20,13 +20,13 @@ import {
   fixtureVerdict,
   outsideAttemptFix,
 } from "src/api/simulate-environments/__tests__/fixtures/codingAgent";
-import type {
-  BlockedCode,
-  BriefRead,
-  VerdictRead,
-} from "src/api/simulate-environments/__tests__/fixtures/codingAgent";
+import type { BlockedCode } from "src/api/simulate-environments/__tests__/fixtures/codingAgent";
 import { fixtureFixRun } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
-import type { AgentFixRunDetailApi } from "src/generated/api-contracts/api.schemas";
+import type {
+  AgentFixAttemptVerdictApi,
+  AgentFixCodingAgentBriefApi,
+  AgentFixRunDetailApi,
+} from "src/generated/api-contracts/api.schemas";
 
 // The deployment's setting, as the capabilities read carries it.
 const caps = vi.hoisted(() => ({ codingAgent: true }));
@@ -46,9 +46,9 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
 
 // The two coding-agent routes, answered from the fixtures; anything else is a bug.
 const api = vi.hoisted(() => ({
-  brief: null as BriefRead | null,
+  brief: null as AgentFixCodingAgentBriefApi | null,
   briefStatus: 200,
-  verdict: null as VerdictRead | null,
+  verdict: null as AgentFixAttemptVerdictApi | null,
   get: vi.fn<
     (url: string, config?: { params?: unknown }) => Promise<{ data: unknown }>
   >(),
@@ -342,7 +342,13 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
   // Only the static check's own refusal blames the change: an attempt that ended with
   // no improvement and no check, whatever the reason, is not read as one.
   // A stopped attempt has no ending (the verdict's ending has no "stopped").
-  it.each<[VerdictRead["state"], VerdictRead["ending"], boolean]>([
+  it.each<
+    [
+      AgentFixAttemptVerdictApi["state"],
+      AgentFixAttemptVerdictApi["ending"],
+      boolean,
+    ]
+  >([
     ["no_improvement", "no_improvement", true],
     ["out_of_budget", "out_of_budget", false],
     ["not_reproduced", "not_reproduced", false],

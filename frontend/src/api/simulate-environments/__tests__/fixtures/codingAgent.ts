@@ -4,29 +4,10 @@
 // one against the generated OpenAPI contract.
 
 import type {
-  AgentFixAgentApi,
   AgentFixAttemptVerdictApi,
   AgentFixCodingAgentBriefApi,
-  AgentFixFailureApi,
   AgentFixRunDetailApi,
 } from "src/generated/api-contracts/api.schemas";
-
-// The routes answer null where the generated types give a value: a nested serializer's
-// allow_null and a string's x-nullable do not reach them.
-export type BriefRead = Omit<
-  AgentFixCodingAgentBriefApi,
-  "agent" | "blocked"
-> & {
-  agent: Omit<AgentFixAgentApi, "ref"> & { ref: string | null };
-  blocked: AgentFixFailureApi | null;
-};
-export type VerdictRead = Omit<
-  AgentFixAttemptVerdictApi,
-  "ending" | "failure"
-> & {
-  ending: AgentFixAttemptVerdictApi["ending"] | null;
-  failure: AgentFixFailureApi | null;
-};
 
 export const SOURCE_RUN_ID = "7d3f5c2a-1b4e-4c8d-9a6f-2e1d0c9b8a71";
 export const ATTEMPT_ID = "3c9e1f7b-5a2d-4e8c-b1f6-9d0a7e3c2b54";
@@ -71,8 +52,8 @@ const INSTRUCTIONS = [
 ].join("\n");
 
 export const fixtureBrief = (
-  overrides: Partial<BriefRead> = {},
-): BriefRead => ({
+  overrides: Partial<AgentFixCodingAgentBriefApi> = {},
+): AgentFixCodingAgentBriefApi => ({
   source_run: {
     id: SOURCE_RUN_ID,
     number: 4,
@@ -133,7 +114,7 @@ export type BlockedCode = keyof typeof BLOCKED_BRIEFS;
 
 export const fixtureBlockedBrief = (
   code: BlockedCode = "fix_attempts_used",
-): BriefRead =>
+): AgentFixCodingAgentBriefApi =>
   fixtureBrief({
     attempts: { used: code === "fix_attempts_used" ? 4 : 0, max: 4 },
     blocked: { code, message: BLOCKED_BRIEFS[code] },
@@ -145,8 +126,8 @@ export const ENGINE_STATIC_DETAIL = "2 files changed, 14 lines; parses";
 export const ENGINE_TARGET_DETAIL = "pass rate 0.33 -> 1.00, p=0.004";
 
 export const fixtureVerdict = (
-  overrides: Partial<VerdictRead> = {},
-): VerdictRead => ({
+  overrides: Partial<AgentFixAttemptVerdictApi> = {},
+): AgentFixAttemptVerdictApi => ({
   id: ATTEMPT_ID,
   number: 2,
   state: "no_improvement",

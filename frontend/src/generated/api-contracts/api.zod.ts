@@ -39219,13 +39219,16 @@ export const SimulateApiAgentFixRunsBriefResponse = zod.object({
     name: zod.string().min(1),
     version: zod.union([zod.number(), zod.null()]),
   }),
-  agent: zod.object({
-    name: zod.string().min(1),
-    kind: zod.string().min(1),
-    version_id: zod.string().uuid(),
-    version_number: zod.union([zod.number(), zod.null()]),
-    ref: zod.union([zod.string().min(1), zod.null()]),
-  }),
+  agent: zod.union([
+    zod.object({
+      name: zod.string().min(1),
+      kind: zod.string().min(1),
+      version_id: zod.string().uuid(),
+      version_number: zod.union([zod.number(), zod.null()]),
+      ref: zod.union([zod.string().min(1), zod.null()]),
+    }),
+    zod.null(),
+  ]),
   base_commit: zod
     .string()
     .describe(
@@ -39262,10 +39265,13 @@ export const SimulateApiAgentFixRunsBriefResponse = zod.object({
     used: zod.number(),
     max: zod.number(),
   }),
-  blocked: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
+  blocked: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
   instructions: zod
     .string()
     .min(1)
@@ -40316,18 +40322,27 @@ export const SimulateApiAgentFixRunsVerdictResponse = zod.object({
     "failed",
     "too_few_cases",
   ]),
-  step: zod.enum(["variations", "reproduce", "search", "verify", "done"]),
-  ending: zod.enum([
-    "ready",
-    "no_improvement",
-    "not_reproduced",
-    "out_of_budget",
-    "failed",
+  step: zod.union([
+    zod.enum(["variations", "reproduce", "search", "verify", "done"]),
+    zod.null(),
   ]),
-  failure: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
+  ending: zod.union([
+    zod.enum([
+      "ready",
+      "no_improvement",
+      "not_reproduced",
+      "out_of_budget",
+      "failed",
+    ]),
+    zod.null(),
+  ]),
+  failure: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
   summary: zod.string(),
   tiers: zod.array(
     zod.object({

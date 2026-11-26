@@ -19756,7 +19756,7 @@ export interface AgentFixOutsideAttemptsApi {
 export interface AgentFixCodingAgentBriefApi {
   source_run: AgentFixLaunchSourceRunApi;
   environment: AgentFixLaunchEnvironmentApi;
-  agent: AgentFixAgentApi;
+  agent: AgentFixAgentApi | null;
   /** The commit a GitHub agent's change must start from; blank for an uploaded agent. */
   base_commit: string;
   /** The agent's files as the run ran them. The submitted tree holds each one it keeps, changed or not, and may add new files; one left out is deleted. */
@@ -19767,7 +19767,7 @@ export interface AgentFixCodingAgentBriefApi {
   locked_paths: string[];
   failures: AgentFixCodingAgentFailureApi[];
   attempts: AgentFixOutsideAttemptsApi;
-  blocked: AgentFixFailureApi;
+  blocked: AgentFixFailureApi | null;
   /**
    * The prompt the coding agent follows, in markdown.
    * @minLength 1
@@ -19990,28 +19990,6 @@ export const AgentFixAttemptVerdictApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
-export type AgentFixAttemptVerdictApiStep =
-  (typeof AgentFixAttemptVerdictApiStep)[keyof typeof AgentFixAttemptVerdictApiStep];
-
-export const AgentFixAttemptVerdictApiStep = {
-  variations: "variations",
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
-export type AgentFixAttemptVerdictApiEnding =
-  (typeof AgentFixAttemptVerdictApiEnding)[keyof typeof AgentFixAttemptVerdictApiEnding];
-
-export const AgentFixAttemptVerdictApiEnding = {
-  ready: "ready",
-  no_improvement: "no_improvement",
-  not_reproduced: "not_reproduced",
-  out_of_budget: "out_of_budget",
-  failed: "failed",
-} as const;
-
 export type AgentFixAttemptTierApiStatus =
   (typeof AgentFixAttemptTierApiStatus)[keyof typeof AgentFixAttemptTierApiStatus];
 
@@ -20033,9 +20011,15 @@ export interface AgentFixAttemptVerdictApi {
   id: string;
   number: number;
   state: AgentFixAttemptVerdictApiState;
-  step: AgentFixAttemptVerdictApiStep;
-  ending: AgentFixAttemptVerdictApiEnding;
-  failure: AgentFixFailureApi;
+  step: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  ending:
+    | "ready"
+    | "no_improvement"
+    | "not_reproduced"
+    | "out_of_budget"
+    | "failed"
+    | null;
+  failure: AgentFixFailureApi | null;
   summary: string;
   tiers: AgentFixAttemptTierApi[];
   counted: boolean;
