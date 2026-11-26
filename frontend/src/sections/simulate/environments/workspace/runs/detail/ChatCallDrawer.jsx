@@ -35,6 +35,8 @@ import {
   ownsArrowKeys,
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
+import TrialBrowserPanel from "./TrialBrowserPanel";
+import { TRIAL_BROWSER_COPY } from "./trialBrowser.constants";
 import {
   TRIAL_CHANGES_COPY,
   TRIAL_UNDER_WAY,
@@ -147,10 +149,13 @@ export default function ChatCallDrawer({
     setChosenArtifact("traces");
   };
   const hasWorkers = useHasWorkers(task.id, task.status);
+  // The trial's environment has a browser: its entry shows, with no count, and reads the browser once opened.
+  const browserOn = callDetail?.browserEnvironment === true;
   // Stays on Participants while the next call's record is unread; a call known to have none falls back, unless an
-  // earlier attempt is chosen, whose record is read on its own.
+  // earlier attempt is chosen, whose record is read on its own. A call with no browser has no Browser entry.
   const artifact =
-    chosenArtifact === "workers" && hasWorkers === false && !attempt
+    (chosenArtifact === "workers" && hasWorkers === false && !attempt) ||
+    (chosenArtifact === "browser" && !browserOn)
       ? "transcript"
       : chosenArtifact;
   // An earlier attempt's record is read on its own, whatever the latest attempt kept.
@@ -320,6 +325,9 @@ export default function ChatCallDrawer({
             {(actorsOn || hasSharedRecords(trialState)) && (
               <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
             )}
+            {browserOn ? (
+              <Tab value="browser" label={TRIAL_BROWSER_COPY.tab} />
+            ) : null}
           </CustomTabs>
 
           <Box
@@ -356,7 +364,13 @@ export default function ChatCallDrawer({
                 {ATTEMPT_COPY.latestOnly}
               </Typography>
             ) : null}
-            {artifact === "workers" ? null : showChanges && isLoading ? (
+            {artifact === "workers" ? null : artifact === "browser" ? (
+              <TrialBrowserPanel
+                key={`${task.id}:${attempt ?? "latest"}`}
+                callExecutionId={task.id}
+                attempt={attempt}
+              />
+            ) : showChanges && isLoading ? (
               // Loading, not "not recorded".
               <Stack alignItems="center" sx={{ py: 6 }}>
                 <CircularProgress size={20} />

@@ -649,6 +649,8 @@ export function mapCallDetail(raw) {
     attemptNumber: raw.attempt_number,
     // The World state view shows only when the call detail says actors are on.
     actorsEnabled: raw.actors_enabled,
+    // The trial's environment has a browser: its entry shows, and what it did loads once opened.
+    browserEnvironment: raw.browser_environment === true,
     // Why the platform kept no transcript and ran none of its own evals or CSAT, in the server's words.
     processingSkipReason: raw.processing_skipped
       ? raw.processing_skip_reason || null

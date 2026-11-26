@@ -29,6 +29,8 @@ import {
   ownsArrowKeys,
 } from "./callTraces.constants";
 import TrialChangesPanel from "./TrialChangesPanel";
+import TrialBrowserPanel from "./TrialBrowserPanel";
+import { TRIAL_BROWSER_COPY } from "./trialBrowser.constants";
 import {
   TRIAL_CHANGES_COPY,
   TRIAL_UNDER_WAY,
@@ -224,6 +226,26 @@ export default function VoiceCallDrawer({
                     trialState={trialState}
                     underWay={!attempt && TRIAL_UNDER_WAY.has(task.status)}
                     sharedOnly={data?.actors_enabled !== true}
+                  />
+                </>
+              ),
+            },
+          ]
+        : []),
+      // The trial's environment has a browser: its entry shows, with no count, and reads the browser once opened.
+      ...(data?.browser_environment === true
+        ? [
+            {
+              label: TRIAL_BROWSER_COPY.tab,
+              value: "browser",
+              icon: "solar:monitor-linear",
+              content: (
+                <>
+                  {attemptSelect}
+                  <TrialBrowserPanel
+                    key={`${task.id}:${attempt ?? "latest"}`}
+                    callExecutionId={task.id}
+                    attempt={attempt}
                   />
                 </>
               ),
