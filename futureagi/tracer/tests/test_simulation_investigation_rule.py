@@ -99,18 +99,23 @@ def test_a_diagnosis_made_before_the_rule_stays_openable(
 ):
     execution = _small_run(organization, workspace)
     _diagnosed_before_the_rule(execution)
-    for claim in claim_due_investigations(
+    # A project's claims are capped, so read the calls until none is due.
+    while claims := claim_due_investigations(
         worker_id="test-worker", engine_version="omega-v1", limit=5
     )["claims"]:
-        job = TraceInvestigationJob.no_workspace_objects.get(id=claim["job_id"])
-        result = _failure_result(claim, job.call_execution)
-        publish_investigation(
-            idempotency_key=str(claim["attempt_id"]),
-            lease_token=claim["lease_token"],
-            result=result,
-            wire_result_digest=result["result_digest"],
-        )
+        for claim in claims:
+            job = TraceInvestigationJob.no_workspace_objects.get(id=claim["job_id"])
+            result = _failure_result(claim, job.call_execution)
+            publish_investigation(
+                idempotency_key=str(claim["attempt_id"]),
+                lease_token=claim["lease_token"],
+                result=result,
+                wire_result_digest=result["result_digest"],
+            )
     before = _jobs(execution)
+    assert {state for _, state in before.values()} == {
+        TraceInvestigationJobState.COMPLETED
+    }
 
     ensure_simulation_investigation(execution)
     response = auth_client.post(_url(execution))
