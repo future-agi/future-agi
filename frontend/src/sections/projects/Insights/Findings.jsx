@@ -21,9 +21,9 @@ const SEVERITY_LABEL = {
 
 const severityColor = (theme, severity) =>
   ({
-    high: theme.palette.error.main,
+    high: theme.palette.status.danger.fg,
     medium: cautionColor(theme),
-    low: theme.palette.info.main,
+    low: theme.palette.status.neutral.fg,
   })[severity] || theme.palette.text.disabled;
 
 function SeverityDot({ severity }) {
@@ -101,8 +101,7 @@ function Finding({ finding, index }) {
             sx={{
               m: 0,
               fontWeight: 600,
-              fontSize: 14,
-              lineHeight: "22px",
+              typography: "m3",
               color: "text.primary",
             }}
           />
@@ -117,8 +116,7 @@ function Finding({ finding, index }) {
               m: 0,
               mt: 0.5,
               pl: 2,
-              fontSize: 12,
-              lineHeight: "20px",
+              typography: "s1_2",
               color: "text.secondary",
             }}
           />
@@ -131,9 +129,9 @@ function Finding({ finding, index }) {
             sx={{ mt: 0.75, pl: 2 }}
           >
             <Iconify
-              icon="mdi:arrow-right"
+              icon="solar:arrow-right-linear"
               width={14}
-              sx={{ color: "primary.main", mt: "3px", flexShrink: 0 }}
+              sx={{ color: "text.secondary", mt: "3px", flexShrink: 0 }}
             />
             <CitedText
               text={finding.action}
@@ -141,8 +139,7 @@ function Finding({ finding, index }) {
               component="p"
               sx={{
                 m: 0,
-                fontSize: 12,
-                lineHeight: "20px",
+                typography: "s1_2",
                 color: "text.primary",
               }}
             />
@@ -218,19 +215,19 @@ export default function Findings({ summary }) {
         alignItems="center"
         sx={{
           mt: 0.5,
-          color: note.checked ? "text.secondary" : "warning.dark",
+          color: note.checked ? "text.secondary" : "status.warning.fg",
         }}
       >
         <Iconify
           icon={
             !note.checked
-              ? "mdi:alert-outline"
+              ? "solar:danger-triangle-linear"
               : note.verifier
-                ? "mdi:shield-check-outline"
-                : "mdi:check-circle-outline"
+                ? "solar:shield-check-linear"
+                : "solar:check-circle-linear"
           }
           width={14}
-          sx={{ color: note.checked ? "success.main" : "inherit" }}
+          sx={{ color: note.checked ? "status.success.fg" : "inherit" }}
         />
         <Typography variant="caption" color="inherit">
           {note.text}. Hover <b>#n</b> to preview an example.

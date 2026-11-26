@@ -44,6 +44,14 @@ describe("ContactInformation", () => {
     expect(screen.getByRole("checkbox", { name: "Agent speaks first" })).toBeEnabled();
   });
 
+  it("LiveKit (inboundOnly): keeps the Web/Phone choice, but Inbound Calls is locked on in phone mode", () => {
+    render(<ContactInformation {...base} mode="phone" inboundOnly inboundCalls={false} />);
+    expect(screen.getByText("Telephony simulation (PSTN)")).toBeInTheDocument();
+    const inbound = screen.getByRole("checkbox", { name: "Inbound Calls" });
+    expect(inbound).toBeChecked();
+    expect(inbound).toBeDisabled();
+  });
+
   it("phone mode for other providers: Inbound Calls stays a free choice", () => {
     const onInboundCalls = vi.fn();
     render(

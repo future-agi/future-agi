@@ -359,6 +359,16 @@ def insert_tenant(client, database, tenant, eval_table):
                 "",
                 "hash",
                 "all",
+                # Uncertainty columns (029): no interval was computed.
+                None,
+                None,
+                None,
+                None,
+                None,
+                "",
+                "",
+                "",
+                "",
             )
             for item in tenant.metrics
         ],

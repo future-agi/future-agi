@@ -37,8 +37,12 @@ const TASKS = [
     scenario: "Refund a double charge",
     goal: "Refund a double charge",
     subGoalResults: [
-      { name: "Identity verified", passed: true },
-      { name: "Refund created", passed: true },
+      {
+        name: "Identity verified",
+        display_name: "Identity verified",
+        passed: true,
+      },
+      { name: "Refund created", display_name: "Refund created", passed: true },
     ],
     persona: "Impatient caller",
     personaDetails: {
@@ -60,7 +64,13 @@ const TASKS = [
     id: "t2",
     scenario: "Escalate to a human",
     goal: "Escalate to a human",
-    subGoalResults: [{ name: "Transferred to human", passed: false }],
+    subGoalResults: [
+      {
+        name: "Transferred to human",
+        display_name: "Transferred to human",
+        passed: false,
+      },
+    ],
     persona: "Angry caller",
     personaDetails: {
       name: "Angry caller",

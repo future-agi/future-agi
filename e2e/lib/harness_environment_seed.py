@@ -1,6 +1,25 @@
-"""Seed one built, versioned Environment without a sandbox, as a finished build plus the versions backfill leave it.
+"""Seed one built, versioned Environment the way production gets one, with no sandbox.
 
-Run inside the backend container by ``e2e/lib/simulate-seed.ts``; prints one JSON line.
+``e2e/lib/simulate-seed.ts`` copies this file into the stack's backend container and
+runs it there. The stack starts no simulation runner, so an Environment cannot be
+built for real. Instead this does what a finished build leaves behind and what the
+versions backfill reads, as the backend tests build one
+(``simulate/tests/test_harness_versioning_backfill.py::_legacy``):
+
+1. a hosted job, its attempt and its provisioned scenarios
+   (``create_hosted_job`` -> ``register_attempt`` -> ``provision_scenarios``),
+2. its authoring archive in object storage, the job marked completed,
+3. ``backfill_environment``, which records the agent, environment and suite versions,
+   the suite members and, for a sealed archive, the certified bundle of that pairing.
+
+A ``certified`` archive carries the sealed bundle a build certifies: a certificate
+whose checks all passed, and per-tool and per-action certification files. Without it
+the pairing has no bundle, so its first check is a validation. ``production_only``
+names a tool the contract says reaches production. ``failed_check`` names an action
+an uncertified pairing's last validation failed on: its bundle is left failed by that
+check, as a validation leaves it (``validation._settle_bundle``).
+
+Every row belongs to the given organization and workspace. Prints one JSON line.
 """
 
 import json
@@ -273,14 +292,86 @@ def _with_actor(documents):
     return documents
 
 
-def _documents(refunds, lookups, suffix):
+def _documents(refunds, lookups, suffix, *, refund_worker_budget=False):
     """``refunds`` cases that issue a refund on their only path, then ``lookups`` that
-    only look the order up; numbered in that order."""
+    only look the order up; numbered in that order. ``refund_worker_budget`` gives each
+    refund case a budget for the refund worker, so it relies on that worker."""
+    budget = {"worker_budget_seconds": {"refund": 30}} if refund_worker_budget else {}
     return [
-        _scenario(f"refund-{suffix}-{n:03d}", TOOLS) for n in range(1, refunds + 1)
+        {**_scenario(f"refund-{suffix}-{n:03d}", TOOLS), **budget} for n in range(1, refunds + 1)
     ] + [
         _scenario(f"status-{suffix}-{n:03d}", TOOLS[:1]) for n in range(1, lookups + 1)
     ]
+
+
+# Two declared workers wired separately, each reaching the world through its own channel. ``workers`` picks what ALK
+# sealed for them, as it writes it: ``"sealed"`` a tool proxy holding per-worker limits; ``"not_fronted"`` no door,
+# the tool service not behind it, so ALK holds each refund case that relies on the refund worker; ``"old_seal"``
+# nothing, as a bundle sealed before worker limits.
+WORKERS = [
+    {
+        "id": "order_lookup",
+        "name": "Order-lookup worker",
+        "tools": ["lookup_order", "issue_refund"],
+        "allowed_tools": ["lookup_order"],
+        "binding": "separate",
+        "address_env": "ORDER_LOOKUP_API_URL",
+    },
+    {
+        "id": "refund",
+        "name": "Refund worker",
+        "tools": ["issue_refund"],
+        "allowed_tools": ["issue_refund"],
+        "binding": "separate",
+        "address_env": "REFUND_API_URL",
+    },
+]
+DOOR_OUTCOMES = {
+    "sealed": {"present": True, "surface": "tool_proxy", "worker_deadlines": "per_worker"},
+    "not_fronted": {"present": False, "reason": "tool_service_not_fronted"},
+}
+TOOL_PROXY_FILES = {
+    "environment-bundle/generated/tool-proxy/door.json": {"worker_deadlines": "per_worker"},
+    "environment-bundle/generated/tool-proxy/permissions.json": {
+        "worker:order_lookup": {"allow": ["POST orders.lookup"]},
+        "worker:refund": {"allow": ["POST refunds.issue"]},
+    },
+    "environment-bundle/generated/tool-proxy/actions.json": {
+        "POST orders.lookup": "lookup_order",
+        "POST refunds.issue": "issue_refund",
+    },
+}
+
+
+def _door_files(documents, workers):
+    """ALK's door files for ``workers``: the root ``door.json``, ``worker-limits.json`` with each scenario's hold, and
+    for a tool proxy its own files. A refund case with a budget relies on the refund worker."""
+    if workers not in DOOR_OUTCOMES:
+        return {}
+    held = workers == "not_fronted"
+    scenarios = {}
+    for document in documents:
+        relies = "worker_budget_seconds" in document
+        scenarios[document["scenario_key"]] = {
+            "workers": ["refund"] if relies else [],
+            "relies_on_worker_limits": relies,
+            "held": held and relies,
+            "unheld_workers": ["refund"] if held and relies else [],
+            "reason": "worker_limits_not_enforced" if held and relies else None,
+            "cause": "tool_service_not_fronted" if held and relies else None,
+            "limit": "all" if held and relies else None,
+            "deadline": None,
+        }
+    files = {
+        "environment-bundle/door.json": DOOR_OUTCOMES[workers],
+        "environment-bundle/worker-limits.json": {
+            "workers": {one["id"]: {"limited": True} for one in WORKERS},
+            "scenarios": scenarios,
+        },
+    }
+    if workers == "sealed":
+        files.update(TOOL_PROXY_FILES)
+    return files
 
 
 def _actor_rules():
@@ -299,10 +390,22 @@ def _actor_rules():
     }
 
 
-def _authoring(documents, *, certified, production_only, actors=False, tool_detail=False):
-    contract = {"agent": "support", "tools": list(DETAILED_TOOLS if tool_detail else TOOLS)}
+def _authoring(documents, *, certified, production_only, actors=False, tool_detail=False, workers=None):
+    # Each tool as ALK writes it: an object named by `name`, so the review lists the contract item by item.
+    contract = {
+        "agent": "support",
+        "tools": list(DETAILED_TOOLS) if tool_detail else [{"name": tool} for tool in TOOLS],
+    }
     if tool_detail:
         contract["tool_entrypoints"] = list(DETAILED_ENTRYPOINTS)
+    if workers:
+        # Reached on the agent's tool service, which the world's door fronts as tools-api.
+        contract["tool_entrypoints"] = [
+            {"tool": "lookup_order", "endpoint": "/orders/lookup", "method": "POST", "mode": "service", "service": "tools-api"},
+            {"tool": "issue_refund", "endpoint": "/refunds/issue", "method": "POST", "mode": "service", "service": "tools-api"},
+        ]
+        contract["workers"] = WORKERS
+    door_files = _door_files(documents, workers)
     if production_only:
         contract["tool_entrypoints"] = [
             *(one for one in contract.get("tool_entrypoints", []) if one["tool"] != production_only),
@@ -339,7 +442,17 @@ def _authoring(documents, *, certified, production_only, actors=False, tool_deta
         files.update(
             {
                 "environment-bundle/manifest.json": {
-                    "files": [{"path": "world.sqlite", "sha256": "a" * 64, "size": 2}],
+                    "files": [
+                        {"path": "world.sqlite", "sha256": "a" * 64, "size": 2},
+                        *(
+                            {
+                                "path": path.removeprefix("environment-bundle/"),
+                                "sha256": "a" * 64,
+                                "size": 2,
+                            }
+                            for path in door_files
+                        ),
+                    ],
                     "digest": BUNDLE_DIGEST,
                     "provenance": {"source_digest": "e" * 64},
                 },
@@ -363,6 +476,7 @@ def _authoring(documents, *, certified, production_only, actors=False, tool_deta
                 },
             }
         )
+        files.update(door_files)
     return {
         path: (value if isinstance(value, str) else json.dumps(value)).encode()
         for path, value in files.items()
@@ -379,12 +493,21 @@ def seed_environment(
     certified=True,
     production_only=None,
     failed_check=None,
+    proofs=None,
+    archived=(),
     actors=False,
     trial=False,
     tool_detail=False,
+    workers=None,
+    refund_worker_budget=False,
 ):
     """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; ``trial`` picks a
-    ``TRIAL_STATES`` variant for its finished trial."""
+    ``TRIAL_STATES`` variant for its finished trial.
+
+    ``proofs`` (``{key: format-2 entry}``) is the default pair's validation; without it every
+    case is proved, so a flow about something else is not held back for validation. A key the
+    dict leaves out has no proof. ``archived`` keys are archived with their content kept.
+    """
     from simulate.models import (
         AgentDefinition,
         AgentVersion,
@@ -401,7 +524,9 @@ def seed_environment(
     )
     from simulate.services.hosted_harness_gateway import authoring_content_digest
 
-    documents = _documents(refunds, lookups, suffix)
+    documents = _documents(
+        refunds, lookups, suffix, refund_worker_budget=refund_worker_budget
+    )
     if actors:
         documents = _with_actor(documents)
     environment, _ = create_hosted_job(
@@ -440,6 +565,7 @@ def seed_environment(
         production_only=production_only,
         actors=actors,
         tool_detail=tool_detail,
+        workers=workers,
     )
     body = archives.pack_archive(authored)
     object_key = archives.pair_key(organization.id, environment.id, body)
@@ -496,6 +622,8 @@ def seed_environment(
         raise RuntimeError("backfill cached no certified bundle")
     if failed_check:
         _fail_check(environment, failed_check)
+    _prove(environment, documents, proofs)
+    _archive(environment, documents, archived)
     trial_ids = (
         _finished_trial(environment, definition, documents[0], TRIAL_STATES[trial])
         if trial
@@ -511,6 +639,54 @@ def seed_environment(
         "refundKeys": [d["scenario_key"] for d in documents[:refunds]],
         "lookupKeys": [d["scenario_key"] for d in documents[refunds:]],
     }
+
+
+PROVED = {"format": 2, "holds": True, "proved": True, "assumed": [], "blocked_reason": None}
+
+
+def _key_of(documents, key):
+    """A seeded key, or ``@n`` for the n-th document's (from 0): a flow names cases before their keys exist."""
+    if isinstance(key, str) and key.startswith("@"):
+        return documents[int(key[1:])]["scenario_key"]
+    return key
+
+
+def _prove(environment, documents, proofs):
+    """The default pair's proofs, as a validation records them."""
+    from django.utils import timezone
+
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.versions import _validation_status
+
+    if proofs is None:
+        proofs = {document["scenario_key"]: PROVED for document in documents}
+    proofs = {_key_of(documents, key): entry for key, entry in proofs.items()}
+    HarnessSuiteValidation.no_workspace_objects.update_or_create(
+        suite_version_id=environment.suite_version_id,
+        environment_version_id=environment.environment_version_id,
+        defaults={
+            "status": _validation_status(proofs, [d["scenario_key"] for d in documents]),
+            "proofs": proofs,
+            "proved_at": timezone.now(),
+        },
+    )
+
+
+def _archive(environment, documents, keys):
+    """Archive ``keys`` as the Archive action does, keeping each one's content to restore."""
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessScenario
+
+    by_key = {document["scenario_key"]: document for document in documents}
+    for key in (_key_of(documents, one) for one in keys or ()):
+        HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment, scenario_key=key
+        ).update(
+            archived_at=timezone.now(),
+            archive_reason="e2e seed",
+            archived_content=by_key.get(key) or {},
+        )
 
 
 def _finished_trial(environment, definition, document, trial_state):

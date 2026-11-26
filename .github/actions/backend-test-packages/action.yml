@@ -1,0 +1,25 @@
+# The system packages the backend test jobs need (ffmpeg, ffprobe, xmlsec1,
+# pgbouncer), from one apt cache. Every backend job that needs them uses this
+# action, so no job can fall back to an uncached download: that download is
+# what stalled the evaluator job into exit 124.
+name: Install backend test packages
+description: Installs ffmpeg, xmlsec1 and pgbouncer from the apt cache that matches the runner image.
+runs:
+  using: composite
+  steps:
+    - name: Identify exact runner image for the apt cache
+      id: image
+      shell: bash
+      run: echo "version=${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Ubuntu test packages and indexes
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        # /tmp is traversable by apt's _apt user; ~/.cache need not be.
+        path: /tmp/futureagi-backend-ci-apt
+        # No prefix restores: package closure must match preinstalled libraries.
+        key: backend-ci-apt-ubuntu24-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('futureagi/.ci/install-test-packages.sh') }}
+
+    - name: Install ffmpeg, ffprobe, xmlsec1 and pgbouncer from the bounded Ubuntu cache
+      shell: bash
+      run: bash futureagi/.ci/install-test-packages.sh /tmp/futureagi-backend-ci-apt

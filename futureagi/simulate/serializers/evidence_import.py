@@ -65,14 +65,15 @@ class EvidenceDatasetColumnsSerializer(serializers.Serializer):
 
 
 class EvidenceImportCreateSerializer(serializers.Serializer):
-    """An Observe import (session or call) names its project and ids; a dataset
-    import its dataset, row ids and columns; a transcript import carries its
-    transcripts instead."""
+    """An Observe import (session, call or trace) names its project and ids; a
+    dataset import its dataset, row ids and columns; a transcript import carries
+    its transcripts instead."""
 
     # What each kind needs and may take; any other source field is refused.
     NEEDS = {
         EvidenceImport.SourceKind.SESSION: ("project_id", "ids"),
         EvidenceImport.SourceKind.CALL: ("project_id", "ids"),
+        EvidenceImport.SourceKind.TRACE: ("project_id", "ids"),
         EvidenceImport.SourceKind.TRANSCRIPT: ("transcripts",),
         EvidenceImport.SourceKind.DATASET: ("dataset_id", "ids", "columns"),
     }
@@ -91,15 +92,16 @@ class EvidenceImportCreateSerializer(serializers.Serializer):
 
     source_kind = serializers.ChoiceField(choices=EvidenceImport.SourceKind.choices)
     project_id = serializers.UUIDField(
-        required=False, help_text="Session and call imports: the Observe project."
+        required=False,
+        help_text="Session, call and trace imports: the Observe project.",
     )
     ids = serializers.ListField(
         child=serializers.UUIDField(),
         min_length=1,
         max_length=MAX_SOURCES,
         required=False,
-        help_text="Session, call and dataset imports: session ids, the trace ids "
-        "of calls, or row ids, in the order picked.",
+        help_text="Session, call, trace and dataset imports: session ids, the trace"
+        " ids of calls or traces, or row ids, in the order picked.",
     )
     dataset_id = serializers.UUIDField(
         required=False, help_text="Dataset imports: the dataset."

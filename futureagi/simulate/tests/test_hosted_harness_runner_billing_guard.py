@@ -394,19 +394,24 @@ def test_receipt_ingest_can_skip_the_usage_replay(
     )
     body = _skipped_receipt(attempt)
 
-    with django_capture_on_commit_callbacks() as silent:
-        _, created = ingest_result_receipt(attempt, body, replay_usage=False)
-    assert created is True
-    assert silent == []
+    # Other after-commit work (the worker read) may run; only the usage replay is what charges.
+    with (
+        patch("simulate.services.harness_usage.replay_harness_usage") as replay,
+        patch("simulate.services.hosted_harness_ingestion.dispatch_worker_read"),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            _, created = ingest_result_receipt(attempt, body, replay_usage=False)
+        assert created is True
+        replay.assert_not_called()
 
-    with django_capture_on_commit_callbacks() as silent_again:
-        _, created = ingest_result_receipt(attempt, body, replay_usage=False)
-    assert created is False
-    assert silent_again == []
+        with django_capture_on_commit_callbacks(execute=True):
+            _, created = ingest_result_receipt(attempt, body, replay_usage=False)
+        assert created is False
+        replay.assert_not_called()
 
-    with django_capture_on_commit_callbacks() as replayed:
-        ingest_result_receipt(attempt, body)
-    assert len(replayed) == 1
+        with django_capture_on_commit_callbacks(execute=True):
+            ingest_result_receipt(attempt, body)
+        replay.assert_called_once()
 
 
 def test_offline_recovery_ingests_receipts_without_replaying_usage(monkeypatch):

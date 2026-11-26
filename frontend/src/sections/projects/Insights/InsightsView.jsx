@@ -151,6 +151,7 @@ export default function InsightsView() {
             <Button
               component={RouterLink}
               to={paths.dashboard.observe}
+              variant="outlined"
               color="inherit"
               size="small"
             >

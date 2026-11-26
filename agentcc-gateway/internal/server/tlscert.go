@@ -123,7 +123,30 @@ func (r *certReloader) reload(force bool) (bool, error) {
 	} else {
 		slog.Info("TLS certificate reloaded", attrs...)
 	}
+	r.warnBroadKeyMode()
 	return true, nil
+}
+
+// broadKeyMode is the permission bits that make a private key overly broad:
+// any access for other users, or group write or execute. Owner-only (0400,
+// 0600) and group-readable (0440, 0640) keys are fine: a Kubernetes Secret
+// volume with an fsGroup gives the pod's group read access to the key.
+const broadKeyMode os.FileMode = 0o037
+
+// warnBroadKeyMode logs a warning, with the key file's path and mode, when
+// the key is readable or writable by more than its owner and group. The
+// certificate is served regardless; a key that cannot be stat'ed has just
+// been read, so it is left alone. Stat follows symlinks, as a Secret volume's
+// paths are.
+func (r *certReloader) warnBroadKeyMode() {
+	info, err := os.Stat(r.keyFile)
+	if err != nil {
+		return
+	}
+	if mode := info.Mode().Perm(); mode&broadKeyMode != 0 {
+		slog.Warn("TLS private key file is readable or writable beyond its owner and group; restrict it, for example to mode 0600 or 0440",
+			"key_file", r.keyFile, "mode", fmt.Sprintf("%04o", mode))
+	}
 }
 
 // failed reports a pair that did not load. At startup that is the error;

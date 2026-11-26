@@ -24,6 +24,12 @@ import { seedEnvironment } from '../../lib/environment-seed';
 
 // One browser action's first-paint budget (see README "UI_READY").
 const UI_READY = 60_000;
+// The way in: the toolbar button's accessible name, pinned from SCENARIOS_COPY.addLabel in
+// frontend/src/sections/simulate/environments/workspace/scenarios/scenarios.constants.js, and
+// the panel's card, named by its title then its one line, pinned from SOURCES in
+// frontend/src/sections/simulate/environments/workspace/scenarios/AddScenariosDrawer.jsx.
+const ADD_SCENARIOS = 'Add scenarios';
+const UPLOAD_SOURCE = /^Upload transcript or file/;
 // Copy, pinned from frontend/src/sections/simulate/environments/evidence/evidence.constants.js.
 const DIALOG_BODY = /Paste a transcript or upload files/;
 const CREATE = 'Create environment test';
@@ -52,7 +58,7 @@ test(
         'A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript',
       steps: [
         'seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)',
-        "open the environment's Scenarios tab, choose Import evidence, then Add a transcript",
+        "open the environment's Scenarios tab, choose Add scenarios, then Upload transcript or file",
         'paste a transcript whose second line has an unknown speaker, import it and read the refusal',
         'fix the line, name the transcript and import it',
         "land on the Scenarios tab with the import's review open",
@@ -70,7 +76,7 @@ test(
   async ({ page, actor, probe }, testInfo) => {
     // Seeding + five UI_READY browser steps (tab, dialog, refusal, import, review).
     test.setTimeout(240_000);
-    const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
+    const suffix = `${testInfo.workerIndex}-${[...String(Date.now())].join('_')}`;
     const ask = `e2e-ask-${suffix}`;
     const email = `e2e-${suffix}@example.com`;
     const name = `e2e-sim4-${suffix}`;
@@ -85,10 +91,10 @@ test(
     await testInfo.attach('seeded', { contentType: 'application/json', body: JSON.stringify({ environment, ask }) });
 
     const dialog = page.getByRole('dialog').filter({ hasText: DIALOG_BODY });
-    await test.step('open Add a transcript', async () => {
+    await test.step('open Upload transcript or file', async () => {
       await page.goto(`/dashboard/simulate/environments/${env}?tab=scenarios`);
-      await page.getByRole('button', { name: 'Import evidence' }).click({ timeout: UI_READY });
-      await page.getByRole('dialog').getByRole('button', { name: 'Add a transcript' }).click();
+      await page.getByRole('button', { name: ADD_SCENARIOS }).click({ timeout: UI_READY });
+      await page.getByRole('button', { name: UPLOAD_SOURCE }).click({ timeout: UI_READY });
       await expect(dialog).toBeVisible({ timeout: UI_READY });
     });
 
@@ -146,6 +152,13 @@ test(
     expect(stored).toHaveLength(1);
     expect(`${stored[0].redaction}\n${stored[0].transcript}`).not.toContain(email);
     expect(stored[0].transcript).toContain(ask);
+    const storedTranscript = JSON.parse(stored[0].transcript) as Bundle['cases'][number]['transcript'];
+    const firstUserTurn = storedTranscript.turns.find(turn => turn.role === 'user');
+    expect(firstUserTurn).toBeDefined();
+    await testInfo.attach('stored-first-user-turn', {
+      contentType: 'application/json', body: JSON.stringify(firstUserTurn),
+    });
+    expect(firstUserTurn!.text).toBe(`${ask}: my refund never arrived, write to <EMAIL_ADDRESS>`);
 
     // Check 5: read again through the route the review reads.
     const again = await actor.api.get<Bundle>(`${imports(env)}${bundle.id}/`);

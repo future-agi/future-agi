@@ -21,10 +21,19 @@ import {
   useRunPlan,
   useSuiteMembers,
 } from "src/api/simulate-environments/versions";
+import { useReadiness } from "src/api/simulate-environments/readiness";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
+import { named } from "../agents/agentVersionStatus";
+import HeldBackBox from "./HeldBackBox";
+import ChangedSinceProvedBox from "./ChangedSinceProvedBox";
+import ReadyToRunSection from "./readiness/ReadyToRunSection";
+import { readinessView } from "./readiness/readinessView";
+
+// The run plan's warning that saved changes moved what some scenarios are graded on since they were proved.
+const CHANGED_SINCE_PROVED = "scenarios_need_revalidation";
 
 // Only versions a run can take are offered: an active environment or scenario
 // version, an agent version the server marks pickable (its check passed), and
@@ -34,7 +43,6 @@ const offered = (piece, version) =>
   version.isDefault ||
   (piece === "agent" ? version.pickable : version.status === "active");
 
-const named = (version) => version?.label || COPY.unlabelled;
 const optionLabel = (version) =>
   version.isDefault ? `${named(version)} (${COPY.default})` : named(version);
 
@@ -51,6 +59,7 @@ export default function RunDialog({
   initialPicks,
   initialSeed = null,
   onClose,
+  onOpenAgentVersions,
   onSubmit,
   submitting = false,
   error = null,
@@ -103,14 +112,14 @@ export default function RunDialog({
 
   const suite = options.suite.find((one) => one.id === selected.suite);
   const runAll = scenarioIds === undefined;
-  // Run-all of the default suite runs the server's current list; of another
-  // suite, that suite's scenarios, so it needs them. With versioning on the
-  // list may show unsaved changes, so the default's are named instead.
+  // Run-all names no scenarios: the server runs the picked suite whole. With versioning on that is a saved version,
+  // whose scenarios say how many run.
   const needsMembers =
     runAll &&
     Boolean(picks.suite || (env?.versioning?.enabled && selected.suite));
+  const membersWanted = Boolean(selected.suite) && (!runAll || needsMembers);
   const members = useSuiteMembers(env?.id, selected.suite, {
-    enabled: open && Boolean(selected.suite) && (!runAll || needsMembers),
+    enabled: open && membersWanted,
   });
   const memberKeys = members.data?.map((member) => member.scenario_key);
   const missing =
@@ -118,16 +127,42 @@ export default function RunDialog({
       ? scenarioIds.filter((key) => !memberKeys.includes(key))
       : [];
   // Selected scenarios the picked suite lacks are skipped.
-  let runIds = runAll
+  const runIds = runAll
     ? undefined
     : scenarioIds.filter((key) => !missing.includes(key));
-  if (needsMembers) runIds = memberKeys;
 
   const plan = useRunPlan(env?.id, picks, {
     enabled: open && !versions.isLoading,
-    scenarioKeys: runAll ? null : runIds,
+    scenarioKeys: runIds ?? null,
   });
-  const warnings = plan.data?.warnings || [];
+  const allWarnings = plan.data?.warnings || [];
+  const changed = allWarnings.filter(
+    (one) => one.code === CHANGED_SINCE_PROVED,
+  );
+  const warnings = allWarnings.filter(
+    (one) => one.code !== CHANGED_SINCE_PROVED,
+  );
+  const versioned = Boolean(env?.versioning?.enabled);
+  // What readiness holds back for these picks and scenarios, and how many run.
+  const selectionKeys = runIds ?? null;
+  // A selection is asked about only once settled: the suite's scenarios loaded and at least one picked, else the
+  // server refuses the keys.
+  const readiness = useReadiness(env?.id, picks, {
+    keys: selectionKeys,
+    trials,
+    enabled:
+      open &&
+      versioned &&
+      Boolean(data) &&
+      (runAll || (!(membersWanted && !memberKeys) && selectionKeys.length > 0)),
+  });
+  const selection = readiness.data?.selection;
+  const readyView = useMemo(
+    () => (readiness.data ? readinessView(readiness.data) : null),
+    [readiness.data],
+  );
+  // From a Re-check click until the server says it is checking, Run waits too.
+  const [sendingCheck, setSendingCheck] = useState(false);
   const refusedPlan = planRefusal(plan.error);
   const planFailed =
     plan.isError &&
@@ -181,6 +216,14 @@ export default function RunDialog({
   const blockedTools = plan.data ? plan.data.blocked_tools : [];
   if (!blocked && plan.data && !plan.data.runnable)
     blocked = COPY.allBlocked(blockedTools.map((entry) => entry.tool));
+  // With `next` set, a run of unproved cases starts their check or runs them unvalidated, so it isn't held.
+  if (
+    !blocked &&
+    selection?.held_back?.count > 0 &&
+    selection.running === 0 &&
+    !selection.next
+  )
+    blocked = COPY.allHeld;
 
   const submitError =
     error && error !== dismissedError ? inlineRunError(error) : null;
@@ -196,7 +239,10 @@ export default function RunDialog({
       : null;
   const dialogError = shownError && !pickerError ? shownError : null;
   const errorText = shownError
-    ? shownError.message || shownError.detail || COPY.refused
+    ? shownError.message ||
+      shownError.detail ||
+      COPY.errors[shownError.error] ||
+      COPY.refused
     : null;
 
   const canSubmit =
@@ -207,10 +253,16 @@ export default function RunDialog({
     !refusedPlan &&
     !blocked &&
     !seedError &&
+    // The server refuses a run while the pair is checked or after its check failed; the section says which.
+    !readyView?.holdsRun &&
+    !sendingCheck &&
     !(!runAll && members.isLoading) &&
     (!needsMembers || memberKeys?.length > 0);
 
+  // With readiness, the button says how many run; held ones are never sent, so nothing reads "anyway".
   let runLabel = warnings.length ? COPY.runAnyway : COPY.run;
+  // Nothing to run keeps the plain label; the blocked line says why.
+  if (selection?.running > 0) runLabel = COPY.runCount(selection.running);
   if (submitting) runLabel = COPY.starting;
 
   const pick = (piece, id) => {
@@ -267,7 +319,8 @@ export default function RunDialog({
     return `${COPY.allScenarios(memberKeys.length, named(suite))}${repeats}`;
   };
 
-  const blockedToolLines = plan.data && (
+  // The held-back box names every reason, the blocked tools' among them.
+  const blockedToolLines = plan.data && !selection?.held_back?.count && (
     <RunBlockedLine
       blockedTools={blockedTools}
       heldBack={plan.data.held_back}
@@ -311,6 +364,31 @@ export default function RunDialog({
             {line}
           </Typography>
         )}
+        {selection && !blocked && Number.isInteger(selection.running) && (
+          <Typography
+            data-testid="run-will-run"
+            sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
+          >
+            {COPY.willRun(selection.running, selection.requested)}
+          </Typography>
+        )}
+        {versioned && (
+          <ReadyToRunSection
+            envId={env?.id}
+            picks={picks}
+            keys={selectionKeys}
+            trials={trials}
+            readiness={readiness}
+            view={readyView}
+            onSendingChange={setSendingCheck}
+            onOpenAgentVersions={onOpenAgentVersions}
+          />
+        )}
+        <HeldBackBox
+          shownRows={readyView?.open.map((line) => line.rowId)}
+          selection={selection}
+        />
+        <ChangedSinceProvedBox warnings={changed} />
         <RunSeedLine
           seed={seed}
           value={seedValue}
@@ -392,6 +470,7 @@ export default function RunDialog({
 
   return (
     <Dialog
+      data-scenario-run-dialog=""
       open={open}
       onClose={submitting ? undefined : onClose}
       fullWidth
@@ -435,6 +514,8 @@ RunDialog.propTypes = {
   initialPicks: PropTypes.objectOf(PropTypes.string),
   initialSeed: PropTypes.string,
   onClose: PropTypes.func,
+  // Opens the agent's versions for a fix made on the agent; absent where that can't open.
+  onOpenAgentVersions: PropTypes.func,
   // (picks, scenarioIds, resolved version ids, seed or null)
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,

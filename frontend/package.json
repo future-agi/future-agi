@@ -72,6 +72,7 @@
     "@tanstack/react-virtual": "^3.13.23",
     "@textea/json-viewer": "^4.0.1",
     "@xyflow/react": "^12.8.4",
+    "acorn": "^8.14.0",
     "ag-grid-enterprise": "35.0.0",
     "ag-grid-react": "35.0.0",
     "apexcharts": "^3.45.1",
@@ -125,6 +126,7 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
     "resize-observer-polyfill": "^1.5.1",
     "scatter-gl": "^0.0.13",
     "simplebar-react": "^3.2.4",
@@ -135,6 +137,7 @@
     "swiper": "^12.0.3",
     "swr": "^2.2.4",
     "three": "^0.158.0",
+    "unified": "^11.0.0",
     "uuid": "^13.0.0",
     "victory": "^36.6.12",
     "wavesurfer-multitrack": "^0.4.12",
@@ -146,7 +149,15 @@
     "zustand": "^5.0.6"
   },
   "resolutions": {
-    "strip-ansi": "6.0.1"
+    "strip-ansi": "6.0.1",
+    "protobufjs": "^7.5.5",
+    "form-data": "^4.0.6",
+    "tar": "7.5.22"
+  },
+  "overrides": {
+    "protobufjs": "^7.5.5",
+    "form-data": "^4.0.6",
+    "tar": "7.5.22"
   },
   "devDependencies": {
     "@storybook/addon-docs": "^9.1.20",
@@ -162,8 +173,8 @@
     "@typescript-eslint/eslint-plugin": "6.21.0",
     "@typescript-eslint/parser": "6.21.0",
     "@vitejs/plugin-react-swc": "^3.11.0",
-    "@vitest/coverage-v8": "3.2.3",
-    "@vitest/ui": "^3.2.3",
+    "@vitest/coverage-v8": "3.2.7",
+    "@vitest/ui": "^3.2.7",
     "eslint": "^8.50.0",
     "eslint-config-airbnb": "^19.0.4",
     "eslint-config-prettier": "^9.0.0",
@@ -186,7 +197,7 @@
     "typescript": "^5.2.2",
     "vite": "^5.4.21",
     "vite-plugin-checker": "^0.12.0",
-    "vitest": "^3.2.3"
+    "vitest": "^3.2.7"
   },
   "msw": {
     "workerDirectory": [

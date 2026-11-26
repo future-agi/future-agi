@@ -6,6 +6,8 @@ import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { personaSubline } from "./personaLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { ACTORS_COPY } from "../actors/actors.constants";
+import { LifecycleHeaderLine, LifecycleSection } from "./ScenarioLifecycle";
+import ArchiveScenarioButton from "./ArchiveScenarioButton";
 import {
   TEST_CONDITIONS_COPY,
   testConditionRoute,
@@ -30,53 +32,79 @@ const SECTION_HEAD = {
 };
 
 export default function ScenarioDrawer({
+  envId,
   row,
   onClose,
   onEdit,
   locked = false,
+  testConditions = false,
+  onLifecycleChange,
 }) {
   return (
     <SideDrawer open={!!row} onClose={onClose} width={680}>
       {row && (
         <Stack sx={{ height: "100%" }}>
+          {/* The name and what's done to the scenario, level with the shell's close button; its state and Validate
+              beneath. */}
           <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1.5}
+            spacing={1}
             sx={{
+              pt: 1,
+              pb: 1.5,
               px: 3,
-              py: 2,
-              pr: 6,
               borderBottom: "1px solid",
               borderColor: "divider",
               flexShrink: 0,
             }}
           >
-            <Box flex={1} minWidth={0}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ minHeight: 28, pr: 3 }}
+            >
               <Typography
                 noWrap
-                sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}
+                sx={{
+                  typography: "m1",
+                  fontWeight: "fontWeightMedium",
+                  flex: 1,
+                  minWidth: 0,
+                }}
               >
                 {row.name || row.title}
               </Typography>
-            </Box>
-            {!locked && onEdit && (
-              <Button
-                size="small"
-                variant="outlined"
-                color="inherit"
-                onClick={() => onEdit(row)}
-                startIcon={
-                  <Iconify icon="solar:pen-new-square-linear" width={14} />
-                }
-                sx={{ flexShrink: 0 }}
-              >
-                Edit
-              </Button>
-            )}
+              {!locked && envId && (
+                <ArchiveScenarioButton
+                  envId={envId}
+                  row={row}
+                  onChanged={onLifecycleChange}
+                />
+              )}
+              {!locked && onEdit && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() => onEdit(row)}
+                  startIcon={
+                    <Iconify icon="solar:pen-new-square-linear" width={14} />
+                  }
+                  sx={{ flexShrink: 0 }}
+                >
+                  Edit
+                </Button>
+              )}
+            </Stack>
+            <LifecycleHeaderLine envId={envId} row={row} locked={locked} />
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            <ScenarioSheet row={row} />
+            <ScenarioSheet
+              envId={envId}
+              row={row}
+              testConditions={testConditions}
+              locked={locked}
+            />
           </Box>
         </Stack>
       )}
@@ -85,13 +113,18 @@ export default function ScenarioDrawer({
 }
 
 ScenarioDrawer.propTypes = {
+  envId: PropTypes.string,
   row: SCENARIO_SHAPE,
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
   locked: PropTypes.bool,
+  // Whether the server takes test conditions; without them a scenario that has none shows no row for them.
+  testConditions: PropTypes.bool,
+  // Gets the scenario's new lifecycle after an archive or restore, so the open drawer shows it.
+  onLifecycleChange: PropTypes.func,
 };
 
-function ScenarioSheet({ row }) {
+function ScenarioSheet({ envId, row, testConditions = false, locked = false }) {
   const persona = row.persona?.name ? row.persona : null;
   const goals = normaliseSubTasks(row.subTasks);
   const problem = row.doorProblem;
@@ -210,30 +243,32 @@ function ScenarioSheet({ row }) {
         </Stack>
       </Row>
     ),
-    <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
-      <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
-        {row.faults?.length > 0 ? (
-          row.faults.map((fault, index) => (
-            <Box key={`${fault.action}-${index}`}>
-              <Typography className="sd-val">{fault.line}</Typography>
-              {testConditionRoute(fault) && (
-                <Typography
-                  className="sd-val"
-                  sx={{ typography: "s2", color: "text.subtitle" }}
-                >
-                  {testConditionRoute(fault)}
-                </Typography>
-              )}
-            </Box>
-          ))
-        ) : (
-          <Typography className="sd-val">
-            {TEST_CONDITIONS_COPY.empty}
-          </Typography>
-        )}
-        {problemLine("fault_unreachable")}
-      </Stack>
-    </Row>,
+    (testConditions || row.faults?.length > 0) && (
+      <Row key="conditions" label={TEST_CONDITIONS_COPY.heading}>
+        <Stack spacing={0.5} sx={{ maxWidth: 760 }}>
+          {row.faults?.length > 0 ? (
+            row.faults.map((fault, index) => (
+              <Box key={`${fault.action}-${index}`}>
+                <Typography className="sd-val">{fault.line}</Typography>
+                {testConditionRoute(fault) && (
+                  <Typography
+                    className="sd-val"
+                    sx={{ typography: "s2", color: "text.subtitle" }}
+                  >
+                    {testConditionRoute(fault)}
+                  </Typography>
+                )}
+              </Box>
+            ))
+          ) : (
+            <Typography className="sd-val">
+              {TEST_CONDITIONS_COPY.empty}
+            </Typography>
+          )}
+          {problemLine("fault_unreachable")}
+        </Stack>
+      </Row>
+    ),
     idealOutcome && (
       <Row key="outcome" label="Ideal outcome">
         <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>
@@ -243,28 +278,43 @@ function ScenarioSheet({ row }) {
     ),
   ].filter(Boolean);
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !row.lifecycle) return null;
   return (
     <Stack spacing={3} sx={{ px: 3, py: 3, "& .sd-val": VAL_SX }}>
-      <Box>
-        <Typography sx={SECTION_HEAD}>Scenario</Typography>
-        <Box
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            "& > .sr + .sr": { borderTop: "1px solid", borderColor: "divider" },
-          }}
-        >
-          {rows}
+      <LifecycleSection
+        envId={envId}
+        lifecycle={row.lifecycle}
+        Row={Row}
+        sectionSx={SECTION_HEAD}
+        locked={locked}
+      />
+      {rows.length > 0 && (
+        <Box>
+          <Typography sx={SECTION_HEAD}>Scenario</Typography>
+          <Box
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+              "& > .sr + .sr": {
+                borderTop: "1px solid",
+                borderColor: "divider",
+              },
+            }}
+          >
+            {rows}
+          </Box>
         </Box>
-      </Box>
+      )}
     </Stack>
   );
 }
 
 ScenarioSheet.propTypes = {
+  envId: PropTypes.string,
   row: SCENARIO_SHAPE,
+  testConditions: PropTypes.bool,
+  locked: PropTypes.bool,
 };
 
 function Row({ label, children }) {

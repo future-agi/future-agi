@@ -6,10 +6,41 @@ All permission checks should go through these functions.
 """
 
 from tfc.constants.levels import Level
-from tfc.middleware.workspace_context import get_current_organization
+from tfc.middleware.workspace_context import (
+    get_current_organization,
+    get_current_user,
+    get_current_workspace,
+)
+from tfc.utils.api_errors import ApiErrorCode
+from tfc.utils.error_codes import get_error_message
+
+VIEWER_READ_ONLY_CODE = ApiErrorCode.VIEWER_READ_ONLY.value
 
 
-def get_org_membership(user):
+def viewer_denied_message(action=None):
+    if not action:
+        return get_error_message("VIEWER_READ_ONLY")
+    return f"Viewers can't {action}. Ask a workspace admin for the Member role."
+
+
+def is_read_only_user(user=None, workspace=None):
+    user = user or get_current_user()
+    if not user or not user.is_authenticated:
+        return False
+    workspace = workspace or get_current_workspace()
+    if workspace is not None:
+        return not user.can_write_to_workspace(workspace)
+    membership = get_org_membership(user)
+    return membership is None or membership.level_or_legacy < Level.MEMBER
+
+
+def cached_is_read_only_user(context):
+    if "read_only_user" not in context:
+        context["read_only_user"] = is_read_only_user()
+    return context["read_only_user"]
+
+
+def get_org_membership(user, *, organization=None):
     """
     Get the user's OrganizationMembership for the current organization.
 
@@ -19,7 +50,7 @@ def get_org_membership(user):
     if not user or not user.is_authenticated:
         return None
 
-    org = get_current_organization()
+    org = organization or get_current_organization()
     if not org:
         # Fallback to user's organization
         org = getattr(user, "organization", None)
@@ -38,7 +69,7 @@ def get_org_membership(user):
         return None
 
 
-def get_effective_workspace_level(user, workspace_id):
+def get_effective_workspace_level(user, workspace_id, *, organization=None):
     """
     Resolve the effective workspace level for a user.
 
@@ -47,7 +78,7 @@ def get_effective_workspace_level(user, workspace_id):
     - Org Admins+ automatically get WORKSPACE_ADMIN in every workspace.
     - Returns the integer level, or None if no access.
     """
-    org_membership = get_org_membership(user)
+    org_membership = get_org_membership(user, organization=organization)
     if org_membership is None:
         return None
 

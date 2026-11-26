@@ -19,6 +19,7 @@ from django.core.cache import cache
 from django.db.models import Func, JSONField, QuerySet
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.services.call_provider import call_agent_provider_expression
 from simulate.services.harness_scenarios import level_label
 from simulate.services.run_results_v3 import (
     CALL_ROW_FIELDS,
@@ -142,8 +143,9 @@ def _cache_key(
             default=str,
         ).encode()
     ).hexdigest()
-    # v2 names the shape of a cached row; an entry written in another shape must miss.
-    return f"simulate:v3:calls:v2:{execution.id}:{version.timestamp()}:{fingerprint}"
+    # v3 names the shape and the outcome rules of a cached row (a worker's own check no longer fails the call);
+    # an entry written under other rules must miss.
+    return f"simulate:v3:calls:v3:{execution.id}:{version.timestamp()}:{fingerprint}"
 
 
 def _cached_call_values(
@@ -414,6 +416,7 @@ def page_calls(page: dict[str, Any], execution: TestExecution) -> list[CallExecu
     # per joined row), so a page reads only what build_call_rows uses.
     queryset = (
         CallExecution.objects.filter(id__in=page["page_ids"])
+        .annotate(result_provider=call_agent_provider_expression())
         .select_related("scenario")
         .only(
             *CALL_ROW_FIELDS,

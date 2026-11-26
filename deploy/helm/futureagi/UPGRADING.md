@@ -27,6 +27,30 @@ Kubernetes transition: storage, controllers and recovery procedures differ.
    Pin the chart digest and the target release's signing identity together. Retain
    the verification record beside the reviewed change, without credentials.
 
+### Check the collector admin address
+
+A saved `fiCollector.extraEnv.FI_ADMIN_ADDR: ":9500"` now moves the collector's
+Pod listener, readiness probe, Service target and optional GKE health check
+together. Clients keep using Service port `9464`. With no override, the Pod also
+listens on `:9464`. If you manage a separate fixed-port load-balancer check,
+update it to match the Pod port.
+
+Before upgrading, check saved **and** new values. The chart accepts `:PORT`,
+`0.0.0.0:PORT` and `[::]:PORT` without changing the bind host. Choose an
+unprivileged port (1024–65535) other than the OTLP ports 4317 and 4318. It rejects
+an admin port shared with `FI_HTTP_ADDR` or `FI_GRPC_ADDR` before creating a new
+release revision. If both saved addresses use `:9500`, for example, keep the
+receiver on 9500 and set `--set-string fiCollector.extraEnv.FI_ADMIN_ADDR=:9501`
+on the upgrade. The admin Service stays on 9464. Use numeric receiver ports so
+Helm can compare them without resolving a service name or environment variable;
+`FI_HTTP_ADDR: "off"` and `"disable"` still turn off that receiver.
+
+The chart rejects loopback or other host-specific **admin** addresses rather than silently exposing them or
+rolling out an unreachable Pod. If a Pod-reachable listener is appropriate,
+replace such an override with `:PORT` or remove it to use the default; otherwise
+do not upgrade with this chart. `HEALTHCHECK_URL` is for the standalone Docker
+image check and does not configure Kubernetes probes.
+
 ## Prepare a signed release without changing the cluster
 
 From a trusted checkout of this repository, use Python 3.9+ with PyYAML, Helm 4,

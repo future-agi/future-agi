@@ -51,16 +51,75 @@ describe("jobToBuildProgress", () => {
     });
   });
 
+  it("puts a folder that can't be read on the first step, with no retry", () => {
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "acquiring_source",
+          code: "subfolder_not_found",
+          message: "The folder 'agents/support' is not in this repository",
+          domain: "agent",
+        },
+      }),
+    );
+    expect(out.failure.stepId).toBe("understand");
+    expect(out.failure.detail).toBe(
+      "The folder 'agents/support' is not in this repository",
+    );
+    expect(out.failure.retryable).toBe(false);
+  });
+
   it("maps a failure stage to its milestone's first pipeline step", () => {
     const out = jobToBuildProgress(
       jobAt("failed", {
-        failure: { stage: "building_environment", message: "boom", domain: "infrastructure" },
+        failure: {
+          stage: "building_environment",
+          message: "boom",
+          person_message: "Server wording for this failed build.",
+          domain: "infrastructure",
+        },
       }),
     );
     expect(out.running).toBe(false);
     expect(out.done).toEqual(["understand"]);
-    expect(out.failure).toMatchObject({ stepId: "generate-env", retryable: true });
-    expect(out.failure.detail).toBe("boom");
+    expect(out.failure).toMatchObject({
+      stepId: "generate-env",
+      retryable: true,
+    });
+    expect(out.failure.detail).toBe("Server wording for this failed build.");
+  });
+
+  it("reads a failure the platform set as final as recorded, never as a retry", () => {
+    // The platform writes these with retryable false: the same build would fail the same way.
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "understanding_agent",
+          domain: "infrastructure",
+          code: "subfolder_ignored",
+          retryable: false,
+          message:
+            "the build asked for folder 'agents/support' but the harness read the repository root",
+        },
+      }),
+    );
+    expect(out.failure.detail).toBe(
+      "the build asked for folder 'agents/support' but the harness read the repository root",
+    );
+  });
+
+  it("leaves a failure with no cause outside our infrastructure as recorded", () => {
+    const out = jobToBuildProgress(
+      jobAt("failed", {
+        failure: {
+          stage: "building_environment",
+          domain: "environment",
+          code: "provider_credentials_invalid",
+          message: "The Vapi key was rejected.",
+        },
+      }),
+    );
+    expect(out.failure.detail).toBe("The Vapi key was rejected.");
   });
 
   it("marks a canceled build terminal (freezes the animation) without failing a step", () => {
@@ -74,7 +133,11 @@ describe("jobToBuildProgress", () => {
   });
 
   it("returns an empty slice for a job with no status", () => {
-    expect(jobToBuildProgress(undefined)).toEqual({ done: [], running: false, failure: null });
+    expect(jobToBuildProgress(undefined)).toEqual({
+      done: [],
+      running: false,
+      failure: null,
+    });
   });
 });
 
@@ -88,7 +151,12 @@ describe("useBuildProgress — real poll", () => {
   it("derives the slice from the live job and narrates milestones", async () => {
     getHarnessJob.mockResolvedValue(jobAt("completed"));
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: true }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: true,
+        }),
       { wrapper: makeWrapper() },
     );
     await waitFor(() =>
@@ -101,7 +169,12 @@ describe("useBuildProgress — real poll", () => {
   it("does not fetch while disabled", () => {
     getHarnessJob.mockResolvedValue(jobAt("completed"));
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: false }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: false,
+        }),
       { wrapper: makeWrapper() },
     );
     expect(getHarnessJob).not.toHaveBeenCalled();
@@ -110,13 +183,24 @@ describe("useBuildProgress — real poll", () => {
 
   it("answers a console ask with a fixture reply (no build API)", () => {
     const { result } = renderHook(
-      () => useBuildProgress({ envId: "job-1", agentRef: "acme/bot@main", enabled: false }),
+      () =>
+        useBuildProgress({
+          envId: "job-1",
+          agentRef: "acme/bot@main",
+          enabled: false,
+        }),
       { wrapper: makeWrapper() },
     );
     act(() => result.current.send("what did you seed?"));
     const [userTurn, builderTurn] = result.current.turns;
-    expect(userTurn).toMatchObject({ role: "user", text: "what did you seed?" });
-    expect(builderTurn.steps[0]).toMatchObject({ kind: "json", label: "seeded" });
+    expect(userTurn).toMatchObject({
+      role: "user",
+      text: "what did you seed?",
+    });
+    expect(builderTurn.steps[0]).toMatchObject({
+      kind: "json",
+      label: "seeded",
+    });
   });
 });
 

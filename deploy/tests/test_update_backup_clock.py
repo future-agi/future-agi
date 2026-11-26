@@ -2,6 +2,7 @@
 from dataclasses import replace
 from datetime import timedelta, timezone
 from types import SimpleNamespace
+import time
 import unittest
 from unittest import mock
 
@@ -12,6 +13,22 @@ from deploy.update import standalone_backup as backup
 from deploy.update import standalone_restore as restore
 from deploy.update.backup_proof import validate_backup_proof
 from deploy.update.recovery import RecoveryLedger
+
+
+class _BackupModuleTime:
+    """``time`` as seen by standalone_backup alone, with a fake ``sleep``.
+
+    ``backup.time`` is the process-wide ``time`` module. Patching its
+    ``sleep`` also fakes every stdlib sleep the backup triggers, such as
+    ``Popen.wait`` polling for an archive child that has closed its pipes but
+    is not reaped yet, and that sleep comes after containers are stopped.
+    """
+
+    def __init__(self, sleep):
+        self.sleep = sleep
+
+    def __getattr__(self, name):
+        return getattr(time, name)
 
 
 class BackupClockTests(unittest.TestCase):
@@ -34,7 +51,8 @@ class BackupClockTests(unittest.TestCase):
                         self.assertEqual(f.mutation_calls(), [])
                         self.assertEqual(seconds, .5)
                         now[0] += timedelta(seconds=seconds)
-                    with mock.patch.object(backup.time, 'sleep', side_effect=wait) as sleep:
+                    sleep = mock.Mock(side_effect=wait)
+                    with mock.patch.object(backup, 'time', _BackupModuleTime(sleep)):
                         if cold:
                             ledger = RecoveryLedger.reserve(f.destination, f.expected,
                                 operation_token='token', run_id='run', binding_sha256='2'*64)

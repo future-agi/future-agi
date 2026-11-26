@@ -4,6 +4,7 @@ import {
   MAX_LABEL_COLUMNS,
   MAX_TRANSCRIPT_CHARS,
 } from "src/api/simulate-environments/evidenceImports";
+import { sessionTracesLink } from "src/sections/projects/Insights/insightsLinks";
 
 // What the import review says. One term per thing: an "import" holds "cases",
 // each from one Observe session or call, one dataset row, or one transcript a
@@ -16,7 +17,16 @@ export const IMPORT_PARAM = "import";
 export const EVIDENCE_ACTION_ID = "create-environment-test";
 
 // The kinds Observe keeps; a transcript or a dataset row comes from outside it.
-export const OBSERVE_KINDS = new Set(["session", "call"]);
+export const OBSERVE_KINDS = new Set(["session", "call", "trace"]);
+
+// Where Observe shows a case's source: a session's traces around when it ran, or
+// the call's or trace's own trace. None for evidence from outside Observe.
+export const observeHref = (projectId, kind, one) => {
+  if (!OBSERVE_KINDS.has(kind) || !projectId || !one.source_id) return null;
+  return kind !== "session"
+    ? `/dashboard/observe/${projectId}/trace/${encodeURIComponent(one.source_id)}`
+    : sessionTracesLink(projectId, one.source_id, one.started_at);
+};
 
 // A transcript or dataset import nobody marked as production: the mark is
 // fixed at import, so changing it means importing again.
@@ -56,13 +66,6 @@ export const EVIDENCE_COPY = {
   // The action and the button that confirms it share one name.
   create: "Create environment test",
   creating: "Creating…",
-  importButton: "Import evidence",
-  importHintTitle: "Import evidence",
-  importHint:
-    "Pick sessions or calls in Observe, or rows in a dataset, then choose Create environment test. Or add a transcript you have.",
-  openObserve: "Open Observe",
-  openDataset: "Open a dataset",
-  addTranscript: "Add a transcript",
   transcriptTitle: "Add a transcript",
   transcriptBody: `Paste a transcript or upload files. Emails, phone, card and ID numbers become placeholders; an import keeps ${MAX_IMPORT_KEPT_CHARS.toLocaleString("en-US")} characters, shared by its files.`,
   pasteLabel: "Transcript",

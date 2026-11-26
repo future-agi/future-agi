@@ -36,7 +36,16 @@ func newErrorBody(errorType, message, code string) errorBody {
 
 // WriteError writes an error response in Anthropic format.
 func WriteError(w http.ResponseWriter, statusCode int, errorType string, message string) {
-	writeErrorBody(w, statusCode, newErrorBody(errorType, message, ""))
+	code := ""
+	if gate, ok := w.(interface {
+		GuardrailError(*models.APIError) *models.APIError
+	}); ok {
+		original := &models.APIError{Status: statusCode, Type: errorType, Message: message}
+		if safe := gate.GuardrailError(original); safe != original {
+			statusCode, errorType, message, code = safe.Status, ErrorType(safe), safe.Message, safe.Code
+		}
+	}
+	writeErrorBody(w, statusCode, newErrorBody(errorType, message, code))
 }
 
 func writeErrorBody(w http.ResponseWriter, statusCode int, body errorBody) {
@@ -86,5 +95,10 @@ func MapStatusToErrorType(statusCode int) string {
 
 // WriteAPIError converts a gateway APIError to Anthropic error format.
 func WriteAPIError(w http.ResponseWriter, apiErr *models.APIError) {
+	if gate, ok := w.(interface {
+		GuardrailError(*models.APIError) *models.APIError
+	}); ok {
+		apiErr = gate.GuardrailError(apiErr)
+	}
 	writeErrorBody(w, apiErr.Status, newErrorBody(ErrorType(apiErr), apiErr.Message, apiErr.Code))
 }

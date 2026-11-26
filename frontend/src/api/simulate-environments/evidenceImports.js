@@ -174,6 +174,15 @@ export function useDraftEvidenceCases(envId, importId) {
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: (body) => draftEvidenceCases(envId, importId, body),
+    onError: (error) => {
+      const status = error?.statusCode ?? error?.response?.status;
+      if (status >= 400 && status < 500) return;
+      // The server may already be drafting. Read the review, not another POST.
+      return queryClient.invalidateQueries({
+        queryKey: evidenceImportKey(envId, importId),
+        exact: true,
+      });
+    },
     onSuccess: (data) => {
       queryClient.setQueryData(evidenceImportKey(envId, importId), data);
       refreshImports(queryClient, envId);

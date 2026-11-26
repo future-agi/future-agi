@@ -1,6 +1,56 @@
-"""Tests for strip_code_fence — the shared Markdown-fence unwrapper."""
+"""Tests for JSON extraction and Markdown-fence unwrapping."""
 
-from agentic_eval.core.utils.json_utils import strip_code_fence
+import json
+
+import pytest
+
+from agentic_eval.core.utils.json_utils import (
+    extract_dict_from_string,
+    strip_code_fence,
+)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("wrapper", ["{}", "```json\n{}\n```", "Response:\n{}\nDone."])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "left\tright",
+        "left\rright",
+        "left\r\nright",
+        r"C:\temp\report.txt",
+        r"\r?\t+",
+        r"\text{answer}",
+        "plain text",
+        "left\nright",
+    ],
+)
+def test_extract_dict_preserves_json_strings(text, wrapper):
+    expected = {"reason": text, "details": {"values": [text]}, "score": 0.75}
+    payload = wrapper.format(json.dumps(expected, indent=2))
+    assert extract_dict_from_string(payload) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("indent", [r"\t", r"\r"])
+def test_extract_dict_recovers_escaped_indentation_without_changing_strings(indent):
+    expected = {
+        "result": "Pass",
+        "explanation": 'it\'s "ready"\tC:\\temp\\report.txt\r',
+    }
+    reply = "{" + indent + json.dumps(expected)[1:-1] + indent + "}"
+    assert extract_dict_from_string(reply) == expected
+
+
+@pytest.mark.unit
+def test_extract_dict_keeps_single_quoted_object_fallback():
+    assert extract_dict_from_string("Response: {'score': 0.75}") == {"score": 0.75}
+
+
+@pytest.mark.unit
+def test_extract_dict_rejects_text_without_an_object():
+    with pytest.raises(ValueError, match="Unable to generate a response"):
+        extract_dict_from_string("No JSON object here")
 
 
 def test_multiline_json_fence():
@@ -32,3 +82,10 @@ def test_none_and_empty_are_safe():
 def test_multiline_body_preserved():
     text = "```\nline1\nline2\n```"
     assert strip_code_fence(text) == "line1\nline2"
+
+
+@pytest.mark.unit
+def test_extract_dict_rejects_number_split_by_escaped_tab():
+    # Escaped indentation is whitespace, so this is not the number 12.
+    with pytest.raises(ValueError):
+        extract_dict_from_string('{"score":1\\t2}')

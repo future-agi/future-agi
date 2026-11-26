@@ -10,11 +10,17 @@ import (
 // GuardrailResult captures a single guardrail check that was triggered.
 // Stored on RequestContext by the guardrails plugin for downstream logging.
 type GuardrailResult struct {
-	Name      string  `json:"name"`
-	Score     float64 `json:"score"`
-	Threshold float64 `json:"threshold"`
-	Action    string  `json:"action"` // "block", "warn", or "log"
-	Message   string  `json:"message"`
+	Name        string  `json:"name"`
+	Score       float64 `json:"score"`
+	Threshold   float64 `json:"threshold"`
+	Action      string  `json:"action"` // "block", "warn", or "log"
+	Message     string  `json:"message"`
+	PolicyID    string  `json:"policy_id,omitempty"`
+	PolicyName  string  `json:"policy_name,omitempty"`
+	PolicyScope string  `json:"policy_scope,omitempty"`
+	Mode        string  `json:"mode,omitempty"`
+	Outcome     string  `json:"outcome,omitempty"`
+	WouldAction string  `json:"would_action,omitempty"`
 }
 
 // TraceSnapshot is an immutable copy of RequestContext fields needed by
@@ -64,11 +70,9 @@ type RequestContext struct {
 	// notes from this baseline rather than accumulating stale provider drops.
 	TranslationDrops []string
 
-	// ResponsesCarriage reports that the serving provider attempt goes over the
-	// Responses route. The response cache stores only this fact with a cached
-	// response; a hit recomputes the omitted settings from the request it
-	// answers, since those settings are not part of the cache key.
-	ResponsesCarriage bool
+	// ChatRoute is the serving attempt's translation route. Cache hits use it
+	// to recompute omitted settings for the request being answered.
+	ChatRoute ChatRoute
 
 	// GuardrailRequest and GuardrailResponse carry the text of a request and
 	// its response, chat-shaped, on the routes that forward the client's own
@@ -77,6 +81,28 @@ type RequestContext struct {
 	// Response holds usage only. Guardrails read these; nothing else does.
 	GuardrailRequest  *ChatCompletionRequest
 	GuardrailResponse *ChatCompletionResponse
+
+	// SelectedGuardrailRequest is a complete, inspection-only view for selected
+	// key policies. It must not replace legacy org/static inspection views or the
+	// typed request forwarded to the provider (completions, embeddings, speech).
+	SelectedGuardrailRequest *ChatCompletionRequest `json:"-"`
+	// SelectedGuardrailResponse holds complete native output without expanding
+	// the legacy response used by org/static checks, accounting and observers.
+	SelectedGuardrailResponse *ChatCompletionResponse `json:"-"`
+
+	// Inspection is typed, request-local policy evidence, never caller metadata.
+	Inspection *InspectionState `json:"-"`
+
+	// GuardrailInspectionOnly marks a Request projection that is not the body
+	// forwarded by the selected route (native legacy completions). Keeping Request
+	// available to other plugins does not make its remediation wire-backed.
+	// Only selected checks use this marker; legacy checks retain their mutable
+	// working projection and remediation order.
+	GuardrailInspectionOnly bool
+	// Unsupported reasons describe route capabilities, never client content.
+	// Selected-key checks must not treat token IDs or binary output as empty text.
+	GuardrailInputUnsupported  string
+	GuardrailOutputUnsupported string
 
 	// ServedBy is the provider instance (a providers.Provider) that answered
 	// a chat request, recorded by the chat handlers when the attempt that
@@ -159,9 +185,13 @@ type RequestContext struct {
 type RequestFlags struct {
 	CacheHit           bool
 	GuardrailTriggered bool
-	FallbackUsed       bool
-	Timeout            bool
-	ShortCircuited     bool
+	GuardrailMonitored bool // monitor-only matches appear in logs, never in response headers
+	// StreamGuardrailBlocked marks a stream the streaming guardrail checker
+	// stopped; its results are already stored on the request.
+	StreamGuardrailBlocked bool
+	FallbackUsed           bool
+	Timeout                bool
+	ShortCircuited         bool
 	// NoSpend marks a call that cannot spend, such as a delete. Budget and
 	// credit limits do not refuse it: a key out of budget can still clean up.
 	NoSpend bool
@@ -198,6 +228,12 @@ func (rc *RequestContext) Release() {
 	rc.Response = nil
 	rc.GuardrailRequest = nil
 	rc.GuardrailResponse = nil
+	rc.SelectedGuardrailRequest = nil
+	rc.SelectedGuardrailResponse = nil
+	rc.Inspection = nil
+	rc.GuardrailInspectionOnly = false
+	rc.GuardrailInputUnsupported = ""
+	rc.GuardrailOutputUnsupported = ""
 	rc.IsStream = false
 	rc.SessionID = ""
 	rc.UserID = ""
@@ -226,7 +262,7 @@ func (rc *RequestContext) Release() {
 	rc.GuardrailResults = rc.GuardrailResults[:0]
 	rc.RequestHeaders = nil
 	rc.TranslationDrops = nil
-	rc.ResponsesCarriage = false
+	rc.ChatRoute = ""
 	rc.CustomMetadataKeys = rc.CustomMetadataKeys[:0]
 	rc.CallerExtras = nil
 	rc.CallerExtrasDropped = 0

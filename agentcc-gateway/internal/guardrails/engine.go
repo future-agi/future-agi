@@ -197,6 +197,15 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 }
 
 func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInput) *CheckResult {
+	if input.InspectionOnly {
+		// Static remediators must not modify the shared projection either: org
+		// and key policies run after them against the same actual wire input.
+		owned, err := cloneCheckInput(input)
+		if err != nil {
+			return e.handleError(rule, err)
+		}
+		input = owned
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, rule.timeout)
 	defer cancel()
 
@@ -235,10 +244,21 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 	if res.err != nil {
 		return e.handleError(rule, res.err)
 	}
+	if input.InspectionOnly && mutatesInput(rule.guardrail) && res.cr != nil && !res.cr.Pass {
+		res.cr.Message += passThroughNote
+	}
 	return res.cr
 }
 
 func (e *Engine) runAsync(rule resolvedRule, input *CheckInput) {
+	if input.InspectionOnly {
+		owned, err := cloneCheckInput(input)
+		if err != nil {
+			e.handleError(rule, err)
+			return
+		}
+		input = owned
+	}
 	// Acquire semaphore slot to bound concurrency. Drop if full.
 	select {
 	case e.asyncSem <- struct{}{}:

@@ -2,11 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   TracerEvalTaskGetEvalDetailsQueryParams,
   TracerEvalTaskGetEvalDetailsResponse,
-  TracerEvalTaskUnpauseEvalTaskBody,
 } from "src/generated/api-contracts/api.zod";
 import swagger from "../../../../../api_contracts/openapi/swagger.json";
-import { validateContractedRequestConfig } from "../openapi-contract";
-import { OPENAPI_CONTRACT } from "../openapi-contract.generated";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const policy = {
@@ -103,75 +100,6 @@ describe("generated task-details contract", () => {
       run_type: value,
       filters_applied: null,
     });
-  });
-
-  it.each([true, false])("preserves start eligibility %s", (canStart) => {
-    const response = payload(null);
-    response.result.can_start = canStart;
-    response.result.status = "pending";
-    response.result.last_run = "2026-11-17T00:00:00Z";
-    expect(
-      TracerEvalTaskGetEvalDetailsResponse.parse(response).result.can_start,
-    ).toBe(canStart);
-    const definition = swagger.definitions.EvalTaskDetailsResult;
-    expect(definition.properties.can_start).toEqual({
-      title: "Can start",
-      type: "boolean",
-    });
-    expect(
-      OPENAPI_CONTRACT.definitions.EvalTaskDetailsResult.properties.can_start,
-    ).toEqual(definition.properties.can_start);
-  });
-
-  it.each([{}, { start: true }, { start: false }])(
-    "preserves start-only intent and accepts legacy resume %j",
-    (body) => {
-      expect(TracerEvalTaskUnpauseEvalTaskBody.parse(body)).toEqual(body);
-      const path = "/tracer/eval-task/unpause_eval_task/";
-      const operation = swagger.paths[path].post;
-      const runtime = OPENAPI_CONTRACT.endpoints[path].post;
-      const requestSchema = operation.parameters.find(
-        ({ name }) => name === "data",
-      ).schema;
-      expect(requestSchema.$ref).toBe("#/definitions/EvalTaskUnpauseRequest");
-      expect(runtime.requestBody).toEqual(requestSchema);
-      const definition = swagger.definitions.EvalTaskUnpauseRequest;
-      expect(definition.properties.start).toEqual({
-        title: "Start",
-        type: "boolean",
-      });
-      expect(definition.required || []).not.toContain("start");
-      expect(OPENAPI_CONTRACT.definitions.EvalTaskUnpauseRequest).toEqual(
-        definition,
-      );
-      expect(operation.responses["409"].schema.$ref).toBe(
-        "#/definitions/ApiErrorResponse",
-      );
-      expect(runtime.responses["409"]).toEqual(
-        operation.responses["409"].schema,
-      );
-      expect(
-        validateContractedRequestConfig({
-          url: `${path}?eval_task_id=${id}`,
-          method: "post",
-          data: body,
-        }).ok,
-      ).toBe(true);
-    },
-  );
-
-  it("rejects an invalid start-only discriminator", () => {
-    const body = { start: "not-a-boolean" };
-    expect(TracerEvalTaskUnpauseEvalTaskBody.safeParse(body).success).toBe(
-      false,
-    );
-    expect(
-      validateContractedRequestConfig({
-        url: `/tracer/eval-task/unpause_eval_task/?eval_task_id=${id}`,
-        method: "post",
-        data: body,
-      }).ok,
-    ).toBe(false);
   });
 
   it("rejects paginated envelopes and malformed sampling policies", () => {

@@ -8,8 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-# What an import reads: Observe sessions or calls, transcripts or dataset rows.
-ImportKind = Literal["session", "call", "transcript", "dataset"]
+# What an import reads: Observe sessions, calls or traces, transcripts or dataset rows.
+ImportKind = Literal["session", "call", "trace", "transcript", "dataset"]
 # How redaction found what it replaced: Presidio, or the basic patterns without it.
 RedactionMethod = Literal["presidio", "basic"]
 

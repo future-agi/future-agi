@@ -87,6 +87,11 @@ export function gradingNote(fix) {
 export const fixName = (fix) =>
   fix.number == null ? "Epoch" : `Epoch ${fix.number}`;
 
+// What shipping a winner does, as its button says: a GitHub agent's winner opens a
+// pull request, and an uploaded agent's becomes the environment's default.
+export const shipLabel = (fix) =>
+  fix.agent?.kind === "github" ? "Open pull request" : "Make default";
+
 export function identityLine(fix) {
   const agent = [`agent v${fix.agent.version_number}`, fix.agent.ref]
     .filter(Boolean)
@@ -120,13 +125,14 @@ const whenEnded = (fix) =>
     : "before any candidate ran";
 
 // Failures that are ours, not the agent's: the user can only retry.
-const OUR_FAILURES = new Set([
+export const OUR_FAILURES = new Set([
   "fix_engine_failed",
   "fix_engine_died",
   "fix_watch_failed",
   "fix_workflow_lost",
   "fix_dispatch_failed",
   "fix_variations_failed",
+  "fix_variations_timeout",
   "scheduler_unavailable",
 ]);
 
@@ -149,10 +155,13 @@ export function endingText(fix) {
   if (fix.state !== "failed") return null;
   if (code === "fix_deadline")
     return `This epoch ran out of its time limit ${whenEnded(fix)}. Nothing changed. Run a new epoch with a longer time limit.`;
-  // A failed epoch can be retried once; after that, the next one starts from the run.
-  const again = fix.retryable
-    ? "Retry it"
-    : "It was retried once already. Run a new epoch from the run's Debug failures";
+  // A failed epoch can be retried once; after that, the next one starts from the run. A
+  // retry takes it once it started: one that never started leaves it, and offers it too.
+  const next = "Run a new epoch from the run's Debug failures";
+  let again = `It was retried once already. ${next}`;
+  if (fix.retryable) again = "Retry it";
+  else if (fix.retried_from_id && fix.started_at)
+    again = `This epoch was the retry. ${next}`;
   if (code === "fix_queue_timeout")
     return `Too many epochs were running, so this one could not start. Nothing changed. ${again}${fix.retryable ? " in a few minutes" : ""}.`;
   if (!code || OUR_FAILURES.has(code))
@@ -474,6 +483,14 @@ const NO_SAFE_WHY = {
   "model-lock": { did: "called a model outside the approved list" },
 };
 
+export function rejectionReason(candidate) {
+  if (candidate.outcome !== "rejected") return null;
+  const failed = candidate.verdict?.tiers?.find((tier) => tier.status === "failed");
+  if (!failed) return "No failed check was recorded.";
+  const why = Object.hasOwn(NO_SAFE_WHY, failed.name) && NO_SAFE_WHY[failed.name];
+  return why ? `This candidate ${why.did || why.one}.` : "A required check failed.";
+}
+
 const whyClause = (name, count, request) => {
   const why = NO_SAFE_WHY[name] || {
     did: `failed the ${checkLabel(name, request).toLowerCase()} check`,
@@ -719,11 +736,25 @@ function constraintRows(request) {
   return rows;
 }
 
+// Nothing held back: the change was proven on its targets only. Its pull request is
+// still a draft, as with Limited validation.
+export function provenOnTargetsOnly(fix) {
+  return !(fix.request?.held_back_scenario_keys || []).length;
+}
+
+// How strong a result is, when too few cases were held back to verify it. A normal
+// result has no label.
+export function strengthLabel(fix) {
+  if (provenOnTargetsOnly(fix)) return "Proven on the targets only";
+  return fix.limited_validation ? "Limited validation" : null;
+}
+
 // The list's Result cell: the held-back result first, as the design shows it.
 export function listResult(fix) {
   const result = verdictResult(fix);
-  if (!result || !fix.limited_validation) return result;
-  return { ...result, note: `Limited validation · ${result.note}` };
+  const strength = strengthLabel(fix);
+  if (!result || !strength) return result;
+  return { ...result, note: `${strength} · ${result.note}` };
 }
 
 function verdictResult(fix) {

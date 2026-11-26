@@ -289,7 +289,7 @@ func TestRealtimePostStageTranscriptIsChecked(t *testing.T) {
 	engine := guardrails.NewEngine(config.GuardrailsConfig{DefaultTimeout: time.Second, Rules: []config.GuardrailRuleConfig{{Name: "override-check", Stage: "post", Action: "block"}}}, registry)
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
-	policy, apiErr := guardrails.NewPlugin(engine, registry, nil, nil, nil).BindRealtime(rc)
+	policy, apiErr := guardrails.NewPlugin(engine, registry, nil, nil, nil).BindRealtime(rc, guardrails.RealtimeTextBoth)
 	if apiErr != nil {
 		t.Fatal(apiErr)
 	}

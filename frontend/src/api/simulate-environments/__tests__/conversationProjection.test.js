@@ -553,6 +553,88 @@ describe("projectConversation", () => {
   });
 });
 
+describe("projectConversation with older events loaded", () => {
+  it("marks where the held events start, after the messages before them", () => {
+    const turns = projectConversation({
+      messages: [msg({ message_id: "u1", role: "user" })],
+      events: [evt({ sequence: 201 })],
+      history: { events: { oldest_sequence: 201, has_older: true } },
+    });
+    expect(turns.map((turn) => turn.role)).toEqual([
+      "user",
+      "history",
+      "builder",
+    ]);
+  });
+
+  it("keeps the id of every later turn", () => {
+    const at = (s) => `2026-09-22T10:00:0${s}Z`;
+    const step = (sequence) =>
+      evt({ event_id: `e${sequence}`, sequence, emitted_at: at(sequence) });
+    const messages = [
+      msg({ message_id: "u1", role: "user", created_at: at(3) }),
+      msg({ message_id: "u2", role: "user", created_at: at(6) }),
+    ];
+    const recent = [step(4), step(7)];
+    const ids = (events) =>
+      projectConversation({ messages, events }).map((turn) => turn.id);
+    const before = ids(recent);
+    expect(ids([step(1), ...recent]).slice(-before.length)).toEqual(before);
+  });
+});
+
+describe("projectConversation with messages read around one far back", () => {
+  const at = (s) => `2026-09-22T10:00:0${s}Z`;
+  const said = (sequence, over) =>
+    msg({
+      message_id: `m${sequence}`,
+      sequence,
+      role: "user",
+      created_at: at(sequence),
+      ...over,
+    });
+  const tool = (sequence, second) =>
+    evt({ event_id: `e${sequence}`, sequence, emitted_at: at(second) });
+  const project = (edge, over) =>
+    projectConversation({
+      around: { messages: [said(1), said(2, edge)], has_older: true },
+      messages: [said(6), said(7)],
+      events: [tool(40, 1), tool(41, 4), tool(42, 8)],
+      history: {
+        messages: { oldest_sequence: 6, has_older: true },
+        events: { oldest_sequence: 40, has_older: true },
+      },
+      ...over,
+    });
+
+  it("draws them apart from the rest, with only the steps the messages held can place", () => {
+    expect(project().map((turn) => turn.id)).toEqual([
+      "older-around",
+      "m1",
+      "m2",
+      "gap",
+      "older-messages",
+      "m6",
+      "m7",
+      "turn-grp-e42",
+    ]);
+  });
+
+  it.each([
+    ["as text, when its answer may not be loaded", undefined, "note"],
+    ["to be answered, when it is the open one", "m2", "ask"],
+  ])("shows a question at the edge %s", (_, message_id, kind) => {
+    const question = { role: "assistant", kind: "question", content: "Which?" };
+    const turns = project(question, {
+      blocking_input: message_id && { message_id },
+    });
+    expect(turns.flatMap((turn) => turn.steps ?? [])[0]).toMatchObject({
+      id: "m2",
+      kind,
+    });
+  });
+});
+
 describe("projectConversation nudge cards", () => {
   const card = (over = {}) =>
     msg({
@@ -750,5 +832,23 @@ describe("conversationInFlight", () => {
       }),
     ).toBe(false);
     expect(conversationInFlight(null)).toBe(false);
+  });
+
+  it("is false once a later reply has finished, though an answer was left delivered", () => {
+    const answer = { role: "user", state: "delivered", sequence: 17 };
+    const reply = { role: "assistant", state: "completed", sequence: 18 };
+    expect(
+      conversationInFlight({ state: "warm_idle", messages: [answer, reply] }),
+    ).toBe(false);
+    // Still in flight while the reply to it is being written.
+    expect(
+      conversationInFlight({
+        state: "warm_idle",
+        messages: [
+          { role: "assistant", state: "completed", sequence: 16 },
+          answer,
+        ],
+      }),
+    ).toBe(true);
   });
 });

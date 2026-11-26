@@ -80,6 +80,14 @@ describe("KeyDetailDrawer per-key analytics", () => {
     expect(usageCalls.at(-1).options.meta).toEqual({ errorHandled: true });
   });
 
+  it("asks for hourly buckets in a value the analytics API accepts", () => {
+    // The API knows minute, hour, day, week and month; anything else is
+    // silently served as hourly.
+    renderDrawer();
+
+    expect(usageCalls.at(-1).params.granularity).toBe("hour");
+  });
+
   it("reports a failed usage read in the panel it belongs to", () => {
     analyticsState.isError = true;
 

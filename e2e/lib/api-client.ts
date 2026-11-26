@@ -1,4 +1,5 @@
 import { test, type APIRequestContext } from '@playwright/test';
+import { firstHopOptions } from './backend-transport';
 
 type Method = 'get' | 'head' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -8,7 +9,7 @@ function errorSummary(error: unknown): string {
   return error instanceof Error ? error.message.split('\n')[0] : String(error);
 }
 
-function isResponseLessReset(error: unknown): boolean {
+export function isResponseLessReset(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (('status' in error && error.status != null) || ('statusCode' in error && error.statusCode != null)) return false;
   // Playwright buffers the body before resolving the request, so rejection
@@ -19,7 +20,7 @@ function isResponseLessReset(error: unknown): boolean {
   return !/timeout|timed out/i.test(summary) && /socket hang up|\bECONNRESET\b|\bEPIPE\b/i.test(summary);
 }
 
-function annotateRetry(method: Method, path: string, error: unknown): void {
+export function annotateRetry(method: Method, path: string, error: unknown): void {
   const description = `${method.toUpperCase()} ${path}: ${errorSummary(error)}`;
   let info;
   try { info = test.info(); } catch {
@@ -61,12 +62,13 @@ export class ApiClient {
 
   /** The status and body whatever the status, for a flow that asserts a refusal or a 202. */
   async request<T = unknown>(method: Method, path: string, opts: RequestOptions = {}): Promise<{ status: number; body: T }> {
-    const request = () => this.req[method](`${this.baseURL}${path}`, {
+    const url = `${this.baseURL}${path}`;
+    const request = () => this.req[method](url, firstHopOptions(url, this.baseURL, {
       headers: { ...this.headers, ...opts.headers },
       params: opts.params,
       data: opts.data,
       maxRetries: 0, // This wrapper owns the one retry; never nest Playwright retries.
-    });
+    }));
     let res;
     try {
       res = await request();

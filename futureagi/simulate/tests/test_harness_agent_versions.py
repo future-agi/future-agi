@@ -6,6 +6,7 @@ import json
 import logging
 import socket
 import uuid
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -43,6 +44,7 @@ from simulate.services.hosted_harness import (
 )
 from simulate.services.hosted_harness_gateway import PlatformSecretResolver
 from simulate.tasks import harness_agent_versions as tasks
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_provider import _v1_payload
 from simulate.tests.test_harness_versioning_assembly import (
@@ -709,7 +711,12 @@ class TestCreate:
             environment.refresh_from_db()
         a2 = _create(_a1(first), first, secret_values={"OPENAI_API_KEY": "v2"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
         assert _defaults(first, second) == [a2.id, _a1(second).id]
+        from simulate.tests.test_harness_affected_scenarios import _proved_on
+
+        # Its cases are validated on its versions, so the run sends them.
+        _proved_on(second, second.environment_version)
 
         run, _ = create_selected_harness_run(
             second,
@@ -978,6 +985,7 @@ class TestPreflight:
             assert acquired.call_count == 2
 
         scan = {
+            "api_keys": [],
             "detected_connectors": ["livekit"],
             "required_files": [],
             "scanned_files": 7,
@@ -1014,6 +1022,7 @@ class TestPreflight:
         a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v2"})
         a3 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v3"})
         assert _preflight(a3).status == "passed"
+        settle_validations()
         environment.refresh_from_db()
         assert environment.agent_version_id == a3.id
 
@@ -1133,6 +1142,10 @@ class TestPreflight:
             f"{gateway}.GitHubAppTokenProvider.from_settings",
             lambda: SimpleNamespace(credential=credential),
         )
+        monkeypatch.setattr(
+            "integrations.services.github_app.installation_connected",
+            lambda **_: True,
+        )
         monkeypatch.setattr(f"{gateway}.subprocess.run", run)
         monkeypatch.setattr(f"{gateway}.shutil.which", lambda _: "/usr/bin/git")
         probe = patch(
@@ -1226,6 +1239,7 @@ def _on_a2(user, workspace, storage, key, count=2):
         assert (
             _create(a1, environment, secret_values={"OPENAI_API_KEY": "v2"}).id == a2.id
         )
+    settle_validations()
     assert _defaults(*environments) == [a2.id] * count
     return environments, a1, a2
 
@@ -1246,6 +1260,10 @@ class TestActivation:
 
         with probe as probed:
             result = _preflight(a2, [_passing()[0]])
+        assert result.report["activation"] == [
+            {"environment_id": str(first.id), "outcome": "validating"}
+        ]
+        settle_validations()
 
         assert result.status == "passed"
         values = probed.call_args.args[0]["credential_values"]
@@ -1255,7 +1273,7 @@ class TestActivation:
         assert runtime.preflight_status == "passed"
         assert runtime.preflighted_at is not None
         assert runtime.preflight_report["error"] is None
-        assert result.report["activation"] == [
+        assert runtime.preflight_report["activation"] == [
             {"environment_id": str(first.id), "outcome": "activated"}
         ]
         _no_values(json.dumps(runtime.preflight_report))
@@ -1263,7 +1281,7 @@ class TestActivation:
         first.refresh_from_db()
         # A value-only change keeps the sealed default pair.
         assert first.payload["metadata"]["default_pair_sealed"] is True
-        assert "harness_agent_version_activated" in caplog.text
+        assert "harness_pair_validation_move" in caplog.text
         _no_values(caplog.text)
 
     @pytest.mark.parametrize("first_lands", ["first", "second"])
@@ -1397,6 +1415,7 @@ class TestActivation:
 
         assert _blob(a2)["env"] == {"OPENAI_API_KEY": "val-openai-y"}
         assert _preflight(a2).status == "passed"
+        settle_validations()
         assert _defaults(first, second) == [a1.id, a2.id]
         assert _outcomes(a2) == {str(second.id): "activated"}
 
@@ -1424,6 +1443,7 @@ class TestActivation:
         a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v2"})
         a3 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v3"})
         assert _preflight(a3).status == "passed"
+        settle_validations()
         assert _preflight(a2).status == "passed"
         assert _defaults(environment) == [a3.id]
 
@@ -1445,6 +1465,7 @@ class TestActivation:
             _a1(environment), environment, secret_values={"OPENAI_API_KEY": "v2"}
         )
         assert _preflight(a2).status == "passed"
+        settle_validations()
         a3 = _create(a2, environment, secret_values={"OPENAI_API_KEY": "v3"})
 
         again = _create(
@@ -1468,6 +1489,7 @@ class TestActivation:
         b = _create(a1, environment, secret_values={"OPENAI_API_KEY": "b"})
         c = _create(a1, environment, secret_values={"OPENAI_API_KEY": "c"})
         assert _preflight(c).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [c.id]
 
         # Asked for again from c: the same set as b, still checked.
@@ -1489,6 +1511,7 @@ class TestActivation:
         v2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v2"})
 
         assert _preflight(v1).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [v1.id]
         assert _preflight(v2).status == "passed"
 
@@ -1503,6 +1526,7 @@ class TestActivation:
         a1 = _a1(first)
         a2 = _create(a1, second, secret_values={"OPENAI_API_KEY": "v2"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
         assert _defaults(first, second) == [a1.id, a2.id]
         pending = _create(a1, first, secret_values={"OPENAI_API_KEY": "v3"})
 
@@ -1510,6 +1534,7 @@ class TestActivation:
             pending.id
         )
         assert _preflight(pending).status == "passed"
+        settle_validations()
 
         assert _defaults(first, second) == [pending.id, pending.id]
         assert _outcomes(pending) == {
@@ -1569,7 +1594,7 @@ class TestActivation:
         a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v2"})
         report = {"checks": [], "missing": [], "invalid": [], "error": None}
 
-        def raced(*_args):
+        def raced(*_args, **_kwargs):
             # Another run of the check passes the version first.
             HarnessAgentVersionRuntime.no_workspace_objects.filter(
                 agent_version=a2
@@ -1578,6 +1603,7 @@ class TestActivation:
 
         with patch.object(service, "_run_preflight", side_effect=raced):
             result = preflight_agent_version(a2)
+            settle_validations()
 
         assert result.status == "passed"
         assert _defaults(environment) == [a2.id]
@@ -1677,6 +1703,7 @@ class TestActivation:
             one.start()
         try:
             status = tasks.preflight_harness_agent_version(str(a2.id))
+            settle_validations()
             missing = tasks.preflight_harness_agent_version(str(uuid.uuid4()))
         finally:
             for one in patches:
@@ -1882,6 +1909,7 @@ class TestSharedLegacyRow:
         a1 = _a1(environment)
         a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v2"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
         assert _defaults(environment) == [a2.id]
         a3 = _create(a2, environment, secret_values={"OPENAI_API_KEY": "v3"})
         move_default(environment, "agent", a1.id, expected_default_id=a2.id)
@@ -1900,6 +1928,7 @@ class TestSharedLegacyRow:
             _a1(environment), environment, secret_values={"OPENAI_API_KEY": "2"}
         )
         assert _preflight(a2).status == "passed"
+        settle_validations()
         a3 = _create(a2, environment, secret_values={"OPENAI_API_KEY": "v3"})
         assert _preflight(a3).status == "passed"
         a4 = _create(a3, environment, secret_values={"OPENAI_API_KEY": "v4"})
@@ -1921,6 +1950,7 @@ class TestSharedLegacyRow:
             _a1(environment), environment, secret_values={"OPENAI_API_KEY": "2"}
         )
         assert _preflight(a2).status == "passed"
+        settle_validations()
         a3 = _create(a2, environment, secret_values={"OPENAI_API_KEY": "v3"})
         assert _preflight(a3).status == "passed"
         move_default(environment, "agent", a2.id, expected_default_id=a3.id)
@@ -1941,6 +1971,7 @@ class TestSharedLegacyRow:
         a3 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "v3"})
 
         assert _preflight(a2).status == "passed"
+        settle_validations()
         assert _preflight(a3).status == "passed"
 
         assert _defaults(environment) == [a3.id]
@@ -2066,6 +2097,7 @@ class TestDiscard:
         for environment, value in ((first, "vx"), (second, "vy")):
             mine = _create(a1, environment, secret_values={"OPENAI_API_KEY": value})
             assert _preflight(mine).status == "passed"
+            settle_validations()
         assert a1.id not in _defaults(first, second)
 
         for by_environment in (first.id, None):
@@ -2817,6 +2849,8 @@ class TestAgentDefaultMove:
         name = f"{environment.environment_version_id}:{environment.suite_version_id}"
         assert metadata["default_pairs"][name]["agent_version_id"] == str(a2.id)
 
+    # Where the pairing cannot be validated, the move is at once and its pair unsealed.
+    @pytest.mark.usefixtures("moves_without_validation")
     def test_with_certifying_on_the_pair_is_unsealed(
         self, user, workspace, storage, settings
     ):
@@ -2971,6 +3005,7 @@ class TestAgentDefaultMove:
         moved = auth_client.post(
             path, {"expected_default_id": str(a1.id)}, format="json"
         )
+        settle_validations(environment)
         environment.refresh_from_db()
         after = environment.payload
         again = auth_client.post(
@@ -2979,10 +3014,16 @@ class TestAgentDefaultMove:
 
         assert stale.status_code == 409
         assert stale.json()["error"] == "version_conflict"
-        assert moved.status_code == 200, moved.content
-        default = next(one for one in moved.json()["agent"] if one["is_default"])
-        assert default["id"] == str(a2.id)
+        # The move waits for the new pairing to validate, then lands.
+        assert moved.status_code == 202, moved.content
+        assert moved.json()["validation"]["state"] == "validating"
+        waiting = next(
+            one for one in moved.json()["versions"]["agent"] if one["id"] == str(a2.id)
+        )
+        assert waiting["is_default"] is False
         assert again.status_code == 200
+        default = next(one for one in again.json()["agent"] if one["is_default"])
+        assert default["id"] == str(a2.id)
         environment.refresh_from_db()
         assert environment.payload == after
 
@@ -3009,6 +3050,8 @@ def gateway_provider():
 
     with (
         patch("agentcc.services.url_safety.socket.getaddrinfo", resolve),
+        # The fixture's LiveKit host is not real; this journey is about the model gateway.
+        patch("simulate.services.harness_credential_probes.assert_url_host_public"),
         patch(
             "simulate.services.harness_credential_probes.requests.request",
             side_effect=answer,
@@ -3090,3 +3133,62 @@ def test_preflight_base_url_journey(
     assert _defaults(environment) == [default]
     assert _non_secret_fields(_side(a1)) == old
     _no_values(json.dumps([wrong.report, down.report]))
+
+
+class TestDocumentReading:
+    Kind = HarnessAgentVersionRuntime.SourceKind
+
+    def _runtime(self, *, parent=True, kind=None, owner="environment"):
+        return SimpleNamespace(
+            parent_id=uuid.uuid4() if parent else None,
+            source_kind=kind or self.Kind.GITHUB,
+            agent_payload={"definition_owner": owner} if owner else {},
+        )
+
+    @pytest.mark.parametrize("kind", ["github", "archive"])
+    def test_a_later_code_version_of_an_environments_agent_is_read(
+        self, settings, kind
+    ):
+        from simulate.services.agent_version_steps import document_reading_applies
+
+        settings.HARNESS_AGENT_READING_ENABLED = True
+
+        assert document_reading_applies(self._runtime(kind=kind)) is True
+        assert document_reading_applies(self._runtime(owner=None)) is True
+
+    @pytest.mark.parametrize(
+        "enabled, shape",
+        [
+            (False, {}),
+            (True, {"parent": False}),
+            (True, {"kind": "provider"}),
+            (True, {"owner": "connected"}),
+        ],
+    )
+    def test_other_versions_are_not_read_for_their_document(
+        self, settings, enabled, shape
+    ):
+        from simulate.services.agent_version_steps import document_reading_applies
+
+        settings.HARNESS_AGENT_READING_ENABLED = enabled
+
+        assert document_reading_applies(self._runtime(**shape)) is False
+        assert document_reading_applies(None) is False
+
+    @pytest.mark.parametrize("applies", [True, False])
+    def test_the_check_starts_a_document_reading_when_one_applies(self, applies):
+        version_id = uuid.uuid4()
+        steps = "simulate.services.agent_version_steps"
+        queue = "simulate.tasks.harness_agent_versions"
+        with (
+            patch(f"{steps}.workflow_applies_to", return_value=False),
+            patch(f"{steps}.document_reading_applies_to", return_value=applies),
+            patch(f"{queue}.schedule_agent_preflight") as checked,
+            patch(f"{queue}.schedule_agent_document_reading") as read,
+        ):
+            service._schedule_preflight(version_id)
+
+        checked.assert_called_once_with(version_id)
+        assert [one.args for one in read.call_args_list] == (
+            [(version_id,)] if applies else []
+        )

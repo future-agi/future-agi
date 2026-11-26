@@ -23,18 +23,17 @@ class DeactivateUserTool(BaseTool):
     input_model = DeactivateUserInput
 
     def execute(self, params: DeactivateUserInput, context: ToolContext) -> ToolResult:
-
         from accounts.models.user import User
-        from accounts.models.workspace import OrganizationRoles
+        from accounts.services.organization_access import (
+            is_organization_admin,
+            membership_level,
+        )
+        from tfc.constants.levels import Level
 
         org = context.organization
         actor = context.user
 
-        # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
+        if not is_organization_admin(actor, org):
             return ToolResult.error(
                 "You do not have permission to deactivate users. "
                 "Only Owner or Admin roles can deactivate users.",
@@ -53,10 +52,9 @@ class DeactivateUserTool(BaseTool):
                 error_code="VALIDATION_ERROR",
             )
 
-        # Prevent deactivating owners unless you're an owner
         if (
-            target_user.organization_role == OrganizationRoles.OWNER
-            and actor.organization_role != OrganizationRoles.OWNER
+            membership_level(target_user, org) >= Level.OWNER
+            and membership_level(actor, org) < Level.OWNER
         ):
             return ToolResult.error(
                 "Only Owners can deactivate another Owner.",
