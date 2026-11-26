@@ -891,7 +891,7 @@ describe("agent version checks", () => {
     },
   );
 
-  it("refreshes the detail and the job once the last check lands", () => {
+  it("refreshes the detail, the job and the lock preview once the last check lands", () => {
     const spy = vi.spyOn(client, "invalidateQueries");
     const pending = [
       versionFromApi(
@@ -909,9 +909,12 @@ describe("agent version checks", () => {
       { queryKey: harnessEnvironmentKey("env-1") },
       { queryKey: harnessJobQuery("env-1").queryKey },
       { queryKey: nudgesKey("env-1") },
+      // The landed check may have moved the default agent, whose bundle the
+      // lock preview plans with.
+      { queryKey: lockPreviewKey("env-1") },
     ]);
     rerender({ versions: passed });
-    expect(spy).toHaveBeenCalledTimes(3);
+    expect(spy).toHaveBeenCalledTimes(4);
   });
 
   it("refreshes nothing when nothing was pending", () => {
