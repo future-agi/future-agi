@@ -42,6 +42,9 @@ type GridProps = { serverSideDatasource: Datasource };
 const { server, grid, route } = vi.hoisted(() => {
   const blocks = { count: 1 };
   const mounted: { datasource: Datasource | null } = { datasource: null };
+  // AG Grid holds a load slot for every read until the read calls success or
+  // fail; it allows two at once.
+  const loads = { unsettled: 0 };
   // The rows the grid shows, by call id: a block's read or a poll's update.
   const rows = new Map<string, CallRow>();
   const showRows = ({ rowData, update }: RowsUpdate) => {
@@ -62,11 +65,17 @@ const { server, grid, route } = vi.hoisted(() => {
     // no call rows yet still has its first page read, but no cached block.
     refreshServerSide: () => {
       for (let block = 0; block < Math.max(blocks.count, 1); block++) {
+        loads.unsettled += 1;
         void mounted.datasource?.getRows({
           request: { startRow: block * 30, endRow: (block + 1) * 30 },
           api,
-          success: showRows,
-          fail: () => {},
+          success: (result) => {
+            loads.unsettled -= 1;
+            showRows(result);
+          },
+          fail: () => {
+            loads.unsettled -= 1;
+          },
         });
       }
     },
@@ -77,7 +86,7 @@ const { server, grid, route } = vi.hoisted(() => {
       runPage: vi.fn<(url: string, page: number) => Promise<RunPage>>(),
       kpis: vi.fn<(url: string) => Promise<Kpis>>(),
     },
-    grid: { blocks, mounted, api, rows },
+    grid: { blocks, mounted, api, rows, loads },
     // The :executionId the run page is on.
     route: { executionId: "e1" },
   };
@@ -157,12 +166,19 @@ const kpis = (connected_calls: number): Kpis => ({
   total_calls: 20,
   connected_calls,
 });
-const deferred = <T,>() => {
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: Error) => void;
+};
+const deferred = <T,>(): Deferred<T> => {
   let resolve: (value: T) => void = () => {};
-  const promise = new Promise<T>((done) => {
+  let reject: (error: Error) => void = () => {};
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
 
 type RunPageOptions = { cachedConnectedCalls?: number; cachedPages?: number };
@@ -208,7 +224,18 @@ const openRunPage = ({
     act(async () => {
       rerender(page(false));
     });
-  return { decision, queryClient, openExecution, leaveCallDetails };
+  // The user opens Call Details again: a new grid mounts.
+  const returnToCallDetails = () =>
+    act(async () => {
+      rerender(page(true));
+    });
+  return {
+    decision,
+    queryClient,
+    openExecution,
+    leaveCallDetails,
+    returnToCallDetails,
+  };
 };
 
 // AG Grid re-reads its cached blocks, as after a rerun. Production's refresh
@@ -233,6 +260,7 @@ beforeEach(() => {
   server.runPage.mockReset();
   server.kpis.mockReset();
   grid.rows.clear();
+  grid.loads.unsettled = 0;
   route.executionId = EXECUTION_ID;
   resetState();
 });
@@ -393,6 +421,75 @@ describe("Debug failures when the user leaves Call Details", () => {
     await leaveCallDetails();
     await act(async () => finalRead.resolve(kpis(15)));
     await vi.waitFor(() => expect(decision.current).toEqual(ENABLED));
+  });
+
+  // The final count decides, not the count cached from before the finish.
+  const finalCounts: [string, number, number, Decision][] = [
+    ["opens at 15", 14, 15, ENABLED],
+    ["blocks at 14", 15, 14, BLOCKED],
+  ];
+
+  it.each(finalCounts)(
+    "decides on the first status read that answers after the user left, and %s",
+    async (_name, cached, final, expected) => {
+      const firstRead = deferred<RunPage>();
+      server.runPage.mockReturnValueOnce(firstRead.promise);
+      server.kpis.mockResolvedValue(kpis(final));
+      const { decision, leaveCallDetails } = openRunPage({
+        cachedConnectedCalls: cached,
+      });
+      await vi.waitFor(() => expect(server.runPage).toHaveBeenCalledTimes(1));
+
+      await leaveCallDetails();
+      await act(async () => firstRead.resolve(runPage("completed")));
+      await vi.waitFor(() => expect(decision.current).toEqual(expected));
+      expect(server.kpis).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(finalCounts)(
+    "decides on a poll that answers after the user left, and %s",
+    async (_name, cached, final, expected) => {
+      const pendingPoll = deferred<RunPage>();
+      server.runPage.mockResolvedValueOnce(runPage("running"));
+      server.runPage.mockReturnValueOnce(pendingPoll.promise);
+      server.kpis.mockResolvedValue(kpis(final));
+      const { decision, leaveCallDetails } = openRunPage({
+        cachedConnectedCalls: cached,
+      });
+      await vi.waitFor(() => expect(decision.current).toEqual(STILL_RUNNING));
+      await poll();
+      await vi.waitFor(() => expect(server.runPage).toHaveBeenCalledTimes(2));
+
+      await leaveCallDetails();
+      await act(async () => pendingPoll.resolve(runPage("completed")));
+      await vi.waitFor(() => expect(decision.current).toEqual(expected));
+      expect(server.kpis).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("ignores a poll of the grid the user left once a new grid read the status", async () => {
+    const oldPoll = deferred<RunPage>();
+    server.runPage.mockResolvedValueOnce(runPage("running"));
+    server.runPage.mockReturnValueOnce(oldPoll.promise);
+    server.runPage.mockResolvedValue(runPage("completed"));
+    server.kpis.mockResolvedValue(kpis(15));
+    const { decision, leaveCallDetails, returnToCallDetails } = openRunPage({
+      cachedConnectedCalls: 14,
+    });
+    await vi.waitFor(() => expect(decision.current).toEqual(STILL_RUNNING));
+    await poll();
+    await vi.waitFor(() => expect(server.runPage).toHaveBeenCalledTimes(2));
+
+    await leaveCallDetails();
+    await returnToCallDetails();
+    await vi.waitFor(() => expect(decision.current).toEqual(ENABLED));
+
+    // The old grid's poll answers last, with what it read while the run made calls.
+    await act(async () => oldPoll.resolve(runPage("running")));
+    await settle();
+    expect(useTestExecutionStore.getState().status).toBe("completed");
+    expect(decision.current).toEqual(ENABLED);
   });
 });
 
@@ -558,6 +655,77 @@ describe("Debug failures after the user opens another execution", () => {
     });
     expect(decision.current).toEqual(STILL_RUNNING);
   });
+
+  it("settles the earlier execution's page read without showing its rows", async () => {
+    const lateAPage = deferred<RunPage>();
+    server.runPage.mockImplementation((url) =>
+      url.includes("/exec-a/")
+        ? lateAPage.promise
+        : Promise.resolve(
+            runPage("running", [{ id: "b-call", status: "queued" }]),
+          ),
+    );
+    server.kpis.mockResolvedValue(kpis(15));
+    route.executionId = "exec-a";
+    const { openExecution } = openRunPage();
+    await vi.waitFor(() => expect(server.runPage).toHaveBeenCalledTimes(1));
+
+    await openExecution("exec-b");
+    await vi.waitFor(() => expect(grid.rows.has("b-call")).toBe(true));
+    await act(async () =>
+      lateAPage.resolve(
+        runPage("completed", [{ id: "a-call", status: "completed" }]),
+      ),
+    );
+    await settle();
+
+    // A read that never settles keeps one of the grid's two load slots.
+    expect(grid.loads.unsettled).toBe(0);
+    expect(grid.rows.has("a-call")).toBe(false);
+  });
+
+  // A's poll has read block 1 and waits on block 2 when the user opens B,
+  // which finished at 15.
+  it.each<[string, (read: Deferred<RunPage>) => void]>([
+    ["fails", (read) => read.reject(new Error("network"))],
+    ["answers", (read) => read.resolve(runPage("running"))],
+  ])(
+    "keeps the new execution's decision when the earlier execution's poll %s last",
+    async (_name, endTheRead) => {
+      const lateBlock2 = deferred<RunPage>();
+      const aPoll = { started: false };
+      server.runPage.mockImplementation((url, page) => {
+        if (url.includes("/exec-b/")) {
+          return Promise.resolve(runPage("completed"));
+        }
+        if (aPoll.started && page === 2) return lateBlock2.promise;
+        return Promise.resolve(runPage("running"));
+      });
+      server.kpis.mockResolvedValue(kpis(15));
+      route.executionId = "exec-a";
+      const { decision, openExecution } = openRunPage({ cachedPages: 2 });
+      await vi.waitFor(() => expect(decision.current).toEqual(STILL_RUNNING));
+      aPoll.started = true;
+      await poll();
+      await vi.waitFor(() => expect(server.runPage).toHaveBeenCalledTimes(4));
+
+      await openExecution("exec-b");
+      await vi.waitFor(() => expect(decision.current).toEqual(ENABLED));
+      await act(async () => endTheRead(lateBlock2));
+      await settle();
+
+      expect(useTestExecutionStore.getState()).toMatchObject({
+        status: "completed",
+        statusExecutionId: "exec-b",
+      });
+      expect(decision.current).toEqual(ENABLED);
+      // A finished B is not polled.
+      const readsBeforePoll = server.runPage.mock.calls.length;
+      await poll();
+      await settle();
+      expect(server.runPage).toHaveBeenCalledTimes(readsBeforePoll);
+    },
+  );
 });
 
 // A run of 31 calls fills two grid blocks. A poll reads block 1
@@ -614,5 +782,48 @@ describe("Call rows after a poll that sees the run finish", () => {
     await poll();
     await settle();
     expect(reads).toHaveLength(readsBeforeFinalPoll + 2);
+  });
+
+  it("reads a failed block again, though the other block read finished", async () => {
+    const run = { finished: false, block1Fails: false };
+    server.runPage.mockImplementation((_url, page) => {
+      if (page === 1 && run.block1Fails) {
+        return Promise.reject(new Error("network"));
+      }
+      const status: RunStatus = run.finished ? "completed" : "running";
+      const callStatus = run.finished ? "completed" : "queued";
+      return Promise.resolve(
+        page === 1
+          ? runPage(status, callRows(1, 30, callStatus))
+          : runPage(status, callRows(31, 31, callStatus)),
+      );
+    });
+    server.kpis.mockResolvedValue(kpis(15));
+    openRunPage({ cachedPages: 2 });
+    await vi.waitFor(() =>
+      expect(useTestExecutionStore.getState().status).toBe("running"),
+    );
+    await settle();
+
+    run.finished = true;
+    run.block1Fails = true;
+    await poll();
+    await vi.waitFor(() =>
+      expect(useTestExecutionStore.getState().status).toBe("completed"),
+    );
+    expect(grid.rows.get("call-1")?.status).toBe("queued");
+    expect(grid.rows.get("call-31")?.status).toBe("completed");
+
+    run.block1Fails = false;
+    await poll();
+    await vi.waitFor(() =>
+      expect(grid.rows.get("call-1")?.status).toBe("completed"),
+    );
+
+    // Every block read finished: polling stops.
+    const readsBeforePoll = server.runPage.mock.calls.length;
+    await poll();
+    await settle();
+    expect(server.runPage).toHaveBeenCalledTimes(readsBeforePoll);
   });
 });
