@@ -6,7 +6,7 @@ on:
       - ".github/approval-floor.json"
       - ".github/scripts/devflow_approval.py"
       - ".github/scripts/test_devflow_approval.py"
-      - ".github/workflows/admin-pr-approval.yml"
+      - ".github/workflows/devflow-approval.yml"
       - ".github/workflows/devflow-approval-selftest.yml"
 
 permissions:

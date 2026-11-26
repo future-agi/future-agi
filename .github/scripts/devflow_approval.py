@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Approve a low-tier pull request on a passing devflow agent review.
 
-Runs from .github/workflows/admin-pr-approval.yml when APPROVAL_MODE is
+Runs from .github/workflows/devflow-approval.yml when APPROVAL_MODE is
 `devflow`. It reads the pull request live by number, decides, and then does
 one of three things:
 
@@ -99,12 +99,19 @@ def floor_hits(files: list, floor: list) -> list:
 
 
 def decide(
-    pr: dict, reviews: list, comments: list, files: list, permissions: dict, floor: list
+    pr: dict,
+    reviews: list,
+    comments: list,
+    files: list,
+    permissions: dict,
+    floor: list,
+    tight: bool = False,
 ) -> dict:
     """Return {"action": "skip"|"wait"|"needs-human"|"approve", "reasons": [...], "head": sha}.
 
     `permissions` maps a lower-case login to its repository permission
     (admin, write, read or none), from collaborators/{login}/permission.
+    `tight` (APPROVAL_MODE_TIGHT is "1") sends every passing review to a person.
     """
     head = (pr.get("head") or {}).get("sha") or ""
     author = (pr.get("user") or {}).get("login") or ""
@@ -180,6 +187,8 @@ def decide(
         )
     if permissions.get(lower(author)) not in WRITE:
         reasons.append(f"the author {author} has no write access")
+    if tight:
+        reasons.append("APPROVAL_MODE_TIGHT is 1: a person approves every pull request")
     if reasons:
         return out("needs-human", *reasons)
     return out("approve", f"passing low-tier review by {reviewer} on the head")
@@ -230,7 +239,8 @@ def main(argv=None) -> int:
             None
         }
         permissions = {lower(login): permission(repo, login) for login in logins}
-        result = decide(pr, reviews, comments, files, permissions, floor)
+        tight = os.environ.get("APPROVAL_MODE_TIGHT") == "1"
+        result = decide(pr, reviews, comments, files, permissions, floor, tight)
         print(json.dumps(result, indent=2))
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:

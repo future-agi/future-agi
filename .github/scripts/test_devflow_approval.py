@@ -83,15 +83,21 @@ class Case:
         self.files = [{"filename": n} for n in names]
         self.pr["changed_files"] = len(names)
 
-    def decide(self):
+    def decide(self, tight=False):
         return da.decide(
-            self.pr, self.reviews, self.comments, self.files, self.permissions, FLOOR
+            self.pr,
+            self.reviews,
+            self.comments,
+            self.files,
+            self.permissions,
+            FLOOR,
+            tight,
         )
 
 
 class DecideTests(unittest.TestCase):
-    def check(self, case, action, reason=None):
-        result = case.decide()
+    def check(self, case, action, reason=None, tight=False):
+        result = case.decide(tight)
         self.assertEqual(result["action"], action, result)
         if reason:
             self.assertTrue(any(reason in r for r in result["reasons"]), result)
@@ -255,7 +261,7 @@ class DecideTests(unittest.TestCase):
 
     def test_floor_paths_need_a_human(self):
         for path in (
-            ".github/workflows/admin-pr-approval.yml",
+            ".github/workflows/devflow-approval.yml",
             ".github/CODEOWNERS",
             "futureagi/accounts/views/login.py",
             "futureagi/accounts/migrations/0052_x.py",
@@ -310,6 +316,20 @@ class DecideTests(unittest.TestCase):
         case.reviews = [review(tier="high", needs_person=True)]
         case.files_are(".github/workflows/x.yml")
         self.assertEqual(len(case.decide()["reasons"]), 3)
+
+    # tight mode (APPROVAL_MODE_TIGHT == "1")
+    def test_tight_mode_sends_a_passing_low_tier_review_to_a_person(self):
+        self.check(Case(), "needs-human", "APPROVAL_MODE_TIGHT", tight=True)
+
+    def test_tight_mode_still_waits_on_a_block(self):
+        case = Case()
+        case.reviews = [review(verdict="block")]
+        self.check(case, "wait", "verdict is", tight=True)
+
+    def test_tight_mode_still_skips_a_draft(self):
+        case = Case()
+        case.pr["draft"] = True
+        self.check(case, "skip", "draft", tight=True)
 
     def test_decide_does_not_mutate_inputs(self):
         case = Case()

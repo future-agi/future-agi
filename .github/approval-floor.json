@@ -1,5 +1,5 @@
 {
-  "_comment": "Path floor for .github/workflows/admin-pr-approval.yml in devflow mode. A pull request that changes or renames a file matching any glob is never approved by the bot: it gets the needs-human label. Globs use ** and * and match case-insensitively. Migrations are not here: the agent review sets the tier for them.",
+  "_comment": "Path floor for .github/workflows/devflow-approval.yml in devflow mode. A pull request that changes or renames a file matching any glob is never approved by the bot: it gets the needs-human label. Globs use ** and * and match case-insensitively. Migrations are not here: the agent review sets the tier for them.",
   "paths": [
     ".github/**",
     "futureagi/accounts/**",
