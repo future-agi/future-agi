@@ -800,6 +800,12 @@ AVAILABLE_REGIONS = os.environ.get("AVAILABLE_REGIONS", "")
 # CELERY_BROKER_URL set explicitly. The Channels layer never reads it.
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "memory://")
 CELERY_RESULT_BACKEND = "django-db"  # If you want to use Django's ORM
+# While results expire, Celery beat schedules a daily celery.backend_cleanup task,
+# since django-db cannot expire them by itself. No worker can receive a task from
+# the in-process broker, so there the task only times out and no result is ever
+# stored: turn expiry off. A real broker keeps Celery's default.
+if CELERY_BROKER_URL.startswith("memory://"):
+    CELERY_RESULT_EXPIRES = None
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
