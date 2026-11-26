@@ -34,14 +34,13 @@ from simulate.models import (
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.selectors.runs import user_environment_runs
+from simulate.services.harness_storage import open_private, put_private
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
     hash_secret,
 )
 from simulate.services.hosted_harness_validation import validate_jsonb_strings
-from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 CONVERSATION_SCHEMA_VERSION = "futureagi.harness-conversation.v1"
 EVENT_SCHEMA_VERSION = "futureagi.harness-conversation-event.v1"
@@ -131,12 +130,18 @@ def serialize_conversation(
         conversation=conversation
     ).first()
     # A live job always accepts messages: they wait in order until its sandbox can run chat.
+    terminal = conversation.job.state in _TERMINAL_JOB_STATES
     chat_available = (
         conversation.state != HostedHarnessConversation.State.RETIRED
+        # Only a design's own process answers it: a finished design is continued or started
+        # again, never chatted with.
+        and not (terminal and job_metadata.get("design"))
         and bool(
-            conversation.job.state not in _TERMINAL_JOB_STATES
+            not terminal
             or conversation.latest_workspace_object_key
             or job_metadata.get("authoring_object_key")
+            # A composition's workspace is assembled from its releases (contract §7.8).
+            or job_metadata.get("release_composition")
         )
     )
     return {
@@ -493,6 +498,20 @@ def _abandon_outstanding(conversation_id) -> int:
         )
 
 
+@transaction.atomic
+def fail_source_mismatch(conversation_id, message):
+    conversation = (
+        HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+            pk=conversation_id
+        )
+    )
+    return _fail_outstanding(
+        conversation,
+        state=HostedHarnessConversation.State.DEGRADED,
+        reply=message,
+    )
+
+
 def _fail_outstanding(
     conversation: HostedHarnessConversation, *, state: str, reply: str
 ) -> int:
@@ -558,6 +577,10 @@ def environment_authoring_revision(job: HostedHarnessJob) -> str:
     revision = str(metadata.get("authoring_revision") or "")
     if revision:
         return revision
+    composition = metadata.get("release_composition")
+    if isinstance(composition, dict):
+        # A composition's accepted files are its suite (contract §7.8).
+        return str(composition["suite"]["digest"])
     object_key = str(metadata.get("authoring_object_key") or "")
     if not object_key:
         return ""
@@ -1019,6 +1042,36 @@ def _keep_working_sandbox_alive(conversation, lease, now) -> None:
         )
 
 
+def _attachment_notes(conversation, messages):
+    from simulate.models import HarnessSourceReview
+
+    ids = set()
+    for message in messages:
+        if review_id := (message.payload or {}).get("source_review_id"):
+            try:
+                ids.add(uuid.UUID(str(review_id)))
+            except ValueError:
+                continue
+    if not ids:
+        return {}
+    reviews = HarnessSourceReview.objects.filter(
+        id__in=ids,
+        owner_id=conversation.job_id,
+        organization_id=conversation.organization_id,
+        workspace_id=conversation.workspace_id,
+        owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
+    ).values_list("id", "state")
+    return {
+        str(review_id): (
+            f"The user attached a source review. Its current state is {state}. "
+            "Acknowledge the attachment. If it is awaiting approval, direct the user to "
+            "Review sources on the attachment card. Its contents can only be used after approval. "
+            "Keep any already approved workspace sources distinct from this attachment."
+        )
+        for review_id, state in reviews
+    }
+
+
 def pending_commands(
     conversation: HostedHarnessConversation, *, after: int
 ) -> dict[str, Any]:
@@ -1045,6 +1098,7 @@ def pending_commands(
         )
         .order_by("sequence")[:COMMAND_LIMIT]
     )
+    attachment_notes = _attachment_notes(conversation, messages)
     return {
         "schema_version": CONVERSATION_SCHEMA_VERSION,
         "commands": [
@@ -1064,6 +1118,17 @@ def pending_commands(
                         for key, value in message.payload.items()
                         if key != "command_kind" and not key.startswith("_")
                     },
+                    **(
+                        {
+                            "content": f"{message.content}\n\n[Platform source review] {note}"
+                        }
+                        if (
+                            note := attachment_notes.get(
+                                str(message.payload.get("source_review_id"))
+                            )
+                        )
+                        else {}
+                    ),
                 },
             }
             for message in messages
@@ -1345,6 +1410,33 @@ def _project_event(
             "kind": kind,
             **payload,
         }
+        return
+    if kind == "question_answered":
+        # The builder took the reply in the middle of its turn. A design builds for an hour after
+        # its approval, so waiting for turn_completed would leave the question showing as open.
+        try:
+            reply_id = uuid.UUID(str(payload.get("reply_message_id")))
+        except ValueError:
+            raise HostedHarnessError(
+                "conversation_reply_id_invalid",
+                f"{kind} requires the reply's reply_message_id",
+                status_code=422,
+            ) from None
+        if not message_id:
+            raise HostedHarnessError(
+                "conversation_message_id_missing",
+                f"{kind} requires message_id",
+                status_code=422,
+            )
+        conversation.messages.filter(
+            id=reply_id,
+            role=HostedHarnessConversationMessage.Role.USER,
+            reply_to=message_id,
+        ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        open_question = (conversation.blocking_input or {}).get("message_id")
+        if str(open_question or "") == str(message_id):
+            conversation.blocking_input = None
+            conversation.state = HostedHarnessConversation.State.RESPONDING
         return
     if kind == "turn_interrupted":
         control_id = payload.get("interrupt_message_id") or payload.get(
@@ -2340,12 +2432,31 @@ def promote_conversation_checkpoint(
     environment = job.environment or job
     if environment.state != HostedHarnessJob.State.COMPLETED:
         return None
+    # A design's checkpoints are for continuing it; what it made is the releases it sealed.
+    if ((environment.payload or {}).get("metadata") or {}).get("design"):
+        return None
     checkpoint = _read_object(object_key)
     if checkpoint is None:
         raise HostedHarnessError(
             "conversation_checkpoint_missing",
             "the chat checkpoint is no longer stored",
             status_code=409,
+        )
+    from simulate.services.harness_releases import composition_of
+
+    if composition_of(environment) is not None:
+        from simulate.services.harness_composition_edits import (
+            promote_composition_checkpoint,
+        )
+
+        return promote_composition_checkpoint(
+            conversation,
+            environment,
+            checkpoint,
+            digest=digest,
+            sequence=sequence,
+            expected_revision=expected_revision,
+            retire_runtime=retire_runtime,
         )
     archive = _authoring_archive(checkpoint)
     from simulate.services import agent_fix_variations, evidence_drafts
@@ -2630,12 +2741,15 @@ def _authoring_archive(checkpoint: bytes) -> bytes:
 
 
 def _bind_added_scenarios(
-    environment: HostedHarnessJob, rows: list[HostedHarnessScenario] | None = None
+    environment: HostedHarnessJob,
+    rows: list[HostedHarnessScenario] | None = None,
+    *,
+    personas: dict[str, dict[str, Any]] | None = None,
 ) -> None:
-    """Give scenarios the chat added the platform identity a Run creates its calls from.
+    """Bind newly added scenarios to the platform identities used by Runs.
 
-    ``rows`` limits it to those scenarios, dropped ones included; by default every live
-    unbound scenario of the environment is bound.
+    If given, rows limits the binding to those scenarios, including dropped ones.
+    Personas supplies the sealed suite's record by key for a composition.
     """
     from simulate.services.alk_simulate_ingestion import (
         ALKSimulateIngestionError,
@@ -2658,7 +2772,11 @@ def _bind_added_scenarios(
         return
     try:
         shared, created = append_alk_sim_scenarios(
-            environment.run_test, [_provision_persona(one) for one in added]
+            environment.run_test,
+            [
+                personas[one.scenario_key] if personas else _provision_persona(one)
+                for one in added
+            ],
         )
     except ALKSimulateIngestionError as exc:
         raise HostedHarnessError("scenario_provision_failed", str(exc)) from exc
@@ -2716,15 +2834,7 @@ def store_workspace_archive(
     _validate_workspace_archive(body)
     scenario_count = _workspace_scenario_count(body)
     key = _workspace_object_key(conversation, actual)
-    client = get_storage_client()
-    ensure_bucket(client, UPLOAD_BUCKET_NAME)
-    client.put_object(
-        UPLOAD_BUCKET_NAME,
-        key,
-        io.BytesIO(body),
-        len(body),
-        content_type="application/gzip",
-    )
+    put_private(key, body, "application/gzip")
     HostedHarnessConversation.no_workspace_objects.filter(id=conversation.id).update(
         latest_workspace_digest=actual,
         latest_workspace_object_key=key,
@@ -2750,7 +2860,7 @@ def load_workspace_archive(conversation: HostedHarnessConversation) -> bytes | N
 
 def _read_object(object_key: str) -> bytes | None:
     try:
-        response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+        response = open_private(object_key, legacy_archive=True)
     except S3Error as exc:
         if exc.code != "NoSuchKey":
             raise

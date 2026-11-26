@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import get_args
 
+from drf_yasg import openapi
+from drf_yasg.inspectors import FieldInspector, NotHandled
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import JsonObjectRequestField
@@ -27,6 +29,9 @@ from simulate.serializers.harness_job import (
     HarnessRunHeldBackSerializer,
     HarnessRunPinnedVersionsSerializer,
     HarnessRunWarningSerializer,
+)
+from simulate.serializers.harness_source_selection import (
+    HarnessSourceSelectionSerializer,
 )
 from simulate.serializers.hosted_harness_conversation import (
     HarnessLifecycleCountsSerializer,
@@ -972,8 +977,73 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     enable_tool_evaluation = serializers.BooleanField()
 
 
+class HarnessCompositionReleaseSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField()
+
+
+class HarnessCompositionScenarioSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    origin = serializers.ChoiceField(choices=("base", "specialized", "custom"))
+    derived_from = serializers.CharField(allow_null=True)
+
+
+class HarnessCompositionRuleSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    text = serializers.CharField(allow_blank=True)
+
+
+class HarnessCompositionSuiteSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField()
+    parent_digest = serializers.CharField(allow_null=True)
+    policy_profile = serializers.JSONField()
+    unscored_agent_rules = HarnessCompositionRuleSerializer(
+        many=True,
+        help_text="The environment's agent_policy rules no scenario in this suite grades.",
+    )
+    scenarios = HarnessCompositionScenarioSerializer(many=True)
+
+
+class HarnessCompositionBindingSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    mode = serializers.ChoiceField(choices=("canonical", "tool_routed"))
+    agent_tools = serializers.ListField(child=serializers.JSONField())
+    tools = serializers.ListField(child=serializers.JSONField())
+
+
+class HarnessCompositionAgentSerializer(serializers.Serializer):
+    agent_definition_id = serializers.UUIDField()
+    agent_version_id = serializers.UUIDField()
+    connector = serializers.CharField()
+    name = serializers.CharField(allow_null=True)
+    version_name = serializers.CharField(allow_null=True)
+
+
+class HarnessCompositionProofSerializer(serializers.Serializer):
+    passed = serializers.BooleanField()
+    scenarios = serializers.JSONField()
+
+
+class HarnessCompositionSerializer(serializers.Serializer):
+    """What a composition is made of: releases, suite, binding and its proof.
+
+    ``alignment`` is the adaptation's alignment (admission, mapped and unsupported tools,
+    extension candidates, unscorable scenarios, policy conflicts); null for a canonical
+    composition.
+    """
+
+    environment = HarnessCompositionReleaseSerializer(many=True)
+    suite = HarnessCompositionSuiteSerializer()
+    binding = HarnessCompositionBindingSerializer()
+    agent = HarnessCompositionAgentSerializer()
+    alignment = serializers.JSONField(allow_null=True)
+    binding_proof = HarnessCompositionProofSerializer(allow_null=True)
+
+
 class HarnessEnvironmentDetailSerializer(serializers.Serializer):
-    """One environment. ``contract`` and ``world`` are null until authoring finishes."""
+    """One environment. ``contract`` and ``world`` are null until authoring finishes;
+    ``composition`` is null unless the environment is a release composition."""
 
     id = serializers.UUIDField()
     overview = HarnessEnvironmentOverviewSerializer()
@@ -982,6 +1052,7 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
     scenarios = HarnessEnvironmentScenarioSerializer(many=True)
     evaluations = HarnessEnvironmentEvaluationsSerializer()
     settings = HarnessEnvironmentSettingsSerializer()
+    composition = HarnessCompositionSerializer(allow_null=True)
     actors_tab = serializers.ChoiceField(
         choices=ACTORS_TABS,
         allow_null=True,
@@ -1172,8 +1243,18 @@ class HarnessScenarioLifecycleSerializer(serializers.Serializer):
     negative_controls = HarnessNegativeControlSerializer(many=True)
 
 
+class HarnessScenarioSourceCitationSerializer(serializers.Serializer):
+    filename = serializers.CharField()
+    page = serializers.IntegerField(required=False)
+    row = serializers.IntegerField(required=False)
+
+
 class HarnessScenarioRowSerializer(serializers.Serializer):
     """One authored scenario on the Scenarios list."""
+
+    source_citations = HarnessScenarioSourceCitationSerializer(
+        many=True, required=False
+    )
 
     id = serializers.UUIDField()
     scenario_id = serializers.UUIDField(allow_null=True)
@@ -1333,6 +1414,139 @@ class HarnessScenarioListResponseSerializer(serializers.Serializer):
         declared = super().get_fields()
         declared["fields"] = HarnessScenarioFieldSerializer(many=True)
         return declared
+
+
+class HarnessSourceDraftRefSerializer(StrictInputSerializer):
+    id = serializers.UUIDField(allow_null=True)
+    revision = serializers.IntegerField(min_value=0)
+
+
+class _SourcePrepareSerializer(StrictInputSerializer):
+    import_ref = serializers.UUIDField(required=False)
+    expected_revision = serializers.IntegerField(required=False, min_value=1)
+    idempotency_key = serializers.CharField(required=False, max_length=128)
+    expected_environment_version_id = serializers.UUIDField()
+    target_table = serializers.CharField(required=False, max_length=255)
+
+    def validate(self, attrs):
+        supplied = set(attrs) & {"import_ref", "expected_revision", "idempotency_key"}
+        if supplied and (len(supplied) != 3 or "target_table" not in attrs):
+            raise serializers.ValidationError(
+                "A repair requires import_ref, expected_revision, idempotency_key and target_table."
+            )
+        return attrs
+
+
+class HarnessSourcePrepareSerializer(_SourcePrepareSerializer):
+    expected_draft = HarnessSourceDraftRefSerializer()
+    selection = HarnessSourceSelectionSerializer(required=False)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if ("selection" in attrs) == ("import_ref" in attrs):
+            raise serializers.ValidationError(
+                "Supply a Knowledge Base selection or repair an existing import."
+            )
+        return attrs
+
+
+class HarnessSourceFileListInspector(FieldInspector):
+    def field_to_swagger_object(
+        self, field, swagger_object_type, use_references, **kwargs
+    ):
+        if (
+            swagger_object_type is openapi.Parameter
+            and kwargs.get("in_") == openapi.IN_FORM
+            and isinstance(field, serializers.ListField)
+            and isinstance(field.child, serializers.FileField)
+        ):
+            # Swagger 2 only supports file as a form parameter, not an array item.
+            return openapi.Parameter(
+                kwargs["name"],
+                openapi.IN_FORM,
+                type=openapi.TYPE_FILE,
+                description="Repeat this multipart field for each file in the batch.",
+                required=field.required,
+            )
+        return NotHandled
+
+
+class HarnessSourceUploadPrepareSerializer(_SourcePrepareSerializer):
+    expected_draft_id = serializers.UUIDField(required=False, allow_null=True)
+    expected_draft_revision = serializers.IntegerField(min_value=0)
+    purpose = serializers.ChoiceField(
+        choices=("policy", "reference", "seed_records"), required=False
+    )
+    file = serializers.FileField(required=False)
+    files = serializers.ListField(
+        child=serializers.FileField(),
+        required=False,
+        allow_empty=False,
+        max_length=100,
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if "import_ref" in attrs:
+            if set(attrs) & {"file", "files", "purpose"}:
+                raise serializers.ValidationError(
+                    "Existing imports reuse their retained files and purposes."
+                )
+            return attrs
+        file = attrs.pop("file", None)
+        files = attrs.get("files")
+        if (file is None) == (files is None):
+            raise serializers.ValidationError("Upload one file or a files list.")
+        attrs["files"] = files or [file]
+        return attrs
+
+
+class HarnessSourceAcceptSerializer(StrictInputSerializer):
+    import_ref = serializers.CharField(max_length=16384)
+    expected_environment_version_id = serializers.UUIDField()
+    expected_draft = HarnessSourceDraftRefSerializer()
+    expected_draft_digest = serializers.CharField(max_length=128)
+    expected_revision = serializers.IntegerField(min_value=1, required=False)
+    idempotency_key = serializers.CharField(max_length=128, required=False)
+    review = serializers.JSONField()
+
+
+class HarnessSourceCapabilitiesSerializer(serializers.Serializer):
+    upload = serializers.JSONField()
+    knowledge_base = serializers.JSONField()
+    environment_version_id = serializers.UUIDField()
+    draft = serializers.JSONField()
+    participant_visibility_enabled = serializers.BooleanField()
+    participant_visibility_reason = serializers.CharField()
+
+
+class HarnessSourceSummarySerializer(serializers.Serializer):
+    scenario_generation = serializers.JSONField(required=False)
+    generation_review_id = serializers.UUIDField(required=False)
+    draft = serializers.BooleanField()
+    snapshot_digest = serializers.CharField(allow_null=True)
+    sources = serializers.JSONField()
+    validation_status = serializers.CharField(allow_null=True)
+
+
+class HarnessSourcePrepareResponseSerializer(serializers.Serializer):
+    import_ref = serializers.CharField()
+    revision = serializers.IntegerField()
+    state = serializers.CharField()
+    draft_digest = serializers.CharField(allow_blank=True)
+    draft = serializers.JSONField()
+    suggested_purposes = serializers.JSONField()
+    capabilities = HarnessSourceCapabilitiesSerializer()
+
+
+class HarnessSourceAcceptResponseSerializer(serializers.Serializer):
+    review_id = serializers.UUIDField()
+    accepted_revision = serializers.IntegerField()
+    draft = serializers.JSONField(allow_null=True)
+    snapshot_digest = serializers.CharField()
+    sources = serializers.JSONField()
+    diagnostics = serializers.JSONField()
+    validation = serializers.JSONField()
 
 
 class HarnessVersionPersonSerializer(serializers.Serializer):

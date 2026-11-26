@@ -58,10 +58,14 @@ export function guessEntryFile(fileNames = []) {
 export const MAX_UPLOAD_FILES = 1000;
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
+function sourcePath(file) {
+  return file.webkitRelativePath || file.path?.replace(/^\//, "") || file.name;
+}
+
 export function prepareSourceFolder(selectedFiles) {
   const selected = Array.from(selectedFiles || []);
   const files = selected.filter((file) => {
-    const parts = (file.webkitRelativePath || file.name).split("/");
+    const parts = sourcePath(file).split("/");
     const leaf = parts.at(-1).toLowerCase();
     const environmentFile =
       (leaf === ".env" || leaf.startsWith(".env.")) &&
@@ -81,9 +85,7 @@ export function prepareSourceFolder(selectedFiles) {
     );
   if (totalBytes > MAX_UPLOAD_BYTES)
     throw new Error("Source uploads support at most 200 MiB.");
-  const originalPaths = files.map(
-    (file) => file.webkitRelativePath || file.name,
-  );
+  const originalPaths = files.map(sourcePath);
   const root = originalPaths[0]?.split("/")[0] || "uploaded-agent";
   const stripRoot = originalPaths.every((path) => path.startsWith(`${root}/`));
   return {
@@ -99,12 +101,22 @@ export function prepareSourceFolder(selectedFiles) {
 
 // Sends a prepared folder as one upload, each file with its `paths` field, and
 // reports progress in percent.
+export function prepareSourceZip(file) {
+  if (!file?.name.toLowerCase().endsWith(".zip") || !file.size)
+    throw new Error("Choose a ZIP containing the agent source.");
+  if (file.size > MAX_UPLOAD_BYTES)
+    throw new Error("Source uploads support at most 200 MiB.");
+  return { archive: file, name: file.name, totalBytes: file.size };
+}
+
 export function uploadSourceFolder(prepared, onPercent) {
   const formData = new FormData();
-  prepared.files.forEach((file, i) => {
-    formData.append("files", file, file.name);
-    formData.append("paths", prepared.paths[i]);
-  });
+  if (prepared.archive) formData.append("archive", prepared.archive);
+  else
+    prepared.files.forEach((file, i) => {
+      formData.append("files", file, file.name);
+      formData.append("paths", prepared.paths[i]);
+    });
   formData.append("name", prepared.name);
   return uploadHarnessSource(formData, (evt) => {
     if (evt?.total) onPercent(Math.round((evt.loaded / evt.total) * 100));

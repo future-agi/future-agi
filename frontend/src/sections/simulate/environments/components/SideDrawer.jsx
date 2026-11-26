@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Box, Drawer, IconButton, Portal } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import usePrefersReducedMotion from "./usePrefersReducedMotion";
 
 /**
  * The shared right-side drawer, matching the ones in Datasets.
@@ -33,6 +34,7 @@ export default function SideDrawer({
 }) {
   const [host, setHost] = useState(null);
   const covered = useDrawerCovered(open);
+  const reduce = usePrefersReducedMotion();
   // Nothing keeps focus in a drawer beside the page: a button that disables itself when pressed drops it to the body,
   // where the drawer's own Escape never fires.
   useEffect(() => {
@@ -51,6 +53,7 @@ export default function SideDrawer({
       // Its own container first: opened before it exists, the drawer would land in the page's.
       open={Boolean(open) && (!beside || Boolean(host))}
       onClose={onClose}
+      transitionDuration={reduce ? 0 : undefined}
       sx={{
         "&& .MuiDrawer-paper": {
           width,

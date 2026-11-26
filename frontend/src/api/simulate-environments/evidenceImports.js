@@ -4,6 +4,7 @@ import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { refreshDrafts, refreshFollowers } from "./versions";
+import { designNotSaved, isDesignEnvId } from "./designEnvironment";
 
 // Observe sessions or calls or dataset rows frozen as evidence for an
 // environment's tests, or transcripts a person added, and the review that
@@ -91,14 +92,16 @@ const createBody = ({
   return { project_id: projectId, source_kind: sourceKind, ids };
 };
 
-export const createEvidenceImport = async (envId, body) =>
-  (await axios.post(importsPath(envId), createBody(body))).data;
+export const createEvidenceImport = async (envId, body) => {
+  if (isDesignEnvId(envId)) throw designNotSaved();
+  return (await axios.post(importsPath(envId), createBody(body))).data;
+};
 
 export const getEvidenceImport = async (envId, importId) =>
   (await axios.get(importPath(envId, importId))).data;
 
 export const listEvidenceImports = async (envId) =>
-  (await axios.get(importsPath(envId))).data;
+  isDesignEnvId(envId) ? [] : (await axios.get(importsPath(envId))).data;
 
 // Nothing of it added: the import goes, and a transcript's stored text with
 // it. Some of it added: only the cases not added go.

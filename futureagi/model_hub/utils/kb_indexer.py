@@ -4,24 +4,27 @@ import concurrent.futures
 import os
 import re
 import tempfile
-import traceback
 from dataclasses import dataclass
 from typing import Any
 
 import structlog
 from django.db import close_old_connections
-from striprtf.striprtf import rtf_to_text
 
 from agentic_eval.core.embeddings.embedding_manager import (
     EmbeddingManager,
     log_performance,
 )
 from agentic_eval.core.embeddings.serving_client import SERVING_START_HINT
+from model_hub.services.document_text import (
+    DocumentTextError,
+    extract_document_text,
+    extract_pdf_reader_text,
+)
+from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.telemetry import wrap_for_thread
+from tfc.utils.storage_client import get_storage_client
 
 logger = structlog.get_logger(__name__)
-from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import get_storage_client
 
 KB_TABLE_NAME = "syn"
 KB_INDEX_COL_TYPE = "text"
@@ -68,20 +71,10 @@ class KBIndexer:
 
     def load_pdf(self, pdf_path: str) -> str:
         """Load and extract text from a PDF file."""
-        from pypdf import PdfReader  # lazy: keep pypdf off the startup path
+        from pypdf import PdfReader
 
         try:
-            # The same extraction langchain-community's PyPDFLoader did (pypdf
-            # extract_text() per page, stripped, pages joined by a blank line),
-            # without shipping langchain-community + SQLAlchemy in the image.
-            reader = PdfReader(pdf_path)
-            text = "\n\n".join(
-                (page.extract_text() or "").strip() for page in reader.pages
-            )
-
-            cleaned_text = self._clean_text(text)
-
-            return cleaned_text
+            return self._clean_text(extract_pdf_reader_text(PdfReader(pdf_path)))
 
         except ImportError as e:
             logger.error(f"Error: PDF loader import error: {str(e)}")
@@ -92,6 +85,16 @@ class KBIndexer:
         except Exception as e:
             logger.error(f"Error: Unexpected error loading PDF {pdf_path}: {str(e)}")
             raise
+
+    @staticmethod
+    def _document_text(path: str) -> str | None:
+        with open(path, "rb") as document:
+            try:
+                return extract_document_text(document.read(), path)
+            except DocumentTextError as exc:
+                if str(exc) == "Document contains no extractable text.":
+                    return None
+                raise
 
     def _clean_text(self, text: str) -> str:
         """Clean and normalize extracted text."""
@@ -135,12 +138,7 @@ class KBIndexer:
         Args:
             text_path: Path to the text file
         """
-        with open(text_path) as file:
-            text = file.read()
-        if not text:
-            return None
-        else:
-            return text
+        return self._document_text(text_path)
 
     def process_docx(self, docx_path: str) -> str | None:
         """Process a single docx file.
@@ -148,15 +146,7 @@ class KBIndexer:
         Args:
             docx_path: Path to the docx file
         """
-        import docx  # lazy: keep heavy import off the startup path
-
-        with open(docx_path, "rb") as file:
-            doc = docx.Document(file)
-            text = "\n\n".join([paragraph.text for paragraph in doc.paragraphs])
-        if not text:
-            return None
-        else:
-            return text
+        return self._document_text(docx_path)
 
     def process_rtf(self, rtf_path: str) -> str | None:
         """Process a single rtf file.
@@ -164,13 +154,7 @@ class KBIndexer:
         Args:
             rtf_path: Path to the rtf file
         """
-        with open(rtf_path, encoding="utf-8") as file:
-            rtf_content = file.read()
-            text = rtf_to_text(rtf_content)
-        if not text:
-            return None
-        else:
-            return text
+        return self._document_text(rtf_path)
 
     def _require_embeddings(self) -> None:
         if not self.embedding_manager.text_embeddings_available():

@@ -331,8 +331,8 @@ const SimulatePrebuiltEnvironments = lazyWithRetry(
   () =>
     import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
 );
-const SimulateUseTemplate = lazyWithRetry(
-  () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
+const SimulateEnvironmentDesign = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/design"),
 );
 const SimulateEnvironmentWorkspace = lazyWithRetry(
   () =>
@@ -1478,10 +1478,6 @@ export const dashboardRoutes = (
           element: <SimulatePrebuiltEnvironments />,
         },
         {
-          path: "environments/templates/:templateId",
-          element: <SimulateUseTemplate />,
-        },
-        {
           // Build is no longer a page of its own — the source panels create the
           // job and route straight to the workspace, which hosts the build. An
           // old /build link lands back on the Build entry tab.
@@ -1492,6 +1488,10 @@ export const dashboardRoutes = (
               replace
             />
           ),
+        },
+        {
+          path: "environments/design/:draftId",
+          element: <SimulateEnvironmentDesign />,
         },
         {
           path: "environments/:envId",

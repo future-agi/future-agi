@@ -480,6 +480,7 @@ class TestCreateFilesAndUpload:
         from model_hub.views.develop_dataset import CreateKnowledgeBaseView
 
         view = CreateKnowledgeBaseView()
+        mock_upload.return_value = "http://storage.test/test.pdf"
 
         mock_file = MagicMock()
         mock_file.name = "test.pdf"
@@ -501,6 +502,7 @@ class TestCreateFilesAndUpload:
         from model_hub.views.develop_dataset import CreateKnowledgeBaseView
 
         view = CreateKnowledgeBaseView()
+        mock_upload.return_value = "http://storage.test/document.docx"
 
         mock_file = MagicMock()
         mock_file.name = "document.docx"

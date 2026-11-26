@@ -14,6 +14,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import CreateKnowledgeBaseDrawer from "../CreateKnowledgeBase/CreateKnowledgeBaseDrawer";
 import EditKnowledgeBaseNameDialog from "./edit-knowledge-base-name-dialog";
+import UseInEnvironmentDialog from "../UseInEnvironmentDialog";
 import SyntheticDataDrawer from "src/sections/develop/AddRowDrawer/CreateSyntheticData";
 
 const tabOptions = [
@@ -50,6 +51,7 @@ export default function KnowledgeBaseSheetView() {
   const [isFetchingData, setIsFetchingData] = useState(false);
   const [openEditDialog, setOpenEditDialog] = useState(false);
   const [syntheticDataDrawerOpen, setSyntheticDataDrawerOpen] = useState(false);
+  const [environmentSelection, setEnvironmentSelection] = useState(null);
   const allRowSelected = useRef(false);
   const [totalRows, setTotalRows] = useState(0);
   const [excludingIds, setExcludingIds] = useState(new Set());
@@ -197,6 +199,12 @@ export default function KnowledgeBaseSheetView() {
           setOpenAddRow={() => setOpenAddRow(true)}
           handleOpenSyntheticDrawer={handleOpenSyntheticDrawer}
           handleCloseSyntheticDrawer={handleCloseSyntheticDrawer}
+          onUseInEnvironment={(fileIds) =>
+            setEnvironmentSelection({
+              kb_id: knowledgeId,
+              ...(fileIds ? { file_ids: fileIds } : { whole_collection: true }),
+            })
+          }
         />
 
         {/* tasks section */}
@@ -255,6 +263,11 @@ export default function KnowledgeBaseSheetView() {
         knowledgeId={knowledgeId}
         open={openEditDialog}
         onClose={handleCloseEditDialog}
+      />
+      <UseInEnvironmentDialog
+        open={Boolean(environmentSelection)}
+        onClose={() => setEnvironmentSelection(null)}
+        selection={environmentSelection || undefined}
       />
       <SyntheticDataDrawer
         knowledgeId={knowledgeId}

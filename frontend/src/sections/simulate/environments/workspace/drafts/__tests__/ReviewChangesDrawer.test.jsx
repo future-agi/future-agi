@@ -273,6 +273,28 @@ describe("ReviewChangesDrawer", () => {
     },
   );
 
+  it.each([
+    [false, false, /^Save/],
+    [true, false, /^Validate/],
+    [true, true, /^Save/],
+  ])(
+    "holds the draft action until source generation settles",
+    async (needsValidate, canSaveValidated, action) => {
+      setFlow([change({ decision: "accepted" })], {
+        needsValidate,
+        canSaveValidated,
+      });
+      renderDrawer({ sourceHold: "Source scenarios are still generating." });
+      const control = screen.getByRole("button", { name: action });
+      expect(control).toHaveAttribute("aria-disabled", "true");
+      control.focus();
+      await userEvent.keyboard("{Enter}");
+      expect(flow.onValidate).not.toHaveBeenCalled();
+      expect(flow.onSave).not.toHaveBeenCalled();
+      expect(flow.onSaveValidated).not.toHaveBeenCalled();
+    },
+  );
+
   it("holds a validated Save until the version has a name", async () => {
     const user = userEvent.setup();
     setFlow([change({ decision: "accepted", summary: "Refund window" })], {

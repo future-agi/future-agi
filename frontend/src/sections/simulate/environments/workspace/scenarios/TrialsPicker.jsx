@@ -4,6 +4,7 @@ import {
   Box, Stack, Typography, Button, Tooltip, Popover, TextField,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { CompositionLabels } from "../composition/CompositionPanel";
 
 // Reliability dial — pick how many times each scenario should run. 1 is the
 // single-shot; 3/5/8 are the common repeat counts; Custom covers anything else
@@ -12,7 +13,7 @@ import Iconify from "src/components/iconify";
 const TRIAL_PRESETS = [1, 3, 5, 8];
 const DEFAULT_TRIALS_LABEL = 1;
 
-export default function TrialsPicker({ trials, onChange, scenarioCount = 0 }) {
+export default function TrialsPicker({ trials, onChange, scenarioCount = 0, composition = null }) {
   const [anchor, setAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState(String(trials || 1));
@@ -70,6 +71,11 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0 }) {
           <Typography sx={{ typography: "s3", color: k < 3 ? "status.warning.fg" : "text.subtitle", mt: 0.25 }}>
             Use 3 or more for a result you&apos;d base a decision on.
           </Typography>
+          {composition && (
+            <Box sx={{ mt: 1 }}>
+              <CompositionLabels composition={composition} dense />
+            </Box>
+          )}
         </Box>
         {TRIAL_PRESETS.map((v) => {
           const active = v === k;
@@ -166,4 +172,6 @@ TrialsPicker.propTypes = {
   scenarioCount: PropTypes.number,
   // Accepted for existing callers; the button now follows the theme size.
   size: PropTypes.oneOf(["sm", "xs"]),
+  // A composition pins every run to an agent version, suite and binding; shown before Run.
+  composition: PropTypes.object,
 };

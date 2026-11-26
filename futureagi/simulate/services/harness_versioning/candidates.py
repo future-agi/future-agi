@@ -41,6 +41,7 @@ from simulate.services.harness_versioning.drafts import (
     open_drafts,
     require_revisions,
     require_saveable,
+    require_source_scenario_pair,
     without_archived,
 )
 from simulate.services.harness_versioning.review import DraftReview
@@ -202,6 +203,7 @@ def validate_drafts(
             reviewed, expected_review_digest, digest_required=True, environment=locked
         )
         require_revisions(opened, expected_revisions, required=True)
+        require_source_scenario_pair(locked, expected_revisions)
         # A pairing that can be validated pins an agent version.
         if not validation_available(locked) or locked.agent_version_id is None:
             return UNAVAILABLE, False

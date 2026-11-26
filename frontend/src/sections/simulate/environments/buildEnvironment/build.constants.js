@@ -1,3 +1,5 @@
+import { BUILD_FILES_ACCEPT } from "../buildDrawer/forms/shared/buildFiles";
+import { formatFileSize } from "src/utils/utils";
 import { WORKSPACE_TABS } from "../workspace/workspace.constants";
 
 // Build-stage copy for the deriving hero, the building tab rail and the builder
@@ -29,6 +31,7 @@ export const DERIVING_LABEL = {
 // still building (or failed to build) has no draft, runs, fixes or versions yet.
 const NOT_WHILE_BUILDING = new Set([
   "actors",
+  "composition",
   "runs",
   "improvements",
   "versions",
@@ -49,7 +52,8 @@ export const CONSOLE_COPY = {
     "Answer the questions below to kick things off. You can also just start typing.",
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
-  attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
+  attachAccept: BUILD_FILES_ACCEPT,
+  fileSize: (bytes) => formatFileSize(bytes, { wholeKb: true }),
   stopping: "Stopping…",
   jumpToLatest: "Jump to latest",
   newMessage: "New message",

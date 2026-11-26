@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import { Box, Stack, Typography, TextField, IconButton, Checkbox, FormControlLabel } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
@@ -30,7 +30,10 @@ import { Turn } from "./ConsoleTurn";
 // import VoiceInput from "./VoiceInput";
 import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
-const INITIAL = { draft: "", scaffolds: [] };
+const INITIAL = { draft: "", scaffolds: [], files: [], policyFiles: [] };
+
+// Not the build forms' by-name merge: a message can carry two files that share a name.
+const sameFile = (a, b) => a.name === b.name && a.size === b.size;
 
 function composerReducer(state, action) {
   switch (action.type) {
@@ -44,6 +47,28 @@ function composerReducer(state, action) {
       return {
         ...state,
         scaffolds: state.scaffolds.filter((_, i) => i !== action.index),
+      };
+    // The same file picked twice is attached once.
+    case "attach":
+      return {
+        ...state,
+        files: [
+          ...state.files,
+          ...action.files.filter(
+            (file, i) =>
+              !state.files.some((one) => sameFile(one, file)) &&
+              action.files.findIndex((one) => sameFile(one, file)) === i,
+          ),
+        ],
+      };
+    case "policy":
+      return { ...state, policyFiles: action.checked
+        ? [...state.policyFiles, action.file] : state.policyFiles.filter((f) => f !== action.file) };
+    case "unattach":
+      return {
+        ...state,
+        files: state.files.filter((_, i) => i !== action.index),
+        policyFiles: state.policyFiles.filter((f) => f !== state.files[action.index]),
       };
     case "clear":
       return INITIAL;
@@ -85,6 +110,9 @@ const countMessages = (turns) =>
  * the same way `running` does, but stays blocked until the env finishes
  * building rather than until the last message returns.
  *
+ * `canAttach` adds a paperclip: picked files show as chips above the input
+ * and go with the message as `onSend(text, files)`.
+ *
  * `onCollapse` adds a collapse button to the header. `active` is false while
  * the console is collapsed (mounted but hidden); it skips the auto-scroll then
  * and jumps to the latest turn once the console is shown again.
@@ -104,13 +132,16 @@ export default function BuilderConsole({
   frozen = false,
   frozenReason,
   answerWithOptions = false,
+  canAttach = false,
+  canChooseFilePurpose = false,
   onCollapse,
   collapseRef,
   active = true,
 }) {
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
   const { canEdit } = useSimulationAccess();
-  const { draft, scaffolds } = state;
+  const { draft, scaffolds, files } = state;
+  const fileRef = useRef(null);
   const theme = useTheme();
   const listRef = useRef(null);
   // Where the held messages and steps start.
@@ -249,7 +280,7 @@ export default function BuilderConsole({
     ? WORKSPACE_COPY.viewer.chat
     : frozenReason || CONSOLE_COPY.frozen;
 
-  const hasContent = draft.trim() || scaffolds.length > 0;
+  const hasContent = draft.trim() || scaffolds.length > 0 || files.length > 0;
 
   // "Busy" drives the working indicator: the brief send round-trip (running) OR a
   // turn still in flight (canStop = a queued/responding message waiting on the
@@ -267,9 +298,10 @@ export default function BuilderConsole({
     const combined = [scaffoldText, text]
       .filter(Boolean)
       .join(scaffoldText && text ? ". " : "");
-    if (!combined || blocked) return;
+    if ((!combined && !files.length) || blocked) return;
     dispatch({ type: "clear" });
-    onSend?.(combined);
+    if (canChooseFilePurpose && files.length) onSend?.(combined, files, state.policyFiles);
+    else onSend?.(combined, files);
   };
 
   return (
@@ -501,6 +533,72 @@ export default function BuilderConsole({
             </Stack>
           )}
 
+          {files.length > 0 && (
+            <Stack
+              direction="row"
+              spacing={0.75}
+              sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}
+            >
+              {files.map((file, i) => (
+                <Stack
+                  key={`${file.name}-${file.size}`}
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.75}
+                  sx={{
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: "4px",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    maxWidth: 260,
+                  }}
+                >
+                  <Iconify
+                    icon="solar:paperclip-linear"
+                    width={12}
+                    sx={{ color: "text.secondary", flexShrink: 0 }}
+                  />
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", flex: 1, minWidth: 0 }}
+                  >
+                    {file.name}
+                  </Typography>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.secondary",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {CONSOLE_COPY.fileSize(file.size)}
+                  </Typography>
+                  {canChooseFilePurpose && file.name.toLowerCase().endsWith(".pdf") && (
+                    <FormControlLabel
+                      label={state.policyFiles.includes(file) ? "Policy" : "Reference"}
+                      control={<Checkbox size="small" checked={state.policyFiles.includes(file)}
+                        inputProps={{ "aria-label": `Use ${file.name} as policy` }}
+                        onChange={(event) => dispatch({ type:"policy", file, checked:event.target.checked })} />}
+                    />
+                  )}
+                  <IconButton
+                    size="small"
+                    aria-label={`Remove ${file.name}`}
+                    onClick={() => dispatch({ type: "unattach", index: i })}
+                    sx={{ p: 0, ml: 0.25 }}
+                  >
+                    <Iconify
+                      icon="solar:close-circle-linear"
+                      width={13}
+                      sx={{ color: "text.disabled" }}
+                    />
+                  </IconButton>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+
           {/* Row 1: the text field on its own line so long drafts get the full width. */}
           <TextField
             fullWidth
@@ -529,7 +627,7 @@ export default function BuilderConsole({
             }}
           />
 
-          {/* Row 2: toolbar — flex-spacer · stop · send. */}
+          {/* Row 2: toolbar: attach · flex-spacer · stop · send. */}
           <Stack
             direction="row"
             alignItems="center"
@@ -541,6 +639,41 @@ export default function BuilderConsole({
                 server-side transcription endpoint (record -> /audio/transcriptions)
                 is wired so it works in every browser. VoiceInput.jsx is kept. */}
             {/* <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={blocked} /> */}
+
+            {canAttach && (
+              <CustomTooltip
+                show={!blocked}
+                size="small"
+                arrow
+                title={CONSOLE_COPY.attach}
+              >
+                <IconButton
+                  aria-label={CONSOLE_COPY.attach}
+                  disabled={blocked}
+                  onClick={() => fileRef.current?.click()}
+                  size="small"
+                  sx={{ color: "text.secondary" }}
+                >
+                  <Iconify icon="solar:paperclip-linear" width={16} />
+                </IconButton>
+              </CustomTooltip>
+            )}
+            {canAttach && (
+              <input
+                ref={fileRef}
+                hidden
+                multiple
+                type="file"
+                accept={CONSOLE_COPY.attachAccept}
+                onChange={(event) => {
+                  const picked = Array.from(event.target.files || []);
+                  // Cleared so a removed file can be picked again.
+                  event.target.value = "";
+                  if (picked.length)
+                    dispatch({ type: "attach", files: picked });
+                }}
+              />
+            )}
 
             <Box flex={1} />
 
@@ -611,6 +744,9 @@ BuilderConsole.propTypes = {
   frozenReason: PropTypes.string,
   // The open question takes only one of its options; free text is held.
   answerWithOptions: PropTypes.bool,
+  // Shows the paperclip; `onSend` then gets `(text, files)`.
+  canAttach: PropTypes.bool,
+  canChooseFilePurpose: PropTypes.bool,
   onCollapse: PropTypes.func,
   // Attached to the collapse button so focus can return to it on reopen.
   collapseRef: PropTypes.oneOfType([

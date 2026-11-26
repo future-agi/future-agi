@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 
 import { render } from "src/utils/test-utils";
 import CapabilityGraph from "../CapabilityGraph";
@@ -54,7 +54,7 @@ describe("CapabilityGraph", () => {
     expect(screen.getByText(/\+ 3 more/)).toBeInTheDocument();
   });
 
-  it("starts collapsed and opens on click", () => {
+  it("starts collapsed and opens on click", async () => {
     render(
       <CapabilityGraph
         env={env}
@@ -67,12 +67,16 @@ describe("CapabilityGraph", () => {
     expect(screen.queryByText("book_ride")).toBeNull();
     expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull();
 
-    expect(screen.getByText("Tools, flows, personas and guardrails as one picture")).toBeInTheDocument();
+    expect(
+      screen.getByText("Tools, flows, personas and guardrails as one picture"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Capability graph/ }));
     expect(screen.getByText("book_ride")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Tools" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide capability graph" }));
-    expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Capability graph/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: "Tools" })).toBeNull(),
+    );
   });
 });

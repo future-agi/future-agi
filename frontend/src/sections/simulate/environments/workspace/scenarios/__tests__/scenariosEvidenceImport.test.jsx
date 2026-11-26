@@ -75,9 +75,9 @@ const HIDDEN = [
   "From failing cases",
 ];
 
-const renderAt = (search) => {
+const renderAt = (search, env = TEST_ENV) => {
   window.history.pushState({}, "", `/environments/${TEST_ENV.id}${search}`);
-  renderWithClient(<ScenariosStep env={TEST_ENV} envState={envStateFor()} />);
+  renderWithClient(<ScenariosStep env={env} envState={envStateFor()} />);
 };
 
 const openPanel = async () => {
@@ -114,6 +114,15 @@ describe("ScenariosStep evidence import", () => {
     await waitFor(() => expect(window.location.search).toBe("?tab=scenarios"));
     expect(screen.queryByRole("button", { name: "close review" })).toBeNull();
   });
+
+  it.each([{ supportsEvidenceImports: false }, { composition: { id: "release" } }])(
+    "keeps evidence imports closed for an unsupported environment %j",
+    async (properties) => {
+      renderAt(`?tab=scenarios&import=${IMPORT}`, { ...TEST_ENV, ...properties });
+      expect(await screen.findByRole("button", { name: "Add scenarios" })).toBeDisabled();
+      expect(drawer.props).toBeNull();
+    },
+  );
 
   it("opens no review without an import, and has no separate Import evidence button", async () => {
     renderAt("?tab=scenarios");

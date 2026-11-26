@@ -74,6 +74,8 @@ export default function ReviewChangesDrawer({
   onClose,
   onSaved,
   onOpenTab,
+  children,
+  sourceHold,
 }) {
   const flow = useDraftSaveFlow(env, { reviewEnabled: open });
   const reviewQuery = flow.reviewQuery;
@@ -162,6 +164,7 @@ export default function ReviewChangesDrawer({
       : null;
   let heldReason = null;
   if (hold) heldReason = hold;
+  else if (sourceHold) heldReason = sourceHold;
   else if (counts.undecided) heldReason = COPY.saveWaiting(counts.undecided);
   else if (!counts.accepted) heldReason = COPY.saveAllRejected;
   else if (flow.stale) heldReason = flow.stale;
@@ -337,6 +340,12 @@ export default function ReviewChangesDrawer({
           {announced}
         </Box>
         <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 2 }}>
+          {children}
+          {sourceHold && (
+            <Typography role="status" variant="body2">
+              {sourceHold}
+            </Typography>
+          )}
           {body()}
         </Box>
 
@@ -460,6 +469,8 @@ export default function ReviewChangesDrawer({
 }
 
 ReviewChangesDrawer.propTypes = {
+  sourceHold: PropTypes.string,
+  children: PropTypes.node,
   open: PropTypes.bool,
   env: PropTypes.shape({
     id: PropTypes.string,

@@ -5,6 +5,13 @@ import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { useDebounce } from "src/hooks/use-debounce";
+import {
+  designDraftsOf,
+  designReviewOf,
+  designVersionsOf,
+  isDesignEnvId,
+  saveDesignDrafts,
+} from "./designEnvironment";
 
 /**
  * The version history of one environment: its agent, environment and scenario
@@ -138,17 +145,23 @@ export const versionPickFields = (picks = {}) =>
   );
 
 export const getEnvironmentVersions = async (envId) =>
-  (await axios.get(versionsPath(envId))).data;
+  isDesignEnvId(envId)
+    ? designVersionsOf(envId)
+    : (await axios.get(versionsPath(envId))).data;
 
 export const getVersionDiff = async (envId, piece, versionId, against) =>
-  (
-    await axios.get(versionDiffPath(envId, piece, versionId), {
-      params: against ? { against } : undefined,
-    })
-  ).data;
+  isDesignEnvId(envId)
+    ? null
+    : (
+        await axios.get(versionDiffPath(envId, piece, versionId), {
+          params: against ? { against } : undefined,
+        })
+      ).data;
 
 export const getSuiteMembers = async (envId, versionId) =>
-  (await axios.get(suiteMembersPath(envId, versionId))).data;
+  isDesignEnvId(envId)
+    ? []
+    : (await axios.get(suiteMembersPath(envId, versionId))).data;
 
 // The default the user saw rides along; a newer one refuses the move (409).
 export const moveDefault = async (envId, piece, versionId, expectedDefaultId) =>
@@ -201,7 +214,9 @@ export const stopNudge = async (envId, nudgeId) =>
   (await axios.post(stopNudgePath(envId, nudgeId), {})).data;
 
 export const getDrafts = async (envId) =>
-  (await axios.get(draftsPath(envId))).data;
+  isDesignEnvId(envId)
+    ? designDraftsOf(envId)
+    : (await axios.get(draftsPath(envId))).data;
 
 // Each draft carries the default it started from and the revision the user
 // saw; a newer edit or default refuses the save (409).
@@ -210,17 +225,21 @@ export const saveDrafts = async (
   envId,
   { drafts, idempotencyKey, reviewDigest, name },
 ) =>
-  (
-    await axios.post(saveDraftsPath(envId), {
-      drafts,
-      idempotency_key: idempotencyKey,
-      ...(reviewDigest ? { expected_review_digest: reviewDigest } : {}),
-      ...(name ? { name } : {}),
-    })
-  ).data;
+  isDesignEnvId(envId)
+    ? saveDesignDrafts(envId, name)
+    : (
+        await axios.post(saveDraftsPath(envId), {
+          drafts,
+          idempotency_key: idempotencyKey,
+          ...(reviewDigest ? { expected_review_digest: reviewDigest } : {}),
+          ...(name ? { name } : {}),
+        })
+      ).data;
 
 export const getDraftReview = async (envId) =>
-  (await axios.get(draftReviewPath(envId))).data;
+  isDesignEnvId(envId)
+    ? designReviewOf(envId)
+    : (await axios.get(draftReviewPath(envId))).data;
 
 // Decide changes in the review: [{ id | kind | remaining, decision: "accepted" | "rejected" }], sent with the
 // revisions the person saw. Answers the whole review again, with a new digest.
@@ -592,6 +611,7 @@ export const refreshFollowers = (queryClient, envId) => {
   queryClient.invalidateQueries({ queryKey: ["harness-environment", envId] });
   queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
   queryClient.invalidateQueries({ queryKey: ["harness-scenarios", envId] });
+  queryClient.invalidateQueries({ queryKey: ["harness-env-sources", envId] });
 };
 
 // A draft keeps its id as it is edited, so its diff and members are asked
@@ -915,6 +935,7 @@ export function useDraftReview(envId, { enabled = true } = {}) {
   return useQuery({
     queryKey: draftReviewKey(envId),
     queryFn: () => getDraftReview(envId),
+    staleTime: isDesignEnvId(envId) ? Infinity : 0,
     enabled: Boolean(envId) && enabled,
     retry: retryUnlessNotFound,
     meta: { errorHandled: true },
@@ -928,11 +949,25 @@ export function useDecideChanges(envId) {
   return useMutation({
     scope: { id: `draft-review-${envId}` },
     meta: { errorHandled: true },
-    mutationFn: (vars) => decideReviewChanges(envId, vars),
+    mutationFn: async (vars) => {
+      if (!isDesignEnvId(envId)) return decideReviewChanges(envId, vars);
+      const current =
+        queryClient.getQueryData(draftReviewKey(envId)) ??
+        designReviewOf(envId);
+      const { withSampleDecisions } = await import("./_fixtures/draftReview");
+      const updated = withSampleDecisions(current, vars.decisions);
+      return {
+        ...current,
+        changes: updated.changes,
+        counts: updated.counts,
+        can_save: updated.can_save,
+      };
+    },
     onSuccess: (review) => {
       queryClient.setQueryData(draftReviewKey(envId), review);
       // A decision outdates any validation of the earlier set.
-      queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+      if (!isDesignEnvId(envId))
+        queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
     },
   });
 }

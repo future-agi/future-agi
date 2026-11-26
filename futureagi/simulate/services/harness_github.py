@@ -1,9 +1,5 @@
-"""Reads of GitHub repositories through the GitHub App.
-
-Every read carries an installation token: the workspace's own installation when it
-has connected GitHub, Future AGI's own installation otherwise. Without either, no
-call is made. GitHub alone limits each installation, and when it asks one to wait,
-only that installation's reads wait.
+"""GitHub reads use installation tokens when available. Interactive public
+repository reads can also use GitHub's shared anonymous rate limit.
 """
 
 from __future__ import annotations
@@ -58,6 +54,7 @@ class ReadCredential:
     token: str | None = field(default=None, repr=False)
     installation_id: str | None = None
     workspace_owned: bool = False
+    anonymous_public: bool = False
 
 
 NO_CREDENTIAL = ReadCredential()
@@ -116,7 +113,7 @@ def _workspace_installation(organization_id: Any, workspace_id: Any) -> str | No
 
 @contextmanager
 def read_credential(
-    organization_id: Any = None, workspace_id: Any = None
+    organization_id: Any = None, workspace_id: Any = None, *, allow_public: bool = False
 ) -> Iterator[ReadCredential]:
     from integrations.services.github_app import (
         GitHubAppError,
@@ -149,7 +146,7 @@ def read_credential(
             str(getattr(settings, "GITHUB_APP_FALLBACK_INSTALLATION_ID", "")),
         )
         return
-    yield NO_CREDENTIAL
+    yield ReadCredential(anonymous_public=True) if allow_public else NO_CREDENTIAL
 
 
 def _reset_key(installation_id: str | None) -> str:
@@ -161,7 +158,7 @@ def _remaining_key(installation_id: str | None) -> str:
 
 
 def waiting_until(credential: ReadCredential) -> float | None:
-    if not credential.token:
+    if not credential.token and not credential.anonymous_public:
         return None
     reset = cache.get(_reset_key(credential.installation_id))
     return float(reset) if reset is not None and float(reset) > time.time() else None
@@ -256,8 +253,8 @@ def github_get(
     purpose: str,
 ) -> GitHubResponse:
     """``GET`` one API path built from checked names only, with the credential's
-    installation token; nothing is sent without one."""
-    if not credential.token:
+    installation token or an explicitly requested public read."""
+    if not credential.token and not credential.anonymous_public:
         logger.info("harness_github_not_connected", purpose=purpose)
         return GitHubResponse("not_connected")
     waiting = waiting_until(credential)
@@ -265,10 +262,11 @@ def github_get(
         return GitHubResponse("rate_limited", reset_at=waiting)
     headers = {
         "Accept": accept,
-        "Authorization": f"Bearer {credential.token}",
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "futureagi-harness",
     }
+    if credential.token:
+        headers["Authorization"] = f"Bearer {credential.token}"
     if etag:
         headers["If-None-Match"] = etag
     base = str(getattr(settings, "GITHUB_API_ENDPOINT", "https://api.github.com"))
@@ -286,6 +284,8 @@ def github_get(
     _note_remaining(response, credential, purpose)
     code = response.status_code
     if code == 401:
+        if credential.anonymous_public:
+            return GitHubResponse("error")
         if credential.workspace_owned:
             logger.warning(
                 "harness_github_token_rejected",

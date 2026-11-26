@@ -29,6 +29,9 @@ bundled datastores (wave -2) are ready and before the rest of the release
 {{- if not $bs.propertyCatalog -}}
 {{- $args = append $args "--skip-property-catalog" -}}
 {{- end -}}
+{{- if eq .Values.objectStorage.mode "bundled" -}}
+{{- $args = append $args "--provision-harness-bucket" -}}
+{{- end -}}
 {{- /* Database changes are authorized for this job only: the explicit local
 mode, plus the operator pair a hosted ENV_TYPE (production) requires. */ -}}
 {{- $component := dict

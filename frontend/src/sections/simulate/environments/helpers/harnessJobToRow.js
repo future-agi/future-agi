@@ -129,6 +129,8 @@ export function harnessEnvToRow(item) {
   return {
     id: item?.id,
     name: item?.name,
+    // A design (environment-releases.md §7.9) is followed on its job page, not the workspace.
+    design: item?.source_kind === "design",
     // §1 always reports status and agent_type, so these are passed through
     // rather than defaulted — inventing "building"/"chat" for a missing value
     // would hide a real data gap. `agent_type` is one of two modalities.

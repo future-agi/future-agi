@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
@@ -12,8 +13,19 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
+import { sourceLabel } from "src/sections/agent-playground/connected/connectedAgentLabels";
 import { MONO, PreflightRow, useUiOnlyBuild } from "../forms/formBits";
+import BuildFilesField from "../forms/shared/BuildFilesField";
+import BuildTestField from "../forms/shared/BuildTestField";
+import { BUILD_TEST_MIN } from "../forms/shared/buildFiles";
+import {
+  draftFilesOf,
+  uploadsLabel,
+  useFileUploads,
+} from "../forms/shared/useFileUploads";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
+import { useDesignDraftStore } from "../../design/useDesignDraftStore";
 import { BTN_SX, INPUT_SX, T12, T13, T14, focusRing } from "../drawerStyles";
 import { envNameFor } from "./startUtils";
 
@@ -81,7 +93,11 @@ Pick.propTypes = {
 
 function DialogBody({ agent, onClose, subtitle }) {
   const build = useUiOnlyBuild(SAMPLE_CHECKS);
+  const navigate = useNavigate();
+  const createDesignDraft = useDesignDraftStore((s) => s.createDesignDraft);
   const [name, setName] = useState(() => envNameFor(agent));
+  const [testRequest, setTestRequest] = useState("");
+  const uploads = useFileUploads();
   const version = agent.latestLabel || "Latest";
   // Held as typed, so a half-typed number isn't snapped mid-edit.
   const [countText, setCountText] = useState("10");
@@ -97,11 +113,13 @@ function DialogBody({ agent, onClose, subtitle }) {
 
   const blocked = !name.trim()
     ? "Name it first"
-    : !countOk
-      ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
-      : !build.readyToSubmit
-        ? "Run preflight first"
-        : null;
+    : testRequest.trim().length < BUILD_TEST_MIN
+      ? "Say what this environment should test"
+      : !countOk
+        ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
+        : !build.readyToSubmit
+          ? "Run preflight first"
+          : null;
 
   return (
     <>
@@ -136,6 +154,11 @@ function DialogBody({ agent, onClose, subtitle }) {
             }}
           />
         </Box>
+        <BuildTestField
+          required
+          value={testRequest}
+          onChange={setTestRequest}
+        />
         <Stack direction="row" spacing={1.5}>
           <Box flex={1} minWidth={0}>
             <Label>Built from version</Label>
@@ -219,6 +242,7 @@ function DialogBody({ agent, onClose, subtitle }) {
           The environment tests this version first. You can add scenarios and
           switch versions afterwards.
         </Typography>
+        <BuildFilesField uploads={uploads} />
         <PreflightRow
           build={build}
           canRun={!!name.trim() && countOk}
@@ -272,11 +296,28 @@ function DialogBody({ agent, onClose, subtitle }) {
           size="small"
           variant="contained"
           color="primary"
-          disabled={!!blocked}
-          onClick={build.commitBuild}
+          disabled={!!blocked || uploads.uploading.length > 0}
+          onClick={() =>
+            navigate(
+              paths.dashboard.simulate.environments.design(
+                createDesignDraft({
+                  name,
+                  description: testRequest,
+                  files: draftFilesOf(uploads.done),
+                  agent: {
+                    id: agent.id,
+                    name: agent.name,
+                    version,
+                    source: agent.source ? sourceLabel(agent.source) : null,
+                  },
+                  scenarioCount: count,
+                }),
+              ),
+            )
+          }
           sx={BTN_SX}
         >
-          Build environment
+          {uploadsLabel(uploads) || "Build environment"}
         </Button>
       </Stack>
     </>
@@ -291,7 +332,7 @@ DialogBody.propTypes = {
 /**
  * "Build environment" for one connected agent: its name, the version it's
  * built from and how many scenarios to start with, then preflight. UI only:
- * preflight shows sample checks and building only says it isn't wired.
+ * preflight shows sample checks and building opens the proposed design.
  */
 export default function BuildForAgentDialog({ agent, onClose, subtitle }) {
   return (

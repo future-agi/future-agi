@@ -140,8 +140,13 @@ export default function ScenarioEditor({
       changedFields.push(field);
     };
 
-    if (canEdit("tests") && draft.tests !== base.tests)
-      setField("tests", draft.tests);
+    if (canEdit("tests") && draft.tests !== base.tests) {
+      const stored = row._raw?.tests ?? base.tests;
+      const evidence = stored.startsWith(base.tests)
+        ? stored.slice(base.tests.length)
+        : "";
+      setField("tests", draft.tests + evidence);
+    }
     if (
       canEdit("max_turns") &&
       String(draft.maxTurns) !== String(base.maxTurns)
@@ -203,7 +208,7 @@ export default function ScenarioEditor({
       changes: ops,
       rework: changedFields.some((f) => reworkFields.includes(f)),
     };
-  }, [draft, base, canEdit, canEditPersona, reworkFields]);
+  }, [draft, base, row, canEdit, canEditPersona, reworkFields]);
 
   // Asked to show a builder chat message, the editor steps aside so the chat can be used; unsaved edits ask first.
   // The message the chat was asked to show, while the person decides whether to discard their edits.

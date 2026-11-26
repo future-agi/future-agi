@@ -1516,6 +1516,7 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `objectStorage.mode` | `"external"` | `external` (AWS S3, GCS or any S3-compatible service) or `bundled` (one MinIO, for evaluation). |
 | `objectStorage.backend` | `"s3"` | [STORAGE_BACKEND] `s3` (AWS), `gcs` (Google Cloud Storage with HMAC keys) or `minio` (any other S3-compatible endpoint). Bundled always uses `minio`. |
 | `objectStorage.bucket` | `"futureagi"` | [UPLOAD_BUCKET_NAME] bucket for uploads, datasets and exports. Created on the first upload (not on GCS) with a public-read policy. |
+| `objectStorage.harnessPrivateBucket` | `""` | [HARNESS_PRIVATE_BUCKET] private bucket for harness inputs and checkpoints. Empty uses the upload bucket name with the suffix "-harness-private". Bundled MinIO provisions it. Provision external S3/GCS buckets before enabling harness uploads. |
 | `objectStorage.region` | `"us-east-1"` | [S3_REGION, AWS_DEFAULT_REGION] bucket region. |
 | `objectStorage.accessKey` | `""` | [S3_ACCESS_KEY, or GCS_HMAC_ACCESS_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one. |
 | `objectStorage.secretKey` | `""` | [S3_SECRET_KEY, or GCS_HMAC_SECRET_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one. |

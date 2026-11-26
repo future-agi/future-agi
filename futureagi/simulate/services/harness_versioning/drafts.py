@@ -28,6 +28,7 @@ from urllib3.exceptions import HTTPError
 from simulate.models import (
     HarnessEnvironmentVersion,
     HarnessNudge,
+    HarnessSourceScenarioGeneration,
     HarnessSuiteMember,
     HarnessSuiteVersion,
     HostedHarnessConversation,
@@ -444,9 +445,19 @@ def _sealed_files(key: str) -> dict[str, bytes] | None:
 
 # What a chat reseal carries from the authoring tree into its bundle; ALK stamps their
 # digest into the manifest as ``metadata.sealed_from``.
-RESEAL_INPUTS = frozenset({"contract.json", "sub_goals.json", "world.sqlite"})
+RESEAL_INPUTS = frozenset(
+    {"contract.json", "sub_goals.json", "world.sqlite", "reviewed-source.json"}
+)
 # The authoring world's own bookkeeping, which no v2 bundle carries.
-UNBUNDLED = frozenset({"manifest.json", "world.py", "state.json"})
+UNBUNDLED = frozenset(
+    {
+        "manifest.json",
+        "world.py",
+        "state.json",
+        "sources/manifest.json",
+        "sources/tested-agent.json",
+    }
+)
 
 
 def sealed_from(files: Mapping[str, bytes]) -> str:
@@ -1226,6 +1237,27 @@ def _save_pair(
                 return pair
         current = str(metadata.get("authoring_object_key") or "")
         default_suite = locked.suite_version
+        default = _default_authoring(locked)
+        target_environment = piece_files(locked, "environment", environment_version)
+        if (
+            default is not None
+            and default_suite is not None
+            and suite_version.id == default_suite.id
+            and all(
+                path.startswith("sources/")
+                for path in target_environment.keys() ^ default.environment.keys()
+                | {
+                    path
+                    for path in target_environment.keys() & default.environment.keys()
+                    if target_environment[path] != default.environment[path]
+                }
+            )
+        ):
+            pair = _composed_pair(
+                locked, environment_version, suite_version, default.sealed
+            )
+            if pair is not None:
+                return pair
         if (
             current
             and metadata.get("default_pair_sealed") is not False
@@ -1432,6 +1464,64 @@ def saved_body(locked: HostedHarnessJob, saved: Mapping[str, Any]) -> dict[str, 
     }
 
 
+def require_source_scenario_pair(
+    locked: HostedHarnessJob, revisions: Mapping[str, int | None]
+) -> None:
+    # The generation worker takes this same owner lock when recording the suite draft.
+    environment_draft = open_draft(locked, "environment")
+    if environment_draft is None:
+        return
+    state = HarnessSourceScenarioGeneration.State
+    generations = HarnessSourceScenarioGeneration.objects.filter(
+        review__owner=locked,
+        basis__environment__id=str(environment_draft.id),
+    )
+    if generations.filter(state__in=(state.QUEUED, state.RUNNING)).exists():
+        raise version_error(
+            "source_generation_in_progress",
+            "Wait for scenario generation to finish before saving.",
+            409,
+            piece="suite",
+        )
+    latest = (
+        generations.order_by("-basis__environment__revision")
+        .values("state", "basis", "result")
+        .first()
+    )
+    if latest is None:
+        return
+    if latest["state"] != state.COMPLETED:
+        raise version_error(
+            "source_generation_not_ready",
+            "Prepare the sources again or discard the draft before saving.",
+            409,
+            piece="suite",
+        )
+    generated_draft = latest["result"]["suite_draft"]
+    generated_basis = latest["basis"]
+    agent = str(locked.agent_version_id) if locked.agent_version_id else None
+    authoring_key = ((locked.payload or {}).get("metadata") or {}).get(
+        "authoring_object_key"
+    )
+    suite = open_draft(locked, "suite")
+    if (
+        "environment" not in revisions
+        or "suite" not in revisions
+        or suite is None
+        or generated_basis.get("agent_version_id") != agent
+        or generated_basis.get("authoring_key") != authoring_key
+        or str(suite.id) != generated_draft["id"]
+        or suite.revision < generated_draft["revision"]
+        or revisions["suite"] != suite.revision
+    ):
+        raise version_error(
+            "draft_changed",
+            "Review and save the Environment and its generated scenarios together.",
+            409,
+            piece="suite",
+        )
+
+
 def replayed_save(
     locked: HostedHarnessJob,
     idempotency_key: str,
@@ -1569,6 +1659,9 @@ def save_drafts(
         from simulate.services.harness_scenario_actions import require_no_validation
 
         require_no_validation(locked)
+        require_source_scenario_pair(
+            locked, {piece: one.expected_revision for piece, one in requests.items()}
+        )
         expected_review_digest = next(
             (
                 one.expected_review_digest

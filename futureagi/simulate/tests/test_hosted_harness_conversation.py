@@ -1192,6 +1192,9 @@ class _Storage:
     def make_bucket(self, _bucket):
         pass
 
+    def get_bucket_policy(self, _bucket):
+        return "{}"
+
     def set_bucket_policy(self, _bucket, _policy):
         pass
 
@@ -1937,8 +1940,7 @@ def test_chat_on_run_whose_saved_files_are_gone_fails_at_once(
         raise _storage_error(storage_code)
 
     monkeypatch.setattr(
-        gateway_module,
-        "get_storage_client",
+        "simulate.services.harness_storage.get_storage_client",
         lambda: SimpleNamespace(get_object=get_object),
     )
     gateway = object.__new__(gateway_module.HostedHarnessGateway)
@@ -1985,8 +1987,7 @@ def test_missing_checkpoint_object_falls_back_instead_of_retiring(
             raise _storage_error(code)
 
         monkeypatch.setattr(
-            conv_module,
-            "get_storage_client",
+            "simulate.services.harness_storage.get_storage_client",
             lambda: SimpleNamespace(get_object=get_object),
         )
 
@@ -1998,6 +1999,31 @@ def test_missing_checkpoint_object_falls_back_instead_of_retiring(
     raise_code("SlowDown")
     with pytest.raises(S3Error):
         conv_module.load_workspace_archive(conversation)
+
+
+@pytest.mark.django_db
+def test_source_changed_before_runtime_marks_queued_attachment_failed(organization):
+    from simulate.services.hosted_harness_conversation import fail_source_mismatch
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key="source-race")
+    conversation, command, _ = enqueue_message(
+        job, content="Review this attachment", client_request_id="source-race"
+    )
+    detail = "Restore a version with its approved sources."
+    assert fail_source_mismatch(conversation.pk, detail) == 1
+    command.refresh_from_db()
+    conversation.refresh_from_db()
+    assert command.state == command.State.FAILED
+    assert conversation.state == conversation.State.DEGRADED
+    assert (
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            conversation=conversation,
+            role=command.Role.ASSISTANT,
+            content=detail,
+        ).count()
+        == 1
+    )
+    assert fail_source_mismatch(conversation.pk, detail) == 0
 
 
 @pytest.mark.django_db
@@ -2724,6 +2750,66 @@ def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
     )
 
     assert conversation.blocking_input is not None
+
+
+@pytest.mark.django_db
+def test_chat_attachment_pins_only_an_environment_review_owned_by_the_job(
+    user, workspace, settings, monkeypatch
+):
+    from django.utils import timezone
+
+    from simulate.models import HarnessSourceReview
+    from simulate.serializers.hosted_harness_conversation import (
+        HarnessConversationMessageCreateSerializer,
+    )
+    from simulate.services.harness_provider import HostedHarnessProvider
+    from simulate.tests.test_design_source_lifecycle import _request
+
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example.com"
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, base_url: None,
+    )
+    job, _ = create_hosted_job(
+        user.organization, _payload(), idempotency_key="attached", workspace=workspace
+    )
+    other, _ = create_hosted_job(
+        user.organization, _payload(), idempotency_key="other", workspace=workspace
+    )
+    review = HarnessSourceReview.objects.create(
+        owner=job,
+        owner_kind="environment",
+        organization=user.organization,
+        workspace=workspace,
+        basis={},
+        expires_at=timezone.now() + timedelta(days=1),
+    )
+    provider = HostedHarnessProvider()
+    request = _request(user, workspace)
+    serializer = HarnessConversationMessageCreateSerializer(
+        data={
+            "content": "Review my sources.",
+            "client_request_id": "attached",
+            "source_review_id": str(review.id),
+        }
+    )
+    serializer.is_valid(raise_exception=True)
+    request.validated_data = serializer.validated_data
+    provider._job = lambda _request, _pk: other
+    assert provider.send_message(request, other.id).status_code == 404
+    provider._job = lambda _request, _pk: job
+    assert provider.send_message(request, job.id).status_code == 202
+    assert provider.send_message(request, job.id).status_code == 202
+    message = HostedHarnessConversationMessage.no_workspace_objects.get(
+        conversation__job=job, client_request_id="attached"
+    )
+    assert message.payload["source_review_id"] == str(review.id)
+    from simulate.services.hosted_harness_conversation import pending_commands
+
+    command = pending_commands(message.conversation, after=0)["commands"][0]
+    assert "direct the user to Review sources" in command["payload"]["content"]
+    assert "current state is reading" in command["payload"]["content"]
+    assert message.content == "Review my sources."
 
 
 def _events(conversation, count):

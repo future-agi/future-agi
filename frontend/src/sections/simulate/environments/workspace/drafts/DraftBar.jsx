@@ -31,6 +31,7 @@ export default function DraftBar({
   busy = false,
   rebuilding = false,
   onReview,
+  compact = false,
 }) {
   const flow = useDraftSaveFlow(env);
   const { canEdit } = useSimulationAccess();
@@ -56,6 +57,25 @@ export default function DraftBar({
     setConfirming(false);
     flow.onDiscard();
   };
+
+  if (compact) {
+    const count = drafts.pieces.reduce(
+      (sum, piece) => sum + changeCount(drafts[piece].changes),
+      0,
+    );
+    return (
+      <>
+        <Typography variant="caption" color="text.secondary">
+          {count
+            ? count + (count === 1 ? " unsaved edit" : " unsaved edits")
+            : COPY.title}
+        </Typography>
+        <Button size="small" variant="outlined" onClick={onReview}>
+          {REVIEW_COPY.reviewAndSave}
+        </Button>
+      </>
+    );
+  }
 
   return (
     <Box
@@ -194,6 +214,7 @@ export default function DraftBar({
 }
 
 DraftBar.propTypes = {
+  compact: PropTypes.bool,
   env: PropTypes.shape({
     id: PropTypes.string,
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),

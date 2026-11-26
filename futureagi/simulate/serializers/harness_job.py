@@ -12,6 +12,9 @@ from simulate.models.hosted_harness import (
     MAX_SEED,
     HostedHarnessJob,
 )
+from simulate.serializers.harness_source_selection import (
+    HarnessDesignSourceSelectionSerializer,
+)
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -191,6 +194,11 @@ VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
 # Connectors that reach an already-running agent, so the run carries no source tree.
 PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone", "livekit"}
 
+# Our own agent (contract §6.4): runs in the harness from a spec, so it has no source either.
+HOSTED_AGENT = "hosted_agent"
+HOSTED_AGENT_CONFIG = ("name", "instructions", "model")
+HOSTED_AGENT_MODELS = ("vertex_ai/gemini-3.7-flash", "vertex_ai/gemini-3.8-flash")
+
 
 def names_agent_version(agent, metadata) -> bool:
     metadata = metadata or {}
@@ -240,7 +248,15 @@ class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
 
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
-        choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto")
+        choices=(
+            "livekit",
+            "vapi",
+            "retell",
+            "retell_chat",
+            "phone",
+            "auto",
+            HOSTED_AGENT,
+        )
     )
     mode = serializers.ChoiceField(
         choices=("connect_only", "environment_backed", "provider_import"),
@@ -329,6 +345,8 @@ class HarnessAgentSerializer(serializers.Serializer):
         connector = attrs["connector"]
         mode = attrs.get("mode")
         config = attrs.get("config") or {}
+        if connector == HOSTED_AGENT:
+            return self._validate_hosted_agent(attrs)
         provider_connector = "retell" if connector == "retell_chat" else connector
         # A chat target has no call to place in either direction, so a direction
         # here means the caller has the wrong connector rather than a preference
@@ -474,6 +492,33 @@ class HarnessAgentSerializer(serializers.Serializer):
                     )
         return attrs
 
+    def _validate_hosted_agent(self, attrs):
+        config = attrs.get("config") or {}
+        if attrs.get("mode") or attrs.get("secret_refs") or attrs.get("call_direction"):
+            raise serializers.ValidationError(
+                {
+                    "agent": "our hosted agent takes no mode, credentials or call direction"
+                }
+            )
+        if set(config) != set(HOSTED_AGENT_CONFIG) or not all(
+            isinstance(config[name], str) and config[name].strip()
+            for name in HOSTED_AGENT_CONFIG
+        ):
+            raise serializers.ValidationError(
+                {
+                    "config": f"a hosted agent's config is exactly {', '.join(HOSTED_AGENT_CONFIG)}"
+                }
+            )
+        if config["model"] not in HOSTED_AGENT_MODELS:
+            raise serializers.ValidationError(
+                {"config": f"model must be one of {', '.join(HOSTED_AGENT_MODELS)}"}
+            )
+        if len(config["instructions"]) > TARGET_SYSTEM_PROMPT_MAX_CHARS:
+            raise serializers.ValidationError(
+                {"config": "instructions are at most 65536 characters"}
+            )
+        return attrs
+
 
 class HarnessRuntimeSerializer(serializers.Serializer):
     isolation = serializers.ChoiceField(
@@ -551,6 +596,8 @@ CREDENTIAL_VALUE_MAX_CHARS = 65_536
 
 
 class HarnessJobCreateSerializer(serializers.Serializer):
+    test_focus = serializers.CharField(required=False, max_length=4000)
+    source_selection = HarnessDesignSourceSelectionSerializer(required=False)
     # Create refuses a job whose connector has no credentials; preflight reports them as
     # unmet requirements instead, so the readiness panel can tell the user what to add.
     reject_missing_credentials = True
@@ -625,6 +672,25 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             "parallelism_warnings",
             "observability_refusal",
             "requested_agent_definition_id",
+            # Written only by the release services; they name the archives a sandbox unpacks.
+            "adaptation",
+            "adaptation_result",
+            "design",
+            "design_result",
+            "release_composition",
+            "run_manifest",
+            "source_review_basis",
+            "accepted_source_review",
+            "source_review_receipt",
+            "assigned_source_cases",
+            "design_source_selection",
+            "design_source_pin",
+            "build_source_selection",
+            "build_source_pin",
+            "test_focus",
+            "source_review_documents",
+            "source_review",
+            "source_review_id",
         }
         if reserved.intersection(value):
             raise serializers.ValidationError(
@@ -642,15 +708,12 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         runtime = attrs["runtime"]
         agent = attrs["agent"]
         source = attrs.get("source")
-        provider_target_mode = agent.get("mode") in {
-            "connect_only",
-            "provider_import",
-        }
+        provider_target_mode = agent["connector"] == HOSTED_AGENT or agent.get(
+            "mode"
+        ) in {"connect_only", "provider_import"}
+        no_source = PROVIDER_TARGET_CONNECTORS | {HOSTED_AGENT}
         if source is None:
-            if (
-                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
-                or not provider_target_mode
-            ):
+            if agent["connector"] not in no_source or not provider_target_mode:
                 raise serializers.ValidationError(
                     {
                         "source": "required unless a hosted agent ID or phone number is connected"
@@ -660,10 +723,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         elif (
             source["kind"] == "provider"
             and not names_agent_version(agent, attrs.get("metadata"))
-            and (
-                agent["connector"] not in PROVIDER_TARGET_CONNECTORS
-                or not provider_target_mode
-            )
+            and (agent["connector"] not in no_source or not provider_target_mode)
         ):
             raise serializers.ValidationError(
                 {
@@ -853,10 +913,11 @@ def missing_provider_credentials(agent, detected_connectors=()):
     """
     present = present_provider_aliases(agent)
     connector = agent["connector"]
-    # The platform dials a phone target with its own dialler, so the run needs no
-    # target-provider credential at all. Kept out of ``CONNECTOR_ALIASES`` so an empty
-    # family cannot satisfy ``complete_provider_families`` for every other connector.
-    if connector == "phone":
+    # The platform dials a phone target with its own dialler, and our hosted agent calls its model
+    # on the platform's key, so neither needs a target-provider credential. Kept out of
+    # ``CONNECTOR_ALIASES`` so an empty family cannot satisfy ``complete_provider_families`` for
+    # every other connector.
+    if connector in ("phone", HOSTED_AGENT):
         return []
     if connector != "auto":
         return [alias for alias in CONNECTOR_ALIASES[connector] if alias not in present]
@@ -869,6 +930,26 @@ def missing_provider_credentials(agent, detected_connectors=()):
         for alias in CONNECTOR_ALIASES[name]
         if alias not in present
     ]
+
+
+class HarnessDesignCreateSerializer(HarnessJobCreateSerializer):
+    """A design job's payload (contract §7.9): no agent and no source, because the harness designs
+    the environment rather than testing an agent. `metadata.design` is written by the design
+    service only. It runs one world at a time."""
+
+    def get_fields(self):
+        fields = super().get_fields()
+        del fields["agent"], fields["source_selection"]
+        return fields
+
+    def validate(self, attrs):
+        for name in ("runtime", "security", "retry"):
+            if not attrs.get(name):
+                attrs[name] = self.fields[name].run_validation({})
+        attrs["source"] = {"kind": "provider", "visibility": "public"}
+        attrs["runtime"]["parallelism"] = 1
+        self._apply_sandbox_runtime_limits(attrs["runtime"])
+        return attrs
 
 
 class HarnessJobActionSerializer(serializers.Serializer):
@@ -1200,11 +1281,20 @@ class HarnessSecretValuesSerializer(serializers.Serializer):
 # ── Read DTO response serializers ───────────────────────────────────────
 
 
+class HarnessJobSourceReviewSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    state = serializers.CharField()
+    revision = serializers.IntegerField()
+    draft_digest = serializers.CharField(allow_blank=True)
+    schema_digest = serializers.CharField(allow_null=True)
+
+
 class HarnessJobInfoSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     run_id = serializers.UUIDField()
     source = serializers.DictField()
     metadata = serializers.DictField(child=JsonValueField(allow_null=True))
+    source_review = HarnessJobSourceReviewSerializer(required=False)
     runtime = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)

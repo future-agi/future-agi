@@ -147,6 +147,7 @@ export default function ScenarioTable({
   onTogglePage,
   locked = false,
   lockTooltip = LOCK_TOOLTIP,
+  editHint,
   rowHeight = "Short",
   isValidating,
 }) {
@@ -608,12 +609,12 @@ export default function ScenarioTable({
                   >
                     <Tooltip
                       arrow
-                      title={locked ? lockTooltip : SCENARIOS_COPY.editLabel}
+                      title={locked ? lockTooltip : editHint || SCENARIOS_COPY.editLabel}
                     >
                       <Box component="span" sx={{ display: "inline-flex" }}>
                         <IconButton
                           size="small"
-                          disabled={locked}
+                          disabled={locked || Boolean(editHint)}
                           aria-label={SCENARIOS_COPY.editLabel}
                           onClick={() => onEdit?.(row)}
                         >
@@ -627,12 +628,12 @@ export default function ScenarioTable({
                     </Tooltip>
                     <Tooltip
                       arrow
-                      title={locked ? lockTooltip : removeTitle(row)}
+                      title={locked ? lockTooltip : editHint || removeTitle(row)}
                     >
                       <Box component="span" sx={{ display: "inline-flex" }}>
                         <IconButton
                           size="small"
-                          disabled={locked || isArchived(row)}
+                          disabled={locked || Boolean(editHint) || isArchived(row)}
                           aria-label={SCENARIOS_COPY.removeLabel}
                           onClick={() => onRemove(row.id)}
                         >
@@ -676,6 +677,7 @@ ScenarioTable.propTypes = {
   onTogglePage: PropTypes.func,
   locked: PropTypes.bool,
   lockTooltip: PropTypes.string,
+  editHint: PropTypes.string,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
   // (row) => whether a running validation is proving it.
   isValidating: PropTypes.func,

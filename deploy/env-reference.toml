@@ -733,6 +733,24 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` tells an environment when its agent or environment version changed and offers a rebuild. Turn it on together with `HARNESS_BUNDLE_CERTIFY_ENABLED`, after `HARNESS_VERSIONING_ENABLED`, once the sandbox template carries an agent-learning-kit release that supports versioning."
 
     [[part.section.row]]
+    keys = ["ALK_HARNESS_SANDBOX_URL"]
+    default = "Empty"
+    setups = ["S", "D"]
+    text = "Base URL of the ALK harness HTTP service. When empty, environment source processing uses the configured hosted sandbox provider."
+
+    [[part.section.row]]
+    keys = ["ALK_HARNESS_SANDBOX_TOKEN"]
+    default = "Empty"
+    setups = ["S", "D"]
+    text = "Bearer token for the ALK harness HTTP service. Set it to the secret expected by that service when authentication is enabled."
+
+    [[part.section.row]]
+    keys = ["HARNESS_PRIVATE_BUCKET"]
+    default = "`UPLOAD_BUCKET_NAME` followed by `-harness-private`"
+    setups = ["S", "D", "H"]
+    text = "Private object storage bucket for harness inputs and checkpoints. The backend requires a separate bucket from `UPLOAD_BUCKET_NAME`. Bundled MinIO provisions the private bucket. For external object storage, provision it before enabling harness uploads."
+
+    [[part.section.row]]
     keys = ["HARNESS_SOURCE_SUBFOLDER_ENABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]

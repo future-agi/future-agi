@@ -9,6 +9,7 @@ The hosted gateway independently selects Daytona or E2B through
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
 import uuid
@@ -16,10 +17,11 @@ from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
+from temporalio.exceptions import TemporalError
 
 from simulate.models import (
     AgentDefinition,
@@ -87,6 +89,29 @@ _SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".rar", ".7z")
 _SOURCE_ARCHIVE_DETAIL = (
     "upload the expanded project folder; archives are not supported"
 )
+_SOURCE_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
+# Multipart framing and one `paths` field per file, on top of the files themselves.
+_SOURCE_UPLOAD_FRAMING_BYTES = 8 * 1024 * 1024
+
+
+def _receive_source_zip(request, store) -> Response:
+    from simulate.services.harness_source_zip import unpack_source_zip
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    archives = request.FILES.getlist("archive")
+    if len(archives) != 1 or "files" in request.FILES or "paths" in request.data:
+        return Response(
+            {"detail": "Choose a single ZIP or a source folder."}, status=400
+        )
+    try:
+        with unpack_source_zip(
+            archives[0],
+            _SOURCE_UPLOAD_MAX_BYTES,
+            settings.DATA_UPLOAD_MAX_NUMBER_FILES or 1000,
+        ) as source:
+            return Response(store(*source), status=status.HTTP_201_CREATED)
+    except HostedHarnessError as exc:
+        return Response(exc.as_dict(), status=exc.status_code)
 
 
 def _rejected_archive_upload(files) -> Response | None:
@@ -97,6 +122,21 @@ def _rejected_archive_upload(files) -> Response | None:
         return Response(
             {"detail": _SOURCE_ARCHIVE_DETAIL},
             status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
+
+def _oversized_upload(request) -> Response | None:
+    """Refuse on the declared length, before Django reads the body: the size of the parsed files
+    is known only after the whole request has been buffered (up to `DATA_UPLOAD_MAX_MEMORY_SIZE`)."""
+    try:
+        declared = int(request.META.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        declared = 0
+    if declared > _SOURCE_UPLOAD_MAX_BYTES + _SOURCE_UPLOAD_FRAMING_BYTES:
+        return Response(
+            {"detail": "source may not exceed 200 MiB"},
+            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
         )
     return None
 
@@ -382,8 +422,78 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         ) from exc
 
 
+def _public_metadata(value):
+    if isinstance(value, dict):
+        public = {
+            key: _public_metadata(item)
+            for key, item in value.items()
+            if key
+            not in {
+                "object_key",
+                "source_review_basis",
+                "source_review_receipt",
+                "assigned_source_cases",
+                "design_source_pin",
+                "design_source_selection",
+                "build_source_selection",
+                "build_source_pin",
+                "source_review_documents",
+            }
+            and not key.endswith("_object_key")
+        }
+        basis = value.get("source_review_basis")
+        if value.get("design_source_selection") and isinstance(
+            public.get("design"), dict
+        ):
+            public["design"].pop("documents", None)
+        if isinstance(basis, dict) and isinstance(basis.get("revision"), int):
+            public["source_review_basis"] = {
+                "revision": basis["revision"],
+                "schema_digest": basis.get("schema_digest"),
+            }
+        return public
+    if isinstance(value, list):
+        return [_public_metadata(item) for item in value]
+    return value
+
+
 def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
-    metadata = job.payload.get("metadata", {})
+    metadata = _public_metadata(job.payload.get("metadata", {}))
+    if (
+        isinstance(metadata, dict)
+        and metadata.get("source_review_id")
+        and (
+            job.payload["metadata"].get("design_source_selection")
+            or job.payload["metadata"].get("build_source_selection")
+        )
+    ):
+        from simulate.models import HarnessSourceReview
+
+        summary = (
+            HarnessSourceReview.objects.filter(
+                pk=metadata["source_review_id"],
+                organization_id=job.organization_id,
+                workspace=job.workspace_id,
+            )
+            .values("state", "revision", "draft_digest", "basis__schema_digest")
+            .first()
+        )
+        if summary:
+            metadata["source_review"] = {
+                "id": str(metadata["source_review_id"]),
+                "state": summary["state"],
+                "revision": summary["revision"],
+                "draft_digest": summary["draft_digest"],
+                "schema_digest": summary["basis__schema_digest"],
+            }
+    renamed = str(job.name or "").strip()
+    if isinstance(metadata, dict) and renamed:
+        # A name set through the rename endpoint wins, as on the environments list.
+        metadata = {
+            **metadata,
+            "name": renamed,
+            **({"agent_name": renamed} if metadata.get("agent_name") else {}),
+        }
     if not isinstance(metadata, dict) or "observability_refusal" not in metadata:
         return metadata
     if not job.run_test_id:
@@ -440,6 +550,16 @@ def serialize_job(
     ]
     if not stage_outputs:
         stage_outputs = list(job.stage_outputs or [])
+    if not stage_outputs and job.state == HostedHarnessJob.State.COMPLETED:
+        from simulate.services.harness_releases import composition_stage_outputs
+
+        # A composition authored nothing: its tabs describe its agent and released world,
+        # read from the releases once and kept (without touching updated_at).
+        stage_outputs = composition_stage_outputs(job)
+        if stage_outputs:
+            HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+                stage_outputs=stage_outputs
+            )
     # Scenarios — bounded to job.scenario_count.
     scenario_regs = list(
         HostedHarnessScenario.no_workspace_objects.filter(job=job)
@@ -563,12 +683,18 @@ def serialize_job(
     conversation = HostedHarnessConversation.no_workspace_objects.filter(
         job=job
     ).first()
+    public_metadata = _metadata_for_read(job)
     return {
         "job": {
             "job_id": str(job.id),
             "run_id": str(job.run_id),
             "source": job.payload["source"],
-            "metadata": _metadata_for_read(job),
+            "metadata": public_metadata,
+            **(
+                {"source_review": public_metadata["source_review"]}
+                if public_metadata.get("source_review")
+                else {}
+            ),
             "runtime": {
                 "parallelism": _requested_parallelism,
                 "cpu_units": _runtime.get("cpu_units"),
@@ -1578,17 +1704,6 @@ class HostedHarnessProvider:
     name = "hosted"
 
     def create(self, request) -> Response:
-        from simulate.serializers.harness_job import names_agent_version
-        from simulate.services.harness_agent_versions import advisory_xact_lock
-        from simulate.services.harness_versioning.versions import versioning_enabled
-        from simulate.services.hosted_harness import (
-            HostedHarnessError,
-            create_hosted_job,
-            find_replayed_job,
-            idempotency_lock_name,
-        )
-        from simulate.temporal.client import start_hosted_harness_gateway_workflow
-
         organization = request_organization(request)
         if organization is None:
             return Response(
@@ -1601,9 +1716,305 @@ class HostedHarnessProvider:
                 {"detail": "Idempotency-Key header is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        payload = request.validated_data
+        return self._submit(
+            request, organization, request.validated_data, idempotency_key
+        )
+
+    def create_adaptation(self, request) -> Response:
+        """Start adapting an agent to a release suite (contract §7.5): a hosted job like any
+        other, whose payload carries `metadata.adaptation`."""
+        from simulate.services.harness_releases import (
+            adaptation_payload,
+            organization_agent_version,
+            visible_suite,
+        )
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                build_error_envelope(
+                    "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        try:
+            payload = adaptation_payload(
+                organization,
+                suite=visible_suite(organization, data["suite_id"]),
+                # Re-validated as a hosted job agent; the request serializer only shapes it.
+                agent=request.data["agent"],
+                agent_version=organization_agent_version(
+                    organization, data["agent_version_id"]
+                ),
+                name=data["name"],
+                parallelism=data.get("parallelism"),
+                credential_values=data.get("credential_values"),
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return self._submit(request, organization, payload, data["idempotency_key"])
+
+    def create_design(self, request) -> Response:
+        """Start designing an environment (contract §7.9): a hosted job whose payload carries
+        `metadata.design`, from requirements and optionally a root template and documents."""
+        from simulate.services.harness_designs import design_payload
+        from simulate.services.harness_releases import visible_suite
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                build_error_envelope(
+                    "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        try:
+            selection = data.get("source_selection")
+            if not selection and data.get("document_ids"):
+                selection = {
+                    "document_ids": data["document_ids"],
+                    "document_purposes": {},
+                    "knowledge_base": [],
+                }
+            if selection:
+                from simulate.services.harness_source_reviews import (
+                    require_source_scope,
+                )
+
+                require_source_scope(request, write=True)
+            payload = design_payload(
+                organization,
+                name=data["name"],
+                requirements=data["requirements"],
+                personal_data_mode=data.get("personal_data_mode"),
+                modality=data["modality"],
+                template_suite=(
+                    visible_suite(organization, data["template_suite_id"])
+                    if data.get("template_suite_id")
+                    else None
+                ),
+                source_selection=selection,
+                target_table=data.get("target_table"),
+                workspace_id=getattr(request_workspace(request), "id", None),
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return self._submit_design(
+            request, organization, payload, data["idempotency_key"]
+        )
+
+    def continue_design(self, request, pk) -> Response:
+        """Continue a design that stopped at an unanswered question or out of time, from its
+        last checkpoint, as a new design job."""
+        from simulate.services.harness_designs import continued_payload
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        organization = request_organization(request)
+        job = self._job(request, pk)
+        if organization is None or job is None:
+            return Response(
+                build_error_envelope(
+                    "Design not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            payload = continued_payload(organization, job)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return self._submit_design(
+            request, organization, payload, request.validated_data["idempotency_key"]
+        )
+
+    def upload_design_document(self, request) -> Response:
+        """Store one document for a design (contract §7.9); it is parsed only in the sandbox."""
+        from simulate.services.harness_designs import (
+            DOCUMENT_MAX_BYTES,
+            serialize_document,
+            store_design_document,
+        )
+        from simulate.services.harness_source_reviews import require_source_scope
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        require_source_scope(request, write=True)
+
+        # Refused on its declared length, before Django buffers the body.
+        try:
+            declared = int(request.META.get("CONTENT_LENGTH") or 0)
+        except ValueError:
+            declared = 0
+        if declared > DOCUMENT_MAX_BYTES + 1024 * 1024:
+            return Response(
+                build_error_envelope(
+                    "a document may be at most 25 MB",
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    code="document_too_large",
+                ),
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                build_error_envelope(
+                    "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        upload = request.FILES.get("file")
+        if upload is None or len(request.FILES.getlist("file")) != 1:
+            return Response(
+                build_error_envelope(
+                    "upload exactly one file as `file`",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if upload.size > DOCUMENT_MAX_BYTES:
+            return Response(
+                build_error_envelope(
+                    "a document may be at most 25 MB",
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    code="document_too_large",
+                ),
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        try:
+            document = store_design_document(
+                organization,
+                request_workspace(request),
+                request.user,
+                name=upload.name,
+                body=upload.read(),
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(serialize_document(document), status=status.HTTP_201_CREATED)
+
+    def _submit_design(
+        self, request, organization, payload: dict, idempotency_key: str
+    ) -> Response:
+        """Admit a design: its authoring is the only usage it meters before it runs."""
+        from simulate.services.harness_usage import require_harness_authoring
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            create_hosted_job,
+        )
+        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+        base_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
+        metadata = payload["metadata"]
+        if metadata.get("design_source_selection") and not metadata.get(
+            "design_source_pin"
+        ):
+            from simulate.services.harness_designs import AWAITING_REVIEW
+            from simulate.services.harness_source_reviews import create_review
+
+            try:
+                with transaction.atomic():
+                    job, created = create_hosted_job(
+                        organization,
+                        payload,
+                        idempotency_key=idempotency_key,
+                        workspace=request_workspace(request),
+                    )
+                    if created:
+                        job.current_stage = AWAITING_REVIEW
+                        job.save(update_fields=["current_stage", "updated_at"])
+                        selection = metadata["design_source_selection"]
+                        scope = {"kind": "design", "id": str(job.id)}
+                        if selection.get("target_table"):
+                            scope["target_table"] = selection["target_table"]
+                        create_review(
+                            request,
+                            scope=scope,
+                            idempotency_key="design-selection",
+                            **{
+                                key: selection[key]
+                                for key in (
+                                    "document_ids",
+                                    "document_purposes",
+                                    "knowledge_base",
+                                )
+                            },
+                        )
+                        job.refresh_from_db()
+            except HostedHarnessError as exc:
+                return Response(exc.as_dict(), status=exc.status_code)
+            return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
+        try:
+            require_harness_authoring(str(organization.id))
+        except Exception as exc:
+            response = _usage_limit_response(exc)
+            if response is not None:
+                return response
+            raise
+        try:
+            job, _ = create_hosted_job(
+                organization,
+                payload,
+                idempotency_key=idempotency_key,
+                workspace=request_workspace(request),
+            )
+            retry_cfg = job.payload["retry"]
+            start_hosted_harness_gateway_workflow(
+                str(job.id),
+                base_url,
+                retry_cfg["max_infrastructure_attempts"],
+                retry_cfg["initial_backoff_seconds"],
+                retry_cfg["max_backoff_seconds"],
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        except (DatabaseError, OSError, RuntimeError, TemporalError):
+            return Response(
+                build_error_envelope(
+                    "Hosted harness scheduler is unavailable",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                ),
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
+
+    def _submit(
+        self, request, organization, payload: dict, idempotency_key: str
+    ) -> Response:
+        """Admit one validated hosted job payload and start its gateway workflow."""
+        from simulate.serializers.harness_job import names_agent_version
+        from simulate.services.harness_agent_versions import advisory_xact_lock
+        from simulate.services.harness_versioning.versions import versioning_enabled
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            create_hosted_job,
+            find_replayed_job,
+            idempotency_lock_name,
+        )
+        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
         # Taken out first: values never reach the checks, the digest or the job.
         secret_values = payload.pop("credential_values", None) or {}
+        if test_focus := payload.pop("test_focus", None):
+            payload["metadata"]["test_focus"] = test_focus
+        selection = payload.pop("source_selection", None)
+        if selection is not None:
+            from simulate.services.harness_source_reviews import require_source_scope
+
+            require_source_scope(request, write=True)
+            if not selection.get("document_ids") and not selection.get(
+                "knowledge_base"
+            ):
+                return Response(
+                    {"detail": "Choose files or organization knowledge."}, status=422
+                )
+            payload["metadata"]["build_source_selection"] = json.loads(
+                json.dumps(selection, default=str)
+            )
         client_digest = canonical_digest(payload)
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
@@ -1686,7 +2097,8 @@ class HostedHarnessProvider:
         )
 
         try:
-            require_harness_run_usage(str(organization.id), payload)
+            if not selection:
+                require_harness_run_usage(str(organization.id), payload)
         except Exception as exc:
             response = _usage_limit_response(exc)
             if response is not None:
@@ -1702,11 +2114,12 @@ class HostedHarnessProvider:
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         try:
-            require_harness_source_call_usage(
-                str(organization.id),
-                payload,
-                source_analysis[0] if source_analysis else (),
-            )
+            if not selection:
+                require_harness_source_call_usage(
+                    str(organization.id),
+                    payload,
+                    source_analysis[0] if source_analysis else (),
+                )
         except Exception as exc:
             response = _usage_limit_response(exc)
             if response is not None:
@@ -1752,7 +2165,7 @@ class HostedHarnessProvider:
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)
-                job, _ = create_hosted_job(
+                job, created = create_hosted_job(
                     organization,
                     payload,
                     idempotency_key=idempotency_key,
@@ -1760,6 +2173,19 @@ class HostedHarnessProvider:
                     on_create=on_create,
                     request_digest=client_digest,
                 )
+                if selection and created:
+                    from simulate.services.harness_designs import AWAITING_REVIEW
+                    from simulate.services.harness_source_reviews import create_review
+
+                    job.current_stage = AWAITING_REVIEW
+                    job.save(update_fields=["current_stage", "updated_at"])
+                    create_review(
+                        request,
+                        scope={"kind": "build_job", "id": str(job.id)},
+                        idempotency_key="build-selection",
+                        **selection,
+                    )
+                    job.refresh_from_db()
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         except Exception as exc:
@@ -1772,6 +2198,8 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness scheduler is unavailable"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        if selection:
+            return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
         try:
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
@@ -2247,6 +2675,36 @@ class HostedHarnessProvider:
             HostedHarnessJob.State.FAILED,
             HostedHarnessJob.State.CANCELED,
         }
+        if job.state in terminal_states and (
+            (job.payload or {}).get("metadata") or {}
+        ).get("adaptation"):
+            # Only the adaptation process answers its conversation, and it has exited.
+            return Response(
+                build_error_envelope(
+                    "This adaptation has finished; start a new one to change it.",
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="conversation_closed",
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+        if job.state in terminal_states and (
+            (job.payload or {}).get("metadata") or {}
+        ).get("design"):
+            # Only the design process answers its conversation, and it has exited.
+            waiting = (job.failure or {}).get("code") in {
+                "design_waiting",
+                "design_unfinished",
+            }
+            return Response(
+                build_error_envelope(
+                    "This design stopped before it was finished; continue it to carry on."
+                    if waiting
+                    else "This design has finished; start a new design from it to change it.",
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="conversation_closed",
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
         if job.state in terminal_states:
             conversation = (
                 HostedHarnessConversation.no_workspace_objects.filter(job=job)
@@ -2256,6 +2714,8 @@ class HostedHarnessProvider:
             metadata = (job.payload or {}).get("metadata") or {}
             has_archive = bool(
                 metadata.get("authoring_object_key")
+                # A composition's workspace is assembled from its releases (contract §7.8).
+                or metadata.get("release_composition")
                 or getattr(conversation, "latest_workspace_object_key", None)
             )
             files_gone = (
@@ -2278,7 +2738,50 @@ class HostedHarnessProvider:
                     },
                     status=status.HTTP_409_CONFLICT,
                 )
+            from simulate.services import harness_reviewed_builds
+
+            if harness_reviewed_builds.has_chat_sources(job):
+                from simulate.services.hosted_harness_conversation import (
+                    ensure_conversation,
+                    fail_source_mismatch,
+                    load_workspace_archive,
+                )
+                from simulate.services.hosted_harness_gateway import chat_workspace_for
+
+                try:
+                    conversation = conversation or ensure_conversation(job)
+                    body = chat_workspace_for(
+                        job,
+                        conversation,
+                        chat_state=load_workspace_archive(conversation),
+                    )
+                    harness_reviewed_builds.chat_review(job, body)
+                except HostedHarnessError as exc:
+                    if (
+                        exc.code == "conversation_source_snapshot_changed"
+                        and conversation is not None
+                    ):
+                        fail_source_mismatch(conversation.id, exc.message)
+                    return Response(exc.as_dict(), status=exc.status_code)
         data = request.validated_data
+        attachment = {}
+        if review_id := data.get("source_review_id"):
+            from simulate.models import HarnessSourceReview
+            from simulate.services.harness_source_reviews import require_source_scope
+
+            try:
+                scope = require_source_scope(request, write=True)
+            except HostedHarnessError as exc:
+                return Response(exc.as_dict(), status=exc.status_code)
+            if not HarnessSourceReview.objects.filter(
+                **scope,
+                id=review_id,
+                owner=job,
+                owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
+            ).exists():
+                return Response({"detail": "Source review not found."}, status=404)
+            attachment["source_review_id"] = str(review_id)
+
         # Checked before queueing, so a message never waits on a runtime that cannot call back.
         try:
             base_url = _public_base_url(request)
@@ -2292,9 +2795,12 @@ class HostedHarnessProvider:
                 kind=data["kind"],
                 reply_to=data.get("reply_to"),
                 payload={
-                    key: value
-                    for key, value in (data.get("payload") or {}).items()
-                    if key != "from_platform"
+                    **{
+                        key: value
+                        for key, value in (data.get("payload") or {}).items()
+                        if key not in {"from_platform", "source_review_id"}
+                    },
+                    **attachment,
                 },
                 server_payload={"_author_id": str(request.user.id)},
                 admit_authoring=(
@@ -2617,10 +3123,15 @@ class HostedHarnessProvider:
         targets = fault_targets(contract, rules, actor_cast)
         door = targets if door_reach(contract) else None
 
+        from simulate.services.harness_source_citations import visible_citations
+
+        citations = visible_citations(request, job, page)
+
         def row_of(one: HostedHarnessScenario) -> dict[str, Any]:
             row = scenario_row(
                 one, targets=door, fault_targets=targets, actor_cast=actor_cast
             )
+            row["source_citations"] = citations.get(one.scenario_key, [])
             return _with_lifecycle(
                 row if drafted is None else {**row, "draft_change": one.draft_change},
                 lifecycle,
@@ -2719,6 +3230,7 @@ class HostedHarnessProvider:
         return response
 
     def _amend_scenarios(self, request, pk) -> Response:
+        from simulate.services.harness_releases import composition_of
         from simulate.services.hosted_harness_gateway import (
             SCENARIO_EDIT_ON_RUN,
             AuthoringArchiveKept,
@@ -2754,6 +3266,17 @@ class HostedHarnessProvider:
             if job is None:
                 return Response(
                     {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            if composition_of(job) is not None:
+                # Its suite is a sealed release: a change is a proved child suite (§7.8).
+                return Response(
+                    build_error_envelope(
+                        "A prebuilt environment's scenarios change through its chat, "
+                        "where each change is proved and saved as a new suite version.",
+                        status_code=status.HTTP_409_CONFLICT,
+                        code="composition_edit_in_chat",
+                    ),
+                    status=status.HTTP_409_CONFLICT,
                 )
             output = (
                 HostedHarnessStageOutput.no_workspace_objects.select_for_update()
@@ -3244,7 +3767,9 @@ class HostedHarnessProvider:
             }
         )
 
-    def _extend_in_chat(self, request, job, count, guidance, client_request_id):
+    def _extend_in_chat(
+        self, request, job, count, guidance, client_request_id
+    ) -> Response:
         """Extend where drafts apply: a builder request whose scenarios land in the
         unsaved changes."""
         from uuid import uuid4
@@ -3436,11 +3961,20 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import store_source_archive
 
+        if (oversized := _oversized_upload(request)) is not None:
+            return oversized
         organization = request_organization(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+        if "archive" in request.FILES:
+            return _receive_source_zip(
+                request,
+                lambda files, paths, name: store_source_archive(
+                    organization, files, paths, name
+                ),
             )
         files = request.FILES.getlist("files")
         paths = request.data.getlist("paths")
@@ -3452,13 +3986,9 @@ class HostedHarnessProvider:
         rejected = _rejected_archive_upload(files)
         if rejected is not None:
             return rejected
-        if len(files) > 5_000:
-            return Response(
-                {"detail": "source may contain at most 5000 files"},
-                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
+        # Django refuses more than DATA_UPLOAD_MAX_NUMBER_FILES files before this view runs.
         total = sum(int(getattr(uploaded, "size", 0) or 0) for uploaded in files)
-        if total > 200 * 1024 * 1024:
+        if total > _SOURCE_UPLOAD_MAX_BYTES:
             return Response(
                 {"detail": "source may not exceed 200 MiB"},
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -3784,6 +4314,17 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
+        if (oversized := _oversized_upload(request)) is not None:
+            return oversized
+        if "archive" in request.FILES:
+            try:
+                return _receive_source_zip(request, self._client().upload_source)
+            except HarnessSandboxRejected as exc:
+                return Response({"detail": str(exc)}, status=exc.status_code)
+            except HarnessSandboxUnavailable as exc:
+                return Response(
+                    {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
         files = request.FILES.getlist("files")
         paths = request.data.getlist("paths")
         if not files or len(files) != len(paths):

@@ -71,6 +71,35 @@ class TestGet:
         assert result.status == "not_connected"
         get.assert_not_called()
 
+    def test_public_repository_can_be_read_without_an_installation(self):
+        with (
+            patch.object(github, "_workspace_installation", return_value=None),
+            patch(
+                "integrations.services.github_app.fallback_read_token",
+                return_value=None,
+            ),
+            read_credential("org", "ws", allow_public=True) as credential,
+            _get(_response(body={"id": 123, "private": False})) as get,
+        ):
+            result = github_get(
+                "/repos/acme/agent",
+                accept="application/vnd.github+json",
+                credential=credential,
+                purpose="create",
+            )
+        assert result.body["id"] == 123
+        assert "Authorization" not in get.call_args.kwargs["headers"]
+
+    def test_private_branch_without_installation_never_uses_public_reader(self):
+        from simulate.services.agent_versions import branch_head_of
+
+        with _get() as get, pytest.raises(HostedHarnessError) as error:
+            branch_head_of(
+                "org", "ws", {"visibility": "private", "repository": "acme/agent"}
+            )
+        assert error.value.code == "github_installation_not_connected"
+        get.assert_not_called()
+
     def test_etag_is_sent_and_304_is_not_modified(self):
         with _get(_response(304)) as get:
             result = github_get(

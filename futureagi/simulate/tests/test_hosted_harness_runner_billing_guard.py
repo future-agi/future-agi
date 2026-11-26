@@ -21,6 +21,7 @@ from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
     HostedHarnessJob,
+    HostedHarnessScenario,
 )
 from simulate.services import harness_usage
 from simulate.services.hosted_harness import (
@@ -215,6 +216,40 @@ def test_cleanup_finalizes_without_any_billing_import(
     assert attempt.cleanup_verified_at is not None
     assert attempt.state == attempt_state
     assert _job(attempt).state == job_state
+    assert [args for args, _ in seal_requests] == [[str(attempt.id)]]
+
+
+@pytest.mark.django_db
+def test_cleanup_keeps_a_durable_reviewed_source_build_completed(
+    cleanup_ready, seal_requests, django_capture_on_commit_callbacks
+):
+    attempt = cleanup_ready
+    job = _job(attempt)
+    job.payload = {
+        **job.payload,
+        "metadata": {
+            **job.payload["metadata"],
+            "build_source_selection": {"document_ids": [str(uuid4())]},
+            "authoring_object_key": "harness-authoring/reviewed.tar.gz",
+        },
+    }
+    job.save(update_fields=["payload", "updated_at"])
+    HostedHarnessScenario.objects.bulk_create(
+        [
+            HostedHarnessScenario(
+                job=job,
+                scenario_key=f"reviewed-{index}",
+            )
+            for index in range(job.scenario_count)
+        ]
+    )
+    attempt.terminal_stage = "completed"
+    attempt.save(update_fields=["terminal_stage", "updated_at"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(attempt.id, provider_ref="", verified_absent=True)
+
+    assert _job(attempt).state == HostedHarnessJob.State.COMPLETED
     assert [args for args, _ in seal_requests] == [[str(attempt.id)]]
 
 

@@ -10,6 +10,7 @@ import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { prepareSourceForBuild } from "./prepareSourceForBuild";
 import { clampParallelism } from "../parallelism.constants";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
+import useBuildSources from "../buildDrawer/forms/shared/useBuildSources";
 import { clearBuildDrafts } from "../buildDrawer/buildDraft";
 
 /**
@@ -30,6 +31,7 @@ export default function usePanelBuild() {
   const setDraft = useEnvironmentsStore((s) => s.setDraft);
   const preflight = useRuntimePreflight();
   const build = useBuildEnvironment();
+  const sources = useBuildSources();
   const {
     exhaustionError,
     handleError: handleCreditError,
@@ -48,6 +50,7 @@ export default function usePanelBuild() {
   // One idempotency key per checked build, kept across a failed create, so a
   // retry replays the job the failed attempt may already have made.
   const buildKey = useRef(null);
+  const submittedSourceSelection = useRef(null);
   // prepareSourceForBuild is async, so there is a window between the click and
   // the mutation. `preparing` disables the trigger through it; `runSeq`
   // supersedes a run still in flight when the user edits or re-runs — without it
@@ -81,6 +84,7 @@ export default function usePanelBuild() {
       heldValues.current =
         result.buildCredentialValues ?? result.credentialValues;
       buildKey.current = harnessIdempotencyKey();
+      submittedSourceSelection.current = null;
       preflight.mutate({
         draft: result.draft,
         credentialValues: result.credentialValues,
@@ -114,6 +118,7 @@ export default function usePanelBuild() {
       !prepared ||
       !preflight.data?.ready_to_submit ||
       !preflight.data?.credentials ||
+      sources.blocked ||
       committing
     )
       return;
@@ -128,11 +133,20 @@ export default function usePanelBuild() {
     // on a back-navigation; the create call below is what actually builds it.
     setDraft(draft);
     setCommitting(true);
+    const signature = JSON.stringify(sources.selection ?? null);
+    if (
+      submittedSourceSelection.current !== null &&
+      submittedSourceSelection.current !== signature
+    ) {
+      buildKey.current = harnessIdempotencyKey();
+    }
+    submittedSourceSelection.current = signature;
     build.mutate(
       {
         draft,
         credentialValues: heldValues.current || {},
         idempotencyKey: buildKey.current,
+        sourceSelection: sources.selection,
       },
       {
         onSuccess: ({ envId, skipped }) => {
@@ -170,6 +184,8 @@ export default function usePanelBuild() {
     build,
     navigate,
     handleCreditError,
+    sources.blocked,
+    sources.selection,
   ]);
 
   const status =
@@ -183,6 +199,7 @@ export default function usePanelBuild() {
 
   return {
     status,
+    sources,
     result: preflight.data,
     readyToSubmit:
       preflight.data?.ready_to_submit === true && !!preflight.data?.credentials,

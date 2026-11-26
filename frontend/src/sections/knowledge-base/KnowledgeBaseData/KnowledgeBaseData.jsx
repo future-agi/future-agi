@@ -16,6 +16,7 @@ import { formatNumberWithCommas } from "src/sections/projects/UsersView/common";
 import SvgColor from "src/components/svg-color";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { RESPONSE_CODES } from "src/utils/constants";
+import UseInEnvironmentDialog from "../UseInEnvironmentDialog";
 
 const getKnowledgeRows = (payload) =>
   payload?.table_data ?? payload?.tableData ?? [];
@@ -32,6 +33,7 @@ const KnowledgeBaseData = React.forwardRef(
     const [rowSelection, setRowSelection] = useState({});
     const [searchQuery, setSearchQuery] = useState("");
     const [openDelete, setOpenDelete] = useState(false);
+    const [openEnvironmentChooser, setOpenEnvironmentChooser] = useState(false);
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(25);
 
@@ -242,6 +244,20 @@ const KnowledgeBaseData = React.forwardRef(
                 onCancel={closeModal}
                 actions={[
                   {
+                    label: "Use in Environment",
+                    icon: "solar:folder-with-files-linear",
+                    disabled:
+                      selectedItems.length !== 1 ||
+                      selectedItems[0]?.status !== "Completed",
+                    tooltip:
+                      selectedItems.length !== 1
+                        ? "Select exactly one Knowledge Base"
+                        : selectedItems[0]?.status !== "Completed"
+                          ? "Wait for processing to finish"
+                          : "",
+                    onClick: () => setOpenEnvironmentChooser(true),
+                  },
+                  {
                     label: "Delete",
                     icon: "solar:trash-bin-trash-linear",
                     onClick: () => {
@@ -328,6 +344,15 @@ const KnowledgeBaseData = React.forwardRef(
           onClose={closeModal}
           refreshGrid={refreshGrid}
           selected={selected}
+        />
+        <UseInEnvironmentDialog
+          open={openEnvironmentChooser}
+          onClose={() => setOpenEnvironmentChooser(false)}
+          selection={
+            selectedItems[0]
+              ? { kb_id: selectedItems[0].id, whole_collection: true }
+              : undefined
+          }
         />
       </Box>
     );

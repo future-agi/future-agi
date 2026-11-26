@@ -10,7 +10,8 @@ import { agentIconOf, agentMetaOf, uiOnlyToast } from "./startUtils";
 
 const AGENTS_LIMIT = 100;
 
-function AgentRow({ agent, divider, selected, onClick }) {
+// `meta` replaces the line under the name.
+export function AgentRow({ agent, divider, selected, onClick, meta }) {
   return (
     <ButtonBase
       role="radio"
@@ -52,7 +53,7 @@ function AgentRow({ agent, divider, selected, onClick }) {
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {agentMetaOf(agent)}
+          {meta ?? agentMetaOf(agent)}
         </Typography>
       </Box>
       <Iconify
@@ -68,6 +69,7 @@ function AgentRow({ agent, divider, selected, onClick }) {
 }
 AgentRow.propTypes = {
   agent: PropTypes.object.isRequired,
+  meta: PropTypes.string,
   divider: PropTypes.bool,
   selected: PropTypes.bool,
   onClick: PropTypes.func,

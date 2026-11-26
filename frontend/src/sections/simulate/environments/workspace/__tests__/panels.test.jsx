@@ -37,6 +37,9 @@ vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({
   default: () => <div>contract-body</div>,
 }));
+vi.mock("../world/WorldToolsPanel", () => ({
+  default: () => <div>world-body</div>,
+}));
 vi.mock("../actors/ActorsTab", () => ({
   default: () => <div>actors-body</div>,
 }));

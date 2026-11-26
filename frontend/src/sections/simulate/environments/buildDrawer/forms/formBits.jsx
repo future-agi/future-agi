@@ -1,3 +1,4 @@
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
@@ -23,7 +24,8 @@ import {
 } from "../../panels/scenarioCountRules";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { PARALLELISM_COPY } from "../../parallelism.constants";
-import { sampleAgentFor, useConnectMode } from "../connectNewAgent";
+import { useConnectMode } from "../connectNewAgent";
+import BuildSourceFields from "./shared/BuildSourceFields";
 import {
   BTN_SX,
   INPUT_SX,
@@ -841,20 +843,17 @@ export function FormCard({
   uiOnly = false,
 }) {
   const connect = useConnectMode();
-  const sample = useUiOnlyBuild(
-    connect
-      ? [{ label: connect.item.name, detail: "Reached with these details" }]
-      : [],
-  );
-  const shown = connect ? sample : build;
+  const { canEdit } = useSimulationAccess();
+  const supported = !connect && !uiOnly;
+  const reviewingSources = Boolean(build.sources?.selection);
   useEffect(() => {
-    onBusyChange?.(shown.committing);
-  }, [shown.committing, onBusyChange]);
+    onBusyChange?.(build.committing);
+  }, [build.committing, onBusyChange]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const countOk = isValidScenarioCount(scenarioCount);
-  const footerHint = connect
-    ? hint || null
+  const footerHint = !supported
+    ? "This setup is unavailable."
     : hint ||
       (!countOk
         ? `Scenarios to generate: 1 to ${MAX_SCENARIOS.toLocaleString()}`
@@ -863,7 +862,7 @@ export function FormCard({
             ? "Fix what preflight found, then run it again"
             : "Run preflight first"
           : null);
-  const disabled = !!footerHint;
+  const disabled = !canEdit || !!footerHint || build.sources?.blocked;
 
   return (
     <Box
@@ -888,24 +887,29 @@ export function FormCard({
         )}
         <Stack spacing={1.75}>{children}</Stack>
         <Stack spacing={1.25} sx={{ mt: 1.75 }}>
-          {!connect && (
+          {supported && (
             <>
               <ScenarioRow value={scenarioCount} onChange={onScenarioCount} />
               <ParallelRow build={build} />
+              {canEdit && build.sources && (
+                <BuildSourceFields
+                  sources={build.sources}
+                  disabled={build.committing}
+                />
+              )}
+              <PreflightRow
+                build={build}
+                canRun={canRun && canEdit}
+                blockedReason={blockedReason}
+                onRun={onRun}
+              />
+              <CreditExhaustionBanner
+                error={build.creditExhaustion.error}
+                onUpgrade={build.creditExhaustion.onUpgrade}
+                onDismiss={build.creditExhaustion.onDismiss}
+              />
             </>
           )}
-          <PreflightRow
-            build={shown}
-            canRun={canRun}
-            blockedReason={blockedReason}
-            onRun={connect ? sample.runPreflight : onRun}
-            readyTitle={connect ? "Ready to connect" : undefined}
-          />
-          <CreditExhaustionBanner
-            error={shown.creditExhaustion.error}
-            onUpgrade={shown.creditExhaustion.onUpgrade}
-            onDismiss={shown.creditExhaustion.onDismiss}
-          />
         </Stack>
       </Box>
       <Stack
@@ -924,7 +928,7 @@ export function FormCard({
         }}
       >
         <Box flex={1} />
-        {shown.committing ? (
+        {build.committing ? (
           <Stack direction="row" alignItems="center" spacing={1}>
             <CircularProgress
               size={13}
@@ -932,7 +936,9 @@ export function FormCard({
               sx={{ color: "text.secondary" }}
             />
             <Typography sx={{ ...T12, color: "text.secondary" }}>
-              Building the environment…
+              {reviewingSources
+                ? "Preparing source review…"
+                : "Building the environment…"}
             </Typography>
           </Stack>
         ) : (
@@ -946,19 +952,14 @@ export function FormCard({
           size="medium"
           variant="contained"
           color="primary"
-          disabled={disabled || shown.committing}
-          onClick={
-            connect
-              ? () =>
-                  connect.onConnected(
-                    sampleAgentFor(connect.item, connect.modality),
-                  )
-              : build.commitBuild
-          }
+          disabled={disabled || build.committing}
+          onClick={build.commitBuild}
           startIcon={<Iconify icon="solar:link-circle-linear" width={14} />}
           sx={{ ...BTN_SX, flexShrink: 0 }}
         >
-          {connect ? "Connect agent" : "Connect and build environment"}
+          {reviewingSources
+            ? "Review sources"
+            : "Connect and build environment"}
         </Button>
       </Stack>
     </Box>

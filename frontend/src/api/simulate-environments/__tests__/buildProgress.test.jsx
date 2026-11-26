@@ -163,7 +163,7 @@ describe("useBuildProgress — real poll", () => {
       expect(result.current.done).toEqual(["understand", "build", "scenarios"]),
     );
     expect(result.current.running).toBe(false);
-    expect(result.current.turns.length).toBeGreaterThan(0);
+    await waitFor(() => expect(result.current.turns.length).toBeGreaterThan(0));
   });
 
   it("does not fetch while disabled", () => {

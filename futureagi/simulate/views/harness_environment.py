@@ -5,7 +5,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -112,7 +112,15 @@ from simulate.serializers.harness_environment import (
     HarnessScenarioValidateSerializer,
     HarnessScenarioValidationQuerySerializer,
     HarnessScenarioValidationStatusSerializer,
+    HarnessSourceAcceptResponseSerializer,
+    HarnessSourceAcceptSerializer,
+    HarnessSourceCapabilitiesSerializer,
     HarnessSourceChangesSerializer,
+    HarnessSourceFileListInspector,
+    HarnessSourcePrepareResponseSerializer,
+    HarnessSourcePrepareSerializer,
+    HarnessSourceSummarySerializer,
+    HarnessSourceUploadPrepareSerializer,
     HarnessSuiteMemberSerializer,
     HarnessVerifyCreateResponseSerializer,
     HarnessVerifyCreateSerializer,
@@ -124,6 +132,10 @@ from simulate.serializers.harness_environment import (
 from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
+)
+from simulate.serializers.harness_run_report import (
+    HarnessRunReportQuerySerializer,
+    HarnessRunReportSerializer,
 )
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
 from simulate.services import (
@@ -333,24 +345,38 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
 
-    def _scoped_jobs(self, request):
-        return scope_jobs(
-            HostedHarnessJob.no_workspace_objects.filter(
-                organization=request_organization(request),
-                environment__isnull=True,
-                deleted=False,
-            ),
-            request,
+    def _scoped_jobs(
+        self, request, *, designs: bool = False, adaptations: bool = False
+    ):
+        # The environments workspace is the page of a design and of an adaptation as well.
+        # A design is listed, read and renamed like an environment; an adaptation is only
+        # read (the composition it produces is the environment that gets listed). Neither
+        # takes an environment action: neither has an agent to run or evaluate.
+        jobs = HostedHarnessJob.no_workspace_objects.filter(
+            organization=request_organization(request),
+            environment__isnull=True,
+            deleted=False,
+        )
+        if not adaptations:
+            jobs = jobs.exclude(payload__metadata__has_key="adaptation")
+        if not designs:
+            jobs = jobs.exclude(payload__metadata__has_key="design")
+        return scope_jobs(jobs, request)
+
+    def _queryset(self, request, *, designs: bool = False, adaptations: bool = False):
+        return annotate_for_list(
+            self._scoped_jobs(request, designs=designs, adaptations=adaptations)
         )
 
-    def _queryset(self, request):
-        return annotate_for_list(self._scoped_jobs(request))
-
-    def _job(self, request, pk):
+    def _job(self, request, pk, *, designs: bool = False, adaptations: bool = False):
         identifier = _uuid_or_none(pk)
         if identifier is None:
             return None
-        return self._queryset(request).filter(id=identifier).first()
+        return (
+            self._queryset(request, designs=designs, adaptations=adaptations)
+            .filter(id=identifier)
+            .first()
+        )
 
     def handle_exception(self, exc):
         if isinstance(exc, HostedHarnessError):
@@ -932,6 +958,145 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if job is None:
             return self._not_found()
         return Response(list_drafts(job))
+
+    @validated_request(responses={200: HarnessSourceCapabilitiesSerializer})
+    @action(detail=True, methods=["get"], url_path="sources/capabilities")
+    def source_capabilities(self, request, pk=None):
+        """Formats, limits, and the draft basis for adding sources."""
+        from simulate.services.harness_sources import source_capabilities
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(source_capabilities(job))
+
+    @validated_request(responses={200: HarnessSourceSummarySerializer})
+    @action(detail=True, methods=["get"], url_path="sources")
+    def sources(self, request, pk=None):
+        """The secret-safe source summary from the current draft or version."""
+        from simulate.services.harness_sources import source_summary
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        from simulate.services.harness_source_reviews import require_source_scope
+
+        scope = (
+            None
+            if coding_agent_key(request)
+            else require_source_scope(request, write=False)
+        )
+        return Response(source_summary(job, reviewer_scope=scope))
+
+    @viewer_denied("prepare environment sources")
+    @validated_request(
+        request_serializer=HarnessSourcePrepareSerializer,
+        responses={200: HarnessSourcePrepareResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="sources/imports/prepare")
+    def prepare_source_import(self, request, pk=None):
+        """Capture authorized KB bytes and prepare a source review."""
+        from simulate.services.harness_sources import (
+            prepare_source_import,
+            reprepare_environment_import,
+        )
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        if "import_ref" in body:
+            return Response(
+                reprepare_environment_import(request, job, body, body["expected_draft"])
+            )
+        return Response(
+            prepare_source_import(
+                request,
+                job,
+                body["selection"],
+                target_table=body.get("target_table"),
+                expected_environment_version_id=body["expected_environment_version_id"],
+                expected_draft=body["expected_draft"],
+            )
+        )
+
+    @viewer_denied("prepare environment source uploads")
+    @validated_request(
+        request_serializer=HarnessSourceUploadPrepareSerializer,
+        responses={200: HarnessSourcePrepareResponseSerializer},
+        reject_unknown_fields=True,
+        field_inspectors=[HarnessSourceFileListInspector],
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="sources/uploads/prepare",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def prepare_source_upload(self, request, pk=None):
+        """Capture one direct upload and prepare the same source review."""
+        from simulate.services.harness_sources import (
+            prepare_upload_import,
+            reprepare_environment_import,
+        )
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        expected_draft = {
+            "id": body.get("expected_draft_id"),
+            "revision": body["expected_draft_revision"],
+        }
+        if "import_ref" in body:
+            return Response(
+                reprepare_environment_import(request, job, body, expected_draft)
+            )
+        return Response(
+            prepare_upload_import(
+                job,
+                body["files"],
+                target_table=body.get("target_table"),
+                purpose=body.get("purpose"),
+                expected_environment_version_id=body["expected_environment_version_id"],
+                expected_draft=expected_draft,
+            )
+        )
+
+    @viewer_denied("accept environment sources")
+    @validated_request(
+        request_serializer=HarnessSourceAcceptSerializer,
+        responses={200: HarnessSourceAcceptResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="sources/imports/accept")
+    def accept_source_import(self, request, pk=None):
+        """Accept a prepared review into the existing Environment draft."""
+        from simulate.services.harness_sources import accept_source_import
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        body = request.validated_data
+        return Response(
+            accept_source_import(
+                request,
+                job,
+                import_ref=body["import_ref"],
+                review=body["review"],
+                expected_environment_version_id=body["expected_environment_version_id"],
+                expected_draft=body["expected_draft"],
+                expected_draft_digest=body["expected_draft_digest"],
+                expected_revision=body.get("expected_revision"),
+                idempotency_key=body.get("idempotency_key"),
+            )
+        )
 
     @validated_request(responses={200: HarnessDraftReviewSerializer})
     @action(detail=True, methods=["get"], url_path="drafts/review")
@@ -1730,7 +1895,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         query = request.validated_query_data
         jobs = filter_for_list(
-            with_version_contract(self._queryset(request)),
+            with_version_contract(self._queryset(request, designs=True)),
             search=query.get("search"),
             status=query.get("status"),
             agent_type=query.get("agent_type"),
@@ -1741,7 +1906,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
         response = paginator.get_paginated_response(environment_rows(page or []))
-        response.data["status_counts"] = status_counts(self._scoped_jobs(request))
+        response.data["status_counts"] = status_counts(
+            self._scoped_jobs(request, designs=True)
+        )
         return response
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
@@ -1751,8 +1918,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         Same shape whichever door built it. A section the pipeline has not reached
         yet is null, so the client renders "building" rather than an empty pane. A
         coding agent's read leaves out the held-back cases.
+        Designs and adaptations are also read here.
         """
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True, adaptations=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},
@@ -1775,7 +1943,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         records how it was built, and editing that would make the provenance the
         contract tab shows a claim rather than a record.
         """
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},
@@ -1802,7 +1970,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """
         from simulate.services.hosted_harness import delete_environment
 
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},
@@ -1821,6 +1989,94 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def run(self, request, pk=None):
         """Create one new Run for the selected scenarios and trial count."""
         return get_harness_provider().run(request, pk)
+
+    @validated_request(
+        query_serializer=HarnessRunReportQuerySerializer,
+        responses={200: HarnessRunReportSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "The report of one run of a composition, optionally compared with a "
+            "baseline run."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"runs/(?P<run_id>[0-9a-fA-F-]{36})/report",
+    )
+    def run_report(self, request, pk=None, run_id=None):
+        """A composition run's results, coverage and comparability (contract §7.7).
+
+        A run is addressed by its test execution id, as the other run routes
+        are, or by its run id. The baseline may be a run of another composition
+        of this organization: comparing two agents means two compositions.
+        """
+        from django.db.models import Q
+
+        from simulate.services.harness_releases import composition_of
+        from simulate.services.harness_run_report import run_manifest, run_report
+
+        def not_found(message):
+            return Response(
+                build_error_envelope(message, status_code=status.HTTP_404_NOT_FOUND),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        def not_a_composition(message):
+            return Response(
+                build_error_envelope(
+                    message,
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="not_a_composition",
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        def find_run(identifier, **scope):
+            identifier = _uuid_or_none(identifier)
+            if identifier is None:
+                return None
+            return (
+                scope_jobs(
+                    HostedHarnessJob.no_workspace_objects.filter(
+                        organization=request_organization(request),
+                        environment__isnull=False,
+                        deleted=False,
+                        **scope,
+                    ),
+                    request,
+                )
+                .filter(Q(test_execution_id=identifier) | Q(run_id=identifier))
+                .first()
+            )
+
+        job = self._job(request, pk)
+        if job is None:
+            return not_found("Environment not found")
+        if composition_of(job) is None:
+            return not_a_composition("Only a composition's runs have a report")
+        run = find_run(run_id, environment=job)
+        manifest = run_manifest(run) if run is not None else None
+        if manifest is None:
+            return not_found("Run not found")
+        baseline_id = request.validated_query_data.get("baseline")
+        baseline_manifest = None
+        if baseline_id is not None:
+            baseline = find_run(baseline_id)
+            if baseline is None:
+                return not_found("Baseline run not found")
+            baseline_manifest = run_manifest(baseline)
+            if baseline_manifest is None:
+                return not_a_composition("The baseline is not a composition's run")
+        return Response(
+            run_report(
+                job,
+                run,
+                manifest,
+                baseline_run_id=str(baseline_id) if baseline_id else None,
+                baseline_manifest=baseline_manifest,
+            )
+        )
 
     def _run_test_job(self, request, pk):
         """The environment and its run test, or the response that refuses the call.

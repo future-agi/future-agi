@@ -4,131 +4,20 @@ import {
   Box,
   Button,
   ButtonBase,
+  Collapse,
   IconButton,
-  InputBase,
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import SvgColor from "src/components/svg-color";
 import CustomTooltip from "src/components/tooltip";
-import { formatFileSize } from "src/utils/utils";
-import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { BTN_SX, T12, T13, focusRing } from "../drawerStyles";
-import { uiOnlyToast } from "./startUtils";
-
-function iconForFile(name) {
-  const ext = String(name).split(".").pop()?.toLowerCase();
-  if (["csv", "tsv"].includes(ext)) return "solar:document-text-linear";
-  if (["json"].includes(ext)) return "solar:code-square-linear";
-  if (["md", "txt"].includes(ext)) return "solar:document-linear";
-  if (["pdf"].includes(ext)) return "solar:document-medicine-linear";
-  if (["docx", "doc"].includes(ext)) return "solar:document-add-linear";
-  if (["wav", "mp3", "m4a"].includes(ext)) return "solar:microphone-3-linear";
-  return "solar:paperclip-linear";
-}
+import UploadingFiles from "../forms/shared/UploadingFiles";
 
 const toolSx = { p: 0.5, color: "text.secondary" };
 
-function FalconBar({ value, onClose }) {
-  const [ask, setAsk] = useState("");
-  const [asked, setAsked] = useState(false);
-  const submit = () => {
-    if (ask.trim()) setAsked(true);
-  };
-  return (
-    <Box
-      sx={{
-        borderBottom: "1px solid",
-        borderColor: "divider",
-        bgcolor: "background.aiSurface",
-      }}
-    >
-      <Stack direction="row" alignItems="center" sx={{ px: 1.5, py: 0.75 }}>
-        <InputBase
-          autoFocus
-          fullWidth
-          placeholder={
-            value?.trim()
-              ? "Describe changes, e.g. 'make it escalate faster'"
-              : "Describe your agent, e.g. 'triages GitHub issues into Linear'"
-          }
-          value={ask}
-          onChange={(e) => {
-            setAsk(e.target.value);
-            setAsked(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-            if (e.key === "Escape") onClose();
-          }}
-          inputProps={{ "aria-label": "Ask Falcon AI" }}
-          sx={{ ...T13, flex: 1 }}
-        />
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={0.5}
-          sx={{ ml: 1, flexShrink: 0 }}
-        >
-          <IconButton
-            size="small"
-            onClick={submit}
-            disabled={!ask.trim()}
-            aria-label="Draft with Falcon AI"
-            sx={{ p: 0.5 }}
-          >
-            <Iconify
-              icon="solar:round-arrow-up-linear"
-              width={20}
-              sx={{ color: ask.trim() ? "primary.main" : "text.disabled" }}
-            />
-          </IconButton>
-          <IconButton
-            size="small"
-            onClick={onClose}
-            aria-label="Close Falcon AI"
-            sx={{ p: 0.25 }}
-          >
-            <Iconify
-              icon="solar:close-linear"
-              width={16}
-              sx={{ color: "text.disabled" }}
-            />
-          </IconButton>
-        </Stack>
-      </Stack>
-      {asked && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{ px: 1.5, pb: 1 }}
-        >
-          <UiOnlyFlag />
-          <Typography sx={{ ...T12, color: "text.secondary" }}>
-            Falcon AI drafting isn&apos;t wired to the API yet. Write the flow
-            yourself for now.
-          </Typography>
-        </Stack>
-      )}
-    </Box>
-  );
-}
-FalconBar.propTypes = {
-  value: PropTypes.string,
-  onClose: PropTypes.func.isRequired,
-};
-
-/*
-  the design's describe-your-flow card: one composer for prose, attached files and
-  a Falcon AI draft. Falcon drafting and voice input aren't wired, so the
-  bar takes the ask and says so instead of drafting.
-*/
 export default function DescribeFlowCard({
   prompt,
   description,
@@ -138,26 +27,22 @@ export default function DescribeFlowCard({
   onChange,
   files,
   onAdd,
+  onRetry,
   onRemove,
   onNext,
   canSubmit,
+  disabled = false,
   submitLabel,
   accept,
+  filesFooter = null,
 }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
 
   const onFiles = (list) => {
-    if (!list || !list.length) return;
-    onAdd(
-      Array.from(list).map((f) => ({
-        id: `${f.name}-${f.size}-${f.lastModified}`,
-        name: f.name,
-        size: f.size,
-        type: f.type,
-      })),
-    );
+    // Copied now: the input is cleared right after, which empties a live FileList.
+    if (!disabled && list?.length) onAdd(Array.from(list));
   };
   const words = value.trim() ? value.trim().split(/\s+/).length : 0;
 
@@ -224,9 +109,6 @@ export default function DescribeFlowCard({
             overflow: "hidden",
           }}
         >
-          {aiOpen && (
-            <FalconBar value={value} onClose={() => setAiOpen(false)} />
-          )}
           <Box sx={{ p: 1.5 }}>
             <TextField
               fullWidth
@@ -243,6 +125,15 @@ export default function DescribeFlowCard({
                 sx: { ...T13, lineHeight: 1.6, px: 0.5, py: 0.25 },
               }}
             />
+            <UploadingFiles
+              chips
+              label="Attached files"
+              files={files}
+              accept={accept}
+              onRetry={onRetry}
+              onRemove={onRemove}
+              sx={{ mt: 1 }}
+            />
             <Stack
               direction="row"
               alignItems="center"
@@ -252,34 +143,8 @@ export default function DescribeFlowCard({
               <Typography sx={{ ...T12, color: "text.disabled", flex: 1 }}>
                 {words
                   ? `${words} word${words === 1 ? "" : "s"}`
-                  : "Type, drop a file, or use the tools →"}
+                  : "Type a description or drop a file"}
               </Typography>
-              <CustomTooltip
-                show
-                arrow
-                size="small"
-                title="Write with Falcon AI"
-                placement="top"
-              >
-                <IconButton
-                  size="small"
-                  aria-label="Write with Falcon AI"
-                  onClick={() => setAiOpen(true)}
-                  sx={{
-                    ...toolSx,
-                    color: aiOpen ? "primary.main" : "text.secondary",
-                    "&:hover": {
-                      bgcolor: "background.aiHover",
-                      color: "primary.main",
-                    },
-                  }}
-                >
-                  <SvgColor
-                    src="/assets/icons/navbar/ic_falcon_ai.svg"
-                    sx={{ width: 18, height: 18 }}
-                  />
-                </IconButton>
-              </CustomTooltip>
               <CustomTooltip
                 show
                 arrow
@@ -288,6 +153,7 @@ export default function DescribeFlowCard({
               >
                 <IconButton
                   size="small"
+                  disabled={disabled}
                   aria-label="Attach reference material"
                   onClick={() => inputRef.current?.click()}
                   sx={toolSx}
@@ -295,19 +161,15 @@ export default function DescribeFlowCard({
                   <Iconify icon="solar:paperclip-linear" width={16} />
                 </IconButton>
               </CustomTooltip>
-              <CustomTooltip show arrow size="small" title="Voice input">
-                <IconButton
-                  size="small"
-                  aria-label="Voice input"
-                  onClick={() => uiOnlyToast("voice input")}
-                  sx={toolSx}
-                >
-                  <Iconify icon="solar:microphone-linear" width={16} />
-                </IconButton>
-              </CustomTooltip>
             </Stack>
           </Box>
         </Box>
+
+        {filesFooter && (
+          <Collapse in={files.length > 0} timeout={reduceMotion ? 0 : "auto"}>
+            {filesFooter}
+          </Collapse>
+        )}
 
         {chips?.length > 0 && (
           <Stack
@@ -344,63 +206,10 @@ export default function DescribeFlowCard({
           </Stack>
         )}
 
-        {files.length > 0 && (
-          <Stack
-            component="ul"
-            aria-label="Attached files"
-            spacing={0.5}
-            sx={{
-              listStyle: "none",
-              m: 0,
-              p: 0,
-              mt: 1.25,
-              maxHeight: 180,
-              overflowY: "auto",
-            }}
-          >
-            {files.map((f) => (
-              <Stack
-                component="li"
-                key={f.id}
-                direction="row"
-                alignItems="center"
-                spacing={1}
-                sx={{
-                  px: 1.25,
-                  py: 0.75,
-                  borderRadius: "6px",
-                  bgcolor: "action.hover",
-                }}
-              >
-                <Iconify
-                  icon={iconForFile(f.name)}
-                  width={16}
-                  sx={{ color: "text.secondary", flexShrink: 0 }}
-                />
-                <Typography noWrap sx={{ ...T13, flex: 1, minWidth: 0 }}>
-                  {f.name}
-                </Typography>
-                <Typography
-                  sx={{ ...T12, color: "text.disabled", flexShrink: 0 }}
-                >
-                  {formatFileSize(f.size)}
-                </Typography>
-                <IconButton
-                  size="small"
-                  aria-label={`Remove ${f.name}`}
-                  onClick={() => onRemove(f.id)}
-                  sx={{ p: 0.25, color: "text.secondary" }}
-                >
-                  <Iconify icon="solar:close-linear" width={12} />
-                </IconButton>
-              </Stack>
-            ))}
-          </Stack>
-        )}
-
         <input
           ref={inputRef}
           type="file"
+          disabled={disabled}
           multiple
           hidden
           accept={accept}
@@ -439,11 +248,17 @@ DescribeFlowCard.propTypes = {
   chips: PropTypes.arrayOf(PropTypes.string),
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
+  // Rows from useFileUploads.
   files: PropTypes.array.isRequired,
+  // Called with the picked or dropped files, as an array.
   onAdd: PropTypes.func.isRequired,
+  onRetry: PropTypes.func,
   onRemove: PropTypes.func.isRequired,
   onNext: PropTypes.func.isRequired,
   canSubmit: PropTypes.bool,
+  disabled: PropTypes.bool,
   submitLabel: PropTypes.string.isRequired,
   accept: PropTypes.string,
+  // What the attached files need before building, right under the box.
+  filesFooter: PropTypes.node,
 };

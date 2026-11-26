@@ -98,9 +98,9 @@ export const paths = {
       environments: {
         root: `${ROOTS.DASHBOARD}/simulate/environments`,
         templates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
-        useTemplate: (templateId) =>
-          `${ROOTS.DASHBOARD}/simulate/environments/templates/${templateId}`,
         detail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+        design: (draftId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/design/${draftId}`,
         workspaceTab: (envId, tab) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
         execution: (envId, testId, executionId) =>

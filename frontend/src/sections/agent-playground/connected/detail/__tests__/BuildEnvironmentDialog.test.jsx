@@ -109,11 +109,18 @@ describe("BuildEnvironmentDialog", () => {
     preflight.current = { data: { ok: true, checks: [] } };
     mockCreateJob.mockResolvedValue({ job: { job_id: "job-9" } });
     const onClose = renderDialog();
-
+    fireEvent.change(
+      screen.getByRole("textbox", {
+        name: "What should this environment test?",
+      }),
+      { target: { value: "Check refund eligibility." } },
+    );
+    expect(screen.getByText("Select Knowledge Base")).toBeInTheDocument();
     fireEvent.click(buildButton());
 
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledTimes(1));
     const [payload, key] = mockCreateJob.mock.calls[0];
+    expect(payload.test_focus).toBe("Check refund eligibility.");
     expect(payload.metadata).toMatchObject({
       agent_definition_id: "a1",
       agent_version_id: "v1",
@@ -148,7 +155,9 @@ describe("BuildEnvironmentDialog", () => {
     renderDialog();
 
     fireEvent.mouseDown(screen.getByRole("combobox"));
-    fireEvent.click(screen.getByRole("option", { name: "Load older versions" }));
+    fireEvent.click(
+      screen.getByRole("option", { name: "Load older versions" }),
+    );
 
     expect(versionsPage.fetchNextPage).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("build-env-version")).toHaveValue("v1");

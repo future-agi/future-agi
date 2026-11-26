@@ -10,6 +10,7 @@ import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import axios, { endpoints } from "src/utils/axios";
 
 import { fetchRunCalls, mapCallRow } from "./runCalls";
+import { isDesignEnvId } from "./designEnvironment";
 
 // Fix my agent v0 (agent-fix-runs).
 export const FIX_LIVE_STATES = new Set(["queued", "running", "stopping"]);
@@ -36,6 +37,8 @@ export async function listFixRuns(
   envId,
   { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {},
 ) {
+  // A design's environment has no fixes; it isn't on the server yet.
+  if (isDesignEnvId(envId)) return { results: [], count: 0 };
   const res = await axios.get(endpoints.agentFixRuns.list(), {
     params: { environment_id: envId, page, limit },
   });

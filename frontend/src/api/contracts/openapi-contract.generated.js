@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1223,
+  endpointCount: 1241,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29506,6 +29506,110 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-adaptations/": {
+      post: {
+        operationId: "simulate_api_harness-adaptations_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessReleaseAgentRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessJobRead",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environment-designs/": {
+      post: {
+        operationId: "simulate_api_harness-environment-designs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessDesignRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessJobRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          422: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environment-designs/documents/": {
+      post: {
+        operationId: "simulate_api_harness-environment-designs_documents",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessDesignDocumentResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          413: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          415: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environment-designs/{id}/continue/": {
+      post: {
+        operationId: "simulate_api_harness-environment-designs_continue_design",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessDesignContinueRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessJobRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/": {
       get: {
         operationId: "simulate_api_harness-environments_list",
@@ -30612,6 +30716,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/runs/{run_id}/report/": {
+      get: {
+        operationId: "simulate_api_harness-environments_runs_run_report",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          baseline: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessRunReport",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/scenarios/validate/": {
       get: {
         operationId: "simulate_api_harness-environments_validation_status",
@@ -30794,6 +30923,108 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/sources/": {
+      get: {
+        operationId: "simulate_api_harness-environments_sources",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceSummary",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/sources/capabilities/": {
+      get: {
+        operationId:
+          "simulate_api_harness-environments_sources_source_capabilities",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceCapabilities",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/sources/imports/accept/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_sources_imports_accept_source_import",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceAccept",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceAcceptResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/sources/imports/prepare/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_sources_imports_prepare_source_import",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourcePrepare",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourcePrepareResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/sources/uploads/prepare/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_sources_uploads_prepare_source_upload",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourcePrepareResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/verify/": {
       post: {
         operationId: "simulate_api_harness-environments_verify",
@@ -31012,6 +31243,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-hosted-agents/": {
+      post: {
+        operationId: "simulate_api_harness-hosted-agents_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessHostedAgentRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessHostedAgentResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-jobs/": {
       get: {
         operationId: "simulate_api_harness-jobs_list",
@@ -31376,6 +31632,167 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-releases/": {
+      get: {
+        operationId: "simulate_api_harness-releases_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessReleaseListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/": {
+      post: {
+        operationId: "simulate_api_harness-source-reviews_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceReviewCreate",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/": {
+      get: {
+        operationId: "simulate_api_harness-source-reviews_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/accept/": {
+      post: {
+        operationId: "simulate_api_harness-source-reviews_accept",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceReviewAccept",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/cancel/": {
+      post: {
+        operationId: "simulate_api_harness-source-reviews_cancel",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceReviewCancel",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/reprepare/": {
+      post: {
+        operationId: "simulate_api_harness-source-reviews_reprepare",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceReviewReprepare",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/scenario-generation/": {
+      get: {
+        operationId:
+          "simulate_api_harness-source-reviews_scenario-generation_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceScenarioGeneration",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId:
+          "simulate_api_harness-source-reviews_scenario-generation_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceScenarioGeneration",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -72754,6 +73171,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 20000,
           minLength: 1,
         },
+        source_review_id: {
+          title: "Source review id",
+          type: "string",
+          format: "uuid",
+        },
         client_request_id: {
           title: "Client request id",
           type: "string",
@@ -73241,6 +73663,106 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessDesignContinueRequest: {
+      required: ["idempotency_key"],
+      type: "object",
+      properties: {
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessDesignDocumentResponse: {
+      required: ["id", "name", "content_type", "sha256", "size"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        content_type: {
+          title: "Content type",
+          type: "string",
+          minLength: 1,
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+        },
+      },
+    },
+    HarnessDesignRequest: {
+      required: ["name", "requirements", "idempotency_key"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        requirements: {
+          title: "Requirements",
+          type: "string",
+          maxLength: 20000,
+          minLength: 1,
+        },
+        personal_data_mode: {
+          title: "Personal data mode",
+          type: "string",
+          enum: ["none", "synthetic_replace"],
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["chat", "voice"],
+          default: "chat",
+        },
+        template_suite_id: {
+          title: "Template suite id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        source_selection: {
+          $ref: "#/definitions/HarnessDesignSourceSelection",
+        },
+        target_table: {
+          title: "Target table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        document_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 100,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
     HarnessDraftReview: {
       required: ["drafts", "changes", "counts", "review_digest", "can_save"],
       type: "object",
@@ -73441,6 +73963,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "scenarios",
         "evaluations",
         "settings",
+        "composition",
         "actors_tab",
       ],
       type: "object",
@@ -73470,6 +73993,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         settings: {
           $ref: "#/definitions/HarnessEnvironmentSettings",
+        },
+        composition: {
+          $ref: "#/definitions/HarnessComposition",
         },
         actors_tab: {
           title: "Actors tab",
@@ -73955,6 +74481,71 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessHostedAgentRequest: {
+      required: [
+        "suite_id",
+        "name",
+        "instructions",
+        "model",
+        "idempotency_key",
+      ],
+      type: "object",
+      properties: {
+        suite_id: {
+          title: "Suite id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        instructions: {
+          title: "Instructions",
+          type: "string",
+          maxLength: 65536,
+          minLength: 1,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          enum: ["vertex_ai/gemini-3.7-flash", "vertex_ai/gemini-3.8-flash"],
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        parallelism: {
+          title: "Parallelism",
+          description:
+            "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+          type: "integer",
+          maximum: 8,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessHostedAgentResponse: {
+      required: ["id", "agent_version_id"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "The composition, an environment id.",
+          type: "string",
+          format: "uuid",
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
     HarnessIngressProxyRequest: {
       type: "object",
       properties: {
@@ -74046,6 +74637,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["agent", "artifacts"],
       type: "object",
       properties: {
+        test_focus: {
+          title: "Test focus",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
+        source_selection: {
+          $ref: "#/definitions/HarnessDesignSourceSelection",
+        },
         schema_version: {
           title: "Schema version",
           type: "string",
@@ -74395,6 +74995,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["agent", "artifacts"],
       type: "object",
       properties: {
+        test_focus: {
+          title: "Test focus",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
+        source_selection: {
+          $ref: "#/definitions/HarnessDesignSourceSelection",
+        },
         schema_version: {
           title: "Schema version",
           type: "string",
@@ -74513,6 +75122,72 @@ export const OPENAPI_CONTRACT = Object.freeze({
         snapshot: {
           title: "Snapshot",
           type: "object",
+        },
+      },
+    },
+    HarnessReleaseAgentRequest: {
+      required: [
+        "suite_id",
+        "agent_version_id",
+        "agent",
+        "name",
+        "idempotency_key",
+      ],
+      type: "object",
+      properties: {
+        suite_id: {
+          title: "Suite id",
+          type: "string",
+          format: "uuid",
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        agent: {
+          $ref: "#/definitions/HarnessAgent",
+        },
+        credential_values: {
+          title: "Credential values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        parallelism: {
+          title: "Parallelism",
+          description:
+            "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+          type: "integer",
+          maximum: 8,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessReleaseListResponse: {
+      required: ["results"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRelease",
+          },
         },
       },
     },
@@ -74822,6 +75497,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "Selected scenarios that need a blocked tool, when the run would be refused; 0 when it runs.",
           type: "integer",
           minimum: 0,
+        },
+      },
+    },
+    HarnessRunReport: {
+      required: [
+        "run_mode",
+        "manifest",
+        "comparability",
+        "coverage",
+        "use_cases",
+        "scenarios",
+        "environment_faults",
+      ],
+      type: "object",
+      properties: {
+        run_mode: {
+          title: "Run mode",
+          type: "string",
+          enum: ["canonical", "tool_routed", "conversation_only"],
+        },
+        manifest: {
+          $ref: "#/definitions/HarnessRunReportManifest",
+        },
+        comparability: {
+          $ref: "#/definitions/HarnessRunReportComparability",
+        },
+        coverage: {
+          $ref: "#/definitions/HarnessRunReportCoverage",
+        },
+        use_cases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunReportUseCase",
+          },
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessRunReportScenario",
+          },
+        },
+        environment_faults: {
+          title: "Environment faults",
+          type: "integer",
         },
       },
     },
@@ -75372,6 +76091,137 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessSourceAccept: {
+      required: [
+        "import_ref",
+        "expected_environment_version_id",
+        "expected_draft",
+        "expected_draft_digest",
+        "review",
+      ],
+      type: "object",
+      properties: {
+        import_ref: {
+          title: "Import ref",
+          type: "string",
+          maxLength: 16384,
+          minLength: 1,
+        },
+        expected_environment_version_id: {
+          title: "Expected environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        expected_draft: {
+          $ref: "#/definitions/HarnessSourceDraftRef",
+        },
+        expected_draft_digest: {
+          title: "Expected draft digest",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        review: {
+          title: "Review",
+          type: "object",
+        },
+      },
+    },
+    HarnessSourceAcceptResponse: {
+      required: [
+        "review_id",
+        "accepted_revision",
+        "draft",
+        "snapshot_digest",
+        "sources",
+        "diagnostics",
+        "validation",
+      ],
+      type: "object",
+      properties: {
+        review_id: {
+          title: "Review id",
+          type: "string",
+          format: "uuid",
+        },
+        accepted_revision: {
+          title: "Accepted revision",
+          type: "integer",
+        },
+        draft: {
+          title: "Draft",
+          type: "object",
+          "x-nullable": true,
+        },
+        snapshot_digest: {
+          title: "Snapshot digest",
+          type: "string",
+          minLength: 1,
+        },
+        sources: {
+          title: "Sources",
+          type: "object",
+        },
+        diagnostics: {
+          title: "Diagnostics",
+          type: "object",
+        },
+        validation: {
+          title: "Validation",
+          type: "object",
+        },
+      },
+    },
+    HarnessSourceCapabilities: {
+      required: [
+        "upload",
+        "knowledge_base",
+        "environment_version_id",
+        "draft",
+        "participant_visibility_enabled",
+        "participant_visibility_reason",
+      ],
+      type: "object",
+      properties: {
+        upload: {
+          title: "Upload",
+          type: "object",
+        },
+        knowledge_base: {
+          title: "Knowledge base",
+          type: "object",
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        draft: {
+          title: "Draft",
+          type: "object",
+        },
+        participant_visibility_enabled: {
+          title: "Participant visibility enabled",
+          type: "boolean",
+        },
+        participant_visibility_reason: {
+          title: "Participant visibility reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessSourceChanges: {
       required: ["from_version", "to_version", "changes", "truncated"],
       type: "object",
@@ -75395,6 +76245,389 @@ export const OPENAPI_CONTRACT = Object.freeze({
         truncated: {
           title: "Truncated",
           type: "boolean",
+        },
+      },
+    },
+    HarnessSourcePrepare: {
+      required: ["expected_environment_version_id", "expected_draft"],
+      type: "object",
+      properties: {
+        import_ref: {
+          title: "Import ref",
+          type: "string",
+          format: "uuid",
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        expected_environment_version_id: {
+          title: "Expected environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        target_table: {
+          title: "Target table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        expected_draft: {
+          $ref: "#/definitions/HarnessSourceDraftRef",
+        },
+        selection: {
+          $ref: "#/definitions/HarnessSourceSelection",
+        },
+      },
+    },
+    HarnessSourcePrepareResponse: {
+      required: [
+        "import_ref",
+        "revision",
+        "state",
+        "draft_digest",
+        "draft",
+        "suggested_purposes",
+        "capabilities",
+      ],
+      type: "object",
+      properties: {
+        import_ref: {
+          title: "Import ref",
+          type: "string",
+          minLength: 1,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        draft_digest: {
+          title: "Draft digest",
+          type: "string",
+        },
+        draft: {
+          title: "Draft",
+          type: "object",
+        },
+        suggested_purposes: {
+          title: "Suggested purposes",
+          type: "object",
+        },
+        capabilities: {
+          $ref: "#/definitions/HarnessSourceCapabilities",
+        },
+      },
+    },
+    HarnessSourceReviewAccept: {
+      required: [
+        "expected_revision",
+        "expected_draft_digest",
+        "expected_schema_digest",
+        "decisions",
+        "idempotency_key",
+      ],
+      type: "object",
+      properties: {
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        expected_draft_digest: {
+          title: "Expected draft digest",
+          type: "string",
+          pattern: "\\Asha256:[0-9a-f]{64}$",
+          minLength: 1,
+        },
+        expected_schema_digest: {
+          title: "Expected schema digest",
+          type: "string",
+          pattern: "\\Asha256:[0-9a-f]{64}$",
+          minLength: 1,
+        },
+        decisions: {
+          title: "Decisions",
+          type: "object",
+          additionalProperties: true,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessSourceReviewCancel: {
+      required: ["expected_revision", "expected_draft_digest"],
+      type: "object",
+      properties: {
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        expected_draft_digest: {
+          title: "Expected draft digest",
+          type: "string",
+          pattern: "\\Asha256:[0-9a-f]{64}$",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessSourceReviewCreate: {
+      required: ["scope", "idempotency_key"],
+      type: "object",
+      properties: {
+        document_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 100,
+        },
+        document_purposes: {
+          title: "Document purposes",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            enum: ["policy", "reference", "seed_records"],
+          },
+          default: {},
+        },
+        knowledge_base: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceSelection",
+          },
+          default: [],
+        },
+        scope: {
+          $ref: "#/definitions/HarnessSourceScope",
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        schema_repairs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceSchemaRepair",
+          },
+        },
+      },
+    },
+    HarnessSourceReviewRead: {
+      required: [
+        "id",
+        "state",
+        "revision",
+        "scope",
+        "draft_digest",
+        "preview",
+        "receipt",
+        "expires_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "reading",
+            "needs_repair",
+            "ready",
+            "accepted",
+            "cancelled",
+            "expired",
+          ],
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+        draft_digest: {
+          title: "Draft digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preview: {
+          title: "Preview",
+          type: "object",
+        },
+        receipt: {
+          title: "Receipt",
+          type: "object",
+          "x-nullable": true,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        scenario_generation: {
+          $ref: "#/definitions/HarnessSourceScenarioGeneration",
+        },
+      },
+    },
+    HarnessSourceReviewReprepare: {
+      required: ["expected_revision", "idempotency_key"],
+      type: "object",
+      properties: {
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        target_table: {
+          title: "Target table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        schema_repairs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceSchemaRepair",
+          },
+        },
+        redact_text_sources: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
+        synthetic_text_sources: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
+      },
+    },
+    HarnessSourceScenarioGeneration: {
+      required: [
+        "id",
+        "review_id",
+        "state",
+        "source_digest",
+        "generated_scenarios",
+        "suite_draft",
+        "error",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        review_id: {
+          title: "Review id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["queued", "running", "completed", "failed", "stale"],
+        },
+        source_digest: {
+          title: "Source digest",
+          type: "string",
+          minLength: 1,
+        },
+        generated_scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceGeneratedScenario",
+          },
+        },
+        suite_draft: {
+          title: "Suite draft",
+          type: "object",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessSourceSummary: {
+      required: ["draft", "snapshot_digest", "sources", "validation_status"],
+      type: "object",
+      properties: {
+        scenario_generation: {
+          title: "Scenario generation",
+          type: "object",
+        },
+        generation_review_id: {
+          title: "Generation review id",
+          type: "string",
+          format: "uuid",
+        },
+        draft: {
+          title: "Draft",
+          type: "boolean",
+        },
+        snapshot_digest: {
+          title: "Snapshot digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        sources: {
+          title: "Sources",
+          type: "object",
+        },
+        validation_status: {
+          title: "Validation status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -115770,6 +117003,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "tool_result",
             "question_requested",
             "confirmation_requested",
+            "question_answered",
             "turn_interrupted",
             "turn_completed",
             "checkpoint_committed",
@@ -116090,6 +117324,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         available: {
           title: "Available",
           type: "boolean",
+        },
+      },
+    },
+    HarnessDesignSourceSelection: {
+      type: "object",
+      properties: {
+        document_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 100,
+        },
+        document_purposes: {
+          title: "Document purposes",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            enum: ["policy", "reference", "seed_records"],
+          },
+          default: {},
+        },
+        knowledge_base: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceSelection",
+          },
+          default: [],
         },
       },
     },
@@ -116719,6 +117983,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    HarnessComposition: {
+      required: [
+        "environment",
+        "suite",
+        "binding",
+        "agent",
+        "alignment",
+        "binding_proof",
+      ],
+      type: "object",
+      properties: {
+        environment: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCompositionRelease",
+          },
+        },
+        suite: {
+          $ref: "#/definitions/HarnessCompositionSuite",
+        },
+        binding: {
+          $ref: "#/definitions/HarnessCompositionBinding",
+        },
+        agent: {
+          $ref: "#/definitions/HarnessCompositionAgent",
+        },
+        alignment: {
+          title: "Alignment",
+          type: "object",
+          "x-nullable": true,
+        },
+        binding_proof: {
+          $ref: "#/definitions/HarnessCompositionProof",
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentContract: {
       required: [
@@ -117573,7 +118874,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         connector: {
           title: "Connector",
           type: "string",
-          enum: ["livekit", "vapi", "retell", "retell_chat", "phone", "auto"],
+          enum: [
+            "livekit",
+            "vapi",
+            "retell",
+            "retell_chat",
+            "phone",
+            "auto",
+            "hosted_agent",
+          ],
         },
         mode: {
           title: "Mode",
@@ -117961,6 +119270,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-json-value": true,
             description: "Any valid JSON value.",
           },
+        },
+        source_review: {
+          $ref: "#/definitions/HarnessJobSourceReview",
         },
         runtime: {
           title: "Runtime",
@@ -118492,6 +119804,69 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessRelease: {
+      required: [
+        "id",
+        "digest",
+        "name",
+        "system",
+        "parent",
+        "derived_from",
+        "provenance",
+        "tools",
+        "policy",
+        "suites",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        system: {
+          title: "System",
+          type: "boolean",
+        },
+        parent: {
+          $ref: "#/definitions/HarnessReleaseParent",
+        },
+        derived_from: {
+          $ref: "#/definitions/HarnessReleaseDerivedFrom",
+        },
+        provenance: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReleaseProvenance",
+          },
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReleaseTool",
+          },
+        },
+        policy: {
+          $ref: "#/definitions/HarnessReleasePolicy",
+        },
+        suites: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSuiteSummary",
+          },
+        },
+      },
+    },
     HarnessCall: {
       required: ["started_at", "ended_at", "duration_ms", "turns"],
       type: "object",
@@ -118803,6 +120178,232 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessBlockedScenario",
           },
+        },
+      },
+    },
+    HarnessRunReportComparability: {
+      required: ["baseline_run_id", "comparable", "differing"],
+      type: "object",
+      properties: {
+        baseline_run_id: {
+          title: "Baseline run id",
+          type: "string",
+          minLength: 1,
+        },
+        comparable: {
+          title: "Comparable",
+          type: "boolean",
+        },
+        differing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessRunReportCoverage: {
+      required: [
+        "runnable",
+        "suite_scenarios",
+        "base_scenarios",
+        "unscorable",
+        "extension_tools",
+      ],
+      type: "object",
+      properties: {
+        runnable: {
+          title: "Runnable",
+          type: "integer",
+        },
+        suite_scenarios: {
+          title: "Suite scenarios",
+          type: "integer",
+        },
+        base_scenarios: {
+          title: "Base scenarios",
+          type: "integer",
+        },
+        unscorable: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        extension_tools: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessRunReportManifest: {
+      required: [
+        "digest",
+        "environment",
+        "suite",
+        "binding",
+        "agent",
+        "selection",
+        "simulator",
+        "scorer",
+        "runtime",
+      ],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        environment: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        suite: {
+          title: "Suite",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        binding: {
+          title: "Binding",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        agent: {
+          title: "Agent",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        selection: {
+          title: "Selection",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        simulator: {
+          title: "Simulator",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        scorer: {
+          title: "Scorer",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        runtime: {
+          title: "Runtime",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+    },
+    HarnessRunReportScenario: {
+      required: [
+        "scenario_key",
+        "name",
+        "use_case",
+        "origin",
+        "trials",
+        "pass_1",
+        "passed_all",
+      ],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        use_case: {
+          title: "Use case",
+          type: "string",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          enum: ["base", "specialized", "custom"],
+        },
+        trials: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["passed", "failed", "errored", "skipped"],
+            "x-nullable": true,
+          },
+        },
+        pass_1: {
+          title: "Pass 1",
+          type: "number",
+          "x-nullable": true,
+        },
+        passed_all: {
+          title: "Passed all",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessRunReportUseCase: {
+      required: ["use_case", "scenarios", "trials", "pass_1", "pass_k"],
+      type: "object",
+      properties: {
+        use_case: {
+          title: "Use case",
+          type: "string",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+        },
+        pass_1: {
+          title: "Pass 1",
+          type: "number",
+          "x-nullable": true,
+        },
+        pass_k: {
+          title: "Pass k",
+          type: "number",
+          "x-nullable": true,
         },
       },
     },
@@ -119278,6 +120879,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        source_citations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioSourceCitation",
+          },
+        },
         id: {
           title: "Id",
           type: "string",
@@ -119529,6 +121136,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessSourceDraftRef: {
+      required: ["id", "revision"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     HarnessSourceChange: {
       required: ["kind", "ref", "before", "after", "cited_by"],
       type: "object",
@@ -119559,6 +121183,136 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "string",
             minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessSourceSelection: {
+      required: ["kind", "kb_id"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["knowledge_base"],
+        },
+        kb_id: {
+          title: "Kb id",
+          type: "string",
+          format: "uuid",
+        },
+        file_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 100,
+        },
+        whole_collection: {
+          title: "Whole collection",
+          type: "boolean",
+          default: false,
+        },
+      },
+    },
+    HarnessSourceScope: {
+      required: ["kind", "id"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["environment", "design", "build_job"],
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+          minimum: 1,
+        },
+        schema_digest: {
+          title: "Schema digest",
+          type: "string",
+          pattern: "\\Asha256:[0-9a-f]{64}$",
+          minLength: 1,
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        expected_draft: {
+          $ref: "#/definitions/HarnessSourceDraftRef",
+        },
+        target_table: {
+          title: "Target table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
+    SourceSchemaRepair: {
+      required: ["source_id"],
+      type: "object",
+      properties: {
+        source_id: {
+          title: "Source id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        text_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 256,
+        },
+        identity_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 256,
+        },
+        separate_entity: {
+          title: "Separate entity",
+          type: "boolean",
+        },
+        manual_relationships: {
+          title: "Manual relationships",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessSourceGeneratedScenario: {
+      required: ["scenario_key", "name", "citations"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        citations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceScenarioCitation",
           },
         },
       },
@@ -141780,6 +143534,151 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessCompositionAgent: {
+      required: [
+        "agent_definition_id",
+        "agent_version_id",
+        "connector",
+        "name",
+        "version_name",
+      ],
+      type: "object",
+      properties: {
+        agent_definition_id: {
+          title: "Agent definition id",
+          type: "string",
+          format: "uuid",
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+        },
+        connector: {
+          title: "Connector",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        version_name: {
+          title: "Version name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessCompositionBinding: {
+      required: ["digest", "mode", "agent_tools", "tools"],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        mode: {
+          title: "Mode",
+          type: "string",
+          enum: ["canonical", "tool_routed"],
+        },
+        agent_tools: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        tools: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+      },
+    },
+    HarnessCompositionProof: {
+      required: ["passed", "scenarios"],
+      type: "object",
+      properties: {
+        passed: {
+          title: "Passed",
+          type: "boolean",
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "object",
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessCompositionRelease: {
+      required: ["digest", "name"],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    HarnessCompositionSuite: {
+      required: [
+        "digest",
+        "name",
+        "parent_digest",
+        "policy_profile",
+        "unscored_agent_rules",
+        "scenarios",
+      ],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        parent_digest: {
+          title: "Parent digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        policy_profile: {
+          title: "Policy profile",
+          type: "object",
+        },
+        unscored_agent_rules: {
+          description:
+            "The environment's agent_policy rules no scenario in this suite grades.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCompositionRule",
+          },
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessCompositionScenario",
+          },
+        },
+      },
+    },
     HarnessEnvironmentAmendment: {
       required: ["subject", "note"],
       type: "object",
@@ -142572,6 +144471,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    HarnessJobSourceReview: {
+      required: ["id", "state", "revision", "draft_digest", "schema_digest"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        draft_digest: {
+          title: "Draft digest",
+          type: "string",
+        },
+        schema_digest: {
+          title: "Schema digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     HarnessDiagnostics: {
       required: ["size", "final", "error"],
       type: "object",
@@ -142712,6 +144641,156 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+      },
+    },
+    HarnessReleaseDerivedFrom: {
+      description: "The template a designed release was customized from.",
+      required: ["digest", "name"],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          description: "Null when the template is not visible to you.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessReleaseParent: {
+      required: ["digest", "name"],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    HarnessReleasePolicy: {
+      required: ["parameters", "agent_rules"],
+      type: "object",
+      properties: {
+        parameters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReleasePolicyParameter",
+          },
+        },
+        agent_rules: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReleaseAgentRule",
+          },
+        },
+      },
+    },
+    HarnessReleaseProvenance: {
+      required: ["target", "document", "sha256"],
+      type: "object",
+      properties: {
+        target: {
+          title: "Target",
+          description:
+            "`table:<name>` for imported rows, else the attached file's path.",
+          type: "string",
+          minLength: 1,
+        },
+        document: {
+          title: "Document",
+          type: "string",
+          minLength: 1,
+        },
+        part: {
+          title: "Part",
+          type: "string",
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          minLength: 1,
+        },
+        rows: {
+          title: "Rows",
+          type: "integer",
+          "x-nullable": true,
+        },
+        replaced: {
+          title: "Replaced",
+          description: "Personal details replaced with made-up ones.",
+          type: "integer",
+        },
+      },
+    },
+    HarnessReleaseTool: {
+      required: ["name", "description", "mutates_state"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        mutates_state: {
+          title: "Mutates state",
+          type: "boolean",
+        },
+      },
+    },
+    HarnessSuiteSummary: {
+      required: [
+        "id",
+        "digest",
+        "name",
+        "scenario_count",
+        "origins",
+        "policy_profile",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+        },
+        origins: {
+          $ref: "#/definitions/HarnessSuiteOrigins",
+        },
+        policy_profile: {
+          title: "Policy profile",
+          type: "object",
         },
       },
     },
@@ -143155,6 +145234,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessScenarioSourceCitation: {
+      required: ["filename"],
+      type: "object",
+      properties: {
+        filename: {
+          title: "Filename",
+          type: "string",
+          minLength: 1,
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+        },
+        row: {
+          title: "Row",
+          type: "integer",
+        },
+      },
+    },
     HarnessScenarioRegistrationResponse: {
       required: ["scenario_key", "scenario_id"],
       type: "object",
@@ -143173,6 +145271,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Call execution id",
           type: "string",
           format: "uuid",
+        },
+      },
+    },
+    HarnessSourceScenarioCitation: {
+      required: ["source_id"],
+      type: "object",
+      properties: {
+        source_id: {
+          title: "Source id",
+          type: "string",
+          minLength: 1,
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+          "x-nullable": true,
+        },
+        row: {
+          title: "Row",
+          type: "integer",
+          "x-nullable": true,
         },
       },
     },
@@ -153163,6 +155282,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    HarnessCompositionRule: {
+      description:
+        "The environment's agent_policy rules no scenario in this suite grades.",
+      required: ["id", "text"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+      },
+    },
+    HarnessCompositionScenario: {
+      required: ["key", "origin", "derived_from"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          enum: ["base", "specialized", "custom"],
+        },
+        derived_from: {
+          title: "Derived from",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     HarnessFaultBounds: {
       required: ["on_call", "delay_seconds", "status", "message"],
       type: "object",
@@ -153446,6 +155604,67 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Type",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessReleaseAgentRule: {
+      required: ["id", "text"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+        },
+      },
+    },
+    HarnessReleasePolicyParameter: {
+      required: ["name", "type", "default", "allowed"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: ["string", "integer", "number", "boolean"],
+        },
+        default: {
+          title: "Default",
+          type: "object",
+          "x-nullable": true,
+        },
+        allowed: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessSuiteOrigins: {
+      required: ["base", "specialized", "custom"],
+      type: "object",
+      properties: {
+        base: {
+          title: "Base",
+          type: "integer",
+        },
+        specialized: {
+          title: "Specialized",
+          type: "integer",
+        },
+        custom: {
+          title: "Custom",
+          type: "integer",
         },
       },
     },

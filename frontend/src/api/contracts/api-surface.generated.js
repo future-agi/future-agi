@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1223,
+  endpointCount: 1241,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -908,6 +908,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "post",
       ],
       "/simulate/api/call-executions/": ["get"],
+      "/simulate/api/harness-adaptations/": ["post"],
+      "/simulate/api/harness-environment-designs/": ["post"],
+      "/simulate/api/harness-environment-designs/documents/": ["post"],
+      "/simulate/api/harness-environment-designs/{id}/continue/": ["post"],
       "/simulate/api/harness-environments/": ["get"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
       "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
@@ -969,6 +973,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
         ["post"],
+      "/simulate/api/harness-environments/{id}/runs/{run_id}/report/": ["get"],
       "/simulate/api/harness-environments/{id}/scenarios/validate/": [
         "get",
         "post",
@@ -992,6 +997,17 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["get"],
       "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
         ["post"],
+      "/simulate/api/harness-environments/{id}/sources/": ["get"],
+      "/simulate/api/harness-environments/{id}/sources/capabilities/": ["get"],
+      "/simulate/api/harness-environments/{id}/sources/imports/accept/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/sources/imports/prepare/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/sources/uploads/prepare/": [
+        "post",
+      ],
       "/simulate/api/harness-environments/{id}/verify/": ["post"],
       "/simulate/api/harness-environments/{id}/verify/{verify_id}/": ["get"],
       "/simulate/api/harness-environments/{id}/versions/": ["get"],
@@ -1008,6 +1024,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":
         ["get"],
+      "/simulate/api/harness-hosted-agents/": ["post"],
       "/simulate/api/harness-jobs/": ["get", "post"],
       "/simulate/api/harness-jobs/health/": ["get"],
       "/simulate/api/harness-jobs/preflight/": ["post"],
@@ -1024,6 +1041,16 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-jobs/{id}/scenarios/": ["get"],
       "/simulate/api/harness-jobs/{id}/scenarios/amend/": ["post"],
       "/simulate/api/harness-jobs/{id}/scenarios/coverage/": ["get"],
+      "/simulate/api/harness-releases/": ["get"],
+      "/simulate/api/harness-source-reviews/": ["post"],
+      "/simulate/api/harness-source-reviews/{id}/": ["get"],
+      "/simulate/api/harness-source-reviews/{id}/accept/": ["post"],
+      "/simulate/api/harness-source-reviews/{id}/cancel/": ["post"],
+      "/simulate/api/harness-source-reviews/{id}/reprepare/": ["post"],
+      "/simulate/api/harness-source-reviews/{id}/scenario-generation/": [
+        "get",
+        "post",
+      ],
       "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
       "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": [
         "put",
@@ -2414,6 +2441,10 @@ export const API_SURFACE_PATHS = Object.freeze({
     "post",
   ],
   "/simulate/api/call-executions/": ["get"],
+  "/simulate/api/harness-adaptations/": ["post"],
+  "/simulate/api/harness-environment-designs/": ["post"],
+  "/simulate/api/harness-environment-designs/documents/": ["post"],
+  "/simulate/api/harness-environment-designs/{id}/continue/": ["post"],
   "/simulate/api/harness-environments/": ["get"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
   "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
@@ -2466,6 +2497,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
     ["post"],
+  "/simulate/api/harness-environments/{id}/runs/{run_id}/report/": ["get"],
   "/simulate/api/harness-environments/{id}/scenarios/validate/": [
     "get",
     "post",
@@ -2481,6 +2513,11 @@ export const API_SURFACE_PATHS = Object.freeze({
     ["get"],
   "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
     ["post"],
+  "/simulate/api/harness-environments/{id}/sources/": ["get"],
+  "/simulate/api/harness-environments/{id}/sources/capabilities/": ["get"],
+  "/simulate/api/harness-environments/{id}/sources/imports/accept/": ["post"],
+  "/simulate/api/harness-environments/{id}/sources/imports/prepare/": ["post"],
+  "/simulate/api/harness-environments/{id}/sources/uploads/prepare/": ["post"],
   "/simulate/api/harness-environments/{id}/verify/": ["post"],
   "/simulate/api/harness-environments/{id}/verify/{verify_id}/": ["get"],
   "/simulate/api/harness-environments/{id}/versions/": ["get"],
@@ -2497,6 +2534,7 @@ export const API_SURFACE_PATHS = Object.freeze({
     ["post"],
   "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":
     ["get"],
+  "/simulate/api/harness-hosted-agents/": ["post"],
   "/simulate/api/harness-jobs/": ["get", "post"],
   "/simulate/api/harness-jobs/health/": ["get"],
   "/simulate/api/harness-jobs/preflight/": ["post"],
@@ -2513,6 +2551,16 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-jobs/{id}/scenarios/": ["get"],
   "/simulate/api/harness-jobs/{id}/scenarios/amend/": ["post"],
   "/simulate/api/harness-jobs/{id}/scenarios/coverage/": ["get"],
+  "/simulate/api/harness-releases/": ["get"],
+  "/simulate/api/harness-source-reviews/": ["post"],
+  "/simulate/api/harness-source-reviews/{id}/": ["get"],
+  "/simulate/api/harness-source-reviews/{id}/accept/": ["post"],
+  "/simulate/api/harness-source-reviews/{id}/cancel/": ["post"],
+  "/simulate/api/harness-source-reviews/{id}/reprepare/": ["post"],
+  "/simulate/api/harness-source-reviews/{id}/scenario-generation/": [
+    "get",
+    "post",
+  ],
   "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
   "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": ["put"],
   "/simulate/api/harness/attempts/{id}/events/": ["post"],

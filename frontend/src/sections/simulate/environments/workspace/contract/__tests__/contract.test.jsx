@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "src/utils/test-utils";
 import RlContractPanel from "../RlContractPanel";
+import WorldToolsPanel from "../../world/WorldToolsPanel";
+
 import { WORKERS_COPY } from "../workers.constants";
+
+vi.mock("../../sources/SourcesSection", () => ({ default: () => null }));
 
 const tool = (name, description, writes) => ({
   tool: name,
@@ -19,9 +23,9 @@ const tool = (name, description, writes) => ({
   tables: { recorded: false, read: [], changed: [], label: "Not recorded" },
 });
 
-// A voice environment with two tools, two hard rules and a seeded table —
+// A voice environment with two tools, two hard rules and a seeded table:
 // enough to exercise the world (capability graph), the internals (tables +
-// tools) and the run-end card.
+// tools) on World & tools and the run-end card on Contract.
 const voiceEnv = {
   name: "Refund Copilot",
   surface: "voice",
@@ -43,9 +47,9 @@ const voiceEnv = {
   ],
 };
 
-const renderPanel = (props = {}) =>
+const renderPanel = (props = {}, Panel = RlContractPanel) =>
   render(
-    <RlContractPanel
+    <Panel
       env={voiceEnv}
       envState={{
         evals: [{ id: "task_success" }],
@@ -56,6 +60,7 @@ const renderPanel = (props = {}) =>
       {...props}
     />,
   );
+const renderWorld = (props) => renderPanel(props, WorldToolsPanel);
 
 describe("RlContractPanel", () => {
   it("opens on its content, with no heading repeating the tab", () => {
@@ -64,9 +69,16 @@ describe("RlContractPanel", () => {
     expect(screen.queryByText(/What this environment is made of/)).toBeNull();
   });
 
-  it("renders the world-internals cards over real data only: tables and tools", () => {
+  it("leaves the world to World & tools", () => {
     renderPanel();
-    expect(screen.getByText("World state · database")).toBeInTheDocument();
+    expect(screen.queryByText("World state · database schema")).toBeNull();
+  });
+
+  it("renders the world-internals cards over real data only: tables and tools", () => {
+    renderWorld();
+    expect(
+      screen.getByText("World state · database schema"),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("Tools").length).toBeGreaterThan(0);
     // The synthesised handler/check source cards are gone: their bodies were
     // generated from the env manifest by _fixtures/envInternals, not read from
@@ -125,7 +137,7 @@ describe("RlContractPanel", () => {
   });
 
   it("lists each declared tool with its description and no inferred effect chip", () => {
-    renderPanel();
+    renderWorld();
     expect(screen.getAllByText("lookup_account").length).toBeGreaterThan(0);
     expect(screen.getAllByText("issue_refund").length).toBeGreaterThan(0);
     expect(screen.getByText("Reads the caller's account.")).toBeInTheDocument();
@@ -137,7 +149,7 @@ describe("RlContractPanel", () => {
   });
 
   it("shows where a tool runs only when the contract says, in its words", () => {
-    renderPanel({
+    renderWorld({
       env: {
         ...voiceEnv,
         toolStatus: [
@@ -169,7 +181,7 @@ describe("RlContractPanel", () => {
 
     it("renders the tool list as a static read-out — no override menu, no patch", () => {
       const patch = vi.fn();
-      renderPanel({ patch, locked: true });
+      renderWorld({ patch, locked: true });
 
       // With the effect override gone there is nothing on this card to lock,
       // and nothing that can reach patch.
@@ -211,7 +223,7 @@ describe("Participants card", () => {
   ];
 
   it("lists each declared worker with its served channel and only the tools it may use", () => {
-    renderPanel({ env: { ...voiceEnv, workers } });
+    renderWorld({ env: { ...voiceEnv, workers } });
     const rows = screen.getAllByTestId("declared-worker");
     expect(rows).toHaveLength(2);
     expect(within(rows[0]).getByText("get_order")).toBeTruthy();
@@ -222,7 +234,7 @@ describe("Participants card", () => {
   });
 
   it("calls them Participants, as the agent and the call drawers do, in product words", () => {
-    renderPanel({ env: { ...voiceEnv, workers } });
+    renderWorld({ env: { ...voiceEnv, workers } });
     expect(screen.getByText("Participants")).toBeInTheDocument();
     expect(screen.getByText("2 participants")).toBeInTheDocument();
     const rows = screen.getAllByTestId("declared-worker");
@@ -232,7 +244,7 @@ describe("Participants card", () => {
   });
 
   it("hides the workers card when the contract declares none", () => {
-    renderPanel();
+    renderWorld();
     expect(screen.queryByTestId("declared-workers")).toBeNull();
   });
 });

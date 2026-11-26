@@ -1,9 +1,10 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 
-export default function SectionCard({ title, subtitle, action, children, sx, dense, wrap }) {
+export default function SectionCard({ title, subtitle, action, children, sx, dense, wrap, id }) {
   return (
     <Box
+      id={id}
       sx={{
         border: "1px solid",
         borderColor: "divider",
@@ -54,4 +55,6 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
 SectionCard.propTypes = {
   title: PropTypes.node, subtitle: PropTypes.node, action: PropTypes.node,
   children: PropTypes.node, sx: PropTypes.object, dense: PropTypes.bool, wrap: PropTypes.bool,
+  // A page anchor, e.g. to scroll the card into view.
+  id: PropTypes.string,
 };

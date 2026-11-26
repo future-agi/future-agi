@@ -283,10 +283,14 @@ class TestKnowledgeBaseDropdownList:
 class TestKnowledgeBaseFilesList:
     """``POST /model-hub/knowledge-base/files/``."""
 
+    @pytest.mark.parametrize("metadata_as_object", [False, True])
     def test_returns_files_with_size_and_status(
-        self, auth_client, organization, workspace
+        self, auth_client, organization, workspace, metadata_as_object
     ):
         kb_file = _file("listed.txt", size=99)
+        if metadata_as_object:
+            kb_file.metadata = {"size": 99}
+            kb_file.save(update_fields=["metadata"])
         kb = _kb(organization, workspace, "files-kb", files=[kb_file])
 
         response = auth_client.post(

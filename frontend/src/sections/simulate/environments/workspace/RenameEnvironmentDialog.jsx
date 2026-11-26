@@ -1,7 +1,13 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import {
-  Dialog, DialogTitle, DialogContent, DialogActions, TextField, Button, Stack,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  Button,
+  Stack,
 } from "@mui/material";
 import { useRenameEnvironment } from "src/api/simulate-environments/environments";
 import { validateEnvName, MAX_ENV_NAME } from "./renameEnvironment";
@@ -11,7 +17,12 @@ import { validateEnvName, MAX_ENV_NAME } from "./renameEnvironment";
  * response is the full §6 detail body, so the mutation seeds the detail cache;
  * this dialog only validates, submits, and surfaces the error inline.
  */
-export default function RenameEnvironmentDialog({ open, env, onClose }) {
+export default function RenameEnvironmentDialog({
+  open,
+  env,
+  onClose,
+  onSave,
+}) {
   const [name, setName] = useState(env?.name || "");
   const [error, setError] = useState(null);
   const rename = useRenameEnvironment();
@@ -34,6 +45,11 @@ export default function RenameEnvironmentDialog({ open, env, onClose }) {
       return;
     }
     setError(null);
+    if (onSave) {
+      onSave(check.value);
+      onClose?.();
+      return;
+    }
     rename.mutate(
       { id: env.id, name: check.value },
       {
@@ -86,4 +102,6 @@ RenameEnvironmentDialog.propTypes = {
   open: PropTypes.bool,
   env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }),
   onClose: PropTypes.func,
+  // (name) saves a name that isn't on the server yet, instead of renaming.
+  onSave: PropTypes.func,
 };

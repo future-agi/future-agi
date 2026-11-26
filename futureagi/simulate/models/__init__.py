@@ -23,6 +23,15 @@ from .harness_environment_credentials import (
     HarnessCredentialFile,
     HarnessEnvironmentCredentials,
 )
+from .harness_release import (
+    HarnessAgentBinding,
+    HarnessDesignDocument,
+    HarnessEnvironmentRelease,
+    HarnessRunManifest,
+    HarnessSuiteRelease,
+    HostedAgentSpec,
+)
+from .harness_source_review import HarnessSourceReview, HarnessSourceScenarioGeneration
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -89,6 +98,14 @@ __all__ = [
     "ComponentEvaluation",
     "HarnessCredentialFile",
     "HarnessEnvironmentCredentials",
+    "HarnessAgentBinding",
+    "HarnessDesignDocument",
+    "HarnessEnvironmentRelease",
+    "HarnessRunManifest",
+    "HarnessSourceReview",
+    "HarnessSourceScenarioGeneration",
+    "HarnessSuiteRelease",
+    "HostedAgentSpec",
     "HarnessAgentVersionRuntime",
     "HarnessAssembledBundle",
     "HarnessEnvironmentVersion",

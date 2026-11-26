@@ -1,123 +1,15 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
+import { useEffect, useRef, useState } from "react";
 import { useConnectedAgents } from "src/api/agents/connectedAgents";
-import { usePrebuiltEnvironments } from "src/api/simulate-environments/prebuilt";
-import UiOnlyFlag from "../components/UiOnlyFlag";
-import ConnectSection from "./ConnectSection";
-import { featuredWorlds, worldsFrom } from "./worlds";
-import {
-  BTN_SX,
-  OUTLINED_BTN_SX,
-  PANEL_SX,
-  ROW_BOX_SX,
-  T12,
-  T13,
-  chipSx,
-  focusRing,
-} from "./drawerStyles";
-import { SectionHead } from "./starts/startBits";
-import { SaasSandboxRow, WorldCard } from "./starts/worldCards";
 import BuildEnvironmentDialog from "src/sections/agent-playground/connected/detail/BuildEnvironmentDialog";
-import {
-  FROM_CODE_ITEM,
-  MCP_ITEM,
-  SANDBOX_ITEM,
-  worldItem,
-} from "./starts/startItems";
 import { agentIconOf, agentMetaOf } from "./starts/startUtils";
+import Iconify from "src/components/iconify";
+import { BTN_SX, PANEL_SX, T12, T13, chipSx, focusRing } from "./drawerStyles";
+import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
+import ConnectSection from "./ConnectSection";
+import { SectionHead } from "./starts/startBits";
 
 const AGENTS_LIMIT = 100;
-
-function BuildFromCode({ onOpen }) {
-  return (
-    <Stack
-      component="li"
-      aria-label="Build from code"
-      direction="row"
-      alignItems="center"
-      spacing={1.5}
-      sx={{ ...ROW_BOX_SX, px: 2, py: 1.5 }}
-    >
-      <Iconify
-        icon="solar:code-linear"
-        width={16}
-        sx={{ color: "text.secondary", flexShrink: 0 }}
-      />
-      <Box flex={1} minWidth={0}>
-        <Typography sx={{ ...T13, fontWeight: 500 }}>
-          Build from code
-        </Typography>
-        <Typography sx={{ ...T13, color: "text.secondary" }}>
-          Use the CLI, Python or your coding agent. Environments you build this
-          way show up here, managed in code.
-        </Typography>
-      </Box>
-      <UiOnlyFlag />
-      <Button
-        size="small"
-        variant="contained"
-        color="primary"
-        onClick={onOpen}
-        sx={{ ...BTN_SX, flexShrink: 0 }}
-      >
-        Open setup
-      </Button>
-    </Stack>
-  );
-}
-BuildFromCode.propTypes = { onOpen: PropTypes.func.isRequired };
-
-function PrebuiltSection({ onPick, onBrowse }) {
-  const { data } = usePrebuiltEnvironments();
-  const worlds = useMemo(() => worldsFrom(data || []), [data]);
-  const featured = featuredWorlds(worlds);
-  return (
-    <Box>
-      <SectionHead
-        title="Use a prebuilt world"
-        subtitle="Tables, tools and rules, as designed. Try one now with its sample agent, or use it with one of your agents."
-        action={
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <UiOnlyFlag />
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={onBrowse}
-              sx={OUTLINED_BTN_SX}
-            >
-              {`Browse all ${worlds.length + 1}`}
-            </Button>
-          </Stack>
-        }
-      />
-      <Box
-        component="ul"
-        sx={{
-          listStyle: "none",
-          m: 0,
-          p: 0,
-          display: "grid",
-          gap: 1.5,
-          gridTemplateColumns: "repeat(3, 1fr)",
-        }}
-      >
-        {featured.map((w) => (
-          <WorldCard key={w.id} world={w} onOpen={() => onPick(worldItem(w))} />
-        ))}
-      </Box>
-      <Box sx={{ mt: 1.5 }}>
-        <SaasSandboxRow onOpen={() => onPick(SANDBOX_ITEM)} />
-      </Box>
-    </Box>
-  );
-}
-PrebuiltSection.propTypes = {
-  onPick: PropTypes.func.isRequired,
-  onBrowse: PropTypes.func.isRequired,
-};
-
 const AGENT_TYPES = [
   { id: "all", label: "All types" },
   { id: "voice", label: "Voice", icon: "solar:phone-calling-rounded-linear" },
@@ -301,36 +193,20 @@ function YourAgentsSection({ resumeAgentId, onAgentDialog }) {
   );
 }
 
-/**
- * The Build environment drawer's first screen, as in the design: every way
- * in. `onPick(item)` opens an item's setup; `onBrowseWorlds` every world.
- */
-const SHOW_BUILD_FROM_CODE = false;
-const SHOW_PREBUILT_WORLDS = false;
-const SHOW_MCP_WORLD = false;
-
 export default function DrawerCatalog({
   onPick,
   onBrowseWorlds,
-  resumeAgentId = null,
+  resumeAgentId,
   onAgentDialog,
 }) {
   return (
     <Stack spacing={4} sx={{ pb: 4 }}>
-      {SHOW_BUILD_FROM_CODE && (
-        <Box component="ul" sx={{ listStyle: "none", m: 0, p: 0 }}>
-          <BuildFromCode onOpen={() => onPick(FROM_CODE_ITEM)} />
-        </Box>
-      )}
-      {SHOW_PREBUILT_WORLDS ? (
-        <PrebuiltSection onPick={onPick} onBrowse={onBrowseWorlds} />
-      ) : (
-        <SaasSandboxRow disabled onOpen={() => onPick(SANDBOX_ITEM)} />
-      )}
-      <ConnectSection
-        onPick={onPick}
-        onPickMcp={SHOW_MCP_WORLD ? () => onPick(MCP_ITEM) : undefined}
+      <SectionHead
+        title="Use a prebuilt world"
+        subtitle="Choose a released environment and customize it with your requirements and files."
+        action={<Button onClick={onBrowseWorlds}>Browse templates</Button>}
       />
+      <ConnectSection onPick={onPick} />
       <YourAgentsSection
         resumeAgentId={resumeAgentId}
         onAgentDialog={onAgentDialog}
@@ -338,14 +214,14 @@ export default function DrawerCatalog({
     </Stack>
   );
 }
+
 YourAgentsSection.propTypes = {
   resumeAgentId: PropTypes.string,
   onAgentDialog: PropTypes.func,
 };
-
 DrawerCatalog.propTypes = {
-  onPick: PropTypes.func.isRequired,
-  onBrowseWorlds: PropTypes.func.isRequired,
   resumeAgentId: PropTypes.string,
   onAgentDialog: PropTypes.func,
+  onPick: PropTypes.func.isRequired,
+  onBrowseWorlds: PropTypes.func.isRequired,
 };

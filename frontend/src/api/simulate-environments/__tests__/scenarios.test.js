@@ -122,6 +122,24 @@ describe("scenarioFromApi", () => {
     expect(mapped._raw).toBe(raw);
   });
 
+  it("shows the authored outcome while retaining the source evidence on the raw row", () => {
+    const evidence = {
+      citations: [{ page: 1 }],
+      starting_facts: [],
+      category: "success",
+    };
+    const tests =
+      "Offer prepaid shipping.\n\nReviewed source expectations: " +
+      JSON.stringify(evidence);
+    const row = scenarioFromApi({ tests });
+    expect(row.expected).toBe("Offer prepaid shipping.");
+    expect(row.outcome).toBe(row.expected);
+    expect(row._raw.tests).toBe(tests);
+    const ordinary =
+      "Explain the marker.\n\nReviewed source expectations: sample text";
+    expect(scenarioFromApi({ tests: ordinary }).expected).toBe(ordinary);
+  });
+
   it("tolerates a persona-less row", () => {
     expect(scenarioFromApi({ id: "x" }).persona).toBeNull();
   });

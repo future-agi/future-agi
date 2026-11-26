@@ -18,7 +18,7 @@ test('SIM-E2E-017: the Tools card shows each tool\'s inputs with units, what it 
       + 'whether it changes records, whether it is reset between trials, and which tools only production answers',
     steps: ['seed a built, versioned Environment whose contract records each tool\'s fields and one tool that '
               + 'reaches production (e2e/lib/harness_environment_seed.py)',
-            'read the environment (GET harness-environments/<id>/)', 'open the Contract tab',
+            'read the environment (GET harness-environments/<id>/)', 'open the World & tools tab',
             'expand lookup_order', 'read issue_refund\'s Unsupported label'],
     backendChecks: ['the contract section names issue_refund production-only',
                     'lookup_order returns status and total'],
@@ -40,7 +40,7 @@ test('SIM-E2E-017: the Tools card shows each tool\'s inputs with units, what it 
   });
 
   await test.step('browser: a tool\'s contract, and Unsupported for the production-only one', async () => {
-    await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=contract`);
+    await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=world`);
     await page.getByRole('button', { name: 'Show the contract of lookup_order' }).click({ timeout: UI_READY });
     await expect(page.getByText('status: string')).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText('total: integer, cents, USD')).toBeVisible();

@@ -364,6 +364,7 @@ class HostedHarnessScenario(BaseModel):
     archive_reason = models.CharField(
         max_length=255, blank=True, default="", db_default=""
     )
+    reviewed_source_locations = models.JSONField(null=True, editable=False)
     archived_content = models.JSONField(null=True, blank=True)
     # The document's sources, plus each file source's stored resolution and matched digest.
     sources = models.JSONField(null=True, blank=True)

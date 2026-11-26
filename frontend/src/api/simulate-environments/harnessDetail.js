@@ -1,3 +1,4 @@
+import { visibleScenarioTest } from "./reviewedScenarioText";
 import { environmentName } from "src/pages/dashboard/harness/harnessShared";
 import {
   stageToStatus,
@@ -62,7 +63,7 @@ const toScenarioRow = (row) => ({
   task: row?.instruction,
   situation: row?.situation || row?.instruction,
   useCase: row?.use_case || "Generated test case",
-  expected: row?.outcome || row?.tests || "",
+  expected: visibleScenarioTest(row?.outcome || row?.tests || ""),
   persona: row?.persona || null,
   status: row?.status,
   callExecutionId: row?.call_execution_id || null,

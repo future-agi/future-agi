@@ -63,6 +63,7 @@ const { harnessEnvironmentKey, harnessJobQuery } = await import(
   "../environment"
 );
 const { harnessScenariosListKey } = await import("../scenariosHooks");
+const { sourceSummaryKey } = await import("../sourceImports");
 
 let client;
 const wrapper = ({ children }) => (
@@ -425,6 +426,7 @@ describe("useMoveDefault", () => {
     harnessEnvironmentKey("env-1"),
     harnessJobQuery("env-1").queryKey,
     harnessScenariosListKey("env-1"),
+    sourceSummaryKey("env-1"),
   ];
   const invalidated = (spy) => spy.mock.calls.map(([filters]) => filters);
 
@@ -1470,6 +1472,7 @@ describe("drafts", () => {
       { queryKey: harnessEnvironmentKey("env-1") },
       { queryKey: harnessJobQuery("env-1").queryKey },
       { queryKey: harnessScenariosListKey("env-1") },
+      { queryKey: sourceSummaryKey("env-1") },
     ]);
   });
 
@@ -1579,6 +1582,7 @@ describe("drafts", () => {
       { queryKey: harnessEnvironmentKey("env-1") },
       { queryKey: harnessJobQuery("env-1").queryKey },
       { queryKey: harnessScenariosListKey("env-1") },
+      { queryKey: sourceSummaryKey("env-1") },
     ]);
   });
 

@@ -3,18 +3,20 @@
 // inline so the shell, the build-page in-place swap and the tests share them.
 
 // The workspace tabs, in rail order (matching the designer). Overview is first
-// and is the default landing tab. Overview and Contract are views of the
-// environment itself, so they carry no count badge; Scenarios, Evaluations and
+// and is the default landing tab. Overview, World & tools and Contract are views
+// of the environment itself, so they carry no count badge; Scenarios, Evaluations and
 // Runs badge the length of their matching env-state slice. Settings is last.
 // The Overview tab id is "overview" (URL reads ?tab=overview), and its panel
 // component/folder keep the OverviewPanel name.
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
+  { id: "world", label: "World & tools", icon: "solar:globe-linear" },
   {
     id: "contract",
     label: "Contract",
     icon: "solar:document-text-linear",
   },
+  { id: "composition", label: "Alignment", icon: "solar:routing-2-linear" },
   { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
     id: "scenarios",
@@ -62,6 +64,9 @@ export const GAP_AREA_TO_TAB = {
 // Header, overflow-menu and empty-state copy for the workspace shell.
 export const WORKSPACE_COPY = {
   back: "All environments",
+  designSaved:
+    "Saved as v1. Nothing runs until you connect an agent and start a run.",
+  designChatFrozen: "UI only: replying to the builder isn't wired yet",
   live: "Ready",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
@@ -77,6 +82,8 @@ export const WORKSPACE_COPY = {
   runningTooltip:
     "A simulation is running. Results land under Runs when it finishes.",
   failedTooltip: "This environment failed to build.",
+  designTooltip:
+    "A designed environment has no agent of its own: use it with your agent or run ours.",
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",
@@ -140,6 +147,8 @@ export const WORKSPACE_COPY = {
       "This environment isn't linked to a run yet. Rebuild it to run simulations.",
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
+    design:
+      "UI only: runs start once this environment and its agent are on the server",
   },
   // The env-version pin: lists every version of the world, and makes an
   // earlier one the default.
@@ -161,6 +170,14 @@ export const WORKSPACE_COPY = {
   // The strip under the header: the environment / agent version pairing when
   // versioning is on, else the agent version under test; stated, not selected.
   versionBar: {
+    // A design's environment, before it's on the server.
+    design: {
+      noAgent: "No agent yet",
+      agent: "Agent",
+      environment: "environment",
+      notRun: "not run yet",
+      scenarios: (n) => `${n} scenario${n === 1 ? "" : "s"}`,
+    },
     envPrefix: "env",
     agentPrefix: "agent",
     suitePrefix: "scenarios",
@@ -559,6 +576,7 @@ export const DRAFTS_COPY = {
   stale: (piece, from, now) =>
     `These unsaved changes started from ${piece} ${from || "an earlier version"}; it is now ${now || "a newer version"}. Discard them, or ask chat to make them again on the current version.`,
   busy: "Chat is working; save when it finishes",
+  refreshingGeneratedScenarios: "Refreshing the generated scenarios…",
   saveError: "Couldn't save the changes. Try again in a moment.",
   validateError: "Couldn't start validating. Try again in a moment.",
   validation: {
@@ -588,6 +606,10 @@ export const DRAFTS_COPY = {
     environment_busy:
       "The environment is being built or updated; try again when it finishes",
     draft_not_found: "These changes were already saved or discarded.",
+    source_generation_in_progress:
+      "Save becomes available when source scenario generation finishes.",
+    source_generation_not_ready:
+      "Prepare the sources again or discard the draft before saving.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
     validation_required: "Validate these reviewed changes, then save them.",
@@ -695,6 +717,7 @@ const SAVE_KIND = {
 };
 const SAVE_TARGET = { environment: "environment", suite: "scenarios" };
 const scenarioWord = (n) => `${n} scenario${n === 1 ? "" : "s"}`;
+const affectedWord = (n) => `${n} affected scenario${n === 1 ? "" : "s"}`;
 export const REVIEW_COPY = {
   title: "Review changes",
   // `named` is the version's number and name; its number alone is enough the second time.
@@ -708,6 +731,7 @@ export const REVIEW_COPY = {
     accepted: (summary) => `Accepted: ${summary}`,
     rejected: (summary) => `Rejected: ${summary}`,
     restored: (summary) => `Restored: ${summary}`,
+    undecided: (summary) => `Undecided: ${summary}`,
   },
   allAccepted: "Accepted all remaining changes",
   groupTitle: (label, n) => `${label} · ${n}`,
@@ -782,6 +806,45 @@ export const REVIEW_COPY = {
   saved: "Saved as a new version.",
   notActive: (n) =>
     `${n} scenario${n === 1 ? "" : "s"} won't run yet. Their reasons are on the Scenarios tab.`,
+  dismissed: (detail) => `Dismissed: ${detail}`,
+  failed: "Couldn't apply",
+  failedMeta: ({ source_id: id, source_name: source = id, scenarios }) => {
+    let held = "no scenario depends on it";
+    if (scenarios?.length) {
+      const more =
+        scenarios.length > 3 ? ` and ${scenarios.length - 3} more` : "";
+      held = `holds up ${scenarios.slice(0, 3).join(", ")}${more}`;
+    }
+    return [
+      source && `From ${source}`,
+      held,
+      "the rest of the draft saves without it",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  },
+  fix: "Fix",
+  fixIn: (name) => `Fix in ${name}`,
+  fixes: { supply: "Supply the records", attach: "Attach a file" },
+  dismiss: "Dismiss",
+  viewIn: (name) => `View in ${name}`,
+  undo: "Undo",
+  dismissedCount: (n) => `${n} dismissed`,
+  show: "Show",
+  bringBack: "Bring back",
+  rejectedEdits: (n) => `${n} rejected edit${n === 1 ? "" : "s"}`,
+  checkFirst: (n) => `Check the ${affectedWord(n)} before you save`,
+  checking: (n) => `Checking ${affectedWord(n)}…`,
+  checked: (n) => `${affectedWord(n)} checked, all pass`,
+  runChecks: "Run checks",
+  runChecksFirst: "Run the affected scenario checks first.",
+  comparability: ({ rechecked, exact }) =>
+    `${scenarioWord(rechecked)} pair with past runs as Rechecked if their gates pass, outdated if not; ${exact} compare exactly. Agent, scenario set and evals don't move.`,
+  unsavedEdits: (n) => `${n} unsaved edit${n === 1 ? "" : "s"}`,
+  unsavedEditsUncounted: "Unsaved edits",
+  couldntApply: (n) => `${n} change${n === 1 ? "" : "s"} couldn't apply`,
+  sampleSaved: "Sample data: nothing was saved.",
+  sampleDiscarded: "Sample data: nothing was discarded.",
 };
 
 // The banner under the version bar while a new default agent is checked with this environment, and how it ended.

@@ -17,6 +17,8 @@ import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import ParallelismField from "./ParallelismField";
+import BuildTestField from "../buildDrawer/forms/shared/BuildTestField";
+import BuildSourceFields from "../buildDrawer/forms/shared/BuildSourceFields";
 import usePanelBuild from "../hooks/usePanelBuild";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 import { WORKSPACE_COPY } from "../workspace/workspace.constants";
@@ -44,6 +46,7 @@ const initial = {
   inboundCalls: true,
   agentSpeaksFirst: false,
   systemPrompt: "",
+  testFocus: "",
   scenarioCount: DEFAULT_SCENARIOS,
 };
 
@@ -150,6 +153,7 @@ export default function PanelHostedPlatform({ platformByType, onBusyChange, draf
 
   const buildSource = () => ({
     kind: "platform",
+    testFocus: form.testFocus.trim(),
     agentType,
     provider: chosen?.id,
     scenarioCount: Number(scenarioCount) || undefined,
@@ -389,6 +393,10 @@ export default function PanelHostedPlatform({ platformByType, onBusyChange, draf
         enabled={build.parallelismEnabled}
         admitted={build.admittedParallelism}
       />
+      <BuildTestField value={form.testFocus} onChange={set("testFocus")} />
+      {canEdit && build.sources && (
+        <BuildSourceFields sources={build.sources} disabled={build.committing} />
+      )}
       <RuntimePreflight
         status={build.status}
         canRun={canEdit && canGo}
@@ -403,7 +411,8 @@ export default function PanelHostedPlatform({ platformByType, onBusyChange, draf
         onDismiss={build.creditExhaustion.onDismiss}
       />
       <ContinueRow
-        disabled={!canEdit || !build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
+        label={build.sources?.selection ? "Review sources" : "Build environment"}
+        disabled={!canEdit || !build.readyToSubmit || build.sources?.blocked || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
         hint={!canEdit ? WORKSPACE_COPY.viewer.create : build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
         onClick={build.commitBuild}

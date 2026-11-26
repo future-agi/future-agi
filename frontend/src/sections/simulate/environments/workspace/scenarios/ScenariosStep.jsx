@@ -134,7 +134,11 @@ export default function ScenariosStep({
   // An evidence import opened from Observe or a dataset, or a transcript added
   // here, lands as `?import=`.
   const [searchParams, setSearchParams] = useSearchParams();
-  const importId = searchParams.get(IMPORT_PARAM);
+  const evidenceEnvId =
+    env?.supportsEvidenceImports === false || env?.designBuild || env?.composition
+      ? null
+      : env?.id;
+  const importId = evidenceEnvId ? searchParams.get(IMPORT_PARAM) : null;
   const closeImport = () => {
     const next = new URLSearchParams(searchParams);
     next.delete(IMPORT_PARAM);
@@ -152,7 +156,11 @@ export default function ScenariosStep({
   const rowsLockTooltip = locked
     ? LOCK_TOOLTIP
     : WORKSPACE_COPY.viewer.scenarios;
-  const addLockReason = rowsLocked ? rowsLockTooltip : undefined;
+  // A composition's suite is a sealed release; the amend route cannot change it, its chat can.
+  const editHint = env?.composition ? SCENARIOS_COPY.compositionEditHint : null;
+  const addLockReason = rowsLocked
+    ? rowsLockTooltip
+    : editHint || (evidenceEnvId ? undefined : "Evidence imports are unavailable for this environment.");
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -605,6 +613,7 @@ export default function ScenariosStep({
                 list.
               </Alert>
             )}
+            {editHint && <Alert severity="info" sx={{ mb: 2 }}>{editHint}</Alert>}
             {/* The bulk-action bar covers the toolbar's row while a selection is
                 active. Both sit in one grid cell, the toolbar staying mounted
                 underneath, so the row keeps the toolbar's height (no shift when
@@ -666,7 +675,7 @@ export default function ScenariosStep({
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <SelectionBar
                       count={sel.count}
-                      onDelete={bulkDelete}
+                      onDelete={editHint ? undefined : bulkDelete}
                       deleteBlockedReason={
                         showingArchived
                           ? SCENARIOS_COPY.deleteArchived
@@ -681,6 +690,7 @@ export default function ScenariosStep({
                       }
                       trials={trials}
                       onTrialsChange={setTrials}
+                      composition={env?.composition}
                       matching={{
                         mode: sel.mode,
                         total: pageData.total,
@@ -793,8 +803,8 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
-              {!rowsLocked && env?.id ? (
-                <DraftImports envId={env.id} onResume={openImport} />
+              {!rowsLocked && !editHint && evidenceEnvId ? (
+                <DraftImports envId={evidenceEnvId} onResume={openImport} />
               ) : null}
               <PagedScenarioViews
                 pageData={pageData}
@@ -814,6 +824,7 @@ export default function ScenariosStep({
                 groupBy={activeGroupBy}
                 locked={rowsLocked}
                 lockTooltip={rowsLockTooltip}
+                editHint={editHint}
                 rowHeight={rowHeight}
                 readout={
                   hasSearchOrFilters || hiddenCount > 0
@@ -832,9 +843,9 @@ export default function ScenariosStep({
         </ClickAwayListener>
       )}
 
-      {importId && env?.id ? (
+      {importId && evidenceEnvId ? (
         <EvidenceReviewDrawer
-          envId={env.id}
+          envId={evidenceEnvId}
           importId={importId}
           open
           onClose={closeImport}
@@ -859,7 +870,7 @@ export default function ScenariosStep({
           setOpenRow(null);
           setEditing(row);
         }}
-        locked={rowsLocked}
+        locked={rowsLocked || Boolean(editHint)}
         testConditions={
           !!pageData.scenarioEditing?.editable_fields?.includes("faults")
         }

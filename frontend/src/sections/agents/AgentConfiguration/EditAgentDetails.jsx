@@ -53,7 +53,7 @@ import { formatDistanceToNow } from "date-fns";
 import CustomModelDropdownControl from "src/components/custom-model-dropdown/CustomModelDropdownControl";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
 import { useAuthContext } from "src/auth/hooks";
-import ProviderConnectionHealth from "./ProviderConnectionHealth";
+import ProviderConnectionHealth from "./ProviderConnectionHealth.jsx";
 
 const EditAgentDetails = ({
   control,

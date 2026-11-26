@@ -91,8 +91,8 @@ describe("BuildEnvironmentDrawer catalog", () => {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
     expect(
-      screen.queryByRole("heading", { name: "Use a prebuilt world" }),
-    ).toBeNull();
+      screen.getByRole("heading", { name: "Use a prebuilt world" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Code 2/ })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -135,12 +135,11 @@ describe("BuildEnvironmentDrawer catalog", () => {
     expect(screen.getByText(/No way to connect matches/)).toBeInTheDocument();
   });
 
-  it("hides the prebuilt worlds and shows the SaaS sandbox disabled", () => {
+  it("offers the released template gallery", () => {
     render();
     expect(
-      screen.queryByRole("listitem", { name: "Customer Support Line" }),
-    ).toBeNull();
-    expect(screen.getByRole("button", { name: "SaaS sandbox" })).toBeDisabled();
+      screen.getByRole("button", { name: "Browse templates" }),
+    ).toBeEnabled();
   });
 
   it("lists the connected agents, filtered by type", () => {
@@ -252,11 +251,37 @@ describe("BuildEnvironmentDrawer setup", () => {
       }),
     );
     render({ way: "github" });
+    expect(screen.getByTestId("build-files")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Select Knowledge Base" }),
+    ).toBeEnabled();
     expect(screen.getByDisplayValue("kept name")).toBeInTheDocument();
     expect(screen.getByText("acme/agent at main")).toBeInTheDocument();
     expect(
       screen.getByText("0 of 1 set", { exact: false }),
     ).toBeInTheDocument();
+  });
+
+  it("can attach supporting files after choosing an agent code folder", () => {
+    sessionStorage.setItem(
+      "environments.build.upload.form",
+      JSON.stringify({
+        picked: {
+          folderName: "support-agent",
+          source: { archive_artifact_id: "archive-1" },
+          entry: "agent.py",
+          envNames: [],
+          name: "Support",
+        },
+        form: { name: "Support" },
+      }),
+    );
+    render({ way: "upload" });
+    expect(screen.getByDisplayValue("Support")).toBeInTheDocument();
+    expect(screen.getByTestId("build-files")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Select Knowledge Base" }),
+    ).toBeEnabled();
   });
 
   it("starts a way afresh when it is picked from the list", () => {
@@ -286,6 +311,7 @@ describe("BuildEnvironmentDrawer setup", () => {
     render();
     fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms/ }));
     connect("Vapi");
+    expect(screen.getByTestId("build-files")).toBeInTheDocument();
     expect(screen.getByText("Vapi API key")).toBeInTheDocument();
     expect(screen.queryByText("Agent type")).toBeNull();
     expect(screen.queryByText("Platform")).toBeNull();

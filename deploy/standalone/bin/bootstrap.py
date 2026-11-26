@@ -687,6 +687,10 @@ def main() -> None:
 
     django.setup()
     adopting = refuse_foreign_database()
+    if os.environ.get("STORAGE_BACKEND") == "minio":
+        from django.core.management import call_command
+
+        call_command("provision_harness_private_bucket")
     fingerprint = migrate_and_seed()
     set_phase("clickhouse")
     steps.clickhouse_native_schema(log, 600)

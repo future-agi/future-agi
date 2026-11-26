@@ -35,12 +35,13 @@ import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
 import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
+import AdaptationProgress from "src/pages/dashboard/harness/AdaptationProgress";
+import DesignProgress from "src/pages/dashboard/harness/DesignProgress";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import AgentMoveBanner from "./AgentMoveBanner";
 import VersionBar from "./VersionBar";
-import DraftBar from "./drafts/DraftBar";
-import ReviewChangesDrawer from "./drafts/ReviewChangesDrawer";
+import WorkspaceDraftBar from "./drafts/WorkspaceDraftBar";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
@@ -53,6 +54,10 @@ import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
+import DesignWorkspace from "../design/DesignWorkspace";
+import { designQuestion } from "../design/designQuestion";
+import SourceBuilderConsole from "./sources/SourceBuilderConsole";
+import SourceReviewPanel from "./sources/SourceReviewPanel";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -112,6 +117,9 @@ export default function EnvironmentWorkspace() {
   const backedScenarioCount = backed
     ? evalDetailQuery.data?.overview?.scenario_count ?? undefined
     : undefined;
+  // A composition (a released environment bound to an agent) rides on `env` so the
+  // alignment tab, the run picker and the run report can read it without a second fetch.
+  const composition = (backed && evalDetailQuery.data?.composition) || null;
   // While the job is still deriving, the harness bootstrap is only a placeholder
   // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
   // any) — and useEnvState seeds byEnv once, so seeding it now would freeze that
@@ -131,16 +139,21 @@ export default function EnvironmentWorkspace() {
     handleDismiss: dismissCreditBanner,
     clearError: clearCreditError,
   } = useCreditExhaustion({ feature: "hosted_harness" });
-  const chat = useWorkspaceChat(env, { source });
-  const { canRun: roleCanRun, canEdit: roleCanEdit } = useSimulationAccess();
+  const jobQuery = useHarnessJob(envId, { enabled: backed });
+  const metadata = jobQuery.data?.job?.metadata || {};
+  const reviewId = metadata.source_review?.id || metadata.source_review_id;
+  const reviewStage = [
+    "awaiting_source_review",
+    "source_review_dispatch_pending",
+  ].includes(jobQuery.data?.status?.stage);
+  const chat = useWorkspaceChat(reviewStage ? undefined : env, { source });
+  const { canRun: roleCanRun, canEdit } = useSimulationAccess();
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
   // { ids, trials, initialPicks, seed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
-  // The review of the unsaved changes, opened from the unsaved-changes bar.
-  const [reviewOpen, setReviewOpen] = useState(false);
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
@@ -255,7 +268,29 @@ export default function EnvironmentWorkspace() {
   // neutral skeleton before.
   const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
-  const jobQuery = useHarnessJob(envId, { enabled: backed });
+  // A design (environment-releases.md §7.9) and an adaptation (§7.5) have their own steps:
+  // a sealed design offers the prebuilt environment's options, a finished adaptation opens
+  // the environment it composed. Neither has an agent of its own, so neither runs from here.
+  const designJob =
+    metadata.design || metadata.adaptation ? jobQuery.data : null;
+  const designPanel = designJob ? (
+    <Box sx={{ px: 2, pt: 1.5, borderBottom: 1, borderColor: "divider" }}>
+      {metadata.design ? (
+        <DesignProgress
+          job={designJob.job}
+          conversation={designJob.conversation}
+          stage={designJob.status?.stage}
+          failure={designJob.status?.failure}
+        />
+      ) : (
+        <AdaptationProgress
+          job={designJob.job}
+          conversation={designJob.conversation}
+          stage={designJob.status?.stage}
+        />
+      )}
+    </Box>
+  ) : null;
   const usageLimit = jobQuery.data?.usage_limit;
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {
@@ -363,6 +398,9 @@ export default function EnvironmentWorkspace() {
   // a dead-end error page. Run is gated off and Fork is hidden (locked) until it
   // goes Live, at which point buildStatus flips and the branch below takes over.
   if (building || buildFailed) {
+    const question = metadata.design && designQuestion(designJob?.conversation);
+    const awaiting =
+      jobQuery.data?.status?.stage === "awaiting_source_review" || question;
     return (
       <Box
         sx={{
@@ -373,7 +411,15 @@ export default function EnvironmentWorkspace() {
         }}
       >
         <WorkspaceHeader
-          env={env}
+          env={
+            awaiting
+              ? {
+                  ...env,
+                  buildingLabel: "Awaiting approval",
+                  buildingTooltip: "Review and approve to continue.",
+                }
+              : env
+          }
           envState={envState}
           canRun={false}
           runBlockedReason={
@@ -385,18 +431,52 @@ export default function EnvironmentWorkspace() {
         />
         {creditBanner}
         {refusalLine}
-        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <BuildingStage
-            progress={progress}
+        {metadata.design || (reviewId && reviewStage) ? (
+          <DesignWorkspace
             chat={chat}
-            env={env}
-            envState={envState}
-            patch={patch}
-            primed={false}
-            source={env.name}
-            world={derivedWorld}
+            canEdit={canEdit}
+            question={question}
+            progress={designPanel}
+            requirements={metadata.design?.requirements}
+            modality={metadata.design?.modality}
+            sourceReviewId={reviewId}
+            review={
+              reviewId && reviewStage ? (
+                <SourceReviewPanel
+                  reviewId={reviewId}
+                  ownerId={envId}
+                  canEdit={canEdit}
+                  defaultPersonalDataMode={metadata.design?.personal_data_mode}
+                  acceptLabel={
+                    metadata.design
+                      ? "Approve sources and design environment"
+                      : "Approve sources and start build"
+                  }
+                  onAccepted={() => jobQuery.refetch()}
+                  onDismiss={() =>
+                    navigate(paths.dashboard.simulate.environments.root)
+                  }
+                />
+              ) : null
+            }
           />
-        </Box>
+        ) : (
+          <>
+            {designPanel}
+            <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <BuildingStage
+                progress={progress}
+                chat={chat}
+                env={env}
+                envState={envState}
+                patch={patch}
+                primed={false}
+                source={env.name}
+                world={derivedWorld}
+              />
+            </Box>
+          </>
+        )}
       </Box>
     );
   }
@@ -444,7 +524,7 @@ export default function EnvironmentWorkspace() {
         <Suspense fallback={<LoadingScreen />}>
           <Outlet
             context={{
-              env,
+              env: composition ? { ...env, composition } : env,
               envState,
               backed,
               onStartRun: startRun,
@@ -492,6 +572,15 @@ export default function EnvironmentWorkspace() {
   // While the environment is still deriving, the builder can't accept edits —
   // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
+  const attachable =
+    backed &&
+    jobQuery.data &&
+    !metadata.design &&
+    !metadata.adaptation &&
+    envLive &&
+    canEdit &&
+    !locked;
+  const WorkspaceConsole = attachable ? SourceBuilderConsole : BuilderConsole;
 
   // The tab count, the "no evals" gap and the Runs summary read the
   // applied eval set. For a backed env that set is the detail's
@@ -511,8 +600,15 @@ export default function EnvironmentWorkspace() {
   // rename shows
   // everywhere the moment it lands, not only in the Settings field.
   const backedName = evalDetailQuery.data?.overview?.name;
+  const renamed = Boolean(env && backed && backedName);
   const displayEnv =
-    env && backed && backedName ? { ...env, name: backedName } : env;
+    renamed || composition
+      ? {
+          ...env,
+          ...(renamed ? { name: backedName } : {}),
+          ...(composition ? { composition } : {}),
+        }
+      : env;
 
   // Overview summary tiles need the detail's real counts: the job poll (which
   // drives
@@ -585,9 +681,12 @@ export default function EnvironmentWorkspace() {
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
-        canRun={runnable && !runMutation.isPending && !detailBlock}
+        canRun={
+          !designJob && runnable && !runMutation.isPending && !detailBlock
+        }
         runBlockedReason={runReason(
-          detailBlock ||
+          (designJob && WORKSPACE_COPY.designTooltip) ||
+            detailBlock ||
             blockedReason(
               envState,
               env,
@@ -605,11 +704,24 @@ export default function EnvironmentWorkspace() {
       />
       {creditBanner}
       {refusalLine}
+      {designPanel}
 
-      <SystemBanners env={env} />
+      <SystemBanners env={env} envState={envState} patch={patch} />
       {!detailLoading && !detailFailed && (
         <>
-          <VersionBar env={env} envState={envState} />
+          <VersionBar
+            env={env}
+            envState={envState}
+            action={
+              <WorkspaceDraftBar
+                env={env}
+                busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
+                canEdit={canEdit && !locked}
+                onOpenTab={setTab}
+                rebuilding={chat.rebuildHold}
+              />
+            }
+          />
           <AgentMoveBanner
             env={env}
             onOpenAgentVersions={() =>
@@ -618,12 +730,6 @@ export default function EnvironmentWorkspace() {
           />
         </>
       )}
-      <DraftBar
-        env={env}
-        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
-        rebuilding={chat.rebuildHold}
-        onReview={() => setReviewOpen(true)}
-      />
 
       {/* A template-seeded env is read-only until forked — the banner states the
           lock and offers the fork. */}
@@ -635,7 +741,9 @@ export default function EnvironmentWorkspace() {
             chat.running || chat.inFlight || chat.waiting || chat.nudgePending
           }
           chat={({ collapse, open, collapseRef }) => (
-            <BuilderConsole
+            <WorkspaceConsole
+              key={envId}
+              {...(attachable ? { envId } : {})}
               turns={chat.turns}
               running={chat.running}
               onSend={chat.send}
@@ -704,15 +812,6 @@ export default function EnvironmentWorkspace() {
         </ChatSplitPane>
       </Box>
       {runDialogEl}
-      <ReviewChangesDrawer
-        open={reviewOpen}
-        env={env}
-        canEdit={!locked && roleCanEdit}
-        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
-        rebuilding={chat.rebuildHold}
-        onClose={() => setReviewOpen(false)}
-        onOpenTab={setTab}
-      />
     </Box>
   );
 }
