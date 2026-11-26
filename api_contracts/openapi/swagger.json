@@ -155502,7 +155502,8 @@
                     "type": "string",
                     "format": "uuid"
                 }
-            }
+            },
+            "additionalProperties": false
         },
         "HarnessSuiteMember": {
             "required": [
@@ -155557,7 +155558,8 @@
                     "type": "string",
                     "format": "uuid"
                 }
-            }
+            },
+            "additionalProperties": false
         },
         "HarnessUnlockForbidden": {
             "type": "object",

@@ -1340,7 +1340,7 @@ class HarnessVersionsSerializer(serializers.Serializer):
     locked_versions = HarnessLockedVersionSerializer(many=True)
 
 
-class HarnessLockVersionSerializer(serializers.Serializer):
+class HarnessLockVersionSerializer(StrictInputSerializer):
     environment_version_id = serializers.UUIDField(
         help_text="The default environment version the caller saw."
     )
@@ -1348,9 +1348,15 @@ class HarnessLockVersionSerializer(serializers.Serializer):
         help_text="The default suite version the caller saw."
     )
 
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
-class HarnessUnlockVersionSerializer(serializers.Serializer):
+
+class HarnessUnlockVersionSerializer(StrictInputSerializer):
     locked_version_id = serializers.UUIDField()
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
 
 class HarnessLockRefusalSerializer(serializers.Serializer):

@@ -51795,8 +51795,8 @@ export const SimulateApiHarnessEnvironmentsVersionsLockVersionParams =
     id: zod.string(),
   });
 
-export const SimulateApiHarnessEnvironmentsVersionsLockVersionBody = zod.object(
-  {
+export const SimulateApiHarnessEnvironmentsVersionsLockVersionBody = zod
+  .object({
     environment_version_id: zod
       .string()
       .uuid()
@@ -51805,8 +51805,8 @@ export const SimulateApiHarnessEnvironmentsVersionsLockVersionBody = zod.object(
       .string()
       .uuid()
       .describe("The default suite version the caller saw."),
-  },
-);
+  })
+  .strict();
 
 export const SimulateApiHarnessEnvironmentsVersionsLockVersionResponse =
   zod.object({
@@ -52115,10 +52115,11 @@ export const SimulateApiHarnessEnvironmentsVersionsUnlockVersionParams =
     id: zod.string(),
   });
 
-export const SimulateApiHarnessEnvironmentsVersionsUnlockVersionBody =
-  zod.object({
+export const SimulateApiHarnessEnvironmentsVersionsUnlockVersionBody = zod
+  .object({
     locked_version_id: zod.string().uuid(),
-  });
+  })
+  .strict();
 
 export const SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse =
   zod.object({

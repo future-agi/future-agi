@@ -367,6 +367,13 @@ async function runGeneration(schemaPath) {
           "api_host-update-status_list": {
             zod: { strict: { response: true } },
           },
+          // Their serializers are closed: the server refuses an unknown field.
+          "simulate_api_harness-environments_versions_lock_version": {
+            zod: { strict: { body: true } },
+          },
+          "simulate_api_harness-environments_versions_unlock_version": {
+            zod: { strict: { body: true } },
+          },
         },
         zod: {
           generate: {

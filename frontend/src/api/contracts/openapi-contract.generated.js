@@ -73368,6 +73368,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
         },
       },
+      additionalProperties: false,
     },
     HarnessManifest: {
       required: [
@@ -74544,6 +74545,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
         },
       },
+      additionalProperties: false,
     },
     HarnessUsageRequest: {
       required: ["operation"],
