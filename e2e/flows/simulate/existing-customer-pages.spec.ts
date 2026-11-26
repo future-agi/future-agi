@@ -74,13 +74,15 @@ async function stubFinishedRun(page: Page, run: FinishedRun) {
     }),
   );
   // GET /simulate/test-executions/<id>/optimiser-analysis/ (TestExecutionOptimiserAnalysisView):
-  // the one read the Debug failures drawer makes when it opens (SuggestionsPage.jsx). This is
-  // get_latest_optimiser_result's answer for a run with no analysis yet
-  // (simulate/utils/agent_optimiser.py), in the success_response envelope.
+  // the one read the Debug failures drawer makes when it opens (SuggestionsPage.jsx).
   await page.route(endsWith(`/simulate/test-executions/${run.executionId}/optimiser-analysis/`), (route) =>
-    route.fulfill({ json: { status: true, result: { response: null, status: 'completed' } } }),
+    route.fulfill({ json: NO_ANALYSIS_YET }),
   );
 }
+
+// get_latest_optimiser_result's answer for a run with no analysis yet
+// (simulate/utils/agent_optimiser.py), in the success_response envelope.
+const NO_ANALYSIS_YET = { status: true, result: { response: null, status: 'completed' } };
 
 // The Debug failures drawer's header subtitle (FixMyAgentHeader.jsx) and its text for a run
 // with no analysis yet (FixMyAgentSections.jsx).
@@ -173,7 +175,10 @@ test('SIM-E2E-002: an org from before the Simulate cutoff keeps Scenarios and Ru
       { timeout: UI_READY },
     );
     await debugFailures.click();
-    await analysisRead;
+    // The no-analysis text also shows when the read fails, so it proves only the stubbed answer arrived.
+    const analysis = await analysisRead;
+    expect(analysis.ok()).toBe(true);
+    expect(await analysis.json()).toEqual(NO_ANALYSIS_YET);
     await expect(page.getByText(DRAWER_SUBTITLE, { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText(DRAWER_NO_ANALYSIS, { exact: true })).toBeVisible({ timeout: UI_READY });
   }, { timeout: UI_READY });
