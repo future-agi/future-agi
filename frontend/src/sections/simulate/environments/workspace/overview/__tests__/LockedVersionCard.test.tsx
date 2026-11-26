@@ -148,6 +148,22 @@ const answer = ({
   },
 });
 
+// A newer default pair than the one answer() starts on.
+const NEWER_PAIR = {
+  environment_version_id: "env-4",
+  suite_version_id: "suite-6",
+};
+const older = (row: PieceRow): PieceRow => ({ ...row, is_default: false });
+// The versions read once the default moved to NEWER_PAIR; the old pair stays listed.
+const movedTo = (server: Answer): Answer => ({
+  ...server,
+  versions: server.versions && {
+    ...server.versions,
+    environment: [piece("env-4", "v4"), older(piece("env-3", "v3"))],
+    suite: [piece("suite-6", "v6"), older(piece("suite-5", "v5"))],
+  },
+});
+
 beforeEach(() => {
   state.server = answer();
   state.canUnlockVersion = true;
@@ -214,10 +230,8 @@ describe("LockedVersionCard", () => {
       screen.getByRole("button", { name: "Lock versions" }),
     );
 
-    // The versions refresh behind the open dialog with a newer default pair.
-    state.server = answer({
-      lock: { environment_version_id: "env-4", suite_version_id: "suite-6" },
-    });
+    // Both reads refresh behind the open dialog with a newer default pair.
+    state.server = movedTo(answer({ lock: NEWER_PAIR }));
     rerender(<LockedVersionCard envId="env" />);
     // The dialog still names the pair it opened on.
     expect(
@@ -233,6 +247,37 @@ describe("LockedVersionCard", () => {
 
     expect(calls.lock).toEqual([
       { environmentVersionId: "env-3", suiteVersionId: "suite-5" },
+    ]);
+  });
+
+  it("names the pair it locks when the two reads disagree", async () => {
+    // The preview already answers the newer pair; the versions read still
+    // names the older default.
+    const server = answer({ lock: NEWER_PAIR });
+    state.server = {
+      ...server,
+      versions: server.versions && {
+        ...server.versions,
+        environment: [piece("env-3", "v3"), older(piece("env-4", "v4"))],
+        suite: [piece("suite-5", "v5"), older(piece("suite-6", "v6"))],
+      },
+    };
+
+    render(<LockedVersionCard envId="env" />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Lock versions" }),
+    );
+
+    // The dialog names the pair the POST sends, not the versions read's default.
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText("Lock environment v4, scenarios v6?"),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Lock versions" }),
+    );
+    expect(calls.lock).toEqual([
+      { environmentVersionId: "env-4", suiteVersionId: "suite-6" },
     ]);
   });
 
@@ -317,7 +362,7 @@ describe("LockedVersionCard", () => {
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(
       screen.getByText(
-        /^Lock 2026\.11\.1 · .+ · Train 54 · Test 14 scenarios · scorer frozen$/,
+        /^Lock 2026\.11\.1 · .+ · Train 54 · Test 14 scenarios · scorer environment v3$/,
       ),
     ).toBeInTheDocument();
     expect(
@@ -331,7 +376,7 @@ describe("LockedVersionCard", () => {
     ).toBeInTheDocument();
     expect(
       within(dialog).getByText(
-        "Lock 2026.11.1 moves to Earlier locks. Its scores stay, but they're no longer a locked comparison. Each scenario keeps its train and test split.",
+        "Lock 2026.11.1 is kept; its scores stay, but they're no longer a locked comparison. Each scenario keeps its train and test split.",
       ),
     ).toBeInTheDocument();
     await userEvent.click(
