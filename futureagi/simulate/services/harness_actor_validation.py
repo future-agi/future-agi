@@ -230,8 +230,15 @@ def _trigger_problems(actor: ActorRecord) -> list[tuple[str, Problem]]:
     if kind == "on_keyword":
         # Words that are not a list of text are the record schema's to refuse, once.
         words = trigger.get("words")
-        listed = isinstance(words, list) and all(isinstance(one, str) for one in words)
-        if "words" not in trigger or (listed and not any(one.strip() for one in words)):
+        texts = (
+            [one for one in words if isinstance(one, str)]
+            if isinstance(words, list)
+            else None
+        )
+        listed = texts is not None and len(texts) == len(words or [])
+        if "words" not in trigger or (
+            listed and not any(one.strip() for one in texts or [])
+        ):
             found.append(("words", "Give the words that bring them in."))
     if kind == "mid_journey":
         # A turn that is not a whole number is the record schema's to refuse; 2.0 reads as 2.
