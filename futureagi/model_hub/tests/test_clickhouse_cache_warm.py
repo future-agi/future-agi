@@ -71,6 +71,7 @@ def test_python_c_without_deployment_env_skips_every_startup_mutation_path(monke
         "makemigrations",
         "migrate",
         "provision_grouping_features",
+        "provision_harness_private_bucket",
         "enable_sampled_grouping",
         "requeue_budget_grouping",
         "requeue_failed_grouping",
