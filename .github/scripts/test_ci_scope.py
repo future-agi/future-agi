@@ -521,15 +521,15 @@ class CandidateScope(unittest.TestCase):
         ):
             self.assertTrue(all(self.group()["flags"].values()))
 
-    def pull_request(self, path="futureagi/app.py"):
+    def pull_request(self, path="futureagi/app.py", branch="work"):
         """(tested, base, head) for a PR that changes path, merged onto dev."""
-        self.git("checkout", "-qb", "work")
+        self.git("checkout", "-qb", branch)
         self.write(path)
         head = self.commit()
         self.git("checkout", "-q", "dev")
-        self.write("new-root/input")
+        self.write("new-root/input", branch)
         base = self.commit()
-        self.git("merge", "-q", "--no-ff", "work", "-m", "event merge")
+        self.git("merge", "-q", "--no-ff", branch, "-m", "event merge")
         return self.git("rev-parse", "HEAD"), base, head
 
     def test_a_light_pull_request_holds_only_the_backend_shards(self):
@@ -594,6 +594,51 @@ class CandidateScope(unittest.TestCase):
                 self.assertEqual(result["mode"], "full")
                 self.assertTrue(all(result["flags"][s] for s in ("backend", "metrics", "any")))
         self.assertEqual(plan("pull_request", tested, base, head, "light")["mode"], "light")
+
+    def test_a_code_owned_path_keeps_the_full_plan_under_light(self):
+        # It needs a person and goes to the queue alone, so it needs its own
+        # full run. The base's CODEOWNERS decides, not the candidate's.
+        self.write(".github/CODEOWNERS", "/futureagi/accounts/ @org/team\n*billing* @org/team\n")
+        self.commit()
+        for i, path in enumerate(("futureagi/accounts/views.py", "frontend/src/billing/Page.tsx")):
+            with self.subTest(path=path):
+                tested, base, head = self.pull_request(path, branch=f"owned-{i}")
+                result = plan("pull_request", tested, base, head, "light")
+                self.assertEqual(result["mode"], "full")
+                self.assertTrue(all(result["flags"][s] for s in ("backend", "metrics")))
+        tested, base, head = self.pull_request("futureagi/tracer/span.py")
+        self.assertEqual(plan("pull_request", tested, base, head, "light")["mode"], "light")
+
+    def test_a_candidate_cannot_drop_its_own_code_owner(self):
+        self.write(".github/CODEOWNERS", "/futureagi/accounts/ @org/team\n")
+        self.commit()
+        self.git("checkout", "-qb", "work")
+        self.write(".github/CODEOWNERS", "# nobody\n")
+        self.write("futureagi/accounts/views.py")
+        head = self.commit()
+        self.git("checkout", "-q", "dev")
+        self.write("new-root/input")
+        base = self.commit()
+        self.git("merge", "-q", "--no-ff", "work", "-m", "event merge")
+        tested = self.git("rev-parse", "HEAD")
+        self.assertEqual(plan("pull_request", tested, base, head, "light")["mode"], "full")
+
+    def test_light_names_the_aggregate_deferred_so_the_required_check_is_absent(self):
+        text = (SCRIPTS.parent / "workflows" / "backend-ci.yml").read_text()
+        changes = re.search(r"(?ms)^  changes:\n(.*?)(?=^  [a-z0-9_-]+:\n)", text)[1]
+        self.assertIn(
+            "      deferred: ${{ steps.filter.outputs.scope != '' && "
+            "fromJSON(steps.filter.outputs.scope).mode == 'light' }}\n",
+            changes,
+        )
+        gate = re.search(r"(?ms)^  backend-tests:\n(.*?)(?=^  [a-z0-9_-]+:\n|\Z)", text)[1]
+        self.assertIn(
+            "    name: ${{ needs.changes.outputs.deferred == 'true' && 'Backend Tests Deferred' || 'Backend Tests Pass' }}",
+            gate,
+        )
+        # The queue's own aggregate keeps the required name.
+        queue = (SCRIPTS.parent / "workflows" / "backend-queue-ci.yml").read_text()
+        self.assertIn("    name: Backend Tests Pass\n", queue)
 
     def test_the_planner_reads_the_rollup_identity_from_the_event(self):
         for name in ("backend-ci", "e2e-ci"):
@@ -690,7 +735,8 @@ class CandidateScope(unittest.TestCase):
                 block = re.search(
                     rf"(?ms)^  {job}:\n(.*?)(?=^  [a-z0-9_-]+:\n|\Z)", text
                 )[1]
-                self.assertRegex(block, rf"(?m)^    name: {check}( #.*)?$")
+                # Backend CI names its aggregate from the plan (light: Deferred).
+                self.assertRegex(block, rf"(?m)^    name: (?:{check}( #.*)?|.*\|\| '{check}' }}}})$")
                 self.assertIn("    if: ${{ always() }}\n", block)
                 suffix = (
                     "-candidate"

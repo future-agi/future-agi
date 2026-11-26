@@ -29,8 +29,13 @@ SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
 # ci:full label asks for one (read live, so a re-run picks it up), and
 # queue_full_run_gate.py fails a merge group whose same-repository member has
 # none. A fork never gets the light plan: it never has an internal run, so it
-# keeps today's full OSS run.
+# keeps today's full OSS run. Nor does a pull request that touches a path
+# with a code owner (the base's .github/CODEOWNERS): it needs a person and
+# goes to the queue alone. A light plan names Backend CI's aggregate
+# "Backend Tests Deferred", so the required "Backend Tests Pass" is absent
+# and auto-merge cannot enqueue a pull request whose suite has not run.
 LIGHT_HELD = ("backend", "metrics")
+CODEOWNERS = ".github/CODEOWNERS"
 FULL_LABEL = "ci:full"
 TRAIN_AUTHOR = "futureagi-devflow-train[bot]"
 TRAIN_HEAD_PREFIX = "chore/devflow-train-"
@@ -104,6 +109,46 @@ def glob_match(pattern, path):
         else:
             out, at = out + re.escape(pattern[at]), at + 1
     return re.fullmatch(out, path, re.DOTALL) is not None
+
+
+def codeowners_regex(pattern):
+    """GitHub's CODEOWNERS matching (gitignore rules without ! and [ ]): enough to
+    tell which line owns a path. Case-sensitive, like GitHub."""
+    anchored = "/" in pattern.rstrip("/")
+    directory = pattern.endswith("/")
+    body, out, i = pattern.strip("/"), [], 0
+    while i < len(body):
+        if body.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif body[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append(re.escape(body[i]))
+            i += 1
+    tail = "/.*" if directory else "(?:/.*)?"
+    return re.compile(("" if anchored else "(?:.*/)?") + "".join(out) + tail, re.DOTALL)
+
+
+def owners(text, path):
+    """Owners on the last CODEOWNERS line that matches path."""
+    found = []
+    for line in text.splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            pattern, *who = line.split()
+            if codeowners_regex(pattern).fullmatch(path):
+                found = who
+    return found
+
+
+def code_owned(paths, base):
+    """Whether any path has a code owner in the base's CODEOWNERS."""
+    try:
+        text = git("show", f"{base}:{CODEOWNERS}").decode("utf-8", "replace")
+    except subprocess.CalledProcessError:
+        return False  # no CODEOWNERS on the base: nobody owns anything
+    return any(owners(text, p.decode("utf-8", "surrogateescape")) for p in paths)
 
 
 def update_ci_relevant(paths):
@@ -337,6 +382,9 @@ def plan(
         mode == "light"
         and event == "pull_request"
         and not (rollup or fork or full)
+        # Unknown impact may touch an owned path.
+        and paths is not None
+        and not code_owned(paths, base)
     )
     if light:
         # E2E ("any") keeps the full plan on every push: only the backend

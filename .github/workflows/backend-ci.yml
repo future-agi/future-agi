@@ -111,6 +111,9 @@ jobs:
       executor_base: ${{ steps.hold.outputs.hold == 'true' && 'false' || steps.filter.outputs.executor_base }}
       metrics: ${{ steps.hold.outputs.hold == 'true' && 'false' || steps.filter.outputs.metrics }}
       scope: ${{ steps.filter.outputs.scope }}
+      # A light plan held the backend and Metrics shards: the aggregate is then
+      # named "Backend Tests Deferred", so the required check stays absent.
+      deferred: ${{ steps.filter.outputs.scope != '' && fromJSON(steps.filter.outputs.scope).mode == 'light' }}
       shards: ${{ steps.shards.outputs.matrix }}
       internal: ${{ steps.overlay.outputs.internal }}
     steps:
@@ -1192,7 +1195,12 @@ jobs:
           if-no-files-found: error
 
   backend-tests:
-    name: Backend Tests Pass # the ONLY required status check
+    # "Backend Tests Pass" is the ONLY required status check. Under
+    # CI_SCOPE_MODE=light a pull request run that held the backend shards
+    # reports "Backend Tests Deferred" instead (same verdict), so auto-merge
+    # cannot enqueue it alone: the batch train takes it, or ci:full and a
+    # re-run give it the full plan (.github/scripts/ci_scope.py).
+    name: ${{ needs.changes.outputs.deferred == 'true' && 'Backend Tests Deferred' || 'Backend Tests Pass' }}
     needs:
       [
         changes,

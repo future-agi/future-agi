@@ -4,7 +4,6 @@
 import copy
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -14,6 +13,7 @@ import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci_scope  # noqa: E402
 import devflow_approval as da  # noqa: E402
 
 REPO = "org/repo"
@@ -698,35 +698,13 @@ class RiskScanTests(unittest.TestCase):
         self.assertEqual(run_main("dry", case)[2]["action"], "approve")
 
 
-def codeowners_regex(pattern: str):
-    """GitHub's CODEOWNERS matching (gitignore rules without ! and [ ]): enough to
-    check which line owns a path. Case-sensitive, like GitHub."""
-    anchored = "/" in pattern.rstrip("/")
-    directory = pattern.endswith("/")
-    body, out, i = pattern.strip("/"), [], 0
-    while i < len(body):
-        if body.startswith("**/", i):
-            out.append("(?:.*/)?")
-            i += 3
-        elif body[i] == "*":
-            out.append("[^/]*")
-            i += 1
-        else:
-            out.append(re.escape(body[i]))
-            i += 1
-    tail = "/.*" if directory else "(?:/.*)?"
-    return re.compile(("" if anchored else "(?:.*/)?") + "".join(out) + tail)
-
-
 def owners(path: str) -> list:
-    """Owners on the last CODEOWNERS line that matches path."""
-    found = []
-    for line in CODEOWNERS.read_text().splitlines():
-        if line.strip() and not line.startswith("#"):
-            pattern, *who = line.split()
-            if codeowners_regex(pattern).fullmatch(path):
-                found = who
-    return found
+    """Owners on the last CODEOWNERS line that matches path: the matcher Backend
+    CI's planner uses to keep a code-owned pull request on the full plan."""
+    return ci_scope.owners(CODEOWNERS.read_text(), path)
+
+
+codeowners_regex = ci_scope.codeowners_regex
 
 
 class CodeownersFloorTests(unittest.TestCase):
