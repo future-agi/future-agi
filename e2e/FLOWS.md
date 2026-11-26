@@ -1253,7 +1253,7 @@
 
 **Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
 
-**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:130`
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:131`
 
 **Tags:** —
 
@@ -1279,8 +1279,207 @@
 - the create POST body is exactly the issue, project, environment and the picks after the swap
 - the run POST body is exactly the kept scenario and the review's launch rows at their defaults
 - the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
-- the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
+- the epoch page's breadcrumb is the environment linking to the environment, then Epochs linking to its Epochs tab, the header reads "From issue: <title>" linking to the issue, and both survive a reload
 - the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
+
+### ESC-E2E-001 — New issues require evidence before showing Escalating
+
+**Goal:** An engineer sees a newly detected issue start in review before growth is confirmed
+
+**Spec:** `flows/error-feed/creation-defaults.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish singleton and large initial scanner, F6 and evaluation clusters
+2. inspect each new issue and its filter results before confirmation
+3. check its original occurrence timestamps
+
+**Backend state verified:**
+
+- PG stores the exact source memberships with system ownership, For review and revision zero
+- collector timestamps remain original completion times
+- detail/list/status-filter APIs and the browser show those exact issues For review
+
+### ESC-E2E-002 — Confirm sustained growth and recover a quiet issue without new findings
+
+**Goal:** An engineer sees sustained growth escalate and a quiet issue return to review
+
+**Spec:** `flows/error-feed/automatic-escalation-recovery.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish baseline findings, then attach a burst through collector and fenced publishers
+2. inspect review before confirmation
+3. advance four normal boundaries through Temporal
+4. inspect escalation and evidence
+5. publish nothing further and advance quiet recovery
+6. inspect review
+
+**Backend state verified:**
+
+- PG has exactly one status revision at entry and one at recovery, including duplicate checks
+- frozen baseline, counts, thresholds and boundary timestamps equal the independently seeded windows
+- detail/list/status-filter/statistics APIs and UI agree with each persisted transition
+
+### ESC-E2E-003 — Preserve user-selected statuses and F6 attachment protection
+
+**Goal:** An engineer keeps any chosen status while automatic trend checks and new findings run
+
+**Spec:** `flows/error-feed/manual-status-protection.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish qualifying findings
+2. select all four statuses through detail controls, including the current value
+3. use the bulk status action
+4. advance growth and quiet boundaries
+5. attempt an F6 attachment and inspect rejection
+
+**Backend state verified:**
+
+- PG manual ownership, actor, status revision and F6 protection persist for all selections
+- real publisher rejects attachment to the protected issue without adding its finding
+- Feed APIs and UI retain each chosen status after both automatic cycles
+
+### ESC-E2E-004 — Configure and restore workspace escalation thresholds
+
+**Goal:** An administrator saves thresholds and can cancel, retry, or restore defaults safely
+
+**Spec:** `flows/error-feed/escalation-settings.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. inspect defaults
+2. reject invalid thresholds
+3. save eight valid values
+4. cancel edits and a reset
+5. retain and retry a failed save
+6. save a reset
+
+**Backend state verified:**
+
+- scoped settings API equals each saved policy
+- PG policy has all eight values, one revision per changed save, and the updating user
+- canceled and failed saves do not mutate the policy
+
+### ESC-E2E-005 — Share workspace settings across projects and enforce scope permissions
+
+**Goal:** An administrator configures one workspace while other workspaces and read-only users stay isolated
+
+**Spec:** `flows/error-feed/escalation-settings-scope.spec.ts:10`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two uniquely named projects in workspace A
+2. save A settings
+3. inspect settings under each project filter
+4. inspect sibling and foreign workspace defaults
+5. inspect member and viewer read-only controls
+6. attempt forbidden and foreign-scope saves
+
+**Backend state verified:**
+
+- collector traces and PG projects belong to workspace A
+- PG and scoped settings API contain one saved A policy and unchanged defaults in other workspaces
+- unauthorized PATCHes return 403 and do not change policy values or revision
+
+### ESC-E2E-006 — Apply saved thresholds without arrivals and preserve manual choices
+
+**Goal:** An administrator changes thresholds and automatic decisions update after fresh confirmation
+
+**Spec:** `flows/error-feed/settings-reevaluation.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. prepare a system escalation, candidate, review issue and manually controlled issue
+2. save workspace thresholds
+3. publish no new findings
+4. advance four eligible boundaries
+5. inspect policy revision, frozen incident baseline and preserved manual choice
+
+**Backend state verified:**
+
+- PG settings save does not itself transition any issue
+- new policy revision resets candidate confirmation and preserves the active baseline after history ages out
+- only qualifying system-owned issues change after full confirmation; API and UI show those exact decisions
+
+### ESC-E2E-007 — Evaluate current findings after merge, split, removal and supersession
+
+**Goal:** An engineer sees decisions follow current evidence when issues are regrouped or reinvestigated
+
+**Spec:** `flows/error-feed/membership-revisions.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish and confirm two small issues with a real workspace policy
+2. merge through fenced reconciliation
+3. confirm the surviving issue
+4. split and remove through reconciliation
+5. replace a source report
+6. inspect surviving issues and original occurrence times
+
+**Backend state verified:**
+
+- PG current memberships match exact source finding IDs and keep original timestamps
+- structural changes request fresh confirmation and retired issues stop evaluation
+- source supersession removes obsolete findings; list APIs and UI contain only current surviving issues
+
+### ESC-E2E-008 — Resolve concurrent settings edits without losing another save
+
+**Goal:** An administrator reloads a conflicting edit and explicitly reapplies their changes
+
+**Spec:** `flows/error-feed/settings-conflicts.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. open two sessions at one revision
+2. save in the first session
+3. see a conflict with retained draft in the second
+4. reload and explicitly save a new edit
+
+**Backend state verified:**
+
+- real stale PATCH returns 409 and leaves stored values and revision unchanged
+- scoped API and PG policy equal the last successful edit, with exactly two revision increments
+
+### ESC-E2E-009 — Pick a sensitivity preset instead of typing thresholds
+
+**Goal:** An administrator picks a sensitivity preset instead of typing eight thresholds, and exactly that preset is saved for the workspace
+
+**Spec:** `flows/error-feed/escalation-presets.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. open settings on Balanced with the defaults
+2. pick Calm and see its eight values
+3. save and reopen on Calm
+4. fine-tune one value, see Custom and Edited, save
+5. reopen, pick Balanced, save
+
+**Backend state verified:**
+
+- PG policy holds Calm's eight values, revision +1 and the updating user
+- scoped settings API returns Calm's values
+- a fine-tuned save stores Calm with only min_findings changed, revision +2
+- picking Balanced stores the server defaults in PG and the API, revision +3
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
@@ -3350,7 +3549,7 @@
 
 **Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links
 
-**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:32`
 
 **Tags:** —
 
@@ -3361,10 +3560,10 @@
 3. open the old Simulator Agent link
 4. open the old Personas link
 5. open the Personas tab
-6. open the Prebuilt template links
+6. open the Prebuilt list
 7. read the Simulate menu
 8. open the old Agent Definition link
-9. open the Scenarios, Run Simulation and Agent Definition links directly
+9. open the Scenarios, Run Simulation, Agent Definition and template id links directly
 
 **Browser observations:**
 
@@ -3373,16 +3572,16 @@
 - simulator-agent lands on Environments
 - personas lands on the Environments Personas tab
 - the Personas tab is selected and shows the persona search
-- both template URLs stay on their URL and open their page by title
+- the Prebuilt list stays on its URL and opens its page by title
 - agent-definitions lands on Connected agents
 - the Simulate menu is exactly Environment
-- /dashboard/simulate/scenarios, /test and /agent-definitions/<id> land on /404
+- /dashboard/simulate/scenarios, /test, /agent-definitions/<id> and environments/templates/<id> land on /404
 
 ### SIM-E2E-002 — an org from before the Simulate cutoff keeps Scenarios and Run Simulation
 
-**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu
+**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu, and can debug the failures of a finished Run Simulation run once it has 15 connected calls
 
-**Spec:** `flows/simulate/existing-customer-pages.spec.ts:22`
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:89`
 
 **Tags:** —
 
@@ -3390,6 +3589,8 @@
 
 1. read the Simulate menu
 2. open Scenarios and Run Simulation from the menu
+3. open a finished Run Simulation run with 14 connected calls and point at Debug failures
+4. open a finished Run Simulation run with 15 connected calls and 14 completed calls
 
 **Backend state verified:**
 
@@ -3399,6 +3600,8 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+- at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."
+- at 15 connected calls and 14 completed calls Debug failures is enabled
 
 ### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
 
@@ -3521,7 +3724,7 @@
 - the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
 - the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
-- the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the epoch page's stages are Writing variations, Reproducing, Diagnosing, Proposing and Checking, and Writing variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
 - the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
 
 ### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
@@ -3545,7 +3748,7 @@
 
 **Browser observations:**
 
-- the ending reads "No safe improvement: the only candidate went over the cost or latency limit."
+- the ending reads "The only candidate went over the reply-time or cost limit."
 - the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
 - the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
@@ -4001,3 +4204,28 @@
 
 - the URL agent's Run reads Stop requested, its hover says the stop can't be confirmed, and its note says why
 - the runs list reads Stop requested for the URL agent's Run and Stopped for the sandboxed Run
+
+### SIM-E2E-040 — a developer narrows an environment's Epochs list to one status and sees only the epochs in it
+
+**Goal:** A developer narrows an environment's Epochs list to one status and sees only the epochs in it
+
+**Spec:** `flows/simulate/epochs-status-filter.spec.ts:94`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the environment's Epochs tab
+2. read every epoch under All statuses
+3. choose Running
+4. choose No safe improvement
+5. choose Ready for review
+6. choose All statuses again
+
+**Browser observations:**
+
+- All statuses asks the list with no state and shows exactly the three minted epochs, newest first
+- Running asks for state=queued,running,stopping and shows exactly the stopping epoch
+- No safe improvement asks for state=no_improvement and shows exactly that epoch
+- Ready for review asks for state=ready and says no epoch has that status
+- All statuses again shows the three epochs

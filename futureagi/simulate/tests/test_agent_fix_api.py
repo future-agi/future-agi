@@ -35,7 +35,10 @@ from simulate.selectors.agent_fix import (
     default_max_minutes,
     engine_brief,
 )
-from simulate.serializers.agent_fix import AgentFixLaunchSerializer
+from simulate.serializers.agent_fix import (
+    AgentFixLaunchSerializer,
+    AgentFixListQuerySerializer,
+)
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_agents import VersionedSourceAgent
@@ -1372,6 +1375,85 @@ class TestUserApi:
         assert page() == (3, newest_first)
         assert page(limit=2) == (3, newest_first[:2])
         assert page(limit=2, page=2) == (3, newest_first[2:])
+
+    def test_fixes_list_by_state_with_their_total(
+        self, auth_client, environment, source_run
+    ):
+        ready = _fix_run(source_run, state=AgentFixRun.State.READY)
+        stopped = _fix_run(source_run, state=AgentFixRun.State.STOPPED)
+        # An environment holds one live fix at a time.
+        stopping = _fix_run(source_run, state=AgentFixRun.State.STOPPING)
+        failed = _fix_run(source_run, state=AgentFixRun.State.FAILED)
+
+        def listed(**query):
+            response = auth_client.get(
+                f"{BASE}/", {"environment_id": str(environment.id), **query}
+            )
+            assert response.status_code == 200, response.content
+            body = response.json()
+            return body["count"], [one["id"] for one in body["results"]]
+
+        # Running, as the list's filter sends it: every live state.
+        assert listed(state="queued,running,stopping") == (1, [str(stopping.id)])
+        assert listed(state="ready") == (1, [str(ready.id)])
+        assert listed(state=" failed , stopped ") == (
+            2,
+            [str(failed.id), str(stopped.id)],
+        )
+        # No state lists every fix, as before.
+        assert listed()[0] == 4
+        assert listed(state="ready", limit=1, page=1) == (1, [str(ready.id)])
+
+    def test_an_unknown_state_is_refused(self, auth_client, environment, source_run):
+        _fix_run(source_run, state=AgentFixRun.State.READY)
+
+        response = auth_client.get(
+            f"{BASE}/",
+            {"environment_id": str(environment.id), "state": "ready,shipped"},
+        )
+
+        assert response.status_code == 400, response.content
+        assert "shipped" in response.content.decode()
+
+    @pytest.mark.parametrize("state", [",,", "ready,", " , "])
+    def test_an_empty_state_is_refused_with_the_states_to_use(
+        self, auth_client, environment, source_run, state
+    ):
+        # Read as no state, ",," once listed every fix.
+        _fix_run(source_run, state=AgentFixRun.State.READY)
+
+        response = auth_client.get(
+            f"{BASE}/", {"environment_id": str(environment.id), "state": state}
+        )
+
+        assert response.status_code == 400, response.content
+        body = response.content.decode()
+        assert all(one in body for one in AgentFixRun.State.values), body
+
+    def test_the_state_param_names_every_state(self):
+        help_text = AgentFixListQuerySerializer().fields["state"].help_text
+        assert all(one in help_text for one in AgentFixRun.State.values)
+
+    @pytest.mark.parametrize("deleted", ["execution", "job"])
+    def test_a_fix_from_a_deleted_run_names_no_run(
+        self, auth_client, environment, source_run, deleted
+    ):
+        fix = _fix_run(source_run, state=AgentFixRun.State.STOPPED)
+        if deleted == "execution":
+            # What deleting the run from its page does (run_test views).
+            source_run.test_execution.delete()
+        else:
+            HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+                deleted=True
+            )
+
+        detail = auth_client.get(f"{BASE}/{fix.id}/").json()
+        listed = auth_client.get(
+            f"{BASE}/", {"environment_id": str(environment.id)}
+        ).json()["results"][0]
+
+        for body in (detail, listed):
+            assert (body["source_run_id"], body["source_run_number"]) == (None, None)
 
     def test_a_fix_shows_its_limit_and_spend_in_credits(
         self, auth_client, environment, source_run, settings
