@@ -218,9 +218,16 @@ export default function SourcesSection({ env, locked }) {
         </Stack>
       }
     >
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && (
+        <Alert severity="error" sx={{ mx: 1.5, mt: 1.5 }}>
+          {error}
+        </Alert>
+      )}
       {generationHeld && (
-        <Alert severity={draftGeneration.state === "failed" ? "error" : "info"}>
+        <Alert
+          severity={draftGeneration.state === "failed" ? "error" : "info"}
+          sx={{ mx: 1.5, mt: 1.5 }}
+        >
           {draftGeneration.state === "failed"
             ? "Scenario generation failed. Open the source review to retry."
             : draftGeneration.state === "stale"
