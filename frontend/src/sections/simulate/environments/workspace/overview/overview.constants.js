@@ -231,7 +231,7 @@ export const LOCK_COPY = {
   lockedLine: (at, train, test, environmentLabel) =>
     `Locked ${at} · Train ${train} · Test ${test} scenarios · scorer environment ${environmentLabel}`,
   readyLine: (train, test) =>
-    `Train ${train} · Test ${test} scenarios once locked. Lock to freeze scenarios, splits and the scorer environment.`,
+    `Train ${train} · Test ${test} scenarios once locked.`,
   lock: "Lock this version",
   addScenarios: "Add scenarios",
   viewer: "You don't have permission to lock versions.",
