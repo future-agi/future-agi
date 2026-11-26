@@ -16,7 +16,10 @@ One tick reads GitHub, plans, and (live mode only) acts:
    approved on its head was pushed to by someone: close it. A rollup whose required checks
    failed, or that the queue removed, is retried once only if every failed
    job matches a known infra signature; otherwise it splits in halves at
-   once, and a red single member leaves with train:red. A rollup removed for
+   once, and a red single member leaves with train:red. A red single member
+   whose failed job also fails on dev's newest finished push run is held
+   instead (the breaker may not have tripped yet): no train:red, and its
+   rollup is rebuilt once dev passes that job. A rollup removed for
    a conflict is rebuilt on the new dev. While an open issue carries the
    base-red label, no rollup starts, and a red one is closed without a split.
 2. Admitted pull requests (label devflow:train). Exclusions send a pull
@@ -121,6 +124,12 @@ POSIX_CLASSES = {
     "[:lower:]": "a-z",
 }
 LOG_TAIL_LINES = 400
+# Dev's push runs of the suite a red rollup failed: the queue calls
+# backend-ci.yml as "backend", so its jobs read "backend / <job>".
+DEV_TWINS = {"backend-queue-ci.yml": ("backend-ci.yml", "backend / ")}
+# Pages of dev push runs read to find the newest finished one: a burst of
+# cancelled runs can fill the first page.
+DEV_PUSH_PAGES = 5
 # A member head's check runs are read again only when the head moves, while
 # a check is not green, or after this long (a person may re-run a check).
 CHECK_CACHE_SECONDS = 900
@@ -815,13 +824,19 @@ def stale_members(manifest: dict, live: dict) -> list:
 
 
 def rollup_action(
-    rollup: dict, live: dict, failure: str | None, paused: bool = False
+    rollup: dict,
+    live: dict,
+    failure: str | None,
+    paused: bool = False,
+    dev_red: list | None = None,
 ) -> dict:
     """What one tick does with one open rollup pull request.
 
     While the base is red (paused), a red rollup is closed, not split and
     not evicted: its red says nothing about its members, which re-batch
-    once dev is fixed."""
+    once dev is fixed. `dev_red` is the rollup's failed (or held) jobs that
+    dev's newest finished push run also fails: a red single member is held,
+    not evicted, until dev passes them, and then its rollup is rebuilt."""
     manifest = rollup["manifest"]
     stale = stale_members(manifest, live)
     if stale:
@@ -845,10 +860,18 @@ def rollup_action(
         if kind == "manual":
             return {"action": "release"}
     signal = red_signal(rollup)
-    if signal and paused:
-        return {"action": "close-red", "signal": signal}
+    held = manifest.get("held")
+    if paused and (signal or held):
+        return {"action": "close-red", "signal": signal or "held"}
+    if held:
+        # Never ensure: auto-merge stays as the red left it.
+        if dev_red:
+            return {"action": "hold", "jobs": held}
+        return {"action": "rebuild", "drop": [], "why": "dev passes the held jobs"}
     if signal:
         act = on_red(manifest, failure or "red")
+        if act["action"] == "evict" and dev_red:
+            return {"action": "hold", "signal": signal, "jobs": dev_red, "new": True}
         act["signal"] = signal
         return act
     return {"action": "ensure"}
@@ -888,13 +911,21 @@ def rollup_view(node: dict, cfg: Config, required: list) -> dict | None:
     }
 
 
-def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) -> dict:
+def plan(
+    data: dict,
+    required: list,
+    cfg: Config,
+    failures: dict | None = None,
+    dev_red: dict | None = None,
+) -> dict:
     """The whole tick as data. Pure: tests feed it built payloads.
 
     `failures` maps a red rollup's number to 'infra' or 'red' (from its
     failed job logs); a red rollup missing from it counts as 'red'.
+    `dev_red` maps a rollup's number to its jobs that dev's newest finished
+    push run also fails (see rollup_action).
     """
-    failures = failures or {}
+    failures, dev_red = failures or {}, dev_red or {}
     repo = data["repository"]
     paused = list(data.get("base_red") or [])
     queue = [
@@ -909,17 +940,24 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
         if r
     ]
 
-    actions, reserved, evicted = [], {}, {}
+    actions, reserved, evicted, held = [], {}, {}, {}
     for rollup in rollups:
-        act = rollup_action(rollup, live, failures.get(rollup["number"]), bool(paused))
-        act["rollup"] = rollup["number"]
+        number = rollup["number"]
+        act = rollup_action(
+            rollup, live, failures.get(number), bool(paused), dev_red.get(number)
+        )
+        act["rollup"] = number
         actions.append(act)
-        if act["action"] in ("wait", "ensure", "retry", "split"):
+        if act["action"] in ("wait", "ensure", "retry", "split", "hold"):
             for member in rollup["manifest"]["members"]:
-                reserved[member["pr"]] = rollup["number"]
+                reserved[member["pr"]] = number
+                if act["action"] == "hold":
+                    held[member["pr"]] = number
         elif act["action"] == "evict":
             evicted[act["pr"]] = act["sha"]
-    still_open = sum(1 for a in actions if a["action"] in ("wait", "ensure", "retry"))
+    still_open = sum(
+        1 for a in actions if a["action"] in ("wait", "ensure", "retry", "hold")
+    )
     new_from_splits = sum(len(a["halves"]) for a in actions if a["action"] == "split")
 
     labels, excluded, eligible, full_runs = [], {}, [], []
@@ -935,6 +973,8 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
             )
             m["labels"] = m["labels"] - {RED_LABEL}
         reason = exclusion(m, cfg, reserved)
+        if m["number"] in held:
+            reason = f"held: base red (rollup #{held[m['number']]})"
         if reason:
             excluded[m["number"]] = reason
             waiting += waits_on_checks(m, reason)
@@ -1288,14 +1328,15 @@ class GitHub:
                 ]
         return [r for r in runs["workflow_runs"] if r.get("conclusion") == "failure"]
 
-    def failed_job_logs(self, runs: list, required: list) -> list:
-        """Log tails of the failed jobs, leaving out the required aggregates.
+    def failed_jobs(self, runs: list, required: list) -> list:
+        """[{id, name, workflow}] of the failed jobs, leaving out the required
+        aggregates.
 
         Only runs that produce a required check count: another workflow's
         failure does not block the rollup, so it must not decide the retry.
         """
         aggregates = {r["context"] for r in required}
-        logs = []
+        out = []
         for run in runs:
             jobs = self.call(
                 "GET",
@@ -1305,21 +1346,58 @@ class GitHub:
                 job["name"].split(" / ")[-1] in aggregates for job in jobs["jobs"]
             ):
                 continue
-            for job in jobs["jobs"]:
-                if (
-                    job.get("conclusion") != "failure"
-                    or job["name"].split(" / ")[-1] in aggregates
-                ):
-                    continue
-                status, text = self.request(
-                    "GET", f"repos/{self.repo}/actions/jobs/{job['id']}/logs", raw=True
-                )
-                logs.append(
-                    "\n".join(step_output(text).splitlines()[-LOG_TAIL_LINES:])
-                    if status == 200
-                    else ""
-                )
+            workflow = os.path.basename(run.get("path") or "")
+            out += [
+                {"id": job["id"], "name": job["name"], "workflow": workflow}
+                for job in jobs["jobs"]
+                if job.get("conclusion") == "failure"
+                and job["name"].split(" / ")[-1] not in aggregates
+            ]
+        return out
+
+    def job_logs(self, jobs: list) -> list:
+        """Each job's log tail, without the echoed step scripts."""
+        logs = []
+        for job in jobs:
+            status, text = self.request(
+                "GET", f"repos/{self.repo}/actions/jobs/{job['id']}/logs", raw=True
+            )
+            logs.append(
+                "\n".join(step_output(text).splitlines()[-LOG_TAIL_LINES:])
+                if status == 200
+                else ""
+            )
         return logs
+
+    def failed_job_logs(self, runs: list, required: list) -> list:
+        """Log tails of the failed jobs, leaving out the required aggregates."""
+        return self.job_logs(self.failed_jobs(runs, required))
+
+    def dev_red_jobs(self, workflow: str, required: list) -> set:
+        """The jobs that failed on dev's newest finished (passed or failed)
+        push run of `workflow`'s suite, named as `workflow` names them.
+        Empty when that run passed or dev has no finished run."""
+        twin, prefix = DEV_TWINS.get(workflow, (workflow, ""))
+        for page in range(1, DEV_PUSH_PAGES + 1):
+            batch = (
+                self.call(
+                    "GET",
+                    f"repos/{self.repo}/actions/workflows/{twin}/runs?event=push"
+                    f"&branch={BASE}&status=completed&per_page=20&page={page}",
+                ).get("workflow_runs")
+                or []
+            )
+            done = [r for r in batch if r.get("conclusion") in ("success", "failure")]
+            if done:
+                newest = done[0]  # the listing is newest first
+                if newest["conclusion"] == "success":
+                    return set()
+                return {
+                    prefix + job["name"] for job in self.failed_jobs([newest], required)
+                }
+            if len(batch) < 20:
+                break
+        return set()
 
 
 class Live:
@@ -1463,6 +1541,25 @@ class Live:
             ok=(204, 422),
         )
 
+    def hold(self, rollup: dict, jobs: list):
+        """Mark a lone red rollup held in its manifest, once. It stays open,
+        and its member is not marked red."""
+        self.app.call(
+            "PATCH",
+            f"repos/{self.repo}/pulls/{rollup['number']}",
+            {"body": render_manifest({**rollup["manifest"], "held": jobs})},
+        )
+        names = ", ".join(f"`{j['job']}` ({j['workflow']})" for j in jobs)
+        self.actions.call(
+            "POST",
+            f"repos/{self.repo}/issues/{rollup['number']}/comments",
+            {
+                "body": f"Held by the batch train: red on {names}, which dev's newest finished "
+                "push run fails too, so the red may be the base's. Nothing is marked red. "
+                "The train rebuilds this rollup once dev passes that job."
+            },
+        )
+
     def evict(self, pr: int, sha: str, rollup: int, runs: list):
         self.label(pr, RED_LABEL)
         links = ", ".join(r["html_url"] for r in runs if r.get("html_url"))
@@ -1529,6 +1626,8 @@ def execute(result: dict, live: Live, red_runs: dict):
                 f"Closed by the batch train: rebuilding{': ' + act['why'] if act.get('why') else ''}."
                 f" Dropped: {act['drop'] or 'none'}.",
             )
+        elif kind == "hold" and act.get("new"):
+            live.hold(rollup, act["jobs"])
         elif kind == "close-red":
             live.close(
                 rollup,
@@ -1612,17 +1711,37 @@ def tick(reader: GitHub, required: list, cfg: Config, live: Live | None) -> dict
     reader.attach_reviewer_permissions(data)
     reader.attach_permissions(data, required, cfg)
     reader.attach_checks(data, required, cfg)
-    red_runs, failures = {}, {}
+    red_runs, failures, dev_red, on_dev = {}, {}, {}, {}
+
+    def shared(jobs: list) -> list:
+        """The jobs dev's newest finished push run also fails, read once a
+        tick per workflow."""
+        for job in jobs:
+            if job["workflow"] not in on_dev:
+                on_dev[job["workflow"]] = reader.dev_red_jobs(job["workflow"], required)
+        return [j for j in jobs if j["job"] in on_dev[j["workflow"]]]
+
     for node in data["repository"]["rollups"]["nodes"]:
         rollup = rollup_view(node, cfg, required)
-        signal = rollup and red_signal(rollup)
-        if signal and not data["base_red"]:
-            runs = reader.failed_runs(rollup, signal)
-            red_runs[rollup["number"]] = runs
-            failures[rollup["number"]] = classify_failure(
-                reader.failed_job_logs(runs, required), cfg.signatures
+        if not rollup or data["base_red"]:
+            continue
+        number, manifest = rollup["number"], rollup["manifest"]
+        if manifest.get("held"):
+            # Only dev decides now; its own red was read when it was held.
+            dev_red[number] = shared(manifest["held"])
+            continue
+        signal = red_signal(rollup)
+        if not signal:
+            continue
+        runs = reader.failed_runs(rollup, signal)
+        red_runs[number] = runs
+        jobs = reader.failed_jobs(runs, required)
+        failures[number] = classify_failure(reader.job_logs(jobs), cfg.signatures)
+        if on_red(manifest, failures[number])["action"] == "evict":
+            dev_red[number] = shared(
+                [{"workflow": j["workflow"], "job": j["name"]} for j in jobs]
             )
-    result = plan(data, required, cfg, failures)
+    result = plan(data, required, cfg, failures, dev_red)
     result["failures"] = failures
     if live:
         execute(result, live, red_runs)

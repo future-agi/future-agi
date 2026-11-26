@@ -153,6 +153,7 @@ def rollup_node(
     author=APP,
     reason="CI failed",
     checks=None,
+    held=None,
 ):
     manifest = {
         "schema": train.SCHEMA,
@@ -172,6 +173,8 @@ def rollup_node(
             for n, h in members
         ],
     }
+    if held is not None:
+        manifest["held"] = held
     node = pr_node(
         number,
         author=author,
@@ -2025,6 +2028,266 @@ class LiveWrites(unittest.TestCase):
         )
         self.assertIn(url, comment)
         self.assertIn(f"<!-- devflow-train:red pr=1 sha={sha(1)} -->", comment)
+
+
+SHARD = "pytest shard 3"
+RED_CHECKS = [run("Backend Tests Pass", "FAILURE")] + green()[1:]
+
+
+def held_on(*pairs):
+    return [{"workflow": w, "job": j} for w, j in pairs]
+
+
+class RedReader(train.GitHub):
+    """tick()'s reader: the GraphQL payload is given, and REST answers come
+    from (path prefix, body) routes, first match wins."""
+
+    def __init__(self, payload, routes):
+        super().__init__("t", "o/r")
+        self.payload, self.routes, self.paths = payload, routes, []
+
+    def gather(self):
+        return json.loads(json.dumps(self.payload))
+
+    def base_red(self):
+        return list(self.payload["base_red"])
+
+    def attach_reviewer_permissions(self, data):
+        pass
+
+    def attach_permissions(self, data, required, cfg):
+        pass
+
+    def attach_checks(self, data, required, cfg):
+        pass
+
+    def request(self, method, path, body=None, raw=False):
+        self.paths.append(path)
+        for prefix, answer in self.routes:
+            if path.startswith(prefix):
+                return 200, answer
+        raise AssertionError(path)
+
+
+def failed_job(i, name):
+    return {"id": i, "name": name, "conclusion": "failure"}
+
+
+def dev_push(conclusion, run_id=600):
+    """The listing of dev's finished push runs of backend-ci.yml, newest first:
+    a cancelled run, then one that finished."""
+    return [
+        (
+            "repos/o/r/actions/workflows/backend-ci.yml/runs?event=push",
+            {
+                "workflow_runs": [
+                    {"id": 601, "conclusion": "cancelled"},
+                    {"id": run_id, "conclusion": conclusion},
+                ]
+            },
+        ),
+        (
+            f"repos/o/r/actions/runs/{run_id}/jobs",
+            {
+                "jobs": [
+                    failed_job(61, SHARD),
+                    failed_job(62, "Backend Tests Pass"),
+                ]
+            },
+        ),
+    ]
+
+
+PR_RUN_RED = [
+    (
+        "repos/o/r/actions/runs?event=pull_request",
+        {
+            "workflow_runs": [
+                {
+                    "id": 500,
+                    "conclusion": "failure",
+                    "path": ".github/workflows/backend-ci.yml",
+                    "html_url": "https://github.com/o/r/actions/runs/500",
+                }
+            ]
+        },
+    ),
+    (
+        "repos/o/r/actions/runs/500/jobs",
+        {
+            "jobs": [
+                failed_job(1, SHARD),
+                failed_job(2, "pytest shard 4"),
+                failed_job(3, "Backend Tests Pass"),
+            ]
+        },
+    ),
+    ("repos/o/r/actions/jobs/", "FAILED tests/test_x.py::test_y\n"),
+]
+
+
+class HeldOnRedBase(unittest.TestCase):
+    """A lone red member is not evicted while dev's own push run is red on
+    the same job (the breaker may not have tripped yet): it is held, and its
+    rollup is rebuilt once dev is green."""
+
+    def solo(self, **over):
+        return rollup_node(81, [(3, sha(3))], checks=RED_CHECKS, **over)
+
+    def test_a_lone_red_with_dev_red_on_the_same_job_is_held_not_evicted(self):
+        jobs = held_on(("backend-ci.yml", SHARD))
+        out = train.plan(
+            data([pr_node(3)], [self.solo()]),
+            REQUIRED,
+            cfg(),
+            {81: "red"},
+            {81: jobs},
+        )
+        self.assertEqual(
+            out["rollup_actions"],
+            [
+                {
+                    "action": "hold",
+                    "rollup": 81,
+                    "signal": "checks",
+                    "jobs": jobs,
+                    "new": True,
+                }
+            ],
+        )
+        self.assertEqual(out["excluded"], {3: "held: base red (rollup #81)"})
+        self.assertEqual(out["batches"], [])
+        self.assertTrue(out["busy"], "a held rollup keeps the loop awake")
+        green_dev = train.plan(
+            data([pr_node(3)], [self.solo()]), REQUIRED, cfg(), {81: "red"}, {}
+        )
+        self.assertEqual(green_dev["rollup_actions"][0]["action"], "evict")
+
+    def test_a_held_rollup_waits_then_rebuilds_once_dev_is_green(self):
+        jobs = held_on(("backend-ci.yml", SHARD))
+        node = self.solo(held=jobs)
+        still = train.plan(data([pr_node(3)], [node]), REQUIRED, cfg(), {}, {81: jobs})
+        self.assertEqual(
+            still["rollup_actions"],
+            [{"action": "hold", "rollup": 81, "jobs": jobs}],
+            "no new write while it stays held",
+        )
+        self.assertTrue(still["busy"])
+        fixed = train.plan(data([pr_node(3)], [node]), REQUIRED, cfg(), {}, {})
+        self.assertEqual(fixed["rollup_actions"][0]["action"], "rebuild")
+        self.assertEqual(fixed["batches"], [[3]], "never evicted on the old red")
+        self.assertNotIn(3, fixed["excluded"])
+
+    def test_base_red_still_closes_a_held_rollup(self):
+        node = self.solo(held=held_on(("backend-ci.yml", SHARD)))
+        out = train.plan(
+            data([pr_node(3)], [node], base_red=[900]), REQUIRED, cfg(), {}, {}
+        )
+        self.assertEqual(out["rollup_actions"][0]["action"], "close-red")
+
+    def test_execute_hold_writes_the_manifest_once_and_never_labels_red(self):
+        jobs = held_on(("backend-ci.yml", SHARD))
+        result = train.plan(
+            data([pr_node(3)], [self.solo()]), REQUIRED, cfg(), {81: "red"}, {81: jobs}
+        )
+        app, actions = FakeGitHub({}), FakeGitHub({})
+        train.execute(result, train.Live("o/r", app, actions), {})
+        patch = next(c for c in app.calls if c[:2] == ("PATCH", "repos/o/r/pulls/81"))
+        manifest = train.parse_manifest(patch[2]["body"])
+        self.assertEqual(manifest["held"], jobs)
+        self.assertEqual(manifest["removals_seen"], 0)
+        self.assertFalse(any("/labels" in c[1] for c in app.calls + actions.calls))
+        self.assertFalse(any("state" in (c[2] or {}) for c in app.calls), "stays open")
+        comment = next(
+            c[2]["body"] for c in actions.calls if c[1].endswith("/issues/81/comments")
+        )
+        self.assertIn(SHARD, comment)
+        again = train.plan(
+            data([pr_node(3)], [self.solo(held=jobs)]), REQUIRED, cfg(), {}, {81: jobs}
+        )
+        app, actions = FakeGitHub({}), FakeGitHub({})
+        train.execute(again, train.Live("o/r", app, actions), {})
+        self.assertEqual(app.calls + actions.calls, [], "held: no write per tick")
+
+    def tick(self, rollup, routes):
+        reader = RedReader(data([pr_node(3)], [rollup]), routes)
+        return train.tick(reader, REQUIRED, cfg(), None), reader
+
+    def test_tick_holds_on_a_shared_job_and_reads_only_dev_while_held(self):
+        # The rollup fails shards 3 and 4; dev's newest finished push run
+        # fails shard 3. One shared job is enough to hold.
+        out, _ = self.tick(self.solo(), PR_RUN_RED + dev_push("failure"))
+        act = out["rollup_actions"][0]
+        self.assertEqual(
+            (act["action"], act["jobs"]),
+            ("hold", held_on(("backend-ci.yml", SHARD))),
+        )
+        held = self.solo(held=act["jobs"])
+        out, reader = self.tick(held, dev_push("failure"))
+        self.assertEqual(out["rollup_actions"][0]["action"], "hold")
+        self.assertFalse(
+            any("event=pull_request" in p or "/logs" in p for p in reader.paths),
+            "a held rollup's logs are not read again",
+        )
+        out, _ = self.tick(held, dev_push("success"))
+        self.assertEqual(out["rollup_actions"][0]["action"], "rebuild")
+
+    def test_tick_evicts_when_dev_has_no_red_run_on_that_job(self):
+        no_run = [
+            (
+                "repos/o/r/actions/workflows/backend-ci.yml/runs?event=push",
+                {"workflow_runs": []},
+            )
+        ]
+        other_job = dev_push("failure")
+        other_job[1] = (
+            other_job[1][0],
+            {"jobs": [failed_job(61, "pytest shard 9")]},
+        )
+        for name, dev in (
+            ("dev green", dev_push("success")),
+            ("dev red elsewhere", other_job),
+            ("no finished dev run", no_run),
+        ):
+            with self.subTest(name):
+                out, _ = self.tick(self.solo(), PR_RUN_RED + dev)
+                self.assertEqual(out["rollup_actions"][0]["action"], "evict")
+
+    def test_tick_maps_a_queue_red_to_devs_backend_run(self):
+        queue_red = [
+            (
+                "repos/o/r/actions/runs?event=merge_group",
+                {
+                    "workflow_runs": [
+                        {
+                            "id": 700,
+                            "conclusion": "failure",
+                            "created_at": "2026-11-26T11:00:00Z",
+                            "head_sha": sha(700),
+                            "head_branch": f"gh-readonly-queue/dev/pr-81-{sha(9000)}",
+                            "path": ".github/workflows/backend-queue-ci.yml",
+                        }
+                    ]
+                },
+            ),
+            (
+                "repos/o/r/actions/runs/700/jobs",
+                {
+                    "jobs": [
+                        failed_job(7, f"backend / {SHARD}"),
+                        failed_job(8, "backend / Backend Tests Pass"),
+                    ]
+                },
+            ),
+            ("repos/o/r/actions/jobs/", "FAILED tests/test_x.py::test_y\n"),
+        ]
+        node = rollup_node(81, [(3, sha(3))], removals=1)
+        out, _ = self.tick(node, queue_red + dev_push("failure"))
+        act = out["rollup_actions"][0]
+        self.assertEqual(
+            (act["action"], act["signal"], act["jobs"]),
+            ("hold", "queue", held_on(("backend-queue-ci.yml", f"backend / {SHARD}"))),
+        )
 
 
 if __name__ == "__main__":
