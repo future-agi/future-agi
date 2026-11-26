@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1207,
+  endpointCount: 1224,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -925,9 +925,18 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "put",
       ],
       "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
+      "/simulate/api/harness-environments/{id}/capabilities/": ["get", "post"],
+      "/simulate/api/harness-environments/{id}/capabilities/cases/": ["get"],
+      "/simulate/api/harness-environments/{id}/capabilities/history/": ["get"],
+      "/simulate/api/harness-environments/{id}/capabilities/recheck/": ["post"],
       "/simulate/api/harness-environments/{id}/compare/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
+      "/simulate/api/harness-environments/{id}/drafts/review/": ["get"],
+      "/simulate/api/harness-environments/{id}/drafts/review/decisions/": [
+        "post",
+      ],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
+      "/simulate/api/harness-environments/{id}/drafts/validate/": ["post"],
       "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
       "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
       "/simulate/api/harness-environments/{id}/evaluations/available/": ["get"],
@@ -949,6 +958,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
         ["post"],
       "/simulate/api/harness-environments/{id}/files/": ["post"],
+      "/simulate/api/harness-environments/{id}/files/role/": ["post"],
       "/simulate/api/harness-environments/{id}/nudges/": ["get"],
       "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": [
         "post",
@@ -962,6 +972,25 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
         ["post"],
+      "/simulate/api/harness-environments/{id}/scenarios/validate/": [
+        "get",
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/scenarios/validate/running/": [
+        "get",
+      ],
+      "/simulate/api/harness-environments/{id}/scenarios/{key}/archive/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/scenarios/{key}/records/": [
+        "get",
+      ],
+      "/simulate/api/harness-environments/{id}/scenarios/{key}/restore/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/": [
+        "get",
+      ],
       "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/":
         ["get"],
       "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
@@ -974,6 +1003,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/retry/":
         ["post"],
+      "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/":
+        ["get"],
       "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
         ["get"],
       "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
@@ -989,6 +1020,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-jobs/{id}/": ["get"],
       "/simulate/api/harness-jobs/{id}/adjust/": ["post"],
       "/simulate/api/harness-jobs/{id}/cancel/": ["post"],
+      "/simulate/api/harness-jobs/{id}/conversation/history/": ["get"],
       "/simulate/api/harness-jobs/{id}/conversation/messages/": ["post"],
       "/simulate/api/harness-jobs/{id}/extend/": ["post"],
       "/simulate/api/harness-jobs/{id}/runs/": ["post"],
@@ -1232,6 +1264,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/eval-task/unpause_eval_task/": ["post"],
       "/tracer/eval-task/update_eval_task/": ["patch"],
       "/tracer/eval-task/{id}/": ["delete", "get", "patch", "put"],
+      "/tracer/feed/escalation-settings/": ["get", "patch"],
       "/tracer/feed/integrations/linear/teams/": ["get"],
       "/tracer/feed/issues/": ["get"],
       "/tracer/feed/issues/stats/": ["get"],
@@ -2399,9 +2432,16 @@ export const API_SURFACE_PATHS = Object.freeze({
     "put",
   ],
   "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
+  "/simulate/api/harness-environments/{id}/capabilities/": ["get", "post"],
+  "/simulate/api/harness-environments/{id}/capabilities/cases/": ["get"],
+  "/simulate/api/harness-environments/{id}/capabilities/history/": ["get"],
+  "/simulate/api/harness-environments/{id}/capabilities/recheck/": ["post"],
   "/simulate/api/harness-environments/{id}/compare/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/": ["get"],
+  "/simulate/api/harness-environments/{id}/drafts/review/": ["get"],
+  "/simulate/api/harness-environments/{id}/drafts/review/decisions/": ["post"],
   "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
+  "/simulate/api/harness-environments/{id}/drafts/validate/": ["post"],
   "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
   "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
   "/simulate/api/harness-environments/{id}/evaluations/available/": ["get"],
@@ -2421,6 +2461,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
     ["post"],
   "/simulate/api/harness-environments/{id}/files/": ["post"],
+  "/simulate/api/harness-environments/{id}/files/role/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/": ["get"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": ["post"],
@@ -2431,6 +2472,17 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
     ["post"],
+  "/simulate/api/harness-environments/{id}/scenarios/validate/": [
+    "get",
+    "post",
+  ],
+  "/simulate/api/harness-environments/{id}/scenarios/validate/running/": [
+    "get",
+  ],
+  "/simulate/api/harness-environments/{id}/scenarios/{key}/archive/": ["post"],
+  "/simulate/api/harness-environments/{id}/scenarios/{key}/records/": ["get"],
+  "/simulate/api/harness-environments/{id}/scenarios/{key}/restore/": ["post"],
+  "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/": ["get"],
   "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/":
     ["get"],
   "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
@@ -2443,6 +2495,8 @@ export const API_SURFACE_PATHS = Object.freeze({
     ["post"],
   "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/retry/":
     ["post"],
+  "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/":
+    ["get"],
   "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
     ["get"],
   "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
@@ -2458,6 +2512,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-jobs/{id}/": ["get"],
   "/simulate/api/harness-jobs/{id}/adjust/": ["post"],
   "/simulate/api/harness-jobs/{id}/cancel/": ["post"],
+  "/simulate/api/harness-jobs/{id}/conversation/history/": ["get"],
   "/simulate/api/harness-jobs/{id}/conversation/messages/": ["post"],
   "/simulate/api/harness-jobs/{id}/extend/": ["post"],
   "/simulate/api/harness-jobs/{id}/runs/": ["post"],
@@ -2689,6 +2744,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/eval-task/unpause_eval_task/": ["post"],
   "/tracer/eval-task/update_eval_task/": ["patch"],
   "/tracer/eval-task/{id}/": ["delete", "get", "patch", "put"],
+  "/tracer/feed/escalation-settings/": ["get", "patch"],
   "/tracer/feed/integrations/linear/teams/": ["get"],
   "/tracer/feed/issues/": ["get"],
   "/tracer/feed/issues/stats/": ["get"],

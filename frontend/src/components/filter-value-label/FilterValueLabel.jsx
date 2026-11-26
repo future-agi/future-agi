@@ -28,8 +28,12 @@ function useLabelContinuation(key, cursor, query) {
     isFetchNextPageError,
     isFetchingNextPage,
     onNextPageError,
+    pageCount,
     tryStartNextPage,
   } = query;
+  // Chips that share one query share its read budget: continuation pages any
+  // observer already loaded count, so N chips cannot spend N separate budgets.
+  const sharedReads = Math.max((pageCount ?? 1) - 1, 0);
   const [walk, setWalk] = useState(() => newWalk(key));
   const spent = cursor === walk.cursor;
   const failed = fetchStatus === "idle" && isFetchNextPageError;
@@ -41,7 +45,11 @@ function useLabelContinuation(key, cursor, query) {
     setWalk({ ...walk, cursor, pending: false });
   }
   const canStart =
-    cursor && !spent && !failed && walk.count < MAX_LABEL_CONTINUATION_READS;
+    cursor &&
+    !spent &&
+    !failed &&
+    walk.count < MAX_LABEL_CONTINUATION_READS &&
+    sharedReads < MAX_LABEL_CONTINUATION_READS;
   const peerFailed = useRef(false);
   useLayoutEffect(() => {
     if (!canStart) return;

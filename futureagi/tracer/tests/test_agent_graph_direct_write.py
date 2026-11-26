@@ -113,7 +113,7 @@ def test_agent_graph_cache_identity_invalidates_retired_path_payloads(monkeypatc
     assert identity == {
         "project_id": PROJECT_ID,
         "filters": [FINAL_STATUS_FILTER],
-        "payload_version": 6,
+        "payload_version": 7,
     }
 
 
