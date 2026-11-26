@@ -14,7 +14,9 @@ from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryB
 from tracer.services.clickhouse.v2.query_builders.observe_usage import (
     ObserveTraceListQueryBuilderV2,
 )
-from tracer.services.clickhouse.v2.query_builders.trace_list import TraceListQueryBuilderV2
+from tracer.services.clickhouse.v2.query_builders.trace_list import (
+    TraceListQueryBuilderV2,
+)
 
 
 @pytest.fixture
