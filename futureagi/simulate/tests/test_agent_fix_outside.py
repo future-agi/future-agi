@@ -1156,6 +1156,8 @@ class TestLineage:
         second.refresh_from_db()
 
         assert _grade(second, winner.id) == [final.test_execution_id]
+
+    def test_the_hold_holds_each_check_at_its_worst(self, source_run):
         request = FixRequest(
             target_scenario_keys=[f"case-{n}" for n in range(12)],
             held_back_scenario_keys=[f"case-{n}" for n in range(4)],
