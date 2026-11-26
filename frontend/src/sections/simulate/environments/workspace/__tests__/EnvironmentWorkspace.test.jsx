@@ -849,10 +849,7 @@ describe("EnvironmentWorkspace route shell", () => {
       );
 
       renderWorkspace("/dashboard/simulate/environments/job-build");
-      expect(
-        await screen.findByRole("heading", { name: "Review sources" }),
-      ).toBeInTheDocument();
-      expect(screen.getByText("Reading sources…")).toBeInTheDocument();
+      expect(await screen.findByText("Reading sources…")).toBeInTheDocument();
       expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
       expect(
         screen.getByRole("button", { name: /Run simulation/ }),

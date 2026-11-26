@@ -156,7 +156,10 @@ describe("Prebuild source review", () => {
         expected_draft_digest: "sha256:repaired",
       }),
     );
-    expect(onAccepted).toHaveBeenCalledExactlyOnceWith(serverReview);
+    expect(onAccepted).toHaveBeenCalledExactlyOnceWith(
+      serverReview,
+      { reviewId: serverReview.id, ...api.post.mock.calls[1][1] },
+    );
   });
   it("keeps a four-page source collapsed until the reviewer asks to see the text", async () => {
     serverReview = {
