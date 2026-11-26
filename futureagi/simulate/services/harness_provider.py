@@ -1618,6 +1618,26 @@ def _mint_sandbox_values(request) -> Response | None:
     return None
 
 
+def _refuse_browser_on_sandbox(data: dict[str, Any]) -> Response | None:
+    """Refuse a browser section, or sites sent in metadata, on the sandbox server provider.
+
+    It has no browser environment, and it sends a request's metadata on as it came, so neither
+    would be read as the hosted provider reads them.
+    """
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    if data.get("browser") is None and "browser_allowed_sites" not in (
+        data.get("metadata") or {}
+    ):
+        return None
+    refusal = HostedHarnessError(
+        "browser_environment_unsupported",
+        "Browser environments run only on the hosted harness provider.",
+        status_code=400,
+    )
+    return Response(refusal.as_dict(), status=refusal.status_code)
+
+
 class HostedHarnessProvider:
     """Persist jobs and drive the configured managed sandbox through Temporal."""
 
@@ -3709,7 +3729,9 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
-        refused = _mint_sandbox_values(request)
+        refused = _refuse_browser_on_sandbox(
+            request.validated_data
+        ) or _mint_sandbox_values(request)
         if refused is not None:
             return refused
         try:
@@ -3746,7 +3768,9 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
-        refused = _mint_sandbox_values(request)
+        refused = _refuse_browser_on_sandbox(
+            request.validated_data
+        ) or _mint_sandbox_values(request)
         if refused is not None:
             return refused
         try:

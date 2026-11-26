@@ -1757,13 +1757,10 @@ class TestABrowserAgentRunsOnlyWithSites:
     def test_the_default_agent_is_held_to_the_same_rule(self, user, workspace, storage):
         environment = _environment(user, workspace, "pk-browser-default", storage)
 
-        with (
-            _reads_as_browser(environment.agent_version_id),
-            pytest.raises(HostedHarnessError) as caught,
-        ):
-            resolve_run_pins(environment)
+        with _reads_as_browser(environment.agent_version_id):
+            refusal = _refusal(environment, None)
 
-        assert caught.value.code == "browser_environment_required"
+        assert refusal.code == "browser_environment_required"
 
     def test_a_browser_agent_runs_where_the_environment_names_sites(
         self, user, workspace, storage
@@ -1809,7 +1806,9 @@ class TestABrowserAgentRunsOnlyWithSites:
         environment.refresh_from_db()
 
         with _reads_as_browser():
-            assert resolve_run_pins(environment) is not None
+            run = _create(environment)
+
+        assert run.agent_version_id == environment.agent_version_id
 
     def test_the_pinned_version_s_own_sites_answer(self, user, workspace, storage):
         from simulate.models.harness_versioning import HarnessEnvironmentVersion
@@ -1822,7 +1821,9 @@ class TestABrowserAgentRunsOnlyWithSites:
         environment.refresh_from_db()
 
         with _reads_as_browser(environment.agent_version_id):
-            assert resolve_run_pins(environment) is not None
+            run = _create(environment)
+
+        assert run.agent_version_id == environment.agent_version_id
 
     def test_a_version_that_recorded_no_sites_is_held_to_that(
         self, user, workspace, storage
@@ -1841,10 +1842,65 @@ class TestABrowserAgentRunsOnlyWithSites:
         ).update(browser_allowed_sites=[])
         environment.refresh_from_db()
 
+        with _reads_as_browser(environment.agent_version_id):
+            refusal = _refusal(environment, None)
+
+        assert refusal.code == "browser_environment_required"
+
+    def test_a_run_reads_the_agent_s_contract_once(self, user, workspace, storage):
+        # The read goes to storage, so a run makes it once, before the environment's lock,
+        # however often its pins are resolved.
+        environment = _environment(user, workspace, "pk-browser-read-once", storage)
+
+        with _reads_as_browser() as reads:
+            _create(environment)
+
+        assert reads.call_count == 1
+
+    def test_pins_that_move_before_the_lock_are_checked_again(
+        self, user, workspace, storage, monkeypatch
+    ):
+        from simulate.services import hosted_harness
+
+        environment = _environment(user, workspace, "pk-browser-moved", storage)
+        a2 = _second_agent(environment)
+        _ready(
+            environment,
+            a2.id,
+            environment.environment_version,
+            environment.suite_version,
+        )
+        resolve = hosted_harness.resolve_run_pins
+        calls = []
+
+        def moving(environment, **kwargs):
+            calls.append(kwargs)
+            # The plan and the early check see the default agent; under the lock the
+            # browser agent is pinned, as if the default changed in between.
+            if len(calls) == 3:
+                kwargs["picks"] = VersionPicks(agent_version_id=a2.id)
+            return resolve(environment, **kwargs)
+
+        monkeypatch.setattr(hosted_harness, "resolve_run_pins", moving)
+
+        with _reads_as_browser(a2.id) as reads:
+            refusal = _refusal(environment, None)
+
+        assert len(calls) == 3
+        assert refusal.code == "browser_environment_required"
+        assert reads.call_count == 2
+
+    def test_the_run_preview_is_refused_as_the_run_would_be(
+        self, user, workspace, storage
+    ):
+        from simulate.services.harness_versioning.run_warnings import preview_run
+
+        environment = _environment(user, workspace, "pk-browser-preview", storage)
+
         with (
             _reads_as_browser(environment.agent_version_id),
             pytest.raises(HostedHarnessError) as caught,
         ):
-            resolve_run_pins(environment)
+            preview_run(environment)
 
         assert caught.value.code == "browser_environment_required"
