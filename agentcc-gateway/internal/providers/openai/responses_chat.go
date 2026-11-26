@@ -86,6 +86,12 @@ func reasoningOff(req *models.ChatCompletionRequest) bool {
 
 // ChatCompletionViaResponses serves a chat request on the Responses API.
 func (p *Provider) ChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "openai", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true, StructuredAllowedTools: true})
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	req = prepared
+
 	rr, apiErr := toResponsesRequest(req, false)
 	if apiErr != nil {
 		return nil, apiErr
@@ -125,6 +131,12 @@ func (p *Provider) StreamChatCompletionViaResponses(ctx context.Context, req *mo
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "openai", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true, StructuredAllowedTools: true})
+		if policyErr != nil {
+			errs <- policyErr
+			return
+		}
+		req = prepared
 
 		rr, apiErr := toResponsesRequest(req, true)
 		if apiErr != nil {
@@ -314,7 +326,9 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 	if out.MaxOutputTokens == nil {
 		out.MaxOutputTokens = req.MaxTokens
 	}
-	if raw, ok := req.Extra["parallel_tool_calls"]; ok {
+	if req.ParallelToolCalls != nil {
+		out.ParallelToolCalls = req.ParallelToolCalls
+	} else if raw, ok := req.Extra["parallel_tool_calls"]; ok {
 		var parallel bool
 		if json.Unmarshal(raw, &parallel) == nil {
 			out.ParallelToolCalls = &parallel
@@ -362,25 +376,25 @@ func toResponsesRequest(req *models.ChatCompletionRequest, stream bool) (_ *resp
 	return out, nil
 }
 
-// ResponsesDrops names the settings omitted by a valid Responses attempt.
+// ChatRouteDrops names the settings omitted by a valid Responses attempt.
 // Called after pre-plugins/tool routing, never from the caller's original body.
 // A conversion error is still an error, not an attempt that dropped settings.
-func (p *Provider) ResponsesDrops(req *models.ChatCompletionRequest) []string {
+func (p *Provider) ChatRouteDrops(req *models.ChatCompletionRequest) (models.ChatRoute, []string) {
 	if !p.ChatNeedsResponses(req) {
-		return nil
+		return "", nil
 	}
 	drops := responsesDroppedParams(req)
 	if len(drops) == 0 {
-		return nil
+		return models.RouteResponses, nil
 	}
 	out, err := toResponsesRequest(req, req.Stream)
 	if err != nil {
-		return nil
+		return models.RouteResponses, nil
 	}
 	if _, err := json.Marshal(out); err != nil {
-		return nil
+		return models.RouteResponses, nil
 	}
-	return drops
+	return models.RouteResponses, drops
 }
 
 // responsesDroppedParams is the shared support table, so a response-cache hit
@@ -713,6 +727,7 @@ func responsesAllowedTools(raw json.RawMessage) (json.RawMessage, *models.APIErr
 			Mode  string `json:"mode"`
 			Tools []struct {
 				Type     string `json:"type"`
+				Name     string `json:"name"`
 				Function struct {
 					Name string `json:"name"`
 				} `json:"function"`
@@ -732,10 +747,14 @@ func responsesAllowedTools(raw json.RawMessage) (json.RawMessage, *models.APIErr
 		Tools []tool `json:"tools"`
 	}{Type: "allowed_tools", Mode: chat.AllowedTools.Mode, Tools: []tool{}}
 	for _, t := range chat.AllowedTools.Tools {
-		if t.Type != "function" || t.Function.Name == "" {
+		name := t.Function.Name
+		if name == "" {
+			name = t.Name
+		}
+		if t.Type != "function" || name == "" {
 			return nil, unsupportedOverResponses(fmt.Sprintf("a %q tool in allowed_tools", t.Type))
 		}
-		out.Tools = append(out.Tools, tool{Type: "function", Name: t.Function.Name})
+		out.Tools = append(out.Tools, tool{Type: "function", Name: name})
 	}
 	b, _ := json.Marshal(out)
 	return b, nil

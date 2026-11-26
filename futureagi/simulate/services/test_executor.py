@@ -4254,13 +4254,15 @@ class TestExecutor:
             return False
 
     def _mark_summary_out_of_date(self, test_execution_id):
-        """A late verdict on a completed run: mark its finished summary pending.
+        """A late verdict on a run: mark its finished summary pending.
 
-        The summary was made without this verdict. It is kept, and nothing is
-        queued: pending tells the page, and the SDK, that nobody has asked
-        for a summary since the run's verdicts last changed. A summary that
-        failed or was never made keeps its state. One that is running sees
-        the verdict itself, so it keeps running and the page keeps polling.
+        Any run, whatever its status: a failed or stopped run can be
+        summarised too. The summary was made without this verdict. It is
+        kept, and nothing is queued: pending tells the page, and the SDK,
+        that nobody has asked for a summary since the run's verdicts last
+        changed. A summary that failed or was never made keeps its state.
+        One that is running sees the verdict itself, so it keeps running and
+        the page keeps polling.
 
         The mark is made once the verdict is committed: a summary job that
         looks at the grading after the mark then sees the verdict too.
@@ -4269,7 +4271,6 @@ class TestExecutor:
         def _mark():
             TestExecution.objects.filter(
                 id=test_execution_id,
-                status=TestExecution.ExecutionStatus.COMPLETED,
                 eval_explanation_summary_status=EvalExplanationSummaryStatus.COMPLETED,
             ).update(
                 eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING

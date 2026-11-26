@@ -1,6 +1,7 @@
 """Held-back cases and verify: what a coding agent may read and run, and the counts it
 gets back when it verifies an agent version on the cases it never saw."""
 
+import dataclasses
 import json
 import uuid
 from types import SimpleNamespace
@@ -14,6 +15,7 @@ from accounts.models import OrgApiKey
 from simulate.models import (
     CallExecution,
     HarnessSuiteMember,
+    HarnessSuiteValidation,
     HarnessSuiteVersion,
     HostedHarnessJob,
 )
@@ -59,6 +61,7 @@ from simulate.tests.test_agent_fix_services import (
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     environment as environment,
 )
+from simulate.tests.test_harness_affected_scenarios import _proved_on
 from simulate.tests.test_harness_agent_versions import _environment
 from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_run_compare import _done
@@ -352,8 +355,16 @@ class TestWhenTheSuiteChanges:
         HarnessSuiteVersion.no_workspace_objects.filter(id=old_suite).update(
             status=VersionStatus.DISCARDED
         )
+        candidate = _second_agent(environment)
+        # The new suite proved, with no other agent version recorded on its validation.
+        _proved_on(
+            environment, environment.environment_version, environment.suite_version
+        )
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).update(job=None)
 
-        run = _verify(environment, _second_agent(environment))
+        run = _verify(environment, candidate)
 
         assert run.suite_version_id == environment.suite_version_id
         assert KEYS[1] in run.payload["metadata"]["selected_scenario_keys"]
@@ -503,6 +514,29 @@ class TestVerify:
             _verify(environment, _second_agent(environment))
 
         assert refused.value.code == "held_back_empty"
+
+
+def test_a_held_back_trial_failed_only_by_a_check_its_proof_never_verified_is_not_counted_failed(
+    environment,
+):
+    from simulate.selectors.held_back import verify_result
+    from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY
+
+    run = _verify(environment, _second_agent(environment))
+    executions = list(_executions(run).order_by("trial_index"))
+    key = executions[0].source_scenario.scenario_key
+    _receipt(executions[0].call_execution, key, {"refunded": True})
+    unverified = executions[1].call_execution
+    _receipt(unverified, key, {"refunded": False})
+    unverified.call_metadata = {
+        **unverified.call_metadata,
+        UNVERIFIED_KEY: ["refunded"],
+    }
+    unverified.save(update_fields=["call_metadata"])
+
+    result = verify_result(run)
+
+    assert (result["passed"], result["failed"], result["total"]) == (1, 0, 2)
 
 
 class TestVerifyApi:
@@ -1011,7 +1045,10 @@ class TestWhatACodingAgentReads:
             "code": "authoring_runtime_validation_failed",
             "message": RUNTIME_VALIDATION_FAILED,
         }
-        assert person.json()["status"]["failure"] == failure
+        assert person.json()["status"]["failure"] == {
+            **failure,
+            "person_message": RUNTIME_VALIDATION_FAILED,
+        }
         assert (
             coder[job_path].json()["status"]["state"] == HostedHarnessJob.State.FAILED
         )
@@ -1134,11 +1171,25 @@ class TestWhatACodingAgentReads:
         assert reasons == (
             {f"{_cause_read(read)} ProcessRuntimeError: {detail}"} if read else {raw}
         )
+        job = _as(api_client, keys.user, "get", f"/simulate/api/harness-jobs/{run.id}/")
+        assert job.status_code == 200, job.content
+        assert reasons == {job.json()["status"]["failure"]["person_message"]}
         run.refresh_from_db()
         assert run.failure["message"] == raw
 
-    def test_a_person_s_calls_read_a_run_s_start_timeout_in_plain_words(
-        self, api_client, environment, keys
+    @pytest.mark.parametrize(
+        "code,expected",
+        [
+            ("depends_on_timeout", START_TIMEOUT_LINE),
+            (
+                "sandbox_launch_failed",
+                "Stopped — an issue occurred while running this. Run it again; "
+                "it doesn't count against the agent.",
+            ),
+        ],
+    )
+    def test_a_person_reads_the_same_infrastructure_failure_on_the_job_and_calls(
+        self, api_client, environment, keys, code, expected
     ):
         created = _as(
             api_client,
@@ -1157,7 +1208,7 @@ class TestWhatACodingAgentReads:
         run.failure = {
             "domain": "infrastructure",
             "stage": "running",
-            "code": "depends_on_timeout",
+            "code": code,
             "message": raw,
         }
         run.save(update_fields=["state", "failure", "updated_at"])
@@ -1169,7 +1220,10 @@ class TestWhatACodingAgentReads:
                 test_execution_id=created.json()["test_execution_id"]
             ).values_list("ended_reason", flat=True)
         )
-        assert reasons == {START_TIMEOUT_LINE}
+        assert reasons == {expected}
+        job = _as(api_client, keys.user, "get", f"/simulate/api/harness-jobs/{run.id}/")
+        assert job.status_code == 200, job.content
+        assert reasons == {job.json()["status"]["failure"]["person_message"]}
         run.refresh_from_db()
         assert run.failure["message"] == raw
 
@@ -1228,6 +1282,69 @@ class TestWhatACodingAgentReads:
 
         environment.refresh_from_db()
         assert held_back(environment) is None
+
+
+def test_a_coding_agent_starting_a_run_reads_no_readiness_selection(
+    api_client, environment, keys
+):
+    chosen = ensure_held_back(environment)
+    hidden = chosen.scenario_keys[0]
+    shown = [key for key in _suite_keys(environment) if key not in chosen.scenario_keys]
+
+    created = _as(
+        api_client,
+        keys.coder,
+        "post",
+        f"{BASE}/{environment.id}/run/",
+        {"scenario_ids": shown, "trials": 1},
+        HTTP_IDEMPOTENCY_KEY="coder-selection",
+    )
+
+    assert created.status_code == 202, created.content
+    assert created.json()["selection"] is None
+    assert hidden not in created.content.decode()
+
+
+def test_a_coding_agent_s_verify_refused_by_readiness_names_no_case(
+    api_client, environment, keys, monkeypatch
+):
+    from simulate.services import harness_readiness
+
+    chosen = ensure_held_back(environment)
+    candidate = _second_agent(environment)
+    real = harness_readiness.select_for_run
+
+    def every_case_held(pairing, *, keys, trials, **options):
+        # Readiness holding back every case the verify sends (a Blocked start row, or
+        # a production-only tool every held-back case uses); the 409 is the PR's own.
+        plan = real(pairing, keys=keys, trials=trials, **options)
+        view = {
+            **plan.view,
+            "running": 0,
+            "held_back": {
+                "count": len(keys),
+                "keys": list(keys),
+                "truncated": False,
+                "by": {"start": len(keys)},
+            },
+            "reasons": {"start": "The agent did not start in the test sandbox"},
+        }
+        return dataclasses.replace(plan, view=view, held=frozenset(keys))
+
+    monkeypatch.setattr(harness_readiness, "select_for_run", every_case_held)
+
+    refused = _as(
+        api_client,
+        keys.coder,
+        "post",
+        f"{BASE}/{environment.id}/verify/",
+        {"agent_version_id": str(candidate.id), "trials": 1},
+    )
+
+    assert refused.status_code == 409, refused.content
+    assert refused.json()["error"] == "all_cases_blocked"
+    assert "selection" not in refused.json()
+    assert not any(key in refused.content.decode() for key in chosen.scenario_keys)
 
 
 def test_a_coding_agent_reads_each_cause_in_plain_words_beside_its_code():

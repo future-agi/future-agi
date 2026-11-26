@@ -43,14 +43,44 @@ from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
 logger = structlog.get_logger(__name__)
 
 
+# A summary job's longest life. Its own limit is 1800 s, but the Fix My Agent
+# job also makes the summary inline, bounded only by that job's limit
+# (OPTIMISER_RUN_TIME_LIMIT_SECONDS, 5400 s), with room for a wait in the
+# queue. A summary still running this long after its stamp lost its job.
+SUMMARY_JOB_GIVE_UP = timedelta(hours=2)
+
+
+def summary_job_alive(now: datetime | None = None) -> Q:
+    """A summary running with a job still alive: stamped within the give-up."""
+    cutoff = (now or timezone.now()) - SUMMARY_JOB_GIVE_UP
+    return Q(
+        eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
+        eval_explanation_summary_last_updated__gte=cutoff,
+    )
+
+
+def summary_status_as_read(execution: TestExecution) -> str:
+    """The summary status to show: failed for a summary left running by a
+    job that is gone (killed with its worker; no stamp, or one older than the
+    give-up), else the stored status. Reading changes nothing stored."""
+    status = execution.eval_explanation_summary_status
+    if status != EvalExplanationSummaryStatus.RUNNING:
+        return status
+    stamp = execution.eval_explanation_summary_last_updated
+    if stamp is None or stamp < timezone.now() - SUMMARY_JOB_GIVE_UP:
+        return EvalExplanationSummaryStatus.FAILED
+    return status
+
+
 def summary_status_once_graded():
     """The summary status a run gets when its grading ends: pending (nobody
     has asked since the verdicts last changed), except a summary a person is
     waiting for, which stays running so the page keeps polling. That job
-    sees for itself whether the grading changed while it ran."""
+    sees for itself whether the grading changed while it ran. A summary left
+    running by a job that is gone is pending: nobody is making it."""
     running = EvalExplanationSummaryStatus.RUNNING
     return Case(
-        When(eval_explanation_summary_status=running, then=Value(running)),
+        When(summary_job_alive(), then=Value(running)),
         default=Value(EvalExplanationSummaryStatus.PENDING),
         output_field=CharField(),
     )

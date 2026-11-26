@@ -38,6 +38,7 @@ from simulate.selectors.call_detail import (
     trial_state,
 )
 from simulate.selectors.call_workers import call_workers, scenario_trial_routes
+from simulate.selectors.held_back import coding_agent_key
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.call_detail_v3 import (
@@ -54,11 +55,17 @@ from simulate.serializers.call_workers_v3 import (
     TrialRoutesQuerySerializer,
     TrialRoutesResponseSerializer,
 )
+from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
+from simulate.serializers.harness_job import (
+    HarnessRunReadinessSelectionSerializer,
+    RunStopSerializer,
+)
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
+from simulate.services.harness_cancel import stop_summary
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_versioning.versions import actors_enabled
@@ -311,10 +318,32 @@ class RunExecutionSerializer(serializers.Serializer):
     # ``agent_version`` is the version's name; this is the run's agent pin.
     pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
     agent_differs = serializers.BooleanField(required=False, default=False)
+    capability_snapshot = HarnessCapabilityReportSerializer(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "The run readiness of the run's versions when it was created; null for a"
+            " coding agent's key."
+        ),
+    )
+    readiness_selection = HarnessRunReadinessSelectionSerializer(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "The selected cases readiness held back from this run, and why; null for"
+            " a coding agent's key."
+        ),
+    )
     build_notice = serializers.CharField(
         allow_null=True,
         required=False,
         help_text="Said when the run replayed a build without its environment's actors.",
+    )
+    stop = RunStopSerializer(
+        allow_null=True,
+        required=False,
+        help_text="The run's Stop and how far it got confirmed; null for a run never"
+        " stopped.",
     )
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
@@ -328,6 +357,10 @@ class RunExecutionSerializer(serializers.Serializer):
     summary = RunSummarySerializer()
     # Set on a fix's check run, which is not one of the user's runs; null otherwise.
     fix_run = RunFixRunSerializer(allow_null=True, required=False)
+    # Names of the must-pass cases this run failed; a failure here blocks the release.
+    must_pass_failed = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -761,11 +794,19 @@ def _execution_for_request(request, execution_id) -> TestExecution:
     )
 
 
+def must_pass_failures(execution: TestExecution) -> list[str]:
+    from simulate.services.harness_scenario_lifecycle import must_pass_failures as read
+
+    return read(execution)
+
+
 def _execution_payload(
-    execution: TestExecution, summary: dict[str, Any]
+    execution: TestExecution, summary: dict[str, Any], *, coding_agent: bool = False
 ) -> dict[str, Any]:
     version = execution.agent_version or execution.run_test.agent_version
-    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
+    pinned = (
+        run_version_labels([execution.id], readiness=True).get(str(execution.id)) or {}
+    )
     ordinal = (
         user_executions()
         .filter(run_test=execution.run_test, created_at__lte=execution.created_at)
@@ -791,6 +832,14 @@ def _execution_payload(
         "suite_version": pinned.get("suite_version"),
         "pinned_agent_version": pinned.get("agent_version"),
         "agent_differs": bool(pinned.get("agent_differs")),
+        # Readiness names the suite's cases, held-back ones included: a coding agent
+        # reads neither.
+        "capability_snapshot": (
+            None if coding_agent else pinned.get("capability_snapshot")
+        ),
+        "readiness_selection": (
+            None if coding_agent else pinned.get("readiness_selection")
+        ),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition
@@ -804,6 +853,8 @@ def _execution_payload(
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
+        "must_pass_failed": must_pass_failures(execution),
+        "stop": stop_summary(job) if job is not None else None,
         # Said when the run replayed a build without its environment's actors.
         "build_notice": (
             ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
@@ -937,7 +988,11 @@ class RunCallsV3View(APIView):
                 f":{calls_page['execution_summary']['total']}"
             )
         response = {
-            "execution": _execution_payload(execution, calls_page["execution_summary"]),
+            "execution": _execution_payload(
+                execution,
+                calls_page["execution_summary"],
+                coding_agent=coding_agent_key(request) is not None,
+            ),
             "summary": {
                 **calls_page["summary"],
                 # Counted over the pass the rest of the summary reads, so the

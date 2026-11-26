@@ -46,17 +46,77 @@ func ResponsesOmittedParams(req *ChatCompletionRequest) []string {
 	return params
 }
 
-// ResponsesRouteNotes is how the route a request arrived on reports what the
-// Responses route omits from it: <name>_unsupported for a caller's own chat
-// request, and the bare names on translated routes, beside the translator's
-// own notes.
-func ResponsesRouteNotes(req *ChatCompletionRequest) []string {
-	params := ResponsesOmittedParams(req)
-	if req == nil || req.TranslatedFrom != "" {
-		return params
+// ChatRoute identifies a translation whose omitted parameters must also be
+// reported on cache hits. The empty route carries no provider-specific notes.
+type ChatRoute string
+
+const (
+	RouteResponses ChatRoute = "responses"
+	RouteGemini    ChatRoute = "gemini"
+)
+
+// HasNonDirectCallerPolicy distinguishes an absent or direct-only setting
+// from a caller restriction a direct-only provider cannot enforce.
+func (t Tool) HasNonDirectCallerPolicy() bool {
+	return t.AllowedCallers != nil && (len(t.AllowedCallers) != 1 || t.AllowedCallers[0] != "direct")
+}
+
+// GeminiOmittedParams names unenforceable restrictions, never caller values.
+func GeminiOmittedParams(req *ChatCompletionRequest) []string {
+	params, _ := GeminiToolPolicyWarning(req)
+	return params
+}
+
+// GeminiToolPolicyWarning returns only setting keys and affected function names,
+// never the declarations, schema, or caller policy values.
+func GeminiToolPolicyWarning(req *ChatCompletionRequest) (params, names []string) {
+	if req == nil {
+		return nil, nil
 	}
-	for i, param := range params {
-		params[i] = param + "_unsupported"
+	tools := req.Tools
+	allowed, err := ParseAllowedToolsChoice(req.ToolChoice)
+	if err != nil {
+		return nil, nil
+	}
+	if allowed != nil {
+		tools, err = allowed.Filter(tools)
+		if err != nil {
+			return nil, nil
+		}
+	}
+	var parallel, callers bool
+	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(tools) > 0 {
+		var choice string
+		_ = json.Unmarshal(req.ToolChoice, &choice)
+		// NONE already permits zero calls, satisfying the restriction.
+		if choice != "none" {
+			parallel = true
+			params = append(params, "parallel_tool_calls")
+		}
+	}
+	for _, tool := range tools {
+		if !tool.IsFunction() {
+			continue
+		}
+		restricted := tool.HasNonDirectCallerPolicy()
+		if parallel || restricted {
+			names = append(names, tool.Function.Name)
+		}
+		callers = callers || restricted
+	}
+	if callers {
+		params = append(params, "allowed_callers")
+	}
+	return params, names
+}
+
+// RouteNotes formats fresh provider parameter names for the ingress dialect:
+// chat callers get <name>_unsupported; translated callers get the bare name.
+func RouteNotes(req *ChatCompletionRequest, params []string) []string {
+	if req != nil && req.TranslatedFrom == "" {
+		for i := range params {
+			params[i] += "_unsupported"
+		}
 	}
 	return params
 }
@@ -79,12 +139,12 @@ func responsesStopSet(raw json.RawMessage) bool {
 	return len(raw) > 0 && string(raw) != "null"
 }
 
-// SetResponsesRouteDrops records route as the serving attempt's Responses-route
+// SetRouteDrops records route as the serving attempt's provider-route
 // notes and rebuilds the request's translation_drops metadata from the
 // translator's notes followed by these, deduplicated and without empty names.
 // It returns the joined notes, or "" when there are none. Notes are rebuilt
 // from these trusted lists only, never from headers or caller metadata.
-func (rc *RequestContext) SetResponsesRouteDrops(route []string) string {
+func (rc *RequestContext) SetRouteDrops(route []string) string {
 	var drops []string
 	seen := make(map[string]bool)
 	for _, group := range [][]string{rc.TranslationDrops, route} {

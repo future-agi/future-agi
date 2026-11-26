@@ -28,6 +28,7 @@ from simulate.models import CallExecution, TestExecution
 from simulate.models.run_test import RunTest
 from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.selectors.runs import user_executions
+from simulate.services.scoring_status import summary_status_as_read
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
@@ -48,9 +49,11 @@ def _summary_fields(execution) -> dict:
 
     The summary is made only when a person presses Refresh in the app.
     "pending" means nobody has asked since the run's verdicts last changed:
-    any stored summary is from before then, and none is on its way.
+    any stored summary is from before then, and none is on its way. A summary
+    left running by a job that is gone reads "failed", so a script stops
+    waiting for it.
     """
-    status = execution.eval_explanation_summary_status
+    status = summary_status_as_read(execution)
     return {
         "eval_explanation_summary": execution.eval_explanation_summary,
         "eval_explanation_summary_status": status,

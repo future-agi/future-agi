@@ -31,7 +31,8 @@ def _with_run_summary(run: AgentOptimiserRun) -> dict:
     The analysis reads the summary. Whether it is current is read here, when
     the job starts, never from what was queued: a current one is used as it
     is, and a missing or out-of-date one is made first, inside the job the
-    person started, never inside a web request.
+    person started, never inside a web request. When making it fails, the
+    analysis gets no summary rather than the old one.
     """
     input_data = dict(run.input_data or {})
     test_execution_id = input_data.get("test_execution_id")
@@ -50,11 +51,27 @@ def _with_run_summary(run: AgentOptimiserRun) -> dict:
         test_execution_id=str(test_execution_id),
     )
     run_eval_summary_task(str(test_execution_id))
-    input_data["cluster_dict_by_eval"] = (
+    made = (
         TestExecution.objects.filter(id=test_execution_id)
-        .values_list("eval_explanation_summary", flat=True)
+        .values_list("eval_explanation_summary", "eval_explanation_summary_status")
         .first()
     )
+    summary, summary_status = made if made is not None else (None, None)
+    if summary_status not in (
+        EvalExplanationSummaryStatus.COMPLETED,
+        # Made by this job; a verdict landed while it ran. Still the newest.
+        EvalExplanationSummaryStatus.PENDING,
+    ):
+        # The remake failed: what is stored is the old summary, which is not
+        # analysed as if it were current. The analysis runs without one.
+        logger.warning(
+            "optimiser_run_summary_not_made",
+            run_id=str(run.id),
+            test_execution_id=str(test_execution_id),
+            summary_status=summary_status,
+        )
+        summary = None
+    input_data["cluster_dict_by_eval"] = summary
     run.input_data = input_data
     run.save(update_fields=["input_data", "updated_at"])
     return input_data

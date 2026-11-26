@@ -2,7 +2,22 @@ import { useEffect, useRef, useCallback } from "react";
 import { useAuthContext } from "src/auth/hooks";
 import { HOST_API } from "src/config-global";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import {
+  AUTH_REJECTED_CLOSE_CODE,
+  MAX_AUTH_FAILURES,
+  getCurrentAccessToken,
+  refreshRejectedSocketToken,
+} from "src/components/websocket/socket-auth";
 import useFalconStore from "../store/useFalconStore";
+
+const RECONNECT_BASE_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 30000;
+
+// Exponential backoff, capped. Token rejections back off on their own count:
+// the server accepts the handshake before it rejects the token, so the open
+// handler resets the ordinary retry count.
+const backoffDelay = (attempt) =>
+  Math.min(RECONNECT_BASE_DELAY * 2 ** attempt, MAX_RECONNECT_DELAY);
 
 /**
  * WebSocket hook for Falcon AI streaming chat.
@@ -19,6 +34,13 @@ export const useFalconSocket = () => {
   const timerRef = useRef(null);
   const pingRef = useRef(null);
   const mountedRef = useRef(true);
+  const connectRef = useRef(null);
+  const contextTokenRef = useRef(null);
+  const authFailuresRef = useRef(0);
+  // Each socket gets an id; a token refresh only acts for the socket whose
+  // rejection started it, and only while no newer socket has been opened.
+  const socketIdRef = useRef(0);
+  const refreshingRef = useRef(null);
 
   const {
     appendTextDelta,
@@ -29,9 +51,63 @@ export const useFalconSocket = () => {
     setActiveSkill,
   } = useFalconStore.getState();
 
+  const scheduleReconnect = useCallback((delay) => {
+    if (!mountedRef.current) return;
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      connectRef.current?.();
+    }, delay);
+  }, []);
+
+  // After the server rejects a token, make sure the next attempt carries a
+  // current one before reconnecting.
+  const refreshTokenThenReconnect = useCallback(
+    async (rejectedToken, socketId) => {
+      if (refreshingRef.current === socketId) return;
+
+      refreshingRef.current = socketId;
+      let canRetry;
+      try {
+        canRetry = await refreshRejectedSocketToken(
+          rejectedToken,
+          contextTokenRef.current,
+        );
+      } finally {
+        if (refreshingRef.current === socketId) refreshingRef.current = null;
+      }
+
+      // A newer socket was opened while refreshing (for example after a
+      // workspace switch); its own close decides whether to reconnect.
+      if (socketIdRef.current !== socketId) return;
+
+      if (!canRetry) {
+        // Nothing to refresh with; a new sign-in brings a new token.
+        authFailuresRef.current = MAX_AUTH_FAILURES;
+        return;
+      }
+
+      // Unmounted, or the hook already reconnected while refreshing.
+      if (!mountedRef.current || socketRef.current) return;
+      scheduleReconnect(backoffDelay(authFailuresRef.current - 1));
+    },
+    [scheduleReconnect],
+  );
+
   const connect = useCallback(() => {
-    const token = user?.accessToken;
-    if (!token) return;
+    // The context token gates the connection; the stored token is the one the
+    // REST client keeps current, so it is the one the socket sends.
+    const contextToken = user?.accessToken;
+    if (!contextToken) return;
+    if (contextTokenRef.current !== contextToken) {
+      // A new sign-in gets a fresh budget of token rejections.
+      authFailuresRef.current = 0;
+      contextTokenRef.current = contextToken;
+    }
+    const token = getCurrentAccessToken(contextToken);
+
+    // The server keeps rejecting the token; only a new token reconnects.
+    if (authFailuresRef.current >= MAX_AUTH_FAILURES) return;
 
     // Don't open a second socket if one is already connecting/open
     if (
@@ -52,6 +128,8 @@ export const useFalconSocket = () => {
     const url = `${protocol}://${wsHost}/ws/falcon-ai/?${wsParams.toString()}`;
 
     const ws = new WebSocket(url);
+    socketIdRef.current += 1;
+    const socketId = socketIdRef.current;
     socketRef.current = ws;
 
     ws.onopen = () => {
@@ -78,6 +156,9 @@ export const useFalconSocket = () => {
     };
 
     ws.onmessage = (event) => {
+      // Any server frame (including the ping's pong) means the token was
+      // accepted; "open" alone does not, as the server accepts first.
+      authFailuresRef.current = 0;
       try {
         const parsed = JSON.parse(event.data);
         const { type, data } = parsed;
@@ -268,15 +349,23 @@ export const useFalconSocket = () => {
         return;
       }
 
-      if (mountedRef.current) {
-        const delay = Math.min(1000 * 2 ** retriesRef.current, 30000);
-        retriesRef.current += 1;
-        timerRef.current = setTimeout(connect, delay);
+      if (!mountedRef.current) return;
+
+      if (event.code === AUTH_REJECTED_CLOSE_CODE) {
+        authFailuresRef.current += 1;
+        if (authFailuresRef.current >= MAX_AUTH_FAILURES) return;
+        refreshTokenThenReconnect(token, socketId);
+        return;
       }
+
+      scheduleReconnect(backoffDelay(retriesRef.current));
+      retriesRef.current += 1;
     };
   }, [
     user?.accessToken,
     currentWorkspaceId,
+    scheduleReconnect,
+    refreshTokenThenReconnect,
     appendTextDelta,
     addToolCall,
     updateToolCall,
@@ -286,6 +375,7 @@ export const useFalconSocket = () => {
   ]);
 
   useEffect(() => {
+    connectRef.current = connect;
     mountedRef.current = true;
     connect();
     return () => {
