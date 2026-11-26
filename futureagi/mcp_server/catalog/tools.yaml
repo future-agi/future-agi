@@ -590,7 +590,7 @@ tools:
     access: read
   - name: validate_environment_drafts
     group: simulation
-    description: Build candidate versions from the environment's reviewed drafts and validate them against the agent before they are saved. Pass expected_revisions (per piece, the revision from list_environment_drafts) and the review_digest from review_environment_drafts. It runs in a build sandbox and makes model calls; see the Usage page in the app for what it counts toward. Poll list_environment_drafts until validation is no longer validating, then save the candidates with save_environment_drafts.
+    description: Build candidate versions from the environment's reviewed drafts and validate them against the agent before they are saved. Pass expected_revisions (per piece, the revision from list_environment_drafts) and the review_digest from review_environment_drafts. It runs in a build sandbox and makes model calls; see the Usage page in the app for what it counts toward. Poll list_environment_drafts while validation is validating. On ready or check_unavailable, save the candidates with save_environment_drafts; on retry, outdated or superseded, validate again; failed means the agent failed the check; unavailable means this environment cannot validate, so save the drafts themselves.
     operation: {method: POST, path: "/simulate/api/harness-environments/{id}/drafts/validate/"}
     access: write
     open_world: true
