@@ -44,6 +44,10 @@ interface CandidateRow {
   id: string;
   attempt: number;
   tried: string;
+  // What its patch changes, from the server, and the engine's note on its
+  // last round; empty when the server has none.
+  changes: string;
+  notes: string;
   // The candidate's own check run, for its Open run.
   run: AgentFixCheckRunApi | null;
   target: CandidateTarget | null;
