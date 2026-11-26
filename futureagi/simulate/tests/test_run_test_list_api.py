@@ -1870,9 +1870,9 @@ class TestRunTestExecutionsView:
         )
         assert row["calls"] == 5
         assert row["total_calls"] == 5
-        # Receipts by status, as dev counted them: the no-score call's passed receipt is a pass, and
+        # Receipts by status: the no-score call's passed receipt is counted as no score, never a pass, and
         # outcome_failed is failed plus errored.
-        assert row["outcome_passed"] == 2
+        assert row["outcome_passed"] == 1
         assert row["outcome_failed"] == 2
         assert row["outcome_errored"] == 1
         assert row["outcome_skipped"] == 1
