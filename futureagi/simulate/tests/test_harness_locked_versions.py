@@ -1057,7 +1057,8 @@ class TestReadCost:
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
         _lock(auth_client, environment)
-        url = f"{BASE}/{environment.id}/versions/"
+        # The preview reads the suite; the versions list no longer does.
+        url = f"{BASE}/{environment.id}/versions/lock-preview/"
 
         def member_reads():
             with CaptureQueriesContext(connection) as queries:
