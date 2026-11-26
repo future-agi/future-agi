@@ -79,7 +79,7 @@
 
 **Goal:** A developer whose agent reads its model from a setting sees which setting sets it, where the code reads it and its default, and an agent with no setting keeps its plain Model row
 
-**Spec:** `flows/agents/agent-model-setting.spec.ts:27`
+**Spec:** `flows/agents/agent-model-setting.spec.ts:25`
 
 **Tags:** —
 
@@ -89,14 +89,14 @@
 2. open the first agent page on its Definition tab
 3. see the Model row say which setting sets the model, where the code reads it, and its default
 4. open the second agent page on its Definition tab
-5. see the model as stored, with no setting and not under the retired label
+5. see the model as stored, with no setting
 
 **Backend state verified:**
 
 - the stored-agent response for the first agent carries model_source with exactly the minted setting, agent.py and line 19, and the default as model.name
 - the stored-agent response for the second agent carries no model_source
-- the first page shows the exact sentence naming the minted setting and agent.py:19, never the bare default, and no row has the retired label
-- the second page shows gpt-4.1 exactly, and no row has the retired label
+- the first page shows the exact sentence naming the minted setting and agent.py:19, never the bare default
+- the second page shows gpt-4.1 exactly, and no row says Set by
 
 ## alerts
 

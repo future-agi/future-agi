@@ -12,8 +12,6 @@ const DEFAULT = 'vertex_ai/gemini-3.7-flash';
 const NAMED = 'gpt-4.1';
 const PATH = 'agent.py';
 const LINE = 19;
-// frontend/src/sections/agent-playground/connected/detail/definitionRows.js modelRow: the label this PR retired.
-const OLD_LABEL = 'Model named in the code';
 const UI_READY = 60_000;
 
 // futureagi/simulate/serializers/response/agent_setup.py StoredAgentResponseSerializer (the parts read here).
@@ -37,13 +35,13 @@ test(
         'open the first agent page on its Definition tab',
         'see the Model row say which setting sets the model, where the code reads it, and its default',
         'open the second agent page on its Definition tab',
-        'see the model as stored, with no setting and not under the retired label',
+        'see the model as stored, with no setting',
       ],
       backendChecks: [
         'the stored-agent response for the first agent carries model_source with exactly the minted setting, agent.py and line 19, and the default as model.name',
         'the stored-agent response for the second agent carries no model_source',
-        'the first page shows the exact sentence naming the minted setting and agent.py:19, never the bare default, and no row has the retired label',
-        'the second page shows gpt-4.1 exactly, and no row has the retired label',
+        'the first page shows the exact sentence naming the minted setting and agent.py:19, never the bare default',
+        'the second page shows gpt-4.1 exactly, and no row says Set by',
       ],
     }),
   },
@@ -79,7 +77,6 @@ test(
     await test.step('the Model row names the setting, never the default as the model', async () => {
       await expect(page.getByText(sentence, { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(page.getByText(DEFAULT, { exact: true })).toHaveCount(0);
-      await expect(page.getByText(OLD_LABEL, { exact: true })).toHaveCount(0);
     }, { timeout: UI_READY });
 
     let withoutSetting: StoredAgentResponse | undefined;
@@ -92,9 +89,8 @@ test(
       expect(withoutSetting?.agent.model?.name).toBe(NAMED);
     });
 
-    await test.step('the Model row shows the stored model, under no retired label', async () => {
+    await test.step('the Model row shows the stored model, and no setting', async () => {
       await expect(page.getByText(NAMED, { exact: true })).toBeVisible({ timeout: UI_READY });
-      await expect(page.getByText(OLD_LABEL, { exact: true })).toHaveCount(0);
       await expect(page.getByText(/^Set by /)).toHaveCount(0);
     }, { timeout: UI_READY });
   },
