@@ -1011,6 +1011,11 @@ def _catalogue_index(catalogue: Any) -> dict[str, dict[str, Any]]:
     return index
 
 
+def environment_sub_goals(environment: HostedHarnessJob) -> dict[str, dict[str, Any]]:
+    """What each sub-goal of an environment checks, by name."""
+    return _catalogue_index(stage_output(environment, "sub_goals"))
+
+
 def sub_goal_catalogue(
     run_test_id, *, test_execution_id=None
 ) -> dict[str, dict[str, Any]]:
@@ -1026,7 +1031,7 @@ def sub_goal_catalogue(
     for environment in HostedHarnessJob.no_workspace_objects.filter(
         id__in=list(environment_ids)[:1]
     ):
-        return _catalogue_index(stage_output(environment, "sub_goals"))
+        return environment_sub_goals(environment)
     return {}
 
 

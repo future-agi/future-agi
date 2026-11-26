@@ -19809,6 +19809,46 @@ export const AgentFixRunDetailApiEvalGrading = {
   incomplete: "incomplete",
 } as const;
 
+export type AgentFixRunDetailApiScenarioNames = { [key: string]: string };
+
+export type AgentFixCandidateDetailApiOutcome =
+  (typeof AgentFixCandidateDetailApiOutcome)[keyof typeof AgentFixCandidateDetailApiOutcome];
+
+export const AgentFixCandidateDetailApiOutcome = {
+  pending: "pending",
+  rejected: "rejected",
+  finalist: "finalist",
+  winner: "winner",
+} as const;
+
+export interface AgentFixCandidateWordingApi {
+  headline: string;
+  must_pass: string;
+  /** @minimum 0 */
+  must_pass_broken: number;
+  changes: string | null;
+  caveats: string[];
+}
+
+export interface AgentFixCandidateDetailApi {
+  readonly id?: string;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  attempt: number;
+  agent_version_id: string;
+  version_number: number;
+  summary?: string;
+  outcome?: AgentFixCandidateDetailApiOutcome;
+  verdict: AgentFixVerdictApi;
+  readonly check_runs?: readonly AgentFixCheckRunApi[];
+  override?: AgentFixOverrideApi;
+  pull_request_url: string;
+  readonly created_at?: string;
+  wording?: AgentFixCandidateWordingApi;
+}
+
 export interface AgentFixEvalWarningApi {
   /** @minLength 1 */
   name: string;
@@ -19846,12 +19886,14 @@ export interface AgentFixRunDetailApi {
   readonly from_issue?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
-  candidates: AgentFixCandidateApi[];
+  candidates: AgentFixCandidateDetailApi[];
   started_at?: string | null;
   finished_at?: string | null;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
   readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
+  readonly flaky_protected_text?: readonly string[];
+  readonly scenario_names?: AgentFixRunDetailApiScenarioNames;
 }
 
 export interface AgentFixShipApi {
