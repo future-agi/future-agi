@@ -36,19 +36,19 @@ config:
             return {"score": 0.0, "reason": "Empty hypothesis"}
         def _ng(t, n):
             return [tuple(t[i:i+n]) for i in range(len(t)-n+1)]
+        # Average only orders the hypothesis can form, up to BLEU-4.
+        max_n = min(4, len(ht))
         lp = []
-        for n in range(1, 5):
+        for n in range(1, max_n + 1):
             rn = Counter(_ng(rt, n))
             hn = Counter(_ng(ht, n))
             tot = sum(hn.values())
-            if tot == 0:
-                p = 1e-9
-            else:
-                cl = sum(min(hn[ng], rn.get(ng, 0)) for ng in hn)
-                p = (cl + 1) / (tot + 1)
+            cl = sum(min(hn[ng], rn.get(ng, 0)) for ng in hn)
+            # Keep add-1 smoothing for matches, but only epsilon mass for no overlap.
+            p = (cl + 1) / (tot + 1) if cl else 0.1 / tot
             lp.append(math.log(p))
         bp = 1.0 if len(ht) >= len(rt) else math.exp(1 - len(rt)/max(len(ht), 1))
-        bleu = bp * math.exp(sum(0.25*l for l in lp))
+        bleu = bp * math.exp(sum(lp) / max_n)
         kws = {"def","class","return","if","else","elif","for","while","try","except",
                "finally","with","import","from","as","in","not","and","or","is","None",
                "True","False","lambda","yield","async","await","function","const","let",

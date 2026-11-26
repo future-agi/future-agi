@@ -544,7 +544,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.processTextInspection(ctx, rc, "genai.generate", func(ctx context.Context, rc *models.RequestContext) error {
-		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
+		noteRouteDrops(w, rc, provider, canonicalReq)
 		var callErr error
 		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
@@ -643,7 +643,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var errCh <-chan error
 
 	if err := h.processTextInspection(ctx, rc, "genai.generate", func(ctx context.Context, rc *models.RequestContext) error {
-		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
+		noteRouteDrops(w, rc, provider, canonicalReq)
 		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
 		if rawChunkCh != nil {
 			recordServedBy(rc, provider)
