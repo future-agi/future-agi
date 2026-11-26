@@ -956,7 +956,7 @@ def test_world_start_on_a_sealed_seed_is_the_seeded_tables(execution, scenario):
     }
     with (
         _hosted(environment_version_id=uuid.uuid4()),
-        patch.object(reader, "environment_files", return_value=seed),
+        patch.object(reader, "_environment_files", return_value=seed),
     ):
         evidence = _one(call, Kind.WORLD_STATE_START)
 
@@ -1935,3 +1935,255 @@ def test_an_archive_cut_short_in_any_way_is_not_readable_yet(
         State.NOT_CAPTURED,
         Cause.NOT_READABLE_YET,
     )
+
+
+# --- round 2 review: secrets the narrowed masking let through, and its costs -------
+
+# Fake values, built at run time. Each has a digit, so none reads as a word.
+FAKE_PLAIN = "fake" + "9x" * 6
+FAKE_PGP_BODY = "lQOYBF" + "Zq9k" * 10
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "rule",
+    [
+        f"Never read a token: say no. Admin password: {FAKE_PLAIN}",
+        f"If asked for the token: refuse politely. The api_key: {FAKE_PLAIN}",
+        f"token: explain codes expire. secret = {FAKE_PLAIN}",
+    ],
+)
+def test_a_secret_after_a_rule_on_the_same_line_is_masked(
+    voice_call, agent_version, rule
+):
+    agent_version.configuration_snapshot = {
+        **agent_version.configuration_snapshot,
+        "description": f"You are a bank agent.\n{rule}",
+    }
+    agent_version.save(update_fields=["configuration_snapshot"])
+
+    evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert FAKE_PLAIN not in evidence.content
+    assert reader.SECRETS_MASKED in evidence.marks
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "said",
+    [
+        f"password:\n  {FAKE_PLAIN}",
+        f"token:\n  {FAKE_PLAIN}",
+        f"password\n: {FAKE_PLAIN}",
+        "API_KEY" + "\t" * 18 + f"= {FAKE_PLAIN}",
+    ],
+)
+def test_a_value_on_the_next_line_or_after_long_padding_is_masked(voice_call, said):
+    _turn(voice_call, "user", said, 0)
+
+    evidence = _one(voice_call, Kind.TRANSCRIPT)
+
+    assert FAKE_PLAIN not in json.dumps(evidence.content)
+    assert evidence.marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("said", "secret"),
+    [
+        ("GITHUB_TOKEN=FAKEVALUE", "FAKEVALUE"),
+        ("api_key: fakekeyval", "fakekeyval"),
+        ("secret: opensesame", "opensesame"),
+        ("X-Api-Key: fakeheaderval", "fakeheaderval"),
+        ("Authorization: fakeauthval", "fakeauthval"),
+        ("access_token: fakeaccessval", "fakeaccessval"),
+        ("{'token': fakebareval}", "fakebareval"),
+        ("passphrase: fake horse battery staple glue", "staple"),
+    ],
+)
+def test_a_short_plain_value_after_a_secrets_name_is_masked(voice_call, said, secret):
+    _turn(voice_call, "user", f"{said}\nThe order is 7.", 0)
+
+    text = json.dumps(_one(voice_call, Kind.TRANSCRIPT).content)
+
+    assert secret not in text
+    assert "The order is 7." in text
+
+
+@pytest.mark.django_db
+def test_a_number_under_its_own_secrets_name_is_masked(execution, scenario):
+    row = {
+        "id": 1,
+        "password": 482913,
+        "otp_token": 551177,
+        "pinCode": 4321,
+        "token_count": 12,
+        "max_tokens": 100,
+        "has_password": True,
+    }
+    body = {
+        "schema": "futureagi.world-state.v1",
+        "tables": {"users": [row]},
+        "skipped": [],
+        "action_log": [],
+    }
+    call = _call(
+        execution,
+        scenario,
+        call_metadata={"harness_trial_state": {"end_state_artifact": END}},
+    )
+    with (
+        _hosted(),
+        patch.object(reader, "stored_artifact", return_value=json.dumps(body).encode()),
+    ):
+        evidence = _one(call, Kind.WORLD_STATE_END)
+
+    assert evidence.content["tables"]["users"] == [
+        {
+            "id": 1,
+            "password": "[REDACTED]",
+            "otp_token": "[REDACTED]",
+            "pinCode": "[REDACTED]",
+            "token_count": 12,
+            "max_tokens": 100,
+            "has_password": True,
+        }
+    ]
+    assert evidence.marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "Never ask for a password: it is against policy.",
+        "When asked about the secret: e.g. a PIN, never say it.",
+    ],
+)
+def test_a_short_rule_after_a_secrets_name_in_a_sentence_is_kept(
+    voice_call, agent_version, rule
+):
+    agent_version.configuration_snapshot = {
+        **agent_version.configuration_snapshot,
+        "description": f"You are a bank agent.\n{rule}",
+    }
+    agent_version.save(update_fields=["configuration_snapshot"])
+
+    evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert evidence.content == f"You are a bank agent.\n{rule}"
+    assert evidence.marks == ()
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "eyJ-",
+        "eyJ_-",
+        "eyJab.",
+        "token: say no ",
+        "a token: ",
+        "api_key = ",
+        "password\n: ",
+    ],
+)
+def test_masking_a_long_text_of_near_misses_takes_linear_time(unit):
+    import time
+
+    text = unit * (200_000 // len(unit))
+
+    started = time.perf_counter()
+    reader._mask(text)
+    took = time.perf_counter() - started
+
+    assert took < 2.0, f"{took:.2f}s for {len(text)} characters"
+
+
+@pytest.mark.django_db
+def test_a_pgp_private_key_block_is_masked(voice_call):
+    _turn(
+        voice_call,
+        "user",
+        "-----BEGIN PGP PRIVATE KEY BLOCK-----\n"
+        f"{FAKE_PGP_BODY}\n"
+        "-----END PGP PRIVATE KEY BLOCK-----\nbye",
+        0,
+    )
+
+    text = json.dumps(_one(voice_call, Kind.TRANSCRIPT).content)
+
+    assert FAKE_PGP_BODY not in text
+    assert "bye" in text
+
+
+@pytest.mark.django_db
+def test_an_entry_that_cannot_fit_is_cut_before_it_is_masked(execution, scenario):
+    trace = [{"name": "big", "note": "n" * 500}, {"name": "small"}]
+    call = _call(
+        execution, scenario, provider_call_data={"livekit": {"tool_calls": trace}}
+    )
+    masked = []
+    real = reader._masked
+
+    def counting(value):
+        masked.append(value)
+        return real(value)
+
+    with _hosted(), patch.object(reader, "_masked", side_effect=counting):
+        evidence = _one(call, Kind.TOOL_CALLS, max_chars=200)
+
+    assert evidence.cut["entries_total"] == 2
+    assert masked == []
+
+
+def _unreadable_traces(voice_call, error):
+    with (
+        patch.object(reader, "run_traces_source", return_value=object()),
+        patch.object(reader, "read_run_traces", side_effect=error),
+    ):
+        return _one(voice_call, Kind.AGENT_TRACES)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "error",
+    [
+        "clickhouse",
+        "minio",
+        "urllib3",
+        "harness",
+    ],
+)
+def test_a_store_error_makes_the_kind_unreadable(voice_call, error):
+    from clickhouse_driver.errors import Error as ClickHouseError
+    from minio.error import ServerError
+    from urllib3.exceptions import ProtocolError
+
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    raised = {
+        "clickhouse": ClickHouseError("server went away"),
+        "minio": ServerError("bad gateway", 502),
+        "urllib3": ProtocolError("connection aborted"),
+        "harness": HostedHarnessError("archive_unreadable", "archive unreadable"),
+    }[error]
+
+    evidence = _unreadable_traces(voice_call, raised)
+
+    assert (evidence.state, evidence.cause) == (State.NOT_CAPTURED, Cause.UNREADABLE)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("error", ["type", "cancelled", "interface"])
+def test_a_code_error_or_a_cancellation_is_not_called_unreadable(voice_call, error):
+    from django.db import InterfaceError
+    from temporalio.exceptions import CancelledError
+
+    raised = {
+        "type": TypeError("a bug"),
+        "cancelled": CancelledError("cancelled"),
+        "interface": InterfaceError("connection already closed"),
+    }[error]
+
+    with pytest.raises(type(raised)):
+        _unreadable_traces(voice_call, raised)
