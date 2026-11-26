@@ -1,25 +1,41 @@
 // What to do about each reason Run Epoch can't start, by the server's code. The
 // server's message says why; this names the next step and where it is. Pure, so
 // the issue drawer and the run's launch form say the same thing.
+import type {
+  AgentFixLaunchBlockedApi,
+  AgentFixLaunchOptionsApi,
+  AgentFixShipReadinessApi,
+  AgentFixShipReadinessApiPath,
+} from "src/generated/api-contracts/api.schemas";
 import { paths } from "src/routes/paths";
+
+export interface BlockerAction {
+  label: string;
+  href: string;
+}
+
+// The part of the server's refusal an action reads: the issue it names, if any.
+type Refusal = Partial<Pick<AgentFixLaunchBlockedApi, "cluster_id">> | null;
+
+type ActionOf = (envId?: string, refusal?: Refusal) => BlockerAction | null;
 
 const environments = paths.dashboard.simulate.environments;
 
-const openEnvironment = (envId) => ({
+const openEnvironment: ActionOf = (envId) => ({
   label: "Open the environment",
   href: environments.detail(envId),
 });
 
 // A new environment's build saves the agent and environment versions an epoch
 // works on; nothing done later to one made before them does both.
-const buildEnvironment = () => ({
+const buildEnvironment: ActionOf = () => ({
   label: "Build an environment",
   href: environments.root,
 });
 
 // A page that fixes it. `refusal` is the server's whole answer, for one that names
 // what to open.
-const ACTIONS = {
+const ACTIONS: Record<string, ActionOf> = {
   environment_not_built: openEnvironment,
   environment_build_failed: openEnvironment,
   environment_update_failed: openEnvironment,
@@ -33,7 +49,7 @@ const ACTIONS = {
     href: environments.workspaceTab(envId, "runs"),
   }),
   // The other issue's page shows its epoch starting.
-  issue_epoch_measuring: (envId, refusal) =>
+  issue_epoch_measuring: (_envId, refusal) =>
     refusal?.cluster_id
       ? {
           label: "Open that issue",
@@ -63,7 +79,7 @@ const ACTIONS = {
 };
 
 // What to do, in one sentence under the server's reason when it doesn't say.
-const HINTS = {
+const HINTS: Record<string, string> = {
   // Only a self-hosted deployment runs with them off; its operator turns them on.
   fix_unavailable: "Ask your Future AGI admin to turn on agent versions.",
   // With versions on, only an environment made before they were kept has none.
@@ -76,29 +92,49 @@ const HINTS = {
 };
 
 // The link that fixes the blocker, or null.
-export const blockerAction = (code, envId, refusal) =>
-  ACTIONS[code]?.(envId, refusal) ?? null;
+export const blockerAction = (
+  code: string,
+  envId?: string,
+  refusal?: Refusal,
+): BlockerAction | null => ACTIONS[code]?.(envId, refusal) ?? null;
 
 // What to do, or null.
-export const blockerHint = (code) => HINTS[code] ?? null;
+export const blockerHint = (code: string): string | null => HINTS[code] ?? null;
 
 // How the winner ships, in words, before launch. A pull request that can't open
 // now ships as a patch; the server's reason says what a pull request needs.
-const SHIP_PATH = {
+const SHIP_PATH: Record<AgentFixShipReadinessApiPath, string> = {
   pull_request: "A pull request on the agent's repository",
   make_default: "A new version of the agent, made the default when you choose",
 };
 
-export const shipHeadline = (ship) =>
+export const shipHeadline = (ship: AgentFixShipReadinessApi): string =>
   ship.path === "pull_request" && ship.blocked
     ? "A patch to download"
     : SHIP_PATH[ship.path];
+
+export const HELD_BACK_PENDING = {
+  variations:
+    "The cases held back to prove the fix are chosen after the variations are written.",
+  edited:
+    "You changed the cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
+} as const;
+
+export type HeldBack =
+  | { keys: string[] }
+  | { pending: keyof typeof HELD_BACK_PENDING };
 
 // The cases held back to prove the fix, as the launch form shows them: the keys
 // the server picked for the suggested targets, or why there are none to show.
 // Below `cases_min` the epoch writes variations first and picks them with those;
 // `edited`: the targets differ from the suggested ones, so the launch picks them.
-export function heldBackOf(options, targets) {
+export function heldBackOf(
+  options: Pick<
+    AgentFixLaunchOptionsApi,
+    "held_back_scenario_keys" | "suggested" | "limits"
+  >,
+  targets: string[],
+): HeldBack {
   const keys = options.held_back_scenario_keys;
   const suggested = options.suggested.target_scenario_keys;
   const same =
@@ -110,10 +146,3 @@ export function heldBackOf(options, targets) {
   }
   return same ? { keys: [] } : { pending: "edited" };
 }
-
-export const HELD_BACK_PENDING = {
-  variations:
-    "The cases held back to prove the fix are chosen after the variations are written.",
-  edited:
-    "You changed the cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
-};
