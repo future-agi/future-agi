@@ -1364,10 +1364,11 @@ class TestUserApi:
         assert (launched.status_code, launched.json()["error"]) == (422, code)
 
     def test_launch_options_hold_back_what_the_launch_holds_back(
-        self, auth_client, source_run
+        self, browser_client, source_run
     ):
         # The split's answer names what it was given, so any other seed or target set
-        # reads differently on the form than on the epoch.
+        # reads differently on the form than on the epoch. The form is a person's
+        # session: no other caller reads the held-back cases (test_agent_fix_outside).
         def split(seed, failing, parents=None):
             return [f"{seed}|{','.join(sorted(failing))}"]
 
@@ -1377,11 +1378,11 @@ class TestUserApi:
                 "simulate.services.agent_fix_runs.split_held_back", side_effect=split
             ),
         ):
-            options = auth_client.get(
+            options = browser_client.get(
                 f"{BASE}/launch-options/",
                 {"source_run_id": str(source_run.test_execution_id)},
             ).json()
-            launched = auth_client.post(
+            launched = browser_client.post(
                 f"{BASE}/",
                 _launch_body(
                     source_run,
