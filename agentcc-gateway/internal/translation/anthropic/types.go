@@ -106,9 +106,10 @@ type CacheControl struct {
 
 // AnthropicTool is a function tool definition.
 type AnthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	InputSchema    json.RawMessage `json:"input_schema"`
+	AllowedCallers []string        `json:"allowed_callers,omitempty"`
 
 	// cache_control is supported at the tool level.
 	CacheControl *CacheControl `json:"cache_control,omitempty"`

@@ -382,6 +382,78 @@ describe("FixVerdict", () => {
   });
 });
 
+describe("finished trial presentation", () => {
+  function showTrials(fix) {
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    const plot = screen.getByRole("img", {
+      name: "Target pass rate per candidate",
+    });
+    return within(plot.parentElement.parentElement);
+  }
+
+  it("plots rejected candidates without a lead", () => {
+    const fix = fixOf("fix-no-improvement");
+    fix.candidates[0].verdict.target_pass_rate = [0, 0.9];
+    const chart = showTrials(fix);
+    expect(chart.getAllByTestId("trial-point")).toHaveLength(2);
+    expect(chart.queryByText(/best so far|winner/i)).toBeNull();
+  });
+
+  it("explains rejections in product words without displaying engine text", async () => {
+    const fix = fixOf("fix-no-improvement");
+    const [first, second] = fix.candidates;
+    first.verdict = {
+      target_pass_rate: [0, 0.9],
+      reason: "INTERNAL_VERDICT_A",
+    };
+    second.verdict.reason = "INTERNAL_VERDICT_B";
+    showTrials(fix);
+    // Rejected groups start folded: open both, so the rows are on the page.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("candidate-group-rejected"));
+    await user.click(screen.getByTestId("candidate-group-target"));
+    const firstRow = within(screen.getByTestId("candidate-1"));
+    const secondRow = within(screen.getByTestId("candidate-2"));
+    expect(firstRow.queryByText(first.verdict.reason)).not.toBeInTheDocument();
+    expect(
+      secondRow.queryByText(second.verdict.reason),
+    ).not.toBeInTheDocument();
+    // Replaces "No failed check was recorded.": a verdict with no checks keeps its numbers.
+    expect(
+      firstRow.getByText("Rejected. Target scenarios 0% → 90%."),
+    ).toBeVisible();
+    expect(screen.getByTestId("candidate-group-target")).toHaveTextContent(
+      "Didn't improve the target scenarios",
+    );
+    expect(secondRow.getByText("0% → 0%, not a clear gain.")).toBeVisible();
+  });
+
+  it("leads with the kept candidate even when a rejected candidate scored higher", () => {
+    const fix = fixOf("fix-ready-archive");
+    fix.candidates.find(
+      (c) => c.outcome === "rejected",
+    ).verdict.target_pass_rate = [0, 1];
+    const kept = fix.candidates.find((c) => c.outcome === "winner");
+    kept.verdict.target_pass_rate = [0.1, 0.7];
+    const chart = showTrials(fix);
+    expect(chart.getByText(/Candidate 3 · winner ▲ 60 pts/)).toBeVisible();
+    const points = chart.getAllByTestId("trial-point");
+    const filled = points.filter((point) => {
+      const dot = point.querySelector("circle");
+      return dot.getAttribute("fill") === dot.getAttribute("stroke");
+    });
+    expect(filled).toHaveLength(1);
+    expect(filled[0].textContent).toBe(String(kept.attempt));
+  });
+});
+
 describe("FixFinishedView, no safe improvement", () => {
   it("says what stopped the trials in one sentence, the numbers behind a toggle", async () => {
     renderUi(
@@ -1160,6 +1232,21 @@ describe("Ship", () => {
     expect(
       await screen.findByRole("button", { name: "Make default" }),
     ).toBeEnabled();
+  });
+
+  it("says a winner waiting for its check becomes the default once it passes", async () => {
+    hooks.ship = {
+      isPending: false,
+      mutateAsync: vi.fn().mockResolvedValue({ kind: "validating" }),
+    };
+    const user = userEvent.setup();
+    renderPage("fix-ready-archive");
+    await user.click((await confirmShip(user, "Make default")).confirm);
+    expect(
+      await screen.findByText(
+        "It becomes the default once it passes a check with this environment",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {

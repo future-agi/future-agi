@@ -720,6 +720,9 @@ class TestEnvironmentRollBack:
         move_default(environment, "environment", e1.id, expected_default_id=e2.id)
         environment.refresh_from_db()
         settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+        from simulate.tests.harness_validation import prove_every_pair
+
+        prove_every_pair(environment)
 
         run = _run(environment, VersionPicks(environment_version_id=e2.id))
 

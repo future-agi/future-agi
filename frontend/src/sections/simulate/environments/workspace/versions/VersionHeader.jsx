@@ -1,10 +1,9 @@
 import PropTypes from "prop-types";
-import { Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
 import { VersionBadge } from "../EnvVersionPin";
 import { VERSIONS_COPY } from "../workspace.constants";
 import { PreflightBadge } from "../agents/PreflightStatus";
-import { named } from "../agents/agentVersionStatus";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -40,7 +39,12 @@ export default function VersionHeader({ version }) {
             fontFamily: MONO,
           }}
         >
-          {named(version)}
+          {version.label || VERSIONS_COPY.unlabelled}
+          {version.name && (
+            <Box component="span" sx={{ fontFamily: "fontFamily" }}>
+              {` · ${version.name}`}
+            </Box>
+          )}
         </Typography>
         {version.isDefault && (
           <VersionBadge label={VERSIONS_COPY.default} />
@@ -53,7 +57,7 @@ export default function VersionHeader({ version }) {
           {origin}
         </Typography>
       )}
-      {version.summary && (
+      {version.summary && version.summary !== version.name && (
         <Typography
           sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
         >

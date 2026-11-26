@@ -879,14 +879,17 @@ def environment_sub_goals(environment: HostedHarnessJob) -> dict[str, dict[str, 
     return _catalogue_index(stage_output(environment, "sub_goals"))
 
 
-def sub_goal_catalogue(run_test_id) -> dict[str, dict[str, Any]]:
+def sub_goal_catalogue(
+    run_test_id, *, test_execution_id=None
+) -> dict[str, dict[str, Any]]:
     """What each sub-goal of a run's environment checks, by name, for reading results."""
-    environment_ids = (
-        HostedHarnessJob.no_workspace_objects.filter(
-            run_test_id=run_test_id, environment_id__isnull=False
-        )
-        .order_by("-created_at")
-        .values_list("environment_id", flat=True)
+    jobs = HostedHarnessJob.no_workspace_objects.filter(
+        run_test_id=run_test_id, environment_id__isnull=False
+    )
+    if test_execution_id is not None:
+        jobs = jobs.filter(test_execution_id=test_execution_id)
+    environment_ids = jobs.order_by("-created_at").values_list(
+        "environment_id", flat=True
     )
     for environment in HostedHarnessJob.no_workspace_objects.filter(
         id__in=list(environment_ids)[:1]
