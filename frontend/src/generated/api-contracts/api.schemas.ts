@@ -30379,6 +30379,197 @@ export interface RunAnalyticsV3ResponseApi {
   trends: TrendApi[];
 }
 
+export type AskRateApiLabels = { [key: string]: number };
+
+export interface AskRateApi {
+  answered: number;
+  labels: AskRateApiLabels;
+}
+
+export interface AskCountsApi {
+  requested: number;
+  answered: number;
+  unmeasured: number;
+  not_applicable: number;
+  grading_error: number;
+  infrastructure_error: number;
+  cancelled: number;
+  pending: number;
+  rate: AskRateApi;
+}
+
+export interface AskQuestionSummaryApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  answer_type: string;
+  labels: string[];
+  kinds: string[];
+  counts: AskCountsApi;
+}
+
+export interface AskSummaryApi {
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  stop_cause: string;
+  created_at: string;
+  /** @minLength 1 */
+  asked_by: string;
+  /** @minLength 1 */
+  selection_kind: string;
+  note: string;
+  requested: number;
+  credits_estimate: number;
+  questions: AskQuestionSummaryApi[];
+}
+
+export interface AskListResponseApi {
+  asks: AskSummaryApi[];
+}
+
+export type AskSelectionApiKind =
+  (typeof AskSelectionApiKind)[keyof typeof AskSelectionApiKind];
+
+export const AskSelectionApiKind = {
+  runs: "runs",
+  calls: "calls",
+} as const;
+
+export interface AskSelectionApi {
+  kind: AskSelectionApiKind;
+  /** @maxItems 200 */
+  call_ids?: string[];
+  /** @maxLength 500 */
+  note?: string;
+}
+
+export type AskQuestionApiAnswerType =
+  (typeof AskQuestionApiAnswerType)[keyof typeof AskQuestionApiAnswerType];
+
+export const AskQuestionApiAnswerType = {
+  yes_no: "yes_no",
+  category: "category",
+} as const;
+
+export type AskQuestionApiKindsItem =
+  (typeof AskQuestionApiKindsItem)[keyof typeof AskQuestionApiKindsItem];
+
+export const AskQuestionApiKindsItem = {
+  transcript: "transcript",
+  agent_instructions: "agent_instructions",
+  scenario: "scenario",
+  tool_calls: "tool_calls",
+  world_changes: "world_changes",
+  world_state_end: "world_state_end",
+  world_state_start: "world_state_start",
+  check_results: "check_results",
+  audio: "audio",
+  agent_traces: "agent_traces",
+} as const;
+
+export type AskQuestionApiDescriptions = { [key: string]: string };
+
+export interface AskQuestionApi {
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  question: string;
+  answer_type?: AskQuestionApiAnswerType;
+  labels?: string[];
+  descriptions?: AskQuestionApiDescriptions;
+  /** @minItems 1 */
+  kinds: AskQuestionApiKindsItem[];
+}
+
+export interface AskAcceptedApi {
+  /** @minimum 1 */
+  requested: number;
+  credits_estimate: number;
+}
+
+export interface AskLaunchRequestApi {
+  selection: AskSelectionApi;
+  questions: AskQuestionApi[];
+  accepted: AskAcceptedApi;
+}
+
+export interface AskLaunchResponseApi {
+  id: string;
+  /** @minLength 1 */
+  status: string;
+}
+
+export interface AskCheckRequestApi {
+  selection: AskSelectionApi;
+  questions: AskQuestionApi[];
+}
+
+export type AskCheckedQuestionApiByKind = { [key: string]: unknown };
+
+export interface AskCheckedQuestionApi {
+  /** @minLength 1 */
+  name: string;
+  kinds: string[];
+  ready: number;
+  unmeasured: number;
+  not_applicable: number;
+  by_kind: AskCheckedQuestionApiByKind;
+}
+
+export interface AskRefusalApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface AskCheckResponseApi {
+  requested: number;
+  questions: AskCheckedQuestionApi[];
+  answers: number;
+  credits_estimate: number;
+  priced_by_use?: string[];
+  refusal: AskRefusalApi;
+}
+
+export interface AskResultRowApi {
+  call_execution_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  call_name: string;
+  /** @minLength 1 */
+  question_key: string;
+  /** @minLength 1 */
+  state: string;
+  cause: string;
+  label: string;
+  score: number;
+  confidence: number;
+  reason: string;
+  finished_at: string;
+}
+
+export interface AskDetailResponseApi {
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  stop_cause: string;
+  created_at: string;
+  /** @minLength 1 */
+  asked_by: string;
+  /** @minLength 1 */
+  selection_kind: string;
+  note: string;
+  requested: number;
+  credits_estimate: number;
+  questions: AskQuestionSummaryApi[];
+  results: AskResultRowApi[];
+}
+
 export interface RunResumeEntryApi {
   at: string;
   by: string;

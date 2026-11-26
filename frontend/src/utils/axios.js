@@ -1935,6 +1935,20 @@ export const endpoints = {
       apiPath("/simulate/v3/test-executions/{test_execution_id}/export/", {
         test_execution_id: id,
       }),
+    // Questions asked about a run's calls: list and launch, check, one ask.
+    asks: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/asks/", {
+        test_execution_id: id,
+      }),
+    askCheck: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/asks/check/", {
+        test_execution_id: id,
+      }),
+    askDetail: (id, askId) =>
+      apiPath(
+        "/simulate/v3/test-executions/{test_execution_id}/asks/{ask_id}/",
+        { test_execution_id: id, ask_id: askId },
+      ),
   },
   optimizeSimulate: {
     createOptimization: apiPath("/simulate/api/agent-prompt-optimiser/"),
