@@ -3,14 +3,19 @@
 
 Runs from .github/workflows/devflow-approval.yml when APPROVAL_MODE is
 `devflow` or `observe`. It reads the pull request live by number, decides,
-and then does one of three things:
+and then does one of these (tier contract v2; tiers are ordinal, low <
+medium < high, and the final tier is the highest of the reviewer's tier, the
+verdict's diff-only tier_check and the deterministic risk scan):
 
-- approve: the bot approves the head commit and adds devflow:train, so the
-  batch train may take it.
-- needs-human: the bot adds the needs-human label and does not approve. A
-  high tier is one reason: the reviewer, the verdict's diff-only tier_check
-  or the deterministic risk scan of the changed files says high.
-- wait: nothing yet (no trusted review on this head, or the verdict is not pass).
+- approve (low): the bot approves the head commit and adds devflow:train, so
+  the batch train may take it.
+- train (medium, after a person approved the head): the bot adds
+  devflow:train and does not approve. Tight mode and a review that asks for
+  a person make a low tier medium.
+- needs-human (high): the bot adds the needs-human label; the pull request
+  goes to the queue alone.
+- wait: nothing yet (no trusted review on this head, the verdict is not
+  pass, or a medium tier has no approval from a person yet).
 
 In `observe` mode it only writes the decision to the job summary: no
 approval, no label. Paths that need a person are not decided here: the
@@ -44,6 +49,7 @@ STOP_LABEL = "needs-human"
 TRAIN_LABEL = "devflow:train"
 BASE = "dev"
 MODES = ("devflow", "observe")
+TIERS = ("low", "medium", "high")  # ordinal
 # The deterministic risk scan reads only the pull request's changed files, no
 # model: destructive Django operations and ClickHouse statements in a
 # migration's added lines, and any change to a manifest's dependency tables.
@@ -114,6 +120,35 @@ def assigned_login(comments: list):
         pairs = dict(p.split("=", 1) for p in match.group(1).split() if "=" in p)
         if pairs.get("login"):
             return pairs["login"]
+    return None
+
+
+def max_tier(*tiers) -> str:
+    """The ordinal maximum of low < medium < high. Anything else (a missing,
+    misspelt or unknown tier) is high."""
+    if any(tier not in TIERS for tier in tiers):
+        return "high"
+    return max(tiers, key=TIERS.index)
+
+
+def approvers(reviews: list, head: str) -> list:
+    """Logins whose newest approving or blocking review approves the head."""
+    latest = {}
+    for r in sorted(reviews, key=lambda r: r.get("submitted_at") or ""):
+        if r.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            latest[lower((r.get("user") or {}).get("login"))] = r
+    return [
+        (r.get("user") or {}).get("login")
+        for r in latest.values()
+        if r.get("state") == "APPROVED" and r.get("commit_id") == head
+    ]
+
+
+def human_approver(reviews: list, head: str, author: str, permissions: dict):
+    """A person, not the author or the bot, with write access who approved the head."""
+    for login in approvers(reviews, head):
+        if lower(login) != lower(author) and not BOT.match(login or "") and permissions.get(lower(login)) in WRITE:
+            return login
     return None
 
 
@@ -304,7 +339,7 @@ def decide(
     if verdict.get("verdict") != "pass":
         return out("wait", f"verdict is {verdict.get('verdict')!r}")
 
-    # A passing review on the head. From here the bot either approves or asks a person.
+    # A passing review on the head. From here the tier decides (tier contract v2).
     reasons = []
     check = verdict.get("tier_check")
     check = check if isinstance(check, dict) else {}
@@ -328,15 +363,30 @@ def decide(
         )
     if scan:
         reasons.append("scan: " + "; ".join(scan))
+    tier = max_tier(*votes.values())
+    if permissions.get(lower(author)) not in WRITE:
+        reasons.append(f"the author {author} has no write access, so it counts as high")
+        tier = "high"
+    # A low review that still asks for a person, and tight mode, raise low to
+    # medium: a person approves, and tightness never adds needs-human.
     if verdict.get("needs_person") is not False:
         reasons.append("the review asks for a person (needs_person is not false)")
-    if permissions.get(lower(author)) not in WRITE:
-        reasons.append(f"the author {author} has no write access")
+        tier = max_tier(tier, "medium")
     if tight:
-        reasons.append("APPROVAL_MODE_TIGHT is 1: a person approves every pull request")
-    if reasons:
-        return {**out("needs-human", *reasons), "votes": votes}
-    return {**out("approve", f"passing low-tier review by {reviewer} on the head"), "votes": votes}
+        reasons.append("APPROVAL_MODE_TIGHT is 1: the lowest tier is medium")
+        tier = max_tier(tier, "medium")
+
+    def result(action, *why):
+        return {**out(action, *why), "tier": tier, "votes": votes}
+
+    if tier == "high":
+        return result("needs-human", *reasons)
+    if tier == "medium":
+        approver = human_approver(reviews, head, author, permissions)
+        if approver:
+            return result("train", *reasons, f"approved on the head by {approver}")
+        return result("wait", *reasons, "medium: waiting for an approval on the head by a person with write access")
+    return result("approve", f"passing low-tier review by {reviewer} on the head")
 
 
 def train_labels(pr: dict) -> list:
@@ -434,9 +484,12 @@ def main(argv=None) -> int:
         pr = json.loads(gh("api", f"repos/{repo}/pulls/{number}"))
         reviews = gh_list(f"repos/{repo}/pulls/{number}/reviews?per_page=100")
         comments = gh_list(f"repos/{repo}/issues/{number}/comments?per_page=100")
-        logins = {(pr.get("user") or {}).get("login"), assigned_login(comments)} - {
-            None
-        }
+        # The author, the assigned reviewer, and whoever approved the head (medium).
+        logins = {
+            (pr.get("user") or {}).get("login"),
+            assigned_login(comments),
+            *(a for a in approvers(reviews, pr["head"]["sha"]) if not BOT.match(a or "")),
+        } - {None}
         permissions = {lower(login): permission(repo, login) for login in logins}
         tight = os.environ.get("APPROVAL_MODE_TIGHT") == "1"
         result = decide(pr, reviews, comments, permissions, tight, observe, scan_pr(repo, number, pr))
@@ -449,16 +502,23 @@ def main(argv=None) -> int:
                 fh.writelines(f"- {reason}\n" for reason in result["reasons"])
                 if "votes" in result:
                     votes = ", ".join(f"{k} {v!r}" for k, v in result["votes"].items())
-                    fh.write(f"\nTier votes: {votes}\n")
+                    fh.write(f"\nTier: {result['tier']!r} (votes: {votes})\n")
         if observe or args.dry_run or result["action"] in ("skip", "wait"):
             return 0
         if result["action"] == "needs-human":
             add_labels(repo, number, [STOP_LABEL])
             return 0
-        # Approve only the commit that was judged; a later push gets its own run.
+        # Act only on the commit that was judged; a later push gets its own run.
         current = json.loads(gh("api", f"repos/{repo}/pulls/{number}"))
         if current["head"]["sha"] != result["head"]:
             print(f"Head moved to {current['head']['sha']}; the newer event decides.")
+            return 0
+        if result["action"] == "train":
+            # Medium: a person approved the head, so it may batch. No bot approval.
+            labels = train_labels(current)
+            if labels:
+                add_labels(repo, number, labels)
+                print(f"labelled {', '.join(labels)}")
             return 0
         body = (
             "Approved automatically: a passing low-tier devflow agent review on this commit. "

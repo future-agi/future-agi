@@ -12,13 +12,17 @@ name: PR approval
 # - observe: the admin rule keeps approving; the devflow rule only writes
 #   what it would do to the job summary, so its decisions can be compared
 #   with people's before the switch.
-# - devflow: approve the head commit on a passing low-tier devflow agent
-#   review by the assigned reviewer, and add devflow:train so the batch
-#   train may take it. A high tier gets the needs-human label instead. Paths
-#   that need a person are the floor block in .github/CODEOWNERS: the dev
-#   ruleset's code owner review enforces it, whatever the bot approves. When
-#   the variable APPROVAL_MODE_TIGHT is "1", a passing low-tier review also
-#   gets needs-human, so a person approves.
+# - devflow: on a passing devflow agent review by the assigned reviewer, the
+#   final tier (the highest of the reviewer's tier, the diff-only tier_check
+#   and a deterministic scan of the changed files) decides. Low: approve the
+#   head and add devflow:train so the batch train may take it. Medium: no
+#   bot approval; once a person with write access approves the head (a
+#   pull_request_review event), add devflow:train. High: the needs-human
+#   label, and the pull request goes alone. When the variable
+#   APPROVAL_MODE_TIGHT is "1", the lowest tier is medium; it never adds
+#   needs-human. Paths that need a person are the floor block in
+#   .github/CODEOWNERS: the dev ruleset's code owner review enforces it,
+#   whatever the bot approves.
 #   See .github/scripts/devflow_approval.py.
 #
 # pull_request and pull_request_review run this file from the pull request's

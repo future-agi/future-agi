@@ -253,12 +253,13 @@ class DecideTests(unittest.TestCase):
                 case.reviews = [review(tier=tier)]
                 self.check(case, "needs-human", "tier is")
 
-    def test_needs_person_other_than_false_needs_a_human(self):
+    def test_needs_person_other_than_false_makes_a_low_tier_medium(self):
+        # Contract v2: no bot approval and no needs-human; a person approves.
         for value in (True, None, "false", 0):
             with self.subTest(value=value):
                 case = Case()
                 case.reviews = [review(needs_person=value)]
-                self.check(case, "needs-human", "needs_person")
+                self.assertEqual(self.check(case, "wait", "needs_person")["tier"], "medium")
 
     def test_author_without_write_access_needs_a_human(self):
         case = Case()
@@ -279,8 +280,16 @@ class DecideTests(unittest.TestCase):
         self.assertFalse((CODEOWNERS.parent / "approval-floor.json").exists())
 
     # tight mode (APPROVAL_MODE_TIGHT == "1")
-    def test_tight_mode_sends_a_passing_low_tier_review_to_a_person(self):
-        self.check(Case(), "needs-human", "APPROVAL_MODE_TIGHT", tight=True)
+    def test_tight_mode_makes_a_low_tier_medium_and_never_needs_human(self):
+        result = self.check(Case(), "wait", "APPROVAL_MODE_TIGHT", tight=True)
+        self.assertEqual(result["tier"], "medium")
+        case = Case()
+        case.reviews.append(review("lead", state="APPROVED", body="ok", at="2026-11-26T11:00:00Z"))
+        case.permissions["lead"] = "write"
+        self.check(case, "train", "approved on the head by lead", tight=True)
+        # Tight never lowers a high tier.
+        case.reviews[0] = review(tier="high")
+        self.check(case, "needs-human", "tier is", tight=True)
 
     def test_tight_mode_still_waits_on_a_block(self):
         case = Case()
@@ -499,8 +508,68 @@ class TierVoteTests(unittest.TestCase):
                 del os.environ["GITHUB_STEP_SUMMARY"]
             text = summary.read_text()
         self.assertEqual(decision["votes"], {"reviewer": "high", "tier_check": "low", "scan": "high"})
-        self.assertIn("Tier votes: reviewer 'high', tier_check 'low', scan 'high'", text)
+        self.assertEqual(decision["tier"], "high")
+        self.assertIn("Tier: 'high' (votes: reviewer 'high', tier_check 'low', scan 'high')", text)
         self.assertIn("scan: go.mod changes require/replace", text)
+
+
+def approval(login, commit=HEAD, at="2026-11-26T11:00:00Z", state="APPROVED"):
+    return review(login, commit=commit, at=at, state=state, body="looks fine")
+
+
+class TierContractTests(unittest.TestCase):
+    """tier contract v2: ordinal low < medium < high; unknown is high."""
+
+    def case(self, *extra, **verdict):
+        case = Case()
+        case.reviews = [review(**verdict), *extra]
+        case.permissions.update(lead="write", reader="read")
+        return case
+
+    def test_medium_is_never_auto_approved_and_never_treated_as_low(self):
+        medium_check = {"tier": "medium", "engine": "e2", "input": "diff-only"}
+        for verdict in ({"tier": "medium"}, {"tier_check": medium_check}):
+            with self.subTest(verdict=verdict):
+                waiting = self.case(**verdict).decide()
+                self.assertEqual((waiting["action"], waiting["tier"]), ("wait", "medium"))
+                approved = self.case(approval("lead"), **verdict).decide()
+                self.assertEqual((approved["action"], approved["tier"]), ("train", "medium"))
+        # Only a person with write access, not the author, approving this head.
+        for who, commit, perm in (("author", HEAD, "write"), ("reader", HEAD, "read"), ("lead", OLD, "write")):
+            with self.subTest(approver=who, commit=commit):
+                case = self.case(approval(who, commit), tier="medium")
+                case.permissions[who] = perm
+                self.assertEqual(case.decide()["action"], "wait")
+        withdrawn = self.case(approval("lead"), approval("lead", at="2026-11-26T11:30:00Z", state="CHANGES_REQUESTED"), tier="medium")
+        self.assertEqual(withdrawn.decide()["action"], "wait")
+        # main(): a medium approval adds devflow:train and posts no bot approval.
+        code, calls, decision = run_main("devflow", self.case(approval("lead"), tier="medium"))
+        writes = [c for c in calls if "-X" in c]
+        self.assertEqual((code, decision["action"]), (0, "train"))
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][-1], "labels[]=devflow:train")
+        self.assertFalse(any("event=APPROVE" in c for c in writes[0]))
+
+    def test_an_unknown_tier_string_is_high(self):
+        for tier in ("Medium", "", None, "critical", "LOW", ["low"]):
+            with self.subTest(tier=tier):
+                result = self.case(approval("lead"), tier=tier).decide()
+                self.assertEqual((result["action"], result["tier"]), ("needs-human", "high"))
+                check = {"tier": tier, "engine": "e2", "input": "diff-only"}
+                self.assertEqual(self.case(tier_check=check).decide()["tier"], "high")
+
+    def test_the_final_tier_is_the_ordinal_max(self):
+        for votes, expected in (
+            (("low", "medium"), "medium"),
+            (("medium", "high"), "high"),
+            (("medium", "low", "low"), "medium"),
+            (("low", "low"), "low"),
+            (("low", "critical"), "high"),
+        ):
+            with self.subTest(votes=votes):
+                self.assertEqual(da.max_tier(*votes), expected)
+        result = self.case(tier="medium", tier_check={"tier": "high", "input": "diff-only"}).decide()
+        self.assertEqual((result["action"], result["tier"]), ("needs-human", "high"))
 
 
 def scan(*files, base=None, head=None):
