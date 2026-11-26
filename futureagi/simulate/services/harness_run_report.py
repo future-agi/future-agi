@@ -15,7 +15,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessReceipt,
 )
-from simulate.services.harness_releases import _visible, composition_of
+from simulate.services.harness_releases import _error, _visible, require_composition
 
 MANIFEST_FIELDS = (
     "digest",
@@ -54,8 +54,8 @@ def _rate(numerator: int, denominator: int) -> float | None:
 
 
 def _root(suite: HarnessSuiteRelease) -> HarnessSuiteRelease:
-    while suite.parent_id:
-        suite = suite.parent
+    while suite.parent_id and (parent := suite.parent) is not None:
+        suite = parent
     return suite
 
 
@@ -136,10 +136,14 @@ def run_report(
     the composition another suite, which must not change an earlier run's scenarios or coverage.
     """
     # The composition as it stood when this run was submitted, copied onto the run job.
-    composition = composition_of(run)
+    composition = require_composition(run)
     suite = _visible(
         HarnessSuiteRelease, environment.organization, manifest["suite"]["digest"]
     )
+    if suite is None:
+        raise _error(
+            "release_not_found", "the run's suite release no longer exists", 404
+        )
     by_key = {entry["key"]: entry for entry in suite.manifest["scenarios"]}
     personas = {persona["scenario_key"]: persona for persona in suite.personas}
     trials = manifest["selection"]["trials"]
@@ -159,6 +163,10 @@ def run_report(
         use_cases.setdefault(one["use_case"], []).append(one)
     comparability = None
     if baseline_run_id is not None:
+        if baseline_manifest is None:
+            raise _error(
+                "run_manifest_missing", "the baseline run has no frozen manifest", 409
+            )
         differing = differing_fields(manifest, baseline_manifest)
         comparability = {
             "baseline_run_id": baseline_run_id,

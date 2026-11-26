@@ -103,10 +103,17 @@ class HarnessHostedAgentViewSet(viewsets.ViewSet):
                 idempotency_key=data["idempotency_key"],
                 parallelism=data.get("parallelism"),
             )
+            run_test = job.run_test
+            if run_test is None or run_test.agent_version_id is None:
+                raise HostedHarnessError(
+                    "composition_invalid",
+                    "the composition has no linked agent version",
+                    status_code=409,
+                )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         return Response(
-            {"id": str(job.id), "agent_version_id": str(job.run_test.agent_version_id)},
+            {"id": str(job.id), "agent_version_id": str(run_test.agent_version_id)},
             status=status.HTTP_201_CREATED,
         )
 

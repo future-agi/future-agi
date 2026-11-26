@@ -263,7 +263,7 @@ def _usable(model, organization):
 
 
 def visible_suite(organization, suite_id) -> HarnessSuiteRelease:
-    suite = (
+    suite: HarnessSuiteRelease | None = (
         _usable(HarnessSuiteRelease, organization)
         .select_related("environment", "environment__parent")
         .filter(id=suite_id)
@@ -455,11 +455,16 @@ def _store_suite(
 def archive_files(archive: bytes) -> dict[str, bytes]:
     """Every regular file in a release archive, by its path in the release."""
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
-        return {
-            member.name: source.extractfile(member).read()
-            for member in source.getmembers()
-            if member.isfile()
-        }
+        files = {}
+        for member in source.getmembers():
+            if member.isfile():
+                content = source.extractfile(member)
+                if content is None:
+                    raise _error(
+                        "release_archive_invalid", "a release file is unreadable", 422
+                    )
+                files[member.name] = content.read()
+        return files
 
 
 def scenario_documents(
@@ -644,8 +649,14 @@ def _check_modality(agent_version: AgentVersion, connector: str) -> None:
 
 
 def _chain(suite: HarnessSuiteRelease) -> list[HarnessEnvironmentRelease]:
-    environment = suite.environment
-    return [environment.parent, environment] if environment.parent_id else [environment]
+    return _environment_chain(suite.environment)
+
+
+def _environment_chain(
+    environment: HarnessEnvironmentRelease,
+) -> list[HarnessEnvironmentRelease]:
+    parent = environment.parent if environment.parent_id else None
+    return [parent, environment] if parent is not None else [environment]
 
 
 def _admitted_parallelism(payload: dict[str, Any]) -> int:
@@ -799,10 +810,13 @@ def create_composition(
         )
     except ALKSimulateIngestionError as exc:
         raise _error("composition_invalid", str(exc)) from exc
-    rows = list(
-        scenarios[0].dataset.row_set.filter(deleted=False).order_by("order", "id")
+    dataset = scenarios[0].dataset if len(scenarios) == 1 else None
+    rows = (
+        list(dataset.row_set.filter(deleted=False).order_by("order", "id"))
+        if dataset is not None
+        else []
     )
-    if len(scenarios) != 1 or len(rows) != len(personas):
+    if dataset is None or len(rows) != len(personas):
         raise _error(
             "scenario_provision_count_mismatch", "scenario rows were not created", 500
         )
@@ -957,6 +971,13 @@ def composition_of(job: HostedHarnessJob) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def require_composition(job: HostedHarnessJob) -> dict[str, Any]:
+    composition = composition_of(job)
+    if composition is None:
+        raise _error("composition_invalid", "the job has no release composition", 409)
+    return composition
+
+
 def _voice_choice(settings: dict[str, str], prefix: str) -> str | None:
     """`provider/model` of one simulator voice stage as the gateway passes it; either half may be
     empty, and None means ALK picks both."""
@@ -1027,7 +1048,7 @@ def freeze_run_manifest(
         sandbox_runtime_reference,
     )
 
-    composition = composition_of(environment)
+    composition = require_composition(environment)
     binding = composition["binding"]
     from simulate.services.harness_capacity import configured_capacity
 
@@ -1259,7 +1280,8 @@ def adaptation_payload(
             agent_version, connector, payload["agent"].get("config") or {}
         ),
     }
-    return json.loads(json.dumps(payload, default=str))
+    serialized: dict[str, Any] = json.loads(json.dumps(payload, default=str))
+    return serialized
 
 
 @dataclass(frozen=True)
@@ -1313,6 +1335,10 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
     if result.get("status") != "completed":
         raise _error("adaptation_result_invalid", "result.json has no final status")
     adaptation = adaptation_of(job)
+    if adaptation is None:
+        raise _error(
+            "adaptation_inputs_missing", "the job has no adaptation configuration"
+        )
     organization = job.organization
     base = _visible(HarnessSuiteRelease, organization, adaptation["suite"]["digest"])
     agent_version = AgentVersion.no_workspace_objects.filter(
@@ -1383,6 +1409,7 @@ def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHar
     from simulate.models import HostedHarnessConversation
 
     adaptation_result: dict[str, Any] = {}
+    failure: dict[str, Any] | None
     if output is None or not (Path(output) / "result.json").is_file():
         failure = _adaptation_failure(
             "adaptation_result_missing", "the adaptation process wrote no result.json"
@@ -1572,10 +1599,7 @@ def design_world_outputs(
 ) -> list[dict[str, Any]]:
     """What a sealed design adds to its own stage outputs: the world it sealed. Its contract,
     scenarios and sub-goals are already there from the session's checkpoints."""
-    chain = (
-        [environment.parent, environment] if environment.parent_id else [environment]
-    )
-    outputs, _tables = _world_outputs(chain)
+    outputs, _tables = _world_outputs(_environment_chain(environment))
     return outputs
 
 
@@ -1586,22 +1610,27 @@ def composition_stage_outputs(job: HostedHarnessJob) -> list[dict[str, Any]]:
     composition = ((job.payload or {}).get("metadata") or {}).get("release_composition")
     if not composition:
         return []
-    chain = [
-        HarnessEnvironmentRelease.no_workspace_objects.filter(
-            digest=one["digest"], object_key=one["object_key"]
+    chain = []
+    for entry in composition["environment"]:
+        release = HarnessEnvironmentRelease.no_workspace_objects.filter(
+            digest=entry["digest"], object_key=entry["object_key"]
         ).first()
-        for one in composition["environment"]
-    ]
-    if any(release is None for release in chain):
+        if release is None:
+            return []
+        chain.append(release)
+    if not chain:
         return []
     environment = chain[-1]
     agent = (job.payload or {}).get("agent") or {}
     connector = str(agent.get("connector") or "")
     config = agent.get("config") or {}
     reference = (composition.get("binding") or {}).get("agent") or {}
-    definition = AgentDefinition.objects.filter(
-        id=reference.get("agent_definition_id")
-    ).first()
+    definition_id = reference.get("agent_definition_id")
+    definition = (
+        AgentDefinition.objects.filter(id=definition_id).first()
+        if definition_id
+        else None
+    )
     if connector == HOSTED_AGENT:
         label = f"Our agent ({config.get('model')})"
     else:

@@ -38,7 +38,7 @@ from simulate.services.harness_releases import (
     _store_suite,
     _visible,
     archive_files,
-    composition_of,
+    require_composition,
     scenario_documents,
 )
 from simulate.services.hosted_harness import HostedHarnessError
@@ -50,7 +50,7 @@ CHANGE = "composition-change"
 
 def composition_revision(job: HostedHarnessJob) -> str:
     """The revision a composition chat edits: its current suite."""
-    return str(composition_of(job)["suite"]["digest"])
+    return str(require_composition(job)["suite"]["digest"])
 
 
 def _json(value: Any) -> bytes:
@@ -59,7 +59,7 @@ def _json(value: Any) -> bytes:
 
 def composition_workspace_archive(job: HostedHarnessJob) -> bytes:
     """The workspace a composition chat opens on (contract §7.8 layout)."""
-    composition = composition_of(job)
+    composition = require_composition(job)
     files: list[tuple[str, bytes]] = []
     for entry in composition["environment"]:
         prefix = f"releases/environment/{_hex(entry['digest'])}"
@@ -126,7 +126,14 @@ def _extract_change(checkpoint: bytes, into: Path) -> Path | None:
                 )
             target = into.joinpath(*parts)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(source.extractfile(member).read())
+            content = source.extractfile(member)
+            if content is None:
+                raise _error(
+                    "conversation_checkpoint_invalid",
+                    "a change file is unreadable",
+                    422,
+                )
+            target.write_bytes(content.read())
             found = True
     return root if found else None
 
@@ -192,7 +199,7 @@ def _applied(
         "suite": {"digest": row.digest, "name": row.name, "object_key": row.object_key},
         "trajectories": trajectories if isinstance(trajectories, dict) else {},
     }
-    if binding["mode"] == "tool_routed":
+    if isinstance(proof, dict) and binding["mode"] == "tool_routed":
         updated["binding_proof"] = proof
         updated["alignment"] = {
             **(composition.get("alignment") or {}),
@@ -254,11 +261,12 @@ def promote_composition_checkpoint(
             if basis != current:
                 stale = current
             else:
-                suite = personas = None
+                changed_suite = None
                 if change is not None:
                     composition, suite, personas = _applied(
                         environment, composition, change
                     )
+                    changed_suite = suite, personas, change / "suite"
                 checkpoints[conversation_id] = {
                     "digest": digest,
                     "sequence": sequence,
@@ -270,13 +278,13 @@ def promote_composition_checkpoint(
                 payload["metadata"] = metadata
                 environment.payload = payload
                 fields = ["payload", "updated_at"]
-                if suite is not None:
-                    environment.scenario_count = len(suite["scenarios"])
+                if changed_suite is not None:
+                    environment.scenario_count = len(changed_suite[0]["scenarios"])
                     environment.content_updated_at = timezone.now()
                     fields += ["scenario_count", "content_updated_at"]
                 environment.save(update_fields=fields)
-                if suite is not None:
-                    suite_dir = change / "suite"
+                if changed_suite is not None:
+                    suite, personas, suite_dir = changed_suite
                     index_scenarios(
                         environment,
                         scenario_documents(
