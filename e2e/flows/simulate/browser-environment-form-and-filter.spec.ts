@@ -108,15 +108,16 @@ test('SIM-E2E-043: environments built for browser agents read Browser and are wh
     userGoal: 'A user finds the environments built for browser agents by their Browser label and the Browser filter',
     steps: ['seed two built environments: one whose agent contract needs a browser, one chat '
               + '(e2e/lib/harness_environment_seed.py)', 'open Environments', 'search each one\'s name and read '
-              + 'its agent type', 'choose Agent type › Browser', 'search each name again and read the rows'],
+              + 'its agent type', 'search the browser one\'s name', 'choose Agent type › Browser and read the rows',
+            'search the chat one\'s name and read the rows'],
     backendChecks: ['GET harness-environments/?agent_type=browser lists the browser environment with agent_type '
                       + 'browser, and not the chat one'],
     browserChecks: ['the browser environment\'s row reads Browser and the chat one\'s reads Chat',
                     'with Browser chosen, the browser environment is listed and the chat one is not'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // 2 seeds (container execs, about 20 s each) + 3 x UI_READY (180 s) + navigation.
-  test.setTimeout(240_000);
+  // 2 seeds (container execs, about 20 s each) + 4 x UI_READY (240 s) + navigation.
+  test.setTimeout(300_000);
   const browserSeed = seedHarnessEnvironment({ organizationId: actor.organizationId, workspaceId: actor.workspaceId,
     environmentNeeds: ['browser'] });
   const chatSeed = seedHarnessEnvironment({ organizationId: actor.organizationId, workspaceId: actor.workspaceId });
@@ -141,21 +142,26 @@ test('SIM-E2E-043: environments built for browser agents read Browser and are wh
   });
 
   await test.step('ui: the Browser filter lists the browser environment and not the chat one', async () => {
+    // The filtered answer for one name. Each is awaited, so a row count is the filter's and not a list still
+    // loading. Each filter and name pair is asked for once: the app keeps a list answer fresh for 5 s
+    // (app.jsx QueryClient staleTime) and asks again only after that.
+    const filtered = (name: string) => page.waitForResponse((r) => {
+      const url = new URL(r.url());
+      return url.pathname.endsWith(LIST_PATH) && url.searchParams.get('agent_type') === 'browser'
+        && url.searchParams.get('search') === name;
+    }, { timeout: UI_READY });
+    await search.fill(browserEnv);
+    await expect(rowsNamed(browserEnv)).toHaveCount(1, { timeout: UI_READY });
+    const forBrowser = filtered(browserEnv);
     // The Agent type select's display carries the aria-label (EnvironmentFilters.jsx FilterSelect).
     await page.getByRole('combobox', { name: 'Agent type', exact: true }).click();
     await page.getByRole('option', { name: BROWSER, exact: true }).click();
-    await search.fill(browserEnv);
+    expect(((await (await forBrowser).json()) as ListPage).results.map((one) => one.id))
+      .toEqual([browserSeed.environmentId]);
     await expect(rowsNamed(browserEnv)).toHaveCount(1, { timeout: UI_READY });
-    // Wait for the filtered answer for the chat name, so an empty table is the filter's and not a list
-    // still loading.
-    const answered = page.waitForResponse((r) => {
-      const url = new URL(r.url());
-      return url.pathname.endsWith(LIST_PATH) && url.searchParams.get('agent_type') === 'browser'
-        && url.searchParams.get('search') === chatEnv;
-    }, { timeout: UI_READY });
+    const forChat = filtered(chatEnv);
     await search.fill(chatEnv);
-    const response = await answered;
-    expect((await response.json() as ListPage).results).toEqual([]);
+    expect(((await (await forChat).json()) as ListPage).results).toEqual([]);
     await expect(rowsNamed(browserEnv)).toHaveCount(0, { timeout: UI_READY });
     await expect(rowsNamed(chatEnv)).toHaveCount(0);
   });

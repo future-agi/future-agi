@@ -4388,8 +4388,9 @@
 1. seed two built environments: one whose agent contract needs a browser, one chat (e2e/lib/harness_environment_seed.py)
 2. open Environments
 3. search each one's name and read its agent type
-4. choose Agent type › Browser
-5. search each name again and read the rows
+4. search the browser one's name
+5. choose Agent type › Browser and read the rows
+6. search the chat one's name and read the rows
 
 **Backend state verified:**
 
