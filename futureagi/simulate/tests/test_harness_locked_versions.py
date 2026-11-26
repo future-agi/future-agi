@@ -1063,6 +1063,106 @@ class TestUnlockAndDelete:
         assert HarnessTaskSplit.no_workspace_objects.count() == len(splits)
 
 
+class TestRequestScope:
+    def test_another_environment_s_lock_is_not_found_and_stays_locked(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        other = _environment(user, workspace, storage, key="rel-other")
+        _suite(other, _scenarios(20))
+        assert _lock(auth_client, environment).status_code == 200
+        [theirs] = _lock(auth_client, other).json()["locked_versions"]
+
+        # The caller can see both environments, but the lock is the other one's.
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"locked_version_id": theirs["id"]},
+            format="json",
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"] == "locked_version_not_found"
+        assert not HarnessLockedVersion.no_workspace_objects.filter(
+            unlocked_at__isnull=False
+        ).exists()
+
+    @pytest.mark.parametrize(
+        ("change", "field", "error"),
+        [
+            (
+                {"suite_version_id": None},
+                "suite_version_id",
+                "This field may not be null.",
+            ),
+            (
+                {"environment_version_id": "not-a-uuid"},
+                "environment_version_id",
+                "Must be a valid UUID.",
+            ),
+            ({"release_id": str(uuid.uuid4())}, "release_id", "Unknown field."),
+            ({"suite_version_id": ...}, "suite_version_id", "This field is required."),
+        ],
+    )
+    def test_the_lock_takes_only_its_two_version_ids(
+        self, auth_client, user, workspace, storage, change, field, error
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        body = {
+            key: value
+            for key, value in {**_lock_body(environment), **change}.items()
+            if value is not ...
+        }
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/lock/", body, format="json"
+        )
+
+        assert response.status_code == 400, response.content
+        assert response.json()["details"][field] == [error]
+        assert not HarnessLockedVersion.no_workspace_objects.exists()
+        assert not HarnessTaskSplit.no_workspace_objects.exists()
+
+    @pytest.mark.parametrize(
+        ("body", "field", "error"),
+        [
+            ({}, "locked_version_id", "This field is required."),
+            (
+                {"locked_version_id": None},
+                "locked_version_id",
+                "This field may not be null.",
+            ),
+            (
+                {"locked_version_id": "rel-1"},
+                "locked_version_id",
+                "Must be a valid UUID.",
+            ),
+            (
+                {"locked_version_id": "LOCKED", "force": True},
+                "force",
+                "Unknown field.",
+            ),
+        ],
+    )
+    def test_the_unlock_takes_only_its_lock_id(
+        self, auth_client, user, workspace, storage, body, field, error
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
+        if body.get("locked_version_id") == "LOCKED":
+            body = {**body, "locked_version_id": locked_version["id"]}
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/", body, format="json"
+        )
+
+        assert response.status_code == 400, response.content
+        assert response.json()["details"][field] == [error]
+        assert HarnessLockedVersion.no_workspace_objects.get().unlocked_at is None
+
+
 class TestReadCost:
     def test_member_reads_stay_flat_as_locked_versions_grow(
         self, auth_client, user, workspace, storage
