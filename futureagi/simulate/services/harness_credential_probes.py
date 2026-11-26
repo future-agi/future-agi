@@ -340,8 +340,9 @@ def _request(
     method: str, url: str, *, guarded: bool, timeout: float, **kwargs: Any
 ) -> Any:
     """Send one probe. A URL under a base the agent set goes through Agent Command Center's SSRF-safe
-    session, which checks the address the connection is opened to on the same rules as the check before
-    it. Without a base, the provider's own URL is sent as is."""
+    session, which resolves the URL again on the same rules just before sending it. The connection does
+    its own lookup, so a name that changes between that check and the connect is not covered. Without a
+    base, the provider's own URL is sent as is."""
     if not guarded:
         return requests.request(method, url, timeout=timeout, **kwargs)
     session = build_ssrf_safe_session(
