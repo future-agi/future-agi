@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 import structlog
@@ -36,6 +36,9 @@ from simulate.services.harness_versioning.versions import _conflict, _lock_envir
 from simulate.services.hosted_harness import HostedHarnessError, sub_goal_catalogue
 from tfc.constants.levels import Level
 from tfc.permissions.utils import get_effective_workspace_level
+
+if TYPE_CHECKING:
+    from accounts.models.user import User
 
 logger = structlog.get_logger(__name__)
 
@@ -67,7 +70,7 @@ class SplitPlan:
     train: int
     test: int
     test_target: int
-    assign: Mapping[Any, str]
+    assign: Mapping[UUID, str]
 
 
 def target_test_size(size: int) -> int:
@@ -170,7 +173,7 @@ def _seats(
 
 def plan_splits(
     tasks: Iterable[Task],
-    assigned: Mapping[Any, str],
+    assigned: Mapping[UUID, str],
     seed: str,
     *,
     suite_size: int | None = None,
@@ -220,7 +223,7 @@ def plan_splits(
         target,
         seed,
     )
-    assign: dict[Any, str] = {}
+    assign: dict[UUID, str] = {}
     for name, members in new.items():
         for index, task in enumerate(members):
             assign[task.scenario_id] = (
@@ -237,7 +240,7 @@ def plan_splits(
     )
 
 
-def _assigned(tasks: list[Task]) -> dict[Any, str]:
+def _assigned(tasks: list[Task]) -> dict[UUID, str]:
     return dict(
         HarnessTaskSplit.no_workspace_objects.filter(
             scenario_id__in=[task.scenario_id for task in tasks]
@@ -245,7 +248,9 @@ def _assigned(tasks: list[Task]) -> dict[Any, str]:
     )
 
 
-def _locked_release(environment_version_id: Any, suite_version_id: Any):
+def _locked_release(
+    environment_version_id: UUID, suite_version_id: UUID
+) -> HarnessRelease | None:
     return HarnessRelease.no_workspace_objects.filter(
         environment_version_id=environment_version_id,
         suite_version_id=suite_version_id,
@@ -334,9 +339,9 @@ def _next_label(environment: HostedHarnessJob, now) -> str:
 def lock_release(
     environment: HostedHarnessJob,
     *,
-    environment_version_id: Any,
-    suite_version_id: Any,
-    user: Any = None,
+    environment_version_id: UUID,
+    suite_version_id: UUID,
+    user: User | None = None,
 ) -> HostedHarnessJob:
     """Lock the default pair the caller saw. A newer default refuses the lock."""
     with transaction.atomic():
@@ -379,7 +384,7 @@ def lock_release(
     return locked
 
 
-def require_release_admin(environment: HostedHarnessJob, user: Any) -> None:
+def require_release_admin(environment: HostedHarnessJob, user: User) -> None:
     """Only an owner or an admin of the organization or of the environment's workspace
     may unlock a release."""
     level = get_effective_workspace_level(user, environment.workspace_id)
@@ -392,7 +397,7 @@ def require_release_admin(environment: HostedHarnessJob, user: Any) -> None:
 
 
 def unlock_release(
-    environment: HostedHarnessJob, release_id: Any, *, user: Any
+    environment: HostedHarnessJob, release_id: UUID, *, user: User
 ) -> HostedHarnessJob:
     """Unlock a release. Its versions, its splits and the scores on it stay as they are."""
     require_release_admin(environment, user)
