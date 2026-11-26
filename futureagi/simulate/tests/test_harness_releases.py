@@ -21,7 +21,6 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
-from simulate.services.harness_versioning import releases
 from simulate.services.harness_versioning.backfill import backfill_environment
 from simulate.services.harness_versioning.releases import (
     Task,
@@ -201,6 +200,20 @@ class TestTestTarget:
 
 
 class TestPlanSplits:
+    def test_named_categories_take_seats_before_the_pool(self):
+        # Five categories of two and six single-task ones: N = 16, target 5.
+        sizes = dict.fromkeys("abcde", 2) | {f"solo{i}": 1 for i in range(6)}
+
+        plan = plan_splits(_tasks(sizes), {}, "env")
+
+        assert plan.test_target == 5
+        assert _tests_by_category(plan.assign, "abcde") == dict.fromkeys("abcde", 1)
+        assert not any(
+            split == "test"
+            for key, split in plan.assign.items()
+            if key.startswith("solo")
+        )
+
     def test_first_lock_follows_category_sizes(self):
         plan = plan_splits(_tasks({"a": 20, "b": 15, "c": 4, "d": 1}), {}, "env")
 
@@ -394,23 +407,44 @@ class TestLock:
         assert response.status_code == 422
         assert not HarnessRelease.no_workspace_objects.exists()
 
-    def test_an_environment_without_a_catalogue_scores_every_named_goal(
+    def test_an_environment_without_a_catalogue_runs_every_task(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
-        # A version recorded before sub-goals were catalogued: runs grade every one.
+        # A version recorded before sub-goals were catalogued: its runs refuse nothing.
         version = environment.environment_version
         version.documents = {**version.documents, "sub_goals": []}
         version.save(update_fields=["documents"])
-        _suite(environment, _scenarios(20, goal="resolved"))
+        _suite(
+            environment,
+            _scenarios(10, goal="resolved")
+            + _scenarios(5, prefix="e", scorable=False)
+            + [(f"l{index}", "refunds", None) for index in range(5)],
+        )
 
         response = _lock(auth_client, environment)
 
         assert response.status_code == 200, response.json()
         assert len(_splits(environment)) == 20
 
-    @pytest.mark.parametrize("malformed", ["refunded", 5, {"name": "refunded"}])
-    def test_malformed_sub_goals_are_unscorable(
+    def test_a_legacy_suite_without_sub_goals_locks(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        version = environment.environment_version
+        version.documents = {**version.documents, "sub_goals": []}
+        version.save(update_fields=["documents"])
+        # Members from before sub-goals: the run plays them, so the release counts them.
+        _suite(environment, [(f"l{index}", "refunds", None) for index in range(20)])
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 200, response.json()
+        [release] = response.json()["releases"]
+        assert (release["train"], release["test"]) == (14, 6)
+
+    @pytest.mark.parametrize("malformed", ["refunded", 5, {"name": "refunded"}, None])
+    def test_sub_goals_that_are_not_a_list_are_left_to_the_run(
         self, auth_client, user, workspace, storage, malformed
     ):
         environment = _environment(user, workspace, storage)
@@ -421,10 +455,12 @@ class TestLock:
 
         response = auth_client.get(f"{BASE}/{environment.id}/versions/")
 
+        # The run refuses only a list naming no graded goal, so this member counts:
+        # N = 21, target min(7, 60) = 7.
         assert response.status_code == 200
         assert (response.json()["lock"]["train"], response.json()["lock"]["test"]) == (
             14,
-            6,
+            7,
         )
 
     def test_the_target_counts_scorable_tasks(
@@ -439,7 +475,6 @@ class TestLock:
         lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
 
         # N is the 80 scorable tasks, not the 100 members: min(24, max(60, 16)).
-        assert releases.TARGET_COUNTS_UNSCORABLE is False
         assert (lock["train"], lock["test"], lock["test_target"]) == (56, 24, 24)
 
     def test_too_few_test_tasks_is_refused(self, auth_client, user, workspace, storage):
