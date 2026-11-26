@@ -117,7 +117,12 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
         eval_configs.update(deleted=True, deleted_at=now)
         projects.update(deleted=True, deleted_at=now)
 
+    from tracer.services.clickhouse.v2.trajectory_retention import (
+        delete_project_trajectory_items,
+    )
+
     transaction.on_commit(lambda: publish_project_invalidation(project_ids))
+    transaction.on_commit(lambda: delete_project_trajectory_items(project_ids))
     if pause_task_ids:
         transaction.on_commit(lambda: _pause_eval_task_workflows(pause_task_ids))
     return project_ids

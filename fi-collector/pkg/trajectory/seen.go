@@ -148,15 +148,23 @@ func (s *SeenStore) InvalidateProject(projectID string) int {
 // RedisErrors returns the cumulative number of Redis fail-open events.
 func (s *SeenStore) RedisErrors() uint64 { return s.redisErr.Load() }
 
-// FilterNew partitions items into genuinely NEW items (to persist & bill) and
-// already-seen items (to skip writing & bill 0 bytes). Duplicate keys within
-// `items` itself are collapsed first so each unique key is counted at most once.
-func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Item, reusedCount int, reusedBytes int64) {
+// CheckNew partitions items into items NOT yet durably committed (to persist &
+// bill) and already-committed items (to skip writing & bill 0 bytes). Duplicate
+// keys within `items` itself are collapsed first so each unique key is counted
+// at most once per batch.
+//
+// Crucially, CheckNew is strictly READ-ONLY against both the pod-local LRU and
+// Redis (using SMISMEMBER). Callers MUST invoke MarkCommitted only AFTER
+// `trajectory_items` has durably committed to ClickHouse. This guarantees that
+// a concurrent request on any pod can never emit pointer-only spans referencing
+// an uncommitted hash whose insert might fail or whose originating pod might
+// crash before draining.
+func (s *SeenStore) CheckNew(ctx context.Context, items []Item) (newItems []Item, reusedCount int, reusedBytes int64) {
 	if len(items) == 0 {
 		return nil, 0, 0
 	}
 
-	// Step 1: in-slice dedup + Tier 1 pod-local LRU check.
+	// Step 1: in-slice dedup + Tier 1 pod-local LRU check (read-only on misses).
 	type candidate struct {
 		item Item
 	}
@@ -194,15 +202,12 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 		return nil, reusedCount, reusedBytes
 	}
 
-	// Step 2: Tier 2 cross-pod Redis check (pipelined per (project_id, scope_id)).
+	// Step 2: Tier 2 cross-pod Redis read-only check (pipelined SMISMEMBER).
 	if s.rdb == nil {
 		newItems = make([]Item, 0, len(misses))
-		s.mu.Lock()
 		for _, c := range misses {
-			s.putLocked(c.item.Key(), now)
 			newItems = append(newItems, c.item)
 		}
-		s.mu.Unlock()
 		return newItems, reusedCount, reusedBytes
 	}
 
@@ -224,19 +229,14 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 	defer cancel()
 
 	pipe := s.rdb.Pipeline()
-	cmds := make([]*redis.Cmd, len(order))
+	cmds := make([]*redis.BoolSliceCmd, len(order))
 	for i, sk := range order {
 		group := groups[sk]
-		ttlSec := int64(s.sessionTTL.Seconds())
-		if sk.scopeID == ProjectScopeID {
-			ttlSec = int64(s.projectTTL.Seconds())
+		members := make([]any, len(group))
+		for j, it := range group {
+			members[j] = it.ItemHash
 		}
-		args := make([]any, 0, len(group)+1)
-		args = append(args, ttlSec)
-		for _, it := range group {
-			args = append(args, it.ItemHash)
-		}
-		cmds[i] = pipe.Eval(rctx, redisSeenLuaSrc, []string{redisSeenKey(sk.projectID, sk.scopeID)}, args...)
+		cmds[i] = pipe.SMIsMember(rctx, redisSeenKey(sk.projectID, sk.scopeID), members...)
 	}
 	_, pipeErr := pipe.Exec(rctx)
 
@@ -246,36 +246,100 @@ func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Ite
 
 	for i, sk := range order {
 		group := groups[sk]
-		if pipeErr != nil {
-			// Check per-command error; fail open on Redis error so we never lose items.
-			if cmds[i].Err() != nil {
-				s.redisErr.Add(1)
-				for _, it := range group {
-					s.putLocked(it.Key(), now)
-					newItems = append(newItems, it)
-				}
-				continue
-			}
-		}
-		vals, err := cmds[i].Int64Slice()
-		if err != nil || len(vals) != len(group) {
+		if pipeErr != nil && cmds[i].Err() != nil {
+			// Fail open on Redis error: treat as new so we never emit dangling pointers.
 			s.redisErr.Add(1)
-			for _, it := range group {
-				s.putLocked(it.Key(), now)
-				newItems = append(newItems, it)
-			}
+			newItems = append(newItems, group...)
+			continue
+		}
+		present, err := cmds[i].Result()
+		if err != nil || len(present) != len(group) {
+			s.redisErr.Add(1)
+			newItems = append(newItems, group...)
 			continue
 		}
 		for j, it := range group {
-			s.putLocked(it.Key(), now)
-			if vals[j] == 0 {
-				// Already stored & billed by another collector pod.
+			if present[j] {
+				// Already durably committed by another pod; warm local LRU.
+				s.putLocked(it.Key(), now)
 				reusedCount++
 				reusedBytes += int64(len(it.Content))
 			} else {
 				newItems = append(newItems, it)
 			}
 		}
+	}
+	return newItems, reusedCount, reusedBytes
+}
+
+// MarkCommitted records items in the pod-local LRU and shared Redis seen-set
+// ONLY AFTER their durable ClickHouse `trajectory_items` insert has succeeded.
+func (s *SeenStore) MarkCommitted(ctx context.Context, items []Item) {
+	if s == nil || len(items) == 0 {
+		return
+	}
+	now := s.now()
+	s.mu.Lock()
+	for _, it := range items {
+		s.putLocked(it.Key(), now)
+	}
+	s.mu.Unlock()
+
+	if s.rdb == nil {
+		return
+	}
+
+	type scopeKey struct {
+		projectID string
+		scopeID   string
+	}
+	groups := make(map[scopeKey][]string)
+	order := make([]scopeKey, 0)
+	seenInCall := make(map[ItemKey]struct{}, len(items))
+	for _, it := range items {
+		k := it.Key()
+		if _, dup := seenInCall[k]; dup {
+			continue
+		}
+		seenInCall[k] = struct{}{}
+		sk := scopeKey{projectID: it.ProjectID, scopeID: it.ScopeID}
+		if _, exists := groups[sk]; !exists {
+			order = append(order, sk)
+		}
+		groups[sk] = append(groups[sk], it.ItemHash)
+	}
+
+	rctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+
+	pipe := s.rdb.Pipeline()
+	for _, sk := range order {
+		hashes := groups[sk]
+		ttlSec := int64(s.sessionTTL.Seconds())
+		if sk.scopeID == ProjectScopeID {
+			ttlSec = int64(s.projectTTL.Seconds())
+		}
+		args := make([]any, 0, len(hashes)+1)
+		args = append(args, ttlSec)
+		for _, h := range hashes {
+			args = append(args, h)
+		}
+		pipe.Eval(rctx, redisSeenLuaSrc, []string{redisSeenKey(sk.projectID, sk.scopeID)}, args...)
+	}
+	if _, err := pipe.Exec(rctx); err != nil {
+		// Best-effort Redis cache update after ClickHouse commit; ReplacingMergeTree remains authoritative.
+		s.redisErr.Add(1)
+	}
+}
+
+// FilterNew is a convenience wrapper that runs CheckNew followed immediately by
+// MarkCommitted for single-step callers and tests. Production ingest pipelines
+// MUST call CheckNew at convert time and MarkCommitted only after ClickHouse
+// commits `trajectory_items`.
+func (s *SeenStore) FilterNew(ctx context.Context, items []Item) (newItems []Item, reusedCount int, reusedBytes int64) {
+	newItems, reusedCount, reusedBytes = s.CheckNew(ctx, items)
+	if len(newItems) > 0 {
+		s.MarkCommitted(ctx, newItems)
 	}
 	return newItems, reusedCount, reusedBytes
 }

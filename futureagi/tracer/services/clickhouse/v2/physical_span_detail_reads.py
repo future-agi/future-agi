@@ -30,8 +30,19 @@ def _microseconds(value):
 
 def build_physical_span_detail_query(*, span_id, reference):
     """The caller has validated this complete selector; no mutable bind exists."""
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        is_trajectory_store_read_enabled,
+    )
+
+    traj_select = (
+        """,
+            input_item_hashes, output_item_hashes, tool_def_hashes,
+            item_scope_id, payload_encoding, payload_envelope"""
+        if is_trajectory_store_read_enabled()
+        else ""
+    )
     return (
-        """
+        f"""
         SELECT
             toString(project_id) AS project_id, trace_id, id,
             observation_type, service_name, start_time,
@@ -43,9 +54,7 @@ def build_physical_span_detail_query(*, span_id, reference):
             custom_eval_config_id, toString(trace_session_id) AS trace_session_id,
             toJSONString(metadata) AS metadata_json,
             toJSONString(resource_attrs) AS resource_attrs,
-            attrs_string, attrs_number, attrs_bool,
-            input_item_hashes, output_item_hashes, tool_def_hashes,
-            item_scope_id, payload_encoding, payload_envelope
+            attrs_string, attrs_number, attrs_bool{traj_select}
         FROM spans FINAL
         PREWHERE project_id = %(physical_project_id)s
           AND observation_type = %(physical_observation_type)s

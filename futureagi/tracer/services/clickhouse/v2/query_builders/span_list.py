@@ -94,6 +94,12 @@ _PHYSICAL_SPAN_COLUMNS = (
     "updated_at",
     "is_deleted",
     "_version",
+    "input_item_hashes",
+    "output_item_hashes",
+    "tool_def_hashes",
+    "item_scope_id",
+    "payload_encoding",
+    "payload_envelope",
 )
 
 # The deployed ReplacingMergeTree sorting key, in its declared order. The hour

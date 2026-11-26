@@ -41,66 +41,16 @@ from typing import Any, Optional
 
 
 # Sentinel for keys we never want to elevate into typed maps even if their
-# scalar type fits — they're nested objects, LLM message/tool payloads, or raw
-# dumps better kept in attributes_extra (ZSTD(3), out of attrs_string bloom /
-# 4-gram indexes). Must match overflowKeyPrefixes in fi-collector/pkg/adapter/adapter.go.
+# scalar type fits — they're nested objects or arrays of LLM content, better
+# kept whole in the JSON overflow.
 _OVERFLOW_KEY_PREFIXES = (
     "llm.prompt",
     "llm.completion",
     "llm.messages",
-    "llm.input_messages",
-    "llm.output_messages",
-    "llm.tools",
-    "gen_ai.input.messages",
-    "gen_ai.output.messages",
-    "gen_ai.system_instructions",
-    "gen_ai.tool.definitions",
     "input.value",
     "output.value",
-    "raw.",
     "retrieval.documents",
     "embedding.embeddings",
-)
-
-# Only indexed message keys (e.g. "gen_ai.prompt.0.content") overflow;
-# prompt template metadata like "gen_ai.prompt.name" or
-# "gen_ai.prompt.template.variables" stays filterable in attrs_string.
-_INDEXED_OVERFLOW_KEY_PREFIXES = (
-    "gen_ai.prompt.",
-    "gen_ai.completion.",
-)
-
-
-def _has_overflow_prefix(key: str) -> bool:
-    if any(key.startswith(p) for p in _OVERFLOW_KEY_PREFIXES):
-        return True
-    for p in _INDEXED_OVERFLOW_KEY_PREFIXES:
-        if key.startswith(p) and len(key) > len(p) and "0" <= key[len(p)] <= "9":
-            return True
-    return False
-
-
-# Strings larger than 16 KiB (matching observedcatalog.MaxStringValueBytes)
-# route to attributes_extra so every filterable custom string stays queryable
-# in attrs_string while giant unindexed blobs do not saturate idx_attrs_str_ngram.
-# Must match MaxAttrsStringBytes in fi-collector/pkg/adapter/adapter.go.
-_MAX_ATTRS_STRING_BYTES = 16384
-
-# Promoted hot string keys must stay in attrs_string regardless of length
-# (mirrors hotStringKeys in fi-collector/pkg/adapter/adapter.go).
-_HOT_STRING_KEYS = frozenset(
-    {
-        "llm.model_name",
-        "gen_ai.request.model",
-        "gen_ai.response.model",
-        "llm.request.model",
-        "gen_ai.provider.name",
-        "llm.system",
-        "gen_ai.system",
-        "llm.vendor",
-        "llm.provider",
-        "gen_ai.operation.name",
-    }
 )
 
 
@@ -198,7 +148,7 @@ def split_attributes(
             # PG JSON object keys are always strings; defensive.
             extra[str(k)] = v
             continue
-        if _has_overflow_prefix(k):
+        if any(k.startswith(p) for p in _OVERFLOW_KEY_PREFIXES):
             extra[k] = v
             continue
 
@@ -218,13 +168,7 @@ def split_attributes(
             else:
                 extra[k] = v  # NaN/Inf go to overflow rather than corrupt Float64 maps
         elif isinstance(v, str):
-            if (
-                len(v.encode("utf-8")) > _MAX_ATTRS_STRING_BYTES
-                and k not in _HOT_STRING_KEYS
-            ):
-                extra[k] = v
-            else:
-                s[k] = v
+            s[k] = v
         else:  # list, dict, other
             extra[k] = v
     return s, n, b, extra

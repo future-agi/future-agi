@@ -22,60 +22,21 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
-// Attribute keys whose values stay in the overflow tier regardless of their
-// scalar type. These are LLM message arrays, prompt/completion blobs, tool
-// definitions, and raw provider dumps — keeping them out of attrs_string avoids
-// inflating the ZSTD(1) map and polluting idx_attrs_str_values /
-// idx_attrs_str_ngram with prose/code 4-grams.
+// Attribute keys whose values stay in the typed-JSON overflow regardless of
+// their scalar type. These are LLM message arrays + content payloads — they
+// often look like strings (so would otherwise land in attrs_string) but are
+// usually nested objects whose shape varies per row, so leaving them in
+// overflow keeps the typed Maps' cardinality bounded.
 //
-// Must match _OVERFLOW_KEY_PREFIXES in futureagi/tracer/services/clickhouse/v2/adapter.py.
+// Must match _OVERFLOW_KEY_PREFIXES in pg_to_ch_adapter.py.
 var overflowKeyPrefixes = []string{
 	"llm.prompt",
 	"llm.completion",
 	"llm.messages",
-	"llm.input_messages",
-	"llm.output_messages",
-	"llm.tools",
-	"gen_ai.input.messages",
-	"gen_ai.output.messages",
-	"gen_ai.system_instructions",
-	"gen_ai.tool.definitions",
 	"input.value",
 	"output.value",
-	"raw.",
 	"retrieval.documents",
 	"embedding.embeddings",
-}
-
-// indexedOverflowKeyPrefixes only overflow when followed by an ASCII digit
-// (e.g. "gen_ai.prompt.0.content"), keeping prompt template metadata such as
-// "gen_ai.prompt.name" or "gen_ai.prompt.template.variables" filterable in attrs_string.
-var indexedOverflowKeyPrefixes = []string{
-	"gen_ai.prompt.",
-	"gen_ai.completion.",
-}
-
-// MaxAttrsStringBytes caps the length of a single non-hot string attribute
-// routed into attrs_string. Aligned to observedcatalog.MaxStringValueBytes
-// (16 KiB) so every filterable string attribute stays queryable in attrs_string
-// while giant unindexed blobs (> 16 KiB, e.g. document chunks, transcripts)
-// move to attributes_extra (ZSTD(3), unindexed) instead of saturating
-// idx_attrs_str_ngram. Must match _MAX_ATTRS_STRING_BYTES in adapter.py.
-const MaxAttrsStringBytes = 16384
-
-// hotStringKeys are promoted by DeriveHotKeys from attrs_string; never demote
-// them by length so converter promotion semantics stay identical for any value.
-var hotStringKeys = map[string]struct{}{
-	"llm.model_name":        {},
-	"gen_ai.request.model":  {},
-	"gen_ai.response.model": {},
-	"llm.request.model":     {},
-	"gen_ai.provider.name":  {},
-	"llm.system":            {},
-	"gen_ai.system":         {},
-	"llm.vendor":            {},
-	"llm.provider":          {},
-	"gen_ai.operation.name": {},
 }
 
 // Float64-safe integer range. Larger ints get demoted to overflow rather
@@ -106,14 +67,7 @@ func Split(
 
 		switch v.Type() {
 		case pcommon.ValueTypeStr:
-			s := v.Str()
-			if len(s) > MaxAttrsStringBytes {
-				if _, hot := hotStringKeys[k]; !hot {
-					overflow[k] = s
-					return true
-				}
-			}
-			attrsString[k] = s
+			attrsString[k] = v.Str()
 		case pcommon.ValueTypeBool:
 			// MUST come before any int path. (In Go bool isn't an int subtype
 			// like Python, but the rule still matters for the legibility of
@@ -180,14 +134,6 @@ func hasOverflowPrefix(key string) bool {
 	for _, p := range overflowKeyPrefixes {
 		if strings.HasPrefix(key, p) {
 			return true
-		}
-	}
-	for _, p := range indexedOverflowKeyPrefixes {
-		if strings.HasPrefix(key, p) && len(key) > len(p) {
-			c := key[len(p)]
-			if c >= '0' && c <= '9' {
-				return true
-			}
 		}
 	}
 	return false

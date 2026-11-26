@@ -1809,6 +1809,14 @@ del _runtime_numeric_settings
 # tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
 CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
 
+# Phase 1 Trajectory Store read-side gate (040_trajectory_items.sql).
+# Default False so deploying application code BEFORE an operator applies 040
+# emits zero references to the 6 additive `spans` pointer columns or the
+# `trajectory_items` table. Enable only after 040 is applied in ClickHouse.
+FI_TRAJECTORY_STORE_READ_ENABLED = os.getenv(
+    "FI_TRAJECTORY_STORE_READ_ENABLED", ""
+).strip().lower() in ("1", "true", "yes", "on")
+
 # Operational SQL workbench budgets, not edition/pricing entitlements.
 from .sql_workbench import (  # noqa: E402,F401
     SQL_WORKBENCH_AUDIT_RETENTION_DAYS,

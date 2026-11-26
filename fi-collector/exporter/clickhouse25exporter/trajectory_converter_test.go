@@ -138,11 +138,17 @@ func TestConvertWithOptionsPhase1DedupAndCanary(t *testing.T) {
 		if len(row["input"].(string)) > 128 {
 			t.Fatalf("turn %d: preview input exceeds 128B: %d", turn, len(row["input"].(string)))
 		}
-		// Flattened llm.input_messages.* should be stripped from attributes_extra.
+		// Flattened llm.input_messages.* should be stripped from both attrs_string and attributes_extra.
 		of := row["attributes_extra"].(map[string]any)
+		as := row["attrs_string"].(map[string]string)
 		for k := range of {
 			if strings.HasPrefix(k, "llm.input_messages.") {
-				t.Errorf("turn %d: flattened key %q was not stripped", turn, k)
+				t.Errorf("turn %d: flattened key %q was not stripped from attributes_extra", turn, k)
+			}
+		}
+		for k := range as {
+			if strings.HasPrefix(k, "llm.input_messages.") {
+				t.Errorf("turn %d: flattened key %q was not stripped from attrs_string", turn, k)
 			}
 		}
 		// Trace root row MUST retain full lossless input/output (never truncated to preview!).
@@ -154,13 +160,17 @@ func TestConvertWithOptionsPhase1DedupAndCanary(t *testing.T) {
 		if turn > 1 && res.Usage.ReusedItems == 0 {
 			t.Fatalf("turn %d: expected ReusedItems > 0, got 0", turn)
 		}
+		// Simulate durable ClickHouse commit before next turn arrives.
+		seen.MarkCommitted(context.Background(), res.Trajectory.Items())
 		if turn == 5 {
 			// Verify RestoreInline reverts everything cleanly.
 			res.Trajectory.RestoreInline()
 			if row["input"] != string(inBytes) || row["output"] != string(outBytes) {
 				t.Fatalf("RestoreInline failed to restore original input/output")
 			}
-			if _, exists := of["llm.input_messages.0.message.content"]; !exists {
+			_, inOf := of["llm.input_messages.0.message.content"]
+			_, inAs := as["llm.input_messages.0.message.content"]
+			if !inOf && !inAs {
 				t.Fatalf("RestoreInline failed to restore stripped flattened attributes")
 			}
 		}

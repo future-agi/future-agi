@@ -480,3 +480,40 @@ func TestSeenStoreTTLExpiryAndProjectInvalidation(t *testing.T) {
 		t.Fatalf("after InvalidateProject: new=%+v reused=%d", newItems, reused)
 	}
 }
+
+func TestSeenStoreCheckNewIsReadOnlyUntilMarkCommitted(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	podA := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
+	podB := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
+	ctx := context.Background()
+
+	items := []Item{
+		{ProjectID: "p1", ScopeID: "sess-1", ItemHash: "11111111111111111111111111111111", Content: "m1"},
+		{ProjectID: "p1", ScopeID: ProjectScopeID, ItemHash: "22222222222222222222222222222222", Content: "sys"},
+	}
+
+	// CheckNew on Pod A must NOT mark items seen locally or in Redis.
+	newA, reusedA, _ := podA.CheckNew(ctx, items)
+	if len(newA) != 2 || reusedA != 0 {
+		t.Fatalf("podA CheckNew: new=%d reused=%d, want 2/0", len(newA), reusedA)
+	}
+	// Concurrent CheckNew on BOTH Pod A and Pod B still sees both items as new.
+	newA2, reusedA2, _ := podA.CheckNew(ctx, items)
+	newB, reusedB, _ := podB.CheckNew(ctx, items)
+	if len(newA2) != 2 || reusedA2 != 0 || len(newB) != 2 || reusedB != 0 {
+		t.Fatalf("before MarkCommitted: podA=(%d,%d) podB=(%d,%d), want (2,0) each",
+			len(newA2), reusedA2, len(newB), reusedB)
+	}
+
+	// Only AFTER MarkCommitted on Pod A do Pod A and Pod B see the items as reused.
+	podA.MarkCommitted(ctx, newA)
+	newA3, reusedA3, _ := podA.CheckNew(ctx, items)
+	newB2, reusedB2, _ := podB.CheckNew(ctx, items)
+	if len(newA3) != 0 || reusedA3 != 2 || len(newB2) != 0 || reusedB2 != 2 {
+		t.Fatalf("after MarkCommitted: podA=(%d,%d) podB=(%d,%d), want (0,2) each",
+			len(newA3), reusedA3, len(newB2), reusedB2)
+	}
+}

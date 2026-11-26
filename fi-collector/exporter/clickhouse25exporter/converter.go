@@ -319,18 +319,20 @@ func ConvertWithOptions(ctx context.Context, traces ptrace.Traces, pricer Pricer
 						if trajBatch == nil {
 							trajBatch = trajectory.NewBatch()
 						}
-						// Strip redundant flattened message/tool keys from overflow
-						// when their structured input/output was extracted into items.
+						// Strip redundant flattened message/tool keys from attrs_string and
+						// overflow once their structured input/output was extracted into items.
 						var stripped map[string]any
+						var strippedStr map[string]string
 						var strippedBytes int64
-						if of, ok := row["attributes_extra"].(map[string]any); ok {
-							stripped, strippedBytes = stripFlattenedTrajectoryAttrs(of)
-						}
+						of, _ := row["attributes_extra"].(map[string]any)
+						as, _ := row["attrs_string"].(map[string]string)
+						stripped, strippedStr, strippedBytes = stripFlattenedTrajectoryAttrs(as, of)
 						trajBatch.AddFallback(trajectory.SpanFallback{
-							Row:           row,
-							OrigInput:     origInput,
-							OrigOutput:    origOutput,
-							StrippedAttrs: stripped,
+							Row:                 row,
+							OrigInput:           origInput,
+							OrigOutput:          origOutput,
+							StrippedAttrs:       stripped,
+							StrippedStringAttrs: strippedStr,
 						})
 						row["input"] = ext.InputPreview
 						row["output"] = ext.OutputPreview
@@ -359,7 +361,9 @@ func ConvertWithOptions(ctx context.Context, traces ptrace.Traces, pricer Pricer
 	if len(allTrajItems) > 0 {
 		var newItems []trajectory.Item
 		if opts.Seen != nil {
-			newItems, report.ReusedItems, report.ReusedItemBytes = opts.Seen.FilterNew(ctx, allTrajItems)
+			// Read-only check at convert time: items are only marked committed
+			// in SeenStore AFTER ClickHouse commits `trajectory_items` in drainNow.
+			newItems, report.ReusedItems, report.ReusedItemBytes = opts.Seen.CheckNew(ctx, allTrajItems)
 		} else {
 			// Still deduplicate within the batch when no SeenStore is wired.
 			seen := make(map[trajectory.ItemKey]struct{}, len(allTrajItems))
@@ -1065,21 +1069,26 @@ func isIndexedAttrPrefix(k, prefix string) bool {
 	return c >= '0' && c <= '9'
 }
 
+func isFlattenedTrajectoryAttrKey(k string) bool {
+	return isIndexedAttrPrefix(k, "llm.input_messages.") ||
+		isIndexedAttrPrefix(k, "llm.output_messages.") ||
+		isIndexedAttrPrefix(k, "gen_ai.prompt.") ||
+		isIndexedAttrPrefix(k, "gen_ai.completion.") ||
+		isIndexedAttrPrefix(k, "gen_ai.input.messages.") ||
+		isIndexedAttrPrefix(k, "gen_ai.output.messages.") ||
+		isIndexedAttrPrefix(k, "llm.tools.")
+}
+
 // stripFlattenedTrajectoryAttrs removes redundant OpenInference/OpenLLMetry
-// flattened message/tool keys from overflow once the span's messages have been
-// extracted into trajectory_items. Returns the stripped key/values (for
-// lossless inline fallback) and their approximate byte size.
-func stripFlattenedTrajectoryAttrs(overflow map[string]any) (map[string]any, int64) {
+// flattened message/tool keys from both attrs_string and overflow once the
+// span's messages have been extracted into trajectory_items. Returns the
+// stripped key/values (for lossless inline fallback) and their approximate byte size.
+func stripFlattenedTrajectoryAttrs(attrsStr map[string]string, overflow map[string]any) (map[string]any, map[string]string, int64) {
 	var stripped map[string]any
+	var strippedStr map[string]string
 	var totalBytes int64
 	for k, v := range overflow {
-		if isIndexedAttrPrefix(k, "llm.input_messages.") ||
-			isIndexedAttrPrefix(k, "llm.output_messages.") ||
-			isIndexedAttrPrefix(k, "gen_ai.prompt.") ||
-			isIndexedAttrPrefix(k, "gen_ai.completion.") ||
-			isIndexedAttrPrefix(k, "gen_ai.input.messages.") ||
-			isIndexedAttrPrefix(k, "gen_ai.output.messages.") ||
-			isIndexedAttrPrefix(k, "llm.tools.") {
+		if isFlattenedTrajectoryAttrKey(k) {
 			if stripped == nil {
 				stripped = make(map[string]any)
 			}
@@ -1088,7 +1097,17 @@ func stripFlattenedTrajectoryAttrs(overflow map[string]any) (map[string]any, int
 			delete(overflow, k)
 		}
 	}
-	return stripped, totalBytes
+	for k, v := range attrsStr {
+		if isFlattenedTrajectoryAttrKey(k) {
+			if strippedStr == nil {
+				strippedStr = make(map[string]string)
+			}
+			strippedStr[k] = v
+			totalBytes += int64(len(k)) + int64(len(v))
+			delete(attrsStr, k)
+		}
+	}
+	return stripped, strippedStr, totalBytes
 }
 
 func attrValueBytes(v any) int64 {

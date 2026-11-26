@@ -310,10 +310,12 @@ func TestServerCrossPodDedupBillingShadowAndLive(t *testing.T) {
 			podB := New(Config{BatchMaxRows: 100, BatchMaxAge: time.Minute}, writer, nil, usage, NoopMetering{},
 				WithLogger(log), WithTrajectory(cfg, trajectory.NewSeenStore(rdb, 10_000, time.Hour, time.Hour)))
 
-			// Turn 10 lands on Pod A.
+			// Turn 10 lands on Pod A and commits durably to ClickHouse.
 			postTrajOTLP(t, podA, oid, pid, makeAgentHTTPReq(t, pid, oid, "sess-bill", 0x10, 0x01, baseMsgs, "Prior reply 10"))
-			// Turn 11 (reusing all 21 prior messages!) lands on Pod B.
+			podA.drainNow(context.Background())
+			// Turn 11 (reusing all 21 committed messages!) lands on Pod B and drains.
 			postTrajOTLP(t, podB, oid, pid, makeAgentHTTPReq(t, pid, oid, "sess-bill", 0x11, 0x02, nextMsgs, "Final short reply"))
+			podB.drainNow(context.Background())
 
 			entries, err := rdb.XRange(context.Background(), "usage:events", "-", "+").Result()
 			if err != nil {
@@ -369,5 +371,114 @@ func TestServerCrossPodDedupBillingShadowAndLive(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestServerUncommittedItemsNotReusedAndFallbackBillsRawBytes(t *testing.T) {
+	ch := &fakeTrajectoryCH{}
+	chSrv := httptest.NewServer(ch.handler())
+	defer chSrv.Close()
+
+	writer, err := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		DeadLetterFile: filepath.Join(t.TempDir(), "dlq.jsonl"),
+	})
+	if err != nil {
+		t.Fatalf("chwriter.New: %v", err)
+	}
+	defer writer.Close()
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	pid := "11111111-1111-4111-8111-111111111111"
+	oid := "99999999-9999-4999-8999-999999999999"
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	usage := auth.NewUsageEmitter(rdb, nil, log, 1000)
+
+	cfg := trajectory.Config{
+		Mode:             trajectory.ModeOn,
+		BillDedupedBytes: true,
+	}.Normalize()
+
+	podA := New(Config{BatchMaxRows: 100, BatchMaxAge: time.Minute}, writer, nil, usage, NoopMetering{},
+		WithLogger(log), WithTrajectory(cfg, trajectory.NewSeenStore(rdb, 10_000, time.Hour, time.Hour)))
+	podB := New(Config{BatchMaxRows: 100, BatchMaxAge: time.Minute}, writer, nil, usage, NoopMetering{},
+		WithLogger(log), WithTrajectory(cfg, trajectory.NewSeenStore(rdb, 10_000, time.Hour, time.Hour)))
+
+	msgs := []map[string]any{
+		{"role": "system", "content": "Shared prompt " + strings.Repeat("s", 300)},
+		{"role": "user", "content": "Concurrent question " + strings.Repeat("q", 300)},
+	}
+
+	// 1. Seen-before-commit guard: Pod A enqueues Turn 1 WITHOUT draining yet.
+	//    Pod B receives Turn 2 concurrently and MUST NOT assume Pod A's items
+	//    are committed — Pod B must write all items itself when it drains.
+	postTrajOTLP(t, podA, oid, pid, makeAgentHTTPReq(t, pid, oid, "sess-race", 0x20, 0x01, msgs, "Reply A"))
+	postTrajOTLP(t, podB, oid, pid, makeAgentHTTPReq(t, pid, oid, "sess-race", 0x20, 0x02, msgs, "Reply B"))
+
+	// Even if Pod A never drains (simulating pod crash), Pod B's drain writes
+	// every referenced trajectory_item durably before its span!
+	podB.drainNow(context.Background())
+	podBInserts := ch.snapshot()
+	trajRows := 0
+	for _, ins := range podBInserts {
+		if ins.Table == "trajectory_items" {
+			trajRows += len(ins.Rows)
+		}
+	}
+	if trajRows != 3 {
+		t.Fatalf("podB must write all 3 items when podA has not committed yet; got %d", trajRows)
+	}
+
+	// 2. Post-commit billing fallback guard: simulate trajectory_items outage
+	//    on a fresh session with BillDedupedBytes=true. Usage MUST NOT be emitted
+	//    until drainNow and MUST bill exact raw_bytes when falling back to inline.
+	rdb.Del(context.Background(), "usage:events")
+	ch.mu.Lock()
+	ch.failTrajItem = true
+	ch.mu.Unlock()
+
+	fallbackMsgs := []map[string]any{
+		{"role": "system", "content": "Outage prompt " + strings.Repeat("z", 400)},
+		{"role": "user", "content": "Outage user turn " + strings.Repeat("w", 400)},
+	}
+	postTrajOTLP(t, podA, oid, pid, makeAgentHTTPReq(t, pid, oid, "sess-fb-bill", 0x21, 0x01, fallbackMsgs, "Reply fb"))
+
+	// Before drainNow, no usage event for the deduped request may be emitted yet.
+	beforeDrain, _ := rdb.XRange(context.Background(), "usage:events", "-", "+").Result()
+	if len(beforeDrain) != 0 {
+		t.Fatalf("usage emitted before trajectory_items commit: got %d events", len(beforeDrain))
+	}
+
+	podA.drainNow(context.Background())
+	afterDrain, err := rdb.XRange(context.Background(), "usage:events", "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange usage:events: %v", err)
+	}
+	// podA drained both the earlier sess-race request (which fell back too) and sess-fb-bill.
+	if len(afterDrain) == 0 {
+		t.Fatalf("expected usage events after drainNow")
+	}
+	last := afterDrain[len(afterDrain)-1].Values
+	var props struct {
+		RawBytes        int64 `json:"raw_bytes"`
+		StoredBytes     int64 `json:"stored_bytes"`
+		DedupSavedBytes int64 `json:"dedup_saved_bytes"`
+	}
+	if err := json.Unmarshal([]byte(last["properties"].(string)), &props); err != nil {
+		t.Fatalf("unmarshal properties: %v", err)
+	}
+	var billed int64
+	if _, err := fmt.Sscanf(last["amount"].(string), "%d", &billed); err != nil {
+		t.Fatalf("parse amount: %v", err)
+	}
+	if props.DedupSavedBytes != 0 || props.StoredBytes != props.RawBytes || billed != props.RawBytes {
+		t.Fatalf("inline fallback must bill raw_bytes=%d, got billed=%d stored=%d saved=%d",
+			props.RawBytes, billed, props.StoredBytes, props.DedupSavedBytes)
 	}
 }

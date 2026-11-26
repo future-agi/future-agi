@@ -24,6 +24,11 @@ _TRACES_SPAN_COLUMNS = (
     "completion_tokens, input, output"
 )
 
+_TRACES_SPAN_COLUMNS_WITH_TRAJ = (
+    _TRACES_SPAN_COLUMNS + ", input_item_hashes, output_item_hashes, tool_def_hashes, "
+    "item_scope_id, payload_encoding, payload_envelope"
+)
+
 
 _LIVE_SESSION_SPANS_TEMPLATE = f"""
     SELECT {{columns}},
@@ -58,6 +63,9 @@ _LIVE_SESSION_AGGREGATE_SPANS = _live_session_spans_sql(
 )
 _LIVE_SESSION_TRACE_SPANS = _live_session_spans_sql(
     _TRACES_SPAN_COLUMNS, include_source_summary=False
+)
+_LIVE_SESSION_TRACE_SPANS_WITH_TRAJ = _live_session_spans_sql(
+    _TRACES_SPAN_COLUMNS_WITH_TRAJ, include_source_summary=False
 )
 
 # Do not let a profile or optimizer move mutable session membership ahead of
@@ -137,12 +145,39 @@ def build_session_detail_traces_query(project_id, session_group_ids, *, limit, o
         raise ValueError(
             "Session detail pagination must be positive limit/nonnegative offset"
         )
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        is_trajectory_store_read_enabled,
+    )
+
+    include_traj = is_trajectory_store_read_enabled()
+    traj_outer = (
+        """,
+            trace_messages.3 AS input_item_hashes,
+            trace_messages.4 AS output_item_hashes,
+            trace_messages.5 AS tool_def_hashes,
+            trace_messages.6 AS item_scope_id,
+            trace_messages.7 AS payload_encoding,
+            trace_messages.8 AS payload_envelope"""
+        if include_traj
+        else ""
+    )
+    msg_tuple = (
+        "tuple(input, output, input_item_hashes, output_item_hashes, "
+        "tool_def_hashes, item_scope_id, payload_encoding, payload_envelope)"
+        if include_traj
+        else "tuple(input, output)"
+    )
+    live_trace_spans = (
+        _LIVE_SESSION_TRACE_SPANS_WITH_TRAJ
+        if include_traj
+        else _LIVE_SESSION_TRACE_SPANS
+    )
     return (
         f"""
         SELECT
             trace_id,
             trace_messages.1 AS input,
-            trace_messages.2 AS output,
+            trace_messages.2 AS output{traj_outer},
             root_latency_ms,
             usage_metrics.2 AS total_cost,
             trace_min_start_time,
@@ -153,12 +188,12 @@ def build_session_detail_traces_query(project_id, session_group_ids, *, limit, o
         SELECT
             toString(trace_id) AS trace_id,
             argMin(
-                tuple(input, output),
+                {msg_tuple},
                 tuple(if(parent_span_id IS NULL OR parent_span_id = '', 0, 1),
                       start_time, id, observation_type, service_name)
             ) AS root_messages,
             argMinIf(
-                tuple(input, output),
+                {msg_tuple},
                 tuple(start_time, id, observation_type, service_name),
                 observation_type = 'llm' AND (input != '' OR output != '')
             ) AS first_llm_messages,
@@ -174,7 +209,7 @@ def build_session_detail_traces_query(project_id, session_group_ids, *, limit, o
                      THEN latency_ms ELSE NULL END) AS root_latency_ms,
             {usage_aggregate_sql(prefix="live_session_spans.", coverage="live_session_spans.usage_coverage", materialized=True)},
             min(start_time) AS trace_min_start_time
-        FROM ({_LIVE_SESSION_TRACE_SPANS}) AS live_session_spans
+        FROM ({live_trace_spans}) AS live_session_spans
         GROUP BY trace_id
         ) AS session_traces
         ARRAY JOIN trace_usage_metrics AS usage_metrics

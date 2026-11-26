@@ -486,7 +486,7 @@ def _inspect(client, database, definitions):
                     raise NativeBootstrapError(
                         "incomplete native layout contains retained rows"
                     )
-    pending_upgrades = ()
+    pending_upgrades: tuple[str, ...] = ()
     if "spans" in tables and any(
         col not in columns["spans"] for col in _TRAJECTORY_SPAN_COLUMNS
     ):

@@ -8,10 +8,11 @@ import "time"
 // `payload_encoding = 'inline'` before inserting `spans` — guaranteeing zero
 // orphaned hashes or data loss, even when rows are split across parcels.
 type SpanFallback struct {
-	Row           map[string]any
-	OrigInput     string
-	OrigOutput    string
-	StrippedAttrs map[string]any
+	Row                 map[string]any
+	OrigInput           string
+	OrigOutput          string
+	StrippedAttrs       map[string]any
+	StrippedStringAttrs map[string]string
 }
 
 // UsageReport tracks exact byte & item counts for dedup-aware billing and
@@ -150,6 +151,13 @@ func (b *Batch) RestoreInline() {
 			if of, ok := fb.Row["attributes_extra"].(map[string]any); ok && of != nil {
 				for k, v := range fb.StrippedAttrs {
 					of[k] = v
+				}
+			}
+		}
+		if len(fb.StrippedStringAttrs) > 0 {
+			if as, ok := fb.Row["attrs_string"].(map[string]string); ok && as != nil {
+				for k, v := range fb.StrippedStringAttrs {
+					as[k] = v
 				}
 			}
 		}

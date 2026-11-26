@@ -150,6 +150,7 @@ type Server struct {
 	pend            []map[string]any
 	pendCurated     *curatedwriter.Batch
 	pendTraj        *trajectory.Batch
+	pendUsage       []*pendingUsage
 	pendProperty    []observedcatalog.ScopedSpan
 	pendRoots       []traceavailable.Root
 	// Input positions, not span IDs: duplicate IDs can have different chunk
@@ -590,10 +591,16 @@ func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, h
 	if ctx.Err() != nil {
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectProjectUnavailable)
 	}
-	if h.s.enqueueRoutedWithTrajectory(res.Rows, res.Identities, res.Trajectory, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
+	var deferredUsage *pendingUsage
+	if res.Usage.DedupApplied {
+		deferredUsage = h.s.buildPendingUsage(ctx, req.Traces(), res.Usage)
+	}
+	if h.s.enqueueRoutedWithTrajectory(res.Rows, res.Identities, res.Trajectory, deferredUsage, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rejectShutdown)
 	}
-	h.s.emitUsageWithReport(ctx, req.Traces(), res.Usage)
+	if deferredUsage == nil {
+		h.s.emitUsageWithReport(ctx, req.Traces(), res.Usage)
+	}
 
 	resp := ptraceotlp.NewExportResponse()
 	setProjectPartialSuccess(resp, prepared.rejectedSpans)
@@ -720,13 +727,19 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		s.rejectHTTP(w, ct, rejectProjectUnavailable)
 		return
 	}
-	if s.enqueueRoutedWithTrajectory(res.Rows, res.Identities, res.Trajectory, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
+	var deferredUsage *pendingUsage
+	if res.Usage.DedupApplied {
+		deferredUsage = s.buildPendingUsage(ctx, req.Traces(), res.Usage)
+	}
+	if s.enqueueRoutedWithTrajectory(res.Rows, res.Identities, res.Trajectory, deferredUsage, prepared.routed, prepared.organization, prepared.workspace, prepared.projects, prepared.hidden) != enqueueAccepted {
 		s.rejectHTTP(w, ct, rejectShutdown)
 		return
 	}
 	enqueued = len(res.Rows) > 0
 
-	s.emitUsageWithReport(ctx, req.Traces(), res.Usage)
+	if deferredUsage == nil {
+		s.emitUsageWithReport(ctx, req.Traces(), res.Usage)
+	}
 
 	// ExportTraceServiceResponse — same wire shape, encoded to match the
 	// request's content-type. The spec requires the response media type to
@@ -847,13 +860,14 @@ func (s *Server) enqueueRouted(
 	workspaceProjectIDs map[string]struct{},
 	hiddenProjectIDs map[string]struct{},
 ) enqueueOutcome {
-	return s.enqueueRoutedWithTrajectory(rows, ids, nil, routed, organizationID, workspaceID, workspaceProjectIDs, hiddenProjectIDs)
+	return s.enqueueRoutedWithTrajectory(rows, ids, nil, nil, routed, organizationID, workspaceID, workspaceProjectIDs, hiddenProjectIDs)
 }
 
 func (s *Server) enqueueRoutedWithTrajectory(
 	rows []map[string]any,
 	ids *curatedwriter.Batch,
 	traj *trajectory.Batch,
+	usage *pendingUsage,
 	routed auth.RouteOutcome,
 	organizationID string,
 	workspaceID string,
@@ -861,7 +875,7 @@ func (s *Server) enqueueRoutedWithTrajectory(
 	hiddenProjectIDs map[string]struct{},
 ) enqueueOutcome {
 	if routed.Hidden != "" {
-		return s.enqueueParcels(parcel{rows: rows, ids: ids, traj: traj})
+		return s.enqueueParcels(parcel{rows: rows, ids: ids, traj: traj, usage: usage})
 	}
 	if len(hiddenProjectIDs) > 0 {
 		var visible, hidden []map[string]any
@@ -878,11 +892,11 @@ func (s *Server) enqueueRoutedWithTrajectory(
 			// The payload's identities and trajectory batch go with the visible
 			// rows, or with the hidden ones when nothing else is left.
 			if len(visible) == 0 {
-				return s.enqueueParcels(parcel{rows: hidden, ids: ids, traj: traj})
+				return s.enqueueParcels(parcel{rows: hidden, ids: ids, traj: traj, usage: usage})
 			}
 			return s.enqueueParcels(
 				parcel{rows: hidden},
-				parcel{rows: visible, ids: ids, traj: traj, organizationID: organizationID, workspaceID: workspaceID, projectIDs: workspaceProjectIDs},
+				parcel{rows: visible, ids: ids, traj: traj, usage: usage, organizationID: organizationID, workspaceID: workspaceID, projectIDs: workspaceProjectIDs},
 			)
 		}
 	}
@@ -890,6 +904,7 @@ func (s *Server) enqueueRoutedWithTrajectory(
 		rows:           rows,
 		ids:            ids,
 		traj:           traj,
+		usage:          usage,
 		organizationID: organizationID,
 		workspaceID:    workspaceID,
 		projectIDs:     workspaceProjectIDs,
@@ -935,6 +950,7 @@ type parcel struct {
 	rows           []map[string]any
 	ids            *curatedwriter.Batch
 	traj           *trajectory.Batch
+	usage          *pendingUsage
 	organizationID string
 	workspaceID    string
 	projectIDs     map[string]struct{}
@@ -1048,6 +1064,9 @@ func (s *Server) appendLocked(p parcel) {
 		}
 		s.pendTraj.Merge(p.traj)
 	}
+	if p.usage != nil {
+		s.pendUsage = append(s.pendUsage, p.usage)
+	}
 }
 
 // flushLoop runs limits.inserts flushers until stopCh closes, and returns
@@ -1092,6 +1111,7 @@ func (s *Server) drainNow(ctx context.Context) {
 	batch := s.pend
 	curated := s.pendCurated
 	traj := s.pendTraj
+	usages := s.pendUsage
 	property := s.pendProperty
 	roots := s.pendRoots
 	rootRows, propertyRows := s.pendRootRows, s.pendPropertyRows
@@ -1099,6 +1119,7 @@ func (s *Server) drainNow(ctx context.Context) {
 	s.pend = nil
 	s.pendCurated = nil
 	s.pendTraj = nil
+	s.pendUsage = nil
 	s.pendProperty = nil
 	s.pendRoots = nil
 	s.pendRootRows, s.pendPropertyRows = nil, nil
@@ -1140,22 +1161,27 @@ func (s *Server) drainNow(ctx context.Context) {
 	defer func() { s.pendMu.Lock(); s.bufferedRows -= len(batch); s.pendMu.Unlock() }()
 
 	// Phase 1 Trajectory Store invariant: durably commit unique trajectory_items
-	// BEFORE inserting spans that point to them. If trajectory_items fails after
-	// retries, atomically restore every compacted span in this drain to inline
-	// encoding and evict the uncommitted hashes from the 2-tier seen cache so
-	// future spans re-emit them — guaranteeing zero orphaned hashes or data loss.
+	// BEFORE inserting spans that point to them, and mark items seen in the
+	// 2-tier SeenStore ONLY AFTER the ClickHouse insert commits. If
+	// trajectory_items fails after retries, atomically restore every compacted
+	// span in this drain to inline encoding and emit raw-byte usage so neither
+	// dangling pointers nor billing under-counts can ever occur.
+	trajFallback := false
 	if traj != nil && len(traj.Items()) > 0 {
 		if err := s.writer.InsertTable(ctx, "trajectory_items", traj.ToRows(stamp)); err != nil {
 			s.log.Warn("trajectory_items insert failed; falling back to inline spans",
 				"items", len(traj.Items()), "spans", len(traj.Fallbacks()), "err", err)
 			traj.RestoreInline()
-			if s.trajSeen != nil {
-				s.trajSeen.Forget(ctx, traj.Items())
-			}
+			trajFallback = true
+		} else if s.trajSeen != nil {
+			s.trajSeen.MarkCommitted(ctx, traj.Items())
 		}
 	}
 
 	confirmed, _ := s.writer.InsertConfirmed(ctx, batch)
+	for _, u := range usages {
+		s.emitPendingUsage(u, trajFallback)
+	}
 	roots = confirmedSidecars(roots, rootRows, confirmed)
 	property = confirmedSidecars(property, propertyRows, confirmed)
 	if s.traceNotifier != nil && len(roots) > 0 {

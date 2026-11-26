@@ -24,9 +24,12 @@ Mirrors the Go write-side contract in ``fi-collector/pkg/trajectory/``:
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 PROJECT_SCOPE_ID = "__project__"
 PROJECT_HASH_PREFIX = "p:"
@@ -49,6 +52,25 @@ TRAJECTORY_SPAN_COLUMNS: tuple[str, ...] = (
     "payload_encoding",
     "payload_envelope",
 )
+
+
+def is_trajectory_store_read_enabled() -> bool:
+    """Return True only when 040_trajectory_items.sql has been applied and
+    read-side trajectory hydration is explicitly enabled via Django settings.
+
+    Defaults to False so deploying app code before running 040 emits zero
+    references to the six additive ``spans`` pointer columns or the
+    ``trajectory_items`` table.
+    """
+    try:
+        from django.conf import settings as django_settings
+        from django.core.exceptions import ImproperlyConfigured
+    except ImportError:
+        return False
+    try:
+        return bool(getattr(django_settings, "FI_TRAJECTORY_STORE_READ_ENABLED", False))
+    except ImproperlyConfigured:
+        return False
 
 
 def _normalize_hash(value: bytes | bytearray | str) -> str:
@@ -449,18 +471,34 @@ def hydrate_span_dicts(
     for idx, row in enumerate(rows):
         env = envelopes.get(idx)
         if env is not None:
+            pid = str(row.get("project_id") or project_id_fallback or "")
+            scope = str(row.get("item_scope_id") or "")
             hydrated_in, hydrated_out = _hydrate_envelope_fields(
                 env,
-                project_id=str(row.get("project_id") or project_id_fallback or ""),
-                item_scope_id=str(row.get("item_scope_id") or ""),
+                project_id=pid,
+                item_scope_id=scope,
                 input_hashes=row.get("input_item_hashes"),
                 output_hashes=row.get("output_item_hashes"),
                 tool_hashes=row.get("tool_def_hashes"),
                 resolved=resolved,
             )
-            if hydrated_in is not None:
+            if env.get("in") is not None and hydrated_in is None:
+                logger.warning(
+                    "trajectory_hydration_missing_items side=in project_id=%s span_id=%s scope_id=%s",
+                    pid,
+                    row.get("id", ""),
+                    scope,
+                )
+            elif hydrated_in is not None:
                 row["input"] = hydrated_in
-            if hydrated_out is not None:
+            if env.get("out") is not None and hydrated_out is None:
+                logger.warning(
+                    "trajectory_hydration_missing_items side=out project_id=%s span_id=%s scope_id=%s",
+                    pid,
+                    row.get("id", ""),
+                    scope,
+                )
+            elif hydrated_out is not None:
                 row["output"] = hydrated_out
 
         if attr_key in row:
@@ -512,18 +550,34 @@ def hydrate_chspans(
         updates: dict[str, Any] = {}
         env = envelopes.get(idx)
         if env is not None:
+            pid = str(span.project_id or "")
+            scope = str(span.item_scope_id or "")
             hydrated_in, hydrated_out = _hydrate_envelope_fields(
                 env,
-                project_id=str(span.project_id or ""),
-                item_scope_id=str(span.item_scope_id or ""),
+                project_id=pid,
+                item_scope_id=scope,
                 input_hashes=span.input_item_hashes,
                 output_hashes=span.output_item_hashes,
                 tool_hashes=span.tool_def_hashes,
                 resolved=resolved,
             )
-            if hydrated_in is not None:
+            if env.get("in") is not None and hydrated_in is None:
+                logger.warning(
+                    "trajectory_hydration_missing_items side=in project_id=%s span_id=%s scope_id=%s",
+                    pid,
+                    getattr(span, "id", ""),
+                    scope,
+                )
+            elif hydrated_in is not None:
                 updates["input"] = hydrated_in
-            if hydrated_out is not None:
+            if env.get("out") is not None and hydrated_out is None:
+                logger.warning(
+                    "trajectory_hydration_missing_items side=out project_id=%s span_id=%s scope_id=%s",
+                    pid,
+                    getattr(span, "id", ""),
+                    scope,
+                )
+            elif hydrated_out is not None:
                 updates["output"] = hydrated_out
 
         raw_extra = getattr(span, "attributes_extra", None)

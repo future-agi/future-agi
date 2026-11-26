@@ -67,6 +67,7 @@ from tracer.services.clickhouse.v2.trace_detail_reads import PhysicalSpanIdentit
 from tracer.services.clickhouse.v2.trajectory_hydration import (
     ENCODING_ITEMS_V1,
     hydrate_span_dicts,
+    is_trajectory_store_read_enabled,
 )
 
 SCHEMA = "insights-evidence/v1"
@@ -2062,9 +2063,16 @@ class EvidenceQueryBuilder:
         as_of = self._as_of(params, keyword="  AND")
         inner = derived = outer = ""
         if heavy:
-            inner = _CONTENT_HEAVY_INNER
+            include_traj = is_trajectory_store_read_enabled()
+            inner = (
+                _CONTENT_HEAVY_INNER + _CONTENT_HEAVY_TRAJ_INNER
+                if include_traj
+                else _CONTENT_HEAVY_INNER
+            )
             derived = _CONTENT_HEAVY_DERIVED
-            outer = _CONTENT_HEAVY_OUTER
+            outer = (
+                _CONTENT_HEAVY_OUTER_WITH_TRAJ if include_traj else _CONTENT_HEAVY_OUTER
+            )
         return (
             f"""
             /* insights_evidence:content */
@@ -2161,7 +2169,9 @@ _CONTENT_HEAVY_INNER = """
                         argMax(metadata, _version) AS latest_metadata,
                         argMax(attrs_string, _version) AS latest_attrs_string,
                         argMax(attrs_number, _version) AS latest_attrs_number,
-                        argMax(attrs_bool, _version) AS latest_attrs_bool,
+                        argMax(attrs_bool, _version) AS latest_attrs_bool,"""
+
+_CONTENT_HEAVY_TRAJ_INNER = """
                         argMax(input_item_hashes, _version) AS latest_input_item_hashes,
                         argMax(output_item_hashes, _version) AS latest_output_item_hashes,
                         argMax(tool_def_hashes, _version) AS latest_tool_def_hashes,
@@ -2200,17 +2210,19 @@ _CONTENT_HEAVY_DERIVED = f""",
                     arrayMap((total, own) -> total - own, arrayCumSum(attr_sizes),
                         attr_sizes) AS attr_before"""
 
-_CONTENT_HEAVY_OUTER = """
-                substringUTF8(latest_input, 1, %(evidence_heavy_chars)s) AS input,
-                lengthUTF8(latest_input) AS input_chars,
-                substringUTF8(latest_output, 1, %(evidence_heavy_chars)s) AS output,
-                lengthUTF8(latest_output) AS output_chars,
+_CONTENT_HEAVY_TRAJ_OUTER = """
                 latest_input_item_hashes AS input_item_hashes,
                 latest_output_item_hashes AS output_item_hashes,
                 latest_tool_def_hashes AS tool_def_hashes,
                 latest_item_scope_id AS item_scope_id,
                 latest_payload_encoding AS payload_encoding,
-                latest_payload_envelope AS payload_envelope,
+                latest_payload_envelope AS payload_envelope,"""
+
+_CONTENT_HEAVY_OUTER = """
+                substringUTF8(latest_input, 1, %(evidence_heavy_chars)s) AS input,
+                lengthUTF8(latest_input) AS input_chars,
+                substringUTF8(latest_output, 1, %(evidence_heavy_chars)s) AS output,
+                lengthUTF8(latest_output) AS output_chars,
                 if(input_value_full = latest_input, '',
                     substringUTF8(input_value_full, 1, %(evidence_heavy_chars)s))
                     AS input_value,
@@ -2244,6 +2256,12 @@ _CONTENT_HEAVY_OUTER = """
                 arraySum(attr_sizes) AS attrs_string_chars,
                 latest_attrs_number AS attrs_number,
                 latest_attrs_bool AS attrs_bool,"""
+
+_CONTENT_HEAVY_OUTER_WITH_TRAJ = _CONTENT_HEAVY_OUTER.replace(
+    "lengthUTF8(latest_output) AS output_chars,",
+    f"lengthUTF8(latest_output) AS output_chars,{_CONTENT_HEAVY_TRAJ_OUTER}",
+    1,
+)
 
 
 class _Reader:
@@ -2803,8 +2821,10 @@ def _read_content(
             builder.content_query(identities, heavy_chars=heavy, status_chars=status),
             max_rows=len(batch) + 1,
         )
-        if heavy > 0 and any(
-            row.get("payload_encoding") == ENCODING_ITEMS_V1 for row in result
+        if (
+            heavy > 0
+            and is_trajectory_store_read_enabled()
+            and any(row.get("payload_encoding") == ENCODING_ITEMS_V1 for row in result)
         ):
             pre_vals = [(row.get("input"), row.get("output")) for row in result]
             hydrate_span_dicts(

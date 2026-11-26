@@ -302,7 +302,8 @@ def test_merge_span_attributes_and_chspan_restore_phase0_sentinels():
 # 4. Integration with trace_detail_reads, physical_span_detail_reads, CHSpanReader
 # --------------------------------------------------------------------------- #
 @pytest.mark.unit
-def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1():
+def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
     now = datetime(2026, 11, 20, 12, 15, tzinfo=UTC)
     hour = now.replace(minute=0, second=0, microsecond=0)
     h_u1 = _h("u1")
@@ -428,12 +429,13 @@ def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1():
 
 
 @pytest.mark.unit
-def test_ch_span_reader_hydrates_get_list_and_export():
+def test_ch_span_reader_hydrates_get_list_and_export(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
     h_u1 = _h("u1")
     env = json.dumps({"v": 1, "in": {"f": "msg_array"}})
     now = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
 
-    row_map = dict.fromkeys(span_reader._DATA_KEYS, "")
+    row_map = dict.fromkeys(span_reader._TRAJECTORY_DATA_KEYS, "")
     row_map.update(
         {
             "id": "sp-1",
@@ -464,7 +466,7 @@ def test_ch_span_reader_hydrates_get_list_and_export():
             "payload_envelope": env,
         }
     )
-    full_tuple = tuple(row_map[k] for k in span_reader._DATA_KEYS)
+    full_tuple = tuple(row_map[k] for k in span_reader._TRAJECTORY_DATA_KEYS)
 
     class _FakeClient:
         def __init__(self):
@@ -537,33 +539,32 @@ def test_ch_span_reader_hydrates_get_list_and_export():
 # 5. Phase 0 adapter.py lockstep checks + 040 replicated cluster rewriter
 # --------------------------------------------------------------------------- #
 @pytest.mark.unit
-def test_adapter_split_attributes_phase0_overflow_and_cutoff():
-    exact_4k = "a" * adapter._MAX_ATTRS_STRING_BYTES
-    over_4k = "b" * (adapter._MAX_ATTRS_STRING_BYTES + 1)
+def test_adapter_split_attributes_preserves_dev_routing_by_default():
+    # Blocker #5 guard: default split_attributes must keep Error Feed, scalar
+    # filters (gen_ai.completion.0.finish_reason), and numeric raw.* dashboards
+    # in their typed Maps (exact dev routing).
+    large_str = "b" * 20_000
     s, n, b, extra = adapter.split_attributes(
         {
             "llm.input_messages.0.message.content": "hello",
             "llm.tools.0.tool.json_schema": "{}",
-            "gen_ai.prompt.0.content": "prompt",
-            "gen_ai.input.messages": "[]",
-            "raw.body": "dump",
-            "custom.exact": exact_4k,
-            "custom.large": over_4k,
-            "gen_ai.request.model": over_4k,  # hot key stays in attrs_string
+            "gen_ai.completion.0.finish_reason": "length",
+            "raw.latency_ms": 12.5,
+            "custom.large": large_str,
+            "input.value": '{"messages":[]}',
+            "output.value": '{"choices":[]}',
         }
     )
     for k in (
         "llm.input_messages.0.message.content",
         "llm.tools.0.tool.json_schema",
-        "gen_ai.prompt.0.content",
-        "gen_ai.input.messages",
-        "raw.body",
+        "gen_ai.completion.0.finish_reason",
         "custom.large",
     ):
-        assert k not in s and k in extra
-    assert s["custom.exact"] == exact_4k
-    assert s["gen_ai.request.model"] == over_4k
-    assert n == {} and b == {}
+        assert k in s and k not in extra
+    assert n == {"raw.latency_ms": 12.5}
+    assert b == {}
+    assert "input.value" in extra and "output.value" in extra
 
 
 @pytest.mark.unit
@@ -614,12 +615,31 @@ def test_migration_028_replicated_rewriter_and_no_ttl():
 
 
 @pytest.mark.unit
-def test_session_detail_sql_projects_trajectory_pointers_and_list_strips_sentinels():
+def test_session_detail_sql_projects_trajectory_pointers_and_list_strips_sentinels(
+    settings,
+):
     from tracer.services.clickhouse.v2.query_builders.session_detail import (
         build_session_detail_traces_query,
     )
     from tracer.views.trace_session import _merge_session_attribute_sources
 
+    # Disabled (default): zero references to 040 trajectory columns.
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = False
+    sql_off, _ = build_session_detail_traces_query(
+        PROJECT_ID, (SESSION_ID,), limit=10, offset=0
+    )
+    for col in (
+        "input_item_hashes",
+        "output_item_hashes",
+        "tool_def_hashes",
+        "item_scope_id",
+        "payload_encoding",
+        "payload_envelope",
+    ):
+        assert col not in sql_off
+
+    # Enabled: projects all 6 trajectory pointer columns.
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
     sql, _params = build_session_detail_traces_query(
         PROJECT_ID, (SESSION_ID,), limit=10, offset=0
     )
@@ -704,20 +724,15 @@ def test_hydrate_chspans_restores_extra_sentinels_and_prompt_template_metadata_s
     from tracer.services.clickhouse.v2.adapter import split_attributes
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
-    # 1. gen_ai.prompt.template.* & gen_ai.prompt.name stay in attrs_string;
-    #    gen_ai.prompt.0.content goes to overflow.
-    s, _n, _b, extra = split_attributes(
+    # 1. Scalar gen_ai.prompt.* metadata stays in attrs_string (dev-compatible).
+    s, _n, _b, _extra = split_attributes(
         {
             "gen_ai.prompt.name": "checkout-v2",
             "gen_ai.prompt.template.variables": '{"tier":"gold"}',
-            "gen_ai.prompt.0.content": "huge prompt body",
-            "gen_ai.completion.0.content": "huge completion body",
         }
     )
     assert s["gen_ai.prompt.name"] == "checkout-v2"
     assert s["gen_ai.prompt.template.variables"] == '{"tier":"gold"}'
-    assert "gen_ai.prompt.0.content" in extra and "gen_ai.prompt.0.content" not in s
-    assert "gen_ai.completion.0.content" in extra
 
     # 2. hydrate_chspans & attributes_extra_as_dict restore Phase 0 promoted keys
     #    and never leak __fi_promoted_* sentinels.
@@ -786,7 +801,8 @@ def test_hydrate_chspans_restores_extra_sentinels_and_prompt_template_metadata_s
 
 
 @pytest.mark.unit
-def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1():
+def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
     item_hash = "d" * 32
@@ -820,7 +836,6 @@ def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1():
                     (
                         "child-1",
                         "trace-1",
-                        PROJECT_ID,
                         "root-1",
                         "llm.call",
                         "llm",
@@ -844,6 +859,7 @@ def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1():
                         "[]",
                         "[]",
                         "2026-11-22 00:00:00",
+                        PROJECT_ID,
                         [item_hash],
                         [],
                         [],
@@ -853,25 +869,27 @@ def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1():
                     )
                 ]
             elif "GROUP BY id" in sql:
-                # export_fields_by_ids requesting ONLY span_attributes (no input/output!)
-                res.result_rows = [
-                    (
-                        "span-1",
-                        raw_extra,
-                        {"flag": 1},
-                        {},
-                        {"env": "prod"},
-                        "512B preview",
-                        [item_hash],
-                        SESSION_ID,
-                        "plain out",
-                        [],
-                        ENCODING_ITEMS_V1,
-                        env_json,
-                        PROJECT_ID,
-                        [],
-                    )
-                ]
+                import re
+
+                cols_sql = sql.split("SELECT ", 1)[1].split(" FROM spans", 1)[0]
+                aliases = ["id", *re.findall(r"\bAS\s+(\w+)", cols_sql)]
+                lookup = {
+                    "id": "span-1",
+                    "attributes_extra": raw_extra,
+                    "attrs_bool": {"flag": 1},
+                    "attrs_number": {},
+                    "attrs_string": {"env": "prod"},
+                    "input": "512B preview",
+                    "output": "plain out",
+                    "input_item_hashes": [item_hash],
+                    "output_item_hashes": [],
+                    "tool_def_hashes": [],
+                    "item_scope_id": SESSION_ID,
+                    "payload_encoding": ENCODING_ITEMS_V1,
+                    "payload_envelope": env_json,
+                    "project_id_str": PROJECT_ID,
+                }
+                res.result_rows = [tuple(lookup[a] for a in aliases)]
             else:
                 # list_by_ids(columns=["id", "input"])
                 res.result_rows = [
@@ -893,10 +911,14 @@ def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1():
     reader = CHSpanReader.__new__(CHSpanReader)
     reader._client = client
 
-    # 1. export_fields_by_ids with ONLY {"span_attributes"} restores promoted input.value!
+    # 1. export_fields_by_ids with ONLY {"span_attributes"} must NOT select
+    #    input/output in the initial query (Blocker #6c), and still restores
+    #    promoted input.value via targeted follow-up when a sentinel is present.
     exported = reader.export_fields_by_ids(
         ["span-1"], {"span_attributes"}, project_id=PROJECT_ID
     )
+    assert "argMax(input," not in client.queries[0]
+    assert "argMax(output," not in client.queries[0]
     assert "input" not in exported["span-1"]
     restored_extra = json.loads(exported["span-1"]["attributes_extra"])
     assert restored_extra["meta"] == "keep"
@@ -917,3 +939,229 @@ def test_dataset_export_child_tree_and_columns_projection_hydrate_items_v1():
         ["span-1"], project_id=PROJECT_ID, columns=["id", "input"]
     )
     assert proj_rows == [{"id": "span-1", "input": expected_in}]
+
+
+# --------------------------------------------------------------------------- #
+# 6. Pre-040 deploy safety (Blocker #4), SQL LIMIT BY (Blocker #6),
+#    eval_loader ValueError/RecursionError (Blocker #6b), export cost (#6c),
+#    and retention/project deletion (Blocker #9)
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+def test_disabled_mode_sql_has_zero_trajectory_columns(settings, monkeypatch):
+    from ee.agenthub.insights.evidence import EvidenceQueryBuilder
+    from tracer.services.clickhouse import cluster_rca_spans
+    from tracer.services.clickhouse.v2.query_builders.session_detail import (
+        build_session_detail_traces_query,
+    )
+    from tracer.services.clickhouse.v2.query_builders.span_list import (
+        SpanListQueryBuilderV2,
+    )
+    from tracer.services.clickhouse.v2.trajectory_hydration import (
+        TRAJECTORY_SPAN_COLUMNS,
+    )
+
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = False
+    now = datetime(2026, 11, 20, 12, 15, tzinfo=UTC)
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    ident = trace_detail_reads.PhysicalSpanIdentity(
+        project_id=PROJECT_ID, trace_id=TRACE_ID, span_id="sp-1", start_time=now
+    )
+
+    sqls: list[tuple[str, str]] = []
+
+    # 1. trace_detail_reads
+    td_sql, _ = trace_detail_reads.TraceDetailReadBuilder(
+        project_ids=[PROJECT_ID], trace_id=TRACE_ID
+    ).build_content_query([ident])
+    sqls.append(("trace_detail_reads", td_sql))
+
+    # 2. physical_span_detail_reads
+    phys_sql, _ = physical_span_detail_reads.build_physical_span_detail_query(
+        span_id="sp-1",
+        reference={
+            "project_id": PROJECT_ID,
+            "trace_id": TRACE_ID,
+            "start_hour": hour,
+            "observation_type": "llm",
+            "service_name": "agent",
+        },
+    )
+    sqls.append(("physical_span_detail_reads", phys_sql))
+
+    # 3. session_detail
+    sd_sql, _ = build_session_detail_traces_query(
+        PROJECT_ID, (SESSION_ID,), limit=10, offset=0
+    )
+    sqls.append(("session_detail", sd_sql))
+
+    # 4. span_list v2
+    sl_sql, _ = SpanListQueryBuilderV2(
+        project_ids=[PROJECT_ID],
+        start_date=now - timedelta(hours=1),
+        end_date=now,
+    ).build_content_query(["sp-1"])
+    sqls.append(("span_list_v2", sl_sql))
+
+    # 5. insights evidence
+    ev_sql, _ = EvidenceQueryBuilder(project_id=PROJECT_ID).content_query(
+        [ident], heavy_chars=4096, status_chars=512
+    )
+    sqls.append(("insights_evidence", ev_sql))
+
+    # 6. CHSpanReader (get, list_by_trace, activity_by_trace_ids, export_fields_by_ids, child_tree)
+    captured_reader_sql: list[tuple[str, str]] = []
+
+    class _RecordingClient:
+        def query(self, sql, parameters=None, settings=None):
+            captured_reader_sql.append(("span_reader", sql))
+            return SimpleNamespace(result_rows=[])
+
+    reader = span_reader.CHSpanReader.__new__(span_reader.CHSpanReader)
+    reader._client = _RecordingClient()
+    reader.get("sp-1", project_id=PROJECT_ID)
+    reader.list_by_trace(TRACE_ID, project_id=PROJECT_ID)
+    reader.activity_by_trace_ids(
+        [TRACE_ID], project_id=PROJECT_ID, media_patterns=("img", "aud"), per_trace=25
+    )
+    reader.export_fields_by_ids(["sp-1"], {"span_attributes"}, project_id=PROJECT_ID)
+    reader.child_tree_spans_by_trace_ids([TRACE_ID], project_id=PROJECT_ID)
+    sqls.extend(captured_reader_sql)
+
+    # Verify Blocker #6: activity_by_trace_ids keeps SQL LIMIT %(per)s BY trace_id
+    activity_sql = captured_reader_sql[2][1]
+    assert "LIMIT %(per)s BY trace_id" in activity_sql
+
+    # Verify Blocker #6c: span_attributes-only export does NOT read input/output
+    export_sql = captured_reader_sql[3][1]
+    assert "argMax(input," not in export_sql
+    assert "argMax(output," not in export_sql
+
+    # 7. cluster_rca_spans
+    captured_rca_sql: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        cluster_rca_spans,
+        "_execute_read",
+        lambda q, _p: captured_rca_sql.append(("cluster_rca_spans", q)) or [],
+    )
+    cluster_rca_spans.list_spans_in_traces(PROJECT_ID, [TRACE_ID])
+    cluster_rca_spans.search_spans_in_traces(PROJECT_ID, [TRACE_ID], "needle")
+    cluster_rca_spans.trace_roots(PROJECT_ID, [TRACE_ID])
+    cluster_rca_spans.traces_in_session(PROJECT_ID, SESSION_ID)
+    sqls.extend(captured_rca_sql)
+
+    for label, sql in sqls:
+        for col in TRAJECTORY_SPAN_COLUMNS:
+            assert col not in sql, f"{label} referenced {col} while disabled"
+
+
+@pytest.mark.unit
+def test_activity_by_trace_ids_retains_sql_limit_by_when_enabled(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    seen_sql: list[tuple[str, dict]] = []
+
+    class _RecordingClient:
+        def query(self, sql, parameters=None, settings=None):
+            seen_sql.append((sql, dict(parameters or {})))
+            return SimpleNamespace(result_rows=[])
+
+    reader = span_reader.CHSpanReader.__new__(span_reader.CHSpanReader)
+    reader._client = _RecordingClient()
+    reader.activity_by_trace_ids(
+        [TRACE_ID], project_id=PROJECT_ID, media_patterns=("img", "aud"), per_trace=42
+    )
+    assert len(seen_sql) == 1
+    assert "LIMIT %(per)s BY trace_id" in seen_sql[0][0]
+    assert seen_sql[0][1]["per"] == 42
+
+
+@pytest.mark.unit
+def test_eval_loader_handles_value_error_on_huge_int_json():
+    from tracer.services.clickhouse.v2.eval_loader import _construct_from_chspan
+
+    huge_int = "1" * 5000
+    sp = span_reader.CHSpan(
+        id="sp-huge",
+        project_id=PROJECT_ID,
+        trace_id=TRACE_ID,
+        parent_span_id="",
+        name="llm",
+        observation_type="llm",
+        operation_name="chat",
+        start_time=datetime(2026, 11, 22, 0, 0, tzinfo=UTC),
+        end_time=datetime(2026, 11, 22, 0, 0, 1, tzinfo=UTC),
+        latency_ms=1000,
+        model="gpt-4o",
+        provider="openai",
+        prompt_tokens=1,
+        completion_tokens=1,
+        total_tokens=2,
+        cost=0.0,
+        status="OK",
+        status_message="",
+        org_id=None,
+        project_version_id=None,
+        end_user_id=None,
+        trace_session_id=None,
+        prompt_version_id=None,
+        prompt_label_id=None,
+        custom_eval_config_id=None,
+        input=huge_int,
+        output=huge_int,
+        tags="[]",
+        span_events="[]",
+        metadata="{}",
+        resource_attrs="{}",
+        attributes_extra="{}",
+    )
+    obs = _construct_from_chspan(sp)
+    assert obs.input == huge_int
+    assert obs.output == huge_int
+
+
+@pytest.mark.unit
+def test_trajectory_retention_and_project_delete():
+    from tracer.services.clickhouse.v2.trajectory_retention import (
+        delete_project_trajectory_items,
+        purge_expired_trajectory_items,
+    )
+
+    class _FakeCH:
+        def __init__(self, exists: bool):
+            self.exists = exists
+            self.commands: list[tuple[str, dict]] = []
+
+        def query(self, sql, parameters=None):
+            return SimpleNamespace(result_rows=[(1 if self.exists else 0,)])
+
+        def command(self, sql, parameters=None):
+            self.commands.append((sql, dict(parameters or {})))
+
+    # Pre-040: safe no-op when trajectory_items table does not exist.
+    pre040 = _FakeCH(exists=False)
+    assert delete_project_trajectory_items([PROJECT_ID], client=pre040) == 0
+    assert (
+        purge_expired_trajectory_items(
+            project_id=PROJECT_ID,
+            cutoff=datetime(2026, 11, 1, tzinfo=UTC),
+            client=pre040,
+        )
+        is False
+    )
+    assert pre040.commands == []
+
+    # Post-040: issues targeted DELETE mutations.
+    post040 = _FakeCH(exists=True)
+    assert delete_project_trajectory_items([PROJECT_ID], client=post040) == 1
+    assert "ALTER TABLE trajectory_items DELETE" in post040.commands[0][0]
+    assert post040.commands[0][1]["pids"] == (PROJECT_ID,)
+
+    assert (
+        purge_expired_trajectory_items(
+            project_id=PROJECT_ID,
+            cutoff=datetime(2026, 11, 1, tzinfo=UTC),
+            client=post040,
+        )
+        is True
+    )
+    assert "first_seen_at < toDateTime64" in post040.commands[1][0]
+    assert post040.commands[1][1]["pid"] == PROJECT_ID

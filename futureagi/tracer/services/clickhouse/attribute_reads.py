@@ -2566,7 +2566,7 @@ class AttributeReadSelector:
             if isinstance(extra, dict):
                 for raw_key, raw_value in extra.items():
                     key = str(raw_key)
-                    if not key or key in keys:
+                    if not key or key in keys or key.startswith("__fi_promoted_"):
                         continue
                     decoded = cls._decode_json_attribute(
                         raw_value,
