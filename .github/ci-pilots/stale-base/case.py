@@ -4,7 +4,6 @@ import hashlib
 import json
 import re
 
-
 METHOD = {
     "acceptance": "test_pull_request_plans_from_the_merge_base_tip_not_a_stale_event_base",
     "preservation": "test_loader_uses_base_policy_and_bootstraps_conservatively",
@@ -74,7 +73,11 @@ def encode(record):
 
 
 def oid(value):
-    return isinstance(value, str) and re.fullmatch("[0-9a-f]{40}", value) and value != "0" * 40
+    return (
+        isinstance(value, str)
+        and re.fullmatch("[0-9a-f]{40}", value)
+        and value != "0" * 40
+    )
 
 
 def full_id(role):
@@ -82,11 +85,31 @@ def full_id(role):
 
 
 def check_outer(o):
-    require(o["event"] == "pull_request" and o["ref"] == f"refs/pull/{o['pr']}/merge", "outer PR ref")
-    require(all(oid(o[k]) for k in ("advertised_base", "head", "event_sha", "tested_commit", "tested_tree")), "outer OID")
+    require(
+        o["event"] == "pull_request" and o["ref"] == f"refs/pull/{o['pr']}/merge",
+        "outer PR ref",
+    )
+    require(
+        all(
+            oid(o[k])
+            for k in (
+                "advertised_base",
+                "head",
+                "event_sha",
+                "tested_commit",
+                "tested_tree",
+            )
+        ),
+        "outer OID",
+    )
     require(o["tested_commit"] == o["event_sha"], "outer checkout")
-    require(len(o["parents"]) == 2 and all(oid(p) for p in o["parents"]), "outer parents")
-    require(o["parents"] == [o["effective_base"], o["head"]] and o["ancestor_rc"] == 0, "outer endpoints")
+    require(
+        len(o["parents"]) == 2 and all(oid(p) for p in o["parents"]), "outer parents"
+    )
+    require(
+        o["parents"] == [o["effective_base"], o["head"]] and o["ancestor_rc"] == 0,
+        "outer endpoints",
+    )
     for key in ("run_id", "run_attempt", "pr"):
         require(re.fullmatch(r"[1-9][0-9]*", str(o[key])), "missing " + key)
 
@@ -98,16 +121,36 @@ def check_call(call, subject, event):
     require(call["event_sha"] == call["tested_commit"], "fixture checkout")
     require(call["event_tree"] == call["tested_tree"], "fixture tree")
     marker = call["stderr_marker"]
-    require(marker is None or (isinstance(marker, list) and len(marker) == 2), "unexpected loader diagnostic")
-    expected_stderr = b"" if marker is None else f"PILOT_ERR {marker[0]} {marker[1]}\n".encode()
-    require(call["stderr_sha256"] == digest(expected_stderr), "loader diagnostic digest")
+    require(
+        marker is None or (isinstance(marker, list) and len(marker) == 2),
+        "unexpected loader diagnostic",
+    )
+    expected_stderr = (
+        b"" if marker is None else f"PILOT_ERR {marker[0]} {marker[1]}\n".encode()
+    )
+    require(
+        call["stderr_sha256"] == digest(expected_stderr), "loader diagnostic digest"
+    )
     parents = call["parents"]
-    require(len(parents) == (2 if event == "pull_request" else 1) and all(oid(p) for p in parents), "fixture parents")
-    require(call["original_sha256"] == subject["bootstrap"] and call["executed_sha256"] == subject["executed"], "executed body")
+    require(
+        len(parents) == (2 if event == "pull_request" else 1)
+        and all(oid(p) for p in parents),
+        "fixture parents",
+    )
+    require(
+        call["original_sha256"] == subject["bootstrap"]
+        and call["executed_sha256"] == subject["executed"],
+        "executed body",
+    )
 
 
 def rejected(call, line):
-    require(call["returncode"] == 1 and call["stderr_marker"] == [line, 1] and call["plan"] is None, "wrong rejection site")
+    require(
+        call["returncode"] == 1
+        and call["stderr_marker"] == [line, 1]
+        and call["plan"] is None,
+        "wrong rejection site",
+    )
 
 
 def planned(call, policy_base, diff_base):
@@ -115,38 +158,90 @@ def planned(call, policy_base, diff_base):
     p = call["plan"]
     require(isinstance(p, dict), "missing plan")
     for key, expected in {
-        "version": 1, "mode": "qualified", "event": call["event"], "policy_sha256": POLICY,
-        "policy_base": policy_base, "diff_base": diff_base, "diff_head": call["head"],
-        "tested_commit": call["tested_commit"], "tested_tree": call["tested_tree"], "path_count": 1,
+        "version": 1,
+        "mode": "qualified",
+        "event": call["event"],
+        "policy_sha256": POLICY,
+        "policy_base": policy_base,
+        "diff_base": diff_base,
+        "diff_head": call["head"],
+        "tested_commit": call["tested_commit"],
+        "tested_tree": call["tested_tree"],
+        "path_count": 1,
     }.items():
-        require(type(p.get(key)) is type(expected) and p[key] == expected, "plan " + key)
+        require(
+            type(p.get(key)) is type(expected) and p[key] == expected, "plan " + key
+        )
 
 
 def check_result(arm, role, receipt, returncode, binding):
     expected = MATRIX[arm][role]
     subject = SUBJECT[arm]
-    require(isinstance(receipt, dict) and "error" not in receipt, "missing or incomplete child receipt")
-    require(receipt["binding"] == binding and receipt["arm"] == arm and receipt["role"] == role, "child binding")
-    require(receipt["source"] == dict(subject, oracle=ORACLE, policy=POLICY), "source pins")
+    require(
+        isinstance(receipt, dict) and "error" not in receipt,
+        "missing or incomplete child receipt",
+    )
+    require(
+        receipt["binding"] == binding
+        and receipt["arm"] == arm
+        and receipt["role"] == role,
+        "child binding",
+    )
+    require(
+        receipt["source"] == dict(subject, oracle=ORACLE, policy=POLICY), "source pins"
+    )
     for key in ("bootstrap", "executed"):
         body = receipt["bodies"][key]
-        require(isinstance(body, str) and digest(body.encode()) == subject[key], "body bytes: " + key)
+        require(
+            isinstance(body, str) and digest(body.encode()) == subject[key],
+            "body bytes: " + key,
+        )
     test_id = full_id(role)
-    require(receipt["selected"] == receipt["started"] == receipt["stopped"] == [test_id], "test inventory")
+    require(
+        receipt["selected"] == receipt["started"] == receipt["stopped"] == [test_id],
+        "test inventory",
+    )
     red = expected == "expected-red"
-    terminal = {"id": test_id, "status": "failure", "exception": "AssertionError", "oracle_frames": [[METHOD[role], 327]]} if red else {"id": test_id, "status": "success"}
-    require(receipt["terminal"] == [terminal] and returncode == int(red), "terminal result or raw status")
+    terminal = (
+        {
+            "id": test_id,
+            "status": "failure",
+            "exception": "AssertionError",
+            "oracle_frames": [[METHOD[role], 327]],
+        }
+        if red
+        else {"id": test_id, "status": "success"}
+    )
+    require(
+        receipt["terminal"] == [terminal] and returncode == int(red),
+        "terminal result or raw status",
+    )
     calls = receipt["calls"]
     for c in calls:
-        check_call(c, subject, "pull_request" if role == "acceptance" else "merge_group")
+        check_call(
+            c, subject, "pull_request" if role == "acceptance" else "merge_group"
+        )
     if role == "preservation":
         require(len(calls) == 2, "preservation loader count")
         legacy, published = calls
         for c in calls:
-            require(c["parents"] == [c["base"]] and c["head"] == c["tested_commit"], "group endpoints")
-        require(legacy["returncode"] == 0 and legacy["stderr_marker"] is None and legacy["plan"] == {
-            "version": 0, "mode": "full", "reason": "legacy policy base", "tested_commit": legacy["head"], "policy_base": legacy["base"],
-        }, "legacy plan")
+            require(
+                c["parents"] == [c["base"]] and c["head"] == c["tested_commit"],
+                "group endpoints",
+            )
+        require(
+            legacy["returncode"] == 0
+            and legacy["stderr_marker"] is None
+            and legacy["plan"]
+            == {
+                "version": 0,
+                "mode": "full",
+                "reason": "legacy policy base",
+                "tested_commit": legacy["head"],
+                "policy_base": legacy["base"],
+            },
+            "legacy plan",
+        )
         require(published["base"] == legacy["head"], "published base")
         planned(published, published["base"], published["base"])
     else:
@@ -154,19 +249,46 @@ def check_result(arm, role, receipt, returncode, binding):
         stale = calls[0]
         tip, head = stale["parents"]
         root = stale["merge_base"]
-        require(oid(root) and len({root, tip, head, stale["tested_commit"]}) == 4, "not a diverged fixture")
-        require((stale["base"], stale["head"], stale["ancestor_rc"]) == (root, head, 0), "not the stale first invocation")
+        require(
+            oid(root) and len({root, tip, head, stale["tested_commit"]}) == 4,
+            "not a diverged fixture",
+        )
+        require(
+            (stale["base"], stale["head"], stale["ancestor_rc"]) == (root, head, 0),
+            "not the stale first invocation",
+        )
         if red:
             rejected(stale, 13)
         else:
             current, wrong, unrelated = calls[1:]
             for c in calls[1:]:
-                require(all(c[k] == stale[k] for k in ("tested_commit", "tested_tree", "parents", "merge_base")), "changed fixture")
-            require((current["base"], current["head"], current["ancestor_rc"]) == (tip, head, 0), "current endpoints")
+                require(
+                    all(
+                        c[k] == stale[k]
+                        for k in (
+                            "tested_commit",
+                            "tested_tree",
+                            "parents",
+                            "merge_base",
+                        )
+                    ),
+                    "changed fixture",
+                )
+            require(
+                (current["base"], current["head"], current["ancestor_rc"])
+                == (tip, head, 0),
+                "current endpoints",
+            )
             for c in (stale, current):
                 planned(c, tip, root)
-            require((wrong["base"], wrong["head"], wrong["ancestor_rc"]) == (root, tip, 0), "wrong-head control")
-            require(unrelated["head"] == head and unrelated["ancestor_rc"] == 1, "unrelated-base control")
+            require(
+                (wrong["base"], wrong["head"], wrong["ancestor_rc"]) == (root, tip, 0),
+                "wrong-head control",
+            )
+            require(
+                unrelated["head"] == head and unrelated["ancestor_rc"] == 1,
+                "unrelated-base control",
+            )
             rejected(wrong, 18)
             rejected(unrelated, 19)
     return expected
