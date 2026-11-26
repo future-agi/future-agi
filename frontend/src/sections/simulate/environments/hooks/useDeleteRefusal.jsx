@@ -9,10 +9,13 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { DELETE_REFUSAL_COPY } from "../myEnvironments.constants";
 import useSimulationAccess from "./useSimulationAccess";
 
-// The locked version a refused delete names, when the refusal is one.
+// The locked version a refused delete names, when the refusal is one. Both its id
+// and its label are optional in the contract, so the action needs both.
 const lockedVersionOf = (error) => {
   const body = error?.response?.data || error;
-  return body?.error === "version_locked" && body.locked_version_id
+  return body?.error === "version_locked" &&
+    body.locked_version_id &&
+    body.label
     ? { id: body.locked_version_id, label: body.label }
     : null;
 };
