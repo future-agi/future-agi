@@ -244,7 +244,7 @@ class TestPlanSplits:
         plan = plan_splits(_tasks(sizes), {}, "env")
 
         pooled = [plan.assign[f"s{i}-0"] for i in (1, 2, 3)]
-        assert 1 <= pooled.count("test") <= 2
+        assert pooled.count("test") == 1
         assert plan.test == target_test_size(17)
 
     def test_every_category_keeps_a_train_task(self):
@@ -353,7 +353,7 @@ class TestPlanSplits:
         assert len(covered) == 12
 
     def test_coverage_never_takes_a_category_s_only_train_task(self):
-        # Four pairs: 8 tasks, cap 3. Each pair keeps a train task, so at most 3 test.
+        # Four pairs: 8 tasks, cap ceil(0.3 × 8) = 3. Each pair keeps a train task.
         plan = plan_splits(_tasks({f"p{i}": 2 for i in range(4)}), {}, "env")
 
         assert plan.test == 3
@@ -551,11 +551,11 @@ class TestLock:
         # N is the 80 scorable tasks, not the 100 members: min(24, max(60, 16)).
         assert (lock["train"], lock["test"], lock["test_target"]) == (56, 24, 24)
 
-    def test_four_pairs_stay_under_the_30_percent_cap_and_cannot_lock(
+    def test_four_pairs_stay_within_the_cap_and_cannot_lock(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
-        # 8 tasks in 4 categories: the cap is 3 test tasks, below the 4 a lock needs.
+        # 8 tasks in 4 categories: the cap is ceil(0.3 × 8) = 3, below the 4 a lock needs.
         _suite(
             environment,
             [

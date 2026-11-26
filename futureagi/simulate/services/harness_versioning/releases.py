@@ -89,23 +89,9 @@ def _category(use_case: Any) -> str:
     return str(use_case or "").strip().casefold()
 
 
-@dataclass(frozen=True)
-class SuiteTasks:
-    """A suite version's tasks as one environment version scores them."""
-
-    scorable: list[Task]
-
-
-def _scorable(sub_goals: Any, catalogue: frozenset[str]) -> bool:
-    """Whether a run of the pair plays and scores a task: the run's own rule. A task
-    without a ``sub_goals`` list predates sub-goals, and a version without a catalogue
-    grades anything; the run refuses neither."""
-    return not grades_nothing(sub_goals, catalogue)
-
-
 def scorable_tasks(
     suite_version_id: UUID, *, environment_version_id: UUID
-) -> SuiteTasks:
+) -> list[Task]:
     """The suite version's scenarios a run pinned to both versions can score. Both
     versions are immutable, so neither is this. Only the keys read leave the database."""
     catalogue = sub_goal_catalogue(
@@ -121,9 +107,9 @@ def scorable_tasks(
     tasks = [
         Task(scenario_id, key, _category(use_case))
         for scenario_id, key, use_case, sub_goals in members
-        if _scorable(sub_goals, catalogue)
+        if not grades_nothing(sub_goals, catalogue)
     ]
-    return SuiteTasks(scorable=tasks)
+    return tasks
 
 
 def _seats(
@@ -293,12 +279,12 @@ def _plan_lock(
             f"Release {current_label} already locks these versions.",
             status_code=409,
         )
-    suite = scorable_tasks(
+    tasks = scorable_tasks(
         job.suite_version_id, environment_version_id=job.environment_version_id
     )
     plan = plan_splits(
-        suite.scorable,
-        _assigned(suite.scorable),
+        tasks,
+        _assigned(tasks),
         str(job.id),
     )
     if plan.test < MIN_TEST_TASKS:

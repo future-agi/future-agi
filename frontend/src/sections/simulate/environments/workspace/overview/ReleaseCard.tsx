@@ -30,7 +30,7 @@ export interface Release {
   environmentLabel: string | null;
   suiteVersionId: string;
   suiteLabel: string | null;
-  lockedAt: string | null;
+  lockedAt: string;
   lockedBy: string | null;
   unlockedAt: string | null;
   unlockedBy: string | null;
@@ -95,8 +95,8 @@ const StatusBadge = StatusBadgeJs as unknown as ComponentType<{
 // Refusals the author fixes by adding scenarios.
 const ADD_SCENARIOS_FOR = ["release_too_few_test", "release_too_few_train"];
 
-const shortDate = (at: string | null) =>
-  new Date(at ?? 0).toLocaleDateString(undefined, {
+const shortDate = (at: string) =>
+  new Date(at).toLocaleDateString(undefined, {
     day: "numeric",
     month: "short",
   });

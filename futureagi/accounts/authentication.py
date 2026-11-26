@@ -200,13 +200,13 @@ def workspace_write_denied(request) -> PermissionDenied:
     if request.path.startswith(_VIEWER_REASON_PREFIX):
         handler = _write_handler(request)
         return ViewerReadOnly(
-            _label(handler, "_viewer_denied_action"),
-            _label(handler, "_viewer_denied_advice"),
+            _handler_text(handler, "_viewer_denied_action"),
+            _handler_text(handler, "_viewer_denied_advice"),
         )
     return PermissionDenied(WORKSPACE_WRITE_DENIED)
 
 
-def _label(handler, name):
+def _handler_text(handler, name):
     value = getattr(handler, name, None)
     return value if isinstance(value, str) else None
 
