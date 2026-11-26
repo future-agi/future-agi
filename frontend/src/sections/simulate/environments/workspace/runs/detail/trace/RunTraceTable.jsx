@@ -637,6 +637,7 @@ export default function RunTraceTable({
       <StatusFilterChips
         value={statusChip}
         counts={statusCounts}
+        loading={isLoading}
         onChange={(value) => {
           setFilters((current) => {
             const {

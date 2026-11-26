@@ -1009,6 +1009,36 @@ describe("RunTraceTable", () => {
     expect(
       within(screen.getByRole("button", { name: "All" })).getByText("9"),
     ).toBeInTheDocument();
+    // A status with no calls has no chip.
+    expect(screen.queryByRole("button", { name: "Queued" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Error" })).toBeNull();
+  });
+
+  it("keeps the selected status chip, pressed, when it has no calls", () => {
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      statusCounts: { passed: 2 },
+    }));
+    renderTable({ initialFilters: { status: ["failed"] } });
+
+    const failed = screen.getByRole("button", { name: "Failed" });
+    expect(failed).toHaveAttribute("aria-pressed", "true");
+    expect(within(failed).getByText("0")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Error" })).toBeNull();
+  });
+
+  it("shows every status chip, greyed, until the counts load", () => {
+    const base = useRunCalls.getMockImplementation();
+    useRunCalls.mockImplementation((...args) => ({
+      ...base(...args),
+      statusCounts: {},
+      isLoading: true,
+    }));
+    renderTable();
+
+    expect(screen.getByRole("button", { name: "Queued" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Failed" })).toBeInTheDocument();
   });
 
   it("lets a status chip replace the panel's status filter", async () => {

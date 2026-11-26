@@ -7,22 +7,45 @@ import { STATUS_CHIPS } from "./traceTable.constants";
 // Outcome quick-filter — one chip per status bucket plus All. The active chip is
 // the selected (grey) state; the dot carries the status colour. Each chip
 // carries its count so the distribution is legible before you click. Counts follow the table's other filters, not the status one.
-export default function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
+// Once counts load, a bucket with no calls has no chip. All and the selected
+// chip always stay, so the current filter is never lost. Until then every chip
+// shows greyed, so the bar doesn't jump on first paint.
+export default function StatusFilterChips({
+  value,
+  counts,
+  onChange,
+  blocked = [],
+  loading = false,
+}) {
   return (
-    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
-      {STATUS_CHIPS.map((chip) => {
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.75}
+      sx={{ flexWrap: "wrap", rowGap: 0.75 }}
+    >
+      {STATUS_CHIPS.filter(
+        (chip) =>
+          loading ||
+          chip.id === "all" ||
+          chip.id === value ||
+          (counts[chip.id] ?? 0) > 0,
+      ).map((chip) => {
         const active = value === chip.id;
         const count = counts[chip.id] ?? 0;
         const blockedByGrouping = blocked.includes(chip.id);
-        const disabled = (chip.id !== "all" && count === 0) || blockedByGrouping;
+        const disabled =
+          (chip.id !== "all" && count === 0) || blockedByGrouping;
         return (
           <CustomTooltip
             key={chip.id}
             show={blockedByGrouping}
             arrow
-            title={blockedByGrouping
-              ? "Not available while grouping by a failure view. Passing runs have no failure bucket"
-              : ""}
+            title={
+              blockedByGrouping
+                ? "Not available while grouping by a failure view. Passing runs have no failure bucket"
+                : ""
+            }
           >
             <Box
               role="button"
@@ -30,10 +53,17 @@ export default function StatusFilterChips({ value, counts, onChange, blocked = [
               aria-pressed={active}
               tabIndex={disabled ? -1 : 0}
               onClick={() => !disabled && onChange(chip.id)}
-              onKeyDown={(e) => { if (!disabled && (e.key === "Enter" || e.key === " ")) onChange(chip.id); }}
+              onKeyDown={(e) => {
+                if (!disabled && (e.key === "Enter" || e.key === " "))
+                  onChange(chip.id);
+              }}
               sx={{
-                display: "inline-flex", alignItems: "center", gap: 0.625,
-                height: 28, px: 1.125, borderRadius: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.625,
+                height: 28,
+                px: 1.125,
+                borderRadius: 1,
                 border: "1px solid",
                 borderColor: active ? "text.primary" : "divider",
                 bgcolor: active ? "action.selected" : "transparent",
@@ -41,19 +71,37 @@ export default function StatusFilterChips({ value, counts, onChange, blocked = [
                 cursor: disabled ? "default" : "pointer",
                 opacity: disabled ? 0.5 : 1,
                 transition: "border-color 120ms, background-color 120ms",
-                "&:hover": disabled ? {} : { borderColor: active ? "text.primary" : "text.disabled" },
+                "&:hover": disabled
+                  ? {}
+                  : { borderColor: active ? "text.primary" : "text.disabled" },
               }}
             >
               {chip.id !== "all" && (
-                <Box sx={{ width: 6, height: 6, borderRadius: "50%", bgcolor: chip.role ? `status.${chip.role}.solid` : "text.disabled", flexShrink: 0 }} />
+                <Box
+                  sx={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    bgcolor: chip.role
+                      ? `status.${chip.role}.solid`
+                      : "text.disabled",
+                    flexShrink: 0,
+                  }}
+                />
               )}
-              <Typography sx={{ typography: "s2", fontWeight: 500, whiteSpace: "nowrap" }}>
+              <Typography
+                sx={{ typography: "s2", fontWeight: 500, whiteSpace: "nowrap" }}
+              >
                 {chip.label}
               </Typography>
-              <Typography sx={{
-                typography: "s3", fontWeight: 500, fontVariantNumeric: "tabular-nums",
-                color: active ? "inherit" : "text.subtitle",
-              }}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontWeight: 500,
+                  fontVariantNumeric: "tabular-nums",
+                  color: active ? "inherit" : "text.subtitle",
+                }}
+              >
                 {count}
               </Typography>
             </Box>
@@ -68,4 +116,5 @@ StatusFilterChips.propTypes = {
   counts: PropTypes.object.isRequired,
   onChange: PropTypes.func.isRequired,
   blocked: PropTypes.arrayOf(PropTypes.string),
+  loading: PropTypes.bool,
 };
