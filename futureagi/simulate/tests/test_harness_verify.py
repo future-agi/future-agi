@@ -668,6 +668,10 @@ class TestVerifyApi:
 
         assert posted.status_code == 422, posted.content
         assert posted.json()["error"] == "split_not_for_coding_agent"
+        assert (
+            posted.json()["message"]
+            == "A coding agent runs every scenario. Leave out the split."
+        )
         assert not HostedHarnessJob.no_workspace_objects.filter(
             environment=environment, split__isnull=False
         ).exists()
