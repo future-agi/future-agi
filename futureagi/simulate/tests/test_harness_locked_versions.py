@@ -730,15 +730,13 @@ def _needs_production(environment, keys):
 
 class TestProductionOnlyTasks:
     """A task that needs a production-only tool of the pinned environment version
-    can't run, so it gets no split and doesn't count in N."""
-
-    @pytest.fixture(autouse=True)
-    def actors_on(self, settings):
-        settings.HARNESS_ACTORS_ENABLED = True
+    can't run, so it gets no split and doesn't count in N. The rule reads only while
+    actors are on."""
 
     def test_a_task_that_needs_a_production_only_tool_gets_no_split(
-        self, auth_client, user, workspace, storage
+        self, auth_client, user, workspace, storage, settings
     ):
+        settings.HARNESS_ACTORS_ENABLED = True
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
         blocked = {f"s{index}" for index in range(5)}
@@ -753,14 +751,42 @@ class TestProductionOnlyTasks:
         assert (lock["train"], lock["test"]) == (15 - target_test_size(15), 5)
         assert response.status_code == 200, response.content
         [locked_version] = response.json()["locked_versions"]
-        assert locked_version["train"] + locked_version["test"] == 15
+        # The preview and the lock read one rule, so they agree.
+        assert (locked_version["train"], locked_version["test"]) == (
+            lock["train"],
+            lock["test"],
+        )
         assert set(_splits(environment)) == {f"s{index}" for index in range(20)} - (
             blocked
         )
 
-    def test_a_suite_whose_every_task_needs_one_is_refused(
-        self, auth_client, user, workspace, storage
+    def test_with_actors_off_every_task_splits_and_the_read_stays_off_documents(
+        self, auth_client, user, workspace, storage, settings
     ):
+        settings.HARNESS_ACTORS_ENABLED = False
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        _needs_production(environment, {f"s{index}" for index in range(5)})
+
+        with CaptureQueriesContext(connection) as read:
+            lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
+        response = _lock(auth_client, environment)
+
+        assert (lock["train"], lock["test"]) == (14, 6)
+        assert response.status_code == 200, response.content
+        assert set(_splits(environment)) == {f"s{index}" for index in range(20)}
+        catalogue = "\"documents\" -> 'sub_goals'"
+        assert all(
+            '"documents"' not in query["sql"].replace(catalogue, "")
+            for query in read.captured_queries
+            if "simulate_harness_environment_version" in query["sql"]
+            or "simulate_harness_suite_version" in query["sql"]
+        )
+
+    def test_a_suite_whose_every_task_needs_one_is_refused(
+        self, auth_client, user, workspace, storage, settings
+    ):
+        settings.HARNESS_ACTORS_ENABLED = True
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
         _needs_production(environment, {f"s{index}" for index in range(20)})

@@ -42,6 +42,7 @@ from simulate.services.harness_versioning.versions import (
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     grades_nothing,
+    resolve_run_pins,
     sub_goal_catalogue,
 )
 from tfc.constants.levels import Level
@@ -98,16 +99,21 @@ def _category(use_case: Any) -> str:
 
 
 def production_bound(job: HostedHarnessJob) -> frozenset[str]:
-    """The keys of the default suite's scenarios that need a production-only tool of
-    the default environment version, as a run of that pair refuses them. Read only
-    while actors are on: off, no tool reaches production, and the read stays off the
-    version documents."""
+    """The keys of the tasks the default run would refuse as production-only: those
+    that need a tool the default run's contract says reaches production. That contract
+    is the one its sealed bundle carries, so it can depend on the agent the bundle
+    binds. Read only while actors are on: off, no tool reaches production, and the
+    read stays off the contract and the suite documents."""
     if not actors_enabled():
         return frozenset()
-    # No pins: the default pair, which is the pair every lock and preview names.
+    # The pins the default run would use, as default_bundle_key reads them.
+    try:
+        pins = resolve_run_pins(job)
+    except HostedHarnessError:
+        pins = None
     return frozenset(
         registration_key(scenario["key"])
-        for entry in blocked_tools(job)
+        for entry in blocked_tools(job, pins)
         for scenario in entry["scenarios"]
     )
 
