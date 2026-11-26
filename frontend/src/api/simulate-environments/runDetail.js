@@ -237,6 +237,8 @@ export function useRunDetail(
       pinnedAgentVersion: execution.pinned_agent_version ?? null,
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
+      split: execution.split ?? null,
+      lockedVersion: execution.locked_version ?? null,
       agentDiffers: Boolean(execution.agent_differs),
       // The run readiness the run started under, and the cases it held back.
       capabilitySnapshot: execution.capability_snapshot ?? null,

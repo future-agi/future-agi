@@ -503,6 +503,18 @@ export const RUN_DIALOG_COPY = {
   notInSuite: (keys, suite) =>
     `${keys.length} selected scenario${keys.length === 1 ? " isn't" : "s aren't"} in ${suite} and will be skipped: ${keys.join(", ")}`,
   trials: (n) => `${n} repeat${n === 1 ? "" : "s"} each.`,
+  // The train or test split of the picked versions' locked version.
+  split: {
+    label: "Split",
+    all: "All scenarios",
+    option: (split, n) =>
+      `${split === "train" ? "Train" : "Test"} split · ${n} scenario${n === 1 ? "" : "s"}`,
+    line: (split, n, lockedVersion) =>
+      `Runs the ${split} split of locked version ${lockedVersion}: ${n} scenario${n === 1 ? "" : "s"}.`,
+    empty: (split) => `The ${split} split has no scenarios to run.`,
+    rerunFallback:
+      "That run's locked version is unlocked now, so this run doesn't use its split.",
+  },
   heldBack: (n, tools) =>
     n
       ? `${n} scenario${n === 1 ? "" : "s"} held back: ${tools.join(", ")} ${tools.length === 1 ? "reaches" : "reach"} production`
@@ -671,9 +683,20 @@ export const COMPARE_COPY = {
     not_applicable: "n/a",
     criteria_changed: "criteria changed",
   },
+  lockedVersion: (label) => `Locked version ${label}`,
+  splits: { train: "Train split", test: "Test split" },
+  notComparableRuns:
+    "Not comparable: these runs ran different versions or splits.",
   notComparable: (count) =>
     `${count} trial${count === 1 ? "" : "s"} left out: ${count === 1 ? "it" : "they"} did not start from the seeded records, so ${count === 1 ? "it" : "they"} cannot show whether results repeat.`,
 };
+
+// The locked version a run ran under and the split it ran:
+// "locked version 2026.11.1 · test".
+export const lockedVersionSplitLabel = (lockedVersion, split) =>
+  [lockedVersion?.label && `locked version ${lockedVersion.label}`, split]
+    .filter(Boolean)
+    .join(" · ");
 
 // The run's agent is not the one its environment version was built with.
 const shortVersion = (prefix, label) => {

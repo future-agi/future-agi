@@ -214,13 +214,14 @@ export const changeCredentials = async (envId, environmentValues, files) =>
 export const createAgentVersion = async (envId, body) =>
   (await axios.post(agentVersionsPath(envId), body)).data;
 
-// No scenarioKeys means every scenario.
-export const getRunPlan = async (envId, picks, scenarioKeys) =>
+// No scenarioKeys means every scenario, or every scenario of the split.
+export const getRunPlan = async (envId, picks, scenarioKeys, split = null) =>
   (
     await axios.get(runPlanPath(envId), {
       params: {
         ...versionPickFields(picks),
         ...(scenarioKeys ? { scenario_keys: scenarioKeys.join(",") } : {}),
+        ...(split ? { split } : {}),
       },
     })
   ).data;
@@ -432,11 +433,17 @@ export const draftsKey = (envId) => [
 export const actorsKey = (envId) => [...draftsKey(envId), "actors"];
 export const actorViewKey = (envId, actorId) => [...actorsKey(envId), actorId];
 
-export const runPlanKey = (envId, picks = {}, scenarioKeys = null) => [
+export const runPlanKey = (
+  envId,
+  picks = {},
+  scenarioKeys = null,
+  split = null,
+) => [
   ...environmentVersionsKey(envId),
   "run-plan",
   ...VERSION_PIECES.map((piece) => picks?.[piece] || null),
   scenarioKeys,
+  split,
 ];
 
 const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
@@ -502,6 +509,19 @@ export const lockedVersionFromApi = (item = {}) => ({
   train: item.train ?? 0,
   test: item.test ?? 0,
 });
+
+// The locked version of an environment and scenario version pair, or null.
+export const currentLockedVersion = (
+  lockedVersions,
+  environmentVersionId,
+  suiteVersionId,
+) =>
+  (lockedVersions || []).find(
+    (lockedVersion) =>
+      !lockedVersion.unlockedAt &&
+      lockedVersion.environmentVersionId === environmentVersionId &&
+      lockedVersion.suiteVersionId === suiteVersionId,
+  ) || null;
 
 // Whether the default pair can be locked now, why not, and its splits.
 export const lockFromApi = (item = {}) => ({
@@ -657,11 +677,11 @@ export function useSuiteMembers(envId, versionId, { enabled = true } = {}) {
 export function useRunPlan(
   envId,
   picks,
-  { enabled = true, scenarioKeys = null } = {},
+  { enabled = true, scenarioKeys = null, split = null } = {},
 ) {
   return useQuery({
-    queryKey: runPlanKey(envId, picks, scenarioKeys),
-    queryFn: () => getRunPlan(envId, picks, scenarioKeys),
+    queryKey: runPlanKey(envId, picks, scenarioKeys, split),
+    queryFn: () => getRunPlan(envId, picks, scenarioKeys, split),
     enabled: Boolean(envId) && enabled,
     retry: retryServerFailures,
     meta: { errorHandled: true },

@@ -40,7 +40,10 @@ import {
 import SectionCard from "../../../components/SectionCard";
 import ViewerLock from "../../../components/ViewerLock";
 import useSimulationAccess from "../../../hooks/useSimulationAccess";
-import { WORKSPACE_COPY } from "../../workspace.constants";
+import {
+  WORKSPACE_COPY,
+  lockedVersionSplitLabel,
+} from "../../workspace.constants";
 import StatusChip from "../StatusChip";
 import { stopLiveLineOf, stopNoteOf, stopTipOf } from "../runStop";
 import StopRunControl from "../StopRunControl";
@@ -226,6 +229,7 @@ export default function RunDetail({
     identity?.environmentVersion?.label &&
       `env ${identity.environmentVersion.label}`,
     identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+    lockedVersionSplitLabel(identity?.lockedVersion, identity?.split),
     identity?.seed != null && `seed ${identity.seed}`,
   ]
     .filter(Boolean)
@@ -240,6 +244,7 @@ export default function RunDetail({
       agent: identity?.pinnedAgentVersion?.id,
       environment: identity?.environmentVersion?.id,
       suite: identity?.suiteVersion?.id,
+      split: identity?.split ?? undefined,
     },
     seed: identity?.seed ?? undefined,
   };

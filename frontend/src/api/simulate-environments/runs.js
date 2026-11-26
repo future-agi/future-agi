@@ -99,6 +99,10 @@ export function executionToRun(raw) {
     pinnedAgentVersion: raw?.pinned_agent_version ?? null,
     environmentVersion: raw?.environment_version ?? null,
     suiteVersion: raw?.suite_version ?? null,
+    // The split the run took ("train" or "test") and the locked version
+    // ({id, label, locked}) it ran under; null for neither.
+    split: raw?.split ?? null,
+    lockedVersion: raw?.locked_version ?? null,
     agentDiffers: Boolean(raw?.agent_differs),
     durationS: raw?.duration ?? null,
   };

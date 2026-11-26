@@ -160,11 +160,12 @@ export default function EnvironmentWorkspace() {
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
     // the changed `picks` are sent.
-    mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
+    mutationFn: async ({ ids, trials, picks, resolved, seed, split }) => {
       // Run-all names no scenarios, so a suite past 1,000 can start; a composition
-      // with unscorable cases names the rest instead.
+      // with unscorable cases names the rest instead. Run-all of a split sends no
+      // keys: the server runs the split's.
       const scenarioIds =
-        ids === undefined && unscorable.size
+        ids === undefined && !split && unscorable.size
           ? (
               await resolveScenarioSelection(env.id, {
                 mode: "all",
@@ -180,6 +181,7 @@ export default function EnvironmentWorkspace() {
         resolved?.environment ?? picks?.environment ?? null,
         resolved?.suite ?? picks?.suite ?? null,
         seed ?? null,
+        split ?? null,
       ]);
       if (pendingSubmission.current?.selection !== selection) {
         pendingSubmission.current = {
@@ -194,6 +196,7 @@ export default function EnvironmentWorkspace() {
         pendingSubmission.current.key,
         picks,
         seed,
+        split,
       );
     },
     onSuccess: (run) => {
@@ -251,13 +254,14 @@ export default function EnvironmentWorkspace() {
         setRunDialog(null);
         setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" });
       }}
-      onSubmit={(picks, ids, resolved, seed) =>
+      onSubmit={(picks, ids, resolved, seed, split) =>
         runMutation.mutate({
           ids,
           trials: runDialog.trials,
           picks,
           resolved,
           seed,
+          split,
         })
       }
       submitting={runMutation.isPending}

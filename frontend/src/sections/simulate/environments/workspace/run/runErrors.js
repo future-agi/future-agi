@@ -11,6 +11,9 @@ const INLINE_ERRORS = new Set([
   "pair_failed",
   // Every selected case held back: the server names each reason, read in place.
   "all_cases_blocked",
+  "split_needs_locked_version",
+  "split_scenario_outside",
+  "split_not_for_coding_agent",
 ]);
 
 const isClientError = (error) => {
