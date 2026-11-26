@@ -73,11 +73,12 @@ def _metric_schema_installed(monkeypatch):
     monkeypatch.setattr(schema_install._cache, "installed", True)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _debug_failures_readable(monkeypatch):
-    """Debug analysis fixtures build one- and two-call runs to test the job
-    mechanics, so every run passes the minimum-calls-and-a-failure refusal here.
-    simulate/tests/test_debug_analysis_refusals.py tests the refusal itself."""
+    """Lets a one- or two-call run past Debug failures' minimum-calls-and-a-failure
+    rule, for modules that test the job mechanics on such runs. A module opts in
+    with ``pytest.mark.usefixtures``; test_simulation_investigation_rule.py and
+    simulate/tests/test_debug_analysis_refusals.py read the rule for real."""
     from tracer.services import simulation_investigation
 
     monkeypatch.setattr(

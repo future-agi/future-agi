@@ -106,6 +106,11 @@ const DIAGNOSIS: Json = {
 };
 // What the drawer reads when it opens. A finished diagnosis is read, never queued again.
 const DIAGNOSIS_ON_OPEN: Json = DIAGNOSIS;
+// The read of a run with no diagnosis yet. The run page reads it while the rule
+// blocks the button: a diagnosis already made would keep the button open.
+const NOT_DIAGNOSED: Json = {
+  status: 'not_requested', report: null, error_message: null, summary: null, goals: [], one_offs: [], findings: [],
+};
 
 // GET /simulate/api/agent-fix-runs/launch-options/: AgentFixLaunchOptionsSerializer,
 // shaped as fixtureLaunchOptions in frontend/src/api/simulate-environments/__tests__/fixtures/fixRuns.js.
@@ -188,7 +193,7 @@ const endsWith = (suffix: string) => (url: URL) => url.pathname.endsWith(suffix)
 
 async function stubEpochApi(page: Page, executionId: string, fixId: string) {
   const seen = {
-    connectedCalls: 14, diagnosisPosts: 0, launchSourceRunIds: [] as string[], launchBodies: [] as Json[],
+    connectedCalls: 14, diagnosed: false, diagnosisPosts: 0, launchSourceRunIds: [] as string[], launchBodies: [] as Json[],
   };
   let epoch: Json | null = null;
 
@@ -213,7 +218,7 @@ async function stubEpochApi(page: Page, executionId: string, fixId: string) {
       seen.diagnosisPosts += 1;
       return route.fulfill({ json: DIAGNOSIS });
     }
-    return route.fulfill({ json: DIAGNOSIS_ON_OPEN });
+    return route.fulfill({ json: seen.diagnosed ? DIAGNOSIS_ON_OPEN : NOT_DIAGNOSED });
   });
   await page.route(endsWith('/simulate/api/agent-fix-runs/launch-options/'), (route) => {
     const sourceRunId = new URL(route.request().url()).searchParams.get('source_run_id') ?? '';
@@ -273,6 +278,7 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
   }, { timeout: UI_READY });
 
   seen.connectedCalls = 15;
+  seen.diagnosed = true;
   await test.step('ui: the finished run opens with Debug failures', async () => {
     await page.goto(runPath);
     await expect(page.getByRole('button', { name: 'Debug failures' })).toBeEnabled({ timeout: UI_READY });

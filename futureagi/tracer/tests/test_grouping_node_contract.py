@@ -33,7 +33,10 @@ from tracer.services.grouping.publish import publish_grouping
 from tracer.services.grouping_features import enqueue_grouping_features
 from tracer.tests.test_grouping_snapshot import _saved_report
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("_debug_failures_readable"),
+]
 
 
 @override_settings(

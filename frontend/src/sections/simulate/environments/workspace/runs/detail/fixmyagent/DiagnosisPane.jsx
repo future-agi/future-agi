@@ -120,6 +120,19 @@ export default function DiagnosisPane({
     return <ThinkingLoader />;
   }
 
+  // A run the rule refuses is not a failed diagnosis: it says why, and a retry
+  // would be refused the same way.
+  if (analysis.refused) {
+    return (
+      <Box sx={{ flex: 1 }}>
+        <EmptyState
+          icon="solar:info-circle-linear"
+          title={analysis.errorMessage}
+        />
+      </Box>
+    );
+  }
+
   if (analysis.status === "failed") {
     return (
       <Box sx={{ flex: 1 }}>
@@ -203,6 +216,7 @@ DiagnosisPane.propTypes = {
     status: PropTypes.string,
     isWorking: PropTypes.bool,
     errorMessage: PropTypes.string,
+    refused: PropTypes.bool,
     groupingPending: PropTypes.bool,
     summary: PropTypes.shape({
       measuredCalls: PropTypes.number,

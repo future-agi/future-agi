@@ -74,8 +74,9 @@ def ensure_simulation_investigation(
 ) -> list[TraceInvestigationJob]:
     """Create one durable job per call of a completed execution; re-arm failed ones.
 
-    Refuses a run with too few connected calls or no failing call: a diagnosis of
-    it would spend credits and find nothing.
+    Refuses to start a diagnosis of a run with too few connected calls or no
+    failing call: it would spend credits and find nothing. A diagnosis such a run
+    already has is returned unchanged.
     """
     if execution.status != TestExecution.ExecutionStatus.COMPLETED:
         raise SimulationInvestigationConflict("Test execution is not completed")
@@ -94,24 +95,26 @@ def ensure_simulation_investigation(
             raise SimulationInvestigationConflict(
                 "Test execution contains nonterminal calls"
             )
-        if connected_call_count(execution) < MIN_CONNECTED_CALLS:
-            raise SimulationInvestigationConflict(
-                TOO_FEW_CALLS, code="investigation_too_few_calls"
-            )
-        if not failing_call_count(execution):
-            raise SimulationInvestigationConflict(
-                NOTHING_FAILED, code="investigation_nothing_failed"
-            )
-        project = _project_for_execution(execution)
-        existing = {
-            job.call_execution_id: job
-            for job in TraceInvestigationJob.objects.select_for_update(of=("self",))
+        earlier = list(
+            TraceInvestigationJob.objects.select_for_update(of=("self",))
             .select_related("current_report")
             .filter(
-                project=project,
                 test_execution=execution,
                 workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
             )
+        )
+        refusal = _refusal(execution)
+        # The rule stops new spend, not a diagnosis already made: that one stays
+        # readable as it is, with no call read again.
+        if refusal is not None and earlier:
+            return earlier
+        if refusal is not None:
+            raise refusal
+        project = _project_for_execution(execution)
+        existing = {
+            job.call_execution_id: job
+            for job in earlier
+            if job.project_id == project.id
         }
         now = timezone.now()
         jobs = []
@@ -131,6 +134,19 @@ def ensure_simulation_investigation(
                 _rearm(job, now)
             jobs.append(job)
         return jobs
+
+
+def _refusal(execution: TestExecution) -> SimulationInvestigationConflict | None:
+    """Why a new diagnosis of this run would find nothing, or None."""
+    if connected_call_count(execution) < MIN_CONNECTED_CALLS:
+        return SimulationInvestigationConflict(
+            TOO_FEW_CALLS, code="investigation_too_few_calls"
+        )
+    if not failing_call_count(execution):
+        return SimulationInvestigationConflict(
+            NOTHING_FAILED, code="investigation_nothing_failed"
+        )
+    return None
 
 
 def _unread(job: TraceInvestigationJob) -> bool:

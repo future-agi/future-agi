@@ -72,7 +72,8 @@ export default function FixMyAgentDrawer({
   );
 
   // A refused request (e.g. calls still running) must read as an error, never an
-  // endless loader.
+  // endless loader. The rule's refusals hold until the run changes, so they read
+  // as a reason with no retry.
   const view = useMemo(() => {
     const base =
       requestError && analysis.status === "not_requested"
@@ -80,6 +81,7 @@ export default function FixMyAgentDrawer({
             ...analysis,
             status: "failed",
             errorMessage: refusalMessage(requestError),
+            refused: !!DEBUG_FAILURES_REFUSALS[requestError.code],
           }
         : analysis;
     return withCallContext(base, citedCalls);

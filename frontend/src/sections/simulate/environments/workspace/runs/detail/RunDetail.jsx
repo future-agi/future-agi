@@ -185,9 +185,9 @@ export default function RunDetail({
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
   const stopNotice = stopNoticeOf(identity, live);
-  // Debug failures needs enough connected calls and a failing one; the server
+  // A new diagnosis needs enough connected calls and a failing one; the server
   // refuses the rest. Judged once the run has loaded, so it never flashes.
-  const debugBlocked = identity
+  const ruleBlocked = identity
     ? debugFailuresBlockedReason({
         connectedCalls: stats.connected,
         failingCalls: stats.failed,
@@ -198,7 +198,14 @@ export default function RunDetail({
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
   const headerLaunchOpen = fixLaunching && !!fixTargets;
-  const diagnosis = useDebugAnalysis(headerLaunchOpen ? executionId : null);
+  // A run the rule blocks may hold a diagnosis already made; that one stays
+  // openable. Until the read says so, the button stays blocked.
+  const readDiagnosis = headerLaunchOpen || (!!ruleBlocked && !live && !fixRun);
+  const diagnosis = useDebugAnalysis(readDiagnosis ? executionId : null);
+  const debugBlocked =
+    ruleBlocked && diagnosis.analysis.status === "not_requested"
+      ? ruleBlocked
+      : null;
   const epoch = epochTargets(fixOptions);
   const importedCount = epoch.imported.length;
   const canOfferEpoch =
@@ -490,9 +497,16 @@ export default function RunDetail({
           <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
             <Tooltip
               arrow
+              describeChild
               title={access.canRun && !live ? debugBlocked ?? "" : ""}
             >
-              <Box component="span" sx={{ display: "inline-flex" }}>
+              {/* A disabled button takes no focus; its wrapper does, so the reason
+                  reaches the keyboard and screen readers. */}
+              <Box
+                component="span"
+                tabIndex={debugBlocked ? 0 : undefined}
+                sx={{ display: "inline-flex" }}
+              >
                 <Button
                   variant="contained"
                   color="primary"
