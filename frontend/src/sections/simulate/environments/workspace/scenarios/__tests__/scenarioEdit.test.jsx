@@ -7,10 +7,7 @@ import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 configure({ asyncUtilTimeout: 5000 });
 afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 
-import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
-import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import ScenariosStep from "../ScenariosStep";
-import AddScenariosDrawer from "../AddScenariosDrawer";
 import {
   TEST_ENV,
   SERVER_ROWS,
@@ -45,22 +42,12 @@ const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
 
-const env = MOCK_WORLD;
-// The Add drawer offers scenarios not already on the environment; it is rendered
-// directly (the trigger is disabled), so it keeps its own pooled candidates.
-const pooled = generatedPool(env).slice(0, 12);
-
 // The first displayed row (default goal-grouped view) — the one the edit pencil
 // opens.
 const firstRow = () => queryScenarioFixture({ limit: 25 }).results[0];
 
-const renderStep = () => {
-  const patch = vi.fn();
-  renderWithClient(
-    <ScenariosStep env={TEST_ENV} envState={envStateFor()} patch={patch} />,
-  );
-  return { patch };
-};
+const renderStep = () =>
+  renderWithClient(<ScenariosStep env={TEST_ENV} envState={envStateFor()} />);
 
 beforeEach(() => {
   resetScenarioFixture();
@@ -70,41 +57,6 @@ beforeEach(() => {
   );
   amendScenarios.mockReset();
   amendScenarios.mockResolvedValue({ receipts: [] });
-});
-
-describe("ScenariosStep — add", () => {
-  it("disables the Add scenarios button (coming soon) — the drawer stays built", () => {
-    renderStep();
-    expect(
-      screen.getByRole("button", { name: "Add scenarios" }),
-    ).toBeDisabled();
-  });
-
-  // The drawer is kept fully wired even though the Add button is disabled for
-  // now, so it is exercised directly here rather than through the trigger.
-  it("the add drawer appends the chosen scenarios through onAdd", () => {
-    const onAdd = vi.fn();
-    render(
-      <AddScenariosDrawer
-        open
-        env={env}
-        selected={pooled}
-        onAdd={onAdd}
-        onClose={() => {}}
-      />,
-    );
-
-    expect(screen.getByText(/could not know to write/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("checkbox", { name: /select all/i }));
-    fireEvent.click(
-      screen.getByRole("button", { name: /^Add \d+ scenarios?$/ }),
-    );
-
-    expect(onAdd).toHaveBeenCalledTimes(1);
-    const added = onAdd.mock.calls[0][0];
-    expect(added.length).toBeGreaterThan(0);
-  });
 });
 
 describe("ScenariosStep — edit", () => {

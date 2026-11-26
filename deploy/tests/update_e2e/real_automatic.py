@@ -936,6 +936,8 @@ class ProductHarness:
         self.root = self.evidence / "installation"
         self.compose = ([compose] if isinstance(compose, str) else list(compose or ['docker', 'compose']))
         self.source_manifest = None
+        # Retained dependency lock rows (service/image/digest) A installs at.
+        self.dependency_lock = ()
         # Shared ProductWitnesses records generated secrets for bounded driver
         # diagnostics; acceptance keeps the same driver interface.
         self._secret_values = set()
@@ -986,9 +988,19 @@ class ProductHarness:
         alias = json.loads(self.docker('image','inspect',app_image).stdout)[0]
         if alias['Id'] != image['Id']:
             raise AssertionError('source installer alias differs from frozen image')
+        from scripts.update_rehearsal_shipping import locked_dependency_ref
         for name, service in self.model['services'].items():
-            if name != 'app':
+            if name == 'app':
+                continue
+            # A dependency the qualified proof locked is installed at that
+            # digest under its Compose tag, so an upstream re-push of the tag
+            # after qualification cannot change what this host runs.
+            pinned = locked_dependency_ref(name, service['image'], getattr(self, 'dependency_lock', ()))
+            if pinned is None:
                 self.docker('pull', service['image'], timeout=1800)
+            else:
+                self.docker('pull', '--platform', 'linux/amd64', pinned, timeout=1800)
+                self.docker('image', 'tag', pinned, service['image'])
         return self.boot_source()
 
     def bin_update(self, *args, check=True, timeout=BIN_UPDATE_SECONDS):

@@ -285,10 +285,19 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	// Decided here, so every caller gets it: the chat handlers, failover and
 	// model fallbacks, async jobs, scheduled completions, batches, the traffic
 	// mirror and the routes that translate their own dialect into a chat
-	// request. See ChatNeedsResponses.
+	// request. See ChatNeedsResponses and UnsupportedChatRoute.
+	if apiErr := p.UnsupportedChatRoute(req); apiErr != nil {
+		return nil, apiErr
+	}
 	if p.ChatNeedsResponses(req) {
 		return p.ChatCompletionViaResponses(ctx, req)
 	}
+	prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "openai", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true})
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	req = prepared
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
 	}
@@ -333,7 +342,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseProviderError(resp.StatusCode, respBody)
+		return nil, p.chatProviderError(actualModel, resp.StatusCode, respBody)
 	}
 
 	var result models.ChatCompletionResponse
@@ -346,7 +355,16 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 // StreamChatCompletion sends a streaming chat completion request.
 func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
-	// As in ChatCompletion: every streaming caller gets the Responses route.
+	// As in ChatCompletion: every streaming caller gets the Responses route,
+	// and a model this upstream serves only there is refused.
+	if apiErr := p.UnsupportedChatRoute(req); apiErr != nil {
+		chunks := make(chan models.StreamChunk)
+		errs := make(chan error, 1)
+		close(chunks)
+		errs <- apiErr
+		close(errs)
+		return chunks, errs
+	}
 	if p.ChatNeedsResponses(req) {
 		return p.StreamChatCompletionViaResponses(ctx, req)
 	}
@@ -356,6 +374,12 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "openai", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true})
+		if policyErr != nil {
+			errs <- policyErr
+			return
+		}
+		req = prepared
 
 		if err := p.acquireSemaphore(ctx); err != nil {
 			errs <- models.ErrGatewayTimeout("provider concurrency limit reached")
@@ -409,7 +433,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 					fmt.Sprintf("provider error (HTTP %d), failed to read body: %v", resp.StatusCode, readErr))
 				return
 			}
-			errs <- parseProviderError(resp.StatusCode, respBody)
+			errs <- p.chatProviderError(actualModel, resp.StatusCode, respBody)
 			return
 		}
 
