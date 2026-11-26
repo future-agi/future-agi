@@ -1181,3 +1181,28 @@ def test_an_old_record_s_trigger_never_blocks_an_edit_of_another_field():
 
     assert by_name == []
     assert by_trigger
+
+
+@pytest.mark.parametrize("p", [True, "0.5"])
+def test_a_chance_that_is_not_a_number_is_refused_on_both_write_paths(
+    p, user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-edits-chance-types")
+    assert _add(auth_client, environment, MANAGER).status_code == 200
+    url = f"{BASE}/{environment.id}/actors/manager/"
+    trigger = {"kind": "probability", "p": p}
+
+    by_changes = auth_client.put(url, {"changes": {"trigger": trigger}}, format="json")
+    by_record = auth_client.put(
+        url, {"actor": {**MANAGER, "activation": {"trigger": trigger}}}, format="json"
+    )
+
+    assert by_changes.status_code == 400, by_changes.content
+    assert by_record.status_code == 400, by_record.content
+    assert (
+        _stored(environment)["manager"]
+        .get("activation", {})
+        .get("trigger", {})
+        .get("kind")
+        != "probability"
+    )
