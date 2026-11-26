@@ -1999,6 +1999,8 @@ def test_a_value_on_the_next_line_or_after_long_padding_is_masked(voice_call, sa
         ("access_token: fakeaccessval", "fakeaccessval"),
         ("{'token': fakebareval}", "fakebareval"),
         ("passphrase: fake horse battery staple glue", "staple"),
+        ("{'passphrase': the cat is blue}", "cat is blue"),
+        ("Then my secret = open the door", "open the door"),
     ],
 )
 def test_a_short_plain_value_after_a_secrets_name_is_masked(voice_call, said, secret):
@@ -2008,6 +2010,22 @@ def test_a_short_plain_value_after_a_secrets_name_is_masked(voice_call, said, se
 
     assert secret not in text
     assert "The order is 7." in text
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("said", "secret"),
+    [
+        (f"Use this password: {FAKE_PLAIN} if they ask", FAKE_PLAIN),
+        ("Send Authorization: Basic Zm9vOmJhcjEy to the bank", "Zm9vOmJhcjEy"),
+    ],
+)
+def test_a_key_shaped_value_inside_a_sentence_is_masked(voice_call, said, secret):
+    _turn(voice_call, "user", said, 0)
+
+    text = json.dumps(_one(voice_call, Kind.TRANSCRIPT).content)
+
+    assert secret not in text
 
 
 @pytest.mark.django_db
