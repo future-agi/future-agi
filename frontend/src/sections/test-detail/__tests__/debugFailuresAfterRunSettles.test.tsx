@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // The real run grid, its status tracking, the real useKpis and the real
 // QueryClient. Only the network and AG Grid's server-side row model are fakes.
 
-type RunStatus = "running" | "completed";
+type RunStatus = "running" | "completed" | "failed";
 type RunPage = {
   status?: RunStatus;
   count: number;
@@ -25,6 +25,7 @@ type GridApi = {
   hideOverlay: () => void;
   applyServerSideTransaction: () => void;
   getCacheBlockState: () => Record<number, object>;
+  refreshServerSide: () => void;
 };
 type GetRowsParams = {
   request: { startRow: number; endRow: number };
@@ -37,6 +38,7 @@ type GridProps = { serverSideDatasource: Datasource };
 
 const { server, grid } = vi.hoisted(() => {
   const blocks = { count: 1 };
+  const mounted: { datasource: Datasource | null } = { datasource: null };
   const api: GridApi = {
     setGridOption: () => {},
     showNoRowsOverlay: () => {},
@@ -46,6 +48,18 @@ const { server, grid } = vi.hoisted(() => {
       Object.fromEntries(
         Array.from({ length: blocks.count }, (_, block) => [block, {}]),
       ),
+    // AG Grid reads every cached block, and always the first one: a run with
+    // no call rows yet still has its first page read, but no cached block.
+    refreshServerSide: () => {
+      for (let block = 0; block < Math.max(blocks.count, 1); block++) {
+        void mounted.datasource?.getRows({
+          request: { startRow: block * 30, endRow: (block + 1) * 30 },
+          api,
+          success: () => {},
+          fail: () => {},
+        });
+      }
+    },
   };
   return {
     // GET /simulate/test-executions/<id>/ and GET .../<id>/kpis/.
@@ -53,7 +67,7 @@ const { server, grid } = vi.hoisted(() => {
       runPage: vi.fn<() => Promise<RunPage>>(),
       kpis: vi.fn<() => Promise<Kpis>>(),
     },
-    grid: { blocks, api },
+    grid: { blocks, mounted, api },
   };
 });
 
@@ -75,14 +89,8 @@ vi.mock("ag-grid-react", async () => {
     function FakeServerSideGrid({ serverSideDatasource }, ref) {
       useImperativeHandle(ref, () => ({ api: grid.api }), []);
       useEffect(() => {
-        for (let block = 0; block < grid.blocks.count; block++) {
-          void serverSideDatasource.getRows({
-            request: { startRow: block * 30, endRow: (block + 1) * 30 },
-            api: grid.api,
-            success: () => {},
-            fail: () => {},
-          });
-        }
+        grid.mounted.datasource = serverSideDatasource;
+        grid.api.refreshServerSide();
       }, [serverSideDatasource]);
       return null;
     },
@@ -169,6 +177,12 @@ const openRunPage = ({
   return decision;
 };
 
+// What the page's refreshGrid does after a rerun: AG Grid re-reads its blocks.
+const refreshGrid = () =>
+  act(async () => {
+    grid.api.refreshServerSide();
+  });
+
 const poll = () =>
   act(async () => {
     vi.advanceTimersByTime(POLL_MS);
@@ -187,27 +201,42 @@ afterEach(() => {
 });
 
 describe("Debug failures once the grid sees the run finish", () => {
-  it.each<[string, number, number, Decision]>([
+  it.each<[string, RunStatus, number, number, Decision]>([
     [
       "opens when the final count reaches 15 after a last poll of 14",
+      "completed",
       14,
       15,
       ENABLED,
     ],
     [
       "enables after completion when both the cached and final counts are 15",
+      "completed",
       15,
       15,
       ENABLED,
     ],
-    ["stays blocked when the final count is still 14", 14, 14, BLOCKED],
-  ])("%s", async (_name, cached, final, expected) => {
+    [
+      "stays blocked when the final count is still 14",
+      "completed",
+      14,
+      14,
+      BLOCKED,
+    ],
+    [
+      "blocks a failed run whose final count drops to 14",
+      "failed",
+      15,
+      14,
+      BLOCKED,
+    ],
+  ])("%s", async (_name, finished, cached, final, expected) => {
     server.runPage.mockResolvedValue(runPage("running"));
     const decision = openRunPage({ cachedConnectedCalls: cached });
     await vi.waitFor(() => expect(decision.current).toEqual(STILL_RUNNING));
     expect(server.kpis).not.toHaveBeenCalled();
 
-    server.runPage.mockResolvedValue(runPage("completed"));
+    server.runPage.mockResolvedValue(runPage(finished));
     server.kpis.mockResolvedValue(kpis(final));
     await poll();
 
@@ -313,4 +342,43 @@ describe("Debug failures when a status read fails", () => {
       expect(server.kpis).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe("Debug failures after a rerun", () => {
+  it("reads the final count again when a rerun of the finished run finishes", async () => {
+    server.runPage.mockResolvedValue(runPage("completed"));
+    server.kpis.mockResolvedValue(kpis(14));
+    const decision = openRunPage({ cachedConnectedCalls: 14 });
+    await vi.waitFor(() => expect(server.kpis).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(decision.current).toEqual(BLOCKED));
+
+    server.runPage.mockResolvedValue(runPage("running"));
+    await refreshGrid();
+    await vi.waitFor(() => expect(decision.current).toEqual(STILL_RUNNING));
+
+    server.runPage.mockResolvedValue(runPage("completed"));
+    server.kpis.mockResolvedValue(kpis(15));
+    await poll();
+    await vi.waitFor(() => expect(decision.current).toEqual(ENABLED));
+    expect(server.kpis).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Debug failures on a run with no calls yet", () => {
+  it("keeps reading the status until the run finishes", async () => {
+    server.runPage.mockResolvedValue(runPage("running"));
+    const decision = openRunPage({ cachedConnectedCalls: 0, cachedPages: 0 });
+    await vi.waitFor(() => expect(decision.current).toEqual(STILL_RUNNING));
+
+    server.runPage.mockResolvedValue(runPage("completed"));
+    server.kpis.mockResolvedValue(kpis(0));
+    await poll();
+    await vi.waitFor(() => expect(decision.current).toEqual(BLOCKED));
+    expect(server.runPage).toHaveBeenCalledTimes(2);
+    expect(server.kpis).toHaveBeenCalledTimes(1);
+
+    // A finished run is not polled.
+    await poll();
+    expect(server.runPage).toHaveBeenCalledTimes(2);
+  });
 });

@@ -949,11 +949,15 @@ export const getCompareBaselineTooltipTitle = (status) => {
 };
 
 /**
- * Refetches what a run's page shows once the run stops making calls.
+ * Refetches the run's KPIs once the run stops making calls, so Debug failures
+ * judges a finished run by its final connected count, not the last in-run
+ * snapshot that stays cached for five minutes.
  *
- * The KPIs key is not under `["test-execution-detail", executionId]`, so the
- * prefix match alone leaves the last in-run snapshot cached for five minutes,
- * and Debug failures would judge a finished run by a stale connected count.
+ * The `["test-execution-detail", executionId]` prefix invalidation is the
+ * refresh the grid made before Debug failures read KPIs, kept as it was. It
+ * matches no query on the run page: the grid's pages are under
+ * `"test-execution-detail-list"`, the KPIs key puts `"KPIS"` second, and only
+ * the dataset summary's CriticalIssues reads that exact key.
  *
  * Pass `cancelInFlightKpis` when the page saw the run finish: a first KPI read
  * still in flight then began before the run finished, and React Query would

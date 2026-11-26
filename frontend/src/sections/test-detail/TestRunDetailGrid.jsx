@@ -314,9 +314,11 @@ const TestRunDetailGrid = () => {
 
   const refreshRowsManual = useCallback(async () => {
     if (!gridRef?.current?.api) return;
-    const totalPages = Object.keys(
-      gridRef?.current?.api?.getCacheBlockState(),
-    ).length;
+    // A run with no call rows has no cached block; read page 0 for its status.
+    const totalPages = Math.max(
+      Object.keys(gridRef?.current?.api?.getCacheBlockState()).length,
+      1,
+    );
 
     // const filters = useTestDetailStore.getState().filters || [];
     const search = useTestDetailStore.getState().search;
