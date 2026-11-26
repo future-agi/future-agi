@@ -147,11 +147,16 @@ describe("LockedVersionCard", () => {
     render(<LockedVersionCard envId="env" />);
 
     expect(screen.getByText("Lock a version")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Lock these versions to freeze their scenarios, splits and scorer environment.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
     expect(screen.getByText("Not proved")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Train 54 · Test 14 scenarios once locked. Lock to freeze scenarios, splits and the scorer.",
+        "Train 54 · Test 14 scenarios once locked. Lock to freeze scenarios, splits and the scorer environment.",
       ),
     ).toBeInTheDocument();
 
@@ -162,7 +167,7 @@ describe("LockedVersionCard", () => {
     expect(within(dialog).getByText("Lock this version?")).toBeInTheDocument();
     expect(
       within(dialog).getByText(
-        "Its scenarios, train and test splits and scorer freeze, so every score on it stays comparable. Each scenario keeps its split in every later locked version. Edits make a new, unlocked version.",
+        "Its scenarios, their train and test splits and the scorer environment freeze. Each scenario keeps its split in every later locked version. Edits make a new, unlocked version.",
       ),
     ).toBeInTheDocument();
     await userEvent.click(
@@ -267,6 +272,9 @@ describe("LockedVersionCard", () => {
     render(<LockedVersionCard envId="env" />);
 
     expect(screen.getByText("Locked version 2026.11.1")).toBeInTheDocument();
+    expect(
+      screen.getByText("Frozen: edits make a new, unlocked version."),
+    ).toBeInTheDocument();
     // The title already says Locked: a locked card shows no status badge.
     expect(screen.queryByText("Locked")).not.toBeInTheDocument();
     expect(screen.getByText("Passed")).toBeInTheDocument();
