@@ -636,3 +636,220 @@ def test_every_caller_of_the_harness_queue_states_whether_it_keeps():
         "Decide whether it keeps what it sets pending and record it in "
         f"QUEUE_CALLERS. Found: {found}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Who starts grading
+# ---------------------------------------------------------------------------
+
+# The grading tasks and the call workflow's grading activity. Grading writes
+# its result into the call's slot; unless ``skip_existing`` is true it writes
+# over whatever the slot holds, keeping nothing. So every place that starts
+# grading is filed here with the choice it makes and why the slots it grades
+# hold no verdict that would be lost.
+GRADING_TASKS = {
+    "_run_simulate_evaluations_task",
+    "run_new_evals_on_call_executions_task",
+}
+GRADING_ACTIVITY = "run_simulate_evaluations"
+_TASK_STARTS = {"apply_async", "delay", "s", "si", "signature"}
+_ACTIVITY_STARTS = {"execute_activity", "start_activity"}
+
+
+def _name_of(node) -> str | None:
+    return getattr(node, "id", None) or getattr(node, "attr", None)
+
+
+def _skip_existing(keywords) -> str:
+    """The ``skip_existing`` a dispatch passes, read from its own code."""
+    for keyword in keywords:
+        if keyword.arg == "skip_existing":
+            if isinstance(keyword.value, ast.Constant):
+                return f"skip_existing={keyword.value.value}"
+            return "passes skip_existing on"
+        if keyword.arg == "kwargs" and isinstance(keyword.value, ast.Dict):
+            for key, value in zip(
+                keyword.value.keys, keyword.value.values, strict=True
+            ):
+                if isinstance(key, ast.Constant) and key.value == "skip_existing":
+                    if isinstance(value, ast.Constant):
+                        return f"skip_existing={value.value}"
+                    return "passes skip_existing on"
+    return "skip_existing default (False)"
+
+
+def _grading_start(call: ast.Call) -> str | None:
+    """How ``call`` starts grading, or None when it does not."""
+    func = call.func
+    name = _name_of(func)
+    if name in GRADING_TASKS:
+        # Called in process.
+        return (
+            "grades again"
+            if name == "run_new_evals_on_call_executions_task"
+            else _skip_existing(call.keywords)
+        )
+    if (
+        isinstance(func, ast.Attribute)
+        and name in _TASK_STARTS
+        and _name_of(func.value) in GRADING_TASKS
+    ):
+        if _name_of(func.value) == "run_new_evals_on_call_executions_task":
+            return "grades again"
+        return _skip_existing(call.keywords)
+    if name in _ACTIVITY_STARTS and call.args:
+        first = call.args[0]
+        named = first.value if isinstance(first, ast.Constant) else _name_of(first)
+        if named != GRADING_ACTIVITY:
+            return None
+        given = call.args[1] if len(call.args) > 1 else None
+        keywords = given.keywords if isinstance(given, ast.Call) else []
+        return _skip_existing(keywords)
+    return None
+
+
+def grading_starts_in(source: str, relative: str) -> dict[str, str]:
+    """Each function that starts grading, by ``path::qualname``, with its choices."""
+    found: dict[str, list[str]] = {}
+
+    def walk(node, stack):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                walk(child, [*stack, child.name])
+                continue
+            if isinstance(child, ast.Call):
+                choice = _grading_start(child)
+                if choice is not None:
+                    key = f"{relative}::{'.'.join(stack) or '<module>'}"
+                    found.setdefault(key, []).append(choice)
+            walk(child, stack)
+
+    walk(ast.parse(source), [])
+    return {key: "; ".join(sorted(choices)) for key, choices in found.items()}
+
+
+def scan_grading_starts() -> dict[str, str]:
+    found: dict[str, str] = {}
+    for relative, path in source_files():
+        source = path.read_text(errors="ignore")
+        if GRADING_ACTIVITY in source or any(task in source for task in GRADING_TASKS):
+            found.update(grading_starts_in(source, relative))
+    return found
+
+
+_WORKFLOW = "ee/voice/temporal/workflows/call_execution_workflow.py"
+
+DISPATCHERS = {
+    f"{_WORKFLOW}::CallExecutionWorkflow.run": Filed(
+        "skip_existing default (False)",
+        "the first grading, once the call itself has run: the call is new, or "
+        "a call-and-eval rerun reset it and its snapshot keeps what it held",
+    ),
+    f"{_WORKFLOW}::CallExecutionWorkflow._run_eval_only_mode": Filed(
+        "skip_existing=False",
+        "the eval-only rerun's child: only the two rerun routes start it "
+        "(rerun_call_executions with eval_only), after they emptied the slots "
+        "and kept each verdict (WRITERS, KEEPS)",
+    ),
+    "simulate/services/alk_simulate_ingestion.py::_dispatch_evaluations_once": Filed(
+        "skip_existing default (False)",
+        "the first grading of a finished call, behind the eval_started latch, "
+        "taken in one locked write with the dispatch stamps",
+    ),
+    "simulate/services/chat_sim.py::finalize_chat_execution": Filed(
+        "skip_existing default (False)",
+        "the first grading of a finished chat, behind the eval_started latch",
+    ),
+    "simulate/tasks/chat_sim.py::store_chat_messages": Filed(
+        "skip_existing default (False)",
+        "the first grading of a finished chat, behind the eval_started latch",
+    ),
+    "simulate/services/harness_run_evals.py::_dispatch_one": Filed(
+        "skip_existing=True",
+        "the harness queue: a config whose slot holds a verdict is skipped",
+    ),
+    "simulate/services/run_regrade.py::regrade_run_evals": Filed(
+        "grades again",
+        "run-new-evals: after pend_evals kept each verdict it set pending",
+    ),
+    f"{_VIEWS}::UpdateEvalConfigView.post": Filed(
+        "grades again",
+        "editing an eval with run set: after pend_evals kept each verdict",
+    ),
+    f"{_EXECUTOR}::run_new_evals_on_call_executions_task": Filed(
+        "skip_existing=False",
+        "the job of the two filed above; it grades only the slots they set pending",
+    ),
+    f"{_EXECUTOR}::TestExecutor.monitor_test_execution": Filed(
+        "skip_existing default (False); skip_existing default (False)",
+        "nothing runs it: its only caller is commented out "
+        "(ee/voice/tasks/test_monitor.py)",
+    ),
+}
+
+
+GRADING_SAMPLE = """
+def by_name(call):
+    _run_simulate_evaluations_task.apply_async(args=(call,))
+
+def keeps_what_is_there(call):
+    tasks._run_simulate_evaluations_task.delay(call, skip_existing=True)
+
+def in_kwargs(call, keep):
+    _run_simulate_evaluations_task.apply_async(
+        args=(call,), kwargs={"skip_existing": keep}
+    )
+
+def in_process(call):
+    _run_simulate_evaluations_task(call, skip_existing=False)
+
+def again(calls, configs):
+    run_new_evals_on_call_executions_task.apply_async(args=(calls, configs))
+
+class Workflow:
+    async def run(self, call):
+        await workflow.execute_activity(
+            "run_simulate_evaluations",
+            RunSimulateEvaluationsInput(call_execution_id=call, skip_existing=True),
+        )
+        workflow.start_activity("run_simulate_evaluations", Input(call))
+
+def twice(call):
+    _run_simulate_evaluations_task.apply_async(args=(call,))
+    _run_simulate_evaluations_task.apply_async(args=(call,))
+
+def not_grading(call):
+    other_task.apply_async(args=(call,))
+    workflow.execute_activity("another_activity", call)
+    names = ["run_simulate_evaluations"]
+"""
+
+
+def test_the_grading_scan_finds_every_way_to_start_grading():
+    found = grading_starts_in(GRADING_SAMPLE, "sample.py")
+    assert found == {
+        "sample.py::by_name": "skip_existing default (False)",
+        "sample.py::keeps_what_is_there": "skip_existing=True",
+        "sample.py::in_kwargs": "passes skip_existing on",
+        "sample.py::in_process": "skip_existing=False",
+        "sample.py::again": "grades again",
+        "sample.py::Workflow.run": "skip_existing default (False); skip_existing=True",
+        "sample.py::twice": "skip_existing default (False); skip_existing default (False)",
+    }
+
+
+def test_every_place_that_starts_grading_is_filed_with_its_choice():
+    found = scan_grading_starts()
+    # A build without ee/ has none of its dispatchers.
+    filed = {
+        key: entry.category
+        for key, entry in DISPATCHERS.items()
+        if (FUTUREAGI / key.split("::")[0]).exists()
+    }
+    assert found == filed, (
+        "A place that starts grading is new, gone or changed its choice. "
+        "Grading writes over what a slot holds unless skip_existing is true: "
+        "decide why the slots it grades hold no verdict to lose, or keep them "
+        f"first, and record it in DISPATCHERS. Found: {found}"
+    )
+    assert all(entry.reason for entry in DISPATCHERS.values())
