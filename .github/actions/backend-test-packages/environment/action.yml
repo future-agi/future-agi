@@ -19,6 +19,7 @@ runs:
         UV_CACHE_HIT: ${{ steps.uv.outputs.cache-hit }}
         UV_PYTHON: '3.12.3'
       run: bash "$GITHUB_ACTION_PATH/setup.sh"
+    - uses: ./.github/actions/backend-test-packages/lock-wheels
 inputs:
   profile:
     description: Baseline (copy/eager, serial health), overlap, or tuned (hardlink/lazy, overlapped health).

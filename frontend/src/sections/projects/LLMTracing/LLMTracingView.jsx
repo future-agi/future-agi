@@ -4804,6 +4804,16 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                         ? allTracesSelected
                         : allSpansSelected
                   }
+                  // The same filters the primary grid sends for its list
+                  // fetch, so select-all adds exactly the rows it counted.
+                  selectAllFilters={toBackendFilters([
+                    ...(selectedTab === "trace"
+                      ? primaryTraceValidatedFilters
+                      : primarySpanValidatedFilters),
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ...(extraFilters || []),
+                    ...(metricFilters || []),
+                  ])}
                   onSuccess={() => {
                     if (projectSource === PROJECT_SOURCE.SIMULATOR) {
                       primaryCallLogsGridRef.current?.deselectAll?.();
