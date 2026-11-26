@@ -791,12 +791,21 @@ class TestProductionOnlyTasks:
         assert (lock["train"], lock["test"]) == (14, 6)
         assert response.status_code == 200, response.content
         assert set(_splits(environment)) == {f"s{index}" for index in range(20)}
-        catalogue = "\"documents\" -> 'sub_goals'"
-        assert all(
-            '"documents"' not in query["sql"].replace(catalogue, "")
+        version_selects = [
+            query["sql"]
             for query in read.captured_queries
             if "simulate_harness_environment_version" in query["sql"]
             or "simulate_harness_suite_version" in query["sql"]
+        ]
+        # The runnable check reads one key of ONE version: the pinned environment
+        # version's sub-goal catalogue, looked up by id. No read lists documents
+        # across versions.
+        catalogue = "\"documents\" -> 'sub_goals'"
+        catalogue_reads = [sql for sql in version_selects if catalogue in sql]
+        assert len(catalogue_reads) == 1
+        assert '"simulate_harness_environment_version"."id" =' in catalogue_reads[0]
+        assert all(
+            '"documents"' not in sql.replace(catalogue, "") for sql in version_selects
         )
 
     def test_a_suite_whose_every_task_needs_one_is_refused(
