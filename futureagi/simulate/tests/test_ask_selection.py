@@ -1007,31 +1007,6 @@ def test_a_selection_checked_from_another_workspace_is_refused_as_not_found(
 
 
 @pytest.mark.django_db
-def test_a_decision_gateway_error_that_is_not_a_missing_key_refuses_the_launch(
-    organization, workspace, entitled, billing
-):
-    from ee.decisions.errors import DecisionGatewayError
-    from ee.jev.client import JevGatewayError
-    from evaluations.decision_models import DECISION_MODELS
-
-    model = next(name for name in DECISION_MODELS if "jev" not in name)
-    with (
-        patch(
-            "evaluations.engine.instance._get_decision_api_key",
-            side_effect=DecisionGatewayError(
-                "openrouter", JevGatewayError("JEV_TIMEOUT")
-            ),
-        ),
-        pytest.raises(LaunchRefused) as refused,
-    ):
-        _gate(organization, workspace, models=(model,))
-
-    assert refused.value.code == "DECISION_TIMEOUT"
-    assert refused.value.message.endswith("didn't respond in time. Try again.")
-    billing.assert_not_called()
-
-
-@pytest.mark.django_db
 def test_a_launch_with_no_ready_answer_is_refused_before_anything_is_asked(
     organization, workspace, entitled, billing
 ):
@@ -1092,3 +1067,372 @@ def test_a_run_moved_to_another_workspace_since_freezing_is_refused_as_not_found
         )
 
     assert (refused.value.code, refused.value.message) == ("not_found", NOT_FOUND)
+
+
+# --- round 1 review ------------------------------------------------------------------
+
+
+EVERY_KIND = Question(
+    name="Everything?", kinds=tuple(Kind), decision_model="jev-latest"
+)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("where", ["seed", "transcript"])
+def test_evidence_that_cannot_be_read_just_now_refuses_the_check_with_a_retry(
+    organization, workspace, run, scenario, where
+):
+    from simulate.services import call_evidence
+
+    calls = _calls(run, scenario, 2)
+    for call in calls:
+        call.call_metadata = {
+            "harness_trial_state": {
+                "recorded": True,
+                "start": {"state": "seeded", "against": "sealed_seed"},
+            }
+        }
+        call.save(update_fields=["call_metadata"])
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    trial = call_evidence.HostedTrial(
+        job_id=uuid.uuid4(),
+        connector="phone",
+        artifact_level="traces",
+        attempts=1,
+        trials=1,
+        environment_version_id=uuid.uuid4(),
+    )
+    kind = Kind.WORLD_STATE_START if where == "seed" else Kind.TRANSCRIPT
+
+    def down(*_):
+        raise ConnectionError("storage is down")
+
+    with (
+        patch.object(call_evidence, "hosted_trial", return_value=trial),
+        patch.object(call_evidence, "environment_files", side_effect=down),
+        patch.dict(call_evidence._READERS, {Kind.TRANSCRIPT: down}),
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        check_before_launch(
+            frozen,
+            [Question(name="q", kinds=(kind,), decision_model="jev-latest")],
+            organization=organization,
+            workspace_id=workspace.id,
+        )
+
+    assert refused.value.code == "evidence_unavailable"
+    assert refused.value.details == {"calls": 2}
+
+
+@pytest.mark.django_db
+def test_the_check_downloads_no_world_file_and_reads_no_trace(
+    organization, workspace, run, scenario
+):
+    from simulate.models.hosted_harness import HostedHarnessArtifact
+    from simulate.services import call_evidence
+
+    calls = _hosted_calls(organization, workspace, run, scenario, 2, "traces")
+    job = HostedHarnessExecution.objects.get(call_execution=calls[0]).job
+    for call in calls:
+        call.call_metadata = {
+            "harness_trial_state": {"end_state_artifact": "sha256:" + "c" * 64}
+        }
+        call.save(update_fields=["call_metadata"])
+    HostedHarnessArtifact.no_workspace_objects.create(
+        job=job,
+        sha256="c" * 64,
+        kind="world_state",
+        size=10,
+        content_type="application/json",
+        object_key="end/key",
+    )
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    question = Question(
+        name="End?",
+        kinds=(Kind.WORLD_STATE_END, Kind.AGENT_TRACES),
+        decision_model="jev-latest",
+    )
+    storage = type("S", (), {"get_object": lambda *_: pytest.fail("fetched")})()
+
+    with (
+        patch("tfc.utils.storage_client.get_storage_client", return_value=storage),
+        patch.object(call_evidence, "run_traces_source", return_value=object()),
+        patch.object(
+            call_evidence, "read_run_traces", side_effect=AssertionError("read")
+        ),
+    ):
+        check = check_before_launch(
+            frozen, [question], organization=organization, workspace_id=workspace.id
+        )
+
+    (counted,) = check["questions"]
+    assert counted["by_kind"]["world_state_end"]["present"] == 2
+    assert counted["by_kind"]["agent_traces"]["present"] == 2
+    assert counted["ready"] == 2
+
+
+@pytest.mark.django_db
+def test_what_every_call_of_a_run_shares_is_read_once(
+    organization, workspace, run, scenario
+):
+    from simulate.services import call_evidence
+
+    _hosted_calls(organization, workspace, run, scenario, 3, "traces")
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+
+    with patch.object(call_evidence, "run_traces_source", return_value=None) as source:
+        check_before_launch(
+            frozen,
+            [Question(name="q", kinds=(Kind.AGENT_TRACES,), decision_model="m")],
+            organization=organization,
+            workspace_id=workspace.id,
+        )
+
+    source.assert_called_once()
+
+
+def _queries_for(organization, workspace, run, scenario, count):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    _hosted_calls(
+        organization,
+        workspace,
+        run,
+        scenario,
+        count,
+        "traces",
+        provider_call_data={"livekit": {"tool_calls": [{"name": "lookup"}]}},
+    )
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    with CaptureQueriesContext(connection) as queries:
+        check_before_launch(
+            frozen, [EVERY_KIND], organization=organization, workspace_id=workspace.id
+        )
+    return len(queries)
+
+
+# Each further call of a hosted run reads only its own rows (its trial and its
+# transcript here); what the run's calls share (the job's counts, the trace source,
+# the agent version, the scenario) is not read again. It was 13 before the memo.
+QUERIES_PER_CALL = 2
+
+
+@pytest.mark.django_db
+def test_a_hosted_runs_check_costs_a_few_queries_per_call(
+    organization, workspace, agent_definition, simulator_agent, scenario
+):
+    first = _run(agent_definition, simulator_agent, scenario)
+    second = _run(agent_definition, simulator_agent, scenario)
+
+    few = _queries_for(organization, workspace, first, scenario, 2)
+    many = _queries_for(organization, workspace, second, scenario, 8)
+
+    assert (many - few) / 6 <= QUERIES_PER_CALL, (few, many)
+
+
+@pytest.mark.django_db
+def test_an_unknown_question_kind_is_refused(organization, workspace, run, scenario):
+    _calls(run, scenario, 1)
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+
+    with pytest.raises(LaunchRefused) as refused:
+        check_before_launch(
+            frozen,
+            [Question(name="q", kinds=("bogus",), decision_model="jev-latest")],
+            organization=organization,
+            workspace_id=workspace.id,
+        )
+
+    assert refused.value.code == "questions"
+
+
+@pytest.mark.django_db
+def test_an_unknown_selection_kind_is_refused(organization, workspace, run):
+    with pytest.raises(SelectionRefused) as refused:
+        _freeze(organization, workspace, "bogus", [run])
+
+    assert refused.value.code == "bad_kind"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("how", ["calls", "scenarios", "runs"])
+def test_too_many_chosen_calls_scenarios_or_runs_are_refused_before_loading(
+    organization, workspace, run, scenario, how
+):
+    calls = _calls(run, scenario, 3)
+    picked = {
+        "calls": {"call_ids": [str(call.id) for call in calls]},
+        "scenarios": {"scenario_ids": [str(scenario.id)]},
+        "runs": {},
+    }[how]
+    runs = [run] if how != "runs" else [run, run, run]
+    kind = {
+        "calls": SelectionKind.CALLS,
+        "scenarios": SelectionKind.SCENARIOS,
+        "runs": SelectionKind.RUNS,
+    }[how]
+
+    with (
+        patch.object(selection, "MAX_CALLS", 2),
+        patch.object(selection, "_calls_of", side_effect=AssertionError("loaded")),
+        pytest.raises(SelectionRefused) as refused,
+    ):
+        freeze_selection(
+            kind=kind,
+            organization_id=organization.id,
+            workspace_id=workspace.id,
+            run_ids=[str(one.id) for one in runs]
+            if how != "runs"
+            else [str(uuid.uuid4()) for _ in range(3)],
+            **picked,
+        )
+
+    assert refused.value.code == (
+        "too_many_runs" if how == "runs" else "too_many_calls"
+    )
+
+
+@pytest.mark.django_db
+def test_more_chosen_ids_than_an_ask_takes_are_refused_before_they_are_read(
+    organization, workspace, run
+):
+    with (
+        patch.object(selection, "MAX_CALLS", 2),
+        pytest.raises(SelectionRefused) as refused,
+    ):
+        _freeze(
+            organization,
+            workspace,
+            SelectionKind.CALLS,
+            [run],
+            call_ids=["not-an-id"] * 2 + ["another"],
+        )
+
+    assert refused.value.code == "too_many_calls"
+
+
+@pytest.mark.django_db
+def test_a_gate_with_no_question_is_refused_before_any_key_is_read(
+    organization, workspace, entitled, billing
+):
+    with (
+        patch.object(selection, "_check_key", side_effect=AssertionError("key")),
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        launch_gate(
+            organization=organization,
+            workspace_id=workspace.id,
+            questions=[],
+            answers=5,
+        )
+
+    assert refused.value.code == "questions"
+
+
+@pytest.mark.django_db
+def test_a_kind_listed_twice_is_counted_once(organization, workspace, run, scenario):
+    _calls(run, scenario, 3, recording_url="https://example.com/r.mp3")
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+
+    check = check_before_launch(
+        frozen,
+        [Question(name="q", kinds=(Kind.AUDIO, Kind.AUDIO), decision_model="m")],
+        organization=organization,
+        workspace_id=workspace.id,
+    )
+
+    (counted,) = check["questions"]
+    assert counted["by_kind"]["audio"]["present"] == 3
+    assert counted["kinds"] == ["audio"]
+
+
+@pytest.mark.django_db
+def test_a_billing_refusal_with_no_message_of_ours_keeps_billings_reason(
+    organization, workspace, entitled
+):
+    from types import SimpleNamespace
+
+    with (
+        patch("evaluations.engine.instance._get_typesafe_api_key", return_value="k"),
+        patch("tracer.services.instant_eval_run.credits_per_answer", return_value=0.5),
+        patch(
+            "tracer.services.instant_eval_run.check_credits",
+            return_value=SimpleNamespace(
+                error_code="BUDGET_LIMIT",
+                allowed=False,
+                reason="Your monthly budget for evals is used up.",
+            ),
+        ),
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        _gate(organization, workspace, answers=10)
+
+    assert refused.value.code == "BUDGET_LIMIT"
+    assert refused.value.message == "Your monthly budget for evals is used up."
+
+
+@pytest.mark.django_db
+def test_the_description_keeps_the_filter_as_validated(
+    organization, workspace, run, scenario
+):
+    calls = _calls(run, scenario, 1)
+
+    frozen = _freeze(
+        organization,
+        workspace,
+        SelectionKind.FILTER,
+        [run],
+        filters=json.dumps({"call_execution_id": [str(calls[0].id)]}),
+    )
+
+    assert frozen.description["filters"] == {"call_execution_id": [str(calls[0].id)]}
+
+
+def test_the_service_reads_the_filter_serializer_from_the_serializers_package():
+    import inspect
+
+    from simulate.serializers.run_call_filters import RunCallFiltersSerializer
+    from simulate.views import run_results_v3
+
+    assert run_results_v3.RunCallFiltersSerializer is RunCallFiltersSerializer
+    assert "simulate.views" not in inspect.getsource(selection)
+
+
+@pytest.mark.django_db
+def test_the_workspace_is_put_back_after_a_refused_key_read(
+    organization, workspace, user, entitled, billing
+):
+    from agentic_eval.core_evals.run_prompt.litellm_models import (
+        MissingProviderKeyError,
+    )
+    from tfc.middleware.workspace_context import (
+        get_current_workspace,
+        set_workspace_context,
+    )
+
+    elsewhere = Workspace.objects.create(
+        name=f"ws-{uuid.uuid4().hex[:6]}", organization=organization, created_by=user
+    )
+    before = get_current_workspace()
+    set_workspace_context(workspace=elsewhere)
+    try:
+        with (
+            patch(
+                "evaluations.engine.instance._get_typesafe_api_key",
+                side_effect=MissingProviderKeyError("openai"),
+            ),
+            pytest.raises(LaunchRefused),
+        ):
+            _gate(organization, workspace)
+        after = get_current_workspace()
+    finally:
+        set_workspace_context(workspace=before)
+
+    assert after == elsewhere
+
+
+def test_the_open_service_imports_nothing_from_ee():
+    import inspect
+
+    assert "from ee" not in inspect.getsource(selection)
