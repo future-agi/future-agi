@@ -22,6 +22,7 @@ import structlog
 from google.protobuf import json_format
 
 from agentcc.services.url_safety import (
+    build_ssrf_safe_session,
     ensure_public_http_url,
     private_provider_urls_allowed,
 )
@@ -335,6 +336,22 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
 }
 
 
+def _request(method: str, url: str, *, guarded: bool, **kwargs: Any) -> Any:
+    """Send one probe. A URL under a base the agent set is checked again as the request is sent, on the
+    same rules it was checked by, so a name that resolved to a public address at the check cannot be
+    answered by a private one at the send."""
+    if not guarded:
+        return requests.request(method, url, **kwargs)
+    session = build_ssrf_safe_session(
+        "the base URL does not resolve to an address this check may call",
+        allow_private=private_provider_urls_allowed(),
+    )
+    try:
+        return session.request(method, url, **kwargs)
+    finally:
+        session.close()
+
+
 def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     """Exercise one provider's credentials. Callers pass only providers that ``applies``."""
     spec = PROVIDER_PROBES[provider]
@@ -345,15 +362,16 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     base_fault = (base_name,) if base_name else spec.aliases
     try:
         request = spec.build(values)
-        response = requests.request(
+        response = _request(
             request.method,
             request.url,
+            guarded=bool(base_name),
             headers=dict(request.headers),
             json={} if request.method == "POST" else None,
             timeout=PROBE_TIMEOUT_SECONDS,
             allow_redirects=False,
         )
-    except BaseUrlRefused as exc:
+    except (BaseUrlRefused, ConnectionError) as exc:
         return ProbeResult(
             provider,
             spec.label,

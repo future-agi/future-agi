@@ -3053,7 +3053,7 @@ def gateway_provider():
         # The fixture's LiveKit host is not real; this journey is about the model gateway.
         patch("simulate.services.harness_credential_probes.assert_url_host_public"),
         patch(
-            "simulate.services.harness_credential_probes.requests.request",
+            "simulate.services.harness_credential_probes._request",
             side_effect=answer,
         ),
     ):
@@ -3123,7 +3123,7 @@ def test_preflight_base_url_journey(
         return Mock(status_code=200)
 
     with patch(
-        "simulate.services.harness_credential_probes.requests.request",
+        "simulate.services.harness_credential_probes._request",
         side_effect=gateway_down,
     ):
         down = _preflight(a4, real_probe)

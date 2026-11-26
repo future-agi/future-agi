@@ -395,9 +395,7 @@ def gateway_dns():
 
 @pytest.fixture
 def provider_request():
-    with patch(
-        "simulate.services.harness_credential_probes.requests.request"
-    ) as request:
+    with patch("simulate.services.harness_credential_probes._request") as request:
         request.return_value = Mock(status_code=200)
         yield request
 
@@ -989,7 +987,7 @@ def test_a_livekit_redirect_is_a_failure_not_followed(status):
     ],
 )
 @patch("simulate.services.harness_credential_probes.requests.post")
-@patch("simulate.services.harness_credential_probes.requests.request")
+@patch("simulate.services.harness_credential_probes._request")
 def test_every_livekit_probe_refuses_a_url_that_is_not_https_or_wss(request, post, url):
     values = {**ROUTING_VALUES, "LIVEKIT_URL": url}
 
@@ -1006,7 +1004,7 @@ def test_every_livekit_probe_refuses_a_url_that_is_not_https_or_wss(request, pos
 
 
 @patch("simulate.services.harness_credential_probes.requests.post")
-@patch("simulate.services.harness_credential_probes.requests.request")
+@patch("simulate.services.harness_credential_probes._request")
 def test_every_livekit_probe_refuses_an_internal_host(request, post, public_hosts):
     from tfc.utils.ssrf_guard import assert_url_host_public
 
@@ -1115,3 +1113,36 @@ def test_preflight_checks_a_phone_target_routing_from_our_caller_number(
     assert _preflight_credential_probe(payload) == [{"provider": "livekit_target"}]
     number, values, caller = probe_routing.call_args.args
     assert (number, values, caller) == (NUMBER, ROUTING_VALUES, CALLER)
+
+
+def test_a_base_that_resolves_privately_at_send_is_refused_after_passing_the_check():
+    """The base is checked again as the probe is sent, so a name that answers with a public address at
+    the check and a private one at the send (rebinding) never reaches the private one."""
+    answers = iter(["93.184.215.14", "169.254.169.254"])
+
+    def resolve(host, *_args, **_kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                (next(answers, "169.254.169.254"), 0),
+            )
+        ]
+
+    with (
+        patch("agentcc.services.url_safety.socket.getaddrinfo", resolve),
+        patch("requests.adapters.HTTPAdapter.send") as sent,
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert result.ok is False
+    assert "could not run" in result.message
+    sent.assert_not_called()
