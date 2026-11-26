@@ -1,6 +1,9 @@
 """Reviewer-visible citations on indexed scenario rows."""
 
 import json
+from collections import defaultdict
+
+from django.db.models import Q
 
 from rest_framework.exceptions import PermissionDenied
 
@@ -50,7 +53,8 @@ def visible_citations(request, job, page):
         row.scenario_key: row.reviewed_source_locations or _legacy_locations(row)
         for row in page
     }
-    if not any(locations.values()):
+    source_ids = {item["source_id"] for items in locations.values() for item in items}
+    if not source_ids:
         return {}
 
     from simulate.services.harness_source_reviews import require_source_scope
@@ -62,8 +66,14 @@ def visible_citations(request, job, page):
         return {}
 
     checkpoint = _accepted_checkpoint(job, scope)
+    matching_sources = Q()
+    for source_id in sorted(source_ids):
+        matching_sources |= Q(
+            preview__sources__contains=[{"pin": {"source_id": source_id}}]
+        )
     reviews = list(
         HarnessSourceReview.objects.filter(
+            matching_sources,
             **scope,
             owner=job,
             owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
@@ -73,11 +83,23 @@ def visible_citations(request, job, page):
     if checkpoint:
         reviews.append(checkpoint)
     resolve_legacy_filenames(reviews, scope)
+    candidates = defaultdict(set)
+    for review in reviews:
+        for source in review.preview.get("sources", []):
+            source_id = source["pin"]["source_id"]
+            if source_id in source_ids:
+                filename = (
+                    source.get("filename")
+                    if source.get("visibility") == "agent_visible"
+                    else None
+                )
+                candidates[source_id].add(filename)
     names = {
-        source["pin"]["source_id"]: source["filename"]
-        for review in reviews
-        for source in review.preview.get("sources", [])
-        if source.get("filename") and source.get("visibility") == "agent_visible"
+        key: name
+        for key, choices in candidates.items()
+        if len(choices) == 1
+        for name in choices
+        if name
     }
     return {
         key: [

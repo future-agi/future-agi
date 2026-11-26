@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 from rest_framework.exceptions import PermissionDenied
 
@@ -28,7 +28,19 @@ def test_only_accepted_reviewer_visible_names_are_displayed(monkeypatch):
     )
     monkeypatch.setattr(citations, "_accepted_checkpoint", lambda *_: review)
     query = Mock()
-    query.return_value.only.return_value = []
+    query.return_value.only.return_value = [
+        SimpleNamespace(
+            preview={
+                "sources": [
+                    {
+                        "pin": {"source_id": "hidden"},
+                        "filename": "Was public.txt",
+                        "visibility": "agent_visible",
+                    }
+                ]
+            }
+        )
+    ]
     monkeypatch.setattr(citations.HarnessSourceReview.objects, "filter", query)
     fixture = {
         "citations": [
@@ -49,7 +61,7 @@ def test_only_accepted_reviewer_visible_names_are_displayed(monkeypatch):
         "returns": [{"filename": "Northstar.pdf", "page": 2}]
     }
     query.assert_called_once_with(
-        **scope, owner=job, owner_kind="environment", state="accepted"
+        ANY, **scope, owner=job, owner_kind="environment", state="accepted"
     )
 
 
