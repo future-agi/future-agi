@@ -2,15 +2,112 @@ import PropTypes from "prop-types";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 
 import StatusBadge from "src/components/status-badge/StatusBadge";
+import Iconify from "src/components/iconify";
 
 import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import {
+  LIFECYCLE_COPY,
   hasUnsavedChange,
   isUnsavedAddition,
   unsavedReasonId,
 } from "./scenarios.constants";
+import { isNotMeasured, lifecycleChip, markTitle } from "./lifecycleView";
+
+const LIFECYCLE_ICONS = {
+  draft: "solar:shield-warning-linear",
+  kept_as_written: "solar:document-text-linear",
+  archived: "solar:archive-linear",
+  runs_unvalidated: "solar:info-circle-linear",
+};
+const LIFECYCLE_ICON_COLORS = {
+  danger: "status.danger.fg",
+  warning: "status.warning.fg",
+  neutral: "text.secondary",
+};
+
+// A proved scenario whose check reads evidence this agent doesn't give; the Status section says which.
+export function NotMeasuredChip({ lifecycle }) {
+  if (!isNotMeasured(lifecycle)) return null;
+  return (
+    <StatusBadge
+      status="not_measured"
+      role="warning"
+      label={LIFECYCLE_COPY.notMeasured}
+      size="sm"
+      dot={false}
+    />
+  );
+}
+NotMeasuredChip.propTypes = { lifecycle: PropTypes.object };
+
+function Mark({ icon, label, title, color, testId }) {
+  return (
+    <Tooltip arrow title={title}>
+      <Box
+        role="img"
+        aria-label={label}
+        data-testid={testId}
+        sx={{ display: "flex", flexShrink: 0, color }}
+      >
+        <Iconify icon={icon} width={14} />
+      </Box>
+    </Tooltip>
+  );
+}
+Mark.propTypes = {
+  icon: PropTypes.string,
+  label: PropTypes.string,
+  title: PropTypes.string,
+  color: PropTypes.string,
+  testId: PropTypes.string,
+};
+
+// A row's state as one small mark, its name and reason on hover, so the scenario's name keeps its room. Active rows
+// get none.
+export function LifecycleMark({ lifecycle, validating = false }) {
+  if (validating) {
+    return (
+      <Tooltip arrow describeChild title={LIFECYCLE_COPY.validate.rowHint}>
+        <Box component="span" sx={{ display: "flex", flexShrink: 0 }}>
+          <StatusBadge
+            status="running"
+            label={LIFECYCLE_COPY.validate.rowValidating}
+            size="sm"
+          />
+        </Box>
+      </Tooltip>
+    );
+  }
+  const chip = lifecycleChip(lifecycle);
+  if (!chip) {
+    if (!isNotMeasured(lifecycle)) return null;
+    return (
+      <Mark
+        icon="solar:eye-closed-linear"
+        label={LIFECYCLE_COPY.notMeasured}
+        title={`${LIFECYCLE_COPY.notMeasured}${lifecycle.warning_text ? `: ${lifecycle.warning_text}` : ""}`}
+        color={LIFECYCLE_ICON_COLORS.warning}
+        testId="not-measured-mark"
+      />
+    );
+  }
+  return (
+    <Mark
+      icon={LIFECYCLE_ICONS[chip.key]}
+      label={chip.label}
+      title={markTitle(chip)}
+      color={LIFECYCLE_ICON_COLORS[chip.tone]}
+      testId="lifecycle-mark"
+    />
+  );
+}
+LifecycleMark.propTypes = {
+  lifecycle: PropTypes.object,
+  // A running validation is proving this row.
+  validating: PropTypes.bool,
+};
 
 // "Unsaved" on a row the unsaved changes add or change; an added row also says
 // why it can't be selected.

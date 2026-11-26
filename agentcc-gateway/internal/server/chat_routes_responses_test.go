@@ -255,6 +255,26 @@ func TestChatCompletionsCarriesAllowedToolsOverResponses(t *testing.T) {
 	}
 }
 
+func TestStreamingChatCarriesAllowedToolsOverResponses(t *testing.T) {
+	srv, upstream := newResponsesBridgeServer(t)
+	body := chatToolBody("gpt-5.6-terra", true, `"tool_choice":{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","name":"get_weather"}]}},`)
+	w := postBridgeChat(t, srv, body, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	checkToolStream(t, w)
+	checkHits(t, upstream, 0, 1)
+	var sent struct {
+		ToolChoice json.RawMessage `json:"tool_choice"`
+	}
+	if err := json.Unmarshal(upstream.body("/v1/responses"), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"type":"allowed_tools","mode":"auto","tools":[{"type":"function","name":"get_weather"}]}`; string(sent.ToolChoice) != want {
+		t.Errorf("tool_choice = %s, want %s", sent.ToolChoice, want)
+	}
+}
+
 // genAIToolBody is a GenAI request for gpt-5.6 with a function tool and two
 // candidates.
 const genAIToolBody = `{"contents":[{"role":"user","parts":[{"text":"Weather in Paris?"}]}],

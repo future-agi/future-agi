@@ -175,7 +175,7 @@ func shouldApplyOrgProviderOverride(rc *models.RequestContext) bool {
 	if rc == nil {
 		return false
 	}
-	if rc.Metadata["key_type"] == "internal" {
+	if !allowsImplicitOrgOverride(rc.Metadata["key_type"]) {
 		return false
 	}
 	if rc.Metadata["org_provider"] == "true" {
@@ -186,6 +186,9 @@ func shouldApplyOrgProviderOverride(rc *models.RequestContext) bool {
 	}
 	return true
 }
+
+// Internal keys keep the base provider unless the model explicitly selects an org provider.
+func allowsImplicitOrgOverride(keyType string) bool { return keyType != "internal" }
 
 func mergeModelObjects(globalModels, orgModels []models.ModelObject) []models.ModelObject {
 	if len(orgModels) == 0 {
@@ -1552,7 +1555,7 @@ func (h *Handlers) resolveProviderForOrg(ctx context.Context, rc *models.Request
 // dispatchChat records translation decisions for this physical attempt and pins
 // price and attribution to the adapter that actually served the response.
 func (h *Handlers) dispatchChat(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, p providers.Provider) error {
-	noteChatResponsesRouteDrops(w, rc, p, rc.Request)
+	noteRouteDrops(w, rc, p, rc.Request)
 	resp, err := h.callChatProvider(ctx, p, rc.Request)
 	if err != nil {
 		return err
@@ -1734,7 +1737,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		}
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		start := time.Now()
-		noteChatResponsesRouteDrops(w, rc, callProvider, rc.Request)
+		noteRouteDrops(w, rc, callProvider, rc.Request)
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
 			attemptCancel()
@@ -2480,27 +2483,23 @@ func (h *Handlers) ModelDB() *modeldb.ModelDB {
 	return h.modelDB.Load()
 }
 
+// discoveryModels gives list and detail the same provider for each visible ID.
+func (h *Handlers) discoveryModels(r *http.Request) []models.ModelObject {
+	var global []models.ModelObject
+	if h.globalModelsVisible(r) {
+		global = h.registry.ListAllModels()
+	}
+	return mergeModelObjects(global, h.orgScopedModels(r, global))
+}
+
 // ListModels handles GET /v1/models.
 func (h *Handlers) ListModels(w http.ResponseWriter, r *http.Request) {
-	var allModels []models.ModelObject
-	if h.globalModelsVisible(r) {
-		allModels = h.registry.ListAllModels()
-	}
+	allModels := h.discoveryModels(r)
 	db := h.ModelDB()
-
-	if scopedModels, ok := h.orgScopedModels(r); ok {
-		allModels = mergeModelObjects(allModels, scopedModels)
-	}
-
-	orgID := h.headerOrgID(r)
-	tables := map[string]string{} // price-table name per provider, resolved once
+	quote := h.discoveryQuote(r)
 	enriched := make([]models.EnrichedModelObject, 0, len(allModels))
 	for _, m := range allModels {
-		table, ok := tables[m.OwnedBy]
-		if !ok {
-			table = h.priceTableName(orgID, m.OwnedBy)
-			tables[m.OwnedBy] = table
-		}
+		table := quote(m)
 		enriched = append(enriched, enrichModel(db, m, table))
 	}
 
@@ -2578,12 +2577,34 @@ func (h *Handlers) priceTableName(orgID, providerID string) string {
 	return providers.PriceTableName(p)
 }
 
-// headerOrgID is the org of the API key presented in r's headers, or "".
-func (h *Handlers) headerOrgID(r *http.Request) string {
-	if ki := h.lookupHeaderKey(r); ki != nil {
-		return ki.Metadata["org_id"]
+// discoveryQuote caches table names by instance, not just provider ID: the
+// same internal key may see base and explicitly selected org models together.
+func (h *Handlers) discoveryQuote(r *http.Request) func(models.ModelObject) string {
+	var orgID, keyType string
+	var cfg *tenant.OrgConfig
+	if key := h.lookupHeaderKey(r); key != nil && h.tenantStore != nil {
+		orgID, keyType = key.Metadata["org_id"], key.KeyType
+		cfg = h.tenantStore.Get(orgID)
 	}
-	return ""
+	orgOnly := h.orgProvidersOnlyForKeyType(r.Context(), keyType)
+	type instance struct{ org, provider string }
+	tables := make(map[instance]string)
+	return func(m models.ModelObject) string {
+		id := instance{provider: m.OwnedBy}
+		if cfg != nil {
+			pc := cfg.Providers[m.OwnedBy]
+			// Org-only discovery still lists configured models before credentials are added.
+			if pc != nil && pc.Enabled && (orgOnly || pc.HasCredentials() && (allowsImplicitOrgOverride(keyType) ||
+				len(orgModelMatches(cfg, []string{m.OwnedBy}, m.ID)) != 0)) {
+				id.org = orgID
+			}
+		}
+		if table, ok := tables[id]; ok {
+			return table
+		}
+		tables[id] = h.priceTableName(id.org, id.provider)
+		return tables[id]
+	}
 }
 
 // lookupHeaderKey returns the API key presented in r's headers, or nil.
@@ -2603,21 +2624,21 @@ func (h *Handlers) lookupHeaderKey(r *http.Request) *authpkg.APIKey {
 	return h.keyStore.Lookup(rawKey)
 }
 
-func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool) {
+func (h *Handlers) orgScopedModels(r *http.Request, global []models.ModelObject) []models.ModelObject {
 	if h.tenantStore == nil {
-		return nil, false
+		return nil
 	}
 	ki := h.lookupHeaderKey(r)
 	if ki == nil {
-		return nil, false
+		return nil
 	}
 	orgID := ki.Metadata["org_id"]
 	if orgID == "" {
-		return nil, false
+		return nil
 	}
 	orgCfg := h.tenantStore.Get(orgID)
 	if orgCfg == nil || orgCfg.Providers == nil {
-		return nil, false
+		return nil
 	}
 
 	// A model several providers list is owned by the one inference routes to
@@ -2625,6 +2646,10 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 	// what a request costs. A model only providers that cannot serve list keeps
 	// the first of those.
 	servable, unservable := orgProviderIDs(orgCfg)
+	globalIDs := make(map[string]bool, len(global))
+	for _, m := range global {
+		globalIDs[m.ID] = true
+	}
 	seen := make(map[string]bool)
 	result := make([]models.ModelObject, 0)
 	for _, providerName := range append(servable, unservable...) {
@@ -2636,6 +2661,9 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 			owner := providerName
 			if matches := orgModelMatches(orgCfg, servable, modelID); len(matches) > 0 {
 				owner = matches[0].providerID
+			} else if globalIDs[modelID] {
+				// An org entry without credentials cannot shadow the serving global provider.
+				continue
 			}
 			result = append(result, models.ModelObject{
 				ID:      modelID,
@@ -2644,10 +2672,7 @@ func (h *Handlers) orgScopedModels(r *http.Request) ([]models.ModelObject, bool)
 			})
 		}
 	}
-	if len(result) == 0 {
-		return nil, false
-	}
-	return result, true
+	return result
 }
 
 // GetModel handles GET /v1/models/{model}.
@@ -2658,30 +2683,12 @@ func (h *Handlers) GetModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	found := func(m models.ModelObject) {
-		em := enrichModel(h.ModelDB(), m, h.priceTableName(h.headerOrgID(r), m.OwnedBy))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(em)
-	}
-
-	if scopedModels, ok := h.orgScopedModels(r); ok {
-		for _, m := range scopedModels {
-			if m.ID == modelID {
-				found(m)
-				return
-			}
-		}
-	}
-
-	// The global catalog is visible only to keys that can call it.
-	var allModels []models.ModelObject
-	if h.globalModelsVisible(r) {
-		allModels = h.registry.ListAllModels()
-	}
-	for _, m := range allModels {
+	for _, m := range h.discoveryModels(r) {
 		if m.ID == modelID {
-			found(m)
+			em := enrichModel(h.ModelDB(), m, h.discoveryQuote(r)(m))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(em)
 			return
 		}
 	}
