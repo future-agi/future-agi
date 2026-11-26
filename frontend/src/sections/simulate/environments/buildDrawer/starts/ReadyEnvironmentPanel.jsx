@@ -496,14 +496,9 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
     setEdited((was) => {
       const before =
         (was.versionId === versionId && was.pairing) || pairingOf(fit.rows);
-      // The agent tool leaves its old pair; the world tool takes it.
-      const next = Object.fromEntries(
-        Object.entries(before).map(([world, agent]) => [
-          world,
-          agent === agentTool ? null : agent,
-        ]),
-      );
-      next[worldTool] = agentTool;
+      // One agent tool may stand in for several world tools (a coarse tool), so it
+      // keeps its other pairs.
+      const next = { ...before, [worldTool]: agentTool };
       return { versionId, pairing: next };
     });
   const stopped = useCallback(

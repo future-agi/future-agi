@@ -245,7 +245,7 @@ describe("Use with my agent", () => {
     });
   });
 
-  it("moves an agent tool to the world tool it is picked for", () => {
+  it("gives a picked agent tool to another world tool and keeps its first pair", () => {
     render();
 
     fireEvent.mouseDown(
@@ -260,8 +260,9 @@ describe("Use with my agent", () => {
     expect(useHarnessReleaseFit).toHaveBeenLastCalledWith({
       suiteId: "suite-1",
       agentVersionId: "version-1",
+      // A coarse tool may stand in for several world tools.
       pairing: {
-        verify_order_owner: null,
+        verify_order_owner: "check_owner",
         get_order: "order_details",
         create_draft: "check_owner",
       },

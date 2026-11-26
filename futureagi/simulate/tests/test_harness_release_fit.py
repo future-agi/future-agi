@@ -261,12 +261,8 @@ class TestReleaseFit:
         [
             ({"nope": "cancel"}, "'nope' is not one of this world's tools"),
             ({"get_order": "get_order"}, "'get_order' is not one of the agent's tools"),
-            (
-                {"get_order": "cancel", "get_order_invoice": "cancel"},
-                "cancel is paired with more than one world tool",
-            ),
         ],
-        ids=["unknown-world-tool", "not-an-agent-tool", "one-agent-tool-twice"],
+        ids=["unknown-world-tool", "not-an-agent-tool"],
     )
     def test_an_edit_that_names_no_real_pair_is_refused(
         self, retail, shopmate, fitted, edits, said
@@ -278,18 +274,16 @@ class TestReleaseFit:
         assert refused.value.status_code == 400
         assert said in str(refused.value)
 
-    def test_the_resolved_pairing_is_complete_and_gives_each_agent_tool_once(
+    def test_the_resolved_pairing_is_complete_and_one_agent_tool_may_take_several(
         self, retail, shopmate, fitted
     ):
         suggested = resolved_pairing(retail, shopmate)
         assert set(suggested) == {tool["name"] for tool in WORLD}
         assert suggested["cancel_order"] == "cancel"
 
-        # Given to another world tool, the agent's tool leaves the one it was suggested for.
-        moved = resolved_pairing(retail, shopmate, {"cancel_return": "cancel"})
-        assert moved["cancel_return"] == "cancel" and moved["cancel_order"] is None
-        paired = [tool for tool in moved.values() if tool]
-        assert len(paired) == len(set(paired))
+        # A coarse tool given to another world tool keeps the one it was suggested for.
+        both = resolved_pairing(retail, shopmate, {"cancel_return": "cancel"})
+        assert both["cancel_return"] == "cancel" and both["cancel_order"] == "cancel"
 
     def test_a_stored_pairing_is_shown_as_reviewed_and_never_suggested_again(
         self, retail, shopmate, fitted, monkeypatch
@@ -329,10 +323,10 @@ class TestReleaseFit:
         fit = release_fit(retail, shopmate)
 
         rows = {row["world"]: row for row in fit["rows"]}
-        # Each agent tool pairs once, the first pair the model gave for it; a tool the agent
+        # An agent tool pairs with every world tool the model gave it; a tool the agent
         # doesn't have pairs nothing.
         assert rows["get_order_invoice"]["agent"] == "order_details"
-        assert rows["get_order"]["agent"] is None
+        assert rows["get_order"]["agent"] == "order_details"
         assert rows["create_draft"]["agent"] is None
 
     def test_an_agent_whose_tools_cant_be_read_is_refused(
@@ -1800,3 +1794,167 @@ def test_an_agent_with_no_tools_of_its_own_is_not_adapted(
     assert not HostedHarnessJob.no_workspace_objects.filter(
         organization=organization, payload__metadata__adaptation__isnull=False
     ).exists()
+
+
+
+# --- a coarse agent tool: one tool standing in for two of Banking's -----------------------------
+
+BANKING = [
+    _tool("verify_identity", "customer_id", "date_of_birth"),
+    _tool("lock_card", "card_id", "reason"),
+    _tool("create_dispute", "transaction_id", "reason"),
+    _tool("list_transactions", "account_id"),
+]
+COARSE = [
+    _tool("confirm_caller", "customer", "dob"),
+    _tool("report_lost_card_and_dispute", "card", "transaction", "why"),
+]
+
+
+@pytest.mark.django_db
+class TestCoarseAgentTool:
+    @pytest.fixture
+    def banking(self, organization):
+        environment = HarnessEnvironmentRelease.no_workspace_objects.create(
+            organization=organization,
+            digest="sha256:" + "b" * 64,
+            name="banking",
+            object_key="releases/banking",
+            manifest={},
+            tools=BANKING,
+            policy={"rules": []},
+        )
+        return HarnessSuiteRelease.no_workspace_objects.create(
+            organization=organization,
+            digest="sha256:" + "c" * 64,
+            name="banking_base",
+            environment=environment,
+            object_key="releases/banking_base",
+            manifest={"scenarios": []},
+            personas=[{"name": "Dana Whitfield"}],
+        )
+
+    @pytest.fixture
+    def cardguard(self, organization, monkeypatch):
+        from django.core.cache import cache
+
+        cache.clear()
+        definition = AgentDefinition.no_workspace_objects.create(
+            agent_name="CardGuard Lite",
+            agent_type="text",
+            provider="retell",
+            assistant_id="agent_cardguard_lite",
+            inbound=True,
+            organization=organization,
+            description="",
+        )
+        version = AgentVersion.no_workspace_objects.create(
+            agent_definition=definition,
+            version_number=1,
+            version_name="v1",
+            organization=organization,
+            description="",
+            commit_message="",
+        )
+        ProviderCredentials.objects.create(
+            agent_version=version, provider_type="retell", api_key="test-key"
+        )
+        profile = {
+            "response_engine_type": "retell-llm",
+            "general_prompt": "You are CardGuard.",
+            "general_tools": [
+                {"type": "custom", "url": "https://bank.example/tools", **tool}
+                for tool in COARSE
+            ],
+        }
+        monkeypatch.setattr(harness_fit, "profile_for_version", lambda v: profile)
+        monkeypatch.setattr(
+            harness_fit,
+            "_solution_tools",
+            lambda object_key, suite_json: (
+                (
+                    "lost-card-and-dispute",
+                    "Lost card and a charge to dispute",
+                    (frozenset({"verify_identity", "lock_card", "create_dispute"}),),
+                ),
+                (
+                    "statement-question",
+                    "What did I spend",
+                    (frozenset({"verify_identity", "list_transactions"}),),
+                ),
+            ),
+        )
+        return version
+
+    def test_the_model_pairs_one_coarse_tool_with_both_world_tools(
+        self, banking, cardguard, monkeypatch
+    ):
+        _model_says(
+            monkeypatch,
+            {
+                "pairs": [
+                    {"agent": "confirm_caller", "world": "verify_identity"},
+                    {"agent": "report_lost_card_and_dispute", "world": "lock_card"},
+                    {"agent": "report_lost_card_and_dispute", "world": "create_dispute"},
+                ]
+            },
+        )
+
+        fit = release_fit(banking, cardguard)
+
+        rows = {row["world"]: row["agent"] for row in fit["rows"]}
+        assert rows["lock_card"] == rows["create_dispute"] == (
+            "report_lost_card_and_dispute"
+        )
+        assert [case["key"] for case in fit["unmeasured"]] == ["statement-question"]
+
+    def test_a_coarse_pairing_is_fitted_and_adapted_as_reviewed(
+        self, auth_client, banking, cardguard, monkeypatch
+    ):
+        from simulate.services import harness_provider
+        from simulate.temporal import client
+
+        _model_says(monkeypatch, HostedHarnessError("agentcc_not_configured", "no"))
+        started = []
+        monkeypatch.setattr(
+            client,
+            "start_hosted_harness_gateway_workflow",
+            lambda job_id, *args: started.append(job_id),
+        )
+        monkeypatch.setattr(
+            harness_provider, "_validate_known_hosted_egress", lambda *args: None
+        )
+        pairing = {
+            "verify_identity": "confirm_caller",
+            "lock_card": "report_lost_card_and_dispute",
+            "create_dispute": "report_lost_card_and_dispute",
+        }
+        asked = {"suite_id": str(banking.id), "agent_version_id": str(cardguard.id)}
+
+        fit = auth_client.post(
+            "/simulate/api/harness-releases/fit/",
+            {**asked, "pairing": pairing},
+            format="json",
+        )
+        created = auth_client.post(
+            f"{ADAPTATIONS}/",
+            {
+                **asked,
+                "name": "Banking",
+                "idempotency_key": f"adapt-{uuid.uuid4()}",
+                "pairing": pairing,
+            },
+            format="json",
+        )
+
+        assert fit.status_code == 200, fit.content
+        rows = {row["world"]: row["agent"] for row in fit.json()["rows"]}
+        assert {world: rows[world] for world in pairing} == pairing
+        assert "lost-card-and-dispute" not in {
+            case["key"] for case in fit.json()["unmeasured"]
+        }
+        assert created.status_code == 202, created.content
+        job = HostedHarnessJob.no_workspace_objects.get(id=started[0])
+        stored = job.payload["metadata"]["adaptation"]["pairing"]
+        assert {world: stored[world] for world in pairing} == pairing
+        assert stored["list_transactions"] is None

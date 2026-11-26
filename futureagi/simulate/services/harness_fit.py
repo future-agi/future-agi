@@ -278,10 +278,12 @@ def _one_at_a_time(key: str, task: str, material: dict[str, Any]) -> dict[str, A
 
 _PAIRING_TASK = (
     "You pair a customer's agent tools with a test world's tools. For each agent tool, name "
-    "the world tool that does the same job (the same action on the same thing), judged by "
-    "descriptions and arguments, not only names. Use each world tool at most once and leave an "
-    'agent tool out when no world tool does its job. Answer JSON: {"pairs": [{"agent": '
-    'agent tool name, "world": world tool name, "reason": one short sentence}]}.'
+    "every world tool whose job it does (the same action on the same thing), judged by "
+    "descriptions and arguments, not only names: usually one, but a coarse tool that does "
+    "several jobs (for example reporting a lost card and disputing a charge) pairs with each. "
+    "Use each world tool at most once and leave an agent tool out when no world tool does its "
+    'job. Answer JSON: {"pairs": [{"agent": agent tool name, "world": world tool name, '
+    '"reason": one short sentence}]}, one entry per world tool.'
 )
 _CONFLICTS_TASK = (
     "You compare a customer's agent instructions with the rules a test world grades it on. List "
@@ -306,7 +308,8 @@ def model_pairing(
 ) -> dict[str, str | None]:
     """World tool → agent tool, as the model pairs them, or by names when it can't answer. The
     same names always pair."""
-    key = f"harness-fit:pairing:{agent['digest']}:{world_digest}"
+    # v2: one agent tool may pair with several world tools.
+    key = f"harness-fit:pairing:v2:{agent['digest']}:{world_digest}"
     found = cache.get(key)
     if found is None:
         try:
@@ -337,11 +340,7 @@ def model_pairing(
     }
     for one in found:
         world, agent_tool = str(one.get("world") or ""), str(one.get("agent") or "")
-        if (
-            pairing.get(world, "") is None
-            and agent_tool in names
-            and agent_tool not in pairing.values()
-        ):
+        if pairing.get(world, "") is None and agent_tool in names:
             pairing[world] = agent_tool
     return pairing
 
@@ -429,10 +428,9 @@ def resolved_pairing(
     suggestion with the person's `edits` applied. This one map is what the fit shows, what the
     adaptation stores and what the binding is held to.
 
-    Every edit is checked: its world tool is the world's, its agent tool is the agent's, and no
-    agent tool is given to two world tools (a binding admits each agent tool once). An agent
-    tool the person gives to one world tool is taken from the world tool the suggestion had put
-    it on."""
+    Every edit is checked: its world tool is the world's and its agent tool is the agent's. One
+    agent tool may stand in for several world tools: a coarse tool (one that locks a card and
+    opens a dispute) is bound with a step to each, as ALK's routed binding allows."""
     agent = agent or agent_of(agent_version)
     names = {tool["name"] for tool in agent["tools"]}
     paired = model_pairing(agent, _world_tools(suite), _world_digest(suite))
@@ -447,17 +445,8 @@ def resolved_pairing(
         for world, agent_tool in edits.items()
         if agent_tool is not None and agent_tool not in names
     ]
-    given = [agent_tool for agent_tool in edits.values() if agent_tool]
-    problems += [
-        f"{agent_tool} is paired with more than one world tool"
-        for agent_tool in sorted(set(given))
-        if given.count(agent_tool) > 1
-    ]
     if problems:
         raise _error("pairing_invalid", "; ".join(problems), 400)
-    for world, agent_tool in paired.items():
-        if world not in edits and agent_tool in given:
-            paired[world] = None
     paired.update({world: edits[world] for world in edits})
     return paired
 
