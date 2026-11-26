@@ -103,15 +103,20 @@ def production_bound(job: HostedHarnessJob) -> frozenset[str]:
     that need a tool the default run's contract says reaches production. That contract
     is the one its sealed bundle carries, so it can depend on the agent the bundle
     binds. Read only while actors are on: off, no tool reaches production, and the
-    read stays off the contract and the suite documents."""
+    read stays off the contract and the suite documents. A default pair the run
+    refuses can't be locked: no task of it could run."""
     if not actors_enabled():
         return frozenset()
     # The pins the default run would use, as default_bundle_key reads them. The
     # agent's side row gives its bundle key; its credential blob is never read.
     try:
         pins = resolve_run_pins(job, credential_blob=False)
-    except HostedHarnessError:
-        pins = None
+    except HostedHarnessError as refused:
+        raise HostedHarnessError(
+            "lock_not_ready",
+            f"{refused.message.rstrip('.')}, so they can't be locked.",
+            status_code=409,
+        ) from refused
     return frozenset(
         registration_key(scenario["key"])
         for entry in blocked_tools(job, pins)
