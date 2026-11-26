@@ -15,7 +15,11 @@ import {
   amendScenarios,
   scenariosCoveragePath,
   scenariosAmendPath,
+  validateScenarios,
+  archiveScenario,
+  ARCHIVE_REASON_MAX,
 } from "../scenarios";
+import axios from "src/utils/axios";
 import {
   isContractedApiPath,
   getContractedApiMethods,
@@ -423,5 +427,32 @@ describe("scenarios.js — live routes are in the generated contract", () => {
     expect(
       OPENAPI_CONTRACT.definitions.HarnessPreflight.properties.scenario_count.maximum,
     ).toBe(MAX_SCENARIOS);
+  });
+});
+
+describe("scenario lifecycle requests", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sends only what Validate asks for: nothing, the keys, or reprove_all", async () => {
+    const post = vi.spyOn(axios, "post").mockResolvedValue({ data: {} });
+    await validateScenarios("env-1");
+    await validateScenarios("env-1", { keys: ["a", "b"] });
+    await validateScenarios("env-1", { reproveAll: true });
+    expect(post.mock.calls.map((call) => call[1])).toEqual([
+      {},
+      { keys: ["a", "b"] },
+      { reprove_all: true },
+    ]);
+    expect(post.mock.calls[0][0]).toBe(
+      "/simulate/api/harness-environments/env-1/scenarios/validate/",
+    );
+  });
+
+  it("drops an empty archive note and cuts a long one to the server's limit", async () => {
+    const post = vi.spyOn(axios, "post").mockResolvedValue({ data: {} });
+    await archiveScenario("env-1", "case-1", "   ");
+    await archiveScenario("env-1", "case-1", "x".repeat(300));
+    expect(post.mock.calls[0][1]).toEqual({});
+    expect(post.mock.calls[1][1].reason).toHaveLength(ARCHIVE_REASON_MAX);
   });
 });

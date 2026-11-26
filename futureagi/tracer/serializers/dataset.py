@@ -30,6 +30,10 @@ class AddToNewDatasetObserveSerializer(serializers.Serializer):
     mapping_config = serializers.ListField(child=serializers.DictField(), required=True)
     new_dataset_name = serializers.CharField(required=True)
     select_all = serializers.BooleanField(required=False)
+    # With select_all: the grid's list filters (time window included). The
+    # server resolves exactly the rows the grid counted, minus the ids sent
+    # as exclusions. Omitted means the legacy whole-project select-all.
+    filters = serializers.ListField(child=serializers.DictField(), required=False)
     # A trace/span already belongs to exactly one project, so the view
     # derives `project` from trace_ids / span_ids when the client doesn't
     # send one. Still required for `select_all` (it's the scope bound).
@@ -45,6 +49,8 @@ class AddToExistingDatasetObserveSerializer(serializers.Serializer):
     span_ids = serializers.ListField(child=serializers.CharField(), required=False)
     trace_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
     select_all = serializers.BooleanField(required=False)
+    # See AddToNewDatasetObserveSerializer.filters.
+    filters = serializers.ListField(child=serializers.DictField(), required=False)
     project = serializers.UUIDField(required=False)
     mapping_config = serializers.ListField(
         child=serializers.DictField(), required=False

@@ -1,6 +1,8 @@
 import uuid
+from collections.abc import Callable
 
 import structlog
+from django.conf import settings
 from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
@@ -10,12 +12,13 @@ from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.choices import DatasetSourceChoices, ModelTypes, SourceChoices
 from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.utils.dataset_limit import DatasetLimitOutcome
 from model_hub.views.utils.dataset_limit import (
     DatasetLimitCheckFailed,
     DatasetLimitReached,
     dataset_limit_check_failed_response,
+    dataset_limit_reached_response,
 )
-from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
@@ -26,15 +29,34 @@ from tracer.serializers.dataset import (
     AddToNewDatasetObserveSerializer,
     ObserveDatasetSerializer,
 )
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.tasks import CHUNK_SIZE, process_spans_chunk_task
 
 logger = structlog.get_logger(__name__)
 
 try:
-    from ee.usage.utils.usage_entries import check_if_dataset_creation_is_allowed
+    from ee.usage.utils.usage_entries import (
+        check_if_dataset_creation_is_allowed,
+        send_dataset_limit_alert,
+    )
 except ImportError:
     check_if_dataset_creation_is_allowed = None
+    send_dataset_limit_alert = None  # type: ignore[assignment]
+
+# A select-all that carries the grid's filters resolves through the same bounded
+# resolvers as the annotation-queue filter mode, one page of ids at a time. The
+# page ceiling keeps the synchronous request finite (10 x 10,000 ids by default);
+# a larger selection is refused before any dataset is created.
+_FILTERED_SELECT_ALL_PAGE_SIZE = getattr(settings, "BULK_SELECTION_MAX_CAP", 10_000)
+_FILTERED_SELECT_ALL_MAX_PAGES = 10
+# One wall for every resolver page of a request, the same budget the
+# annotation-queue filter mode gives its resolve.
+_FILTERED_SELECT_ALL_WALL_MS = getattr(
+    settings, "INTERACTIVE_READ_DEFAULT_WALL_MS", 30_000
+)
+# Trace ids per ClickHouse root-span lookup.
+_ROOT_SPAN_LOOKUP_CHUNK_SIZE = 1_000
 
 
 class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
@@ -69,6 +91,7 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             mapping_config = serializer.validated_data.get("mapping_config")
             new_dataset_name = serializer.validated_data.get("new_dataset_name")
             select_all = serializer.validated_data.get("select_all", False)
+            filters = serializer.validated_data.get("filters")
             project = serializer.validated_data.get("project")
 
             org = _request_organization(request)
@@ -91,7 +114,7 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             span_id_list: list[str] = []
             if select_all:
                 span_id_list = _span_ids_for_select_all(
-                    request, project, trace_ids, span_ids
+                    request, project, trace_ids, span_ids, filters=filters
                 )
 
             elif trace_ids and len(trace_ids) > 0:
@@ -135,13 +158,14 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except DatasetLimitCheckFailed:
             return dataset_limit_check_failed_response()
 
-        except DatasetLimitReached:
-            # 400, not the sibling routes' 429: the frontend shows a 429 only
-            # through the usage entry's upgrade alert, which this route does
-            # not send, so a 429 here would refuse without telling the user.
-            return self._gm.bad_request(
-                get_error_message("DATASET_CREATE_LIMIT_REACHED")
-            )
+        except DatasetLimitReached as reached:
+            # The sibling routes' refusal: 429 plus the upgrade alert, which is
+            # how the frontend tells the user about a 429. Unlike them this
+            # route records no DATASET_ADD usage row: it never has, and the
+            # limit counts Dataset rows, not usage rows.
+            if send_dataset_limit_alert is not None:
+                send_dataset_limit_alert(org, reached.limit)
+            return dataset_limit_reached_response()
 
         except (ValidationError, ValueError) as e:
             logger.exception(f"Error in creating dataset observe:  {str(e)}")
@@ -167,6 +191,7 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             )
             dataset_id = serializer.validated_data.get("dataset_id")
             select_all = serializer.validated_data.get("select_all", False)
+            filters = serializer.validated_data.get("filters")
             project = serializer.validated_data.get("project")
             org = _request_organization(request)
             workspace = _request_workspace(request)
@@ -201,7 +226,7 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             span_id_list: list[str] = []
             if select_all:
                 span_id_list = _span_ids_for_select_all(
-                    request, project, trace_ids, span_ids
+                    request, project, trace_ids, span_ids, filters=filters
                 )
 
             elif trace_ids and len(trace_ids) > 0:
@@ -417,10 +442,18 @@ def _span_ids_for_span_ids(request, span_ids, project_id=None):
     return []
 
 
-def _span_ids_for_select_all(request, project_id, trace_ids, span_ids):
+def _span_ids_for_select_all(request, project_id, trace_ids, span_ids, filters=None):
     if not project_id:
         return []
 
+    if filters is not None:
+        return _span_ids_for_filtered_select_all(
+            request, project_id, filters, trace_ids, span_ids
+        )
+
+    # Legacy payload without ``filters``: every live row in the project minus
+    # the exclusions. The grid always sends its filters now, because this path
+    # ignores the time window and filters the user's count was taken under.
     org = _request_organization(request)
     with get_reader() as reader:
         if trace_ids is not None:
@@ -441,6 +474,127 @@ def _span_ids_for_select_all(request, project_id, trace_ids, span_ids):
     return ch_span_ids
 
 
+def _span_ids_for_filtered_select_all(
+    request, project_id, filters, trace_ids, span_ids
+):
+    """Resolve a grid select-all to exactly the rows the grid counted.
+
+    ``filters`` is the grid's own list filter payload (time window included);
+    ``trace_ids`` / ``span_ids`` carry the rows deselected under select-all.
+    Trace selections resolve to one root span per trace, so a trace becomes
+    one dataset row. Every page shares one request wall; an empty result is
+    refused here, before the caller creates a dataset.
+    """
+    from model_hub.services.bulk_selection import (
+        BulkSelectionAmbiguousIdentity,
+        BulkSelectionReadIncomplete,
+        ResolveResult,
+        resolve_filtered_span_ids,
+        resolve_filtered_trace_ids,
+    )
+
+    resolver: Callable[..., ResolveResult]
+    if trace_ids is not None:
+        resolver = resolve_filtered_trace_ids
+        exclude_ids = {str(trace_id) for trace_id in trace_ids}
+    elif span_ids is not None:
+        resolver = resolve_filtered_span_ids
+        exclude_ids = {str(span_id) for span_id in span_ids}
+    else:
+        raise ValueError("No trace or span ids provided")
+
+    selected_ids: list[str] = []
+    seen: set[str] = set()
+    cursor = None
+    # A page that ends on a read-budget checkpoint returns fewer ids than the
+    # page size. Running out of pages is only "too large" when none did.
+    every_page_full = True
+    deadline = ReadDeadline.start(_FILTERED_SELECT_ALL_WALL_MS)
+    try:
+        for _page in range(_FILTERED_SELECT_ALL_MAX_PAGES):
+            result = resolver(
+                project_id=project_id,
+                filters=filters,
+                exclude_ids=exclude_ids,
+                organization=_request_organization(request),
+                workspace=_request_workspace(request),
+                cap=_FILTERED_SELECT_ALL_PAGE_SIZE,
+                user=request.user,
+                cursor=cursor,
+                resumable=True,
+                deadline=deadline,
+            )
+            for raw_id in result.ids:
+                selected_id = str(raw_id)
+                if selected_id not in seen:
+                    seen.add(selected_id)
+                    selected_ids.append(selected_id)
+            if result.continuation is None:
+                break
+            if result.continuation == cursor:
+                raise ValueError("The selection could not be read completely.")
+            if len(result.ids) < _FILTERED_SELECT_ALL_PAGE_SIZE:
+                every_page_full = False
+            cursor = result.continuation
+        else:
+            if every_page_full:
+                raise ValueError(
+                    "The selection is too large to add at once. Narrow the "
+                    "filters or the time range and try again."
+                )
+            raise ValueError(
+                "The selection could not be read completely. Narrow the filters "
+                "or the time range and try again."
+            )
+    except Project.DoesNotExist as exc:
+        raise ValueError(get_error_message("PROJECT_NOT_FOUND")) from exc
+    except ReadDeadlineExceeded as exc:
+        logger.warning(
+            "dataset_select_all_resolve_timed_out",
+            project_id=str(project_id),
+            wall_ms=_FILTERED_SELECT_ALL_WALL_MS,
+        )
+        raise ValueError(
+            "The selection took too long to read. Narrow the filters or the "
+            "time range and try again."
+        ) from exc
+    except (BulkSelectionReadIncomplete, BulkSelectionAmbiguousIdentity) as exc:
+        logger.warning(
+            "dataset_select_all_resolve_incomplete",
+            project_id=str(project_id),
+            error_code=str(exc),
+        )
+        raise ValueError(
+            "The selection could not be read completely. Narrow the filters or "
+            "the time range and try again."
+        ) from exc
+
+    if trace_ids is not None:
+        span_id_list = _first_root_span_id_per_trace(selected_ids, project_id)
+    else:
+        span_id_list = selected_ids
+    if not span_id_list:
+        raise ValueError("No rows match the selection.")
+    return span_id_list
+
+
+def _first_root_span_id_per_trace(trace_ids, project_id):
+    """Return one root span id per trace, in ``trace_ids`` order.
+
+    A trace with several parentless spans still yields a single row; the
+    earliest root wins (``roots_by_trace_ids`` orders by start_time, id).
+    """
+    root_by_trace: dict[str, str] = {}
+    with get_reader() as reader:
+        for start in range(0, len(trace_ids), _ROOT_SPAN_LOOKUP_CHUNK_SIZE):
+            chunk = trace_ids[start : start + _ROOT_SPAN_LOOKUP_CHUNK_SIZE]
+            for span in reader.roots_by_trace_ids(chunk, project_id=str(project_id)):
+                root_by_trace.setdefault(str(span.trace_id), str(span.id))
+    return [
+        root_by_trace[trace_id] for trace_id in trace_ids if trace_id in root_by_trace
+    ]
+
+
 def create_new_dataset(new_dataset_name, organization, workspace, user_id):
     if Dataset.no_workspace_objects.filter(
         _workspace_scope_q("workspace", workspace, organization),
@@ -451,11 +605,12 @@ def create_new_dataset(new_dataset_name, organization, workspace, user_id):
         raise ValueError(get_error_message("DATASET_EXIST_IN_ORG"))
 
     if check_if_dataset_creation_is_allowed is not None:
-        allowed, detail = check_if_dataset_creation_is_allowed(organization)
-        if detail.get("error_code") == ApiErrorCode.DATASET_LIMIT_CHECK_FAILED:
+        # Observe creations are never SDK uploads, so the limit binds them.
+        check = check_if_dataset_creation_is_allowed(organization)
+        if check.outcome == DatasetLimitOutcome.UNVERIFIED:
             raise DatasetLimitCheckFailed
-        if not allowed:
-            raise DatasetLimitReached
+        if check.outcome == DatasetLimitOutcome.LIMIT_REACHED:
+            raise DatasetLimitReached(check.limit)
 
     return Dataset.no_workspace_objects.create(
         id=uuid.uuid4(),

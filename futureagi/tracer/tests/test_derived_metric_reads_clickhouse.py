@@ -759,7 +759,9 @@ def _m10_failure_report(days, deltas):
                             "one interval up to require_window; neither individual inline "
                             "operations nor DB lock/server time are measured. Pin "
                             "revalidation includes serialized enter/body/exit; owned "
-                            "delete is the QuerySet.delete call, not the entire exit."
+                            "delete is the QuerySet.delete call, not the entire exit. "
+                            "Each COMMIT (connection._commit) is its own pg_commit "
+                            "phase, carved out of whichever phase issued it."
                         ),
                         "probe_basis": (
                             "Subtract adjacent cumulative clock readings for intervals. "
@@ -970,6 +972,8 @@ def _m10_sample(store, mode, index, diagnostics):
             store, "assert_visible", timed("visibility", store.assert_visible)
         ),
         patch.object(reads, "read_finality", timed("finality", reads.read_finality)),
+        # COMMIT is not a cursor statement, so the execute wrapper never sees it.
+        patch.object(connection, "_commit", timed("pg_commit", connection._commit)),
         patch.object(reads, "_rows", rows),
         patch.object(reads, "point", timed("python_point_shaping", reads.point)),
         patch.object(store.client, "execute", query),
@@ -1168,10 +1172,57 @@ def test_m10_complete_service_budget_with_source_retained_parts(
     metric = DerivedMetric.objects.select_related("project", "active_version").get(
         pk=metric.id
     )
-    with _m10_failure_report(days, deltas) as diagnostics:
+    with (
+        _m10_failure_report(days, deltas) as diagnostics,
+        _m10_without_commit_flush_wait(),
+    ):
         _assert_m10_service_budget(
             writer, metric, current_head, days, deltas, size, diagnostics
         )
+
+
+@contextmanager
+def _m10_without_commit_flush_wait():
+    """Time the service path, not the CI runner's write-ahead-log flush.
+
+    Every statement, lock, savepoint and COMMIT round trip stays inside the
+    timed reads. Only a commit's wait for the WAL flush is skipped: on a shared
+    runner that wait measures disk contention (for example ClickHouse merging
+    the freshly frozen fixture), not the read path. Session-scoped on Django's
+    connection, verified on the same backend after the batch, and reset for
+    the tests that reuse the connection.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_backend_pid()")
+        backend = cursor.fetchone()[0]
+        cursor.execute("SET synchronous_commit TO off")
+        cursor.execute("SHOW synchronous_commit")
+        assert cursor.fetchone()[0] == "off"
+    try:
+        yield
+        # A reconnect would silently drop the setting for the rest of the batch.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_backend_pid(), current_setting('synchronous_commit')"
+            )
+            assert cursor.fetchone() == (backend, "off")
+    finally:
+        if connection.connection is not None:
+            with connection.cursor() as cursor:
+                cursor.execute("RESET synchronous_commit")
+
+
+@pytest.mark.django_db
+def test_m10_commit_flush_scope_is_verified_and_restored():
+    def setting():
+        with connection.cursor() as cursor:
+            cursor.execute("SHOW synchronous_commit")
+            return cursor.fetchone()[0]
+
+    before = setting()
+    with _m10_without_commit_flush_wait():
+        assert setting() == "off"
+    assert setting() == before
 
 
 def test_m10_drains_setup_gc_before_first_cold_read(monkeypatch):

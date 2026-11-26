@@ -27,6 +27,7 @@ const {
   fixErrorOf,
   collectAllCalls,
   checkRunsForScenarios,
+  shipCandidate,
   epochTargets,
   epochTargetsNote,
 } = await import("../fixRuns");
@@ -162,6 +163,26 @@ describe("fix-run list", () => {
         false,
       ),
     );
+  });
+});
+
+describe("shipCandidate", () => {
+  it.each([
+    ["activated", "activated"],
+    ["already_default", "already_default"],
+    ["validating", "validating"],
+  ])("reads a make-default %s as %s", async (outcome, kind) => {
+    const post = vi
+      .spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { outcome } });
+
+    const shipped = await shipCandidate(
+      { id: "f1", agent: { kind: "archive" } },
+      "c1",
+    );
+
+    expect(shipped).toEqual({ kind });
+    post.mockRestore();
   });
 });
 
