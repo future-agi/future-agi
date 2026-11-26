@@ -260,8 +260,9 @@ export const LOCK_COPY = {
     "The scenarios, their train and test splits and the scorer environment freeze. Each scenario keeps its split in every later lock. Edits make a new, unlocked version.",
   lockAction: "Lock versions",
   unlockTitle: (pair) => `Unlock ${pair}?`,
+  // Earlier locks lists only the newest unlocked ones, so the body promises no place there.
   unlockBody: (label) =>
-    `Lock ${label} moves to Earlier locks. Its scores stay, but they're no longer a locked comparison. Each scenario keeps its train and test split.`,
+    `Lock ${label} is kept; its scores stay, but they're no longer a locked comparison. Each scenario keeps its train and test split.`,
   unlockAction: "Unlock versions",
   earlier: "Earlier locks",
   // An unlocked row says so; a locked one adds nothing.
