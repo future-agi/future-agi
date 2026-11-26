@@ -87,6 +87,7 @@ class TestCreateClusterDeduplication:
             patch("tracer.queries.scan_clustering.ClickHouseVectorDB"),
             patch("tracer.queries.scan_clustering.ErrorClusterTraces"),
             patch("tracer.queries.scan_clustering.TraceScanIssue"),
+            patch("tracer.services.feed_escalation_publication.bind_scan_occurrence"),
         ):
             returned = create_cluster(str(project.id), issue, [0.1, 0.2, 0.3])
 
@@ -116,6 +117,7 @@ class TestCreateClusterDeduplication:
             patch("tracer.queries.scan_clustering.ClickHouseVectorDB"),
             patch("tracer.queries.scan_clustering.ErrorClusterTraces"),
             patch("tracer.queries.scan_clustering.TraceScanIssue"),
+            patch("tracer.services.feed_escalation_publication.bind_scan_occurrence"),
         ):
             returned = create_cluster(str(project.id), issue, [0.1, 0.2, 0.3])
 
@@ -140,6 +142,7 @@ class TestCreateClusterDeduplication:
             patch("tracer.queries.scan_clustering.ClickHouseVectorDB"),
             patch("tracer.queries.scan_clustering.ErrorClusterTraces"),
             patch("tracer.queries.scan_clustering.TraceScanIssue"),
+            patch("tracer.services.feed_escalation_publication.bind_scan_occurrence"),
         ):
             returned = create_cluster(str(project.id), issue, [0.1, 0.2, 0.3])
 
