@@ -11,7 +11,7 @@ export const ACTORS_COPY = {
       "Every limit on actors is a setting. Empty is the default for the channel; none is no limit.",
     labels: {
       max_active: "How many at once on a call",
-      caller_takes_back_after_turns: "Caller takes back after agent turns",
+      caller_takes_back_after_turns: "User takes back after agent turns",
       actor_seconds_per_call: "Seconds of actors per call",
       max_messages: "Most messages in a conversation before the run",
       live_turns_per_actor: "Most turns each actor takes during a run",
@@ -20,7 +20,7 @@ export const ACTORS_COPY = {
     none: "none",
     model: "Model actors are played on",
     modelHelp: "Each actor can also have its own",
-    callerModel: "The caller's model",
+    callerModel: "The user's model",
     save: "Save limits to draft",
     saveFailed: "The limits could not be saved",
     scenarioOverride: "A scenario can set its own values for any of these.",
@@ -41,7 +41,7 @@ export const ACTORS_COPY = {
   showSettings: "Limits",
   hideSettings: "Hide limits",
   noCaller:
-    "There is no caller record yet. The caller is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
+    "There is no user record yet. The user is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
   callActors: {
     title: (n) => `Actors (${n})`,
     subtitle:
@@ -95,8 +95,7 @@ export const ACTORS_COPY = {
     neverSees: "Never sees",
     comesInDifferently: (n) =>
       `Comes in differently in ${n} scenario${n === 1 ? "" : "s"}`,
-    loudnessShare: (ratio) =>
-      `${Math.round(ratio * 100)}% as loud as the caller`,
+    loudnessShare: (ratio) => `${Math.round(ratio * 100)}% as loud as the user`,
     loudnessAutomatic: "Loudness automatic",
     ifNoAnswer: "If they do not answer",
     graderMaterial: "Grader material",
@@ -116,7 +115,7 @@ export const ACTORS_COPY = {
       "scenario.instruction": "What they do in this scenario",
       "scenario.knowledge": "What they know in this scenario",
       "caller.situation":
-        "The caller's situation, without the caller's own details",
+        "The user's situation, without the user's own details",
     },
     form: {
       createTitle: "Add actor",
@@ -229,10 +228,10 @@ export const ACTORS_COPY = {
         "Deciding their own actions, they read what they see below and choose within what they may do; the world still refuses anything they may not.",
       noChannelHelp:
         "They act only through the world's actions. Pick how they join to have them speak too.",
-      loudness: "How loud, next to the caller (optional)",
+      loudness: "How loud, next to the user (optional)",
       loudnessAutomatic: (low, high) =>
-        `Automatic: each call picks between ${low} and ${high} of the caller's voice`,
-      loudnessFixed: (share) => `${share} of the caller's voice`,
+        `Automatic: each call picks between ${low} and ${high} of the user's voice`,
+      loudnessFixed: (share) => `${share} of the user's voice`,
       voice: "How they sound (optional)",
       voiceHelp:
         "Picks their voice on a call; left empty, a voice is chosen for them",

@@ -734,16 +734,16 @@ describe("WorldActorsPanel", () => {
 
   it("says there is no caller only when the cast says so and has actors", () => {
     render(<WorldActorsPanel envId="env-1" />);
-    expect(screen.getByText(/no caller record yet/)).toBeInTheDocument();
+    expect(screen.getByText(/no user record yet/)).toBeInTheDocument();
     actorsData = cast([]);
     const empty = render(<WorldActorsPanel envId="env-2" />);
     expect(
-      within(empty.container).queryByText(/no caller record yet/),
+      within(empty.container).queryByText(/no user record yet/),
     ).toBeNull();
     actorsData = cast([MANAGER], { has_caller: true });
     const withCaller = render(<WorldActorsPanel envId="env-3" />);
     expect(
-      within(withCaller.container).queryByText(/no caller record yet/),
+      within(withCaller.container).queryByText(/no user record yet/),
     ).toBeNull();
   });
 
@@ -1094,7 +1094,7 @@ describe("WorldActorsPanel", () => {
     expect(automatic).toBeChecked();
     fireEvent.click(automatic);
     expect(screen.getByRole("slider")).toHaveValue("0.5");
-    expect(screen.getByText("50% of the caller's voice")).toBeInTheDocument();
+    expect(screen.getByText("50% of the user's voice")).toBeInTheDocument();
     choose("Gender", "Female");
     choose("Age", "60+");
     fireEvent.click(saveButton());
