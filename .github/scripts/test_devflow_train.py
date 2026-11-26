@@ -1161,6 +1161,24 @@ class LiveWrites(unittest.TestCase):
             ("PATCH", f"repos/{self.REPO}/pulls/70", {"state": "closed"}), app.calls
         )
 
+    def test_non_infra_red_splits_at_once_with_no_rerun(self):
+        node = rollup_node(
+            70, [(1, sha(1)), (2, sha(2))], checks=green()[:2] + [run("Python Lint Pass", "FAILURE")]
+        )
+        result = train.plan(data([pr_node(1), pr_node(2)], [node]), REQUIRED, cfg(), {70: "red"})
+        self.assertEqual(result["rollup_actions"][0]["action"], "split")
+        app, actions = FakeGitHub({}), FakeGitHub({})
+
+        class Recorder(train.Live):
+            def open_rollup(self, members, parent=None):
+                pass
+
+        train.execute(result, Recorder(self.REPO, app, actions), {70: [{"id": 5}]})
+        self.assertFalse(
+            [c for c in app.calls + actions.calls if "rerun" in str(c[1])],
+            "only an all-infra red gets its one re-run",
+        )
+
     def test_execute_evict_labels_red_and_links_the_failing_run(self):
         node = rollup_node(
             70, [(1, sha(1))], checks=green()[:2] + [run("Python Lint Pass", "FAILURE")]
