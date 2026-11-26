@@ -12,10 +12,15 @@ import {
   outsideAttemptFix,
 } from "src/api/simulate-environments/__tests__/fixtures/codingAgent";
 import { fixtureFixRun } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+import type { AgentFixRunDetailApi } from "src/generated/api-contracts/api.schemas";
+
+// The issue job's summary of its epoch (`summary`, no run named) or the epoch's own read.
+type IssueEpoch = Partial<AgentFixRunDetailApi> & { summary?: boolean };
 
 const caps = vi.hoisted(() => ({ codingAgent: true }));
 vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual =
+    await importOriginal<typeof import("src/hooks/useCapabilities")>();
   return {
     ...actual,
     useCapabilities: () => ({
@@ -28,7 +33,7 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
 });
 
 // The issue's epoch: the job's summary of it (no run named) or the epoch's own read.
-const issue = vi.hoisted(() => ({ epoch: null }));
+const issue = vi.hoisted(() => ({ epoch: null as IssueEpoch | null }));
 vi.mock("src/api/errorFeed/epochFromIssue", () => ({
   useIssueEpoch: () => ({
     status: {
@@ -42,10 +47,12 @@ vi.mock("src/api/errorFeed/epochFromIssue", () => ({
   useStopIssueEpoch: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
-const api = vi.hoisted(() => ({ get: null }));
+const api = vi.hoisted(() => ({
+  get: vi.fn<(url: string, config?: unknown) => Promise<{ data: unknown }>>(),
+}));
 vi.mock("src/utils/axios", async (importOriginal) => {
-  const actual = await importOriginal();
-  api.get = vi.fn((url) =>
+  const actual = await importOriginal<typeof import("src/utils/axios")>();
+  api.get.mockImplementation((url) =>
     url === actual.endpoints.agentFixRuns.codingAgentBrief()
       ? Promise.resolve({ data: fixtureBrief() })
       : Promise.reject(new Error(`unexpected GET ${url}`)),
@@ -53,7 +60,9 @@ vi.mock("src/utils/axios", async (importOriginal) => {
   return { ...actual, default: { ...actual.default, get: api.get } };
 });
 
-const clipboard = vi.hoisted(() => ({ copy: vi.fn(async () => true) }));
+const clipboard = vi.hoisted(() => ({
+  copy: vi.fn(async (_text: unknown) => true),
+}));
 vi.mock("src/utils/copyToClipboard", () => ({
   copyToClipboard: clipboard.copy,
 }));
@@ -115,7 +124,7 @@ describe("Copy for coding agent on the issue's epoch strip", () => {
     expect(api.get).toHaveBeenCalledWith(expect.any(String), {
       params: { source_run_id: SOURCE_RUN_ID },
     });
-    const [copied] = clipboard.copy.mock.calls[0];
+    const copied = String(clipboard.copy.mock.calls[0][0]);
     expect(copied.endsWith(fixtureBrief().instructions)).toBe(true);
     for (const key of HELD_BACK_KEYS) expect(copied).not.toContain(key);
     expect(
