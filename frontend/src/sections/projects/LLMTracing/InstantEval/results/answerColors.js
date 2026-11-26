@@ -4,20 +4,25 @@ import { ANSWER_TYPES } from "../instantEvalPayloads";
 import { ERROR_ANSWER, SKIPPED_ANSWER } from "../instantEvalAnswers";
 
 // Stable slots follow the authored label order, not the current count/rank.
-// The brand set (dataBrand: purple, then the org design guide's green, red and
-// amber) owns both modes; labels and legends still carry identity. Never cycle
-// overflow labels onto an earlier categorical slot.
+// Categories take blue, teal, pink and lime from the data set, each mode with
+// its own step: never a status hue (red reads as "couldn't answer") and never
+// the Yes or No hue, so a cross-tab of a Yes/No question against a category
+// question gives each colour one meaning. Labels and legends still carry
+// identity. Never cycle overflow labels onto an earlier categorical slot.
 const lightPalette = dsPalette("light");
 const darkPalette = dsPalette("dark");
-export const CATEGORY_COLORS = lightPalette.dataBrand;
-export const CATEGORY_COLORS_DARK = darkPalette.dataBrand;
+export const CATEGORY_SLOTS = [1, 2, 4, 6];
+export const CATEGORY_COLORS = CATEGORY_SLOTS.map((i) => lightPalette.data[i]);
+export const CATEGORY_COLORS_DARK = CATEGORY_SLOTS.map(
+  (i) => darkPalette.data[i],
+);
 // The catch-all answer stays neutral and explicitly named.
 export const CATCH_ALL_COLOR = lightPalette.text.disabled;
 export const CATCH_ALL_COLOR_DARK = darkPalette.text.disabled;
 const CATCH_ALL =
   /^(something else|anything else|other|others|other reason|none|none of (these|the above)|n\/a|unknown|unclear|not sure|misc(ellaneous)?)$/i;
 export const isCatchAll = (label) => CATCH_ALL.test(String(label ?? "").trim());
-// Labels beyond the four brand slots share neutral marks, never another
+// Labels beyond the four category slots share neutral marks, never another
 // category's hue; names, tooltips and small multiples still expose each label
 // separately with unchanged counts/actions.
 export const OTHER_CATEGORY_COLOR = lightPalette.text.disabled;

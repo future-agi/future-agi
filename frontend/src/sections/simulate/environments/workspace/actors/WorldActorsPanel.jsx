@@ -11,6 +11,7 @@ import {
 } from "src/api/simulate-environments/versions";
 import ErrorState from "src/components/error-state";
 import SectionCard from "../../components/SectionCard";
+import FileRoles from "./FileRoles";
 import { refusalText } from "../evals/refusalText";
 import ActorForm from "./ActorForm";
 import ActorLimits from "./ActorLimits";
@@ -244,6 +245,12 @@ export default function WorldActorsPanel({ envId, locked = false }) {
           </SectionCard>
         </Box>
       )}
+      <FileRoles
+        envId={envId}
+        sources={data.knowledge_sources}
+        revision={revision}
+        locked={locked}
+      />
       <SectionCard
         title={C.groupTitle(C.title, cast.length)}
         subtitle={C.everyoneAbout}

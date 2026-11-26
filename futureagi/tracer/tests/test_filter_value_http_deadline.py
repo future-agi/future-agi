@@ -215,9 +215,14 @@ def test_system_filter_value_cursor_receives_view_owned_deadline(monkeypatch):
     )
 
     retained_start = datetime(2026, 8, 1, 11, 55, tzinfo=UTC)
-    selector = Mock()
-    selector.retained_window_start.return_value = retained_start
-    selector_factory = Mock(return_value=selector)
+    selector_factory = Mock(side_effect=AssertionError("no inline lookup"))
+    retained_lookups = []
+
+    def retained_lookup(project_ids, *, window_end, deadline):
+        events.append("retained_lookup")
+        retained_lookups.append((list(project_ids), deadline))
+        return retained_start
+
     page_read = FilterValueCursorPageRead(
         values=("customer-ended-call",),
         query_window_start=retained_start,
@@ -267,6 +272,11 @@ def test_system_filter_value_cursor_receives_view_owned_deadline(monkeypatch):
     )
     monkeypatch.setattr(
         dashboard_view,
+        "_batched_span_system_retained_window_start",
+        retained_lookup,
+    )
+    monkeypatch.setattr(
+        dashboard_view,
         "V2AnalyticsQueryService",
         lambda: object(),
     )
@@ -299,15 +309,17 @@ def test_system_filter_value_cursor_receives_view_owned_deadline(monkeypatch):
         dashboard_view._FILTER_VALUES_INTERACTIVE_TIMEOUT_MS
     )
     assert dashboard_view._FILTER_VALUES_INTERACTIVE_TIMEOUT_MS == 30_000
-    selector_factory.assert_called_once_with(
-        typed_only=True,
-        json_attribute_mode="arrays",
-        wall_timeout_ms=3_900,
-    )
-    request_deadline.remaining_ms.assert_called_once_with(
-        dashboard_view.ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-    )
-    assert events == ["deadline", "pg_budget", "project_scope", "selector"]
+    # The optional retained-window lookup takes the bounded path on the same
+    # request wall; it never runs inline on a selector of its own.
+    selector_factory.assert_not_called()
+    assert retained_lookups == [([project_id], request_deadline)]
+    assert events == [
+        "deadline",
+        "pg_budget",
+        "project_scope",
+        "retained_lookup",
+        "selector",
+    ]
 
 
 @pytest.mark.parametrize("source", ["traces", "sessions"])
@@ -491,6 +503,12 @@ def test_project_display_label_search_keeps_raw_cursor_authorized(monkeypatch):
     )
     monkeypatch.setattr(
         dashboard_view, "AttributeReadSelector", lambda **_kwargs: selector
+    )
+    # The bounded retained lookup is covered in the workspace batch tests.
+    monkeypatch.setattr(
+        dashboard_view,
+        "_batched_span_system_retained_window_start",
+        lambda _project_ids, *, window_end, deadline: window_start,
     )
     monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", lambda: object())
     monkeypatch.setattr(

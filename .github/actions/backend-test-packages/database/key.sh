@@ -24,5 +24,9 @@ else
   uv_version=$(uv --version | cut -d ' ' -f2)
   tools="$python_version|$uv_version"
 fi
-runtime=$(printf '%s\n' "$ids" "$config" "${ImageVersion:?}" "$(uname -m)" "$tools" | sha256sum)
+# PostgreSQL dump/restore utilities run inside the database service image.
+# GitHub can roll runner-image versions during a workflow, so that release is
+# not a database input; keep concrete service images, Compose config, host
+# architecture, and the pinned Python/uv toolchain in the exact recipe key.
+runtime=$(printf '%s\n' "$ids" "$config" "$(uname -m)" "$tools" | sha256sum)
 python3 -I .ci/db_dump.py key "$runtime"
