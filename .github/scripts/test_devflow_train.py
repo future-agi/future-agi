@@ -231,6 +231,15 @@ class Globs(unittest.TestCase):
         with self.assertRaises(ValueError):
             train.parse_high_globs(json.dumps({"high_globs": "ee/**"}))
 
+    def test_batch_and_rollup_defaults_are_variables(self):
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual((train.Config().max_batch, train.Config().max_rollups), (6, 4))
+        with mock.patch.dict(os.environ, {"DEVFLOW_TRAIN_MAX_BATCH": "8", "DEVFLOW_TRAIN_MAX_ROLLUPS": "8"}):
+            self.assertEqual((train.Config().max_batch, train.Config().max_rollups), (8, 8))
+
     def test_floor_always_applies(self):
         self.assertEqual(cfg().high_globs, (".github/**",))
         self.assertEqual(
@@ -267,7 +276,7 @@ class Checks(unittest.TestCase):
         answer = {"runs": green()}
 
         class Counting(train.GitHub):
-            def check_runs(self, sha, required):
+            def check_runs(self, sha, required, deferred=False):
                 reads.append(sha)
                 return answer["runs"]
 
@@ -297,7 +306,7 @@ class Checks(unittest.TestCase):
         reads = []
 
         class Counting(train.GitHub):
-            def check_runs(self, sha, required):
+            def check_runs(self, sha, required, deferred=False):
                 reads.append(sha)
                 return green()
 
@@ -407,6 +416,76 @@ class Checks(unittest.TestCase):
         self.assertEqual(
             train.check_states(runs, REQUIRED)["E2E Tests Pass"], "pending"
         )
+
+
+class Deferred(unittest.TestCase):
+    """Light-mode heads report "Backend Tests Deferred" instead of "Backend Tests Pass"."""
+
+    def deferred_runs(self, conclusion="SUCCESS"):
+        return [run("Backend Tests Deferred", conclusion)] + green()[1:]
+
+    def test_deferred_is_green_for_members_only(self):
+        states = train.check_states(self.deferred_runs(), REQUIRED, deferred=True)
+        self.assertEqual(states["Backend Tests Pass"], "deferred")
+        self.assertEqual(train.check_states(self.deferred_runs(), REQUIRED)["Backend Tests Pass"], "missing")
+        self.assertEqual(
+            train.check_states(self.deferred_runs("FAILURE"), REQUIRED, deferred=True)["Backend Tests Pass"],
+            "failure",
+        )
+        rerun = self.deferred_runs() + [run("Backend Tests Pass", started="2026-11-26T12:00:00Z")]
+        self.assertEqual(train.check_states(rerun, REQUIRED, deferred=True)["Backend Tests Pass"], "success")
+        node = pr_node(1)
+        node["_check_runs"] = self.deferred_runs()
+        self.assertIsNone(train.exclusion(view(node), cfg(), {}))
+
+    def test_rollup_needs_a_real_pass(self):
+        node = rollup_node(70, [(1, sha(1))], checks=self.deferred_runs())
+        rollup = train.rollup_view(node, cfg(), REQUIRED)
+        self.assertEqual(rollup["checks"]["Backend Tests Pass"], "missing")
+
+    def test_auto_merge_is_admitted_only_on_a_deferred_head(self):
+        node = pr_node(1, autoMergeRequest={"enabledAt": "x"})
+        node["_check_runs"] = self.deferred_runs()
+        self.assertIsNone(train.exclusion(view(node), cfg(), {}))
+        self.assertTrue(train.needs_checks(node, REQUIRED, cfg()))
+        node["_check_runs"] = green()
+        self.assertIn("GitHub lands it alone", train.exclusion(view(node), cfg(), {}))
+
+    def test_member_enqueued_alone_makes_its_rollup_stale(self):
+        rollup = rollup_node(70, [(1, sha(1)), (2, sha(2))])
+        result = train.plan(data([pr_node(1, isInMergeQueue=True), pr_node(2)], [rollup]), REQUIRED, cfg())
+        self.assertEqual(result["rollup_actions"][0], {"action": "rebuild", "drop": [1], "rollup": 70})
+
+    def test_go_alone_member_on_a_deferred_head_gets_a_full_run(self):
+        alone = pr_node(1, title='Revert "feat: x"')
+        alone["_check_runs"] = self.deferred_runs()
+        full = pr_node(2, title='Revert "feat: y"')
+        draft = pr_node(3, title='Revert "feat: z"', isDraft=True)
+        draft["_check_runs"] = self.deferred_runs()
+        self.assertTrue(train.needs_checks(alone, REQUIRED, cfg()))
+        result = train.plan(data([alone, full, draft]), REQUIRED, cfg())
+        self.assertEqual(result["full_runs"], [{"pr": 1, "head_sha": sha(1), "labelled": False}])
+        self.assertEqual(result["batches"], [])
+
+    def test_full_run_labels_then_reruns_the_whole_light_run_once(self):
+        def runs(status="completed", attempt=1):
+            return (200, {"workflow_runs": [
+                {"id": 7, "status": "completed", "run_attempt": 1, "created_at": "2026-11-26T09:00:00Z"},
+                {"id": 8, "status": status, "run_attempt": attempt, "created_at": "2026-11-26T10:00:00Z"},
+            ]})
+
+        actions = FakeGitHub({("GET", "repos/o/r/actions/workflows/backend-ci.yml/runs"): runs()})
+        live = train.Live("o/r", FakeGitHub({}), actions)
+        self.assertEqual(live.full_run(1, sha(1), labelled=False), "re-ran run 8 with ci:full")
+        calls = [(c[0], c[1]) for c in actions.calls]
+        self.assertEqual(calls[0], ("POST", "repos/o/r/issues/1/labels"))
+        self.assertIn(("POST", "repos/o/r/actions/runs/8/rerun"), calls, "a full re-run, not rerun-failed-jobs")
+        self.assertIn(("FORGET", sha(1)), calls)
+        for answer, why in ((runs("in_progress"), "running"), (runs(attempt=2), "already re-run")):
+            actions = FakeGitHub({("GET", "repos/o/r/actions/workflows/backend-ci.yml/runs"): answer})
+            live = train.Live("o/r", FakeGitHub({}), actions)
+            self.assertIn(why, live.full_run(1, sha(1), labelled=True))
+            self.assertFalse([c for c in actions.calls if c[0] == "POST"], "labelled already, no re-run")
 
 
 class Verdicts(unittest.TestCase):
@@ -1164,6 +1243,9 @@ class FakeGitHub:
             ("GRAPHQL", re.search(r"\{\s*(\w+)", query).group(1), variables)
         )
         return {}
+
+    def forget(self, sha):
+        self.calls.append(("FORGET", sha, None))
 
 
 class LiveWrites(unittest.TestCase):

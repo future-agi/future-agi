@@ -73,6 +73,16 @@ HIGH_LABELS = ("needs-human", "autopilot-high")
 # label per job that fails across queue builds: "Base looks red: <job>".
 BASE_RED_LABEL = "base-red"
 BRANCH_PREFIX = "chore/devflow-train-"
+# Under CI_SCOPE_MODE=light a pull request run that defers the backend
+# suites reports this name in place of the required "Backend Tests Pass", so
+# GitHub cannot enqueue that head alone. It is green enough to ride a rollup,
+# whose own run is always full. A member that goes alone instead gets the
+# ci:full label and a full re-run of Backend CI (rerun-failed-jobs would keep
+# the light plan).
+DEFERRED_CHECKS = {"Backend Tests Pass": "Backend Tests Deferred"}
+FULL_LABEL = "ci:full"
+BACKEND_WORKFLOW = "backend-ci.yml"
+GREEN = ("success", "deferred")
 BASE = "dev"
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 WRITE = {"admin", "write"}
@@ -334,19 +344,25 @@ def approved_on_head(reviews: list, head: str, by: str | None = None) -> bool:
     )
 
 
-def check_states(contexts: list, required: list) -> dict:
-    """State of each required check on the head: success, failure, pending or missing.
+def check_states(contexts: list, required: list, deferred: bool = False) -> dict:
+    """State of each required check on the head: success, failure, pending or
+    missing, and with `deferred` (members only) also deferred.
 
     Only runs from the required app count. Skipped runs are ignored and the
     newest other run decides, so a newer failure overrules an older success.
+    With `deferred`, a check's deferred name counts as that check, and the
+    newest run of the two names decides.
     """
     states = {}
     for req in required:
+        names = {req["context"]}
+        if deferred and req["context"] in DEFERRED_CHECKS:
+            names.add(DEFERRED_CHECKS[req["context"]])
         runs = [
             c
             for c in contexts
             if c.get("__typename") == "CheckRun"
-            and c.get("name") == req["context"]
+            and c.get("name") in names
             and ((c.get("checkSuite") or {}).get("app") or {}).get("databaseId")
             == req["app_id"]
             and c.get("conclusion") != "SKIPPED"
@@ -358,9 +374,11 @@ def check_states(contexts: list, required: list) -> dict:
         newest = max(runs, key=lambda c: c.get("startedAt") or "9999")
         if newest.get("status") != "COMPLETED":
             states[req["context"]] = "pending"
+        elif newest.get("conclusion") != "SUCCESS":
+            states[req["context"]] = "failure"
         else:
             states[req["context"]] = (
-                "success" if newest.get("conclusion") == "SUCCESS" else "failure"
+                "success" if newest.get("name") == req["context"] else "deferred"
             )
     return states
 
@@ -412,7 +430,7 @@ def member_view(node: dict, required: list) -> dict:
             bot_login((node.get("author") or {}).get("login")),
             assigned_reviewer(node),
         ),
-        "checks": check_states(head_contexts(node), required),
+        "checks": check_states(head_contexts(node), required, deferred=True),
         "files": [f["path"] for f in files],
         "files_complete": len(files) >= (node.get("changedFiles") or 0),
         "migration_apps": migration_apps(files),
@@ -439,8 +457,6 @@ def exclusion(m: dict, cfg: Config, reserved: dict) -> str | None:
         return "revert: goes alone"
     if m["in_queue"]:
         return "already in the merge queue"
-    if m["auto_merge"]:
-        return "auto-merge is on"
     if m["mergeable"] == "CONFLICTING":
         return "conflicts with dev"
     if not m["files_complete"]:
@@ -465,13 +481,27 @@ def exclusion(m: dict, cfg: Config, reserved: dict) -> str | None:
             "medium tier: waits for an approval on this head by a person"
             " with write access who is not the author"
         )
-    # Last, and the only rule that costs API calls (see needs_checks).
-    bad = {name: state for name, state in m["checks"].items() if state != "success"}
+    # Last, and the only rules that cost API calls (see needs_checks).
+    bad = {name: state for name, state in m["checks"].items() if state not in GREEN}
     if bad:
         return "required checks not green: " + ", ".join(
             f"{k}={v}" for k, v in sorted(bad.items())
         )
+    if m["auto_merge"] and "deferred" not in m["checks"].values():
+        # A full head with auto-merge: GitHub enqueues it alone any moment.
+        return "auto-merge is on and the head ran the full plan: GitHub lands it alone"
     return None
+
+
+def wants_full_run(m: dict, reason: str | None) -> bool:
+    """A member that goes alone on a deferred head needs its full run."""
+    return bool(
+        reason
+        and "goes alone" in reason
+        and not m["fork"]
+        and not m["draft"]
+        and "deferred" in m["checks"].values()
+    )
 
 
 def member_tier(m: dict, cfg: Config) -> str | None:
@@ -491,8 +521,10 @@ def needs_checks(node: dict, required: list, cfg: Config) -> bool:
     """Whether this admitted pull request's checks decide anything: only if
     every other rule passes. Saves the REST calls for the rest."""
     m = member_view(node, required)
-    m["checks"] = {r["context"]: "success" for r in required}
-    return exclusion(m, cfg, {}) is None
+    # The most permissive checks: deferred lets auto-merge and go-alone through.
+    m["checks"] = {r["context"]: "deferred" for r in required}
+    reason = exclusion(m, cfg, {})
+    return reason is None or wants_full_run(m, reason)
 
 
 # --- Batching ----------------------------------------------------------------
@@ -701,6 +733,8 @@ def stale_members(manifest: dict, live: dict) -> list:
             or m["head_sha"] != member["head_sha"]
             or ADMIT_LABEL not in m["labels"]
             or any(label in m["labels"] for label in HIGH_LABELS)
+            # Enqueued on its own (a person, or auto-merge on a full head).
+            or m["in_queue"]
         ):
             stale.append(member["pr"])
     return stale
@@ -816,7 +850,7 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
     still_open = sum(1 for a in actions if a["action"] in ("wait", "ensure", "retry"))
     new_from_splits = sum(len(a["halves"]) for a in actions if a["action"] == "split")
 
-    labels, excluded, eligible = [], {}, []
+    labels, excluded, eligible, full_runs = [], {}, [], []
     for m in admitted:
         if m["number"] in evicted:
             # This tick labels it red; it must not ride the next batch.
@@ -830,6 +864,14 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
         reason = exclusion(m, cfg, reserved)
         if reason:
             excluded[m["number"]] = reason
+            if wants_full_run(m, reason):
+                full_runs.append(
+                    {
+                        "pr": m["number"],
+                        "head_sha": m["head_sha"],
+                        "labelled": FULL_LABEL in m["labels"],
+                    }
+                )
         else:
             eligible.append(m)
     ordered = round_robin(eligible)
@@ -842,6 +884,7 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
         "label_changes": labels,
         "excluded": excluded,
         "eligible": [m["number"] for m in ordered],
+        "full_runs": full_runs,
         "train_slots": slots,
         "batches": [[m["number"] for m in b] for b in batches],
         # A paused train with work waiting stays awake: closing the issue
@@ -1028,14 +1071,22 @@ class GitHub:
             repo[key] = {"nodes": nodes}
         return {"repository": repo}
 
-    def check_runs(self, sha: str, required: list) -> list:
-        """Every run of each required check on one commit, by name and app."""
+    def check_runs(self, sha: str, required: list, deferred: bool = False) -> list:
+        """Every run of each required check on one commit, by name and app,
+        and with `deferred` (members) of each check's deferred name too."""
         runs = []
-        for req in required:
-            name = urllib.parse.quote(req["context"])
+        names = [(r["context"], r["app_id"]) for r in required]
+        if deferred:
+            names += [
+                (DEFERRED_CHECKS[r["context"]], r["app_id"])
+                for r in required
+                if r["context"] in DEFERRED_CHECKS
+            ]
+        for context, app_id in names:
+            name = urllib.parse.quote(context)
             out = self.call(
                 "GET",
-                f"repos/{self.repo}/commits/{sha}/check-runs?check_name={name}&app_id={req['app_id']}&filter=all&per_page=50",
+                f"repos/{self.repo}/commits/{sha}/check-runs?check_name={name}&app_id={app_id}&filter=all&per_page=50",
             )
             for r in out["check_runs"]:
                 runs.append(
@@ -1081,8 +1132,8 @@ class GitHub:
         hit = self.check_cache.get(sha)
         if hit and now() - hit[0] < CHECK_CACHE_SECONDS:
             return hit[1]
-        runs = self.check_runs(sha, required)
-        if all(v == "success" for v in check_states(runs, required).values()):
+        runs = self.check_runs(sha, required, deferred=True)
+        if all(v in GREEN for v in check_states(runs, required, True).values()):
             self.check_cache[sha] = (now(), runs)
         else:
             self.check_cache.pop(sha, None)
@@ -1327,6 +1378,27 @@ class Live:
             },
         )
 
+    def full_run(self, pr: int, head: str, labelled: bool) -> str:
+        """ci:full, then one full re-run of the head's light Backend CI run."""
+        if not labelled:
+            self.label(pr, FULL_LABEL)
+        runs = self.actions.call(
+            "GET",
+            f"repos/{self.repo}/actions/workflows/{BACKEND_WORKFLOW}/runs?event=pull_request&head_sha={head}&per_page=20",
+        )["workflow_runs"]
+        if not runs:
+            return "no Backend CI run on the head"
+        newest = max(runs, key=lambda r: r.get("created_at") or "")
+        if newest.get("status") != "completed":
+            return "Backend CI is running"
+        if (newest.get("run_attempt") or 1) > 1:
+            return "already re-run once; a person takes it from here"
+        self.actions.call(
+            "POST", f"repos/{self.repo}/actions/runs/{newest['id']}/rerun"
+        )
+        self.actions.forget(head)
+        return f"re-ran run {newest['id']} with {FULL_LABEL}"
+
     def label(self, pr: int, name: str):
         self.actions.call(
             "POST", f"repos/{self.repo}/issues/{pr}/labels", {"labels": [name]}
@@ -1392,6 +1464,8 @@ def execute(result: dict, live: Live, red_runs: dict):
             )
     for change in result["label_changes"]:
         live.unlabel(change["pr"], change["remove"])
+    for full in result["full_runs"]:
+        full["done"] = live.full_run(full["pr"], full["head_sha"], full["labelled"])
     for batch in result["batches"]:
         live.open_rollup([members[pr] for pr in batch])
 
@@ -1403,6 +1477,10 @@ def summary(result: dict) -> str:
         f"- Queue entries: {result['queue_entries']}; free train slots: {result['train_slots']}",
         f"- Eligible in order: {result['eligible'] or 'none'}",
         f"- Planned batches: {result['batches'] or 'none'}",
+    ]
+    lines += [
+        f"- #{f['pr']} goes alone on a deferred head: {f.get('done') or 'full run planned'}"
+        for f in result["full_runs"]
     ]
     for a in result["rollup_actions"]:
         lines.append(
