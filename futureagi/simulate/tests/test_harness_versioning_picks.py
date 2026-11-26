@@ -1,3 +1,4 @@
+import re
 import uuid
 from unittest.mock import patch
 
@@ -1920,6 +1921,12 @@ class TestSplitRuns:
         refusal = _split_refusal(environment, "train")
 
         assert refusal.code == "split_needs_locked_version"
+        # The pair a lock would cover, as the lock card names it.
+        assert re.fullmatch(
+            r"Lock environment v\d+, scenarios v\d+ to run their train and test "
+            r"splits\.",
+            refusal.message,
+        )
         assert not HostedHarnessJob.no_workspace_objects.filter(
             environment=environment
         ).exists()
@@ -1946,7 +1953,7 @@ class TestSplitRuns:
 
         assert refusal.code == "split_scenario_outside"
         assert TRAIN[0] in refusal.message
-        assert "2026.11.1" in refusal.message
+        assert "split of lock 2026.11.1." in refusal.message
 
     def test_no_scenarios_and_no_split_is_still_refused(self, user, workspace, storage):
         environment, _ = _locked(user, workspace, "sp-empty", storage)

@@ -1133,7 +1133,7 @@ describe("RunDialog split of a locked version", () => {
     });
     expect(
       screen.getByText(
-        "Runs the test split of locked version 2026.11.1: 2 scenarios. 3 repeats each.",
+        "Runs the test split of lock 2026.11.1: 2 scenarios. 3 repeats each.",
       ),
     ).toBeInTheDocument();
     await user.click(runButton());
@@ -1218,14 +1218,14 @@ describe("RunDialog split of a locked version", () => {
     );
   });
 
-  it("says when a re-run's locked version is unlocked and runs without its split", async () => {
+  it("says when a re-run's versions are unlocked and runs without its split", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderDialog({
       initialPicks: { environment: "e1", suite: "s3", split: "test" },
     });
     expect(splitPicker()).toBeNull();
     expect(screen.getByTestId("rerun-split-fallback")).toHaveTextContent(
-      "That run's locked version is unlocked now, so this run doesn't use its split.",
+      "That run's versions are unlocked now, so this run doesn't use its split.",
     );
     await user.click(runButton());
     expect(onSubmit).toHaveBeenLastCalledWith(
@@ -1241,11 +1241,11 @@ describe("RunDialog split of a locked version", () => {
     renderDialog({
       error: refusal(
         "split_scenario_outside",
-        "k1 is not in the test split of locked version 2026.11.1.",
+        "k1 is not in the test split of lock 2026.11.1.",
       ),
     });
     expect(screen.getByTestId("run-error")).toHaveTextContent(
-      "k1 is not in the test split of locked version 2026.11.1.",
+      "k1 is not in the test split of lock 2026.11.1.",
     );
   });
 

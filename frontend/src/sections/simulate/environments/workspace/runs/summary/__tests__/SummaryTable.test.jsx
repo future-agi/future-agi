@@ -70,11 +70,11 @@ describe("SummaryTable split runs", () => {
     );
     const row = (label) => screen.getByText(label).closest("tr");
     expect(
-      within(row("Run 3")).getByText("locked version 2026.11.2 · test"),
+      within(row("Run 3")).getByText("Lock 2026.11.2 · Test"),
     ).toBeInTheDocument();
     expect(
-      within(row("Run 2")).getByText("locked version 2026.11.1 · test"),
+      within(row("Run 2")).getByText("Lock 2026.11.1 · Test"),
     ).toBeInTheDocument();
-    expect(within(row("Run 1")).queryByText(/^locked version /)).toBeNull();
+    expect(within(row("Run 1")).queryByText(/^Lock /)).toBeNull();
   });
 });

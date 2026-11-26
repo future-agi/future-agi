@@ -366,7 +366,7 @@ describe("RunCompare", () => {
     );
     expect(
       within(section()).getByText(
-        "Run 2: Agent v2 · Environment v2 · Scenarios v3 · Locked version 2026.11.2 · Test split · Run 1: Agent v2 · Environment v2 · Scenarios v3 · Locked version 2026.11.1 · Train split",
+        "Run 2: Agent v2 · Environment v2 · Scenarios v3 · Lock 2026.11.2 · Test split · Run 1: Agent v2 · Environment v2 · Scenarios v3 · Lock 2026.11.1 · Train split",
       ),
     ).toBeInTheDocument();
     expect(
