@@ -1,8 +1,8 @@
-import PropTypes from "prop-types";
 import { useState } from "react";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import type { AgentFixRunDetailApi } from "src/generated/api-contracts/api.schemas";
 
 import { diagnosisCauses } from "./fixRunView";
 
@@ -10,11 +10,15 @@ import { diagnosisCauses } from "./fixRunView";
 // every cause. The design shows it only while the epoch runs; this keeps it.
 // A failed epoch's diagnosis is from before it stopped, so it says so: beside
 // "not your agent" it must never read as the current finding.
-export default function FinishedDiagnosis({ fix }) {
+export default function FinishedDiagnosis({
+  fix,
+}: {
+  fix: AgentFixRunDetailApi;
+}) {
   const [open, setOpen] = useState(false);
   if (!fix.diagnosis) return null;
   const failed = fix.state === "failed";
-  const causes = diagnosisCauses(fix);
+  const causes: string[] = diagnosisCauses(fix);
   const line = { typography: "s2", color: "text.secondary" };
   if (!causes.length) {
     // Nothing found before it failed: nothing to say.
@@ -68,5 +72,3 @@ export default function FinishedDiagnosis({ fix }) {
     </Box>
   );
 }
-
-FinishedDiagnosis.propTypes = { fix: PropTypes.object.isRequired };
