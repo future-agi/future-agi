@@ -24,6 +24,7 @@ def connected_call_count(execution: TestExecution) -> int:
 def failing_call_count(execution: TestExecution) -> int:
     return (
         run_calls_queryset(execution)
-        .filter(result_outcome__in=FAILING_OUTCOMES)
+        # `result_outcome` is the queryset's annotation, so it is filtered through Q.
+        .filter(Q(result_outcome__in=FAILING_OUTCOMES))
         .count()
     )
