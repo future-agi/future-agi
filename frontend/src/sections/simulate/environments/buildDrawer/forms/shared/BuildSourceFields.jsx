@@ -17,39 +17,47 @@ export default function BuildSourceFields({
   showUpload = true,
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pdfs = sources.uploads.done.filter(({ name }) =>
+    name.toLowerCase().endsWith(".pdf"),
+  );
 
   return (
     <Stack spacing={1}>
       {showUpload && (
         <BuildFilesField uploads={sources.uploads} disabled={disabled} />
       )}
-      {sources.uploads.done
-        .filter(({ name }) => name.toLowerCase().endsWith(".pdf"))
-        .map(({ name, documentId }) => (
-          <FormControlLabel
-            key={documentId}
-            disabled={disabled}
-            control={
-              <Checkbox
-                checked={Boolean(sources.policy[documentId])}
-                onChange={(event) =>
-                  sources.setPolicy((current) => ({
-                    ...current,
-                    [documentId]: event.target.checked,
-                  }))
-                }
-              />
-            }
-            label={`Use ${name} as policy`}
-          />
-        ))}
-      {sources.uploads.done.some(({ name }) =>
-        name.toLowerCase().endsWith(".pdf"),
-      ) && (
-        <Typography variant="caption" color="text.secondary">
-          Policy mode proposes supported instructions as rules. Other passages
-          remain background.
-        </Typography>
+      {pdfs.length > 0 && (
+        <Stack>
+          {pdfs.map(({ name, documentId }) => (
+            <FormControlLabel
+              key={documentId}
+              disabled={disabled}
+              sx={{
+                m: 0,
+                gap: 0.5,
+                "& .MuiFormControlLabel-label": { typography: "s1" },
+              }}
+              control={
+                <Checkbox
+                  size="small"
+                  sx={{ p: 0.5 }}
+                  checked={Boolean(sources.policy[documentId])}
+                  onChange={(event) =>
+                    sources.setPolicy((current) => ({
+                      ...current,
+                      [documentId]: event.target.checked,
+                    }))
+                  }
+                />
+              }
+              label={`Use ${name} as policy`}
+            />
+          ))}
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            Policy mode proposes supported instructions as rules. Other passages
+            remain background.
+          </Typography>
+        </Stack>
       )}
       {sources.knowledge.map(({ label, selection }) => (
         <Chip
@@ -65,6 +73,7 @@ export default function BuildSourceFields({
       <Button
         sx={{ alignSelf: "start" }}
         size="small"
+        variant="outlined"
         onClick={() => setPickerOpen(true)}
         disabled={disabled}
       >

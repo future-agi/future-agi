@@ -105,6 +105,7 @@ describe("ReviewChangesDrawer", () => {
     for (const file of files)
       expect(screen.queryByText(file.summary)).toBeNull();
     expect(screen.getByText("Change refund")).toBeVisible();
+    expect(screen.getByText("0 of 2 decided")).toBeVisible();
     await userEvent.click(
       screen.getByRole("button", { name: "Accept source changes" }),
     );

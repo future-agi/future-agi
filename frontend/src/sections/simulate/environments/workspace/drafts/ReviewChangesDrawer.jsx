@@ -116,7 +116,17 @@ export default function ReviewChangesDrawer({
   const nameTooLong = name.trim().length > NAME_LIMIT;
   const names = recheckedKeys(changes);
   const line = saveLine(changes);
-  const counts = reviewCounts(changes);
+  // The hidden source files count as the one source change the drawer shows.
+  const sourceUnit = sourceFiles.length > 0 && {
+    decision: sourceFiles.every(
+      (file) => file.decision === sourceFiles[0].decision,
+    )
+      ? sourceFiles[0].decision
+      : undefined,
+  };
+  const counts = reviewCounts(
+    sourceUnit ? [...visibleChanges, sourceUnit] : changes,
+  );
   const piece = pieceOf(changes);
   const saved = versions?.defaults?.[piece];
   const savedLabel = saved?.label || "";
@@ -406,7 +416,7 @@ export default function ReviewChangesDrawer({
         <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 2 }}>
           {children}
           {sourceHold && (
-            <Typography role="status" variant="body2">
+            <Typography role="status" variant="body2" sx={{ mb: 2 }}>
               {sourceHold}
             </Typography>
           )}

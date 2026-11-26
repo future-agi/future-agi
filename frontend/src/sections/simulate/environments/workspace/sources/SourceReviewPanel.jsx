@@ -495,7 +495,7 @@ function SourceReviewEditor({
             helperText={
               suggestedTable && tables.includes(suggestedTable)
                 ? `Suggested table: ${suggestedTable}`
-                : undefined
+                : "Choose the table these rows go into."
             }
             value={table}
             disabled={!editable}
@@ -641,6 +641,7 @@ function SourceReviewEditor({
             (state === "ready" && changingTable)) && (
             <Button
               variant="contained"
+              size="small"
               disabled={!editable || !canRepair}
               onClick={() => doRepair(repairBody)}
             >
@@ -652,12 +653,22 @@ function SourceReviewEditor({
           {state === "ready" && (
             <Button
               variant="contained"
+              size="small"
               disabled={!editable || !canAccept}
               onClick={doAccept}
+              startIcon={
+                accept.isPending ? (
+                  <CircularProgress size={14} color="inherit" />
+                ) : undefined
+              }
             >
-              {scope.kind === "environment"
-                ? `Add ${changeCount} ${changeCount === 1 ? "change" : "changes"}`
-                : acceptLabel}
+              {accept.isPending
+                ? scope.kind === "environment"
+                  ? "Adding…"
+                  : "Approving…"
+                : scope.kind === "environment"
+                  ? `Add ${changeCount} ${changeCount === 1 ? "change" : "changes"}`
+                  : acceptLabel}
             </Button>
           )}
         </Stack>

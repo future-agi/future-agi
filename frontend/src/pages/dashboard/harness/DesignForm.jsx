@@ -161,7 +161,7 @@ export default function DesignForm({
                 />
               )}
               {sources.selection && (
-                <Stack>
+                <Stack sx={{ mt: 1.5 }}>
                   <Typography id="scratch-personal-data">
                     Personal data in the sources
                   </Typography>
