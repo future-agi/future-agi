@@ -45,8 +45,9 @@ MIN_TEST_TASKS = 4
 # How many unlocked releases a versions read lists. Locked ones are always listed.
 UNLOCKED_HISTORY = 20
 
-# What N counts in the test target. False: only the tasks a run can score. True: every
-# task of the suite. Unscorable tasks get no split either way.
+# What N counts in the test target. N counts runnable tasks; unrunnable tasks get no
+# split. True would count every task of the suite in N, and still split none of the
+# unrunnable ones.
 TARGET_COUNTS_UNSCORABLE = False
 
 
