@@ -1192,6 +1192,9 @@ class _Storage:
     def make_bucket(self, _bucket):
         pass
 
+    def get_bucket_policy(self, _bucket):
+        return "{}"
+
     def set_bucket_policy(self, _bucket, _policy):
         pass
 
