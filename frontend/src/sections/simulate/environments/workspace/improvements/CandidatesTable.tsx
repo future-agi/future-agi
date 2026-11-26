@@ -1,4 +1,3 @@
-import PropTypes from "prop-types";
 import { Fragment, useState } from "react";
 import { useLocation } from "react-router-dom";
 import {
@@ -16,6 +15,10 @@ import {
 
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge";
+import type {
+  AgentFixCheckRunApi,
+  AgentFixRunDetailApi,
+} from "src/generated/api-contracts/api.schemas";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
@@ -29,7 +32,36 @@ const COLUMNS = 6;
 const num = { fontVariantNumeric: "tabular-nums" };
 const quiet = { typography: "s2", color: "text.tertiary" };
 
-function TargetCell({ target }) {
+// A candidate's target pass rate as its row shows it: the score, and the change
+// against the agent before the change in points.
+interface CandidateTarget {
+  score: number;
+  delta: number;
+}
+
+// One candidate's row, as fixRunView.candidateGroups builds it.
+interface CandidateRow {
+  id: string;
+  attempt: number;
+  tried: string;
+  // The candidate's own check run, for its Open run.
+  run: AgentFixCheckRunApi | null;
+  target: CandidateTarget | null;
+  held: string | null;
+  // Where it stopped, in words, and whether it broke a must-pass scenario.
+  result: string;
+  broke: boolean;
+}
+
+// The candidates that stopped at the same place, under one folding heading.
+interface CandidateGroup {
+  id: string;
+  label: string;
+  open: boolean;
+  rows: CandidateRow[];
+}
+
+function TargetCell({ target }: { target: CandidateTarget | null }) {
   if (!target) return <Typography sx={quiet}>—</Typography>;
   const { score, delta } = target;
   return (
@@ -59,9 +91,8 @@ function TargetCell({ target }) {
     </Box>
   );
 }
-TargetCell.propTypes = { target: PropTypes.object };
 
-function ResultCell({ row, winner }) {
+function ResultCell({ row, winner }: { row: CandidateRow; winner: boolean }) {
   if (winner) {
     return <StatusBadge status="passed" role="success" label="Winner" />;
   }
@@ -79,25 +110,25 @@ function ResultCell({ row, winner }) {
     </Tooltip>
   );
 }
-ResultCell.propTypes = {
-  row: PropTypes.object.isRequired,
-  winner: PropTypes.bool,
-};
 
 // The design's Candidates tab (EpochCandidatesTable): every candidate the epoch
 // tried, grouped by where it stopped. Each group folds; the ones worth reading
 // start open. A candidate's run opens on its page; its change opens beside this one.
-export default function CandidatesTable({ fix }) {
+export default function CandidatesTable({
+  fix,
+}: {
+  fix: AgentFixRunDetailApi;
+}) {
   const location = useLocation();
-  const groups = candidateGroups(fix);
+  const groups: CandidateGroup[] = candidateGroups(fix);
   // A group's own default until the person folds or opens it, so a group that
   // appears later (a winner, on the next read) starts as it should.
-  const [toggled, setToggled] = useState({});
-  const open = Object.fromEntries(
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const open: Record<string, boolean> = Object.fromEntries(
     groups.map((g) => [g.id, toggled[g.id] ?? g.open]),
   );
-  const [seeing, setSeeing] = useState(null);
-  const toggle = (id) => setToggled((t) => ({ ...t, [id]: !open[id] }));
+  const [seeing, setSeeing] = useState<string | null>(null);
+  const toggle = (id: string) => setToggled((t) => ({ ...t, [id]: !open[id] }));
   const seen = (fix.candidates || []).find((c) => c.id === seeing);
   return (
     <>
@@ -268,5 +299,3 @@ export default function CandidatesTable({ fix }) {
     </>
   );
 }
-
-CandidatesTable.propTypes = { fix: PropTypes.object.isRequired };
