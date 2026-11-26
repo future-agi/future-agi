@@ -699,6 +699,12 @@ export const lockedVersionSplitLabel = (lockedVersion, split) =>
     .filter(Boolean)
     .join(" · ");
 
+// The same, inside a line of lowercase pieces: "lock 2026.11.1 · test".
+export const lockedVersionSplitInline = (lockedVersion, split) =>
+  [lockedVersion?.label && `lock ${lockedVersion.label}`, split]
+    .filter(Boolean)
+    .join(" · ");
+
 // The run's agent is not the one its environment version was built with.
 const shortVersion = (prefix, label) => {
   const number = /^v(\d+)$/i.exec(label || "")?.[1];

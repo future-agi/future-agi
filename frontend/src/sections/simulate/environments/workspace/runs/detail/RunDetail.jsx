@@ -42,7 +42,7 @@ import ViewerLock from "../../../components/ViewerLock";
 import useSimulationAccess from "../../../hooks/useSimulationAccess";
 import {
   WORKSPACE_COPY,
-  lockedVersionSplitLabel,
+  lockedVersionSplitInline,
 } from "../../workspace.constants";
 import StatusChip from "../StatusChip";
 import { stopLiveLineOf, stopNoteOf, stopTipOf } from "../runStop";
@@ -229,7 +229,7 @@ export default function RunDetail({
     identity?.environmentVersion?.label &&
       `env ${identity.environmentVersion.label}`,
     identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
-    lockedVersionSplitLabel(identity?.lockedVersion, identity?.split),
+    lockedVersionSplitInline(identity?.lockedVersion, identity?.split),
     identity?.seed != null && `seed ${identity.seed}`,
   ]
     .filter(Boolean)

@@ -1322,7 +1322,7 @@ describe("RunDetail", () => {
 
     expect(
       screen.getByText(
-        "Run 3 · agent v4 · env v2 · scenarios v3 · Lock 2026.11.1 · Train",
+        "Run 3 · agent v4 · env v2 · scenarios v3 · lock 2026.11.1 · train",
       ),
     ).toBeInTheDocument();
   });
