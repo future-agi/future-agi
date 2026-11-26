@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "tool_names_sha256": "4d7e28fdebface80af3ba5f9ea516469332ba41b439885a69e6a92c356ed516a",
-  "tool_count": 140,
+  "tool_names_sha256": "0e703e4157dca151d0d7a9706cf35dc1781b91e4645ff70d9753e72c0461577c",
+  "tool_count": 143,
   "tools": [
     {
       "name": "whoami",
@@ -11363,6 +11363,257 @@
       },
       "source": {
         "operationId": "simulate_api_harness-environments_replace_actor"
+      }
+    },
+    {
+      "name": "delete_environment_actor",
+      "description": "Take one actor out of the environment's draft; refused while a scenario includes it. Pass expected_revision from list_environment_actors to refuse a draft that changed since. Runs keep using the saved version until save_environment_drafts saves the draft.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "actor_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/simulate/api/harness-environments/{id}/actors/{actor_id}/",
+        "parameters": {
+          "path": [
+            "id",
+            "actor_id"
+          ],
+          "query": [
+            "expected_revision"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_delete_actor"
+      }
+    },
+    {
+      "name": "set_environment_actor_limits",
+      "description": "Replace the environment's actor limits in its draft (each a positive number, or null for no limit) and its actors' model; a limit left out takes the channel's default. Runs keep using the saved version until save_environment_drafts saves the draft.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "limits": {
+            "$ref": "#/definitions/HarnessActorLimits"
+          },
+          "expected_revision": {
+            "title": "Expected revision",
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "limits"
+        ],
+        "definitions": {
+          "HarnessActorLimits": {
+            "description": "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
+            "type": "object",
+            "properties": {
+              "max_active": {
+                "anyOf": [
+                  {
+                    "title": "Max active",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "caller_takes_back_after_turns": {
+                "anyOf": [
+                  {
+                    "title": "Caller takes back after turns",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "actor_seconds_per_call": {
+                "anyOf": [
+                  {
+                    "title": "Actor seconds per call",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "max_messages": {
+                "anyOf": [
+                  {
+                    "title": "Max messages",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "live_turns_per_actor": {
+                "anyOf": [
+                  {
+                    "title": "Live turns per actor",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "live_turns_per_trial": {
+                "anyOf": [
+                  {
+                    "title": "Live turns per trial",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "title": "Model",
+                    "type": "string",
+                    "maxLength": 200,
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/simulate/api/harness-environments/{id}/actor-limits/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "limits",
+            "expected_revision"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_actor_limits"
+      }
+    },
+    {
+      "name": "accept_environment_actor_unresolved",
+      "description": "Accept the cast as written for one policy point the builder could not model (policy, exactly as list_environment_actors lists it under unresolved), in the environment's draft.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "policy": {
+            "title": "Policy",
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1
+          },
+          "expected_revision": {
+            "title": "Expected revision",
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "policy"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/actor-unresolved/accept/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "policy",
+            "expected_revision"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_accept_unresolved"
       }
     },
     {

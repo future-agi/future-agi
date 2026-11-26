@@ -28,6 +28,13 @@ TOOLS = [
     ("validate_environment_actor", "POST", RENAMED + "actor-validation/"),
     ("create_environment_actor", "POST", RENAMED + "actors/"),
     ("update_environment_actor", "PUT", RENAMED + "actors/{actor_id}/"),
+    ("delete_environment_actor", "DELETE", ENVIRONMENT + "actors/{actor_id}/"),
+    ("set_environment_actor_limits", "PUT", ENVIRONMENT + "actor-limits/"),
+    (
+        "accept_environment_actor_unresolved",
+        "POST",
+        ENVIRONMENT + "actor-unresolved/accept/",
+    ),
     ("list_environment_drafts", "GET", ENVIRONMENT + "drafts/"),
     ("save_environment_drafts", "POST", ENVIRONMENT + "drafts/save/"),
     ("get_environment_run_plan", "GET", ENVIRONMENT + "run-plan/"),
@@ -37,6 +44,8 @@ TOOLS = [
 NAMES = {name for name, _, _ in TOOLS}
 # Tools whose call starts billed model work.
 SPENDING = {"run_environment"}
+# Tools that remove what they name.
+DESTRUCTIVE = {"delete_environment_actor"}
 # Tools that write nothing.
 READS = {
     "list_harness_environments",
@@ -78,7 +87,7 @@ def test_access_and_spend(registry, name):
     tool = registry.get(name)
 
     assert tool.annotations["readOnlyHint"] is (name in READS)
-    assert tool.annotations["destructiveHint"] is False
+    assert tool.annotations["destructiveHint"] is (name in DESTRUCTIVE)
     assert tool.annotations["openWorldHint"] is (name in SPENDING)
     assert ("may incur usage charges" in tool.description) is (name in SPENDING)
 
@@ -177,3 +186,13 @@ def test_without_a_rename_the_body_id_conflicts(tmp_path):
 def test_generator_rejects_a_bad_rename(tmp_path, path_names, message):
     with pytest.raises(ToolGenerationError, match=message):
         generate_tool_manifest(CONTRACT_PATH, _catalog(tmp_path, path_names))
+
+
+def test_actor_limits_and_accept_need_their_fields(registry):
+    limits = registry.get("set_environment_actor_limits")
+    accept = registry.get("accept_environment_actor_unresolved")
+    delete = registry.get("delete_environment_actor")
+
+    assert "limits" in limits.input_schema["required"]
+    assert "policy" in accept.input_schema["required"]
+    assert delete.request["parameters"]["query"] == ["expected_revision"]
