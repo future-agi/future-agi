@@ -1,14 +1,21 @@
-"""Dev-push heartbeat: base-health breaker, escape rate and the merge digest.
+"""Dev-flow heartbeat: base-health breaker, escape rate and the merge digest.
 
-Runs from pr-digest.yml on every push to dev. The breaker (--breaker-only)
-runs on every push; the full digest at most once an hour (the workflow gates it). It reads the Actions and git history, decides three
-things and says them in one Slack message:
+Runs from pr-digest.yml on every push to dev, and the breaker also runs at
+the end of every merge-queue build (backend-queue-ci.yml), so a red base
+trips it even when nothing lands. The breaker (--breaker-only) runs every
+time; the full digest at most once an hour (the workflow gates it). It reads
+the Actions and git history, decides three things and says them in one
+Slack message:
 
 - Breaker: the same job failed on merge-queue builds of >= 3 different pull
-  requests inside the window. The base is probably red; people see a label
-  and a tracking issue, plus a Slack line.
+  requests inside the window. The base is probably red: an open issue with
+  the base-red label per failing job, plus a Slack line. The batch train
+  pauses while any such issue is open. The breaker closes its own issue when
+  the job no longer trips and a later queue build of its workflow passed.
 - Escape rate: reverts and fix-forwards among the last 100 first-parent
-  merges on dev. Above the threshold the tight-approval mode is wanted.
+  merges on dev, read from each pull request's title and description. Above
+  the threshold the tight-approval mode is wanted. When devflow-review/v1
+  reviews exist, also one rate per review engine.
 - Digest: landings, queue red rate by class, queue p90, runner wait p95,
   escape rate and the share of open pull requests that conflict.
 
@@ -29,7 +36,9 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -37,9 +46,14 @@ from datetime import datetime, timedelta, timezone
 QUEUE_WORKFLOWS = ("backend-queue-ci.yml", "e2e-ci.yml")
 BREAKER_WINDOW = timedelta(hours=2)
 BREAKER_MIN_PRS = 3
+STATS_WINDOW = timedelta(hours=24)
+WAIT_WINDOW = timedelta(hours=1)
 ESCAPE_WINDOW = 100
 ESCAPE_THRESHOLD = 0.02
 ESCAPE_HISTORY = 400
+# A filtered run listing returns at most this many results; split the window.
+LISTING_CAP = 1000
+MAX_PAGES = 50
 # A red run is infra when every failed job failed inside a setup or install
 # step, not in the test run. Job names are no signal: apt and DB failures hit
 # ordinary shard jobs. Step names seen in red merge-queue builds: the backend
@@ -53,6 +67,7 @@ INFRA_STEP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 BREAKER_LABEL = "base-red"
+BREAKER_TITLE = "Base looks red: "
 VARIABLE_NAME = "APPROVAL_MODE_TIGHT"
 QUEUE_BRANCH = re.compile(r"^gh-readonly-queue/[^/]+/pr-(\d+)-")
 FIX_REF = re.compile(
@@ -60,11 +75,25 @@ FIX_REF = re.compile(
     r"(?:pr\s*)?#(\d+)",
     re.IGNORECASE,
 )
-OWN_PR = re.compile(r"\(#(\d+)\)\s*$|^Merge pull request #(\d+)")
+# Merge-method landings: the subject names the pull request, the body's first
+# line is its title. Squash landings: the subject is the title plus "(#N)".
+MERGE_SUBJECT = re.compile(r"^Merge pull request #(\d+) ")
+SQUASH_PR = re.compile(r"\(#(\d+)\)\s*$")
+# GitHub's revert button ('Revert "..."') and a conventional revert: title.
+REVERT_TITLE = re.compile(r'^(?:Revert "|revert(?:\([^)]*\))?!?:)', re.IGNORECASE)
+FIX_TITLE = re.compile(r"^fix(?:\([^)]*\))?!?:", re.IGNORECASE)
+PR_REF = re.compile(r"#(\d+)\b")
+REVIEW_MARKER = "<!-- devflow-review:v1 -->"
+JSON_BLOCK = re.compile(r"```json\s*\n(.*?)\n\s*```", re.DOTALL)
+TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 
 def parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def iso(at: datetime) -> str:
+    return at.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def percentile(values: list[float], pct: float) -> float | None:
@@ -89,6 +118,28 @@ def is_infra_job(job: dict) -> bool:
     return bool(steps) and all(INFRA_STEP_PATTERN.search(n) for n in steps)
 
 
+def wants_jobs(run: dict, now: datetime, breaker_only: bool) -> bool:
+    """Whose jobs to read. A failed run, or one still going (its own failed jobs
+    already count: the queue's breaker job runs inside a run that is not done).
+    The digest also reads the last hour's runs for the runner wait."""
+    if run.get("conclusion") == "failure" or run.get("status") != "completed":
+        return True
+    return not breaker_only and now - parse_ts(run["created_at"]) <= WAIT_WINDOW
+
+
+def queue_failures(runs: list[dict], jobs_by_run: dict[int, list[dict]]) -> list[dict]:
+    """{job, pr, at, workflow} per completed failed job, whether or not its run is done."""
+    out = []
+    for r in runs:
+        for j in jobs_by_run.get(r["id"], []):
+            if j.get("status", "completed") == "completed" and j.get("conclusion") == "failure":
+                out.append({
+                    "job": j["name"], "pr": pr_number(r), "workflow": r.get("path"),
+                    "at": j.get("completed_at") or r["updated_at"],
+                })
+    return out
+
+
 def detect_breaker(failures: list[dict], now: datetime) -> list[dict]:
     """failures: {job, pr, at} per failed job on a merge-queue run.
 
@@ -107,34 +158,129 @@ def detect_breaker(failures: list[dict], now: datetime) -> list[dict]:
     return sorted(tripped, key=lambda t: (-len(t["prs"]), t["job"]))
 
 
-def _own_pr(subject: str) -> int | None:
-    m = OWN_PR.search(subject)
-    return int(m.group(1) or m.group(2)) if m else None
+def resolved_trips(issues: list[dict], tripped: list[dict], failures: list[dict], runs: list[dict]) -> list[dict]:
+    """Open base-red issues the breaker may close: the job no longer trips, and a
+    queue build of the job's workflow (any queue workflow when unknown) passed
+    after both the issue and the job's last failure. An idle queue closes nothing."""
+    now_red = {t["job"] for t in tripped}
+    out = []
+    for issue in issues:
+        job = issue["title"][len(BREAKER_TITLE):]
+        if not issue["title"].startswith(BREAKER_TITLE) or job in now_red:
+            continue
+        mine = [f for f in failures if f["job"] == job]
+        last_bad = max([parse_ts(issue["created_at"])] + [parse_ts(f["at"]) for f in mine])
+        workflows = {f["workflow"] for f in mine if f.get("workflow")}
+        green = [
+            r for r in runs
+            if r.get("conclusion") == "success"
+            and (not workflows or r.get("path") in workflows)
+            and parse_ts(r.get("updated_at") or r["created_at"]) > last_bad
+            and parse_ts(r["created_at"]) > last_bad
+        ]
+        if green:
+            out.append({"number": issue["number"], "job": job, "run": max(green, key=lambda r: r["created_at"])["id"]})
+    return out
 
 
-def escape_rate(commits: list[dict]) -> dict:
+def landing(c: dict) -> dict:
+    """{own, title, text} of one first-parent commit on dev."""
+    merge = MERGE_SUBJECT.match(c["subject"])
+    body = c.get("body") or ""
+    if merge:
+        title = next((line.strip() for line in body.splitlines() if line.strip()), "")
+        return {"own": int(merge.group(1)), "title": title, "text": body}
+    squash = SQUASH_PR.search(c["subject"])
+    return {
+        "own": int(squash.group(1)) if squash else None,
+        "title": c["subject"],
+        "text": f"{c['subject']}\n{body}",
+    }
+
+
+def review_engine(reviews: list[dict]) -> str | None:
+    """Engine of the newest trusted devflow-review/v1 review; "unknown" when it
+    names none; None when the pull request has no such review."""
+    trusted = sorted(
+        (r for r in reviews if REVIEW_MARKER in (r.get("body") or "") and r.get("authorAssociation") in TRUSTED),
+        key=lambda r: r.get("submittedAt") or "",
+    )
+    for r in reversed(trusted):
+        match = JSON_BLOCK.search(r["body"])
+        try:
+            verdict = json.loads(match.group(1)) if match else None
+        except ValueError:
+            continue
+        if isinstance(verdict, dict) and verdict.get("schema") == "devflow-review/v1":
+            engine = verdict.get("engine")
+            return engine if isinstance(engine, str) and engine else "unknown"
+    return None
+
+
+def escape_rate(commits: list[dict], details: dict[int, dict] | None = None) -> dict:
     """commits: newest-first first-parent {sha, subject, body} on dev.
 
+    details: {pr: {"body", "engine"}} read from the API (the description a
+    merge commit does not carry, and the review engine); may be partial.
     The window is the newest ESCAPE_WINDOW commits. Older commits only tell
     which #N are pull requests, so "fixes #N" on an issue is not counted.
+    A revert is an escape by its title. A fix-forward references an earlier
+    pull request with "fixes/follow-up to/reverts #N" anywhere, or, in a
+    fix: or revert title, with any "#N". The escaped pull request is #N.
     """
-    window = commits[:ESCAPE_WINDOW]
-    known_prs = {n for n in (_own_pr(c["subject"]) for c in commits) if n}
+    details = details or {}
+    lands = [landing(c) for c in commits]
+    known = {land["own"] for land in lands if land["own"]}
+    window = list(zip(commits[:ESCAPE_WINDOW], lands[:ESCAPE_WINDOW]))
     escapes = []
-    for c in window:
-        own = _own_pr(c["subject"])
-        text = f"{c['subject']}\n{c.get('body', '')}"
+    for c, land in window:
+        own = land["own"]
+        text = f"{land['text']}\n{(details.get(own) or {}).get('body') or ''}"
         refs = {int(n) for n in FIX_REF.findall(text)}
-        refs = {n for n in refs if n in known_prs and n != own and (own is None or n < own)}
-        if c["subject"].startswith("Revert ") or refs:
-            escapes.append({"sha": c["sha"][:10], "subject": c["subject"], "refs": sorted(refs)})
+        revert = bool(REVERT_TITLE.match(land["title"]))
+        if revert or FIX_TITLE.match(land["title"]):
+            refs |= {int(n) for n in PR_REF.findall(land["title"])}
+        refs = {n for n in refs if n in known and n != own and (own is None or n < own)}
+        if revert or refs:
+            escapes.append({
+                "sha": c["sha"][:10], "pr": own, "subject": land["title"],
+                "kind": "revert" if revert else "fix-forward", "refs": sorted(refs),
+            })
     total = len(window)
     rate = len(escapes) / total if total else 0.0
-    return {"count": len(escapes), "total": total, "rate": rate, "tight": rate > ESCAPE_THRESHOLD, "escapes": escapes}
+    return {
+        "count": len(escapes), "total": total, "rate": rate, "tight": rate > ESCAPE_THRESHOLD,
+        "escapes": escapes, "by_engine": by_engine([land["own"] for _, land in window], escapes, details),
+    }
+
+
+def by_engine(window_prs: list, escapes: list[dict], details: dict[int, dict]) -> dict:
+    """{engine: {"count", "total", "rate"}} over the window's reviewed pull requests.
+
+    An escape counts against the engine that reviewed the escaped pull
+    request (#N it references), not the one that reviewed the fix. Empty
+    when no pull request in the window has a devflow review.
+    """
+    engine = {n: (details.get(n) or {}).get("engine") for n in set(window_prs) | {r for e in escapes for r in e["refs"]}}
+    totals: dict[str, int] = defaultdict(int)
+    for n in window_prs:
+        if engine.get(n):
+            totals[engine[n]] += 1
+    if not totals:
+        return {}
+    counts: dict[str, int] = defaultdict(int)
+    for e in escapes:
+        for name in {engine.get(r) for r in e["refs"]} - {None}:
+            counts[name] += 1
+    return {
+        name: {"count": counts[name], "total": totals[name], "rate": counts[name] / totals[name]}
+        for name in sorted(totals)
+    }
 
 
 def queue_stats(runs: list[dict], jobs_by_run: dict[int, list[dict]], now: datetime, hours: int = 24) -> dict:
-    """Red rate by class, queue p90 and runner wait p95 over completed merge_group runs."""
+    """Red rate by class and queue p90 over completed merge_group runs in the
+    window; runner wait p95 over the last hour's runs."""
     since = now - timedelta(hours=hours)
     done = [r for r in runs if r.get("conclusion") in ("success", "failure") and parse_ts(r["created_at"]) >= since]
     red = {"infra": 0, "other": 0}
@@ -144,9 +290,11 @@ def queue_stats(runs: list[dict], jobs_by_run: dict[int, list[dict]], now: datet
         failed = [j for j in jobs_by_run.get(r["id"], []) if j.get("conclusion") == "failure"]
         red["infra" if failed and all(is_infra_job(j) for j in failed) else "other"] += 1
     waits = [(parse_ts(r["updated_at"]) - parse_ts(r["created_at"])).total_seconds() for r in done]
+    recent = {r["id"] for r in runs if now - parse_ts(r["created_at"]) <= WAIT_WINDOW}
     runner_waits = [
         (parse_ts(j["started_at"]) - parse_ts(j["created_at"])).total_seconds()
-        for js in jobs_by_run.values()
+        for run_id, js in jobs_by_run.items()
+        if run_id in recent
         for j in js
         if j.get("started_at") and j.get("created_at")
     ]
@@ -183,9 +331,11 @@ def render_digest(landings: int, stats: dict, esc: dict, dirty: float | None, br
         f"(infra {stats['red']['infra']}, other {stats['red']['other']})"
     )
     lines.append(f"- queue run time p90: {fmt_dur(stats['queue_p90_s'])}")
-    lines.append(f"- runner job wait p95: {fmt_dur(stats['runner_p95_s'])}")
+    lines.append(f"- runner job wait p95 (1h): {fmt_dur(stats['runner_p95_s'])}")
     flag = " :warning: above 2%, tight approval wanted" if esc["tight"] else ""
     lines.append(f"- escape rate (last {esc['total']} merges): {pct(esc['rate'])} ({esc['count']}){flag}")
+    for name, e in (esc.get("by_engine") or {}).items():
+        lines.append(f"  - reviewed by `{name}`: {pct(e['rate'])} ({e['count']} of {e['total']})")
     lines.append(f"- open PRs in conflict (DIRTY): {pct(dirty)}")
     return "\n".join(lines)
 
@@ -200,52 +350,95 @@ class Api:
             "User-Agent": "devflow-tick",
         }
 
-    def call(self, method: str, path: str, body: dict | None = None, token: str | None = None):
+    def request(self, method: str, url: str, body: dict | None = None, token: str | None = None):
+        """(json, Link header)."""
         headers = dict(self.headers)
         if token:
             headers["Authorization"] = f"Bearer {token}"
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(f"https://api.github.com{path}", data=data, method=method, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as res:
-            raw = res.read()
-            return json.loads(raw) if raw else None
+        if not url.startswith("https://"):
+            url = f"https://api.github.com{url}"
+        if not url.startswith("https://api.github.com/"):
+            raise ValueError(f"refusing to send the token to {url.split('?')[0]}")
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as res:
+                    raw = res.read()
+                    return (json.loads(raw) if raw else None), res.headers.get("Link", "")
+            except (TimeoutError, urllib.error.URLError) as err:
+                # Reads only: a write is never retried, so it is never doubled.
+                transient = not isinstance(err, urllib.error.HTTPError) or err.code in (502, 503, 504)
+                if method != "GET" or not transient or attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)
+        raise AssertionError("unreachable")
+
+    def call(self, method: str, path: str, body: dict | None = None, token: str | None = None):
+        return self.request(method, path, body, token)[0]
 
     def get(self, path: str):
         return self.call("GET", f"/repos/{self.repo}{path}")
+
+    def get_all(self, path: str, key: str | None = None) -> list:
+        """Every page of a list endpoint, following Link rel="next"."""
+        items, url = [], f"/repos/{self.repo}{path}"
+        for _ in range(MAX_PAGES):
+            page, link = self.request("GET", url)
+            items.extend(page[key] if key else page)
+            match = re.search(r'<([^>]+)>;\s*rel="next"', link or "")
+            if not match:
+                return items
+            url = match.group(1)
+        raise RuntimeError(f"more than {MAX_PAGES} pages at {path}")
 
     def graphql(self, query: str):
         return self.call("POST", "/graphql", {"query": query})
 
 
-def git_first_parent(n: int) -> list[dict]:
-    out = subprocess.run(
-        ["git", "log", "--first-parent", f"-{n}", "--format=%H%x1f%s%x1f%b%x1e", "origin/dev"],
-        check=True, capture_output=True, text=True,
-    ).stdout
-    commits = []
-    for rec in out.split("\x1e"):
-        if rec.strip():
-            sha, subject, body = (rec.strip("\n").split("\x1f") + ["", ""])[:3]
-            commits.append({"sha": sha.strip(), "subject": subject, "body": body})
-    return commits
+def list_runs(api: Api, workflow: str, since: datetime, until: datetime) -> list[dict]:
+    """Every merge_group run of a workflow created in [since, until]. A filtered
+    listing stops at LISTING_CAP results, so a fuller window is split in two."""
+    created = urllib.parse.quote(f"{iso(since)}..{iso(until)}")
+    path = f"/actions/workflows/{workflow}/runs?event=merge_group&per_page=100&created={created}"
+    first = api.get(path)
+    if first.get("total_count", 0) >= LISTING_CAP and until - since > timedelta(minutes=2):
+        mid = since + (until - since) / 2
+        return list_runs(api, workflow, since, mid) + list_runs(api, workflow, mid + timedelta(seconds=1), until)
+    return api.get_all(path, "workflow_runs")
 
 
-def collect_queue(api: Api, now: datetime):
-    runs, failures, jobs_by_run = [], [], {}
-    since = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+def collect_queue(api: Api, now: datetime, breaker_only: bool):
+    window = BREAKER_WINDOW if breaker_only else STATS_WINDOW
+    runs, jobs_by_run = [], {}
     for wf in QUEUE_WORKFLOWS:
-        data = api.get(f"/actions/workflows/{wf}/runs?event=merge_group&per_page=100&created=>={since}")
-        runs.extend(data.get("workflow_runs", []))
+        runs.extend(list_runs(api, wf, now - window, now))
     runs.sort(key=lambda r: r["created_at"], reverse=True)
-    for r in runs[:60]:
-        if r.get("status") != "completed":
-            continue
-        jobs = api.get(f"/actions/runs/{r['id']}/jobs?filter=latest&per_page=100").get("jobs", [])
-        jobs_by_run[r["id"]] = jobs
-        for j in jobs:
-            if j.get("conclusion") == "failure":
-                failures.append({"job": j["name"], "pr": pr_number(r), "at": j.get("completed_at") or r["updated_at"]})
-    return runs, failures, jobs_by_run
+    for r in runs:
+        if wants_jobs(r, now, breaker_only):
+            jobs_by_run[r["id"]] = api.get_all(f"/actions/runs/{r['id']}/jobs?filter=latest&per_page=100", "jobs")
+    return runs, queue_failures(runs, jobs_by_run), jobs_by_run
+
+
+def pr_details(api: Api, numbers: list[int]) -> dict[int, dict]:
+    """{pr: {"body", "engine"}} in batches of 25 per GraphQL query."""
+    owner, name = api.repo.split("/")
+    out: dict[int, dict] = {}
+    numbers = sorted(set(numbers))
+    for i in range(0, len(numbers), 25):
+        fields = " ".join(
+            f"p{n}: pullRequest(number: {n}) {{ number body "
+            "reviews(last: 20) { nodes { body authorAssociation submittedAt } } }"
+            for n in numbers[i:i + 25]
+        )
+        data = api.graphql(f'{{ repository(owner: "{owner}", name: "{name}") {{ {fields} }} }}')
+        for node in ((data or {}).get("data") or {}).get("repository", {}).values():
+            if node:
+                out[node["number"]] = {
+                    "body": node.get("body") or "",
+                    "engine": review_engine(node["reviews"]["nodes"]),
+                }
+    return out
 
 
 def open_pr_mergeables(api: Api) -> list[str]:
@@ -263,30 +456,57 @@ def open_pr_mergeables(api: Api) -> list[str]:
     return out
 
 
-def signal_breaker(api: Api, breaker: list[dict]) -> list[dict]:
+def git_first_parent(n: int) -> list[dict]:
+    out = subprocess.run(
+        ["git", "log", "--first-parent", f"-{n}", "--format=%H%x1f%s%x1f%b%x1e", "origin/dev"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    commits = []
+    for rec in out.split("\x1e"):
+        if rec.strip():
+            sha, subject, body = (rec.strip("\n").split("\x1f") + ["", ""])[:3]
+            commits.append({"sha": sha.strip(), "subject": subject, "body": body})
+    return commits
+
+
+def open_breaker_issues(api: Api) -> list[dict]:
+    """Open issues with the base-red label (the listing also returns pull requests)."""
+    items = api.get_all(f"/issues?labels={BREAKER_LABEL}&state=open&per_page=100")
+    return [i for i in items if "pull_request" not in i]
+
+
+def signal_breaker(api: Api, breaker: list[dict], issues: list[dict]) -> list[dict]:
     """Label plus one open tracking issue per failing job; never twice for the same job.
 
     Returns the entries that are new (no open issue yet).
     """
+    open_titles = {i["title"] for i in issues}
+    new = [b for b in breaker if BREAKER_TITLE + b["job"] not in open_titles]
+    if not new:
+        return []
     try:
         api.call("POST", f"/repos/{api.repo}/labels", {"name": BREAKER_LABEL, "color": "b60205",
                  "description": "Same job failing on several merge-queue PRs"})
     except urllib.error.HTTPError:
         pass  # label exists
-    open_titles = {i["title"] for i in api.get(f"/issues?labels={BREAKER_LABEL}&state=open&per_page=100")}
-    new = []
-    for b in breaker:
-        title = f"Base looks red: {b['job']}"
-        if title in open_titles:
-            continue
-        new.append(b)
+    for b in new:
         prs = ", ".join(f"#{n}" for n in b["prs"])
         api.call("POST", f"/repos/{api.repo}/issues", {
-            "title": title, "labels": [BREAKER_LABEL],
+            "title": BREAKER_TITLE + b["job"], "labels": [BREAKER_LABEL],
             "body": f"`{b['job']}` failed on merge-queue builds of {len(b['prs'])} different PRs in the last 2 hours: {prs}.\n"
-                    "Likely a base problem, not the PRs. Close this issue when the base is green again.",
+                    "Likely a base problem, not the PRs. The batch train pauses while this issue is open. "
+                    "The breaker closes it when the job stops tripping and a later queue build passes; "
+                    "close it yourself once the base is green.",
         })
     return new
+
+
+def close_resolved(api: Api, resolved: list[dict]) -> None:
+    for r in resolved:
+        api.call("POST", f"/repos/{api.repo}/issues/{r['number']}/comments", {
+            "body": f"`{r['job']}` no longer trips the breaker, and queue build {r['run']} passed after its last failure. Closing.",
+        })
+        api.call("PATCH", f"/repos/{api.repo}/issues/{r['number']}", {"state": "closed", "state_reason": "completed"})
 
 
 def breaker_line(b: dict) -> str:
@@ -309,30 +529,53 @@ def post_slack(url: str, text: str) -> None:
     urllib.request.urlopen(req, timeout=30).read()
 
 
+def run_breaker(api: Api, now: datetime, runs, failures, dry: bool) -> tuple[list[dict], list[dict]]:
+    """(tripped, new trips). Files new trips and closes resolved ones unless dry."""
+    breaker = detect_breaker(failures, now)
+    issues = open_breaker_issues(api)
+    resolved = resolved_trips(issues, breaker, failures, runs)
+    for r in resolved:
+        print(f"base health: {r['job']} recovered (queue build {r['run']} passed)")
+    if dry:
+        return breaker, []
+    new = signal_breaker(api, breaker, issues) if breaker else []
+    close_resolved(api, resolved)
+    return breaker, new
+
+
 def main(argv: list[str]) -> int:
     dry = "--dry-run" in argv
+    breaker_only = "--breaker-only" in argv
     repo, token = os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_TOKEN"]
     api, now = Api(repo, token), datetime.now(timezone.utc)
-    runs, failures, jobs_by_run = collect_queue(api, now)
-    breaker = detect_breaker(failures, now)
-    if "--breaker-only" in argv:
-        # Every push: signal a new trip once (issue is the dedupe), post only that.
-        new = [] if dry else signal_breaker(api, breaker) if breaker else []
+    runs, failures, jobs_by_run = collect_queue(api, now, breaker_only)
+    # Every push and every queue build: a new trip is filed once (the open
+    # issue is the dedupe), and only that is posted.
+    breaker, new = run_breaker(api, now, runs, failures, dry)
+    if breaker_only:
         print("\n".join(breaker_line(b) for b in breaker) or "base health: no trip")
         if new and os.environ.get("SLACK_WEBHOOK_URL"):
             post_slack(os.environ["SLACK_WEBHOOK_URL"], "\n".join(breaker_line(b) for b in new))
         return 0
     stats = queue_stats(runs, jobs_by_run, now)
-    esc = escape_rate(git_first_parent(ESCAPE_HISTORY))
-    hour_ago = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    landings = len(api.get(f"/commits?sha=dev&since={hour_ago}&per_page=100"))
+    commits = git_first_parent(ESCAPE_HISTORY)
+    window = [land["own"] for land in map(landing, commits[:ESCAPE_WINDOW]) if land["own"]]
+    first = escape_rate(commits)
+    details = pr_details(api, window + [r for e in first["escapes"] for r in e["refs"]])
+    esc = escape_rate(commits, details)
+    # Culprits found only through a description need their engine too.
+    late = {r for e in esc["escapes"] for r in e["refs"]} - set(details)
+    if late:
+        details.update(pr_details(api, sorted(late)))
+        esc = escape_rate(commits, details)
+    landings = len(api.get_all(f"/commits?sha=dev&since={iso(now - timedelta(hours=1))}&per_page=100"))
     dirty = dirty_share(open_pr_mergeables(api))
     text = render_digest(landings, stats, esc, dirty, breaker)
     print(text)
+    for e in esc["escapes"]:
+        print(f"  escape {e['kind']}: #{e['pr']} {e['subject'][:90]} -> {', '.join(f'#{n}' for n in e['refs']) or 'no PR named'}")
     if dry:
         return 0
-    if breaker:
-        signal_breaker(api, breaker)  # no-op for trips the per-push run already filed
     vars_token = os.environ.get("DEVFLOW_VARS_TOKEN")
     if vars_token:
         set_variable(api, vars_token, "1" if esc["tight"] else "0")
