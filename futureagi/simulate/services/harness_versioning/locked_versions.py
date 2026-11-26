@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -31,8 +31,14 @@ from simulate.models.harness_versioning import (
     TaskSplit,
 )
 from simulate.models.hosted_harness import HostedHarnessJob
+from simulate.selectors.environment_documents import registration_key
+from simulate.services.harness_tool_reach import blocked_tools
 from simulate.services.harness_versioning.drafts import require_no_rebuild
-from simulate.services.harness_versioning.versions import _conflict, _lock_environment
+from simulate.services.harness_versioning.versions import (
+    _conflict,
+    _lock_environment,
+    actors_enabled,
+)
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     grades_nothing,
@@ -90,11 +96,30 @@ def _category(use_case: Any) -> str:
     return str(use_case or "").strip().casefold()
 
 
+def production_bound(job: HostedHarnessJob) -> frozenset[str]:
+    """The keys of the default suite's scenarios that need a production-only tool of
+    the default environment version, as a run of that pair refuses them. Read only
+    while actors are on: off, no tool reaches production, and the read stays off the
+    version documents."""
+    if not actors_enabled():
+        return frozenset()
+    # No pins: the default pair, which is the pair every lock and preview names.
+    return frozenset(
+        registration_key(scenario["key"])
+        for entry in blocked_tools(job)
+        for scenario in entry["scenarios"]
+    )
+
+
 def scorable_tasks(
-    suite_version_id: UUID, *, environment_version_id: UUID
+    suite_version_id: UUID,
+    *,
+    environment_version_id: UUID,
+    blocked: Collection[str] = frozenset(),
 ) -> list[Task]:
-    """The suite version's scenarios a run pinned to both versions can score. Both
-    versions are immutable, so neither is this. Only the keys read leave the database."""
+    """The suite version's scenarios a run pinned to both versions can score, less the
+    ``blocked`` keys a run can't play. Both versions are immutable, so neither is this.
+    Only the keys read leave the database."""
     catalogue = sub_goal_catalogue(
         HarnessEnvironmentVersion._base_manager.filter(id=environment_version_id)
         .values_list("documents__sub_goals", flat=True)
@@ -109,6 +134,7 @@ def scorable_tasks(
         Task(scenario_id, key, _category(use_case))
         for scenario_id, key, use_case, sub_goals in members
         if not grades_nothing(sub_goals, catalogue)
+        and registration_key(key) not in blocked
     ]
     return tasks
 
@@ -282,7 +308,9 @@ def _plan_lock(
             status_code=409,
         )
     tasks = scorable_tasks(
-        job.suite_version_id, environment_version_id=job.environment_version_id
+        job.suite_version_id,
+        environment_version_id=job.environment_version_id,
+        blocked=production_bound(job),
     )
     plan = plan_splits(
         tasks,
