@@ -17,10 +17,11 @@ from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
+from temporalio.exceptions import TemporalError
 
 from simulate.models import (
     AgentDefinition,
@@ -99,9 +100,15 @@ def _receive_source_zip(request, store):
 
     archives = request.FILES.getlist("archive")
     if len(archives) != 1 or "files" in request.FILES or "paths" in request.data:
-        return Response({"detail": "Choose a single ZIP or a source folder."}, status=400)
+        return Response(
+            {"detail": "Choose a single ZIP or a source folder."}, status=400
+        )
     try:
-        with unpack_source_zip(archives[0], _SOURCE_UPLOAD_MAX_BYTES, settings.DATA_UPLOAD_MAX_NUMBER_FILES or 1000) as source:
+        with unpack_source_zip(
+            archives[0],
+            _SOURCE_UPLOAD_MAX_BYTES,
+            settings.DATA_UPLOAD_MAX_NUMBER_FILES or 1000,
+        ) as source:
             return Response(store(*source), status=status.HTTP_201_CREATED)
     except HostedHarnessError as exc:
         return Response(exc.as_dict(), status=exc.status_code)
@@ -1961,7 +1968,7 @@ class HostedHarnessProvider:
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
-        except Exception:
+        except (DatabaseError, OSError, RuntimeError, TemporalError):
             return Response(
                 build_error_envelope(
                     "Hosted harness scheduler is unavailable",
@@ -2740,7 +2747,9 @@ class HostedHarnessProvider:
                 try:
                     conversation = conversation or ensure_conversation(job)
                     body = chat_workspace_for(
-                        job, conversation, chat_state=load_workspace_archive(conversation)
+                        job,
+                        conversation,
+                        chat_state=load_workspace_archive(conversation),
                     )
                     harness_reviewed_builds.chat_review(job, body)
                 except HostedHarnessError as exc:
@@ -3953,7 +3962,12 @@ class HostedHarnessProvider:
                 status=status.HTTP_404_NOT_FOUND,
             )
         if "archive" in request.FILES:
-            return _receive_source_zip(request, lambda files, paths, name: store_source_archive(organization, files, paths, name))
+            return _receive_source_zip(
+                request,
+                lambda files, paths, name: store_source_archive(
+                    organization, files, paths, name
+                ),
+            )
         files = request.FILES.getlist("files")
         paths = request.data.getlist("paths")
         if not files or len(files) != len(paths):
@@ -4300,7 +4314,9 @@ class SandboxHarnessProvider:
             except HarnessSandboxRejected as exc:
                 return Response({"detail": str(exc)}, status=exc.status_code)
             except HarnessSandboxUnavailable as exc:
-                return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+                return Response(
+                    {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
         files = request.FILES.getlist("files")
         paths = request.data.getlist("paths")
         if not files or len(files) != len(paths):

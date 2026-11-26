@@ -417,15 +417,18 @@ def _semantic_source_digest(case, document, setup, ready):
         "case": case,
         "scenario": {field: values.get(field) for field in semantic_fields},
     }
-    return "sha256:" + hashlib.sha256(
-        json.dumps(
-            body,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode()
-    ).hexdigest()
+    return (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                body,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode()
+        ).hexdigest()
+    )
 
 
 def check_archive(job, body):
@@ -471,7 +474,11 @@ def check_archive(job, body):
         # repeated. Keep accepting those IDs while requiring all distinct cases.
         case_identity = {
             key: json.dumps(
-                {k: v for k, v in item["source_case"].items() if k not in {"id", "proof_digest"}},
+                {
+                    k: v
+                    for k, v in item["source_case"].items()
+                    if k not in {"id", "proof_digest"}
+                },
                 sort_keys=True,
             )
             for key, item in expected_by_case.items()
@@ -515,15 +522,16 @@ def check_archive(job, body):
             case = fixture["reviewed_source"]
             trusted = expected_by_case.get(case["id"])
             if trusted is None or case["id"] in seen_cases:
-                raise _invalid(f"scenario uses an unknown or repeated source case: {key}")
+                raise _invalid(
+                    f"scenario uses an unknown or repeated source case: {key}"
+                )
             if (
                 case != trusted["source_case"]
                 or scenario["fixture"]["reviewed_source"] != case
             ):
                 raise _invalid(f"scenario approved source case changed: {key}")
-            if (
-                proofs[key]["reviewed_source_digest"]
-                != _semantic_source_digest(case, archived_document, setup, ready)
+            if proofs[key]["reviewed_source_digest"] != _semantic_source_digest(
+                case, archived_document, setup, ready
             ):
                 raise _invalid(f"scenario source proof changed: {key}")
             seen_cases.add(case["id"])

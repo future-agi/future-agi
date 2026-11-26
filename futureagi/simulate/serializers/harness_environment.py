@@ -1252,7 +1252,9 @@ class HarnessScenarioSourceCitationSerializer(serializers.Serializer):
 class HarnessScenarioRowSerializer(serializers.Serializer):
     """One authored scenario on the Scenarios list."""
 
-    source_citations = HarnessScenarioSourceCitationSerializer(many=True, required=False)
+    source_citations = HarnessScenarioSourceCitationSerializer(
+        many=True, required=False
+    )
 
     id = serializers.UUIDField()
     scenario_id = serializers.UUIDField(allow_null=True)

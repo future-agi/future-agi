@@ -260,7 +260,7 @@ def recover_reviewed_designs(base_url):
 
 @transaction.atomic
 def dispatch_reviewed_design(job_id, base_url):
-    from temporalio.exceptions import WorkflowAlreadyStartedError
+    from temporalio.exceptions import TemporalError, WorkflowAlreadyStartedError
 
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
@@ -283,7 +283,7 @@ def dispatch_reviewed_design(job_id, base_url):
         )
     except WorkflowAlreadyStartedError:
         pass
-    except Exception:
+    except (OSError, RuntimeError, TemporalError):
         raise HostedHarnessError(
             "source_dispatch_unavailable",
             "The approved design could not be scheduled. Retry acceptance.",

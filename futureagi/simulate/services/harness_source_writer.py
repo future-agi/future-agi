@@ -4,11 +4,11 @@ import json
 import logging
 
 from django.conf import settings
+from httpx import HTTPError
 
 from simulate.services import hosted_harness_gateway as gateway
 from simulate.services.harness_versioning import archives
 from simulate.services.hosted_harness import HostedHarnessError
-
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ def author_additions(owner, files, pin, cases):
         # any original writer exception. The sandbox also has a bounded TTL.
         try:
             sandbox.delete()
-        except Exception as error:
+        except (RuntimeError, OSError, HTTPError) as error:
             logger.warning(
                 "Reviewed writer sandbox cleanup failed for job %s (%s)",
                 owner.pk,

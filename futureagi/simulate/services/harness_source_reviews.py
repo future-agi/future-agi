@@ -12,6 +12,8 @@ from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
 from rest_framework.exceptions import PermissionDenied
+from temporalio.exceptions import TemporalError
+from urllib3.exceptions import HTTPError
 
 from model_hub.services.kb_snapshot import CapturedKnowledgeBaseSource
 from model_hub.utils.kb_download import authorized_knowledge_base
@@ -323,7 +325,7 @@ def _store_staging(row, staged):
     try:
         sources._schedule_staging_expiry(key)
         sources._put_private(key, body)
-    except Exception:
+    except (OSError, RuntimeError, TemporalError, S3Error, HTTPError, ValueError):
         raise HostedHarnessError(
             "source_processor_unavailable",
             "Source storage is temporarily unavailable.",
@@ -875,7 +877,11 @@ def reprepare_review(
             "key": idempotency_key,
             "expected_revision": expected_revision,
             "redact_text_sources": sorted(redact_text_sources),
-            **({"synthetic_text_sources": sorted(synthetic_text_sources)} if synthetic_text_sources else {}),
+            **(
+                {"synthetic_text_sources": sorted(synthetic_text_sources)}
+                if synthetic_text_sources
+                else {}
+            ),
             "target_table": target_table,
             "schema_repairs": schema_repairs,
         }
@@ -937,9 +943,7 @@ def reprepare_review(
             }
             if privacy_sources - flagged:
                 raise _conflict("Select a source with a privacy finding.")
-        if row.owner_kind == Owner.ENVIRONMENT and (
-            target_table or privacy_sources
-        ):
+        if row.owner_kind == Owner.ENVIRONMENT and (target_table or privacy_sources):
             scope = {
                 **row.basis,
                 "expected_draft": row.basis["draft"],
@@ -975,7 +979,14 @@ def reprepare_review(
                 schema_repairs
                 or staged.get("prepare_options", {}).get("schema_repairs", ()),
                 repair_request=repair_request,
-                synthetic_text_sources=sorted(set(synthetic_text_sources) | set(staged.get("prepare_options", {}).get("synthetic_text_sources", ()))),
+                synthetic_text_sources=sorted(
+                    set(synthetic_text_sources)
+                    | set(
+                        staged.get("prepare_options", {}).get(
+                            "synthetic_text_sources", ()
+                        )
+                    )
+                ),
                 redact_text_sources=sorted(
                     set(redact_text_sources)
                     | set(

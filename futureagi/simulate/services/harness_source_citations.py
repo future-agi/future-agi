@@ -4,7 +4,6 @@ import json
 from collections import defaultdict
 
 from django.db.models import Q
-
 from rest_framework.exceptions import PermissionDenied
 
 from simulate.models import HarnessSourceReview

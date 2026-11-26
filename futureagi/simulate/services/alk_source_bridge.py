@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from django.conf import settings
+from httpx import HTTPError
 
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import _alk_source_overlay
@@ -113,5 +115,7 @@ def execute_source_request(payload: dict) -> dict:
         if sandbox is not None:
             try:
                 sandbox.delete()
-            except Exception:
-                pass
+            except (RuntimeError, OSError, HTTPError) as exc:
+                logging.getLogger(__name__).warning(
+                    "Source processor sandbox cleanup failed (%s)", type(exc).__name__
+                )

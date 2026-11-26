@@ -3,7 +3,9 @@ from __future__ import annotations
 from rest_framework import serializers
 
 # Set on a command by the server; a client never sends them.
-_SERVER_PAYLOAD_KEYS = frozenset({"command_kind", "nudge_id", "origin", "source_review_id"})
+_SERVER_PAYLOAD_KEYS = frozenset(
+    {"command_kind", "nudge_id", "origin", "source_review_id"}
+)
 
 
 class HarnessConversationMessageCreateSerializer(serializers.Serializer):

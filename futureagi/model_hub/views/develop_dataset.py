@@ -15835,9 +15835,7 @@ class CreateKnowledgeBaseView(APIView):
             for file_obj in files:
                 file_name = file_obj.name
                 file_size = file_obj.size
-                extension = (
-                    file_name.split(".")[-1].lower() if "." in file_name else ""
-                )
+                extension = file_name.split(".")[-1].lower() if "." in file_name else ""
 
                 file_instance = Files.objects.create(
                     name=file_name,

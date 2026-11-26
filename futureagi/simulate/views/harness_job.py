@@ -89,7 +89,10 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @swagger_auto_schema(
         manual_parameters=[
             openapi.Parameter(
-                "archive", openapi.IN_FORM, type=openapi.TYPE_FILE, required=False,
+                "archive",
+                openapi.IN_FORM,
+                type=openapi.TYPE_FILE,
+                required=False,
                 description="One source ZIP, instead of files and paths.",
             ),
             openapi.Parameter(

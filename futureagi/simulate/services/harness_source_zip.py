@@ -4,7 +4,7 @@ import stat
 import struct
 from contextlib import ExitStack, contextmanager
 from pathlib import PurePosixPath
-from zipfile import BadZipFile, ZIP_DEFLATED, ZIP_STORED, ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile
 from zlib import error as CompressionError
 
 from django.core.files import File

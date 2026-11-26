@@ -80,7 +80,9 @@ def capture_knowledge_base_selection(
             "Choose either a whole Knowledge Base or an explicit file selection.",
         )
     kb = authorized_knowledge_base(request, kb_id)
-    ready_selection = file_ids is not None and kb.status == StatusType.PARTIAL_COMPLETED.value
+    ready_selection = (
+        file_ids is not None and kb.status == StatusType.PARTIAL_COMPLETED.value
+    )
     if kb.status != StatusType.COMPLETED.value and not ready_selection:
         raise KnowledgeBaseSnapshotError(
             "source_not_ready",
@@ -141,7 +143,9 @@ def capture_knowledge_base_selection(
                 filename = f"source-{index}.pdf"
                 media_type = "application/pdf"
             else:
-                parsed = extract_document_text(original, file.name, preserve_lines=True).encode("utf-8")
+                parsed = extract_document_text(
+                    original, file.name, preserve_lines=True
+                ).encode("utf-8")
                 filename = f"source-{index}.txt"
                 media_type = "text/plain"
         except DocumentTextError as exc:

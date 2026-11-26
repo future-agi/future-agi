@@ -75,9 +75,7 @@ class _RealisticStorage(_Storage):
         return object_name
 
     def get_bucket_policy(self, bucket):
-        raise S3Error(
-            None, "NoSuchBucketPolicy", "missing", bucket, "request", "host"
-        )
+        raise S3Error(None, "NoSuchBucketPolicy", "missing", bucket, "request", "host")
 
 
 @pytest.fixture

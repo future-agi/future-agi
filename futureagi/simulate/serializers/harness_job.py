@@ -723,10 +723,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         elif (
             source["kind"] == "provider"
             and not names_agent_version(agent, attrs.get("metadata"))
-            and (
-                agent["connector"] not in no_source
-                or not provider_target_mode
-            )
+            and (agent["connector"] not in no_source or not provider_target_mode)
         ):
             raise serializers.ValidationError(
                 {

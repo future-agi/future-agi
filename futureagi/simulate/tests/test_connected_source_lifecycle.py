@@ -399,13 +399,22 @@ def test_each_connector_parks_and_recovers_approved_inputs(
             assert completed.payload["metadata"]["authoring_object_key"]
 
 
-def test_archive_mixes_ordinary_and_grounded_scenarios_without_losing_coverage(monkeypatch):
+def test_archive_mixes_ordinary_and_grounded_scenarios_without_losing_coverage(
+    monkeypatch,
+):
     from types import SimpleNamespace
 
     pin = {"id": "s1", "digest": "snapshot", "schema_digest": "schema"}
     monkeypatch.setattr(builds, "expected_pin", lambda _job: pin)
-    case = {"id": "rule-a", "category": "success", "policy_reference": "Give code RA-25"}
-    expected = [{"source_case": case}, {"source_case": {**case, "id": "old-second-slot"}}]
+    case = {
+        "id": "rule-a",
+        "category": "success",
+        "policy_reference": "Give code RA-25",
+    }
+    expected = [
+        {"source_case": case},
+        {"source_case": {**case, "id": "old-second-slot"}},
+    ]
     monkeypatch.setattr(builds, "_trusted_scenarios", lambda *_: expected)
     job = SimpleNamespace(scenario_count=2)
     files = {"reviewed-source.json": json.dumps(pin).encode()}
@@ -417,19 +426,31 @@ def test_archive_mixes_ordinary_and_grounded_scenarios_without_losing_coverage(m
         files[folder + "/scenario.json"] = json.dumps(document).encode()
         files[folder + "/setup.py"] = files[folder + "/ready.py"] = b""
         proofs[key] = (
-            {"reviewed_source_digest": builds._semantic_source_digest(case, document, b"", b"")}
-            if fixture else {}
+            {
+                "reviewed_source_digest": builds._semantic_source_digest(
+                    case, document, b"", b""
+                )
+            }
+            if fixture
+            else {}
         )
     manifest = {
-        "schema_version": "futureagi.environment-bundle.v2", "metadata": {"reviewed_source": pin},
-        "files": [{"path": k, "size": len(v), "sha256": hashlib.sha256(v).hexdigest()}
-                  for k, v in files.items()],
+        "schema_version": "futureagi.environment-bundle.v2",
+        "metadata": {"reviewed_source": pin},
+        "files": [
+            {"path": k, "size": len(v), "sha256": hashlib.sha256(v).hexdigest()}
+            for k, v in files.items()
+        ],
     }
     files.update({"environment-bundle/" + k: v for k, v in files.copy().items()})
     files["environment-bundle/manifest.json"] = json.dumps(manifest).encode()
     files["scenarios.json"] = json.dumps(index).encode()
     files["proofs.json"] = json.dumps(proofs).encode()
     assert builds.check_archive(job, _archive(files)) == pin
-    expected[1]["source_case"] = {**case, "id": "rule-b", "policy_reference": "Escalate damage"}
+    expected[1]["source_case"] = {
+        **case,
+        "id": "rule-b",
+        "policy_reference": "Escalate damage",
+    }
     with pytest.raises(HostedHarnessError, match="source case"):
         builds.check_archive(job, _archive(files))

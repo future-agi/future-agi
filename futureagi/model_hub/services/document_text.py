@@ -17,7 +17,9 @@ class DocumentTextError(ValueError):
 def normalize_document_text(text: str, *, preserve_lines: bool = False) -> str:
     text = text.replace("\x00", "")
     if preserve_lines:
-        normalized = "\n".join(" ".join(line.split()) for line in text.splitlines()).strip()
+        normalized = "\n".join(
+            " ".join(line.split()) for line in text.splitlines()
+        ).strip()
     else:
         normalized = " ".join(text.split())
     if not normalized:
@@ -34,7 +36,9 @@ def extract_pdf_reader_text(reader, *, preserve_lines: bool = False) -> str:
     )
 
 
-def extract_document_text(content: bytes, filename: str, *, preserve_lines: bool = False) -> str:
+def extract_document_text(
+    content: bytes, filename: str, *, preserve_lines: bool = False
+) -> str:
     """Extract normalized text without filesystem or indexing side effects."""
     if not isinstance(content, bytes) or len(content) > MAX_DOCUMENT_BYTES:
         raise DocumentTextError("Document exceeds the 25 MiB import limit.")
@@ -45,7 +49,9 @@ def extract_document_text(content: bytes, filename: str, *, preserve_lines: bool
         if suffix == ".pdf":
             from pypdf import PdfReader
 
-            return extract_pdf_reader_text(PdfReader(io.BytesIO(content)), preserve_lines=preserve_lines)
+            return extract_pdf_reader_text(
+                PdfReader(io.BytesIO(content)), preserve_lines=preserve_lines
+            )
         elif suffix == ".docx":
             import docx
 

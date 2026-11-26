@@ -101,14 +101,6 @@ from simulate.serializers.harness_environment import (
     HarnessReviewDecisionsSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
-    HarnessSourceAcceptResponseSerializer,
-    HarnessSourceAcceptSerializer,
-    HarnessSourceCapabilitiesSerializer,
-    HarnessSourceFileListInspector,
-    HarnessSourcePrepareResponseSerializer,
-    HarnessSourcePrepareSerializer,
-    HarnessSourceSummarySerializer,
-    HarnessSourceUploadPrepareSerializer,
     HarnessScenarioArchiveSerializer,
     HarnessScenarioLifecycleResponseSerializer,
     HarnessScenarioRecordsQuerySerializer,
@@ -120,7 +112,15 @@ from simulate.serializers.harness_environment import (
     HarnessScenarioValidateSerializer,
     HarnessScenarioValidationQuerySerializer,
     HarnessScenarioValidationStatusSerializer,
+    HarnessSourceAcceptResponseSerializer,
+    HarnessSourceAcceptSerializer,
+    HarnessSourceCapabilitiesSerializer,
     HarnessSourceChangesSerializer,
+    HarnessSourceFileListInspector,
+    HarnessSourcePrepareResponseSerializer,
+    HarnessSourcePrepareSerializer,
+    HarnessSourceSummarySerializer,
+    HarnessSourceUploadPrepareSerializer,
     HarnessSuiteMemberSerializer,
     HarnessVerifyCreateResponseSerializer,
     HarnessVerifyCreateSerializer,
@@ -345,7 +345,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
 
-    def _scoped_jobs(self, request, *, designs: bool = False, adaptations: bool = False):
+    def _scoped_jobs(
+        self, request, *, designs: bool = False, adaptations: bool = False
+    ):
         # The environments workspace is the page of a design and of an adaptation as well.
         # A design is listed, read and renamed like an environment; an adaptation is only
         # read (the composition it produces is the environment that gets listed). Neither
@@ -969,7 +971,6 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             return self._not_found()
         return Response(source_capabilities(job))
 
-
     @validated_request(responses={200: HarnessSourceSummarySerializer})
     @action(detail=True, methods=["get"], url_path="sources")
     def sources(self, request, pk=None):
@@ -982,9 +983,12 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             return self._not_found()
         from simulate.services.harness_source_reviews import require_source_scope
 
-        scope = None if coding_agent_key(request) else require_source_scope(request, write=False)
+        scope = (
+            None
+            if coding_agent_key(request)
+            else require_source_scope(request, write=False)
+        )
         return Response(source_summary(job, reviewer_scope=scope))
-
 
     @viewer_denied("prepare environment sources")
     @validated_request(
@@ -1019,7 +1023,6 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 expected_draft=body["expected_draft"],
             )
         )
-
 
     @viewer_denied("prepare environment source uploads")
     @validated_request(
@@ -1065,7 +1068,6 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         )
 
-
     @viewer_denied("accept environment sources")
     @validated_request(
         request_serializer=HarnessSourceAcceptSerializer,
@@ -1095,7 +1097,6 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 idempotency_key=body.get("idempotency_key"),
             )
         )
-
 
     @validated_request(responses={200: HarnessDraftReviewSerializer})
     @action(detail=True, methods=["get"], url_path="drafts/review")
@@ -1905,7 +1906,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
         response = paginator.get_paginated_response(environment_rows(page or []))
-        response.data["status_counts"] = status_counts(self._scoped_jobs(request, designs=True))
+        response.data["status_counts"] = status_counts(
+            self._scoped_jobs(request, designs=True)
+        )
         return response
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})

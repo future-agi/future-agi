@@ -40,8 +40,8 @@ from simulate.services.harness_versioning.draft_pieces import (
 from simulate.services.harness_versioning.drafts import (
     open_drafts,
     require_revisions,
-    require_source_scenario_pair,
     require_saveable,
+    require_source_scenario_pair,
     without_archived,
 )
 from simulate.services.harness_versioning.review import DraftReview

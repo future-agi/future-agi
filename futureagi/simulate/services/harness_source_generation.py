@@ -6,6 +6,7 @@ import re
 
 from django.db import transaction
 from temporalio.common import WorkflowIDConflictPolicy
+from temporalio.exceptions import TemporalError
 
 from simulate.models import (
     HarnessSourceReview,
@@ -63,7 +64,7 @@ def dispatch(identifier, *, attempt=None):
             id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             dispatch_timeout_seconds=30,
         )
-    except Exception:
+    except (OSError, RuntimeError, TemporalError):
         Generation.objects.filter(pk=identifier, state=Generation.State.QUEUED).update(
             state=Generation.State.FAILED, error=_DISPATCH_ERROR
         )

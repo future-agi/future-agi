@@ -1659,7 +1659,9 @@ def save_drafts(
         from simulate.services.harness_scenario_actions import require_no_validation
 
         require_no_validation(locked)
-        require_source_scenario_pair(locked, {piece: one.expected_revision for piece, one in requests.items()})
+        require_source_scenario_pair(
+            locked, {piece: one.expected_revision for piece, one in requests.items()}
+        )
         expected_review_digest = next(
             (
                 one.expected_review_digest
