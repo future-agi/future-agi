@@ -30,10 +30,10 @@ const CHAT = 'Chat';
 interface Refusal { error: string; message: string; positions: number[] }
 interface ListPage { count: number; results: { id: string; name: string; agent_type: string }[] }
 
-test('SIM-E2E-040: a wrong browser site is refused by its position at preflight, before anything is built', {
+test('SIM-E2E-042: a wrong browser site is refused by its position at preflight, before anything is built', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-040', area: 'simulate',
+    id: 'SIM-E2E-042', area: 'simulate',
     userGoal: 'A user building an environment for a browser agent names the sites its browser may open, and a '
       + 'wrong site is refused by its position, before anything is built',
     steps: ['open Environments with the Build environment drawer on folder upload', 'choose the agent folder and '
@@ -101,10 +101,10 @@ test('SIM-E2E-040: a wrong browser site is refused by its position at preflight,
   });
 });
 
-test('SIM-E2E-041: environments built for browser agents read Browser and are what the Browser filter lists', {
+test('SIM-E2E-043: environments built for browser agents read Browser and are what the Browser filter lists', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-041', area: 'simulate',
+    id: 'SIM-E2E-043', area: 'simulate',
     userGoal: 'A user finds the environments built for browser agents by their Browser label and the Browser filter',
     steps: ['seed two built environments: one whose agent contract needs a browser, one chat '
               + '(e2e/lib/harness_environment_seed.py)', 'open Environments', 'search each one\'s name and read '

@@ -50,6 +50,8 @@ export const stageToStatus = (stage) => {
 const LIST_STATUS_COMPLETED = "completed";
 
 export const envStatusFor = (stage, status) => {
+  // Nothing is built until the design is approved, whatever the job is doing meanwhile.
+  if (status === ENV_STATUS.AWAITING_APPROVAL) return status;
   if (STAGE_LED_STAGES.has(stage)) return stageToStatus(stage);
   return status === LIST_STATUS_COMPLETED ? ENV_STATUS.READY : status;
 };

@@ -30,6 +30,8 @@ export const SCENARIOS_COPY = {
   editLabel: "Edit scenario",
   openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
+  // A composition's suite is a sealed release: each change is proved and saved as a new version.
+  compositionEditHint: "Change these scenarios in the chat; each change is saved as a new version of the suite.",
   removeArchived: "Archived scenarios don't run. Restore it to remove it.",
   deleteArchived: "Archived scenarios don't run. Restore them to delete them.",
   filterLabel: "Filter",
