@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, renderHook, screen, waitFor } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement, ReactNode } from "react";
+import { render, screen, waitFor } from "src/utils/test-utils";
+import type { HarnessVersionsApi } from "src/generated/api-contracts/api.schemas";
 
 interface Shown {
   message: unknown;
@@ -56,7 +58,7 @@ const LOCKED = {
 };
 
 // The unlock's answer: every version and the locked-version history.
-const UNLOCKED = {
+const UNLOCKED: HarnessVersionsApi = {
   agent: [],
   environment: [],
   suite: [],
@@ -64,22 +66,31 @@ const UNLOCKED = {
     {
       id: "lv-1",
       label: "2026.11.1",
+      environment_version_id: "env-version-3",
       environment_label: "v3",
+      suite_version_id: "suite-version-2",
       suite_label: "v2",
+      locked_at: "2026-11-25T10:00:00Z",
+      locked_by: { id: "u-1", name: "Kartik" },
       unlocked_at: "2026-11-26T10:00:00Z",
+      unlocked_by: { id: "u-1", name: "Kartik" },
+      train: 8,
+      test: 4,
     },
   ],
 };
 
 let client: QueryClient;
+let unmount: () => void;
 const refuse = (error: unknown): Shown => {
   client = new QueryClient();
-  const { result } = renderHook(() => useDeleteRefusal(), {
+  const hook = renderHook(() => useDeleteRefusal(), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     ),
   });
-  result.current("env-1", error);
+  unmount = hook.unmount;
+  hook.result.current("env-1", error);
   return snackbars.at(-1) as Shown;
 };
 
@@ -108,6 +119,63 @@ describe("useDeleteRefusal", () => {
       expect(snackbars.at(-1)).toMatchObject({
         message: "Unlocked environment v3, scenarios v2 (lock 2026.11.1).",
         options: { variant: "success" },
+      }),
+    );
+  });
+
+  it("says how the unlock went after the page that asked for it is gone", async () => {
+    let answer: (value: HarnessVersionsApi) => void = () => {};
+    unlockVersion.mockReturnValueOnce(
+      new Promise<HarnessVersionsApi>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const shown = refuse(LOCKED);
+    render(shown.options.action!("snack-1"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Unlock versions" }),
+    );
+
+    // The list that refused the delete unmounts before the unlock answers.
+    unmount();
+    answer(UNLOCKED);
+
+    await waitFor(() =>
+      expect(snackbars.at(-1)).toMatchObject({
+        message: "Unlocked environment v3, scenarios v2 (lock 2026.11.1).",
+        options: { variant: "success" },
+      }),
+    );
+  });
+
+  it("says why the unlock failed after the page that asked for it is gone", async () => {
+    let refuseUnlock: (reason: unknown) => void = () => {};
+    unlockVersion.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        refuseUnlock = reject;
+      }),
+    );
+    const shown = refuse(LOCKED);
+    render(shown.options.action!("snack-1"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Unlock versions" }),
+    );
+
+    unmount();
+    refuseUnlock({
+      response: {
+        status: 403,
+        data: {
+          error: "unlock_admin_only",
+          message: "Only a workspace admin or owner can unlock versions.",
+        },
+      },
+    });
+
+    await waitFor(() =>
+      expect(snackbars.at(-1)).toMatchObject({
+        message: "Only a workspace admin or owner can unlock versions.",
+        options: { variant: "error" },
       }),
     );
   });
