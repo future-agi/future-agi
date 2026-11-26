@@ -42,7 +42,7 @@ export default function OutsideAttemptVerdict({
         title={`Attempt ${number} from your coding agent`}
         description={
           // A run with too few failing cases holds none back.
-          fix.request.held_back_scenario_keys.length
+          fix.request.held_back_scenario_keys?.length
             ? "Your coding agent wrote this change. Future AGI checks every fix on cases your agent wasn't given."
             : "Your coding agent wrote this change. Future AGI checks it on the run's failing cases and on the cases that pass today."
         }
@@ -62,7 +62,9 @@ export default function OutsideAttemptVerdict({
         {error && (
           <ErrorState
             title="Couldn't load this attempt's verdict"
+            detail="The attempt itself is unaffected."
             onRetry={() => refetch()}
+            sx={{ py: 2 }}
           />
         )}
         {checks.length > 0 && (
