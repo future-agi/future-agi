@@ -112,14 +112,14 @@ type policySemanticSpy struct {
 	searches, sets int
 }
 
-func (s *policySemanticSpy) Search(vector []float32, partition string) *cache.SearchResult {
+func (s *policySemanticSpy) Search(scope string, vector []float32, partition string) *cache.SearchResult {
 	s.searches++
-	return s.SemanticBackend.Search(vector, partition)
+	return s.SemanticBackend.Search(scope, vector, partition)
 }
 
-func (s *policySemanticSpy) Set(key string, vector []float32, partition string, resp *models.ChatCompletionResponse, ttl time.Duration) {
+func (s *policySemanticSpy) Set(scope, key string, vector []float32, partition string, resp *models.ChatCompletionResponse, ttl time.Duration) {
 	s.sets++
-	s.SemanticBackend.Set(key, vector, partition, resp, ttl)
+	s.SemanticBackend.Set(scope, key, vector, partition, resp, ttl)
 }
 
 func policySpyPlugin() (*Plugin, *policyExactSpy, *policySemanticSpy) {
@@ -190,9 +190,9 @@ func TestSelectedPoliciesBypassEveryCacheLayer(t *testing.T) {
 					// A matching conditional must not short-circuit admission. Seed
 					// both the old policy partition and the unscoped namespace too.
 					fp, _ := p.keyPolicyCacheState(rc)
-					key := BuildCacheKey(namespaceWithKeyPolicies("default", fp), rc.Request)
+					key := BuildCacheKey(orgScope(rc), namespaceWithKeyPolicies("default", fp), rc.Request)
 					exact.Backend.Set(key, makeResp("cached"), time.Minute)
-					exact.Backend.Set(BuildCacheKey("default", rc.Request), makeResp("unscoped"), time.Minute)
+					exact.Backend.Set(BuildCacheKey(orgScope(rc), "default", rc.Request), makeResp("unscoped"), time.Minute)
 					rc.Metadata["if_none_match"] = `"` + key + `"`
 					p.ProcessRequest(context.Background(), rc)
 					assertPolicyBypass(t, rc, exact, semantic)

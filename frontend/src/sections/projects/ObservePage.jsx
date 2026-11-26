@@ -28,6 +28,9 @@ import {
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
 import { withLiveGridApi } from "src/utils/gridApi";
+import ResourceUnavailable from "src/sections/common/ResourceUnavailable/ResourceUnavailable";
+import { getResourceUnavailableKind } from "src/sections/common/ResourceUnavailable/resourceUnavailableKind";
+import { paths } from "src/routes/paths";
 
 // Loading component for tab content
 const TabContentLoader = () => (
@@ -105,7 +108,8 @@ const ObservePage = React.memo(() => {
   const location = useLocation();
   const navigate = useNavigate();
   const { observeId } = useParams();
-  const { data: projectDetail } = useGetProjectDetails(observeId);
+  const { data: projectDetail, error: projectDetailError } =
+    useGetProjectDetails(observeId);
   const { data: savedViewsData } = useGetSavedViews(observeId);
   const queryClient = useQueryClient();
 
@@ -365,6 +369,24 @@ const ObservePage = React.memo(() => {
         <Alert severity="error">
           Invalid observe ID. Please check the URL and try again.
         </Alert>
+      </Box>
+    );
+  }
+
+  // The legacy 400 can also mean a transient failure. Keep cached content in
+  // that case, but honor a definitive refusal even after a successful load.
+  const projectUnavailableKind = getResourceUnavailableKind(projectDetailError, {
+    acceptLegacy400: !projectDetail,
+  });
+  if (projectUnavailableKind) {
+    return (
+      <Box sx={containerStyles}>
+        <ResourceUnavailable
+          kind={projectUnavailableKind}
+          resourceLabel="project"
+          backTo={paths.dashboard.observe}
+          backLabel="Back to Observe"
+        />
       </Box>
     );
   }
