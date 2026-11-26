@@ -11,6 +11,7 @@ import SideDrawer from "../../components/SideDrawer";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { useScenarioCoverage } from "src/api/simulate-environments/scenariosHooks";
 import { scenarioToolbarButtonSx } from "./scenarios.constants";
+import WorkflowProof from "./WorkflowProof";
 
 
 // The five rare-catastrophic overlays that must be present regardless of
@@ -40,7 +41,13 @@ const humanize = (s) =>
 // height: hover names the three summary numbers (Axes / Pairs / Forced), and a
 // click opens the per-axis table, the forced overlays and the pairwise heatmap
 // in a right-side drawer.
-export default function CoverageMatrix({ jobId, search, filters, defaultOpen = false }) {
+export default function CoverageMatrix({
+  jobId,
+  search,
+  filters,
+  defaultOpen = false,
+  versioned = false,
+}) {
   // Left undefined until the user picks, so the server default (task × overlay)
   // drives the initial grid.
   const [rowAxis, setRowAxis] = useState(undefined);
@@ -214,6 +221,10 @@ export default function CoverageMatrix({ jobId, search, filters, defaultOpen = f
               </Stack>
             </Box>
             <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <WorkflowProof
+                workflows={data?.workflows}
+                versioned={versioned}
+              />
               {/* Per-axis table — how many distinct levels each axis varied, and the
                   levels themselves with their counts. */}
               <Table size="small" sx={{
@@ -407,6 +418,8 @@ CoverageMatrix.propTypes = {
   search: PropTypes.string,
   filters: PropTypes.object,
   defaultOpen: PropTypes.bool,
+  // Whether the environment has versioning; proof per use case needs a saved default.
+  versioned: PropTypes.bool,
 };
 
 const headerCellSx = {

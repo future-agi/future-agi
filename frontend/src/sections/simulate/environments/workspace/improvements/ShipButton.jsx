@@ -74,8 +74,14 @@ export default function ShipButton({ fix }) {
   const shipWinner = async () => {
     setBusy(true);
     try {
-      await ship.mutateAsync(winner.id);
+      const shipped = await ship.mutateAsync(winner.id);
       setConfirming(false);
+      if (shipped?.kind === "validating") {
+        enqueueSnackbar(
+          "It becomes the default once it passes a check with this environment",
+          { variant: "info" },
+        );
+      }
     } catch (error) {
       const parsed = fixErrorOf(error);
       if (parsed.offerPatch) setOfferPatch(true);

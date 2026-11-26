@@ -1,10 +1,10 @@
 import {
-  keepPreviousData,
   useMutation,
   useQueries,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import axios, { endpoints } from "src/utils/axios";
@@ -17,12 +17,12 @@ export const FIX_POLL_MS = 5000;
 
 export const FIX_RUNS_PAGE_SIZE = 25;
 
-// The page and size sit after the env id, so invalidating fixRunsKey(envId)
-// refreshes every page of that environment.
-export const fixRunsKey = (envId, page, pageSize) =>
+// The page, size and states sit after the env id, so invalidating
+// fixRunsKey(envId) refreshes every page and filter of that environment.
+export const fixRunsKey = (envId, page, pageSize, states = []) =>
   page == null
     ? ["agent-fix-runs", envId]
-    : ["agent-fix-runs", envId, page, pageSize];
+    : ["agent-fix-runs", envId, page, pageSize, states.join(",")];
 export const fixRunKey = (fixId) => ["agent-fix-run", fixId];
 
 // A finished fix is read again while its winner's evals grade: it ships once they have.
@@ -31,14 +31,15 @@ export const fixPollInterval = (fix) =>
     ? FIX_POLL_MS
     : false;
 
-// One server page, 1-based, as { results, count }.
+// One server page, 1-based, as { results, count }; with states, only the fixes
+// in them, counted alone.
 export async function listFixRuns(
   envId,
-  { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {},
+  { page = 1, limit = FIX_RUNS_PAGE_SIZE, states = [] } = {},
 ) {
-  const res = await axios.get(endpoints.agentFixRuns.list(), {
-    params: { environment_id: envId, page, limit },
-  });
+  const params = { environment_id: envId, page, limit };
+  if (states.length) params.state = states.join(",");
+  const res = await axios.get(endpoints.agentFixRuns.list(), { params });
   return res.data;
 }
 
@@ -47,21 +48,57 @@ export async function getFixRun(fixId) {
   return res.data;
 }
 
+// The app's axios rejects with the body spread plus statusCode; an
+// axios-style { response } is accepted too.
+export const isNotFound = (error) =>
+  (error?.response?.status ?? error?.statusCode) === 404;
+
+// Only a list showing a live fix polls, so a list of other statuses (Ready for
+// review, say) would miss the fix that just reached it. The list that saw it
+// live refreshes every list of the environment once it ends.
+function useRefreshWhenAFixEnds(envId, results) {
+  const queryClient = useQueryClient();
+  const live = useRef(new Set());
+  useEffect(() => {
+    const fixes = results ?? [];
+    const ended = fixes.some(
+      (f) => live.current.has(f.id) && !FIX_LIVE_STATES.has(f.state),
+    );
+    live.current = new Set(
+      fixes.filter((f) => FIX_LIVE_STATES.has(f.state)).map((f) => f.id),
+    );
+    if (ended) queryClient.invalidateQueries({ queryKey: fixRunsKey(envId) });
+  }, [envId, results, queryClient]);
+}
+
 // 0-based page in, like the other environment lists; count is the server's
-// total across pages. Polls while a fix on the visible page is live. Asks
-// nothing when the org lacks Fix my agent, since the list answers 402 there.
+// total across pages, of the given states when there are some. Polls while a
+// fix on the visible page is live. Asks nothing when the org lacks Fix my
+// agent, since the list answers 402 there.
 export function useEnvironmentFixRuns(
   envId,
-  { page = 0, pageSize = FIX_RUNS_PAGE_SIZE } = {},
+  { page = 0, pageSize = FIX_RUNS_PAGE_SIZE, states = [] } = {},
 ) {
   const { allowed, isLoading: capabilityLoading } = useFeatureAllowed(
     CAPABILITY.FIX_MY_AGENT,
   );
-  const { data, isLoading } = useQuery({
-    queryKey: fixRunsKey(envId, page, pageSize),
-    queryFn: () => listFixRuns(envId, { page: page + 1, limit: pageSize }),
+  const key = fixRunsKey(envId, page, pageSize, states);
+  const { data, isLoading, error } = useQuery({
+    queryKey: key,
+    queryFn: () =>
+      listFixRuns(envId, { page: page + 1, limit: pageSize, states }),
     enabled: allowed && !!envId,
-    placeholderData: keepPreviousData,
+    // The list says why it failed, and steps back from a page past the end
+    // at once: no toast, and no retry of a 404.
+    meta: { errorHandled: true },
+    retry: (failures, failure) => !isNotFound(failure) && failures < 1,
+    // Another page keeps the last one on screen while it loads; another
+    // environment or filter never shows the last one's fixes.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === key[1] &&
+      previousQuery?.queryKey[4] === key[4]
+        ? previous
+        : undefined,
     refetchInterval: (query) =>
       (query.state.data?.results || []).some((f) =>
         FIX_LIVE_STATES.has(f.state),
@@ -69,11 +106,14 @@ export function useEnvironmentFixRuns(
         ? FIX_POLL_MS
         : false,
   });
+  useRefreshWhenAFixEnds(envId, data?.results);
   const fixes = data?.results ?? [];
   return {
     fixes,
     count: data?.count ?? 0,
     isLoading: capabilityLoading || isLoading,
+    // A page past the end answers 404: the list's page can step back.
+    error,
   };
 }
 
@@ -137,9 +177,12 @@ export async function shipCandidate(fix, candidateId) {
     endpoints.agentFixRuns.makeDefault(fix.id, candidateId),
     {},
   );
+  const outcome = res.data?.outcome;
+  // `validating`: it becomes the default once its pairing passes a check.
   return {
-    kind:
-      res.data?.outcome === "already_default" ? "already_default" : "activated",
+    kind: ["already_default", "validating"].includes(outcome)
+      ? outcome
+      : "activated",
   };
 }
 
@@ -225,7 +268,7 @@ export function checkRunsForScenarios(fix, candidateId) {
   };
 }
 
-// The baseline's and one candidate's check-run results, for the Per scenario
+// The baseline's and one candidate's check-run results, for the Scenarios
 // tab: what the scenario did before the change and after it.
 export function useFixScenarioRows(fix, candidateId) {
   const { before: baseline, after: candidateRuns } = checkRunsForScenarios(
@@ -241,10 +284,14 @@ export function useFixScenarioRows(fix, candidateId) {
       staleTime: 1000 * 60 * 5,
     })),
   });
-  const rowsOf = (list) => list.flatMap((r) => r.data ?? []);
+  // Each call keeps the check run it came from, so it can link to its run.
+  const rowsOf = (list, from) =>
+    list.flatMap((r, i) =>
+      (r.data ?? []).map((task) => ({ ...task, checkRun: from[i] })),
+    );
   return {
-    before: rowsOf(results.slice(0, baseline.length)),
-    after: rowsOf(results.slice(baseline.length)),
+    before: rowsOf(results.slice(0, baseline.length), baseline),
+    after: rowsOf(results.slice(baseline.length), candidateRuns),
     run: candidateRuns[0],
     isLoading: results.some((r) => r.isLoading),
     isError: results.some((r) => r.isError),
