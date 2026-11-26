@@ -4,6 +4,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { flowIdsAndAreas, readFlowSpecTexts } from "./flow-ids.mjs";
+
 const E2E_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const REPO_ROOT = path.dirname(E2E_DIR);
 
@@ -225,7 +227,7 @@ function areaOf(p) {
 const RULES = [
   [
     "E0",
-    "{api_contracts/openapi/**,frontend/src/generated/**,frontend/src/api/contracts/*.generated.*,agentcc-gateway/internal/contracts/generated/**,api_contracts/gateway/**,api_contracts/filter_contract.json,**/yarn.lock,**/uv.lock,**/go.sum,**/package-lock.json,futureagi/.test_durations,e2e/FLOWS.md}",
+    "{api_contracts/openapi/**,frontend/src/generated/**,frontend/src/api/contracts/*.generated.*,agentcc-gateway/internal/contracts/generated/**,api_contracts/gateway/**,api_contracts/filter_contract.json,**/yarn.lock,**/uv.lock,**/go.sum,**/package-lock.json,futureagi/.test_durations}",
   ],
   [
     "E1",
@@ -500,7 +502,7 @@ export function decide({
   autoReason,
   hits,
   marker,
-  flowsDiffAdded,
+  newFlowIds,
   changedFlowFiles,
   catalogIds,
 }) {
@@ -530,15 +532,13 @@ export function decide({
     );
   if (marker.kind === "exempt") return out("pass", `declared ${marker.raw}`);
   if (marker.kind === "new") {
-    const missing = marker.ids.filter(
-      (id) => !flowsDiffAdded.some((l) => l.startsWith(`### ${id}`)),
-    );
+    const missing = marker.ids.filter((id) => !newFlowIds.includes(id));
     return missing.length
       ? out(
           "block",
-          `declared new ${missing.join(", ")} but FLOWS.md diff does not add them — run \`yarn catalog\` and commit FLOWS.md`,
+          `declared new ${missing.join(", ")} but no spec under e2e/flows adds that flow id (compared with the base)`,
         )
-      : out("pass", `new ${marker.ids.join(", ")} present in FLOWS.md`);
+      : out("pass", `new ${marker.ids.join(", ")} added under e2e/flows`);
   }
   if (marker.kind === "updated") {
     const missing = marker.ids.filter(
@@ -555,7 +555,7 @@ export function decide({
   if (unknown.length)
     return out(
       "block",
-      `covered-by names flows not in FLOWS.md: ${unknown.join(", ")}`,
+      `covered-by names flows no spec under e2e/flows declares: ${unknown.join(", ")}`,
     );
   return out(
     "pass",
@@ -571,21 +571,14 @@ function needsMarkerHint(classification, hitIds) {
   return "behaviour files changed with no recognised signal: declare `E2E: updated|covered-by <ID>` or `E2E: exempt (<reason>)`";
 }
 
-function catalogAreasAndIds(catalog) {
-  const areas = [...catalog.matchAll(/^## (.+)$/gm)].map((m) => m[1].trim());
-  const ids = [...catalog.matchAll(/^### ([A-Z]+-E2E-\d{3})/gm)].map(
-    (m) => m[1],
-  );
-  return { areas, ids };
-}
-
-// `changedFlowFiles` (path → full head text of each changed spec) is what the CLI passes; tests pass nothing and the
+// `flowCatalog` is {ids, areas} from flowIdsAndAreas() over the head specs;
+// `newFlowIds` are the head ids the base lacked. `changedFlowFiles` (path → full head text of each changed spec) is what the CLI passes; tests pass nothing and the
 // added-line text stands in for it.
 export function classifyChange({
   fileDiffs,
   specs,
-  catalog,
-  flowsDiffAdded,
+  flowCatalog,
+  newFlowIds = [],
   titleType,
   body,
   changedFlowFiles: headSpecs,
@@ -598,7 +591,7 @@ export function classifyChange({
   const areas = [
     ...new Set(behaviour.map((f) => f.area).filter(Boolean)),
   ].sort();
-  const { areas: coveredAreas, ids: catalogIds } = catalogAreasAndIds(catalog);
+  const { areas: coveredAreas, ids: catalogIds } = flowCatalog;
   const areasWithoutFlows = areas.filter((a) => !coveredAreas.includes(a));
   const index = buildPinnedIndex(specs);
   const hits = detectHits(index, fileDiffs);
@@ -634,7 +627,7 @@ export function classifyChange({
     autoReason,
     hits,
     marker: parseMarker(body),
-    flowsDiffAdded,
+    newFlowIds,
     changedFlowFiles,
     catalogIds,
   });
@@ -729,6 +722,26 @@ function readFileDiffs(base, head) {
   );
 }
 
+// Flow ids and areas in the specs at a commit, from the same literals the
+// head reading uses. `git grep` exits 1 when nothing matches.
+function flowIdsAt(ref) {
+  try {
+    const lines = git([
+      "grep",
+      "-h",
+      "-E",
+      "['\"][A-Z]+-E2E-[0-9]{3}['\"]|area:",
+      ref,
+      "--",
+      ":(glob)e2e/flows/**/*.spec.ts",
+    ]);
+    return flowIdsAndAreas([lines]);
+  } catch (err) {
+    if (err.status === 1) return flowIdsAndAreas([]);
+    throw err;
+  }
+}
+
 function readSpecs() {
   const out = [];
   for (const dir of ["flows", "harness"]) {
@@ -804,8 +817,11 @@ function main() {
       /^(feat|fix|chore|docs|refactor|test|perf|ci|revert)(\(|:|!)/,
     )?.[1] ?? null;
   const fileDiffs = readFileDiffs(args.base, args.head);
-  const catalog = readFileSync(path.join(E2E_DIR, "FLOWS.md"), "utf8");
-  const flowsDiffAdded = fileDiffs["e2e/FLOWS.md"]?.added ?? [];
+  const flowCatalog = flowIdsAndAreas(readFlowSpecTexts(E2E_DIR));
+  const baseIds = flowIdsAt(
+    git(["merge-base", args.base, args.head]).trim(),
+  ).ids;
+  const newFlowIds = flowCatalog.ids.filter((id) => !baseIds.includes(id));
   const changedFlowFiles = Object.fromEntries(
     Object.keys(fileDiffs)
       .filter(
@@ -817,8 +833,8 @@ function main() {
   const result = classifyChange({
     fileDiffs,
     specs: readSpecs(),
-    catalog,
-    flowsDiffAdded,
+    flowCatalog,
+    newFlowIds,
     titleType,
     body,
     changedFlowFiles,
