@@ -11,6 +11,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from simulate.services import harness_actor_labels as labels
 from simulate.services.harness_actor_merge import id_from, merged_record
 from simulate.services.harness_actor_rules import _RULES_BEFORE_DECLARED, typed_limits
+from simulate.services.harness_actor_validation import actor_problems
 from simulate.services.harness_actor_view import never_sees
 from simulate.services.harness_versioning import drafts
 from simulate.services.harness_versioning.versions import record_authoring
@@ -1134,3 +1135,49 @@ def test_an_action_trigger_without_its_action_is_refused(
     assert (refused.status_code, refused.json()["error"]) == (400, "actor_invalid")
     assert "Pick the action" in refused.json()["message"]
     assert "manager" not in _stored(environment)
+
+
+@pytest.mark.parametrize(
+    "trigger, field",
+    [
+        ({"kind": "on_keyword", "words": []}, "words"),
+        ({"kind": "on_keyword", "words": ["  "]}, "words"),
+        ({"kind": "mid_journey", "turn": 0}, "turn"),
+        ({"kind": "on_tool", "tool": " "}, "tool"),
+        ({"kind": "probability", "p": 0}, "p"),
+        ({"kind": "probability", "p": "0.5"}, "p"),
+    ],
+)
+def test_a_trigger_the_harness_would_refuse_is_refused_when_written(trigger, field):
+    actor = {**MANAGER, "id": "manager", "activation": {"trigger": trigger}}
+
+    problems = actor_problems([actor], "manager", RULES, new_id=True)
+
+    assert problems, trigger
+    assert any(one["field"] in (field, "trigger") for one in problems), problems
+
+
+def test_an_old_record_s_trigger_never_blocks_an_edit_of_another_field():
+    """A record stored before these rules (ALK's default chance is 0) is edited by name only: its trigger is not
+    this edit's, so it never blocks it; an edit that writes the trigger is still checked."""
+    before = {
+        **MANAGER,
+        "id": "manager",
+        "activation": {"trigger": {"kind": "probability", "p": 0}},
+    }
+    renamed = {**before, "name": "Rep"}
+
+    by_name = actor_problems(
+        [renamed], "manager", RULES, new_id=False, before=before, touched={"name"}
+    )
+    by_trigger = actor_problems(
+        [renamed],
+        "manager",
+        RULES,
+        new_id=False,
+        before=before,
+        touched={"activation.trigger"},
+    )
+
+    assert by_name == []
+    assert by_trigger

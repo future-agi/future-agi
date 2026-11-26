@@ -204,7 +204,52 @@ def _record_problems(
                 problem("id", f"{actor_id!r} is reserved; give the actor another id."),
             )
         )
-    return problems
+    return problems + _trigger_problems(actor)
+
+
+# What each trigger needs for a run to bring the actor in, as the harness checks it when a scenario is kept: the
+# record path at fault and the sentence for it.
+def _trigger_problems(actor: ActorRecord) -> list[tuple[str, Problem]]:
+    activation = actor.get("activation")
+    trigger = activation.get("trigger") if isinstance(activation, dict) else None
+    if not isinstance(trigger, dict):
+        return []
+    kind = trigger.get("kind") or "always"
+    found: list[tuple[str, str]] = []
+    if kind == "on_tool" and not str(trigger.get("tool") or "").strip():
+        found.append(("tool", "Pick the action whose call brings them in."))
+    if kind == "probability":
+        chance = trigger.get("p")
+        if (
+            isinstance(chance, bool)
+            or not isinstance(chance, (int, float))
+            or not 0 < chance <= 1
+        ):
+            found.append(("p", "Give a chance above 0% and at most 100%."))
+    if kind == "on_keyword":
+        words = trigger.get("words")
+        if not isinstance(words, list) or not any(
+            isinstance(one, str) and one.strip() for one in words
+        ):
+            found.append(("words", "Give the words that bring them in."))
+    if kind == "mid_journey":
+        turn = trigger.get("turn")
+        if isinstance(turn, bool) or not isinstance(turn, int) or turn < 1:
+            found.append(("turn", "Give the agent's turn they come in at, 1 or more."))
+    if actor.get("channel") == "ivr" and kind != "always":
+        found.append(
+            (
+                "kind",
+                "A phone menu answers the call itself, so it is present from the start.",
+            )
+        )
+    return [
+        (
+            f"activation.trigger.{key}",
+            problem(field_at(f"activation.trigger.{key}"), sentence),
+        )
+        for key, sentence in found
+    ]
 
 
 def _names(value: object) -> list[str]:
@@ -358,30 +403,6 @@ def actor_problems(
         )
         for path, other in broken_references(actor, known, rules)
     ]
-    # A trigger the runtime refuses when a scenario is kept: an action trigger with no action, or a chance of 0.
-    activation = actor.get("activation")
-    trigger = activation.get("trigger") if isinstance(activation, dict) else None
-    if isinstance(trigger, dict) and trigger.get("kind") == "on_tool":
-        if not str(trigger.get("tool") or "").strip():
-            problems.append(
-                problem(
-                    field_at("activation.trigger.tool"),
-                    "Pick the action whose call brings them in.",
-                )
-            )
-    if isinstance(trigger, dict) and trigger.get("kind") == "probability":
-        chance = trigger.get("p")
-        if (
-            isinstance(chance, bool)
-            or not isinstance(chance, (int, float))
-            or not 0 < chance <= 1
-        ):
-            problems.append(
-                problem(
-                    field_at("activation.trigger.p"),
-                    "Give a chance above 0% and at most 100%.",
-                )
-            )
     problems += [
         problem(field_at(path), f"{actor_id} is in a cycle of {path} links; break it.")
         for path in rules.get("acyclic", [])
