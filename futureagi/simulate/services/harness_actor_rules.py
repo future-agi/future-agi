@@ -4,9 +4,10 @@ references and channels, the world actions and knowledge an actor may be given, 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from simulate.models import HostedHarnessJob
 from simulate.selectors.stage_outputs import stage_output
@@ -86,6 +87,10 @@ class ActorRules(TypedDict, total=False):
     # What each actor limit left unset takes, by limit: `{default, by_modality: {modality: value}}`, `by_modality`
     # empty when every modality shares the default; a release that seals none leaves the defaults unsaid.
     limit_defaults: dict[str, dict[str, object]]
+    # How a `knowledge/roles.json` key is read, by the release that sealed it.
+    knowledge_roles: KnowledgeRoleKeys
+    # Whether attached seed-records files can reach what the agent's tools read; None when the release could not tell.
+    seed_records_loaded: bool | None
 
 
 class WorldAction(TypedDict):
@@ -104,6 +109,10 @@ class KnowledgeSources(TypedDict):
 
     files: list[str]
     records: list[RecordSource]
+    # Each attached file's role, by path; an evaluator-only file is never among `files`.
+    roles: dict[str, str]
+    # Whether seed-records files reach what the agent's tools read, as the sealed rules say; None when unsaid.
+    seed_records_loaded: bool | None
 
 
 def text_of(value: object) -> str:
@@ -194,8 +203,109 @@ def _rules_before_declared() -> ActorRules:
 
 
 def actor_rules(files: dict[str, bytes]) -> ActorRules:
-    """The actor rules of the release that sealed these files."""
-    return read_json(files, ACTOR_RULES_FILE) or _rules_before_declared()
+    """The actor rules of the release that sealed these files, with every attached file marked evaluator-only in
+    `knowledge/roles.json` among the files only the evaluator reads (the harness adds them the same way at seal)."""
+    rules = read_json(files, ACTOR_RULES_FILE) or _rules_before_declared()
+    hidden = [
+        path.rsplit("/", 1)[-1]
+        for path, role in file_roles(files, rules.get("knowledge_roles")).items()
+        if role == "evaluator_only"
+    ]
+    if not hidden:
+        return rules
+    evaluator_only = dict(rules.get("evaluator_only") or {})
+    evaluator_only["files"] = sorted({*(evaluator_only.get("files") or []), *hidden})
+    return cast(ActorRules, {**rules, "evaluator_only": evaluator_only})
+
+
+# Scenario fields that grade the case even where a sealed release does not list them.
+GRADER_FIELDS = frozenset({"negative_controls", "must_pass"})
+
+
+def private_scenario_fields(rules: ActorRules) -> list[str]:
+    """The scenario fields only the grader reads: the sealed evaluator-only fields and the grading fields."""
+    sealed = (rules.get("evaluator_only") or {}).get("scenario_fields") or []
+    return sorted({*(str(one) for one in sealed), *GRADER_FIELDS})
+
+
+# Each attached file's role, by its path under `knowledge/`: what the harness seals it as.
+KNOWLEDGE_ROLES = "knowledge/roles.json"
+FileRole = Literal["policy", "seed_records", "evaluator_only"]
+FILE_ROLES: tuple[FileRole, ...] = ("policy", "seed_records", "evaluator_only")
+# A role that is not one of them, answered with the roles there are.
+FILE_ROLE_ERRORS: dict[str, Any] = {
+    "invalid_choice": f'"{{input}}" is not a file role: use {", ".join(FILE_ROLES)}.'
+}
+# The role a file with a role the platform does not know is read as: the safe side, as the harness reads it.
+UNKNOWN_ROLE: FileRole = "evaluator_only"
+
+
+class KnowledgeRoleKeys(TypedDict):
+    """How a `knowledge/roles.json` key is read. ALK seals it in the actor rules as `knowledge_roles`
+    (agent-learning-kit ``fi/alk/harness/actors.py`` ``KNOWLEDGE_ROLE_KEYS``)."""
+
+    file: str
+    roles: list[str]
+    unknown_role_reads_as: str
+    strip: bool
+    drop_prefix: str
+    under: str
+    refuse_parts: list[str]
+
+
+# For a release that sealed no rule: the same values ALK seals. Pinned with ALK by the shared key fixture
+# ``tests/fixtures/knowledge_role_keys.json``.
+KNOWLEDGE_ROLE_KEYS: KnowledgeRoleKeys = {
+    "file": KNOWLEDGE_ROLES,
+    "roles": list(FILE_ROLES),
+    "unknown_role_reads_as": UNKNOWN_ROLE,
+    "strip": True,
+    "drop_prefix": "./",
+    "under": "knowledge/",
+    "refuse_parts": [".."],
+}
+
+
+def knowledge_role_key(
+    raw: object, rule: Mapping[str, Any] | None = None
+) -> str | None:
+    """The attached file a `knowledge/roles.json` key names, or None when it names none, by the sealed rule."""
+    keys = {**KNOWLEDGE_ROLE_KEYS, **(rule or {})}
+    path = str(raw)
+    if keys["strip"]:
+        path = path.strip()
+    path = path.removeprefix(str(keys["drop_prefix"]))
+    if (
+        not path.startswith(str(keys["under"]))
+        or any(part in path.split("/") for part in keys["refuse_parts"])
+        or path == keys["file"]
+    ):
+        return None
+    return path
+
+
+def file_roles(
+    files: dict[str, bytes], rule: Mapping[str, Any] | None = None
+) -> dict[str, FileRole]:
+    """Each attached file's role from `knowledge/roles.json`, each key read by ``rule`` (the sealed
+    `knowledge_roles` rule, else the same values ALK seals). A role the platform does not know reads as the rule
+    says (evaluator-only, kept hidden); a key that names no attached file is left out, and a file that is not a
+    JSON object is no roles."""
+    keys = {**KNOWLEDGE_ROLE_KEYS, **(rule or {})}
+    try:
+        body = json.loads(files.get(str(keys["file"])) or b"null")
+    except ValueError:
+        # Not JSON: no roles, every file as before, as the harness reads it.
+        body = None
+    roles: dict[str, FileRole] = {}
+    for raw, role in body.items() if isinstance(body, dict) else []:
+        name = knowledge_role_key(raw, keys)
+        if name is None:
+            continue
+        roles[name] = cast(
+            FileRole, role if role in keys["roles"] else keys["unknown_role_reads_as"]
+        )
+    return roles
 
 
 def value_at(record: ActorRecord, path: str) -> Any:
@@ -290,6 +400,8 @@ def readable_file(path: str, rules: ActorRules) -> bool:
     return (
         bool(name)
         and ".." not in name.split("/")
+        # The roles file is harness metadata: it names the evaluator-only files.
+        and name != KNOWLEDGE_ROLES
         and (
             name.rsplit("/", 1)[-1]
             not in (rules.get("evaluator_only") or {}).get("files", [])
@@ -322,7 +434,16 @@ def knowledge_sources(
             name for name in environment_files if readable_file(name, rules)
         ),
         "records": records,
+        "roles": dict(sorted(file_roles(environment_files).items())),
+        "seed_records_loaded": _seed_records_loaded(rules),
     }
+
+
+def _seed_records_loaded(rules: ActorRules) -> bool | None:
+    """The sealed answer, read as given: False only when the release said attached seed records cannot reach the
+    agent's tools (they serve their own data), so they are context only."""
+    sealed = rules.get("seed_records_loaded")
+    return sealed if isinstance(sealed, bool) else None
 
 
 def world_stores(environment: HostedHarnessJob) -> object:

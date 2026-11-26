@@ -17,6 +17,7 @@ from simulate.services.harness_agent_versions import (
     resnapshot_version,
 )
 from simulate.services.hosted_harness_gateway import _source_object_key
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_receiver import _owned
 from simulate.tests.test_harness_agent_versions import (
     _a1,
@@ -217,7 +218,10 @@ class TestCandidate:
             {"expected_default_id": str(a1.id)},
             format="json",
         )
-        assert shipped.status_code == 200, shipped.content
+        # Shipping by hand checks the pairing first; the default moves when it passes.
+        assert shipped.status_code == 202, shipped.content
+        assert _defaults(environment) == [a1.id]
+        settle_validations(environment)
         assert _defaults(environment) == [version.id]
 
     def test_a_repeated_candidate_checks_its_pending_twin(
@@ -276,6 +280,7 @@ class TestCandidate:
         assert _side(change).parent.agent_version_id == a1.id
         assert _preflight(change).status == "passed"
         assert _preflight(candidate).status == "passed"
+        settle_validations(environment)
 
         assert _defaults(environment) == [change.id]
         assert _outcomes(change) == {str(environment.id): "activated"}
@@ -611,6 +616,7 @@ def _two_phone_environments(user, workspace, storage, key):
     assert _create(a1, environments[1], secret_values={"OPENAI_API_KEY": "v2"}).id == (
         a2.id
     )
+    settle_validations()
     assert _defaults(*environments) == [a2.id, a2.id]
     return environments
 
@@ -623,6 +629,7 @@ def test_only_the_asking_environment_moves(
 
     _, version = _made(_post(auth_client, first, {"prompt": "Be friendly."}))
     assert _preflight(version).status == "passed"
+    settle_validations()
 
     assert _defaults(first, second) == [version.id, a2_id]
     assert _outcomes(version) == {
@@ -679,6 +686,7 @@ class TestRead:
             assert (item["source"], item["prompt"]) == (None, None)
 
         assert _preflight(version).status == "passed"
+        settle_validations(environment)
         [default] = [
             item
             for item in _listed(auth_client, environment)["agent"]
