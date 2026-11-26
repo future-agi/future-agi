@@ -30,6 +30,7 @@ import IssueEpochAction from "./epoch/IssueEpochAction";
 import IssueEpochStrip from "./epoch/IssueEpochStrip";
 import RunEpochDrawer from "./epoch/RunEpochDrawer";
 import ErrorStatusChip from "./components/ErrorStatusChip";
+import EscalationReason from "./components/EscalationReason";
 import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
 import ErrorMetadataPanel, {
   LinearTeamPicker,
@@ -363,6 +364,7 @@ export default function ErrorFeedDetailView() {
                   size="small"
                 />
               </Stack>
+              <EscalationReason issue={currentError} />
             </Stack>
 
             {/* Action buttons */}
@@ -500,12 +502,12 @@ export default function ErrorFeedDetailView() {
                     onClick={() =>
                       updateIssue.mutate({
                         clusterId: currentError.cluster_id,
-                        status: "escalating",
+                        status: "for_review",
                       })
                     }
                     sx={{ borderColor: "divider", color: "text.secondary" }}
                   >
-                    Ignore issue
+                    Move to review
                   </Button>
                   <IssueEpochAction
                     clusterId={currentError.cluster_id}

@@ -160,7 +160,14 @@ METRICS_ADDITIONS = (
     ('tracer','0141_metric_refresh_busy_guard'),
     ('tracer','0142_merge_metrics_and_eval_put_back'),
 )
-LATEST = BASELINE_ADDITIONS + METRICS_ADDITIONS
+# Error Feed escalation (TH-8613) and its joins with dev's tracer leaves.
+FEED_ESCALATION_ADDITIONS = (
+    ('tracer','0117_feed_escalation_policy'),
+    ('tracer','0118_backfill_feed_issue_statuses'),
+    ('tracer','0131_merge_feed_escalation_and_internal_span_type'),
+    ('tracer','0143_merge_feed_escalation_and_metrics'),
+)
+LATEST = BASELINE_ADDITIONS + METRICS_ADDITIONS + FEED_ESCALATION_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
     ('simulate','0101_agent_fix_candidate_override'),
@@ -548,6 +555,9 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # simulate 0116 adds the evidence import's relation to the issue it came from.
         expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog',
             'tracer_trace_error_group'}
+        if set(FEED_ESCALATION_ADDITIONS) <= set(identities):
+            expected|={'tracer_error_cluster_traces','tracer_trace_investigation_finding',
+                'tracer_trace_investigation_job','tracer_trace_investigation_report'}
         if revision==REVISIONS[0]: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
         self.assertEqual({row['table'] for row in selected},expected)
         self.assertTrue(all(row['database']=='postgres' for row in selected))
@@ -564,6 +574,9 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
             elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
             elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
             elif row['name']=='0116_agent_fix_issue_job': expected_row={'tracer_trace_error_group'}  # Relation to the source issue.
+            elif row['name']=='0117_feed_escalation_policy': expected_row={'tracer_error_cluster_traces','tracer_trace_error_group'}
+            elif row['name']=='0118_backfill_feed_issue_statuses': expected_row={'tracer_error_cluster_traces',
+                'tracer_trace_investigation_finding','tracer_trace_investigation_job','tracer_trace_investigation_report'}
             else: expected_row=set()
             self.assertEqual(names,expected_row,(row['app_label'],row['name']))
 
