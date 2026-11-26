@@ -50,7 +50,7 @@ def summary(job):
 _DISPATCH_ERROR = "source_generation_dispatch_failed"
 
 
-def dispatch(identifier):
+def dispatch(identifier, *, attempt=None):
     from simulate.tasks.environment_source_imports import (
         generate_environment_source_scenarios,
     )
@@ -58,7 +58,8 @@ def dispatch(identifier):
     try:
         generate_environment_source_scenarios.apply_async(
             args=[str(identifier)],
-            task_id=f"environment-source-scenarios-{identifier}",
+            task_id=f"environment-source-scenarios-{identifier}"
+            + (f"-{attempt}" if attempt else ""),
             id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             dispatch_timeout_seconds=30,
         )
@@ -100,10 +101,10 @@ def reserve(row, user):
     return job
 
 
-def state_for_request(request, review_id):
+def state_for_request(request, review_id, *, retry=False):
     from simulate.services.harness_source_reviews import _find, require_source_scope
 
-    row = _find(review_id, require_source_scope(request, write=False))
+    row = _find(review_id, require_source_scope(request, write=retry))
     if (
         row.owner_kind != HarnessSourceReview.Owner.ENVIRONMENT
         or row.state != HarnessSourceReview.State.ACCEPTED
@@ -116,6 +117,21 @@ def state_for_request(request, review_id):
             "No scenario generation has been started.",
             status_code=404,
         )
+    if retry:
+        from uuid import uuid4
+
+        with transaction.atomic():
+            item = Generation.objects.select_for_update().get(pk=item.pk)
+            if item.state == Generation.State.STALE:
+                raise _conflict()
+            if item.state == Generation.State.FAILED:
+                if _basis(row.owner) != item.basis:
+                    raise _conflict()
+                item.state = Generation.State.QUEUED
+                item.error = ""
+                item.save(update_fields=["state", "error"])
+                transaction.on_commit(lambda: dispatch(item.id, attempt=uuid4().hex))
+        item.refresh_from_db()
     return summary(item)
 
 
@@ -179,7 +195,15 @@ def _generate(generation, owner):
 
 
 def _seal(
-    owner, environment, suite, *, snapshot, result, schema_digest, generated_keys, requested_count
+    owner,
+    environment,
+    suite,
+    *,
+    snapshot,
+    result,
+    schema_digest,
+    generated_keys,
+    requested_count,
 ):
     base = drafts._default_authoring(owner)
     if base is None:

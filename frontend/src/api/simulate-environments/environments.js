@@ -284,6 +284,7 @@ export function useBuildEnvironment() {
       if (credentialValues && Object.keys(credentialValues).length) {
         built.payload.credential_values = credentialValues;
       }
+      if (draft.testFocus) built.payload.test_focus = draft.testFocus;
       if (sourceSelection) built.payload.source_selection = sourceSelection;
       const dto = await createHarnessJob(
         built.payload,

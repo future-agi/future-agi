@@ -90622,7 +90622,7 @@
         },
         "/simulate/api/harness-source-reviews/{id}/scenario-generation/": {
             "get": {
-                "operationId": "simulate_api_harness-source-reviews_scenario_generation",
+                "operationId": "simulate_api_harness-source-reviews_scenario-generation_read",
                 "description": "",
                 "parameters": [],
                 "responses": {
@@ -90642,6 +90642,45 @@
                 "tags": [
                     "simulate"
                 ],
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "simulate_api_harness-source-reviews_scenario-generation_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceScenarioGeneration"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
             "parameters": [
@@ -157220,6 +157259,12 @@
             ],
             "type": "object",
             "properties": {
+                "test_focus": {
+                    "title": "Test focus",
+                    "type": "string",
+                    "maxLength": 4000,
+                    "minLength": 1
+                },
                 "source_selection": {
                     "$ref": "#/definitions/HarnessDesignSourceSelection"
                 },
@@ -157303,6 +157348,12 @@
             ],
             "type": "object",
             "properties": {
+                "test_focus": {
+                    "title": "Test focus",
+                    "type": "string",
+                    "maxLength": 4000,
+                    "minLength": 1
+                },
                 "source_selection": {
                     "$ref": "#/definitions/HarnessDesignSourceSelection"
                 },
@@ -157668,6 +157719,11 @@
                     "type": "string",
                     "maxLength": 20000,
                     "minLength": 1
+                },
+                "source_review_id": {
+                    "title": "Source review id",
+                    "type": "string",
+                    "format": "uuid"
                 },
                 "client_request_id": {
                     "title": "Client request id",
@@ -205503,6 +205559,14 @@
                     "maxLength": 20000,
                     "minLength": 1
                 },
+                "personal_data_mode": {
+                    "title": "Personal data mode",
+                    "type": "string",
+                    "enum": [
+                        "none",
+                        "synthetic_replace"
+                    ]
+                },
                 "modality": {
                     "title": "Modality",
                     "type": "string",
@@ -206139,6 +206203,15 @@
             ],
             "type": "object",
             "properties": {
+                "scenario_generation": {
+                    "title": "Scenario generation",
+                    "type": "object"
+                },
+                "generation_review_id": {
+                    "title": "Generation review id",
+                    "type": "string",
+                    "format": "uuid"
+                },
                 "draft": {
                     "title": "Draft",
                     "type": "boolean"
@@ -207189,6 +207262,15 @@
                     "items": {
                         "$ref": "#/definitions/SourceSchemaRepair"
                     }
+                },
+                "redact_text_sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 100
                 }
             }
         }

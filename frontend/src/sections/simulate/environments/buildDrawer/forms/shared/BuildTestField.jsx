@@ -5,7 +5,7 @@ import { T12 } from "../../drawerStyles";
 
 /**
  * What the environment should test: the agent's code says what it can do,
- * this says what to check. Kept in the form; nothing sends it yet.
+ * this says what to check.
  */
 export default function BuildTestField({
   value,
@@ -46,7 +46,10 @@ export default function BuildTestField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="e.g. Refunds inside and outside the 30-day window, and when a manager must approve"
-        inputProps={{ "aria-label": "What should this environment test?" }}
+        inputProps={{
+          maxLength: 4000,
+          "aria-label": "What should this environment test?",
+        }}
         sx={{ "& .MuiInputBase-input": { ...T12 } }}
       />
     </Box>

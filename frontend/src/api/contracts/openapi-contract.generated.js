@@ -31252,7 +31252,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "/simulate/api/harness-source-reviews/{id}/scenario-generation/": {
       get: {
-        operationId: "simulate_api_harness-source-reviews_scenario_generation",
+        operationId:
+          "simulate_api_harness-source-reviews_scenario-generation_read",
         runtimeRequestValidation: false,
         runtimeResponseValidation: true,
         requestBody: null,
@@ -31260,6 +31261,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessSourceScenarioGeneration",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId:
+          "simulate_api_harness-source-reviews_scenario-generation_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceScenarioGeneration",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -72286,6 +72308,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 20000,
           minLength: 1,
         },
+        source_review_id: {
+          title: "Source review id",
+          type: "string",
+          format: "uuid",
+        },
         client_request_id: {
           title: "Client request id",
           type: "string",
@@ -72790,6 +72817,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 20000,
           minLength: 1,
+        },
+        personal_data_mode: {
+          title: "Personal data mode",
+          type: "string",
+          enum: ["none", "synthetic_replace"],
         },
         modality: {
           title: "Modality",
@@ -73567,6 +73599,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["agent", "artifacts"],
       type: "object",
       properties: {
+        test_focus: {
+          title: "Test focus",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
         source_selection: {
           $ref: "#/definitions/HarnessDesignSourceSelection",
         },
@@ -73919,6 +73957,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["agent", "artifacts"],
       type: "object",
       properties: {
+        test_focus: {
+          title: "Test focus",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
         source_selection: {
           $ref: "#/definitions/HarnessDesignSourceSelection",
         },
@@ -75101,6 +75145,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/SourceSchemaRepair",
           },
         },
+        redact_text_sources: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
       },
     },
     HarnessSourceScenarioGeneration: {
@@ -75159,6 +75212,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["draft", "snapshot_digest", "sources", "validation_status"],
       type: "object",
       properties: {
+        scenario_generation: {
+          title: "Scenario generation",
+          type: "object",
+        },
+        generation_review_id: {
+          title: "Generation review id",
+          type: "string",
+          format: "uuid",
+        },
         draft: {
           title: "Draft",
           type: "boolean",

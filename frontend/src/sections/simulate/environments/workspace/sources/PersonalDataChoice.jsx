@@ -101,8 +101,12 @@ export default function PersonalDataChoice({
   onColumn,
   readOnly = false,
   compact = false,
+  availableChoices,
 }) {
   const name = useId();
+  const choices = shownChoices(choice).filter(
+    (one) => !availableChoices || availableChoices.includes(one.id),
+  );
   const timeout = usePrefersReducedMotion() ? 0 : "auto";
   if (compact) {
     return (
@@ -114,7 +118,7 @@ export default function PersonalDataChoice({
         useFlexGap
         flexWrap="wrap"
       >
-        {shownChoices(choice).map((one) => (
+        {choices.map((one) => (
           <Tooltip key={one.id} title={one.note} arrow>
             <Box>
               <Option
@@ -136,7 +140,7 @@ export default function PersonalDataChoice({
     <Stack spacing={1.5}>
       <Box>
         <Box role="radiogroup" aria-label="Personal data">
-          {shownChoices(choice).map((one) => (
+          {choices.map((one) => (
             <Option
               key={one.id}
               name={name}
@@ -205,6 +209,7 @@ export default function PersonalDataChoice({
 }
 
 PersonalDataChoice.propTypes = {
+  availableChoices: PropTypes.arrayOf(PropTypes.string),
   suggested: PropTypes.string,
   // keep, replace, none or custom; null until the person picks.
   choice: PropTypes.string,

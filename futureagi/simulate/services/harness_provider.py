@@ -1717,6 +1717,7 @@ class HostedHarnessProvider:
                 organization,
                 name=data["name"],
                 requirements=data["requirements"],
+                personal_data_mode=data.get("personal_data_mode"),
                 modality=data["modality"],
                 template_suite=(
                     visible_suite(organization, data["template_suite_id"])
@@ -1925,6 +1926,8 @@ class HostedHarnessProvider:
 
         # Taken out first: values never reach the checks, the digest or the job.
         secret_values = payload.pop("credential_values", None) or {}
+        if test_focus := payload.pop("test_focus", None):
+            payload["metadata"]["test_focus"] = test_focus
         selection = payload.pop("source_selection", None)
         if selection is not None:
             from simulate.services.harness_source_reviews import require_source_scope
@@ -2597,6 +2600,24 @@ class HostedHarnessProvider:
                     status=status.HTTP_409_CONFLICT,
                 )
         data = request.validated_data
+        attachment = {}
+        if review_id := data.get("source_review_id"):
+            from simulate.models import HarnessSourceReview
+            from simulate.services.harness_source_reviews import require_source_scope
+
+            try:
+                scope = require_source_scope(request, write=True)
+            except HostedHarnessError as exc:
+                return Response(exc.as_dict(), status=exc.status_code)
+            if not HarnessSourceReview.objects.filter(
+                **scope,
+                id=review_id,
+                owner=job,
+                owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
+            ).exists():
+                return Response({"detail": "Source review not found."}, status=404)
+            attachment["source_review_id"] = str(review_id)
+
         if job.state in terminal_states and data["kind"] == "user_message":
             # After the build, a message starts a builder turn of its own, billed as authoring, so
             # it is admitted like a build. A running build was admitted already; an answer feeds a
@@ -2623,9 +2644,12 @@ class HostedHarnessProvider:
                 kind=data["kind"],
                 reply_to=data.get("reply_to"),
                 payload={
-                    key: value
-                    for key, value in (data.get("payload") or {}).items()
-                    if key != "from_platform"
+                    **{
+                        key: value
+                        for key, value in (data.get("payload") or {}).items()
+                        if key != "from_platform"
+                    },
+                    **attachment,
                 },
                 server_payload={"_author_id": str(request.user.id)},
             )

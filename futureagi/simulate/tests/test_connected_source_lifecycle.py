@@ -1,5 +1,6 @@
 import hashlib
 import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -12,7 +13,10 @@ from simulate.services import harness_source_reviews as reviews
 from simulate.services import harness_sources
 from simulate.services.harness_provider import HostedHarnessProvider
 from simulate.services.hosted_harness import HostedHarnessError
-from simulate.services.hosted_harness_gateway import guest_job_document
+from simulate.services.hosted_harness_gateway import (
+    _ask_harness_to_build,
+    guest_job_document,
+)
 from simulate.tests.test_design_source_lifecycle import (
     _object_storage as _object_storage,
 )
@@ -104,6 +108,7 @@ def test_each_connector_parks_and_recovers_approved_inputs(
         body=b"Refunds within three days require a receipt.",
     )
     payload["source_selection"] = {"document_ids": [str(document.id)]}
+    payload["test_focus"] = "Verify a refund requires a receipt."
     dispatch = []
     monkeypatch.setattr(
         "simulate.temporal.client.start_hosted_harness_gateway_workflow",
@@ -157,6 +162,14 @@ def test_each_connector_parks_and_recovers_approved_inputs(
             reviews.accept_review(req, parked["id"], **args)
     assert dispatch == [str(job.id)]
     job.refresh_from_db()
+    messages = []
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_conversation.send_to_harness",
+        lambda job, **message: messages.append(message),
+    )
+    _ask_harness_to_build(job, SimpleNamespace(id="test"), "http://callback")
+    assert payload["test_focus"] in messages[0]["content"]
+    assert "test_focus" not in guest_job_document(job.payload)["metadata"]
     material = builds.launch_material(job)
     assert material.receipt["review_id"] == parked["id"] and material.documents[0][
         "id"

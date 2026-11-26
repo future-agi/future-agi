@@ -103038,44 +103038,101 @@ export const simulateApiHarnessSourceReviewsReprepare = async (
   );
 };
 
-export type simulateApiHarnessSourceReviewsScenarioGenerationResponse200 = {
+export type simulateApiHarnessSourceReviewsScenarioGenerationReadResponse200 = {
   data: HarnessSourceScenarioGenerationApi;
   status: 200;
 };
 
-export type simulateApiHarnessSourceReviewsScenarioGenerationResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessSourceReviewsScenarioGenerationResponseSuccess =
-  simulateApiHarnessSourceReviewsScenarioGenerationResponse200 & {
-    headers: ApiResponseHeaders;
-  };
-export type simulateApiHarnessSourceReviewsScenarioGenerationResponseError =
-  simulateApiHarnessSourceReviewsScenarioGenerationResponseDefault & {
-    headers: ApiResponseHeaders;
+export type simulateApiHarnessSourceReviewsScenarioGenerationReadResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
   };
 
-export type simulateApiHarnessSourceReviewsScenarioGenerationResponse =
-  | simulateApiHarnessSourceReviewsScenarioGenerationResponseSuccess
-  | simulateApiHarnessSourceReviewsScenarioGenerationResponseError;
+export type simulateApiHarnessSourceReviewsScenarioGenerationReadResponseSuccess =
+  simulateApiHarnessSourceReviewsScenarioGenerationReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessSourceReviewsScenarioGenerationReadResponseError =
+  simulateApiHarnessSourceReviewsScenarioGenerationReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
 
-export const getSimulateApiHarnessSourceReviewsScenarioGenerationUrl = (
+export type simulateApiHarnessSourceReviewsScenarioGenerationReadResponse =
+  | simulateApiHarnessSourceReviewsScenarioGenerationReadResponseSuccess
+  | simulateApiHarnessSourceReviewsScenarioGenerationReadResponseError;
+
+export const getSimulateApiHarnessSourceReviewsScenarioGenerationReadUrl = (
   id: string,
 ) => {
   return `/simulate/api/harness-source-reviews/${id}/scenario-generation/`;
 };
 
-export const simulateApiHarnessSourceReviewsScenarioGeneration = async (
+export const simulateApiHarnessSourceReviewsScenarioGenerationRead = async (
   id: string,
   options?: RequestInit,
-): Promise<simulateApiHarnessSourceReviewsScenarioGenerationResponse> => {
-  return apiMutator<simulateApiHarnessSourceReviewsScenarioGenerationResponse>(
-    getSimulateApiHarnessSourceReviewsScenarioGenerationUrl(id),
+): Promise<simulateApiHarnessSourceReviewsScenarioGenerationReadResponse> => {
+  return apiMutator<simulateApiHarnessSourceReviewsScenarioGenerationReadResponse>(
+    getSimulateApiHarnessSourceReviewsScenarioGenerationReadUrl(id),
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessSourceReviewsScenarioGenerationCreateResponse200 =
+  {
+    data: HarnessSourceScenarioGenerationApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessSourceReviewsScenarioGenerationCreateResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
+export type simulateApiHarnessSourceReviewsScenarioGenerationCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
+  };
+
+export type simulateApiHarnessSourceReviewsScenarioGenerationCreateResponseSuccess =
+  simulateApiHarnessSourceReviewsScenarioGenerationCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessSourceReviewsScenarioGenerationCreateResponseError =
+  (
+    | simulateApiHarnessSourceReviewsScenarioGenerationCreateResponse403
+    | simulateApiHarnessSourceReviewsScenarioGenerationCreateResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessSourceReviewsScenarioGenerationCreateResponse =
+  | simulateApiHarnessSourceReviewsScenarioGenerationCreateResponseSuccess
+  | simulateApiHarnessSourceReviewsScenarioGenerationCreateResponseError;
+
+export const getSimulateApiHarnessSourceReviewsScenarioGenerationCreateUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-source-reviews/${id}/scenario-generation/`;
+};
+
+export const simulateApiHarnessSourceReviewsScenarioGenerationCreate = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessSourceReviewsScenarioGenerationCreateResponse> => {
+  return apiMutator<simulateApiHarnessSourceReviewsScenarioGenerationCreateResponse>(
+    getSimulateApiHarnessSourceReviewsScenarioGenerationCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };

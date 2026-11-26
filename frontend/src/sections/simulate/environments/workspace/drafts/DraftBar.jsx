@@ -1,3 +1,5 @@
+import { useSearchParams } from "react-router-dom";
+import ReviewChangesFrame from "./ReviewChangesFrame";
 import PropTypes from "prop-types";
 import { useEffect, useId, useRef, useState } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
@@ -21,6 +23,7 @@ import {
   useActiveEnvironmentSourceReview,
   useEnvironmentSourceGeneration,
   useEnvironmentSourceReview,
+  useEnvironmentSources,
 } from "src/api/simulate-environments/sourceImports";
 
 const pieceLine = (piece, draft) =>
@@ -49,6 +52,34 @@ const errorText = (error, drafts, fallback) => {
   return COPY.errors[error?.error] || refusalText(error, fallback);
 };
 
+export function WorkspaceDraftBar(props) {
+  const [params, setParams] = useSearchParams();
+  const summary = useEnvironmentSources(
+    props.env?.versioning?.enabled ? props.env.id : null,
+  );
+  const changeReview = (open) =>
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (open) next.set("reviewChanges", "1");
+        else next.delete("reviewChanges");
+        return next;
+      },
+      { replace: true },
+    );
+  return (
+    <DraftBar
+      {...props}
+      inline
+      changeReview={changeReview}
+      reviewOpen={params.has("reviewChanges")}
+      summary={summary}
+    />
+  );
+}
+
+WorkspaceDraftBar.propTypes = { env: PropTypes.object };
+
 /**
  * The environment's unsaved changes, under the version bar: what they change,
  * who edited them last, and Save (every open piece at once) or Discard. Shown
@@ -59,17 +90,21 @@ export default function DraftBar({
   busy = false,
   rebuilding = false,
   onViewChanges,
+  inline,
+  changeReview,
+  reviewOpen,
+  summary,
 }) {
   const enabled = Boolean(env?.versioning?.enabled);
   const queryClient = useQueryClient();
   const { data: drafts } = useDrafts(env?.id, { enabled });
   const { reviewId } = useActiveEnvironmentSourceReview(env?.id);
   const { data: review } = useEnvironmentSourceReview(
-    enabled ? reviewId : null,
+    enabled ? summary?.data?.generation_review_id || reviewId : null,
   );
   const { data: sourceGeneration } = useEnvironmentSourceGeneration(
-    review?.id,
-    review?.scenario_generation,
+    summary?.data?.generation_review_id || review?.id,
+    summary?.data?.scenario_generation || review?.scenario_generation,
   );
   const save = useSaveDrafts(env?.id);
   const discard = useDiscardDraft(env?.id);
@@ -79,7 +114,11 @@ export default function DraftBar({
   const busyId = useId();
   const holdId = useId();
   const generationId = useId();
-  const affectedDraft = review?.receipt?.draft?.id === drafts?.environment?.id;
+  const affectedDraft = Boolean(
+    summary?.data?.sources?.some((source) => source.unsaved) ||
+      (review?.receipt?.draft?.id &&
+        review.receipt.draft.id === drafts?.environment?.id),
+  );
   const sealedSuite = sourceGeneration?.suite_draft;
   const awaitingSuite =
     affectedDraft &&
@@ -87,9 +126,10 @@ export default function DraftBar({
     (drafts?.suite?.id !== sealedSuite?.id ||
       drafts?.suite?.revision < sealedSuite?.revision);
   const generationBlocked =
-    affectedDraft &&
-    sourceGeneration &&
-    (sourceGeneration.state !== "completed" || awaitingSuite);
+    (inline && Boolean(drafts?.environment) && !summary?.data) ||
+    (affectedDraft &&
+      sourceGeneration &&
+      (sourceGeneration.state !== "completed" || awaitingSuite));
   let generationReason = COPY.errors.source_generation_not_ready;
   if (sourceGenerationPending(sourceGeneration)) {
     generationReason = COPY.errors.source_generation_in_progress;
@@ -101,6 +141,10 @@ export default function DraftBar({
       queryClient.invalidateQueries({ queryKey: draftsKey(env.id) });
     }
   }, [awaitingSuite, env?.id, queryClient]);
+
+  useEffect(() => {
+    if (inline && reviewOpen && drafts && !drafts.any) changeReview(false);
+  }, [inline, reviewOpen, drafts, changeReview]);
 
   // A refusal is about the drafts it was sent for, so it goes when they
   // change. draft_changed stays: it asks to review the drafts it refetched.
@@ -156,7 +200,7 @@ export default function DraftBar({
     error = errorText(discard.error, drafts, COPY.discardError);
   }
 
-  return (
+  const controls = (
     <Box
       component="section"
       aria-label={COPY.title}
@@ -186,13 +230,15 @@ export default function DraftBar({
           {latest.updatedAt &&
             ` — ${COPY.lastEdited(latest.lastEditedBy, relativeTime(latest.updatedAt))}`}
         </Typography>
-        <Button
-          size="small"
-          color="inherit"
-          onClick={() => onViewChanges?.(drafts.pieces[0], open[0].id)}
-        >
-          {COPY.viewChanges}
-        </Button>
+        {!inline && (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => onViewChanges?.(drafts.pieces[0], open[0].id)}
+          >
+            {COPY.viewChanges}
+          </Button>
+        )}
         <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
           <Button
             size="small"
@@ -279,6 +325,78 @@ export default function DraftBar({
       />
     </Box>
   );
+  if (!inline) return controls;
+  const unsaved = (summary?.data?.sources || []).filter(
+    (source) => source.unsaved,
+  );
+  const generated = affectedDraft
+    ? sourceGeneration?.generated_scenarios || []
+    : [];
+  const editCount = drafts.pieces.reduce(
+    (sum, piece) => sum + changeCount(drafts[piece].changes),
+    0,
+  );
+  return (
+    <>
+      <Typography variant="caption" color="text.secondary">
+        {editCount
+          ? editCount + (editCount === 1 ? " unsaved edit" : " unsaved edits")
+          : COPY.title}
+      </Typography>
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={() => changeReview(true)}
+      >
+        Review and save
+      </Button>
+      <ReviewChangesFrame
+        open={Boolean(reviewOpen)}
+        onClose={() => changeReview(false)}
+      >
+        <Stack spacing={2} sx={{ p: 2 }}>
+          {drafts.pieces.map((piece) => (
+            <Box key={piece}>
+              <Typography variant="subtitle2">{COPY.pieces[piece]}</Typography>
+              {Object.entries(drafts[piece].changes || {})
+                .filter(([, count]) => Number(count) > 0)
+                .map(([kind, count]) => (
+                  <Typography key={kind}>
+                    {kind.replaceAll("_", " ")} · {count}
+                  </Typography>
+                ))}
+            </Box>
+          ))}
+          {unsaved.length > 0 && (
+            <Box>
+              <Typography variant="subtitle2">Sources added</Typography>
+              {unsaved.map((source) => (
+                <Typography key={source.source_id}>
+                  {source.filename || "Source file"}
+                </Typography>
+              ))}
+            </Box>
+          )}
+          {generated.length > 0 && (
+            <Box>
+              <Typography variant="subtitle2">Generated scenarios</Typography>
+              {generated.map((scenario) => (
+                <Typography key={scenario.scenario_key}>
+                  {scenario.name}
+                </Typography>
+              ))}
+            </Box>
+          )}
+          {summary?.isError && (
+            <Button onClick={summary.refetch}>
+              Retry loading source changes
+            </Button>
+          )}
+          {controls}
+        </Stack>
+      </ReviewChangesFrame>
+    </>
+  );
 }
 
 DraftBar.propTypes = {
@@ -292,4 +410,8 @@ DraftBar.propTypes = {
   rebuilding: PropTypes.bool,
   // (piece, draft version id): show that draft in the Versions tab.
   onViewChanges: PropTypes.func,
+  inline: PropTypes.bool,
+  changeReview: PropTypes.func,
+  reviewOpen: PropTypes.bool,
+  summary: PropTypes.object,
 };

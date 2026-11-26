@@ -183,3 +183,24 @@ export const useAcceptSource = (envId) => {
     },
   });
 };
+
+export function useRetrySourceGeneration(reviewId, envId) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async () =>
+      (
+        await axios.post(
+          apiPath(
+            "/simulate/api/harness-source-reviews/{id}/scenario-generation/",
+            { id: reviewId },
+          ),
+          {},
+        )
+      ).data,
+    onSuccess: (data) => {
+      client.setQueryData([...sourceReviewKey(reviewId), "generation"], data);
+      client.invalidateQueries({ queryKey: sourceSummaryKey(envId) });
+    },
+    meta: { errorHandled: true },
+  });
+}

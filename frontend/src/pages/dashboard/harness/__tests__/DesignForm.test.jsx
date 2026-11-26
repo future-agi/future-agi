@@ -54,11 +54,11 @@ vi.mock("react-router-dom", async (original) => ({
   useNavigate: () => mocks.navigate,
 }));
 
-function form(template) {
+function form(template, scratch = false) {
   return render(
     <MemoryRouter>
       <QueryClientProvider client={new QueryClient()}>
-        <DesignForm template={template} />
+        <DesignForm template={template} scratch={scratch} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -79,6 +79,37 @@ const pick = (name) => {
 
 describe("DesignForm", () => {
   beforeEach(() => Object.values(mocks).forEach((mock) => mock.mockReset()));
+
+  it("submits the combined scratch composer with an inferred name and reviewed file preferences", async () => {
+    mocks.create.mockResolvedValue({ job: { job_id: "scratch-doc" } });
+    mocks.upload.mockResolvedValue({ id: "doc-17" });
+    form(null, true);
+    const description =
+      "Customer asks for a refund and the agent checks purchase history";
+    fireEvent.change(
+      screen.getByRole("textbox", { name: /describe the flow/i }),
+      { target: { value: description } },
+    );
+    fireEvent.change(screen.getByTestId("describe-files"), {
+      target: { files: [new File(["policy"], "returns.pdf")] },
+    });
+    fireEvent.click(await screen.findByLabelText("Use returns.pdf as policy"));
+    fireEvent.click(screen.getByRole("button", { name: "Build environment" }));
+    await waitFor(() =>
+      expect(mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Customer asks for a refund and the agent",
+          requirements: description,
+          personal_data_mode: "synthetic_replace",
+          source_selection: {
+            document_ids: ["doc-17"],
+            document_purposes: { "doc-17": "policy" },
+            knowledge_base: [],
+          },
+        }),
+      ),
+    );
+  });
 
   it("starts a source-free scratch design without parking it for review", async () => {
     mocks.create.mockResolvedValue({ job: { job_id: "source-free-job" } });

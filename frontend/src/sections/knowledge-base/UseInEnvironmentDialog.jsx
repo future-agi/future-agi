@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
   Button,
@@ -17,14 +17,28 @@ import { paths } from "src/routes/paths";
 
 export default function UseInEnvironmentDialog({ open, onClose, selection }) {
   const navigate = useNavigate();
-  const { data, isLoading, error } = useQuery({
+  const {
+    data,
+    isLoading,
+    error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
     queryKey: ["harness-environments", "source-targets"],
-    queryFn: () => listHarnessEnvironments({ page: 1, limit: 100 }),
+    initialPageParam: 1,
+    queryFn: ({ pageParam }) =>
+      listHarnessEnvironments({
+        page: pageParam,
+        limit: 100,
+        status: "completed",
+      }),
+    getNextPageParam: (page) => (page.next ? page.current_page + 1 : undefined),
     enabled: open,
   });
-  const environments = (data?.results || []).filter(
-    (environment) => environment.status === "completed",
-  );
+  const environments = (
+    data?.pages.flatMap((page) => page.results) || []
+  ).filter((environment) => environment.status === "completed");
 
   const choose = (environment) => {
     navigate(
@@ -62,6 +76,11 @@ export default function UseInEnvironmentDialog({ open, onClose, selection }) {
             </ListItemButton>
           ))}
         </List>
+        {hasNextPage && (
+          <Button onClick={() => fetchNextPage()} disabled={isFetchingNextPage}>
+            {isFetchingNextPage ? "Loading…" : "Load more environments"}
+          </Button>
+        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>

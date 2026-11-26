@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useReducer, useRef, useState } from "react";
-import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import { Box, Stack, Typography, TextField, IconButton, Checkbox, FormControlLabel } from "@mui/material";
 import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
@@ -18,7 +18,7 @@ import { Turn } from "./ConsoleTurn";
 import { subscribeBuilderChatFocus } from "./builderChatFocusBus";
 import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
-const INITIAL = { draft: "", scaffolds: [], files: [] };
+const INITIAL = { draft: "", scaffolds: [], files: [], policyFiles: [] };
 
 // Not the build forms' by-name merge: a message can carry two files that share a name.
 const sameFile = (a, b) => a.name === b.name && a.size === b.size;
@@ -49,10 +49,14 @@ function composerReducer(state, action) {
           ),
         ],
       };
+    case "policy":
+      return { ...state, policyFiles: action.checked
+        ? [...state.policyFiles, action.file] : state.policyFiles.filter((f) => f !== action.file) };
     case "unattach":
       return {
         ...state,
         files: state.files.filter((_, i) => i !== action.index),
+        policyFiles: state.policyFiles.filter((f) => f !== state.files[action.index]),
       };
     case "clear":
       return INITIAL;
@@ -117,6 +121,7 @@ export default function BuilderConsole({
   frozenReason,
   answerWithOptions = false,
   canAttach = false,
+  canChooseFilePurpose = false,
   onCollapse,
   collapseRef,
   active = true,
@@ -224,7 +229,8 @@ export default function BuilderConsole({
       .join(scaffoldText && text ? ". " : "");
     if ((!combined && !files.length) || blocked) return;
     dispatch({ type: "clear" });
-    onSend?.(combined, files);
+    if (canChooseFilePurpose && files.length) onSend?.(combined, files, state.policyFiles);
+    else onSend?.(combined, files);
   };
 
   return (
@@ -467,6 +473,14 @@ export default function BuilderConsole({
                   >
                     {CONSOLE_COPY.fileSize(file.size)}
                   </Typography>
+                  {canChooseFilePurpose && file.name.toLowerCase().endsWith(".pdf") && (
+                    <FormControlLabel
+                      label={state.policyFiles.includes(file) ? "Policy" : "Reference"}
+                      control={<Checkbox size="small" checked={state.policyFiles.includes(file)}
+                        inputProps={{ "aria-label": `Use ${file.name} as policy` }}
+                        onChange={(event) => dispatch({ type:"policy", file, checked:event.target.checked })} />}
+                    />
+                  )}
                   <IconButton
                     size="small"
                     aria-label={`Remove ${file.name}`}
@@ -631,6 +645,7 @@ BuilderConsole.propTypes = {
   answerWithOptions: PropTypes.bool,
   // Shows the paperclip; `onSend` then gets `(text, files)`.
   canAttach: PropTypes.bool,
+  canChooseFilePurpose: PropTypes.bool,
   onCollapse: PropTypes.func,
   // Attached to the collapse button so focus can return to it on reopen.
   collapseRef: PropTypes.oneOfType([

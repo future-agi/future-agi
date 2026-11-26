@@ -1015,7 +1015,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-source-reviews/{id}/accept/": ["post"],
       "/simulate/api/harness-source-reviews/{id}/cancel/": ["post"],
       "/simulate/api/harness-source-reviews/{id}/reprepare/": ["post"],
-      "/simulate/api/harness-source-reviews/{id}/scenario-generation/": ["get"],
+      "/simulate/api/harness-source-reviews/{id}/scenario-generation/": [
+        "get",
+        "post",
+      ],
       "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
       "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": [
         "put",
@@ -2499,7 +2502,10 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-source-reviews/{id}/accept/": ["post"],
   "/simulate/api/harness-source-reviews/{id}/cancel/": ["post"],
   "/simulate/api/harness-source-reviews/{id}/reprepare/": ["post"],
-  "/simulate/api/harness-source-reviews/{id}/scenario-generation/": ["get"],
+  "/simulate/api/harness-source-reviews/{id}/scenario-generation/": [
+    "get",
+    "post",
+  ],
   "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
   "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": ["put"],
   "/simulate/api/harness/attempts/{id}/events/": ["post"],

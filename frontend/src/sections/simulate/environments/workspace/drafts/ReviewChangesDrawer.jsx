@@ -16,7 +16,7 @@ import {
 } from "src/api/simulate-environments/draftReview";
 import { useRevertFileEdits } from "src/api/simulate-environments/sources";
 import { useEnvironmentVersions } from "src/api/simulate-environments/versions";
-import SideDrawer from "../../components/SideDrawer";
+import ReviewChangesFrame from "./ReviewChangesFrame";
 import MockBadge from "../../components/MockBadge";
 import { REVIEW_COPY as COPY } from "../workspace.constants";
 import ChangeRow from "./ChangeRow";
@@ -306,136 +306,106 @@ export default function ReviewChangesDrawer({
   };
 
   return (
-    <SideDrawer open={open} onClose={onClose} width={640}>
-      <Stack
-        role="dialog"
-        aria-label={COPY.title}
-        sx={{ height: "100%", minHeight: 0 }}
+    <ReviewChangesFrame
+      open={open}
+      onClose={onClose}
+      titleRef={titleRef}
+      badge={review?.is_sample && <MockBadge />}
+      subtitle={
+        changes.length
+          ? COPY.subtitle(kept.length, counts.rejected, piece, savedLabel)
+          : null
+      }
+    >
+      <Box role="status" sx={visuallyHidden}>
+        {announced}
+      </Box>
+      <Box
+        ref={bodyRef}
+        sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 2 }}
       >
-        <Box
+        {body()}
+      </Box>
+
+      {canEdit && changes.length > 0 && (
+        <Stack
+          spacing={1}
           sx={{
             px: 2,
-            py: 1.5,
-            pr: 6,
-            borderBottom: "1px solid",
+            py: 1.25,
+            borderTop: "1px solid",
             borderColor: "divider",
             flexShrink: 0,
           }}
         >
+          <TextField
+            size="small"
+            fullWidth
+            label={COPY.nameLabel}
+            placeholder={COPY.namePlaceholder}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            error={nameTooLong}
+            helperText={nameTooLong ? COPY.nameTooLong(NAME_LIMIT) : undefined}
+            inputProps={{ maxLength: NAME_LIMIT + 1 }}
+          />
           <Stack direction="row" alignItems="center" spacing={1}>
             <Typography
-              ref={titleRef}
-              tabIndex={-1}
-              component="h2"
               sx={{
-                typography: "m1",
-                fontWeight: "fontWeightSemiBold",
-                outline: "none",
+                typography: "s3",
+                color: counts.undecided ? "text.secondary" : "text.tertiary",
+                fontVariantNumeric: "tabular-nums",
               }}
             >
-              {COPY.title}
+              {COPY.progress(counts)}
             </Typography>
-            {review?.is_sample && <MockBadge />}
-          </Stack>
-          {changes.length > 0 && (
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {COPY.subtitle(kept.length, counts.rejected, piece, savedLabel)}
-            </Typography>
-          )}
-        </Box>
-
-        <Box role="status" sx={visuallyHidden}>
-          {announced}
-        </Box>
-        <Box
-          ref={bodyRef}
-          sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 2 }}
-        >
-          {body()}
-        </Box>
-
-        {canEdit && changes.length > 0 && (
-          <Stack
-            spacing={1}
-            sx={{
-              px: 2,
-              py: 1.25,
-              borderTop: "1px solid",
-              borderColor: "divider",
-              flexShrink: 0,
-            }}
-          >
-            <TextField
-              size="small"
-              fullWidth
-              label={COPY.nameLabel}
-              placeholder={COPY.namePlaceholder}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              error={nameTooLong}
-              helperText={
-                nameTooLong ? COPY.nameTooLong(NAME_LIMIT) : undefined
-              }
-              inputProps={{ maxLength: NAME_LIMIT + 1 }}
-            />
-            <Stack direction="row" alignItems="center" spacing={1}>
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: counts.undecided ? "text.secondary" : "text.tertiary",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {COPY.progress(counts)}
-              </Typography>
-              {counts.undecided > 0 && (
-                <Button
-                  size="small"
-                  color="inherit"
-                  onClick={acceptRemaining}
-                  sx={{ color: "text.secondary" }}
-                >
-                  {counts.undecided === counts.total
-                    ? COPY.acceptAll
-                    : COPY.acceptRemaining}
-                </Button>
-              )}
-            </Stack>
-            <Stack direction="row" alignItems="center" spacing={1.5}>
+            {counts.undecided > 0 && (
               <Button
                 size="small"
                 color="inherit"
-                onClick={() => setDiscarding(true)}
+                onClick={acceptRemaining}
+                sx={{ color: "text.secondary" }}
               >
-                {COPY.discardAll}
+                {counts.undecided === counts.total
+                  ? COPY.acceptAll
+                  : COPY.acceptRemaining}
               </Button>
-              <OverflowTooltip title={COPY.saveLine(line)}>
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    flex: 1,
-                    minWidth: 0,
-                  }}
-                >
-                  {kept.length > 0 && COPY.saveLine(line)}
-                </Typography>
-              </OverflowTooltip>
-              <HeldButton
-                ref={saveRef}
-                size="small"
-                variant="contained"
-                color="primary"
-                reason={saveReason}
-                onClick={save}
-              >
-                {COPY.save(kept.length ? line.next : null)}
-              </HeldButton>
-            </Stack>
+            )}
           </Stack>
-        )}
-      </Stack>
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            <Button
+              size="small"
+              color="inherit"
+              onClick={() => setDiscarding(true)}
+            >
+              {COPY.discardAll}
+            </Button>
+            <OverflowTooltip title={COPY.saveLine(line)}>
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              >
+                {kept.length > 0 && COPY.saveLine(line)}
+              </Typography>
+            </OverflowTooltip>
+            <HeldButton
+              ref={saveRef}
+              size="small"
+              variant="contained"
+              color="primary"
+              reason={saveReason}
+              onClick={save}
+            >
+              {COPY.save(kept.length ? line.next : null)}
+            </HeldButton>
+          </Stack>
+        </Stack>
+      )}
       <ConfirmDialog
         open={discarding}
         onClose={() => setDiscarding(false)}
@@ -452,7 +422,7 @@ export default function ReviewChangesDrawer({
           </Button>
         }
       />
-    </SideDrawer>
+    </ReviewChangesFrame>
   );
 }
 

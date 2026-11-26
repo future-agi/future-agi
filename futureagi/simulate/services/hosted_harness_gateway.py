@@ -318,9 +318,12 @@ def _ask_harness_to_build(
     """Put the build request into the environment's conversation; its harness does the build."""
     from simulate.services.hosted_harness_conversation import send_to_harness
 
+    content = f"Build the test environment for this agent, with {job.scenario_count} scenarios."
+    if focus := (job.payload.get("metadata") or {}).get("test_focus"):
+        content += f"\nRequested testing focus:\n{focus}"
     send_to_harness(
         job,
-        content=f"Build the test environment for this agent, with {job.scenario_count} scenarios.",
+        content=content,
         client_request_id=f"build-{attempt.id}",
         endpoint_base_url=endpoint_base_url,
     )
@@ -5933,6 +5936,7 @@ def _provider_import_authoring_material(
 
 # Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
 _SERVER_ONLY_METADATA = (
+    "test_focus",
     "conversation_checkpoints",
     "draft_saves",
     "evidence_adds",

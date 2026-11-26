@@ -65,6 +65,35 @@ def test_environment_with_multiple_tables_requires_a_destination(monkeypatch):
     ]
 
 
+def test_template_table_choices_survive_prepare_and_retarget(monkeypatch):
+    from simulate.services import harness_designs, harness_releases
+
+    tables = {
+        "orders": [("order_id", "TEXT", True), ("total", "NUMERIC", False)],
+        "customers": [("customer_id", "TEXT", True)],
+    }
+    monkeypatch.setattr(harness_designs, "_visible", lambda *_: object())
+    monkeypatch.setattr(harness_releases, "template_source_columns", lambda _: tables)
+    job = SimpleNamespace(
+        organization=object(),
+        payload={
+            "metadata": {"design": {"template": {"environment": [{"digest": _DIGEST}]}}}
+        },
+    )
+    upload = SimpleNamespace(
+        role="seed_records", media_type="text/csv", content=b"ORDER_ID,total\nA,42"
+    )
+    for target in (None, "customers", "orders"):
+        basis, schema = harness_designs.design_source_basis(job, target, [upload])
+        assert basis["destination_tables"] == ["customers", "orders"]
+        assert basis["suggested_target_table"] == "orders"
+        if target is None:
+            assert schema is None
+        else:
+            assert basis["target_table"] == target
+            assert schema["fields"][0]["name"] == tables[target][0][0]
+
+
 def test_environment_schema_reads_generated_json_schema(monkeypatch):
     monkeypatch.setattr(reviews.drafts, "fresh_draft", lambda *_: None)
     owner = SimpleNamespace(

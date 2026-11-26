@@ -367,7 +367,14 @@ const HEADERS = [
   ["Points at", null],
 ];
 
-function Columns({ source, targets, readOnly, onEdit }) {
+export function Columns({
+  source,
+  targets,
+  readOnly,
+  onEdit,
+  onInclude,
+  onStable,
+}) {
   const edit = (name, fields) => onEdit((one) => editColumn(one, name, fields));
   return (
     <Box>
@@ -383,6 +390,7 @@ function Columns({ source, targets, readOnly, onEdit }) {
             borderColor: "divider",
           }}
         >
+          {onInclude && <Box sx={{ width: 24, flexShrink: 0 }} />}
           {HEADERS.map(([label, width]) => (
             <Typography
               key={label}
@@ -409,6 +417,18 @@ function Columns({ source, targets, readOnly, onEdit }) {
                 column.type !== "number" && { bgcolor: "action.selected" }),
             }}
           >
+            {onInclude && (
+              <Checkbox
+                size="small"
+                sx={{ p: 0, width: 24 }}
+                checked={Boolean(column.included)}
+                disabled={!column.mappable}
+                inputProps={{ "aria-label": `Include ${column.name}` }}
+                onChange={(event) =>
+                  onInclude(column.index, event.target.checked)
+                }
+              />
+            )}
             <Typography
               noWrap
               sx={{
@@ -440,9 +460,15 @@ function Columns({ source, targets, readOnly, onEdit }) {
               <Checkbox
                 size="small"
                 checked={Boolean(column.stableId || column.key)}
-                disabled={readOnly || Boolean(column.key)}
+                disabled={
+                  onStable
+                    ? !column.canIdentify
+                    : readOnly || Boolean(column.key)
+                }
                 onChange={(event) =>
-                  edit(column.name, { stableId: event.target.checked })
+                  onStable
+                    ? onStable(column.index, event.target.checked)
+                    : edit(column.name, { stableId: event.target.checked })
                 }
                 inputProps={{ "aria-label": `${column.name} is a stable ID` }}
                 sx={{ p: 0.25 }}
@@ -482,7 +508,9 @@ Columns.propTypes = {
   source: PropTypes.object.isRequired,
   targets: PropTypes.arrayOf(PropTypes.string).isRequired,
   readOnly: PropTypes.bool,
-  onEdit: PropTypes.func.isRequired,
+  onEdit: PropTypes.func,
+  onInclude: PropTypes.func,
+  onStable: PropTypes.func,
 };
 
 const joinLine = (join) => {

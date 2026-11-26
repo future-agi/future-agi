@@ -63,7 +63,7 @@ const READS = {
    exists, opening the file itself. */
 function FilePreview({ file, summary, onClose }) {
   const from = `From ${file?.name}`;
-  const fromIt = (x) => x.src === from || x.src.startsWith(`${from} ·`);
+  const fromIt = (x) => x.src === from || x.src?.startsWith(`${from} ·`);
   const gave = [
     ...(summary.records || [])
       .filter(fromIt)
@@ -111,7 +111,14 @@ function FilePreview({ file, summary, onClose }) {
                 >
                   {k}
                 </Typography>
-                <Typography sx={{ typography: "s1", flex: 1, minWidth: 0 }}>
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    flex: 1,
+                    minWidth: 0,
+                    whiteSpace: "pre-line",
+                  }}
+                >
                   {v}
                 </Typography>
               </Stack>
@@ -155,6 +162,8 @@ export default function DesignReview({
   build,
   onApprove,
   onLeaveOut,
+  live = false,
+  disabled = false,
 }) {
   const [adding, setAdding] = useState(false);
   const [openFile, setOpenFile] = useState(null);
@@ -183,8 +192,9 @@ export default function DesignReview({
   const pending = (part) => (readingParts.includes(part) ? readingNames : "");
   const forAgent = !!draft.agent;
   // Only a design waiting for approval, or one whose build stopped short, can change.
-  const editable = !build || STOPPED_BUILD.includes(build.status);
-  const building = !editable && build.status !== "saved";
+  const editable =
+    !disabled && (!build || STOPPED_BUILD.includes(build.status));
+  const building = Boolean(build && !editable && build.status !== "saved");
 
   const rows = [
     [
@@ -225,7 +235,7 @@ export default function DesignReview({
   ];
 
   const blocker =
-    !reading && approveBlocked
+    !live && !reading && approveBlocked
       ? `There's nothing to build yet. Say what the agent does and works with, for example "customers and their orders; it can look up an order and refund up to $200".`
       : null;
   // The last blocker, so its words stay while it collapses away.
@@ -250,7 +260,9 @@ export default function DesignReview({
         }
         actions={
           <>
-            <UiOnlyFlag feature={build ? "designBuild" : "designReview"} />
+            {!live && (
+              <UiOnlyFlag feature={build ? "designBuild" : "designReview"} />
+            )}
             <Fade
               in={build?.status !== "saved"}
               timeout={timeout}
@@ -261,7 +273,9 @@ export default function DesignReview({
                 variant="contained"
                 color="primary"
                 // Approving drops files still in the add panel, so it waits.
-                disabled={reading || approveBlocked || building || adding}
+                disabled={
+                  disabled || reading || approveBlocked || building || adding
+                }
                 onClick={onApprove}
                 startIcon={
                   <Iconify icon="solar:check-circle-linear" width={14} />
@@ -276,11 +290,13 @@ export default function DesignReview({
       />
 
       <Collapse in={!!build} timeout={timeout} unmountOnExit>
-        <DesignBuildView
-          build={build}
-          onLeaveOut={onLeaveOut}
-          timeout={timeout}
-        />
+        {build && (
+          <DesignBuildView
+            build={build}
+            onLeaveOut={onLeaveOut}
+            timeout={timeout}
+          />
+        )}
       </Collapse>
 
       <Collapse in={!!blocker} timeout={timeout} unmountOnExit>
@@ -331,7 +347,10 @@ export default function DesignReview({
               What the design is built from
             </Typography>
             {/* Hidden, not removed, while the panel is open, so the header keeps its size. */}
-            <Fade in={editable && !adding} timeout={timeout}>
+            <Fade
+              in={editable && !adding && Boolean(onAddFiles)}
+              timeout={timeout}
+            >
               <Button
                 ref={addRef}
                 size="small"
@@ -340,7 +359,11 @@ export default function DesignReview({
                 startIcon={
                   <Iconify icon="solar:add-circle-linear" width={14} />
                 }
-                sx={{ color: "text.primary", borderColor: "divider" }}
+                sx={{
+                  color: "text.primary",
+                  borderColor: "divider",
+                  display: onAddFiles ? undefined : "none",
+                }}
               >
                 {draft.files.length ? "Add another" : "Add files"}
               </Button>
@@ -386,7 +409,7 @@ export default function DesignReview({
         </Box>
       </Collapse>
 
-      <Stack spacing={3} sx={{ mt: 3 }}>
+      <Stack spacing={3} sx={{ mt: 3, display: summary.structured === false ? "none" : undefined }}>
         {pendingDeps.length > 0 && (
           <PlanRow
             label="Can't be built here, simulate it instead"
@@ -399,7 +422,11 @@ export default function DesignReview({
                     <Box component="span" sx={{ fontWeight: 500 }}>
                       {d.request}
                     </Box>
-                    <Quiet>{`${d.why} Adds ${d.alt.name}.`}</Quiet>
+                    {d.why && (
+                      <Quiet>
+                        {d.alt ? `${d.why} Adds ${d.alt.name}.` : d.why}
+                      </Quiet>
+                    )}
                   </Box>
                   <Button
                     size="small"
@@ -433,7 +460,12 @@ export default function DesignReview({
                   {t.name}
                 </Box>
                 <Quiet>
-                  {[`${t.rows.toLocaleString()} rows`, t.note]
+                  {[
+                    Number.isFinite(t.rows)
+                      ? `${t.rows.toLocaleString()} rows`
+                      : null,
+                    t.note,
+                  ]
                     .filter(Boolean)
                     .join(" · ")}
                 </Quiet>
@@ -537,7 +569,9 @@ export default function DesignReview({
               ),
             ]
           ) : (
-            <PlanLine empty>Written once it knows what the agent does</PlanLine>
+            <PlanLine empty>
+              Written once it knows what the agent does
+            </PlanLine>
           )}
         </PlanRow>
       </Stack>
@@ -555,7 +589,9 @@ DesignReview.propTypes = {
   // designSummary(draft, now)
   summary: PropTypes.object.isRequired,
   // Plain file rows ({ id, name, size, type }) to add to the design.
-  onAddFiles: PropTypes.func.isRequired,
+  onAddFiles: PropTypes.func,
+  live: PropTypes.bool,
+  disabled: PropTypes.bool,
   // (depId, "simulate" | "skip") for a behaviour that can't be built here.
   onDepChoice: PropTypes.func.isRequired,
   // useDesignBuild(draftId); null until approved.
@@ -565,5 +601,5 @@ DesignReview.propTypes = {
   }),
   onApprove: PropTypes.func.isRequired,
   // (fileId) to leave a file out after a failed check.
-  onLeaveOut: PropTypes.func.isRequired,
+  onLeaveOut: PropTypes.func,
 };

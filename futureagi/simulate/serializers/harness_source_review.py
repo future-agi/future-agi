@@ -73,10 +73,23 @@ class HarnessSourceReviewReprepareSerializer(StrictInputSerializer):
         many=True, required=False, allow_empty=False, max_length=100
     )
 
+    redact_text_sources = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        required=False,
+        allow_empty=False,
+        max_length=100,
+    )
+
     def validate(self, attrs):
-        if ("target_table" in attrs) == ("schema_repairs" in attrs):
+        if (
+            sum(
+                key in attrs
+                for key in ("target_table", "schema_repairs", "redact_text_sources")
+            )
+            != 1
+        ):
             raise serializers.ValidationError(
-                "Choose a destination table or provide schema repairs."
+                "Choose one repair: destination table, field mapping, or text redaction."
             )
         return attrs
 

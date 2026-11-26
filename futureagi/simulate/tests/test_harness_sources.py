@@ -12,6 +12,7 @@ from model_hub.models.develop_dataset import Files, KnowledgeBaseFile
 from simulate.models import HostedHarnessJob
 from simulate.services import harness_source_generation, harness_sources
 from simulate.services import harness_source_reviews as reviews
+from simulate.services.harness_source_summary import resolve_legacy_filenames
 from simulate.services.harness_versioning import archives, assembly, drafts, versions
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import HostedHarnessError
@@ -92,7 +93,9 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
         name="Support docs",
         organization=user.organization,
         workspace=workspace,
-        status=StatusType.COMPLETED.value,
+        status=StatusType.PARTIAL_COMPLETED.value
+        if certified
+        else StatusType.COMPLETED.value,
     )
     file = Files.no_workspace_objects.create(
         name="guide.txt",
@@ -253,6 +256,13 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     }
     accepted = harness_sources.accept_source_import(request, environment, **accept_args)
     assert accepted["draft"]["revision"] == 1
+    summary = harness_sources.source_summary(
+        environment, reviewer_scope=reviews.require_source_scope(request, write=False)
+    )
+    assert summary["sources"][0]["filename"] == "guide.txt"
+    assert summary["sources"][0]["unsaved"] is True
+    assert summary["generation_review_id"] == prepared["import_ref"]
+    assert "guide.txt" not in json.dumps(harness_sources.source_summary(environment))
     assert accepted["validation"] == {
         "status": "structural_only",
         "affected_scenarios": [
@@ -900,3 +910,215 @@ def test_source_dispatch_failure_can_be_replayed(
     job.refresh_from_db()
     assert (job.state, job.error) == ("queued", "")
     assert submit.call_count == 2
+
+
+def test_reviewer_preview_redacts_blocked_pages_and_suspected_columns():
+    source = {
+        "pin": {"source_id": "a"},
+        "filename": "source-1.pdf",
+        "fields": [
+            {"source_field": "tier", "personal_data_suspected": False},
+            {"source_field": "email", "personal_data_suspected": True},
+        ],
+        "rows": [{"values": [["tier", "gold"], ["email", "private"]]}],
+        "pages": [{"page": 2, "text": "Escalate after two returns."}],
+        "statements": [
+            {
+                "statement_id": "p",
+                "text": "Escalate after two returns.",
+                "span": {"page": 2},
+            }
+        ],
+    }
+    source["rejected_records"] = [
+        {"source_row": 2, "reasons": ["Row 2 has 4 cells; expected 3"]},
+        {
+            "source_row": 3,
+            "reasons": [
+                "JSON item 3 field 'private-email' is nested; flatten it before upload"
+            ],
+        },
+        {"source_row": 4, "reasons": ["private raw cell text"]},
+    ]
+    draft = {"sources": [source], "draft_digest": "draft"}
+    origins = [{"source_id": "a", "original_name": "folder/Returns.pdf"}]
+    preview = harness_sources.safe_source_preview(draft, origins)["sources"][0]
+    assert preview["filename"] == "Returns.pdf"
+    assert preview["statements"][0]["text"] == source["pages"][0]["text"]
+    assert preview["sample_rows"] == [{"tier": "gold"}]
+    assert preview["rejected_row_details"] == [
+        {"row": 2, "reasons": ["Found 4 cells, expected 3."]},
+        {
+            "row": 3,
+            "reasons": [
+                "The row contains a nested object or array. Flatten it before uploading."
+            ],
+        },
+        {"row": 4, "reasons": ["The row could not be read."]},
+    ]
+    draft["diagnostics"] = [
+        {
+            "code": "source_privacy_unresolved",
+            "severity": "blocking",
+            "span": {"source_id": "a", "page": 2},
+        }
+    ]
+    blocked = harness_sources.safe_source_preview(draft, origins)["sources"][0]
+    assert "text" not in blocked["statements"][0] and blocked["sample_rows"] == []
+
+
+def test_legacy_kb_previews_return_only_page_metadata():
+    from simulate.services.harness_source_preview import public_source_preview
+
+    source = {
+        "origin": {"kind": "knowledge_base", "kb_id": "collection"},
+        "sample_rows": [{"tier": "private"}],
+        "statements": [
+            {"statement_id": "p", "page": 2, "text": "private", "text_truncated": False}
+        ],
+    }
+    sanitized = public_source_preview({"sources": [source]})["sources"][0]
+    assert sanitized == {
+        "origin": source["origin"],
+        "sample_rows": [],
+        "statements": [{"statement_id": "p", "page": 2}],
+    }
+    assert source["statements"][0]["text"] == "private"
+
+
+def test_reviewer_retry_dispatches_once_and_rejects_changed_basis(
+    queued_source_job, user, workspace, monkeypatch, django_capture_on_commit_callbacks
+):
+    from unittest.mock import Mock
+
+    job = queued_source_job
+    job.state = "failed"
+    job.error = "source_generation_failed"
+    job.save()
+    request = SimpleNamespace(
+        user=user, organization=user.organization, workspace=workspace, headers={}
+    )
+    dispatch = Mock()
+    monkeypatch.setattr(harness_source_generation, "dispatch", dispatch)
+    with django_capture_on_commit_callbacks(execute=True):
+        for _ in range(2):
+            state = harness_source_generation.state_for_request(
+                request, job.review_id, retry=True
+            )
+            assert state["state"] == "queued"
+    dispatch.assert_called_once()
+    job.state = "failed"
+    job.basis = {}
+    job.save()
+    with pytest.raises(HostedHarnessError) as error:
+        harness_source_generation.state_for_request(request, job.review_id, retry=True)
+    assert error.value.code == "source_generation_stale"
+
+
+def test_new_build_lists_its_pinned_sources_without_an_append_manifest(
+    queued_source_job, user, workspace
+):
+    review = queued_source_job.review
+    owner = review.owner
+    review.owner_kind = reviews.Owner.BUILD_JOB
+    review.snapshot_digest = "sha256:" + "3" * 64
+    review.accepted_artifact_digest = "4" * 64
+    review.receipt = {
+        "snapshot_id": "checkpoint",
+        "sources": [{"source_id": "pdf", "purpose": "policy"}],
+    }
+    review.preview = {
+        "sources": [{"pin": {"source_id": "pdf"}, "filename": "Refunds.pdf"}]
+    }
+    review.save()
+    owner.payload.setdefault("metadata", {})["build_source_pin"] = {
+        "owner_id": str(owner.id),
+        "review_id": str(review.id),
+        "id": "checkpoint",
+        "digest": review.snapshot_digest,
+    }
+    owner.save(update_fields=["payload"])
+    scope = {"organization_id": user.organization_id, "workspace_id": workspace.id}
+    assert harness_sources.source_summary(owner, reviewer_scope=scope)["sources"] == [
+        {
+            "source_id": "pdf",
+            "purpose": "policy",
+            "filename": "Refunds.pdf",
+            "review_id": str(review.id),
+            "review_owner_id": str(owner.id),
+            "unsaved": False,
+        }
+    ]
+    assert harness_sources.source_summary(owner)["sources"] == []
+
+
+def test_legacy_kb_name_is_only_recovered_in_its_organizations_default_workspace(
+    user, workspace
+):
+    from accounts.models.workspace import Workspace
+
+    org = user.organization
+    other = Workspace.objects.create(
+        organization=org, name="secondary", display_name="Secondary", created_by=user
+    )
+    kb = KnowledgeBaseFile.no_workspace_objects.create(
+        name="Legacy", organization=org, workspace=None
+    )
+    file = Files.no_workspace_objects.create(
+        name="Legacy guide.txt", uploaded_url="http://invalid.invalid/unused"
+    )
+    kb.files.add(file)
+    for workspace_id, expected in [
+        (None, "source-1.txt"),
+        (other.id, "source-1.txt"),
+        (workspace.id, "Legacy guide.txt"),
+    ]:
+        source = {
+            "filename": "source-1.txt",
+            "origin": {
+                "kind": "knowledge_base",
+                "kb_id": str(kb.id),
+                "file_id": str(file.id),
+            },
+        }
+        row = SimpleNamespace(preview={"sources": [source]})
+        resolve_legacy_filenames(
+            [row], {"workspace_id": workspace_id, "organization_id": org.id}
+        )
+        assert source["filename"] == expected
+
+
+def test_clipped_policy_rule_can_only_be_retained_as_reference():
+    text = "A" * (harness_sources.STATEMENT_PREVIEW_LIMIT + 1)
+    statement = {"statement_id": "s1", "text": text, "span": {"page": 1}}
+    rule = {"rule_id": "r1", "statement_id": "s1", "status": "supported"}
+    draft = {
+        "draft_digest": "d",
+        "sources": [
+            {
+                "pin": {"source_id": "p", "role": "policy"},
+                "pages": [{"page": 1, "text": text}],
+                "statements": [statement],
+            }
+        ],
+        "proposals": {"policy_rules": [rule]},
+    }
+    staged = {"draft_payload": draft, "origins": []}
+    rendered = harness_sources.safe_source_preview(draft, [])["sources"][0][
+        "statements"
+    ][0]
+    assert (
+        rendered["text_truncated"]
+        and len(rendered["text"]) == harness_sources.STATEMENT_PREVIEW_LIMIT
+    )
+    decision = {"rule_id": "r1", "decision": "reference_only"}
+    review = {"policy_reviews": [{"source_id": "p", "rules": [decision]}]}
+    assert (
+        harness_sources._checked_review(None, staged, review)["policy_reviews"][0][
+            "rules"
+        ][0]["decision"]
+        == "reference_only"
+    )
+    decision["decision"] = "accepted"
+    with pytest.raises(HostedHarnessError, match="as reference"):
+        harness_sources._checked_review(None, staged, review)

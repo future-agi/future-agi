@@ -172,7 +172,11 @@ def serialize_document(document: HarnessDesignDocument) -> dict[str, Any]:
 
 def design_source_basis(job, target_table, captured):
     from simulate.services.harness_releases import template_source_columns
-    from simulate.services.harness_source_reviews import _data_type, schema_digest
+    from simulate.services.harness_source_reviews import (
+        _data_type,
+        schema_digest,
+        table_choices,
+    )
 
     template = design_of(job).get("template")
     basis = {"revision": 1, "schema_digest": None}
@@ -196,8 +200,14 @@ def design_source_basis(job, target_table, captured):
             "This template has no record tables. Choose another template or start a scratch design.",
             422,
         )
-    if target_table is None and len(tables) != 1:
-        return {**basis, "destination_tables": sorted(tables)}, None
+    if len(tables) > 1:
+        fields = {
+            name: {column.casefold() for column, _, _ in columns}
+            for name, columns in tables.items()
+        }
+        basis.update(table_choices(captured, fields))
+        if target_table is None:
+            return basis, None
     table = target_table or next(iter(tables))
     if table not in tables:
         raise _error(
@@ -353,6 +363,7 @@ def design_payload(
     document_ids: list[Any] | None = None,
     source_selection: dict | None = None,
     target_table: str | None = None,
+    personal_data_mode: str | None = None,
     workspace_id=None,
     resume_from: HostedHarnessJob | None = None,
 ) -> dict[str, Any]:
@@ -406,6 +417,8 @@ def design_payload(
         "documents": [serialize_document(one) for one in documents],
         "resume_from": str(resume_from.id) if resume_from is not None else None,
     }
+    if personal_data_mode and source_selection:
+        payload["metadata"]["design"]["personal_data_mode"] = personal_data_mode
     if source_selection:
         payload["metadata"]["design_source_selection"] = {
             **source_selection,

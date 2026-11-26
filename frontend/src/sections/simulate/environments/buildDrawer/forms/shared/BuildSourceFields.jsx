@@ -4,12 +4,18 @@ import { Button, Checkbox, Chip, FormControlLabel, Stack } from "@mui/material";
 import KnowledgeBasePicker from "../../../workspace/sources/KnowledgeBasePicker";
 import BuildFilesField from "./BuildFilesField";
 
-export default function BuildSourceFields({ sources, disabled = false }) {
+export default function BuildSourceFields({
+  sources,
+  disabled = false,
+  showUpload = true,
+}) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
     <Stack spacing={1}>
-      <BuildFilesField uploads={sources.uploads} disabled={disabled} />
+      {showUpload && (
+        <BuildFilesField uploads={sources.uploads} disabled={disabled} />
+      )}
       {sources.uploads.done
         .filter(({ name }) => name.toLowerCase().endsWith(".pdf"))
         .map(({ name, documentId }) => (
@@ -66,4 +72,5 @@ export default function BuildSourceFields({ sources, disabled = false }) {
 BuildSourceFields.propTypes = {
   sources: PropTypes.object.isRequired,
   disabled: PropTypes.bool,
+  showUpload: PropTypes.bool,
 };

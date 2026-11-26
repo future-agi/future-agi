@@ -58,7 +58,7 @@ export default function ProposalItem({
   const rule = item.kind === "rule";
   const ruleText = edit ?? item.rule ?? item.title.replace(/^Rule:\s*/, "");
   // A rule's wording, or one field of what else it adds (an approval scope).
-  const editable = rule || Boolean(item.editable);
+  const editable = Boolean(onEdit) && (rule || Boolean(item.editable));
   const editValue = rule
     ? ruleText
     : edit ?? item.actor?.[item.editable?.field] ?? "";
@@ -223,12 +223,18 @@ export default function ProposalItem({
                   {`“${item.cite.excerpt}”`}
                 </Typography>
               )}
-            <ButtonBase
-              onClick={() => onOpenSource(item.cite.sourceId, item.cite.at)}
-              sx={linkSx}
-            >
-              {COPY.from(item.cite.ref)}
-            </ButtonBase>
+            {onOpenSource ? (
+              <ButtonBase
+                onClick={() => onOpenSource(item.cite.sourceId, item.cite.at)}
+                sx={linkSx}
+              >
+                {COPY.from(item.cite.ref)}
+              </ButtonBase>
+            ) : (
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {COPY.from(item.cite.ref)}
+              </Typography>
+            )}
           </>
         )}
         {item.kind === "conflict" && (
@@ -324,15 +330,15 @@ ProposalItem.propTypes = {
   hideCheckbox: PropTypes.bool,
   // The rule's wording as edited, if it was.
   edit: PropTypes.string,
-  onToggle: PropTypes.func.isRequired,
-  onEdit: PropTypes.func.isRequired,
+  onToggle: PropTypes.func,
+  onEdit: PropTypes.func,
   // (sourceId, at): opens the file at the cited spot.
-  onOpenSource: PropTypes.func.isRequired,
-  onPick: PropTypes.func.isRequired,
+  onOpenSource: PropTypes.func,
+  onPick: PropTypes.func,
   // Gets the button to anchor the Add source menu on.
-  onSupply: PropTypes.func.isRequired,
-  onLeaveOut: PropTypes.func.isRequired,
-  onChoose: PropTypes.func.isRequired,
+  onSupply: PropTypes.func,
+  onLeaveOut: PropTypes.func,
+  onChoose: PropTypes.func,
   personalReplaced: PropTypes.bool,
 };
 

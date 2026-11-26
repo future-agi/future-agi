@@ -591,6 +591,7 @@ CREDENTIAL_VALUE_MAX_CHARS = 65_536
 
 
 class HarnessJobCreateSerializer(serializers.Serializer):
+    test_focus = serializers.CharField(required=False, max_length=4000)
     source_selection = HarnessDesignSourceSelectionSerializer(required=False)
     # Create refuses a job whose connector has no credentials; preflight reports them as
     # unmet requirements instead, so the readiness panel can tell the user what to add.
@@ -680,6 +681,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             "design_source_pin",
             "build_source_selection",
             "build_source_pin",
+            "test_focus",
             "source_review_documents",
             "source_review",
             "source_review_id",

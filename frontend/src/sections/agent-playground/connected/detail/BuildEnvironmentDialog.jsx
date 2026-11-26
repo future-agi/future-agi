@@ -27,6 +27,9 @@ import {
 import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { MAX_SCENARIO_COUNT } from "src/pages/dashboard/harness/requestMapper";
+import BuildTestField from "src/sections/simulate/environments/buildDrawer/forms/shared/BuildTestField";
+import BuildSourceFields from "src/sections/simulate/environments/buildDrawer/forms/shared/BuildSourceFields";
+import useBuildSources from "src/sections/simulate/environments/buildDrawer/forms/shared/useBuildSources";
 import ParallelismField from "src/sections/simulate/environments/panels/ParallelismField";
 import { clampParallelism } from "src/sections/simulate/environments/parallelism.constants";
 import { LabeledField } from "./bits";
@@ -91,6 +94,8 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const scenarioCount = scenarioCountOf(scenarioText);
   const [parallelismInput, setParallelismInput] = useState("1");
   const parallelism = clampParallelism(parallelismInput);
+  const sources = useBuildSources();
+  const [testFocus, setTestFocus] = useState("");
   const [building, setBuilding] = useState(false);
   const chosen =
     versionId || versions.find((v) => v.isActive)?.id || versions[0]?.id || "";
@@ -135,6 +140,8 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
           name: name.trim(),
           scenarioCount,
           parallelism,
+          testFocus,
+          sourceSelection: sources.selection,
         }),
         harnessIdempotencyKey(),
       );
@@ -154,7 +161,13 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
       title="Build environment"
       subTitle={`We read ${agent.name} and build its environment: simulated tools, seeded data, rules and scenarios.`}
       actionBtnTitle="Build environment"
-      isValid={!!version && !!name.trim() && !!scenarioCount && !blocked}
+      isValid={
+        !!version &&
+        !!name.trim() &&
+        !!scenarioCount &&
+        !blocked &&
+        !sources.blocked
+      }
       onSubmit={build}
       modalWidth="560px"
     >
@@ -247,6 +260,8 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
             switch versions afterwards.
           </Typography>
         </Stack>
+        <BuildTestField value={testFocus} onChange={setTestFocus} />
+        <BuildSourceFields sources={sources} disabled={building} />
         <ParallelismField
           value={parallelism}
           input={parallelismInput}

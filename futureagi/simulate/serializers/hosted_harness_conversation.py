@@ -3,11 +3,12 @@ from __future__ import annotations
 from rest_framework import serializers
 
 # Set on a command by the server; a client never sends them.
-_SERVER_PAYLOAD_KEYS = frozenset({"command_kind", "nudge_id", "origin"})
+_SERVER_PAYLOAD_KEYS = frozenset({"command_kind", "nudge_id", "origin", "source_review_id"})
 
 
 class HarnessConversationMessageCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=20_000, trim_whitespace=False)
+    source_review_id = serializers.UUIDField(required=False)
     client_request_id = serializers.RegexField(r"^[A-Za-z0-9_-]{1,128}$")
     kind = serializers.ChoiceField(
         choices=(
@@ -26,6 +27,10 @@ class HarnessConversationMessageCreateSerializer(serializers.Serializer):
     def validate(self, attrs):
         kind = attrs["kind"]
         reply_to = attrs.get("reply_to")
+        if attrs.get("source_review_id") and kind != "user_message":
+            raise serializers.ValidationError(
+                {"source_review_id": "Attach sources to a new message."}
+            )
         if kind in {"user_response", "approval"} and reply_to is None:
             raise serializers.ValidationError(
                 {"reply_to": "This field is required when answering ALK."}

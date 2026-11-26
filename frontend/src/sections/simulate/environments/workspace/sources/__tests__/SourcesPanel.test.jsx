@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import SourcesPanel from "../SourcesPanel";
-import DraftBar from "../../drafts/DraftBar";
+import SourcesSection from "../SourcesSection";
+import DraftBar, { WorkspaceDraftBar } from "../../drafts/DraftBar";
 import { validateContractedResponse } from "src/api/contracts/openapi-contract";
 
 const api = vi.hoisted(() => ({
@@ -35,7 +35,7 @@ vi.mock("../KnowledgeBasePicker", () => ({
   ),
 }));
 
-function mount(state, withDraft = false) {
+function mount(state, withDraft = false, inline = false) {
   return render(
     <MemoryRouter
       initialEntries={[{ pathname: "/env", search: "?tab=world", state }]}
@@ -49,10 +49,15 @@ function mount(state, withDraft = false) {
           })
         }
       >
+        {inline && (
+          <WorkspaceDraftBar
+            env={{ id: "env-1", versioning: { enabled: true } }}
+          />
+        )}
         {withDraft && (
           <DraftBar env={{ id: "env-1", versioning: { enabled: true } }} />
         )}
-        <SourcesPanel env={{ id: "env-1" }} />
+        <SourcesSection env={{ id: "env-1" }} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -87,7 +92,13 @@ const ready = {
       {
         filename: "policy.pdf",
         pin: { source_id: "policy", role: "policy" },
-        statements: [{ statement_id: "statement-1", page: 2 }],
+        statements: [
+          {
+            statement_id: "statement-1",
+            page: 2,
+            text: "Refunds are allowed for 15 days.",
+          },
+        ],
       },
     ],
     proposals: {
@@ -98,6 +109,7 @@ const ready = {
             source_field: "email",
             target_field: "email",
             personal_data: true,
+            is_stable_id: true,
           },
         },
       ],
@@ -150,7 +162,7 @@ beforeEach(() => {
 const pickFiles = (files) =>
   fireEvent.change(screen.getByTestId("build-files"), { target: { files } });
 
-describe("SourcesPanel", () => {
+describe("SourcesSection", () => {
   it("validates the scenario generation envelope and its citation array", () => {
     const reviewId = "3646e7d3-b8fe-46f4-aab9-fd666246f879";
     const generation = {
@@ -196,7 +208,7 @@ describe("SourcesPanel", () => {
     });
   });
 
-  it("stages uploads and KB in one review and keeps the same request on a transport retry", async () => {
+  it("automatically prepares uploaded files and keeps the same request on a transport retry", async () => {
     api.upload.mockImplementation(async (file, { onProgress }) => {
       onProgress(42);
       return { id: `uploaded-${file.name}` };
@@ -209,34 +221,29 @@ describe("SourcesPanel", () => {
       })
       .mockImplementationOnce(async () => {
         serverReview = { ...ready, state: "accepted", revision: 4 };
-        sources = [{ source_id: "orders", purpose: "seed_records" }];
+        sources = [
+          {
+            source_id: "orders",
+            filename: "orders.csv",
+            unsaved: true,
+            purpose: "seed_records",
+          },
+        ];
         return { data: serverReview };
       });
     const view = mount();
-    expect(
-      screen.getByText(/preserves the original version and source files/),
-    ).toBeInTheDocument();
-    const csv = new File(["email\\nalice@example.test"], "orders.csv");
+    const add = screen.getByRole("button", { name: "Add source" });
+    await waitFor(() => expect(add).toBeEnabled());
+    fireEvent.click(add);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Use PDFs as policy rules" }),
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: /Upload files/ }));
+    const csv = new File(["email\nalice@example.test"], "orders.csv");
     const policy = new File(["15-day policy"], "policy.pdf");
     pickFiles([csv, policy]);
-    const asPolicy = await screen.findByRole("checkbox", {
-      name: "Use policy.pdf as policy",
-    });
-    fireEvent.click(asPolicy);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Select Knowledge Base" }),
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add a ready KB file" }),
-    );
-    const start = screen.getByRole("button", { name: "Review sources" });
-    await waitFor(() => expect(start).toBeEnabled());
-    fireEvent.click(start);
-    expect(
-      await screen.findByText("The request timed out"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Guides (1 file)")).toBeInTheDocument();
-    fireEvent.click(start);
+    expect(await screen.findByText("The request timed out")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
       await screen.findByRole("heading", { name: "Review sources" }),
     ).toBeInTheDocument();
@@ -251,9 +258,7 @@ describe("SourcesPanel", () => {
       },
       document_ids: ["uploaded-orders.csv", "uploaded-policy.pdf"],
       document_purposes: { "uploaded-policy.pdf": "policy" },
-      knowledge_base: [
-        { kind: "knowledge_base", kb_id: "kb-1", file_ids: ["ready-file"] },
-      ],
+      knowledge_base: [],
       idempotency_key: expect.any(String),
     });
     expect(api.post).toHaveBeenNthCalledWith(2, indexPath, body);
@@ -267,14 +272,9 @@ describe("SourcesPanel", () => {
     view.unmount();
     mount();
     const rule = await screen.findByRole("checkbox", {
-      name: "statement-1 · supported · eligibility · state predicate · Page 2",
+      name: /Refunds are allowed/,
     });
     fireEvent.click(rule);
-    expect(
-      screen.getByRole("checkbox", {
-        name: /Replace personal data in orders.csv/,
-      }),
-    ).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Add to draft" }));
     expect(
       await screen.findByText("Source review accepted."),
@@ -369,19 +369,262 @@ describe("SourcesPanel", () => {
     expect(api.upload).not.toHaveBeenCalled();
   });
 
-  it("keeps a Knowledge Base page selection available for a mixed review", async () => {
+  it("automatically prepares a selection from the Knowledge Base page", async () => {
+    api.post.mockImplementation(async () => {
+      serverReview = ready;
+      return { data: ready };
+    });
     mount({
       environmentSourceSelection: { kb_id: "kb-1", file_ids: ["ready-file"] },
     });
-    expect(
-      await screen.findByText("Selected Knowledge Base"),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Review sources" }),
-      ).toBeEnabled(),
+    await screen.findByRole("heading", { name: "Review sources" });
+    expect(api.post).toHaveBeenCalledExactlyOnceWith(
+      indexPath,
+      expect.objectContaining({
+        knowledge_base: [
+          { kind: "knowledge_base", kb_id: "kb-1", file_ids: ["ready-file"] },
+        ],
+      }),
     );
-    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("opens a saved file and shows only that file's accepted review and citations", async () => {
+    sources = [
+      {
+        source_id: "policy",
+        filename: "policy.pdf",
+        purpose: "policy",
+        review_id: "review-1",
+        unsaved: false,
+      },
+    ];
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      scenario_generation: {
+        state: "completed",
+        generated_scenarios: [
+          {
+            scenario_key: "refund",
+            name: "Refund request at day 15",
+            citations: [{ source_id: "policy", page: 2 }],
+          },
+          {
+            scenario_key: "orders",
+            name: "Different source case",
+            citations: [{ source_id: "orders", row: 1 }],
+          },
+        ],
+      },
+    };
+    const fallback = api.get.getMockImplementation();
+    api.get.mockImplementation((path) =>
+      path.endsWith("/scenario-generation/")
+        ? Promise.resolve({ data: serverReview.scenario_generation })
+        : fallback(path),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "policy.pdf" }));
+    expect(
+      await screen.findByText("Refunds are allowed for 15 days."),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Used by" }));
+    expect(await screen.findByText("Refund request at day 15")).toBeVisible();
+    expect(screen.queryByText("Different source case")).toBeNull();
+    expect(screen.getByText("Page 2")).toBeVisible();
+  });
+
+  it("displays KB passage locations and the original link without rendering cached excerpts", async () => {
+    const origin = { kind: "knowledge_base", kb_id: "kb-1" };
+    sources = [
+      {
+        source_id: "policy",
+        filename: "policy.pdf",
+        purpose: "reference",
+        review_id: "review-1",
+        unsaved: false,
+        origin,
+      },
+    ];
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      preview: {
+        ...ready.preview,
+        sources: [
+          {
+            ...ready.preview.sources[1],
+            origin,
+            statements: [
+              { page: 1, statement_id: "one", text: "Private original quote" },
+              { page: 1, statement_id: "two" },
+            ],
+          },
+        ],
+      },
+    };
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "policy.pdf" }));
+    expect(await screen.findByText("Page 1 · 2 passages")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Read the original in Knowledge Base" }),
+    ).toHaveAttribute("href", "/dashboard/knowledge/kb-1");
+    expect(screen.queryByText("Private original quote")).toBeNull();
+  });
+  it("shows the accepted mapping and actual rejected row reason in file details", async () => {
+    const file = {
+      source_id: "orders",
+      filename: "orders.csv",
+      purpose: "seed_records",
+      review_id: "review-1",
+      unsaved: false,
+      visibility: "agent_visible",
+      updated_at: "2026-11-26T01:00:00Z",
+      rejected_count: 1,
+    };
+    sources = [file];
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      preview: {
+        ...ready.preview,
+        sources: [
+          {
+            ...ready.preview.sources[0],
+            row_count: 2,
+            fields: [{ source_field: "order_id", inferred_type: "string" }],
+            accepted_mappings: [
+              {
+                source_field: "order_id",
+                target_field: "order_number",
+                data_type: "string",
+                is_stable_id: true,
+              },
+            ],
+            rejected_rows: [3],
+            rejected_count: 1,
+            rejected_row_details: [
+              { row: 3, reasons: ["Found 3 cells, expected 2."] },
+            ],
+          },
+        ],
+      },
+    };
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "orders.csv" }));
+    expect(await screen.findByText(/Found 3 cells, expected 2/)).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Mapping" }));
+    expect(screen.getByText("Accepted field mappings")).toBeVisible();
+    expect(screen.getByText(/order_id → order_number/)).toBeVisible();
+    expect(screen.queryByText(/email → email/)).toBeNull();
+  });
+
+  it("opens a build-from-scratch checkpoint through its owning design without polling environment generation", async () => {
+    sources = [
+      {
+        source_id: "policy",
+        filename: "policy.pdf",
+        purpose: "reference",
+        review_id: "review-1",
+        review_owner_id: "design-1",
+        used_by: [
+          {
+            scenario_key: "return-filing",
+            name: "File a return",
+            citations: [{ source_id: "policy", page: 2 }],
+          },
+        ],
+        unsaved: false,
+      },
+    ];
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      scope: { id: "design-1", kind: "design" },
+    };
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "policy.pdf" }));
+    expect(
+      await screen.findByText("Refunds are allowed for 15 days."),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "Used by" }));
+    expect(screen.getByText("File a return")).toBeVisible();
+    expect(
+      api.get.mock.calls.some(([path]) =>
+        path.endsWith("/scenario-generation/"),
+      ),
+    ).toBe(false);
+  });
+
+  it("recovers a failed generation after reload, keeps Save held and retries the existing review", async () => {
+    sources = [
+      {
+        source_id: "policy",
+        filename: "policy.pdf",
+        purpose: "policy",
+        review_id: "review-1",
+        unsaved: true,
+      },
+    ];
+    let generation = {
+      id: "generation-1",
+      state: "failed",
+      error: "source_writer_failed",
+    };
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      receipt: { draft: { id: "draft-1", revision: 1 } },
+      scenario_generation: generation,
+    };
+    const fallback = api.get.getMockImplementation();
+    api.get.mockImplementation((path) => {
+      if (path.endsWith("/scenario-generation/"))
+        return Promise.resolve({ data: generation });
+      if (path.endsWith("/drafts/"))
+        return Promise.resolve({
+          data: {
+            environment: { id: "draft-1", parent_id: "env-v1", revision: 1 },
+            suite: null,
+          },
+        });
+      if (path.endsWith("/sources/"))
+        return Promise.resolve({
+          data: {
+            sources,
+            draft: true,
+            scenario_generation: generation,
+            generation_review_id: "review-1",
+          },
+        });
+      return fallback(path);
+    });
+    api.post.mockImplementation(async () => {
+      generation = { ...generation, state: "queued", error: null };
+      return { data: generation };
+    });
+    mount(undefined, false, true);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review and save" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Save", exact: true }),
+    ).toBeDisabled();
+    expect(screen.getByText("Sources added")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review sources" }),
+    );
+    expect(
+      await screen.findByText(/scenario writer could not finish/),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Retry generation" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledExactlyOnceWith(
+        reviewPath + "scenario-generation/",
+        {},
+      ),
+    );
   });
 
   it("explains why records without a matching field cannot be added", async () => {
@@ -444,7 +687,9 @@ describe("SourcesPanel", () => {
     expect(
       await screen.findByText("Scenario generation is queued."),
     ).toBeInTheDocument();
-    const save = await screen.findByRole("button", { name: "Save" });
+    const save = screen
+      .getByTestId("draft-bar")
+      .querySelector("button[aria-describedby]");
     expect(save).toBeDisabled();
 
     generation = {

@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import WorldInternalsSection from "../contract/WorldInternalsSection";
-import SourcesPanel from "../sources/SourcesPanel";
+import SourcesSection from "../sources/SourcesSection";
 
 export default function WorldToolsPanel({
   env,
@@ -26,7 +26,7 @@ export default function WorldToolsPanel({
         </Box>
       )}
       {backed && env.versioning?.enabled && (
-        <SourcesPanel key={env.id} env={env} locked={locked} />
+        <SourcesSection key={env.id} env={env} locked={locked} />
       )}
       <WorldInternalsSection
         env={env}

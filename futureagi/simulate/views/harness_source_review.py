@@ -15,6 +15,7 @@ from simulate.serializers.harness_source_review import (
 from simulate.services import harness_source_reviews
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import EmptyRequestSerializer
 
 
 class HarnessSourceReviewViewSet(viewsets.ViewSet):
@@ -54,6 +55,18 @@ class HarnessSourceReviewViewSet(viewsets.ViewSet):
         from simulate.services.harness_source_generation import state_for_request
 
         return Response(state_for_request(request, pk))
+
+    @scenario_generation.mapping.post
+    @viewer_denied("retry environment source scenario generation")
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: HarnessSourceScenarioGenerationSerializer},
+        reject_unknown_fields=True,
+    )
+    def retry_scenario_generation(self, request, pk=None):
+        from simulate.services.harness_source_generation import state_for_request
+
+        return Response(state_for_request(request, pk, retry=True))
 
     @viewer_denied("repair environment source review")
     @validated_request(

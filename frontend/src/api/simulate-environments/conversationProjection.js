@@ -172,7 +172,14 @@ export function projectConversation(conversation) {
         // resolved ask card (answerText) — don't also render it as a bubble.
         if (m.reply_to) continue;
         endBuilder();
-        turns.push({ id: m.message_id, role: "user", text: m.content });
+        turns.push({
+          id: m.message_id,
+          role: "user",
+          text: m.content,
+          ...(m.payload?.source_review_id
+            ? { sourceReviewId: m.payload.source_review_id }
+            : {}),
+        });
         continue;
       }
       // A nudge card is its own system turn: never inside a builder turn or the

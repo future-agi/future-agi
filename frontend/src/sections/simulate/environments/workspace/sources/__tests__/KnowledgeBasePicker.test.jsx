@@ -76,4 +76,35 @@ describe("KnowledgeBasePicker", () => {
       }),
     );
   });
+  it("adds only explicit ready file IDs when the collection is partially processed", async () => {
+    const id = "00000000-0000-4000-8000-00000000000b";
+    axios.get.mockResolvedValue(
+      page([{ id, name: "Partial guides", status: "PartialCompleted" }]),
+    );
+    axios.post.mockResolvedValue(
+      page([
+        { id: "ready", name: "guide.txt", status: "Completed", file_size: 12 },
+        { id: "failed", name: "broken.pdf", status: "Failed", file_size: 8 },
+      ]),
+    );
+    const onPick = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <KnowledgeBasePicker open onClose={vi.fn()} onPick={onPick} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Partial guides/ }),
+    );
+    await screen.findByText("guide.txt");
+    fireEvent.click(screen.getByRole("button", { name: "Add ready files" }));
+    await waitFor(() =>
+      expect(onPick).toHaveBeenCalledWith(
+        expect.objectContaining({
+          files: [expect.objectContaining({ id: "ready" })],
+        }),
+      ),
+    );
+    expect(onPick.mock.calls[0][0]).not.toHaveProperty("whole_collection");
+  });
 });

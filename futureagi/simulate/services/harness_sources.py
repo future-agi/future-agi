@@ -24,6 +24,14 @@ from model_hub.services.kb_snapshot import (
 )
 from model_hub.utils.kb_download import authorized_knowledge_base_file
 from simulate.services.alk_source_bridge import execute_source_request
+from simulate.services.harness_source_preview import (
+    STATEMENT_PREVIEW_LIMIT,
+    safe_diagnostics,
+)
+from simulate.services.harness_source_preview import (
+    safe_source_preview as safe_source_preview,
+)
+from simulate.services.harness_source_summary import source_summary as source_summary
 from simulate.services.harness_storage import put_private, read_private
 from simulate.services.harness_versioning import archives, drafts, versions
 from simulate.services.hosted_harness import HostedHarnessError
@@ -57,24 +65,6 @@ def source_capabilities(environment) -> dict[str, Any]:
         "participant_visibility_reason": (
             "The current runtime cannot prove per-participant source isolation."
         ),
-    }
-
-
-def source_summary(environment) -> dict[str, Any]:
-    head = environment.__class__.no_workspace_objects.select_related(
-        "environment_version"
-    ).get(id=environment.id)
-    version = drafts.fresh_draft(head, "environment") or head.environment_version
-    files = drafts._piece_files(head, "environment", version)
-    try:
-        manifest = json.loads(files.get("sources/manifest.json", b"{}").decode())
-    except (UnicodeDecodeError, ValueError):
-        manifest = {}
-    return {
-        "draft": version.status == "draft",
-        "snapshot_digest": manifest.get("snapshot_digest"),
-        "sources": manifest.get("sources") or [],
-        "validation_status": manifest.get("validation_status"),
     }
 
 
@@ -219,7 +209,7 @@ def _alk_result(response: dict) -> dict:
         code,
         "The source processor could not use these inputs or decisions.",
         status_code=status_code,
-        details={"diagnostics": _safe_diagnostics(error.get("diagnostics") or [])},
+        details={"diagnostics": safe_diagnostics(error.get("diagnostics") or [])},
     )
 
 
@@ -562,6 +552,8 @@ def prepare_draft(
     captured: tuple[CapturedKnowledgeBaseSource, ...],
     destination_schema: dict | None,
     schema_repairs=(),
+    *,
+    redact_text_sources=(),
 ) -> dict:
     prepare_request = {
         "version": REQUEST_VERSION,
@@ -581,105 +573,14 @@ def prepare_draft(
             if destination_schema is not None and destination_schema.get("fields")
             else {}
         ),
+        **(
+            {"redact_text_sources": list(redact_text_sources)}
+            if redact_text_sources
+            else {}
+        ),
         **({"schema_repairs": schema_repairs} if schema_repairs else {}),
     }
     return _alk_result(execute_source_request(prepare_request))["draft"]
-
-
-def _safe_diagnostics(items: list[dict]) -> list[dict]:
-    return [
-        {
-            "code": item["code"],
-            "severity": item["severity"],
-            "span": {
-                key: span[key] for key in ("source_id", "page", "row") if key in span
-            },
-        }
-        for item in items
-        if isinstance(item, dict)
-        and re.fullmatch(r"[a-z_]{1,100}", str(item.get("code") or ""))
-        and item.get("severity") in {"warning", "blocking"}
-        and isinstance(span := item.get("span") or {}, dict)
-    ]
-
-
-def safe_source_preview(draft: dict, origins: list[dict]) -> dict:
-    identity = {
-        item["source_id"]: {
-            key: item[key]
-            for key in ("kind", "document_id", "kb_id", "file_id")
-            if key in item
-        }
-        for item in origins
-    }
-    display = []
-    for item in draft.get("sources", []):
-        pin = item["pin"]
-        display.append(
-            {
-                "pin": {
-                    key: pin[key]
-                    for key in ("source_id", "source_sha256", "parser_revision", "role")
-                    if key in pin
-                },
-                "filename": item.get("filename"),
-                "origin": identity.get(pin["source_id"]),
-                "parse_state": item.get("parse_state"),
-                "row_count": len(item.get("rows", [])),
-                "fields": [
-                    {
-                        key: field[key]
-                        for key in (
-                            "source_field",
-                            "inferred_type",
-                            "null_count",
-                            "unique_count",
-                            "suggested_target_field",
-                            "suggested_stable_id",
-                            "personal_data_suspected",
-                        )
-                        if key in field
-                    }
-                    for field in item.get("fields", [])
-                ],
-                "statements": [
-                    {
-                        "statement_id": statement["statement_id"],
-                        "page": (statement.get("span") or {}).get("page"),
-                    }
-                    for statement in item.get("statements", [])
-                ],
-            }
-        )
-    proposals = draft.get("proposals") or {}
-    return {
-        "draft_digest": draft["draft_digest"],
-        "sources": display,
-        "destination_schema": draft.get("destination_schema"),
-        "diagnostics": _safe_diagnostics(draft.get("diagnostics", [])),
-        "proposals": {
-            "field_mappings": proposals.get("field_mappings", []),
-            "relationships": [
-                {"relationship": item["relationship"], "confidence": item["confidence"]}
-                for item in proposals.get("relationships", [])
-            ],
-            "policy_rules": [
-                {
-                    key: item[key]
-                    for key in (
-                        "rule_id",
-                        "statement_id",
-                        "kind",
-                        "check_type",
-                        "conflict_group",
-                        "status",
-                    )
-                    if key in item
-                }
-                for item in proposals.get("policy_rules", [])
-            ],
-        },
-    }
 
 
 def accept_source_import(
@@ -718,6 +619,12 @@ def _checked_review(request, staged: dict, review: dict) -> dict:
         item["rule_id"]: item
         for item in staged["draft_payload"].get("proposals", {}).get("policy_rules", [])
     }
+    clipped_statements = {
+        statement["statement_id"]
+        for source in staged["draft_payload"].get("sources", [])
+        for statement in source.get("statements", [])
+        if len(statement.get("text", "")) > STATEMENT_PREVIEW_LIMIT
+    }
     for key in ("record_reviews", "policy_reviews", "reference_reviews"):
         decisions = review.get(key, [])
         if not isinstance(decisions, list) or len(decisions) > MAX_SELECTION_FILES:
@@ -744,7 +651,8 @@ def _checked_review(request, staged: dict, review: dict) -> dict:
                 )
         if key == "policy_reviews":
             checked[key] = [
-                _policy_decision(decision, proposals) for decision in decisions
+                _policy_decision(decision, proposals, clipped_statements)
+                for decision in decisions
             ]
     checked["expected_draft_digest"] = staged["draft_payload"]["draft_digest"]
     checked.setdefault("record_reviews", [])
@@ -752,7 +660,7 @@ def _checked_review(request, staged: dict, review: dict) -> dict:
     return checked
 
 
-def _policy_decision(decision: dict, proposals: dict) -> dict:
+def _policy_decision(decision: dict, proposals: dict, clipped_statements: set) -> dict:
     rules = decision.get("rules", [])
     if not isinstance(rules, list) or any(not isinstance(item, dict) for item in rules):
         raise HostedHarnessError(
@@ -770,6 +678,15 @@ def _policy_decision(decision: dict, proposals: dict) -> dict:
             raise HostedHarnessError(
                 "source_request_invalid",
                 "The review contains an unknown policy rule.",
+                status_code=422,
+            )
+        if (
+            item.get("decision") == "accepted"
+            and proposals[rule_id].get("statement_id") in clipped_statements
+        ):
+            raise HostedHarnessError(
+                "source_request_invalid",
+                "A policy passage shown as an excerpt can only be kept as reference.",
                 status_code=422,
             )
         checked.append(
@@ -897,7 +814,7 @@ def apply_environment_review(
         else None,
         "snapshot_digest": aggregate_digest,
         "sources": manifest["sources"],
-        "diagnostics": _safe_diagnostics(snapshot["data"].get("diagnostics", [])),
+        "diagnostics": safe_diagnostics(snapshot["data"].get("diagnostics", [])),
         "validation": validation,
     }, private_object_digest.removeprefix("sha256:")
 
@@ -1006,7 +923,7 @@ def accept_checkpoint_review(
             {"source_id": key, "purpose": pin["role"]}
             for key, pin in sorted(pins.items())
         ],
-        "diagnostics": _safe_diagnostics(snapshot["data"].get("diagnostics", [])),
+        "diagnostics": safe_diagnostics(snapshot["data"].get("diagnostics", [])),
         "validation": {"status": "accepted"},
     }, digest
 

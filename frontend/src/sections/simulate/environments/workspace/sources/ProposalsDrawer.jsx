@@ -60,61 +60,67 @@ export default function ProposalsDrawer({
       (one) => one.source_id,
     ),
   );
+  const names =
+    prepared?.ui.sources
+      .filter(
+        (source) =>
+          source.status !== "unsupported" && live.has(source.source_id),
+      )
+      .map((source) => source.name) || [];
   return (
-    // Kept mounted so closing mid-review keeps checks, edits and picks.
-    <SideDrawer
+    <ProposalDrawerFrame
       open={open && Boolean(prepared)}
       onClose={onClose}
-      width={560}
-      keepMounted
+      subtitle={COPY.subtitle(names)}
     >
       {prepared && (
-        <Stack sx={{ height: "100%" }}>
-          <Box
-            sx={{
-              px: 2.5,
-              pt: 2,
-              pb: 1.25,
-              pr: 6,
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Typography sx={{ typography: "m1" }}>{COPY.title}</Typography>
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary" }}
-            >
-              {COPY.subtitle(
-                // A file refused by its extension was never read.
-                prepared.ui.sources
-                  .filter(
-                    (source) =>
-                      source.status !== "unsupported" &&
-                      live.has(source.source_id),
-                  )
-                  .map((source) => source.name),
-              )}
-            </Typography>
-          </Box>
-          <Box sx={{ flex: 1, minHeight: 0 }}>
-            <Proposals
-              key={`${round}:${prepared.import_ref}`}
-              layout="drawer"
-              envId={envId}
-              prepared={prepared}
-              onDone={onDone}
-              onOpenSource={onOpenSource}
-              onAddFiles={onAddFiles}
-              onAddKb={onAddKb}
-              onReviewChanges={onReviewChanges}
-            />
-          </Box>
-        </Stack>
+        <Proposals
+          key={`${round}:${prepared.import_ref}`}
+          layout="drawer"
+          envId={envId}
+          prepared={prepared}
+          onDone={onDone}
+          onOpenSource={onOpenSource}
+          onAddFiles={onAddFiles}
+          onAddKb={onAddKb}
+          onReviewChanges={onReviewChanges}
+        />
       )}
+    </ProposalDrawerFrame>
+  );
+}
+
+export function ProposalDrawerFrame({ open, onClose, subtitle, children }) {
+  return (
+    <SideDrawer open={open} onClose={onClose} width={560} keepMounted>
+      <Stack role="dialog" aria-label={COPY.title} sx={{ height: "100%" }}>
+        <Box
+          sx={{
+            px: 2.5,
+            pt: 2,
+            pb: 1.25,
+            pr: 6,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography sx={{ typography: "m1" }}>{COPY.title}</Typography>
+          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
+            {subtitle}
+          </Typography>
+        </Box>
+        <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>{children}</Box>
+      </Stack>
     </SideDrawer>
   );
 }
+
+ProposalDrawerFrame.propTypes = {
+  open: PropTypes.bool,
+  onClose: PropTypes.func.isRequired,
+  subtitle: PropTypes.node,
+  children: PropTypes.node,
+};
 
 ProposalsDrawer.propTypes = {
   envId: PropTypes.string.isRequired,

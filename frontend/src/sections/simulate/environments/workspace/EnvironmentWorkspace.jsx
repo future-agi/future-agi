@@ -41,7 +41,7 @@ import DesignProgress from "src/pages/dashboard/harness/DesignProgress";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
-import DraftBar from "./drafts/DraftBar";
+import { WorkspaceDraftBar } from "./drafts/DraftBar";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
@@ -52,6 +52,9 @@ import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
+import DesignWorkspace from "../design/DesignWorkspace";
+import { designQuestion } from "../design/designQuestion";
+import SourceBuilderConsole from "./sources/SourceBuilderConsole";
 import SourceReviewPanel from "./sources/SourceReviewPanel";
 
 const EXECUTION_PATTERN = {
@@ -393,6 +396,8 @@ export default function EnvironmentWorkspace() {
   // a dead-end error page. Run is gated off and Fork is hidden (locked) until it
   // goes Live, at which point buildStatus flips and the branch below takes over.
   if (building || buildFailed) {
+    const question = metadata.design && designQuestion(designJob?.conversation);
+    const awaiting = jobQuery.data?.status?.stage === "awaiting_source_review" || question;
     return (
       <Box
         sx={{
@@ -403,7 +408,7 @@ export default function EnvironmentWorkspace() {
         }}
       >
         <WorkspaceHeader
-          env={env}
+          env={awaiting ? { ...env, buildingLabel: "Awaiting approval", buildingTooltip: "Review and approve to continue." } : env}
           envState={envState}
           canRun={false}
           runBlockedReason={
@@ -415,19 +420,21 @@ export default function EnvironmentWorkspace() {
         />
         {creditBanner}
         {refusalLine}
-        {reviewId && reviewStage ? (
-          <Box sx={{ maxWidth: 960, p: 3, overflowY: "auto" }}>
-            <SourceReviewPanel
-              reviewId={reviewId}
-              ownerId={envId}
-              canEdit={canEdit}
-              acceptLabel="Approve sources and start build"
-              onAccepted={() => jobQuery.refetch()}
-              onDismiss={() =>
-                navigate(paths.dashboard.simulate.environments.root)
-              }
-            />
-          </Box>
+        {(metadata.design || (reviewId && reviewStage)) ? (
+          <DesignWorkspace chat={chat} canEdit={canEdit} question={question}
+            progress={designPanel} requirements={metadata.design?.requirements} modality={metadata.design?.modality} hasSources={Boolean(reviewId)}
+            review={reviewId && reviewStage ? (
+              <SourceReviewPanel
+                reviewId={reviewId}
+                ownerId={envId}
+                canEdit={canEdit}
+                defaultPersonalDataMode={metadata.design?.personal_data_mode}
+                acceptLabel={metadata.design ? "Approve sources and design environment" : "Approve sources and start build"}
+                onAccepted={() => jobQuery.refetch()}
+                onDismiss={() => navigate(paths.dashboard.simulate.environments.root)}
+              />
+            ) : null}
+          />
         ) : (
           <>
             {designPanel}
@@ -540,6 +547,8 @@ export default function EnvironmentWorkspace() {
   // While the environment is still deriving, the builder can't accept edits —
   // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
+  const attachable = backed && envLive && canEdit && !locked;
+  const WorkspaceConsole = attachable ? SourceBuilderConsole : BuilderConsole;
 
   // The tab count, the "no evals" gap and the Runs summary read the
   // applied eval set. For a backed env that set is the detail's
@@ -667,16 +676,18 @@ export default function EnvironmentWorkspace() {
 
       <SystemBanners env={env} envState={envState} patch={patch} />
       {!detailLoading && !detailFailed && (
-        <VersionBar env={env} envState={envState} />
+        <VersionBar
+          env={env}
+          envState={envState}
+          action={
+            <WorkspaceDraftBar
+              env={env}
+              busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
+              rebuilding={chat.rebuildHold}
+            />
+          }
+        />
       )}
-      <DraftBar
-        env={env}
-        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
-        rebuilding={chat.rebuildHold}
-        onViewChanges={(piece, id) =>
-          setTab("versions", { version: `${piece}:${id}` })
-        }
-      />
 
       {/* A template-seeded env is read-only until forked — the banner states the
           lock and offers the fork. */}
@@ -688,7 +699,9 @@ export default function EnvironmentWorkspace() {
             chat.running || chat.inFlight || chat.waiting || chat.nudgePending
           }
           chat={({ collapse, open, collapseRef }) => (
-            <BuilderConsole
+            <WorkspaceConsole
+              key={envId}
+              {...(attachable ? { envId } : {})}
               turns={chat.turns}
               running={chat.running}
               onSend={chat.send}

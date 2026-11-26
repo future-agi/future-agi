@@ -1,3 +1,4 @@
+import { BUILD_FILES_ACCEPT } from "../buildDrawer/forms/shared/buildFiles";
 import { formatFileSize } from "src/utils/utils";
 import { WORKSPACE_TABS } from "../workspace/workspace.constants";
 
@@ -47,7 +48,7 @@ export const CONSOLE_COPY = {
     "Answer the questions below to kick things off. You can also just start typing.",
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
-  attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
+  attachAccept: BUILD_FILES_ACCEPT,
   fileSize: (bytes) => formatFileSize(bytes, { wholeKb: true }),
   stopping: "Stopping…",
   jumpToLatest: "Jump to latest",

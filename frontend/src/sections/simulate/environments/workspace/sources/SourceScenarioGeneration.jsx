@@ -9,21 +9,34 @@ import {
 } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  useRetrySourceGeneration,
+  sourceSummaryKey,
   sourceGenerationPending,
   useEnvironmentSourceGeneration,
 } from "src/api/simulate-environments/sourceImports";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { draftsKey } from "src/api/simulate-environments/versions";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessScenariosListKey } from "src/api/simulate-environments/scenariosHooks";
 
+const generationErrors = {
+  source_writer_failed: "The scenario writer could not finish.",
+  source_generation_dispatch_failed:
+    "The scenario generation job could not start.",
+  source_generation_unsealed:
+    "The generated cases could not be saved to this draft.",
+  source_generation_invalid: "The generated cases did not pass validation.",
+};
 export default function SourceScenarioGeneration({ review, onDismiss }) {
   const queryClient = useQueryClient();
+  const { canEdit } = useSimulationAccess();
   const query = useEnvironmentSourceGeneration(
     review.id,
     review.scenario_generation,
   );
   const state = query.data?.state;
   const envId = review.scope.id;
+  const retry = useRetrySourceGeneration(review.id, envId);
   const pending = sourceGenerationPending(query.data);
   const scenarios = query.data?.generated_scenarios || [];
   const filenames = new Map(
@@ -35,6 +48,7 @@ export default function SourceScenarioGeneration({ review, onDismiss }) {
 
   useEffect(() => {
     if (state !== "completed") return;
+    queryClient.invalidateQueries({ queryKey: sourceSummaryKey(envId) });
     queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
     queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(envId) });
     queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(envId) });
@@ -65,7 +79,24 @@ export default function SourceScenarioGeneration({ review, onDismiss }) {
         </Alert>
       )}
       {state === "failed" && (
-        <Alert severity="error">Scenario generation failed.</Alert>
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              disabled={!canEdit || retry.isPending}
+              onClick={() => retry.mutate()}
+            >
+              Retry generation
+            </Button>
+          }
+        >
+          Scenario generation failed.{" "}
+          {generationErrors[query.data?.error] ||
+            query.data?.error?.replaceAll("_", " ")}
+          {retry.isError &&
+            (retry.error?.message || "Could not retry generation.")}
+        </Alert>
       )}
       {state === "stale" && (
         <Alert severity="warning">
@@ -90,7 +121,7 @@ export default function SourceScenarioGeneration({ review, onDismiss }) {
                   color="text.secondary"
                 >
                   {[
-                    filenames.get(id) || id,
+                    filenames.get(id) || "Source file",
                     page != null && `Page ${page}`,
                     row != null && `Row ${row}`,
                   ]

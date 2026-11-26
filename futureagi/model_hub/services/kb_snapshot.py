@@ -80,7 +80,8 @@ def capture_knowledge_base_selection(
             "Choose either a whole Knowledge Base or an explicit file selection.",
         )
     kb = authorized_knowledge_base(request, kb_id)
-    if kb.status != StatusType.COMPLETED.value:
+    ready_selection = file_ids is not None and kb.status == StatusType.PARTIAL_COMPLETED.value
+    if kb.status != StatusType.COMPLETED.value and not ready_selection:
         raise KnowledgeBaseSnapshotError(
             "source_not_ready",
             "The Knowledge Base is not ready to import.",

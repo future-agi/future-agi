@@ -273,7 +273,7 @@ const fetchKbFiles = async (kbId, search, pageNumber, pageSize) => {
 };
 
 // Every ready file in the Knowledge base, whatever the picker has loaded.
-const readyKbFiles = async (kbId) => {
+export const readyKbFiles = async (kbId) => {
   const ready = [];
   for (let page = 0; ; page += 1) {
     const { raw, total, rows } = await fetchKbFiles(

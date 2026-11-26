@@ -1,9 +1,21 @@
+export function readableField(name) {
+  const short = String(name ?? "")
+    .split("/")
+    .at(-1);
+  try {
+    return decodeURIComponent(short);
+  } catch {
+    return short;
+  }
+}
+
 export const buildSourceReview = (draft, decisions = {}) => {
   const sources = draft?.sources || [];
   const proposals = draft?.proposals || {};
   const {
     testedAgent = true,
     acceptedMappingIndexes = [],
+    stableMappingIndexes,
     acceptedRuleIds = [],
     acceptedRelationshipIndexes = [],
     personalDataModes = {},
@@ -22,8 +34,14 @@ export const buildSourceReview = (draft, decisions = {}) => {
               proposal.source_id === source.pin.source_id &&
               acceptedMappingIndexes.includes(index),
           )
-          .map(({ proposal }) => proposal)
-          .map((proposal) => proposal.mapping);
+          .map(({ proposal, index }) =>
+            stableMappingIndexes
+              ? {
+                  ...proposal.mapping,
+                  is_stable_id: stableMappingIndexes.includes(index),
+                }
+              : proposal.mapping,
+          );
         return {
           source_id: source.pin.source_id,
           audience,
@@ -34,8 +52,11 @@ export const buildSourceReview = (draft, decisions = {}) => {
     policy_reviews: sources
       .filter((source) => source.pin?.role === "policy")
       .map((source) => {
-        const statements = new Set(
-          (source.statements || []).map((statement) => statement.statement_id),
+        const statements = new Map(
+          (source.statements || []).map((statement) => [
+            statement.statement_id,
+            statement,
+          ]),
         );
         return {
           source_id: source.pin.source_id,
@@ -46,6 +67,7 @@ export const buildSourceReview = (draft, decisions = {}) => {
               proposal,
               decision:
                 proposal.status === "supported" &&
+                !statements.get(proposal.statement_id)?.text_truncated &&
                 acceptedRuleIds.includes(proposal.statement_id)
                   ? "accepted"
                   : "reference_only",

@@ -309,6 +309,13 @@ def test_review_then_dispatch_one_design(
     assert review["state"] == "ready", review
     assert "PRIVATE_TERMS_SENTINEL" not in json.dumps(review, default=str)
     preview = review["preview"]
+    if kb:
+        kb_source = next(
+            s for s in preview["sources"] if s["origin"]["kind"] == "knowledge_base"
+        )
+        assert kb_source["filename"] == "terms.txt"
+        assert kb_source["origin"]["kb_id"] == str(collection.id)
+        assert kb_source["statements"][0]["page"] == 1
     assert review["scope"]["schema_digest"] == reviews.schema_digest(
         preview["destination_schema"]
     )
@@ -606,3 +613,55 @@ def test_wrong_release_source_pointer_creates_no_objects_or_rows(
         digest=env
     ).exists()
     assert not HarnessSuiteRelease.no_workspace_objects.filter(digest=suite).exists()
+
+
+@pytest.mark.django_db
+def test_existing_reference_can_be_accepted_after_text_redaction(
+    user, workspace, request, settings, alk_source_cli
+):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from simulate.tests.test_harness_versioning_rollback import _built
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    request.getfixturevalue("_object_storage")
+    req = _request(user, workspace)
+    env = _built(user, workspace, "reference-redaction")
+    selectors = {
+        "expected_environment_version_id": str(env.environment_version_id),
+        "expected_draft": {"id": None, "revision": 0},
+    }
+    prepared = harness_sources.prepare_upload_import(
+        env,
+        SimpleUploadedFile("support.txt", b"Escalate returns to support@example.com."),
+        purpose="reference",
+        **selectors,
+    )
+    assert prepared["state"] == "needs_repair"
+    source_id = prepared["draft"]["sources"][0]["pin"]["source_id"]
+    repaired = reviews.reprepare_review(
+        req,
+        prepared["import_ref"],
+        expected_revision=prepared["revision"],
+        idempotency_key="redact",
+        redact_text_sources=[source_id],
+    )
+    assert repaired["state"] == "ready"
+    assert "support@example.com" not in json.dumps(repaired["preview"])
+    result = harness_sources.accept_source_import(
+        req,
+        env,
+        import_ref=repaired["id"],
+        expected_revision=repaired["revision"],
+        expected_draft_digest=repaired["draft_digest"],
+        review={
+            "reference_reviews": [
+                {
+                    "source_id": source_id,
+                    "audience": {"tested_agent": True, "participant_ids": []},
+                }
+            ]
+        },
+        **selectors,
+    )
+    assert result["accepted_revision"] == repaired["revision"]

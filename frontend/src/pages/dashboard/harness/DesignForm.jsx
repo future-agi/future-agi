@@ -9,6 +9,9 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
+  Radio,
+  RadioGroup,
   MenuItem,
   Stack,
   TextField,
@@ -27,6 +30,8 @@ import useSimulationAccess from "src/sections/simulate/environments/hooks/useSim
 import BuildSourceFields from "src/sections/simulate/environments/buildDrawer/forms/shared/BuildSourceFields";
 import useBuildSources from "src/sections/simulate/environments/buildDrawer/forms/shared/useBuildSources";
 
+import DescribeFlowCard from "src/sections/simulate/environments/buildDrawer/starts/DescribeFlowCard";
+import { BUILD_FILES_ACCEPT } from "src/sections/simulate/environments/buildDrawer/forms/shared/buildFiles";
 import { errorMessage } from "./harnessShared";
 
 const MODALITIES = [
@@ -37,13 +42,16 @@ const MODALITIES = [
 // The design request (environment-releases.md §7.9): requirements, and optionally a root release
 // to customize and the person's documents. The harness asks for anything else it needs.
 export default function DesignForm({
+  scratch = false,
   template = null,
   onCancel = null,
   onBusyChange,
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: releases = [] } = useHarnessReleases({ enabled: !template });
+  const { data: releases = [] } = useHarnessReleases({
+    enabled: !template && !scratch,
+  });
   // A customization is a new root: only root releases can be templates.
   const templates = useMemo(
     () =>
@@ -58,6 +66,7 @@ export default function DesignForm({
   const [requirements, setRequirements] = useState("");
   const [modality, setModality] = useState("chat");
   const sources = useBuildSources();
+  const [privacy, setPrivacy] = useState("synthetic_replace");
   const { canEdit } = useSimulationAccess();
   const [submitting, setSubmitting] = useState(false);
   useEffect(() => {
@@ -68,7 +77,7 @@ export default function DesignForm({
   const request = useRef(null);
   const ready =
     canEdit &&
-    Boolean(name.trim() && requirements.trim()) &&
+    Boolean((scratch || name.trim()) && requirements.trim()) &&
     (!chosen || Boolean(suiteId)) &&
     !sources.blocked &&
     !submitting;
@@ -83,7 +92,12 @@ export default function DesignForm({
     setError("");
     try {
       const body = {
-        name: name.trim(),
+        name:
+          name.trim() ||
+          requirements.trim().split(/\s+/).slice(0, 8).join(" ").slice(0, 100),
+        ...(scratch && sources.selection
+          ? { personal_data_mode: privacy }
+          : {}),
         requirements: requirements.trim(),
         modality,
         ...(chosen ? { template_suite_id: suiteId } : {}),
@@ -106,6 +120,86 @@ export default function DesignForm({
       setSubmitting(false);
     }
   };
+
+  if (scratch) {
+    return (
+      <Stack spacing={2}>
+        <TextField
+          size="small"
+          label="Environment name (optional)"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <DescribeFlowCard
+          prompt="Describe the flow, or drop files to learn from"
+          description="Describe the trigger, tools and hand-offs. Attach policies, records or notes for context."
+          placeholder="A customer asks for a refund. The agent checks the order and escalates purchases over $500."
+          chips={[
+            "The agent gets triggered when…",
+            "It reaches for these tools…",
+            "It's done when…",
+            "It escalates if…",
+          ]}
+          value={requirements}
+          onChange={setRequirements}
+          files={sources.uploads.files}
+          onAdd={sources.uploads.add}
+          onRetry={sources.uploads.retry}
+          onRemove={sources.uploads.remove}
+          accept={BUILD_FILES_ACCEPT}
+          disabled={!canEdit || submitting}
+          canSubmit={ready}
+          onNext={submit}
+          submitLabel={submitting ? "Starting…" : "Build environment"}
+        />
+        {canEdit && (
+          <BuildSourceFields
+            sources={sources}
+            disabled={submitting}
+            showUpload={false}
+          />
+        )}
+        {sources.selection && (
+          <Stack>
+            <Typography id="scratch-personal-data">
+              Personal data in the sources
+            </Typography>
+            <RadioGroup
+              row
+              aria-labelledby="scratch-personal-data"
+              value={privacy}
+              onChange={(event) => setPrivacy(event.target.value)}
+            >
+              <FormControlLabel
+                value="synthetic_replace"
+                control={<Radio />}
+                label="Replace with stand-ins"
+              />
+              <FormControlLabel
+                value="none"
+                control={<Radio />}
+                label="There’s no personal data"
+              />
+            </RadioGroup>
+          </Stack>
+        )}
+        <TextField
+          select
+          size="small"
+          label="Channel"
+          value={modality}
+          onChange={(event) => setModality(event.target.value)}
+        >
+          {MODALITIES.map((item) => (
+            <MenuItem key={item.value} value={item.value}>
+              {item.label}
+            </MenuItem>
+          ))}
+        </TextField>
+        {error && <Alert severity="error">{error}</Alert>}
+      </Stack>
+    );
+  }
 
   return (
     <Stack spacing={2}>
@@ -208,6 +302,7 @@ export default function DesignForm({
 }
 
 DesignForm.propTypes = {
+  scratch: PropTypes.bool,
   template: PropTypes.object,
   onCancel: PropTypes.func,
   onBusyChange: PropTypes.func,

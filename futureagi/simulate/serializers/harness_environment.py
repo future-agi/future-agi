@@ -1324,6 +1324,8 @@ class HarnessSourceCapabilitiesSerializer(serializers.Serializer):
 
 
 class HarnessSourceSummarySerializer(serializers.Serializer):
+    scenario_generation = serializers.JSONField(required=False)
+    generation_review_id = serializers.UUIDField(required=False)
     draft = serializers.BooleanField()
     snapshot_digest = serializers.CharField(allow_null=True)
     sources = serializers.JSONField()

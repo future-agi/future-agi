@@ -20,7 +20,14 @@ import {
   useEnvironmentSourceReview,
   useReprepareEnvironmentSourceReview,
 } from "src/api/simulate-environments/sourceImports";
-import { buildSourceReview } from "./importSourceReview";
+import { buildSourceReview, readableField } from "./importSourceReview";
+import PersonalDataChoice from "./PersonalDataChoice";
+import {
+  ReviewedColumns,
+  ReviewedRecords,
+  ReviewedStatements,
+  SourceRepairs,
+} from "./ReviewedSource";
 import SourceScenarioGeneration from "./SourceScenarioGeneration";
 
 const roles = {
@@ -28,7 +35,21 @@ const roles = {
   reference: "Reference",
   policy: "Policy",
 };
-const label = (value) => value?.replaceAll("_", " ");
+const diagnosticMessages = {
+  source_parse_failed:
+    "Some data could not be read. Check the file format and the rows shown above.",
+  source_no_extractable_text:
+    "This document has no readable text. Upload a text-based copy.",
+  source_parser_dependency_missing: "The document reader is unavailable.",
+  source_too_large: "This file exceeds the supported size.",
+  source_unsupported_type: "This file format is unsupported.",
+  source_content_flagged:
+    "Content review blocked this file. Check its contents before uploading again.",
+  source_privacy_unresolved:
+    "Personal data needs review before this file can be used.",
+  source_schema_ambiguous: "Choose the table to use for these records.",
+  source_schema_needs_repair: "Review the column types and row identifier.",
+};
 const unfinished = ["reading", "needs_repair", "ready"];
 const toggled = (items, value, checked) =>
   checked ? [...items, value] : items.filter((item) => item !== value);
@@ -39,6 +60,7 @@ function SourceReviewEditor({
   acceptLabel,
   onAccepted,
   onCancelled,
+  defaultPersonalDataMode,
   stale,
 }) {
   const { id, state, revision, draft_digest: digest, preview, scope } = review;
@@ -46,22 +68,48 @@ function SourceReviewEditor({
   const cancel = useCancelSourceReview(onCancelled);
   const reprepare = useReprepareEnvironmentSourceReview();
   const pending = accept.isPending || cancel.isPending || reprepare.isPending;
-  const editable = canEdit && !pending && !stale;
+  const editable = canEdit && !pending && !stale && unfinished.includes(state);
   const error = accept.error || cancel.error || reprepare.error;
   const action = useRef();
   const sources = preview?.sources ?? [];
-  const tables = preview?.destination_tables ?? [];
+  const tables = preview?.destination_tables ?? scope.destination_tables ?? [];
   const inferRepairs = scope.kind !== "environment" && !scope.target_table;
+  const diagnostics = preview?.diagnostics || [];
+  const privateTextIds = new Set(
+    sources
+      .filter((s) => s.pin.role !== "seed_records")
+      .map((s) => s.pin.source_id),
+  );
+  const privateText = new Set(
+    diagnostics
+      .filter(
+        (d) =>
+          d.code === "source_privacy_unresolved" &&
+          privateTextIds.has(d.span?.source_id),
+      )
+      .map((d) => d.span?.source_id),
+  );
+  const [redactions, setRedactions] = useState([]);
   const hasRepairControls =
     tables.length > 0 ||
     (inferRepairs && sources.some((item) => item.fields?.length));
   const mappings = preview?.proposals?.field_mappings ?? [];
   const rules = preview?.proposals?.policy_rules ?? [];
   const joins = preview?.proposals?.relationships ?? [];
-  const [table, setTable] = useState("");
+  const suggestedTable = preview?.suggested_target_table;
+  const [table, setTable] = useState(
+    scope.target_table ||
+      (tables.includes(suggestedTable) ? suggestedTable : ""),
+  );
+  const changingTable = tables.includes(table) && table !== scope.target_table;
   const [repairs, setRepairs] = useState({});
   const [mappingIndexes, setMappingIndexes] = useState(() =>
     mappings.map((_, index) => index),
+  );
+  const [stableIndexes, setStableIndexes] = useState(() =>
+    mappings.flatMap(({ mapping }, index) =>
+      mapping.is_stable_id ? [index] : [],
+    ),
   );
   const [ruleIds, setRuleIds] = useState([]);
   const [joinIndexes, setJoinIndexes] = useState([]);
@@ -70,7 +118,10 @@ function SourceReviewEditor({
     Object.fromEntries(
       mappings
         .filter(({ mapping }) => mapping.personal_data)
-        .map(({ source_id }) => [source_id, "synthetic_replace"]),
+        .map(({ source_id }) => [
+          source_id,
+          defaultPersonalDataMode || "synthetic_replace",
+        ]),
     ),
   );
   const pins = { reviewId: id, expected_revision: revision };
@@ -81,7 +132,7 @@ function SourceReviewEditor({
     }
     return action.current.key;
   };
-  const repairBody = table
+  const repairBody = changingTable
     ? { target_table: table }
     : {
         schema_repairs: Object.values(repairs).filter(
@@ -92,11 +143,7 @@ function SourceReviewEditor({
             item.manual_relationships,
         ),
       };
-  const canRepair =
-    state === "needs_repair" &&
-    (tables.length
-      ? tables.includes(table)
-      : Boolean(repairBody.schema_repairs?.length));
+  const canRepair = changingTable || Boolean(repairBody.schema_repairs?.length);
   const unmappedRecords = sources.filter(
     ({ pin }) =>
       pin?.role === "seed_records" &&
@@ -104,16 +151,44 @@ function SourceReviewEditor({
         (index) => mappings[index]?.source_id === pin.source_id,
       ),
   );
+  const missingIdentity = sources.filter(
+    ({ pin }) =>
+      pin.role === "seed_records" &&
+      mappings.some((m) => m.source_id === pin.source_id) &&
+      !mappingIndexes.some(
+        (index) =>
+          mappings[index].source_id === pin.source_id &&
+          stableIndexes.includes(index),
+      ),
+  );
+  const validJoin = ({ from_source_id, from_field, to_source_id, to_field }) =>
+    mappingIndexes.some(
+      (index) =>
+        mappings[index].source_id === from_source_id &&
+        mappings[index].mapping.target_field === from_field,
+    ) &&
+    stableIndexes.some(
+      (index) =>
+        mappings[index].source_id === to_source_id &&
+        mappings[index].mapping.target_field === to_field,
+    );
   const canAccept =
     state === "ready" &&
     Boolean(digest && scope?.schema_digest) &&
-    !unmappedRecords.length;
+    !unmappedRecords.length &&
+    !missingIdentity.length &&
+    !mappingIndexes.some(
+      (index) =>
+        mappings[index].mapping.personal_data &&
+        personalDataModes[mappings[index].source_id] !== "synthetic_replace",
+    ) &&
+    !changingTable;
 
-  const doRepair = () =>
+  const doRepair = (body) =>
     reprepare.mutate({
       ...pins,
-      ...repairBody,
-      idempotency_key: keyFor(repairBody),
+      ...body,
+      idempotency_key: keyFor(body),
     });
   const doAccept = () => {
     const body = {
@@ -121,8 +196,11 @@ function SourceReviewEditor({
       expected_schema_digest: scope.schema_digest,
       decisions: buildSourceReview(preview, {
         acceptedMappingIndexes: mappingIndexes,
+        stableMappingIndexes: stableIndexes,
         acceptedRuleIds: ruleIds,
-        acceptedRelationshipIndexes: joinIndexes,
+        acceptedRelationshipIndexes: joinIndexes.filter((index) =>
+          validJoin(joins[index].relationship),
+        ),
         testedAgent,
         personalDataModes,
       }),
@@ -184,6 +262,11 @@ function SourceReviewEditor({
             select
             size="small"
             label="Scenario data table"
+            helperText={
+              suggestedTable && tables.includes(suggestedTable)
+                ? `Suggested table: ${suggestedTable}`
+                : undefined
+            }
             value={table}
             disabled={!editable}
             onChange={(event) => setTable(event.target.value)}
@@ -195,117 +278,169 @@ function SourceReviewEditor({
             ))}
           </TextField>
         )}
-        {sources.map(({ pin, filename, fields = [], row_count: rows }) => (
-          <Stack key={pin.source_id} spacing={1}>
-            <Typography fontWeight={600}>{filename}</Typography>
-            <Typography color="text.secondary">
-              {roles[pin.role] || pin.role}
-              {rows > 0 ? ` · ${rows} rows` : ""}
-            </Typography>
-            {state === "needs_repair" &&
-              inferRepairs &&
-              !tables.length &&
-              fields.length > 0 && (
-                <>
-                  {[
-                    ["text_fields", "Treat as text"],
-                    ["identity_fields", "Identify records by"],
-                  ].map(([key, title]) => (
-                    <TextField
-                      key={key}
-                      select
-                      size="small"
-                      label={title}
-                      disabled={!editable}
-                      SelectProps={{ multiple: true }}
-                      value={repairs[pin.source_id]?.[key] || []}
-                      onChange={(event) =>
-                        changeRepair(pin.source_id, key, event.target.value)
-                      }
-                    >
-                      {fields.map(({ source_field: name }) => (
-                        <MenuItem key={name} value={name}>
-                          {name}
-                        </MenuItem>
-                      ))}
-                    </TextField>
-                  ))}
-                  {[
-                    ["separate_entity", "Use a separate table for this source"],
-                    ["manual_relationships", "Review relationships manually"],
-                  ].map(([key, title]) => (
-                    <FormControlLabel
-                      key={key}
-                      label={title}
-                      control={
-                        <Checkbox
-                          checked={Boolean(repairs[pin.source_id]?.[key])}
-                          onChange={(event) =>
-                            changeRepair(
-                              pin.source_id,
-                              key,
-                              event.target.checked,
-                            )
-                          }
-                        />
-                      }
-                    />
-                  ))}
-                </>
+        {sources.map((source) => {
+          const { pin, filename, fields = [], row_count: rows } = source;
+          const sid = pin.source_id;
+          const choices = (
+            preview?.destination_schema?.repair_choices || []
+          ).filter((c) => c.source_id === sid);
+          const mode = personalDataModes[sid];
+          const privacyPages = [
+            ...new Set(
+              diagnostics
+                .filter(
+                  (d) =>
+                    d.code === "source_privacy_unresolved" &&
+                    d.span?.source_id === sid,
+                )
+                .map((d) => d.span.page)
+                .filter(Boolean),
+            ),
+          ];
+
+          const selectedPersonal = mappings.filter(
+            (m, i) =>
+              m.source_id === sid &&
+              m.mapping.personal_data &&
+              mappingIndexes.includes(i),
+          );
+          return (
+            <Stack key={sid} spacing={1}>
+              <Typography fontWeight={600}>
+                {filename || roles[pin.role]}
+              </Typography>
+              <Typography color="text.secondary">
+                {roles[pin.role] || pin.role}
+                {pin.role === "seed_records" &&
+                  rows != null &&
+                  ` · ${rows} rows`}
+                {pin.role === "seed_records" &&
+                  scope.target_table &&
+                  ` · Table: ${scope.target_table}`}
+              </Typography>
+              {pin.role === "seed_records" && (
+                <ReviewedRecords source={source} />
               )}
-          </Stack>
-        ))}
+              {state === "needs_repair" && privateText.has(sid) && (
+                <Stack spacing={0.5}>
+                  <Alert severity="warning">
+                    An email address or phone number was detected
+                    {privacyPages.length
+                      ? ` on ${privacyPages.length === 1 ? "page" : "pages"} ${privacyPages.join(", ")}`
+                      : ""}
+                    . Remove those details from the review copy or upload a
+                    sanitized file.
+                  </Alert>
+                  <FormControlLabel
+                    label="Remove emails and phone numbers from this review copy"
+                    control={
+                      <Checkbox
+                        checked={redactions.includes(sid)}
+                        onChange={(e) =>
+                          setRedactions(
+                            toggled(redactions, sid, e.target.checked),
+                          )
+                        }
+                      />
+                    }
+                  />
+                </Stack>
+              )}
+              {state === "needs_repair" &&
+                inferRepairs &&
+                !tables.length &&
+                fields.length > 0 && (
+                  <SourceRepairs
+                    source={source}
+                    choices={choices}
+                    repair={repairs[sid] || {}}
+                    change={(key, value) => changeRepair(sid, key, value)}
+                    editable={editable}
+                  />
+                )}
+              {fields.length > 0 && (
+                <ReviewedColumns
+                  source={source}
+                  mappings={mappings}
+                  selected={mappingIndexes}
+                  stable={stableIndexes}
+                  onStable={
+                    state === "ready"
+                      ? (i, on) =>
+                          setStableIndexes(toggled(stableIndexes, i, on))
+                      : undefined
+                  }
+                  joins={joins}
+                  onInclude={
+                    state === "ready"
+                      ? (i, on) =>
+                          setMappingIndexes(toggled(mappingIndexes, i, on))
+                      : undefined
+                  }
+                />
+              )}
+              {state === "ready" && mode && (
+                <Stack>
+                  <Typography variant="subtitle2">Personal data</Typography>
+                  <Typography variant="body2">
+                    Fields marked as personal must be replaced or excluded.
+                  </Typography>
+                  <PersonalDataChoice
+                    compact
+                    choice={mode === "synthetic_replace" ? "replace" : "none"}
+                    availableChoices={[
+                      "replace",
+                      ...(selectedPersonal.length ? [] : ["none"]),
+                    ]}
+                    onChoose={(choice) =>
+                      setPersonalDataModes({
+                        ...personalDataModes,
+                        [sid]:
+                          choice === "replace" ? "synthetic_replace" : "none",
+                      })
+                    }
+                  />
+                </Stack>
+              )}
+              <ReviewedStatements
+                source={source}
+                rules={rules}
+                ruleIds={ruleIds}
+                onSelect={
+                  state === "ready"
+                    ? (id, on) => setRuleIds(toggled(ruleIds, id, on))
+                    : undefined
+                }
+              />
+            </Stack>
+          );
+        })}
         {state === "ready" && (
           <>
+            {missingIdentity.map(({ pin, filename }) => (
+              <Alert key={pin.source_id} severity="warning">
+                Choose a stable ID for {filename}. Select a mapped column with a
+                unique value on every row. If no column qualifies, correct the
+                file or choose another destination.
+              </Alert>
+            ))}
             {unmappedRecords.map(({ pin, filename }) => (
               <Alert key={pin.source_id} severity="warning">
                 {mappings.some(({ source_id }) => source_id === pin.source_id)
                   ? `Select a field mapping for ${filename} to include its records.`
-                  : `No fields in ${filename} match the destination table. Cancel this review and choose a file with matching columns.`}
+                  : `No fields in ${filename} match the destination table. ${tables.length > 1 ? "Choose another table above." : "Choose a file with matching columns."}`}
               </Alert>
-            ))}
-            {mappings.map(({ source_id: sourceId, mapping }, index) => (
-              <FormControlLabel
-                key={`${sourceId}-${mapping.source_field}-${index}`}
-                label={`${mapping.source_field} → ${mapping.target_field}`}
-                control={
-                  <Checkbox
-                    checked={mappingIndexes.includes(index)}
-                    onChange={(event) =>
-                      setMappingIndexes(
-                        toggled(mappingIndexes, index, event.target.checked),
-                      )
-                    }
-                  />
-                }
-              />
-            ))}
-            {Object.entries(personalDataModes).map(([id, mode]) => (
-              <FormControlLabel
-                key={id}
-                label={`Replace personal data in ${sources.find((item) => item.pin.source_id === id)?.filename || id} with synthetic values`}
-                control={
-                  <Switch
-                    checked={mode === "synthetic_replace"}
-                    onChange={(event) =>
-                      setPersonalDataModes({
-                        ...personalDataModes,
-                        [id]: event.target.checked
-                          ? "synthetic_replace"
-                          : "none",
-                      })
-                    }
-                  />
-                }
-              />
             ))}
             {joins.map(({ relationship }, index) => (
               <FormControlLabel
                 key={index}
-                label={`${relationship.from_field} → ${relationship.to_field}`}
+                label={`${readableField(relationship.from_field)} → ${readableField(relationship.to_field)}`}
                 control={
                   <Checkbox
-                    checked={joinIndexes.includes(index)}
+                    disabled={!validJoin(relationship)}
+                    checked={
+                      validJoin(relationship) && joinIndexes.includes(index)
+                    }
                     onChange={(event) =>
                       setJoinIndexes(
                         toggled(joinIndexes, index, event.target.checked),
@@ -315,43 +450,6 @@ function SourceReviewEditor({
                 }
               />
             ))}
-            {rules.map((rule) => {
-              const statement = sources
-                .flatMap((source) => source.statements || [])
-                .find(
-                  ({ statement_id: statementId }) =>
-                    statementId === rule.statement_id,
-                );
-              return (
-                <FormControlLabel
-                  key={rule.rule_id}
-                  label={[
-                    rule.statement_id,
-                    label(rule.status),
-                    label(rule.kind),
-                    label(rule.check_type),
-                    statement?.page != null && `Page ${statement.page}`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  control={
-                    <Checkbox
-                      disabled={rule.status !== "supported"}
-                      checked={ruleIds.includes(rule.statement_id)}
-                      onChange={(event) =>
-                        setRuleIds(
-                          toggled(
-                            ruleIds,
-                            rule.statement_id,
-                            event.target.checked,
-                          ),
-                        )
-                      }
-                    />
-                  }
-                />
-              );
-            })}
             <FormControlLabel
               label="Make approved source facts visible to the tested agent"
               control={
@@ -364,18 +462,49 @@ function SourceReviewEditor({
           </>
         )}
       </Stack>
-      {(preview?.diagnostics || [])
-        .filter(
-          ({ code }) => code !== "source_schema_ambiguous" || !tables.length,
-        )
-        .map((item, index) => (
-          <Alert
-            key={`${item.code}-${index}`}
-            severity={item.severity === "blocking" ? "error" : "warning"}
-          >
-            {item.message || label(item.code)}
-          </Alert>
-        ))}
+      {Array.from(
+        new Set(
+          diagnostics
+            .filter((item) => {
+              if (item.code === "source_schema_ambiguous" && tables.length)
+                return false;
+              if (
+                item.code === "source_schema_needs_repair" &&
+                preview?.destination_schema?.repair_choices?.some(
+                  (c) => c.source_id === item.span?.source_id,
+                )
+              )
+                return false;
+              if (
+                item.code === "source_privacy_unresolved" &&
+                sources.some(
+                  (s) =>
+                    s.pin.source_id === item.span?.source_id &&
+                    s.pin.role !== "seed_records",
+                )
+              )
+                return false;
+              return true;
+            })
+            .map((item) => {
+              const name = sources.find(
+                (s) => s.pin.source_id === item.span?.source_id,
+              )?.filename;
+              const message =
+                diagnosticMessages[item.code] ||
+                item.message ||
+                "Review the file and prepare it again.";
+              return name ? `${name} · ${message}` : message;
+            }),
+        ),
+      ).map((message) => (
+        <Alert
+          key={message}
+          severity={state === "needs_repair" ? "warning" : "info"}
+        >
+          {message}
+        </Alert>
+      ))}
       {unfinished.includes(state) && (
         <Stack direction="row" spacing={1}>
           <Button
@@ -386,13 +515,25 @@ function SourceReviewEditor({
           >
             Cancel review
           </Button>
-          {state === "needs_repair" && hasRepairControls && (
+          {state === "needs_repair" && privateText.size > 0 && (
+            <Button
+              variant="contained"
+              disabled={!editable || !redactions.length}
+              onClick={() => doRepair({ redact_text_sources: redactions })}
+            >
+              Remove personal details and prepare again
+            </Button>
+          )}
+          {((state === "needs_repair" && hasRepairControls) ||
+            (state === "ready" && changingTable)) && (
             <Button
               variant="contained"
               disabled={!editable || !canRepair}
-              onClick={doRepair}
+              onClick={() => doRepair(repairBody)}
             >
-              {tables.length ? "Prepare for this table" : "Prepare again"}
+              {changingTable || tables.length > 0
+                ? "Prepare for this table"
+                : "Prepare again"}
             </Button>
           )}
           {state === "ready" && (
@@ -417,6 +558,7 @@ SourceReviewEditor.propTypes = {
   onAccepted: PropTypes.func,
   onCancelled: PropTypes.func,
   stale: PropTypes.bool,
+  defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
 };
 
 export default function SourceReviewPanel({
@@ -477,6 +619,7 @@ SourceReviewPanel.propTypes = {
   reviewId: PropTypes.string.isRequired,
   ownerId: PropTypes.string.isRequired,
   environmentBasis: PropTypes.object,
+  defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
   acceptLabel: PropTypes.string.isRequired,
   canEdit: PropTypes.bool,
   onAccepted: PropTypes.func,

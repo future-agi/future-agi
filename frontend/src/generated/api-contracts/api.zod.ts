@@ -52352,6 +52352,8 @@ export const SimulateApiHarnessJobsListResponse = zod.array(
 selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
+export const simulateApiHarnessJobsCreateBodyTestFocusMax = 4000;
+
 export const simulateApiHarnessJobsCreateBodySourceSelectionDocumentIdsDefault =
   [];
 export const simulateApiHarnessJobsCreateBodySourceSelectionDocumentIdsMax = 100;
@@ -52473,6 +52475,11 @@ export const simulateApiHarnessJobsCreateBodyMetadataDefault = {};
 export const simulateApiHarnessJobsCreateBodyCredentialValuesMaxOne = 65536;
 
 export const SimulateApiHarnessJobsCreateBody = zod.object({
+  test_focus: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessJobsCreateBodyTestFocusMax)
+    .optional(),
   source_selection: zod
     .object({
       document_ids: zod
@@ -52761,6 +52768,8 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
 selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
+export const simulateApiHarnessJobsPreflightBodyTestFocusMax = 4000;
+
 export const simulateApiHarnessJobsPreflightBodySourceSelectionDocumentIdsDefault =
   [];
 export const simulateApiHarnessJobsPreflightBodySourceSelectionDocumentIdsMax = 100;
@@ -52882,6 +52891,11 @@ export const simulateApiHarnessJobsPreflightBodyMetadataDefault = {};
 export const simulateApiHarnessJobsPreflightBodyCredentialValuesMaxOne = 65536;
 
 export const SimulateApiHarnessJobsPreflightBody = zod.object({
+  test_focus: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessJobsPreflightBodyTestFocusMax)
+    .optional(),
   source_selection: zod
     .object({
       document_ids: zod
@@ -53763,6 +53777,7 @@ export const SimulateApiHarnessJobsConversationConversationMessageBody =
       .string()
       .min(1)
       .max(simulateApiHarnessJobsConversationConversationMessageBodyContentMax),
+    source_review_id: zod.string().uuid().optional(),
     client_request_id: zod
       .string()
       .min(1)
@@ -109074,6 +109089,7 @@ export const SimulateApiHarnessEnvironmentDesignsCreateBody = zod.object({
     .string()
     .min(1)
     .max(simulateApiHarnessEnvironmentDesignsCreateBodyRequirementsMax),
+  personal_data_mode: zod.enum(["none", "synthetic_replace"]).optional(),
   modality: zod
     .enum(["chat", "voice"])
     .default(simulateApiHarnessEnvironmentDesignsCreateBodyModalityDefault),
@@ -109229,6 +109245,8 @@ export const SimulateApiHarnessEnvironmentsSourcesParams = zod.object({
 });
 
 export const SimulateApiHarnessEnvironmentsSourcesResponse = zod.object({
+  scenario_generation: zod.object({}).passthrough().optional(),
+  generation_review_id: zod.string().uuid().optional(),
   draft: zod.boolean(),
   snapshot_digest: zod.string().min(1),
   sources: zod.object({}).passthrough(),
@@ -109868,6 +109886,10 @@ export const simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemIdenti
 
 export const simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemIdentityFieldsMax = 256;
 
+export const simulateApiHarnessSourceReviewsReprepareBodyRedactTextSourcesItemMax = 255;
+
+export const simulateApiHarnessSourceReviewsReprepareBodyRedactTextSourcesMax = 100;
+
 export const SimulateApiHarnessSourceReviewsReprepareBody = zod.object({
   expected_revision: zod.number().min(1),
   idempotency_key: zod
@@ -109919,6 +109941,17 @@ export const SimulateApiHarnessSourceReviewsReprepareBody = zod.object({
       }),
     )
     .optional(),
+  redact_text_sources: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessSourceReviewsReprepareBodyRedactTextSourcesItemMax,
+        ),
+    )
+    .max(simulateApiHarnessSourceReviewsReprepareBodyRedactTextSourcesMax)
+    .optional(),
 });
 
 export const SimulateApiHarnessSourceReviewsReprepareResponse = zod.object({
@@ -109962,12 +109995,43 @@ export const SimulateApiHarnessSourceReviewsReprepareResponse = zod.object({
     .optional(),
 });
 
-export const SimulateApiHarnessSourceReviewsScenarioGenerationParams =
+export const SimulateApiHarnessSourceReviewsScenarioGenerationReadParams =
   zod.object({
     id: zod.string(),
   });
 
-export const SimulateApiHarnessSourceReviewsScenarioGenerationResponse =
+export const SimulateApiHarnessSourceReviewsScenarioGenerationReadResponse =
+  zod.object({
+    id: zod.string().uuid(),
+    review_id: zod.string().uuid(),
+    state: zod.enum(["queued", "running", "completed", "failed", "stale"]),
+    source_digest: zod.string().min(1),
+    generated_scenarios: zod.array(
+      zod.object({
+        scenario_key: zod.string().min(1),
+        name: zod.string().min(1),
+        citations: zod.array(
+          zod.object({
+            source_id: zod.string().min(1),
+            page: zod.number().optional(),
+            row: zod.number().optional(),
+          }),
+        ),
+      }),
+    ),
+    suite_draft: zod.object({}).passthrough(),
+    error: zod.string().min(1),
+  });
+
+export const SimulateApiHarnessSourceReviewsScenarioGenerationCreateParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessSourceReviewsScenarioGenerationCreateBody =
+  zod.object({});
+
+export const SimulateApiHarnessSourceReviewsScenarioGenerationCreateResponse =
   zod.object({
     id: zod.string().uuid(),
     review_id: zod.string().uuid(),

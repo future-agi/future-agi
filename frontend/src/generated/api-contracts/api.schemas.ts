@@ -23991,6 +23991,11 @@ export interface HarnessArtifactApi {
 }
 
 export interface HarnessJobCreateApi {
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  test_focus?: string;
   source_selection?: HarnessDesignSourceSelectionApi;
   schema_version?: HarnessJobCreateApiSchemaVersion;
   run_id?: string;
@@ -24033,6 +24038,11 @@ export type HarnessPreflightApiMetadata = {
 export type HarnessPreflightApiCredentialValues = { [key: string]: string };
 
 export interface HarnessPreflightApi {
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  test_focus?: string;
   source_selection?: HarnessDesignSourceSelectionApi;
   schema_version?: HarnessPreflightApiSchemaVersion;
   run_id?: string;
@@ -24219,6 +24229,7 @@ export interface HarnessConversationMessageCreateApi {
    * @maxLength 20000
    */
   content: string;
+  source_review_id?: string;
   /**
    * @minLength 1
    * @pattern ^[A-Za-z0-9_-]{1,128}$
@@ -44573,6 +44584,14 @@ export interface HarnessReleaseAgentRequestApi {
   parallelism?: number;
 }
 
+export type HarnessDesignRequestApiPersonalDataMode =
+  (typeof HarnessDesignRequestApiPersonalDataMode)[keyof typeof HarnessDesignRequestApiPersonalDataMode];
+
+export const HarnessDesignRequestApiPersonalDataMode = {
+  none: "none",
+  synthetic_replace: "synthetic_replace",
+} as const;
+
 export type HarnessDesignRequestApiModality =
   (typeof HarnessDesignRequestApiModality)[keyof typeof HarnessDesignRequestApiModality];
 
@@ -44592,6 +44611,7 @@ export interface HarnessDesignRequestApi {
    * @maxLength 20000
    */
   requirements: string;
+  personal_data_mode?: HarnessDesignRequestApiPersonalDataMode;
   modality?: HarnessDesignRequestApiModality;
   template_suite_id?: string;
   source_selection?: HarnessDesignSourceSelectionApi;
@@ -44732,9 +44752,15 @@ export interface HarnessRunReportApi {
   environment_faults: number;
 }
 
+export type HarnessSourceSummaryApiScenarioGeneration = {
+  [key: string]: unknown;
+};
+
 export type HarnessSourceSummaryApiSources = { [key: string]: unknown };
 
 export interface HarnessSourceSummaryApi {
+  scenario_generation?: HarnessSourceSummaryApiScenarioGeneration;
+  generation_review_id?: string;
   draft: boolean;
   /** @minLength 1 */
   snapshot_digest: string;
@@ -45190,6 +45216,8 @@ export interface HarnessSourceReviewReprepareApi {
    */
   target_table?: string;
   schema_repairs?: SourceSchemaRepairApi[];
+  /** @maxItems 100 */
+  redact_text_sources?: string[];
 }
 
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {

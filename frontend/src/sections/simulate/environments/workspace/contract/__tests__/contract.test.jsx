@@ -5,7 +5,7 @@ import WorldToolsPanel from "../../world/WorldToolsPanel";
 
 import { WORKERS_COPY } from "../workers.constants";
 
-vi.mock("../../sources/SourcesPanel", () => ({ default: () => null }));
+vi.mock("../../sources/SourcesSection", () => ({ default: () => null }));
 
 const tool = (name, description, writes) => ({
   tool: name,

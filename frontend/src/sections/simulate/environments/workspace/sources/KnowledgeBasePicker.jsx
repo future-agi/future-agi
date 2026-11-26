@@ -1,3 +1,4 @@
+import { useMutation } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -23,12 +24,16 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { paths } from "src/routes/paths";
 import {
   isKbFileReady,
+  readyKbFiles,
   isKbReady,
-  useEnvironmentSources,
   useKnowledgeBaseFiles,
   useKnowledgeBases,
-  useSourceCapabilities,
 } from "src/api/simulate-environments/sources";
+import {
+  useEnvironmentSources,
+  useSourceCapabilities,
+} from "src/api/simulate-environments/sourceImports";
+import { DESIGN_DOCUMENT_MAX_BYTES } from "src/api/simulate-environments/designDocuments";
 import { fDate } from "src/utils/format-time";
 import ShimmerText from "../../components/ShimmerText";
 import { plural } from "./sources.constants";
@@ -261,6 +266,10 @@ export default function KnowledgeBasePicker({ envId, open, onClose, onPick }) {
   const { data: summary } = useEnvironmentSources(envId);
   const { data: capabilities } = useSourceCapabilities(envId);
   const [kb, setKb] = useState(null);
+  const readySelection = useMutation({
+    mutationFn: readyKbFiles,
+    meta: { errorHandled: true },
+  });
   const [picked, setPicked] = useState([]);
   const [search, setSearch] = useState("");
   const debounced = useDebounce(search.trim(), 300);
@@ -270,7 +279,12 @@ export default function KnowledgeBasePicker({ envId, open, onClose, onPick }) {
   const files = useKnowledgeBaseFiles(open ? kb?.id : null, { search: term });
   const query = kb ? files : kbs;
   const listRef = useRef(null);
-  const limits = capabilities?.knowledge_base;
+  const limits = envId
+    ? capabilities?.knowledge_base
+    : {
+        formats: ["pdf", "docx", "rtf", "txt"],
+        max_file_bytes: DESIGN_DOCUMENT_MAX_BYTES,
+      };
   // Removed ones too: adding one again would find it already here.
   const added = new Set(
     (summary?.sources || [])
@@ -296,6 +310,7 @@ export default function KnowledgeBasePicker({ envId, open, onClose, onPick }) {
   useEffect(loadMore);
 
   const openKb = (next) => {
+    readySelection.reset();
     setKb(next);
     setPicked([]);
     setSearch("");
@@ -309,6 +324,18 @@ export default function KnowledgeBasePicker({ envId, open, onClose, onPick }) {
   const pick = (selection) =>
     onPick({ kind: "knowledge_base", kb, ...selection });
 
+  const addAll = () => {
+    if (kb.status === "Completed" && !added.size) {
+      pick({ whole_collection: true });
+      return;
+    }
+    readySelection.mutate(kb.id, {
+      onSuccess: (rows) => {
+        const available = rows.filter((file) => !added.has(file.id));
+        if (available.length) pick({ files: available });
+      },
+    });
+  };
   return (
     <ClosableDialog
       open={open}
@@ -429,10 +456,16 @@ export default function KnowledgeBasePicker({ envId, open, onClose, onPick }) {
                 <Button
                   size="small"
                   variant="outlined"
-                  disabled={nothingToAdd}
-                  onClick={() => pick({ whole_collection: true })}
+                  disabled={nothingToAdd || readySelection.isPending}
+                  onClick={addAll}
                 >
-                  Add all
+                  {readySelection.isPending
+                    ? "Loading files…"
+                    : readySelection.isError
+                      ? "Retry loading files"
+                      : kb.status === "PartialCompleted"
+                        ? "Add ready files"
+                        : "Add all"}
                 </Button>
                 <Button
                   size="small"

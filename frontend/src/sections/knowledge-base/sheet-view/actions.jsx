@@ -59,6 +59,10 @@ export default function Actions({
     }
   };
 
+  const selectionReady =
+    ["Completed", "PartialCompleted"].includes(status?.status) &&
+    selectedFiles?.length > 0 &&
+    selectedFiles.every((file) => file.status === "Completed");
   const count = selectedAll
     ? totalRows - excludingIds?.length
     : selectedFiles.length;
@@ -88,11 +92,11 @@ export default function Actions({
             {
               label: "Use in Environment",
               icon: "solar:folder-with-files-linear",
-              disabled: selectedAll || status?.status !== "Completed",
+              disabled: selectedAll || !selectionReady,
               tooltip: selectedAll
                 ? "Clear Select all and choose exact files"
-                : status?.status !== "Completed"
-                  ? "Wait for processing to finish"
+                : !selectionReady
+                  ? "Choose files that have finished processing"
                   : "",
               onClick: () =>
                 onUseInEnvironment(selectedFiles.map((file) => file.id)),

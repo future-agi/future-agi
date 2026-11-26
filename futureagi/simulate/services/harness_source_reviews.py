@@ -22,6 +22,8 @@ from simulate.models import (
 )
 from simulate.services import harness_sources as sources
 from simulate.services.harness_provider import request_organization, request_workspace
+from simulate.services.harness_source_preview import public_source_preview
+from simulate.services.harness_source_summary import resolve_legacy_filenames
 from simulate.services.harness_versioning import archives, drafts
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError
@@ -72,6 +74,10 @@ def _not_found():
 
 
 def require_source_scope(request, *, write: bool) -> dict:
+    from simulate.selectors.held_back import coding_agent_key
+
+    if coding_agent_key(request):
+        raise _not_found()
     organization = request_organization(request)
     workspace = request_workspace(request)
     if organization is None or (
@@ -145,7 +151,7 @@ def _environment_basis(
 
 
 def _environment_schema(
-    owner: HostedHarnessJob, target_table
+    owner: HostedHarnessJob, target_table, *, fields_by_table=None
 ) -> tuple[dict | None, list[str]]:
     version = drafts.fresh_draft(owner, "environment") or owner.environment_version
     schema = ((version.documents or {}).get("contract") or {}).get("data_schema") or {}
@@ -169,6 +175,9 @@ def _environment_schema(
             )
     if not columns:
         columns = _sql_columns(version.archive_object_key)
+    if fields_by_table is not None:
+        for table, name, _kind in columns:
+            fields_by_table.setdefault(table, set()).add(name.casefold())
     tables = sorted({table for table, _name, _kind in columns})
     if target_table is not None and target_table not in tables:
         raise _conflict(
@@ -342,6 +351,45 @@ def _retained_inputs(captured):
     ]
 
 
+def table_choices(captured, table_fields):
+    import csv
+    import io
+
+    tables = sorted(table_fields)
+    if len(tables) < 2:
+        return {}
+    headers = set()
+    for source in captured:
+        if source.role != "seed_records":
+            continue
+        try:
+            if source.media_type == "text/csv":
+                sample = next(
+                    csv.reader(io.StringIO(source.content.decode("utf-8-sig"))), []
+                )
+            elif source.media_type == "application/json":
+                records = json.loads(source.content)
+                sample = (
+                    records[0].keys()
+                    if isinstance(records, list)
+                    and records
+                    and isinstance(records[0], dict)
+                    else ()
+                )
+            else:
+                continue
+            headers.update(str(name).casefold() for name in sample)
+        except (UnicodeError, csv.Error, ValueError):
+            continue
+    scores = {name: len(fields & headers) for name, fields in table_fields.items()}
+    best = max(scores.values(), default=0)
+    matches = [name for name, score in scores.items() if score == best and best]
+    return {
+        "destination_tables": tables,
+        **({"suggested_target_table": matches[0]} if len(matches) == 1 else {}),
+    }
+
+
 def _stage(
     row: HarnessSourceReview,
     capture,
@@ -349,6 +397,7 @@ def _stage(
     schema_repairs=(),
     *,
     repair_request=None,
+    redact_text_sources=(),
 ) -> HarnessSourceReview:
     reading = HarnessSourceReview.objects.filter(
         pk=row.id, state=State.READING, revision=row.revision
@@ -366,6 +415,19 @@ def _stage(
             raise HostedHarnessError(
                 "source_duplicate", "An input is selected twice.", status_code=422
             )
+        choices = {
+            key: row.basis[key]
+            for key in ("destination_tables", "suggested_target_table")
+            if key in row.basis
+        }
+        if row.owner_kind == Owner.ENVIRONMENT and (
+            row.basis.get("target_table") or row.basis.get("destination_tables")
+        ):
+            table_fields = {}
+            _environment_schema(
+                row.owner, row.basis.get("target_table"), fields_by_table=table_fields
+            )
+            choices.update(table_choices(captured, table_fields))
         if schema is None and "destination_tables" in row.basis:
             _store_staging(
                 row,
@@ -379,7 +441,15 @@ def _stage(
                 revision=row.revision + 1,
                 staged_digest=row.staged_digest,
                 preview={
-                    "destination_tables": row.basis["destination_tables"],
+                    **choices,
+                    "sources": [
+                        {
+                            "pin": {"source_id": source.source_id, "role": source.role},
+                            "filename": source.origin.get("original_name")
+                            or source.filename,
+                        }
+                        for source in captured
+                    ],
                     "diagnostics": [
                         {
                             "code": "source_schema_ambiguous",
@@ -392,11 +462,12 @@ def _stage(
                 raise _conflict()
             row.refresh_from_db()
             return row
-        draft = (
-            sources.prepare_draft(captured, schema, schema_repairs)
-            if schema_repairs
-            else sources.prepare_draft(captured, schema)
-        )
+        options = {}
+        if schema_repairs:
+            options["schema_repairs"] = schema_repairs
+        if redact_text_sources:
+            options["redact_text_sources"] = redact_text_sources
+        draft = sources.prepare_draft(captured, schema, **options)
         owner = _owner(
             {"organization_id": row.organization_id, "workspace_id": row.workspace_id},
             row.owner_id,
@@ -425,8 +496,9 @@ def _stage(
         blocking = any(
             item.get("severity") == "blocking" for item in draft.get("diagnostics", [])
         )
-        if blocking:
+        if blocking or choices:
             staged["retained_inputs"] = _retained_inputs(captured)
+            staged["prepare_options"] = options
         if repair_request is not None:
             staged["repair_request"] = repair_request
         _store_staging(row, staged)
@@ -436,7 +508,10 @@ def _stage(
             revision=row.revision + 1,
             staged_digest=row.staged_digest,
             draft_digest=draft["draft_digest"],
-            preview=sources.safe_source_preview(draft, staged["origins"]),
+            preview={
+                **sources.safe_source_preview(draft, staged["origins"]),
+                **choices,
+            },
         )
         row.refresh_from_db()
         if not updated:
@@ -536,7 +611,7 @@ def prepare_environment_review(
         "revision": row.revision,
         "state": row.state,
         "draft_digest": row.draft_digest,
-        "draft": row.preview,
+        "draft": public_source_preview(row.preview),
         "suggested_purposes": {item.source_id: item.role for item in captured},
         "capabilities": sources.source_capabilities(owner),
     }
@@ -745,7 +820,7 @@ def public_review(row: HarnessSourceReview) -> dict:
         "revision": row.revision,
         "scope": {"kind": row.owner_kind, "id": str(row.owner_id), **row.basis},
         "draft_digest": row.draft_digest or None,
-        "preview": row.preview,
+        "preview": public_source_preview(row.preview),
         "receipt": row.receipt,
         "expires_at": row.expires_at,
     }
@@ -770,9 +845,10 @@ def _accepting_review(review_id, scope):
 
 
 def get_review(request, review_id) -> dict:
-    return public_review(
-        _expire(_find(review_id, require_source_scope(request, write=False)))
-    )
+    scope = require_source_scope(request, write=False)
+    row = _expire(_find(review_id, scope))
+    resolve_legacy_filenames([row], scope)
+    return public_review(row)
 
 
 def reprepare_review(
@@ -785,6 +861,7 @@ def reprepare_review(
     schema_repairs=(),
     environment=None,
     expected_draft=None,
+    redact_text_sources=(),
 ):
     scope = require_source_scope(request, write=True)
     if environment:
@@ -793,6 +870,7 @@ def reprepare_review(
         {
             "key": idempotency_key,
             "expected_revision": expected_revision,
+            "redact_text_sources": sorted(redact_text_sources),
             "target_table": target_table,
             "schema_repairs": schema_repairs,
         }
@@ -811,7 +889,10 @@ def reprepare_review(
         if staged.get("repair_request") == repair_request:
             return public_review(row)
         if (
-            row.state != State.NEEDS_REPAIR
+            (
+                row.state != State.NEEDS_REPAIR
+                and not (target_table and row.preview.get("destination_tables"))
+            )
             or row.revision != expected_revision
             or not staged.get("retained_inputs")
         ):
@@ -842,19 +923,39 @@ def reprepare_review(
             kb = authorized_knowledge_base(request, kb_id)
             if kb.files.filter(pk__in=file_ids).count() != len(file_ids):
                 raise _not_found()
-        if row.owner_kind == Owner.ENVIRONMENT and target_table and not schema_repairs:
+        if redact_text_sources:
+            flagged = {
+                issue.get("span", {}).get("source_id")
+                for issue in row.preview.get("diagnostics", [])
+                if issue["code"] == "source_privacy_unresolved"
+            }
+            if set(redact_text_sources) - flagged:
+                raise _conflict("Select a source with a privacy finding.")
+        if row.owner_kind == Owner.ENVIRONMENT and (
+            target_table or redact_text_sources
+        ):
             scope = {
                 **row.basis,
                 "expected_draft": row.basis["draft"],
-                "target_table": target_table,
+                "target_table": target_table or row.basis.get("target_table"),
             }
-            basis, schema = _owner_basis(row.owner, Owner.ENVIRONMENT, scope)
+            basis, schema = _owner_basis(
+                row.owner,
+                Owner.ENVIRONMENT,
+                scope,
+                records=row.basis.get("record_mapping_required", True),
+            )
         elif _build_selection(row.owner, row.owner_kind):
             basis, schema = _build_basis(
-                row.owner, row.owner_kind, target_table, captured
+                row.owner,
+                row.owner_kind,
+                target_table or row.basis.get("target_table"),
+                captured,
             )
             if schema_repairs and schema is not None:
                 raise _conflict("Schema repairs require an inferred simulation schema.")
+        elif redact_text_sources:
+            basis, schema = _owner_basis(row.owner, row.owner_kind, row.basis)
         else:
             raise _conflict("This review does not support that repair.")
         row.basis = basis
@@ -865,8 +966,15 @@ def reprepare_review(
                 row,
                 lambda: captured,
                 schema,
-                schema_repairs,
+                schema_repairs
+                or staged.get("prepare_options", {}).get("schema_repairs", ()),
                 repair_request=repair_request,
+                redact_text_sources=sorted(
+                    set(redact_text_sources)
+                    | set(
+                        staged.get("prepare_options", {}).get("redact_text_sources", ())
+                    )
+                ),
             )
         )
 
@@ -971,6 +1079,35 @@ def _accept(
         "review_id": str(row.id),
         "accepted_revision": row.revision,
     }
+    accepted_at = timezone.now().isoformat()
+    choices = {
+        decision["source_id"]: decision
+        for key in ("record_reviews", "policy_reviews", "reference_reviews")
+        for decision in decisions.get(key, [])
+    }
+    for source in row.preview.get("sources", []):
+        decision = choices.get(source["pin"]["source_id"], {})
+        source["updated_at"] = accepted_at
+        if "audience" in decision:
+            source["visibility"] = (
+                "agent_visible"
+                if decision["audience"].get("tested_agent")
+                else "evaluator_only"
+            )
+        if "fields" in decision:
+            source["accepted_mappings"] = [
+                {
+                    key: field[key]
+                    for key in (
+                        "source_field",
+                        "target_field",
+                        "data_type",
+                        "is_stable_id",
+                    )
+                    if key in field
+                }
+                for field in decision["fields"]
+            ]
     row.snapshot_digest = result["snapshot_digest"]
     row.acceptance_key = idempotency_key
     row.acceptance_digest = digest
@@ -984,6 +1121,7 @@ def _accept(
             "acceptance_key",
             "acceptance_digest",
             "accepted_artifact_digest",
+            "preview",
             "state",
             "revision",
         ]

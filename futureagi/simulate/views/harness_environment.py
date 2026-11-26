@@ -897,7 +897,10 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        return Response(source_summary(job))
+        from simulate.services.harness_source_reviews import require_source_scope
+
+        scope = None if coding_agent_key(request) else require_source_scope(request, write=False)
+        return Response(source_summary(job, reviewer_scope=scope))
 
     @viewer_denied("prepare environment sources")
     @validated_request(

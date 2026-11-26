@@ -17,6 +17,7 @@ import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import ParallelismField from "./ParallelismField";
+import BuildTestField from "../buildDrawer/forms/shared/BuildTestField";
 import BuildSourceFields from "../buildDrawer/forms/shared/BuildSourceFields";
 import usePanelBuild from "../hooks/usePanelBuild";
 import useSimulationAccess from "../hooks/useSimulationAccess";
@@ -45,6 +46,7 @@ const initial = {
   inboundCalls: true,
   agentSpeaksFirst: false,
   systemPrompt: "",
+  testFocus: "",
   scenarioCount: DEFAULT_SCENARIOS,
 };
 
@@ -151,6 +153,7 @@ export default function PanelHostedPlatform({ platformByType, onBusyChange, draf
 
   const buildSource = () => ({
     kind: "platform",
+    testFocus: form.testFocus.trim(),
     agentType,
     provider: chosen?.id,
     scenarioCount: Number(scenarioCount) || undefined,
@@ -390,6 +393,7 @@ export default function PanelHostedPlatform({ platformByType, onBusyChange, draf
         enabled={build.parallelismEnabled}
         admitted={build.admittedParallelism}
       />
+      <BuildTestField value={form.testFocus} onChange={set("testFocus")} />
       {canEdit && build.sources && (
         <BuildSourceFields sources={build.sources} disabled={build.committing} />
       )}

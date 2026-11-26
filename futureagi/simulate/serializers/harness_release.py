@@ -148,6 +148,9 @@ class HarnessDesignRequestSerializer(serializers.Serializer):
 
     name = serializers.CharField(max_length=255)
     requirements = serializers.CharField(max_length=20000)
+    personal_data_mode = serializers.ChoiceField(
+        choices=("none", "synthetic_replace"), required=False
+    )
     modality = serializers.ChoiceField(choices=("chat", "voice"), default="chat")
     template_suite_id = serializers.UUIDField(required=False, allow_null=True)
     source_selection = HarnessDesignSourceSelectionSerializer(required=False)

@@ -70,7 +70,7 @@ export default function LivePill({ env, building }) {
         : isFinalizing
           ? WORKSPACE_COPY.finalizingTooltip
           : isBuilding
-            ? WORKSPACE_COPY.buildingTooltip
+            ? env?.buildingTooltip || WORKSPACE_COPY.buildingTooltip
             : isRunning
               ? WORKSPACE_COPY.runningTooltip
               : WORKSPACE_COPY.liveTooltip;
@@ -96,6 +96,7 @@ LivePill.propTypes = {
     buildStatus: PropTypes.string,
     status: PropTypes.string,
     buildingLabel: PropTypes.string,
+    buildingTooltip: PropTypes.string,
     designBuild: PropTypes.shape({ status: PropTypes.string }),
   }),
   building: PropTypes.bool,

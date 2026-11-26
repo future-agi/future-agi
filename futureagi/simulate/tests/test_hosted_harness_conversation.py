@@ -2643,3 +2643,57 @@ def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
     )
 
     assert conversation.blocking_input is not None
+
+
+@pytest.mark.django_db
+def test_chat_attachment_pins_only_an_environment_review_owned_by_the_job(
+    user, workspace, settings, monkeypatch
+):
+    from django.utils import timezone
+
+    from simulate.models import HarnessSourceReview
+    from simulate.serializers.hosted_harness_conversation import (
+        HarnessConversationMessageCreateSerializer,
+    )
+    from simulate.services.harness_provider import HostedHarnessProvider
+    from simulate.tests.test_design_source_lifecycle import _request
+
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example.com"
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, base_url: None,
+    )
+    job, _ = create_hosted_job(
+        user.organization, _payload(), idempotency_key="attached", workspace=workspace
+    )
+    other, _ = create_hosted_job(
+        user.organization, _payload(), idempotency_key="other", workspace=workspace
+    )
+    review = HarnessSourceReview.objects.create(
+        owner=job,
+        owner_kind="environment",
+        organization=user.organization,
+        workspace=workspace,
+        basis={},
+        expires_at=timezone.now() + timedelta(days=1),
+    )
+    provider = HostedHarnessProvider()
+    request = _request(user, workspace)
+    serializer = HarnessConversationMessageCreateSerializer(
+        data={
+            "content": "Review my sources.",
+            "client_request_id": "attached",
+            "source_review_id": str(review.id),
+        }
+    )
+    serializer.is_valid(raise_exception=True)
+    request.validated_data = serializer.validated_data
+    provider._job = lambda _request, _pk: other
+    assert provider.send_message(request, other.id).status_code == 404
+    provider._job = lambda _request, _pk: job
+    assert provider.send_message(request, job.id).status_code == 202
+    assert provider.send_message(request, job.id).status_code == 202
+    message = HostedHarnessConversationMessage.no_workspace_objects.get(
+        conversation__job=job, client_request_id="attached"
+    )
+    assert message.payload["source_review_id"] == str(review.id)
