@@ -35,6 +35,10 @@ from django.utils import timezone
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
+from agentcc.services.url_safety import (
+    ensure_public_http_url,
+    private_provider_urls_allowed,
+)
 from integrations.services.github_app import (
     GitHubAppError,
     installation_credential,
@@ -55,6 +59,11 @@ from simulate.services.agent_contracts import store_build_contract
 from simulate.services.code_archives import (
     store_commit_archive,
     stored_commit_archive,
+)
+from simulate.services.harness_credential_probes import (
+    ANTHROPIC_BASE_ALIASES,
+    OPENAI_BASE_ALIASES,
+    configured_base,
 )
 from simulate.services.harness_versioning.hashing import INDEX_ONLY_FIELDS
 from simulate.services.hosted_harness import (
@@ -2176,12 +2185,31 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
     if aliases & {"OPENAI_API_KEY"} and (
         not selected_llm_provider or selected_llm_provider == "openai"
     ):
-        domains.add("api.openai.com")
+        domains.add(_base_url_host(values, OPENAI_BASE_ALIASES) or "api.openai.com")
     if aliases & {"ANTHROPIC_API_KEY"} and (
         not selected_llm_provider or selected_llm_provider == "anthropic"
     ):
-        domains.add("api.anthropic.com")
+        domains.add(
+            _base_url_host(values, ANTHROPIC_BASE_ALIASES) or "api.anthropic.com"
+        )
     return domains
+
+
+def _base_url_host(values: Mapping[str, Any], names: tuple[str, ...]) -> str | None:
+    """The host of the base URL the agent calls its provider at (a gateway or proxy), as preflight
+    probed it; ``None`` when it sets none or one preflight would refuse to call."""
+    _name, base = configured_base(
+        {name: str(values.get(name) or "") for name in names}, names
+    )
+    if not base:
+        return None
+    try:
+        ensure_public_http_url(
+            base, "base URL", allow_private=private_provider_urls_allowed()
+        )
+    except ValueError:
+        return None
+    return _hostname_from_url(base)
 
 
 def _resolved_egress_domains(

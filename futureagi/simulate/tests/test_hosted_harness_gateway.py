@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import socket
 import subprocess
 import sys
 import tarfile
@@ -419,6 +420,49 @@ def test_provider_egress_includes_scoped_claude_gateway():
             "ALK_CLAUDE_GATEWAY_API_KEY": "opaque",
         }
     ) == {"gateway.futureagi.com"}
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({"OPENAI_API_KEY": "k"}, {"api.openai.com"}),
+        (
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+            {"gateway.example.com"},
+        ),
+        (
+            {
+                "ANTHROPIC_API_KEY": "k",
+                "ANTHROPIC_BASE_URL": "https://gateway.example.com",
+            },
+            {"gateway.example.com"},
+        ),
+        # A base preflight refuses to call is never opened: the provider's own host stays.
+        (
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "http://metadata.example.com/v1",
+            },
+            {"api.openai.com"},
+        ),
+    ],
+)
+def test_provider_egress_follows_the_agent_s_base_url_as_preflight_probes_it(
+    values, expected
+):
+    hosts = {
+        "gateway.example.com": "93.184.215.14",
+        "metadata.example.com": "169.254.169.254",
+    }
+
+    def resolve(host, *_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (hosts[host], 0))]
+
+    with patch("agentcc.services.url_safety.socket.getaddrinfo", resolve):
+        assert _provider_egress_domains(values) == expected
 
 
 def test_provider_egress_includes_vapi_and_retell_call_hosts():
