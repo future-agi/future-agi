@@ -58701,6 +58701,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/AskQuestion",
           },
+          maxItems: 5,
+          minItems: 1,
         },
       },
     },
@@ -58831,6 +58833,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/AskQuestion",
           },
+          maxItems: 5,
+          minItems: 1,
         },
         accepted: {
           $ref: "#/definitions/AskAccepted",
@@ -103567,6 +103571,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         by_kind: {
           title: "By kind",
           type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/AskKindCounts",
+          },
         },
       },
     },
@@ -103633,7 +103640,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "question_key",
         "state",
         "cause",
-        "label",
+        "answer",
         "score",
         "confidence",
         "reason",
@@ -103670,8 +103677,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Cause",
           type: "string",
         },
-        label: {
-          title: "Label",
+        answer: {
+          title: "Answer",
           type: "string",
           "x-nullable": true,
         },
@@ -132527,6 +132534,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    AskKindCounts: {
+      required: ["present", "not_applicable", "not_captured"],
+      type: "object",
+      properties: {
+        present: {
+          title: "Present",
+          type: "integer",
+        },
+        not_applicable: {
+          title: "Not applicable",
+          type: "integer",
+        },
+        not_captured: {
+          title: "Not captured",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
         },
       },
     },

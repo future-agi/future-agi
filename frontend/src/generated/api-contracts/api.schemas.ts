@@ -30493,6 +30493,10 @@ export interface AskAcceptedApi {
 
 export interface AskLaunchRequestApi {
   selection: AskSelectionApi;
+  /**
+   * @minItems 1
+   * @maxItems 5
+   */
   questions: AskQuestionApi[];
   accepted: AskAcceptedApi;
 }
@@ -30505,10 +30509,22 @@ export interface AskLaunchResponseApi {
 
 export interface AskCheckRequestApi {
   selection: AskSelectionApi;
+  /**
+   * @minItems 1
+   * @maxItems 5
+   */
   questions: AskQuestionApi[];
 }
 
-export type AskCheckedQuestionApiByKind = { [key: string]: unknown };
+export type AskKindCountsApiNotCaptured = { [key: string]: number };
+
+export interface AskKindCountsApi {
+  present: number;
+  not_applicable: number;
+  not_captured: AskKindCountsApiNotCaptured;
+}
+
+export type AskCheckedQuestionApiByKind = { [key: string]: AskKindCountsApi };
 
 export interface AskCheckedQuestionApi {
   /** @minLength 1 */
@@ -30546,7 +30562,7 @@ export interface AskResultRowApi {
   /** @minLength 1 */
   state: string;
   cause: string;
-  label: string;
+  answer: string;
   score: number;
   confidence: number;
   reason: string;

@@ -66272,6 +66272,7 @@ export const simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsMaxOne
 
 export const simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsDefault =
   {};
+export const simulateV3TestExecutionAskLaunchBodyQuestionsMax = 5;
 
 export const SimulateV3TestExecutionAskLaunchBody = zod.object({
   selection: zod.object({
@@ -66285,59 +66286,62 @@ export const SimulateV3TestExecutionAskLaunchBody = zod.object({
       .max(simulateV3TestExecutionAskLaunchBodySelectionNoteMax)
       .default(simulateV3TestExecutionAskLaunchBodySelectionNoteDefault),
   }),
-  questions: zod.array(
-    zod.object({
-      question: zod
-        .string()
-        .min(1)
-        .max(simulateV3TestExecutionAskLaunchBodyQuestionsItemQuestionMax),
-      answer_type: zod
-        .enum(["yes_no", "category"])
-        .default(
-          simulateV3TestExecutionAskLaunchBodyQuestionsItemAnswerTypeDefault,
-        ),
-      labels: zod
-        .array(
-          zod
-            .string()
-            .min(1)
-            .max(
-              simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsItemMax,
-            ),
-        )
-        .default(
-          simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsDefault,
-        ),
-      descriptions: zod
-        .record(
-          zod.string(),
-          zod
-            .string()
-            .max(
-              simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsMaxOne,
-            ),
-        )
-        .default(
-          simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsDefault,
-        ),
-      kinds: zod
-        .array(
-          zod.enum([
-            "transcript",
-            "agent_instructions",
-            "scenario",
-            "tool_calls",
-            "world_changes",
-            "world_state_end",
-            "world_state_start",
-            "check_results",
-            "audio",
-            "agent_traces",
-          ]),
-        )
-        .min(1),
-    }),
-  ),
+  questions: zod
+    .array(
+      zod.object({
+        question: zod
+          .string()
+          .min(1)
+          .max(simulateV3TestExecutionAskLaunchBodyQuestionsItemQuestionMax),
+        answer_type: zod
+          .enum(["yes_no", "category"])
+          .default(
+            simulateV3TestExecutionAskLaunchBodyQuestionsItemAnswerTypeDefault,
+          ),
+        labels: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .max(
+                simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsItemMax,
+              ),
+          )
+          .default(
+            simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsDefault,
+          ),
+        descriptions: zod
+          .record(
+            zod.string(),
+            zod
+              .string()
+              .max(
+                simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsMaxOne,
+              ),
+          )
+          .default(
+            simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsDefault,
+          ),
+        kinds: zod
+          .array(
+            zod.enum([
+              "transcript",
+              "agent_instructions",
+              "scenario",
+              "tool_calls",
+              "world_changes",
+              "world_state_end",
+              "world_state_start",
+              "check_results",
+              "audio",
+              "agent_traces",
+            ]),
+          )
+          .min(1),
+      }),
+    )
+    .min(1)
+    .max(simulateV3TestExecutionAskLaunchBodyQuestionsMax),
   accepted: zod.object({
     requested: zod.number().min(1),
     credits_estimate: zod.number(),
@@ -66363,6 +66367,7 @@ export const simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsMaxOne 
 
 export const simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsDefault =
   {};
+export const simulateV3TestExecutionAskCheckBodyQuestionsMax = 5;
 
 export const SimulateV3TestExecutionAskCheckBody = zod.object({
   selection: zod.object({
@@ -66376,55 +66381,62 @@ export const SimulateV3TestExecutionAskCheckBody = zod.object({
       .max(simulateV3TestExecutionAskCheckBodySelectionNoteMax)
       .default(simulateV3TestExecutionAskCheckBodySelectionNoteDefault),
   }),
-  questions: zod.array(
-    zod.object({
-      question: zod
-        .string()
-        .min(1)
-        .max(simulateV3TestExecutionAskCheckBodyQuestionsItemQuestionMax),
-      answer_type: zod
-        .enum(["yes_no", "category"])
-        .default(
-          simulateV3TestExecutionAskCheckBodyQuestionsItemAnswerTypeDefault,
-        ),
-      labels: zod
-        .array(
-          zod
-            .string()
-            .min(1)
-            .max(simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsItemMax),
-        )
-        .default(simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsDefault),
-      descriptions: zod
-        .record(
-          zod.string(),
-          zod
-            .string()
-            .max(
-              simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsMaxOne,
-            ),
-        )
-        .default(
-          simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsDefault,
-        ),
-      kinds: zod
-        .array(
-          zod.enum([
-            "transcript",
-            "agent_instructions",
-            "scenario",
-            "tool_calls",
-            "world_changes",
-            "world_state_end",
-            "world_state_start",
-            "check_results",
-            "audio",
-            "agent_traces",
-          ]),
-        )
-        .min(1),
-    }),
-  ),
+  questions: zod
+    .array(
+      zod.object({
+        question: zod
+          .string()
+          .min(1)
+          .max(simulateV3TestExecutionAskCheckBodyQuestionsItemQuestionMax),
+        answer_type: zod
+          .enum(["yes_no", "category"])
+          .default(
+            simulateV3TestExecutionAskCheckBodyQuestionsItemAnswerTypeDefault,
+          ),
+        labels: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .max(
+                simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsItemMax,
+              ),
+          )
+          .default(
+            simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsDefault,
+          ),
+        descriptions: zod
+          .record(
+            zod.string(),
+            zod
+              .string()
+              .max(
+                simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsMaxOne,
+              ),
+          )
+          .default(
+            simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsDefault,
+          ),
+        kinds: zod
+          .array(
+            zod.enum([
+              "transcript",
+              "agent_instructions",
+              "scenario",
+              "tool_calls",
+              "world_changes",
+              "world_state_end",
+              "world_state_start",
+              "check_results",
+              "audio",
+              "agent_traces",
+            ]),
+          )
+          .min(1),
+      }),
+    )
+    .min(1)
+    .max(simulateV3TestExecutionAskCheckBodyQuestionsMax),
 });
 
 export const simulateV3TestExecutionAskCheckResponsePricedByUseDefault = [];
@@ -66438,7 +66450,14 @@ export const SimulateV3TestExecutionAskCheckResponse = zod.object({
       ready: zod.number(),
       unmeasured: zod.number(),
       not_applicable: zod.number(),
-      by_kind: zod.object({}).passthrough(),
+      by_kind: zod.record(
+        zod.string(),
+        zod.object({
+          present: zod.number(),
+          not_applicable: zod.number(),
+          not_captured: zod.record(zod.string(), zod.number()),
+        }),
+      ),
     }),
   ),
   answers: zod.number(),
@@ -66498,7 +66517,7 @@ export const SimulateV3TestExecutionAskDetailResponse = zod.object({
       question_key: zod.string().min(1),
       state: zod.string().min(1),
       cause: zod.string(),
-      label: zod.string(),
+      answer: zod.string(),
       score: zod.number(),
       confidence: zod.number(),
       reason: zod.string(),

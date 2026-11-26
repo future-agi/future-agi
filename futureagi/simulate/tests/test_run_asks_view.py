@@ -13,6 +13,7 @@ workspace.
 
 from __future__ import annotations
 
+import sys
 import uuid
 from unittest.mock import patch
 
@@ -495,7 +496,7 @@ def test_an_ask_reads_back_requested_the_six_counts_and_a_row_per_call(
     assert [row["call_execution_id"] for row in rows] == [str(one.id) for one in calls]
     assert {row["call_execution_id"] for row in rows} <= set(ask.selection["call_ids"])
     assert rows[0]["state"] == "answered"
-    assert rows[0]["label"] == "Yes"
+    assert rows[0]["answer"] == "Yes"
     assert rows[0]["reason"] == "Because Yes"
     assert rows[2]["state"] == "grading_error"
     assert all(row["test_execution_id"] == str(run.id) for row in rows)
@@ -644,3 +645,57 @@ def test_an_ask_of_another_run_is_not_found_through_this_one(
     response = auth_client.get(ASK.format(run.id, elsewhere))
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+# --- the scenario matrix's other rows -------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_a_run_with_no_calls_is_refused_as_empty(auth_client, run, gate_passes):
+    response = _check(auth_client, run)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
+    assert response.data["code"] == "empty"
+
+
+@pytest.mark.django_db
+def test_more_than_200_ticked_calls_are_refused_before_anything_is_read(
+    auth_client, run, calls, gate_passes
+):
+    ids = [str(uuid.uuid4()) for _ in range(201)]
+    with patch("simulate.services.run_asks.check_before_launch") as check:
+        response = _check(
+            auth_client, run, selection={"kind": "calls", "call_ids": ids}
+        )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
+    check.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_an_unknown_field_is_refused(auth_client, run, calls, gate_passes):
+    response = _check(auth_client, run, surprise=True)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST, response.data
+
+
+@pytest.mark.django_db
+def test_a_build_without_instant_eval_says_so_and_launches_nothing(
+    auth_client, run, calls, queued
+):
+    """The open build has no ee gating module: the check names it, the launch is
+    refused, and nothing is written or queued."""
+    before = _nothing_written()
+    with (
+        patch.dict(sys.modules, {"tfc.ee_gating": None}),
+        patch("simulate.services.ask_selection._credits", return_value=None),
+    ):
+        checked = _check(auth_client, run)
+        launched = _launch(auth_client, run, requested=3)
+
+    assert checked.status_code == status.HTTP_200_OK, checked.data
+    assert checked.data["refusal"]["code"] == "ENTITLEMENT_DENIED"
+    assert launched.status_code == status.HTTP_409_CONFLICT, launched.data
+    assert launched.data["code"] == "ENTITLEMENT_DENIED"
+    assert _nothing_written() == before
+    queued.assert_not_called()

@@ -172338,7 +172338,9 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/AskQuestion"
-                    }
+                    },
+                    "maxItems": 5,
+                    "minItems": 1
                 },
                 "accepted": {
                     "$ref": "#/definitions/AskAccepted"
@@ -172378,6 +172380,33 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/AskQuestion"
+                    },
+                    "maxItems": 5,
+                    "minItems": 1
+                }
+            }
+        },
+        "AskKindCounts": {
+            "required": [
+                "present",
+                "not_applicable",
+                "not_captured"
+            ],
+            "type": "object",
+            "properties": {
+                "present": {
+                    "title": "Present",
+                    "type": "integer"
+                },
+                "not_applicable": {
+                    "title": "Not applicable",
+                    "type": "integer"
+                },
+                "not_captured": {
+                    "title": "Not captured",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
                     }
                 }
             }
@@ -172419,7 +172448,10 @@
                 },
                 "by_kind": {
                     "title": "By kind",
-                    "type": "object"
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/AskKindCounts"
+                    }
                 }
             }
         },
@@ -172493,7 +172525,7 @@
                 "question_key",
                 "state",
                 "cause",
-                "label",
+                "answer",
                 "score",
                 "confidence",
                 "reason",
@@ -172530,8 +172562,8 @@
                     "title": "Cause",
                     "type": "string"
                 },
-                "label": {
-                    "title": "Label",
+                "answer": {
+                    "title": "Answer",
                     "type": "string",
                     "x-nullable": true
                 },

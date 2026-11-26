@@ -47,7 +47,9 @@ class AskQuestionSerializer(serializers.Serializer):
 
 class AskCheckRequestSerializer(serializers.Serializer):
     selection = AskSelectionSerializer()
-    questions = AskQuestionSerializer(many=True, min_length=1, max_length=MAX_QUESTIONS)
+    questions = serializers.ListField(
+        child=AskQuestionSerializer(), min_length=1, max_length=MAX_QUESTIONS
+    )
 
 
 class AskAcceptedSerializer(serializers.Serializer):
@@ -69,14 +71,22 @@ class AskRefusalSerializer(serializers.Serializer):
     message = serializers.CharField()
 
 
+class AskKindCountsSerializer(serializers.Serializer):
+    """How many calls have one kind of evidence, and why the rest are missing."""
+
+    present = serializers.IntegerField()
+    not_applicable = serializers.IntegerField()
+    # Missing calls by cause (call_evidence.Cause): never uploaded, too large...
+    not_captured = serializers.DictField(child=serializers.IntegerField())
+
+
 class AskCheckedQuestionSerializer(serializers.Serializer):
     name = serializers.CharField()
     kinds = serializers.ListField(child=serializers.CharField())
     ready = serializers.IntegerField()
     unmeasured = serializers.IntegerField()
     not_applicable = serializers.IntegerField()
-    # Per kind: present, not_applicable, and not_captured by cause.
-    by_kind = serializers.JSONField()
+    by_kind = serializers.DictField(child=AskKindCountsSerializer())
 
 
 class AskCheckResponseSerializer(serializers.Serializer):
@@ -150,7 +160,8 @@ class AskResultRowSerializer(serializers.Serializer):
     question_key = serializers.CharField()
     state = serializers.CharField()
     cause = serializers.CharField(allow_blank=True)
-    label = serializers.CharField(allow_null=True, allow_blank=True)
+    # The answer given (Yes, No or one of the person's answers), or null.
+    answer = serializers.CharField(source="label", allow_null=True, allow_blank=True)
     score = serializers.FloatField(allow_null=True)
     confidence = serializers.FloatField(allow_null=True)
     reason = serializers.CharField(allow_null=True, allow_blank=True)
