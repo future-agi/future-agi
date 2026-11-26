@@ -439,7 +439,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         scores stay; returns every version and release."""
         from simulate.services.harness_versioning.releases import unlock_release
 
-        version_reads.require_versioning()
+        # Not behind the versioning flag: a locked release blocks deletion either way.
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
