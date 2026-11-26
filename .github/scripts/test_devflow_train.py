@@ -94,6 +94,8 @@ def pr_node(
         "comments": {"nodes": []},
         "_check_runs": green(),
         "timelineItems": {"nodes": []},
+        # Reviewer and approver -> repository permission (GitHub.attach_*).
+        "_permissions": {"reviewer": "write"},
     }
     node.update(over)
     return node
@@ -101,6 +103,14 @@ def pr_node(
 
 def view(node):
     return train.member_view(node, REQUIRED)
+
+
+# Repository permissions of the reviewers in the Verdicts tests.
+WRITERS = {"reviewer": "write", "bob": "write", "carol": "write", "author-a": "admin"}
+
+
+def latest(reviews, author, assigned=None):
+    return train.latest_verdict(reviews, author, assigned, WRITERS)
 
 
 def verdict_review(
@@ -620,7 +630,7 @@ class Deferred(unittest.TestCase):
 class Verdicts(unittest.TestCase):
     def test_untrusted_and_malformed_are_ignored(self):
         bad = verdict_review(
-            sha(1), tier="low", assoc="NONE", when="2026-11-26T13:00:00Z"
+            sha(1), tier="low", login="outsider", when="2026-11-26T13:00:00Z"
         )
         broken = {
             **verdict_review(sha(1)),
@@ -629,12 +639,12 @@ class Verdicts(unittest.TestCase):
         }
         good = verdict_review(sha(1), tier="high")
         self.assertEqual(
-            train.latest_verdict([good, bad], "author-a")["tier"],
+            latest([good, bad], "author-a")["tier"],
             "high",
             "an untrusted review is not considered",
         )
         self.assertIsNone(
-            train.latest_verdict([good, broken, bad], "author-a"),
+            latest([good, broken, bad], "author-a"),
             "a malformed newest review means no verdict, not the older one",
         )
 
@@ -664,10 +674,10 @@ class Verdicts(unittest.TestCase):
             "body": f"{train.VERDICT_MARKER}\nSee the fix:\n```json\n{fake}\n```\n"
             f"```json\n{json.dumps(real)}\n```",
         }
-        self.assertIsNone(train.latest_verdict([smuggled], "author-a"))
+        self.assertIsNone(latest([smuggled], "author-a"))
         older_low = verdict_review(sha(1), when="2026-11-26T09:00:00Z")
         self.assertIsNone(
-            train.latest_verdict([older_low, smuggled], "author-a"),
+            latest([older_low, smuggled], "author-a"),
             "an older low verdict never stands in for a rejected newest one",
         )
         node = pr_node(1)
@@ -683,19 +693,64 @@ class Verdicts(unittest.TestCase):
         self.assertIsNone(train.parse_verdict(f"{block}\n{train.VERDICT_MARKER}"))
         self.assertIsNone(train.parse_verdict(block), "no marker at all")
 
+    def test_trust_is_write_permission_not_the_association(self):
+        # GitHub shows an org member with private membership as CONTRIBUTOR
+        # to the bot token; a MEMBER association without write is no reviewer.
+        member = verdict_review(sha(1), tier="high", login="pat", assoc="CONTRIBUTOR")
+        for permission, trusted in (
+            ("write", True),
+            ("admin", True),
+            ("read", False),
+            ("none", False),
+        ):
+            with self.subTest(permission=permission):
+                got = train.latest_verdict(
+                    [member], "author-a", None, {"pat": permission}
+                )
+                self.assertEqual(got is not None, trusted)
+        public = verdict_review(sha(1), login="pat", assoc="MEMBER")
+        self.assertIsNone(
+            train.latest_verdict([public], "author-a", None, {"pat": "read"})
+        )
+        self.assertIsNone(
+            train.latest_verdict([public], "author-a"),
+            "no permission read: not trusted",
+        )
+        node = pr_node(1)
+        node["reviews"]["nodes"][-1] = verdict_review(
+            sha(1), login="Pat", assoc="CONTRIBUTOR"
+        )
+        node["_permissions"] = {}
+
+        asked = []
+
+        class Perm(train.GitHub):
+            def request(self, method, path, body=None, raw=False):
+                asked.append(path)
+                return 200, {"permission": "write"}
+
+        reader = Perm("t", "o/r")
+        twice = data([node, {**node, "number": 2}])
+        reader.attach_reviewer_permissions(twice)
+        self.assertEqual(node["_permissions"], {"pat": "write"})
+        self.assertEqual(
+            asked,
+            ["repos/o/r/collaborators/pat/permission"],
+            "one read per login",
+        )
+        self.assertIsNone(train.exclusion(view(node), cfg(), {}))
+
     def test_newest_trusted_wins(self):
         old = verdict_review(sha(1), tier="high", when="2026-11-26T10:00:00Z")
         new = verdict_review(sha(1), tier="low", when="2026-11-26T11:00:00Z")
-        self.assertEqual(train.latest_verdict([new, old], "author-a")["tier"], "low")
+        self.assertEqual(latest([new, old], "author-a")["tier"], "low")
 
     def test_the_authors_own_verdict_never_counts(self):
         own = verdict_review(sha(1), login="author-a", when="2026-11-26T12:00:00Z")
-        self.assertIsNone(train.latest_verdict([own], "author-a"))
-        self.assertIsNone(
-            train.latest_verdict([own], "Author-A"), "logins compare without case"
-        )
+        self.assertIsNone(latest([own], "author-a"))
+        self.assertIsNone(latest([own], "Author-A"), "logins compare without case")
         other = verdict_review(sha(1), tier="high", when="2026-11-26T10:00:00Z")
-        self.assertEqual(train.latest_verdict([own, other], "author-a")["tier"], "high")
+        self.assertEqual(latest([own, other], "author-a")["tier"], "high")
 
     def test_the_assigned_reviewer_wins_over_a_newer_verdict(self):
         assigned = verdict_review(
@@ -704,12 +759,8 @@ class Verdicts(unittest.TestCase):
         newer = verdict_review(
             sha(1), tier="low", login="carol", when="2026-11-26T11:00:00Z"
         )
-        self.assertEqual(
-            train.latest_verdict([assigned, newer], "a", "bob")["tier"], "high"
-        )
-        self.assertEqual(
-            train.latest_verdict([assigned, newer], "a", "dave")["tier"], "low"
-        )
+        self.assertEqual(latest([assigned, newer], "a", "bob")["tier"], "high")
+        self.assertEqual(latest([assigned, newer], "a", "dave")["tier"], "low")
 
     def test_assignment_marker_only_from_the_bot(self):
         marker = "<!-- devflow-assigned:v1 login={} at=2026-11-26T05:00:00Z by=reviewer-assigner round=1 -->"
@@ -903,11 +954,11 @@ class Exclusions(unittest.TestCase):
         ]
         for approvals, permissions, eligible in cases:
             node = self.with_verdict(verdict, *approvals)
-            node["_permissions"] = permissions
+            node["_permissions"].update(permissions)
             with self.subTest(approvals=approvals):
                 self.assertEqual(self.reason(node) is None, eligible, self.reason(node))
         stale = self.with_verdict(verdict, {**approval("w"), "commit": {"oid": sha(7)}})
-        stale["_permissions"] = {"w": "write"}
+        stale["_permissions"].update({"w": "write"})
         self.assertIsNotNone(self.reason(stale), "the approval must be on this head")
 
     def test_contract_2_unknown_tier_is_high(self):
@@ -995,7 +1046,7 @@ class Exclusions(unittest.TestCase):
                 "author": {"__typename": "User", "login": "w"},
             }
         )
-        node["_permissions"] = {"w": "write"}
+        node["_permissions"].update({"w": "write"})
         self.assertIsNone(self.reason(node, off))
 
     def test_red_label_holds_only_on_the_red_head(self):
