@@ -6,15 +6,15 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to assign (leave blank to sweep all open PRs)'
+        description: "PR number to assign (leave blank to sweep all open PRs)"
         required: false
       run_pings:
-        description: 'Also run ping (Slack DMs) and summary jobs. Default off — flip this on to test the daily reminder flow manually.'
+        description: "Also run ping (Slack DMs) and summary jobs. Default off — flip this on to test the daily reminder flow manually."
         type: boolean
         default: false
   schedule:
     # 10:00 IST (UTC+5:30) → 04:30 UTC — same morning slot as pr-digest.
-    - cron: '30 4 * * *'
+    - cron: "30 4 * * *"
 
 jobs:
   assign:
@@ -26,12 +26,12 @@ jobs:
     permissions:
       pull-requests: write
       contents: read
-      issues: write   # needed to post the cross-team coordination comment
+      issues: write # needed to post the cross-team coordination comment
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - name: Assign reviewers
         env:
           MODE: assign
@@ -52,7 +52,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - name: DM stale reviewers
         env:
           MODE: ping
@@ -77,7 +77,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - name: Post reviewer-load summary
         env:
           MODE: summary
