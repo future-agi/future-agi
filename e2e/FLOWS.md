@@ -3810,7 +3810,7 @@
 - simulate_harness_release has one row for the environment, unlocked_at NULL, with the default environment and suite version ids and a YYYY.M.N label
 - simulate_harness_task_split has one row per seeded scenario, each first released by that release, and the test rows number what target_test_size gives (4 of 12)
 - the versions read lists that release with the same label and the 8 train and 4 test counts
-- deleting the environment answers 409 release_locked, "Unlock release <label> first.", and the environment is still readable
+- deleting the environment answers 409 release_locked, "A workspace admin or owner must unlock release <label> first.", and the environment is still readable
 
 **Browser observations:**
 

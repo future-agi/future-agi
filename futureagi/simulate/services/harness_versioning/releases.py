@@ -432,7 +432,7 @@ def require_no_locked_release(environment: HostedHarnessJob) -> None:
     if release is not None:
         raise HostedHarnessError(
             "release_locked",
-            f"Unlock release {release.label} first.",
+            f"A workspace admin or owner must unlock release {release.label} first.",
             status_code=409,
             details={"release_id": str(release.id)},
         )
