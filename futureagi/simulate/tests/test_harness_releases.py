@@ -1,5 +1,8 @@
 """Locking an environment's versions into a release with train and test splits."""
 
+import uuid
+from datetime import timedelta
+
 import pytest
 from django.db import connection
 from django.db.models import RestrictedError
@@ -666,12 +669,35 @@ class TestReadCost:
         _suite(environment, _scenarios(30))
         two = member_reads()
 
-        # The default suite's preview, then every release's suite in one read.
-        assert len(one) == len(two) == 2
+        # Only the default suite's preview: a release keeps the counts it locked with.
+        assert len(one) == len(two) == 1
         # Only the two keys the split reads, never the whole member content.
         assert all(
             '"content" FROM' not in sql and '"content",' not in sql for sql in two
         )
+
+    def test_history_keeps_every_locked_release_and_the_newest_unlocked(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [locked] = _lock(auth_client, environment).json()["releases"]
+        first = HarnessRelease.no_workspace_objects.get()
+        # 25 newer lock-and-unlock cycles of an earlier pair.
+        for number in range(25):
+            later = first.locked_at + timedelta(minutes=number + 1)
+            first.pk = uuid.uuid4()
+            first.label = f"cycle.{number}"
+            first.locked_at = later
+            first.unlocked_at = later
+            first.save()
+
+        body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+
+        labels = [release["label"] for release in body["releases"]]
+        assert locked["label"] in labels
+        assert len(labels) == 21
+        assert labels[:20] == [f"cycle.{number}" for number in range(24, 4, -1)]
 
 
 class TestLockedVersionsStay:
