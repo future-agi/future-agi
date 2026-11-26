@@ -36,7 +36,12 @@ vi.mock("../../../hooks/useSimulationAccess", () => ({
 const { default: ReleaseCard } = await import("../ReleaseCard");
 const { versionLine } = await import("../overview.constants");
 
-const piece = (id, label) => ({ id, label, status: "active", is_default: true });
+const piece = (id, label) => ({
+  id,
+  label,
+  status: "active",
+  is_default: true,
+});
 const RELEASE = {
   id: "rel-1",
   label: "2026.11.1",
@@ -123,6 +128,28 @@ describe("ReleaseCard", () => {
     ]);
   });
 
+  it("locks the pair that opened the dialog, even if the default moved since", async () => {
+    const { rerender } = render(<ReleaseCard envId="env" />);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Lock this release" }),
+    );
+
+    // The versions refresh behind the open dialog with a newer default pair.
+    state.versions = answer({
+      lock: { environment_version_id: "env-4", suite_version_id: "suite-6" },
+    });
+    rerender(<ReleaseCard envId="env" />);
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Lock release",
+      }),
+    );
+
+    expect(calls.lock).toEqual([
+      { environmentVersionId: "env-3", suiteVersionId: "suite-5" },
+    ]);
+  });
+
   it("says why it can't lock, in one sentence, with the fix", async () => {
     state.versions = answer({
       lock: {
@@ -146,7 +173,9 @@ describe("ReleaseCard", () => {
     expect(
       screen.getByRole("button", { name: "Lock this release" }),
     ).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: "Add scenarios" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Add scenarios" }),
+    );
     expect(onGo).toHaveBeenCalledWith("scenarios");
   });
 
