@@ -1,4 +1,4 @@
-"""Complete 123/128-pending-migration inventory and A9 scope regressions, without Django.
+"""Complete 133/138-pending-migration inventory and A9 scope regressions, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -123,7 +123,19 @@ SAMPLING_ADDITIONS = (
     ('tracer','0132_merge_sampling_and_sql_workbench_dev_merge'),
     ('tracer','0133_merge_sampling_and_alert_webhook'),
 )
-BASELINE_ADDITIONS = LATEST + SQL_ADDITIONS + SAMPLING_ADDITIONS
+HARNESS_ADDITIONS = (
+    ('simulate','0099_harness_releases'),
+    ('simulate','0100_harness_release_policy'),
+    ('simulate','0101_hosted_agent_spec'),
+    ('simulate','0102_harness_design_document'),
+    ('simulate','0117_merge_design_documents_and_agent_fix'),
+    ('simulate','0118_harness_source_review'),
+    ('simulate','0119_harness_source_scenario_generation'),
+    ('simulate','0121_merge_source_generation_and_scenario_lifecycle'),
+    ('simulate','0122_harness_source_review_build_case_assignment'),
+    ('simulate','0123_hosted_scenario_reviewed_source_locations'),
+)
+BASELINE_ADDITIONS = LATEST + SQL_ADDITIONS + SAMPLING_ADDITIONS + HARNESS_ADDITIONS
 # Metrics identities and the new graph join; these are not UPDATE_SAFETY claims.
 METRICS_ADDITIONS = (
     ('tracer','0117_derived_metrics'),
@@ -185,7 +197,7 @@ def field(node):
         target=options.get('to') or (node.args[0] if node.args else None)
         assert target is not None
         if isinstance(target,ast.Attribute):
-            assert ast.unparse(target)=='settings.AUTH_USER_MODEL'
+            assert ast.unparse(target) in ('settings.AUTH_USER_MODEL', 'django.conf.settings.AUTH_USER_MODEL')
             target='accounts.user'
         else: target=ast.literal_eval(target)
         remote=SimpleNamespace(model=target,through=ast.literal_eval(options['through']) if 'through' in options else None)
@@ -418,7 +430,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         self.assertEqual(len(METRICS_ADDITIONS),29)
         self.assertTrue(set(BASELINE_ADDITIONS).isdisjoint(METRICS_ADDITIONS))
         self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,123),(REVISIONS[0],LATEST+FLOOR_ONLY,128)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,133),(REVISIONS[0],LATEST+FLOOR_ONLY,138)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
 
@@ -426,13 +438,13 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # Preserve the SQL-layer negative controls when adding sampling's graph.
         # Same-count replacement must fail just as an extra or missing file does.
         unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 123),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 128)):
+        for revision, identities, count in ((REVISIONS[1], LATEST, 133),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 138)):
             paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
                 '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
                 'futureagi/**/migrations/*.py'], text=True).splitlines()
             self.assert_complete_inventory(revision, identities, count)
-            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS + METRICS_ADDITIONS:
+            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS + METRICS_ADDITIONS + HARNESS_ADDITIONS:
                 missing = 'futureagi/' + app + '/migrations/' + name + '.py'
                 self.assertIn(missing, paths)
                 without = [path for path in paths if path != missing]
@@ -465,7 +477,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         with mock.patch.object(subprocess,'check_output',return_value=paths+
                 'futureagi/tracer/migrations/9999_unexpected.py\n'):
             with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,123)
+                self.assert_complete_inventory(REVISIONS[1],LATEST,133)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -496,6 +508,34 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
             with self.subTest(revision=revision):
                 self.assertEqual(actual,expected)
 
+    def test_harness_migrations_touch_only_their_declared_model_tables(self):
+        expected = {
+            '0099_harness_releases': {'simulate_harness_environment_release', 'simulate_harness_agent_binding',
+                'simulate_harness_run_manifest', 'simulate_harness_suite_release'},
+            '0100_harness_release_policy': {'simulate_harness_environment_release'},
+            '0101_hosted_agent_spec': {'simulate_hosted_agent_spec'},
+            '0102_harness_design_document': {'simulate_harness_design_document'},
+            '0117_merge_design_documents_and_agent_fix': set(),
+            '0118_harness_source_review': {'simulate_harnesssourcereview'},
+            '0119_harness_source_scenario_generation': {'simulate_harnesssourcescenariogeneration'},
+            '0121_merge_source_generation_and_scenario_lifecycle': set(),
+            '0122_harness_source_review_build_case_assignment': {'simulate_harnesssourcereview'},
+            '0123_hosted_scenario_reviewed_source_locations': {'simulate_hosted_harness_scenario'},
+        }
+        for revision in REVISIONS:
+            state = baseline_state(revision)
+            env = scope_environment(state)
+            actual = {}
+            for migration in pending_plan(HARNESS_ADDITIONS, env):
+                tables = set()
+                for op in migration.operations:
+                    tables.update(env['touched'](op, migration, state))
+                    op.state_forwards(migration.app_label, state)
+                actual[migration.name] = tables
+            with self.subTest(revision=revision):
+                self.assertEqual(actual, {name: {('postgres', 'public.' + table) for table in tables}
+                    for name, tables in expected.items()})
+
     def test_guardrail_policy_runs_on_gateway_scope_is_its_own_table(self):
         # prism 0030 is one AddField on the guardrail policy model; it must
         # resolve to that table alone and select no high-volume reference.
@@ -514,7 +554,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 self.assertEqual(list(p.select_reference_registry(registry,[row],plan=plan)),[])
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
-        for revision,identities,count in ((REVISIONS[1],LATEST,123),(REVISIONS[0],LATEST+FLOOR_ONLY,128)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,133),(REVISIONS[0],LATEST+FLOOR_ONLY,138)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
                 # Keep the complete gate fail-closed on undeclared Metrics operations.
