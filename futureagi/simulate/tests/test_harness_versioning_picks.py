@@ -1708,13 +1708,20 @@ class TestABrowserAgentRunsOnlyWithSites:
     def test_a_browser_agent_runs_where_the_environment_names_sites(
         self, user, workspace, storage
     ):
+        from simulate.models.harness_versioning import HarnessEnvironmentVersion
+
         environment = _environment(user, workspace, "pk-browser-sites", storage)
+        # Named at create and recorded on the version, as a browser environment's are: the
+        # version's own record is what a run is held to.
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             payload={
                 **environment.payload,
                 "browser": {"allowed_sites": ["shop.example.com"]},
             }
         )
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            id=environment.environment_version_id
+        ).update(browser_allowed_sites=["shop.example.com"])
         environment.refresh_from_db()
         a2 = _second_agent(environment)
         _ready(
