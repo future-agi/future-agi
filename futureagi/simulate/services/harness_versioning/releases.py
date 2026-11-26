@@ -11,8 +11,9 @@ import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
-from typing import Any
+from typing import Any, TypedDict
 
 import structlog
 from django.db import transaction
@@ -38,6 +39,9 @@ logger = structlog.get_logger(__name__)
 
 # A test split this small can't tell a better agent from luck.
 MIN_TEST_TASKS = 4
+
+# How many unlocked releases a versions read lists. Locked ones are always listed.
+UNLOCKED_HISTORY = 20
 
 
 @dataclass(frozen=True)
@@ -213,8 +217,12 @@ def _locked_release(environment_version_id: Any, suite_version_id: Any):
     ).first()
 
 
-def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
-    """What locking the default pair would give, or the reason it can't be locked."""
+def _plan_lock(
+    job: HostedHarnessJob, releases: list[ReleaseItem] | None = None
+) -> SplitPlan:
+    """What locking the default pair would give, or the reason it can't be locked.
+    ``releases``, a read's own list, says which pair is locked, so the read's preview
+    and history agree; without it the database says."""
     from simulate.services.harness_agent_versions import _busy
 
     if job.environment_version_id is None or job.suite_version_id is None:
@@ -230,11 +238,24 @@ def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
             "build finishes.",
             status_code=409,
         )
-    current = _locked_release(job.environment_version_id, job.suite_version_id)
-    if current is not None:
+    if releases is None:
+        current = _locked_release(job.environment_version_id, job.suite_version_id)
+        current_label = current.label if current is not None else None
+    else:
+        current_label = next(
+            (
+                release["label"]
+                for release in releases
+                if release["unlocked_at"] is None
+                and release["environment_version_id"] == str(job.environment_version_id)
+                and release["suite_version_id"] == str(job.suite_version_id)
+            ),
+            None,
+        )
+    if current_label is not None:
         raise HostedHarnessError(
             "release_already_locked",
-            f"Release {current.label} already locks these versions.",
+            f"Release {current_label} already locks these versions.",
             status_code=409,
         )
     tasks = scorable_tasks(job.suite_version_id)
@@ -292,6 +313,8 @@ def lock_release(
             label=_next_label(locked, now),
             locked_at=now,
             locked_by=user if getattr(user, "is_authenticated", False) else None,
+            train_count=plan.train,
+            test_count=plan.test,
         )
         HarnessTaskSplit.no_workspace_objects.bulk_create(
             [
@@ -374,21 +397,27 @@ def require_no_locked_release(environment: HostedHarnessJob) -> None:
 # --- reads -------------------------------------------------------------------------
 
 
-def _counts(tasks: list[Task], assigned: Mapping[Any, str]) -> dict[str, int]:
-    splits = [assigned.get(task.scenario_id) for task in tasks]
-    return {
-        "train": splits.count(TaskSplit.TRAIN),
-        "test": splits.count(TaskSplit.TEST),
-    }
+class ReleaseItem(TypedDict):
+    id: str
+    label: str
+    environment_version_id: str
+    environment_label: str | None
+    suite_version_id: str
+    suite_label: str | None
+    locked_at: datetime
+    locked_by: dict[str, str] | None
+    unlocked_at: datetime | None
+    unlocked_by: dict[str, str] | None
+    train: int
+    test: int
 
 
-def release_items(job: HostedHarnessJob) -> list[dict[str, Any]]:
-    """Every release of the environment, newest first, with its split counts. Each one
-    counts the scenarios scorable in its own suite version, so a later lock never
-    changes an earlier release's counts."""
+def release_items(job: HostedHarnessJob) -> list[ReleaseItem]:
+    """The environment's releases, newest first: every locked one, since only its
+    Unlock clears the delete guard, and the newest unlocked ones."""
     from simulate.services.harness_versioning.read import _label, _person
 
-    releases = list(
+    rows = (
         HarnessRelease.no_workspace_objects.filter(environment=job)
         # Labels only: a version row carries large documents the read never needs.
         .select_related("locked_by", "unlocked_by")
@@ -398,12 +427,14 @@ def release_items(job: HostedHarnessJob) -> list[dict[str, Any]]:
         )
         .order_by("-locked_at")
     )
-    assigned = dict(
-        HarnessTaskSplit.no_workspace_objects.filter(scenario__job=job).values_list(
-            "scenario_id", "split"
-        )
+    releases = sorted(
+        [
+            *rows.filter(unlocked_at__isnull=True),
+            *rows.filter(unlocked_at__isnull=False)[:UNLOCKED_HISTORY],
+        ],
+        key=lambda release: release.locked_at,
+        reverse=True,
     )
-    tasks = scorable_tasks_by_suite({release.suite_version_id for release in releases})
     return [
         {
             "id": str(release.id),
@@ -416,14 +447,18 @@ def release_items(job: HostedHarnessJob) -> list[dict[str, Any]]:
             "locked_by": _person(release.locked_by),
             "unlocked_at": release.unlocked_at,
             "unlocked_by": _person(release.unlocked_by),
-            **_counts(tasks.get(release.suite_version_id, []), assigned),
+            "train": release.train_count,
+            "test": release.test_count,
         }
         for release in releases
     ]
 
 
-def lock_preview(job: HostedHarnessJob) -> dict[str, Any]:
-    """Whether the default pair can be locked now, why not, and the splits it would get."""
+def lock_preview(
+    job: HostedHarnessJob, releases: list[ReleaseItem] | None = None
+) -> dict[str, Any]:
+    """Whether the default pair can be locked now, why not, and the splits it would
+    get. ``releases`` is the same read's history, so both name the same lock."""
     proved = HarnessSuiteValidation.no_workspace_objects.filter(
         suite_version_id=job.suite_version_id,
         environment_version_id=job.environment_version_id,
@@ -440,7 +475,7 @@ def lock_preview(job: HostedHarnessJob) -> dict[str, Any]:
         "test_target": None,
     }
     try:
-        plan = _plan_lock(job)
+        plan = _plan_lock(job, releases)
     except HostedHarnessError as refusal:
         preview["refusal"] = {"code": refusal.code, "message": refusal.message}
         preview.update(

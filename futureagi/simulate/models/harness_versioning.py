@@ -318,6 +318,10 @@ class HarnessRelease(BaseModel):
         blank=True,
         related_name="+",
     )
+    # Its split counts when locked. Its versions and splits never change, so neither do
+    # these: a read never recounts them.
+    train_count = models.PositiveIntegerField()
+    test_count = models.PositiveIntegerField()
 
     class Meta:
         db_table = "simulate_harness_release"

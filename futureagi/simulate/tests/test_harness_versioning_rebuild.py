@@ -727,6 +727,8 @@ class TestLanding:
             label="2026.11.1",
             locked_at=timezone.now(),
             locked_by=user,
+            train_count=1,
+            test_count=1,
         )
 
         with django_capture_on_commit_callbacks(execute=True):

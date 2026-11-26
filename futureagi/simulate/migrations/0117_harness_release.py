@@ -31,6 +31,8 @@ class Migration(migrations.Migration):
                 ("label", models.CharField(max_length=32)),
                 ("locked_at", models.DateTimeField()),
                 ("unlocked_at", models.DateTimeField(blank=True, null=True)),
+                ("train_count", models.PositiveIntegerField()),
+                ("test_count", models.PositiveIntegerField()),
                 (
                     "environment",
                     models.ForeignKey(
