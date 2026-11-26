@@ -838,6 +838,17 @@ class TestProductionOnlyTasks:
             # A refusal stops before the split plan, so the plan must run both times.
             assert lock["can_lock"] is True, lock
             assert (lock["train"], lock["test"]) == (19 - target_test_size(19), 6)
+            runtime_selects = [
+                # Whether a row has a blob may be asked; the blob itself never is.
+                query["sql"]
+                .replace('"credential_blob" IS NULL', "")
+                .replace("\"credential_blob\" = ''", "")
+                for query in read.captured_queries
+                if "simulate_harness_agent_version_runtime" in query["sql"]
+            ]
+            # The production-only rule reads the default run's real pins.
+            assert runtime_selects
+            assert all('"credential_blob"' not in sql for sql in runtime_selects)
             return len(read.captured_queries)
 
         unlocked_default()
