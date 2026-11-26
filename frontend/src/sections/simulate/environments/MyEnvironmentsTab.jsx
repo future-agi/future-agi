@@ -53,7 +53,7 @@ export default function MyEnvironmentsTab({ onBuild }) {
   const showError = isError && !loading && total === 0;
 
   const deleteEnvironment = useDeleteEnvironment();
-  const showDeleteRefusal = useDeleteRefusal();
+  const { showDeleteRefusal, unlockConfirm } = useDeleteRefusal();
 
   const onOpen = (env) =>
     navigate(paths.dashboard.simulate.environments.detail(env.id));
@@ -144,6 +144,7 @@ export default function MyEnvironmentsTab({ onBuild }) {
           onDelete={onDelete}
         />
       )}
+      {unlockConfirm}
     </Box>
   );
 }

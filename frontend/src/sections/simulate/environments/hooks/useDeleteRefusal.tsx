@@ -1,3 +1,4 @@
+import { useState, type ReactElement } from "react";
 import { Button } from "@mui/material";
 import { closeSnackbar, enqueueSnackbar, type SnackbarKey } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -10,11 +11,26 @@ import type { HarnessVersionsApi } from "src/generated/api-contracts/api.schemas
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { DELETE_REFUSAL_COPY } from "../myEnvironments.constants";
 import { lockPair } from "../workspace/overview/overview.constants";
+import UnlockConfirm, {
+  type UnlockTarget,
+} from "../workspace/overview/UnlockConfirm";
 import useSimulationAccess from "./useSimulationAccess";
 
-interface LockedVersionRef {
+// The lock a refused delete names, with the pair its confirmation names.
+interface LockedVersionRef extends UnlockTarget {
   id: string;
-  label: string;
+}
+
+// The unlock waiting for its confirmation, and the environment it is for.
+interface PendingUnlock {
+  envId: string;
+  target: LockedVersionRef;
+}
+
+interface DeleteRefusal {
+  showDeleteRefusal: (envId: string, error: unknown) => void;
+  // The unlock's confirmation, rendered by the caller while one is open.
+  unlockConfirm: ReactElement | null;
 }
 
 // The lock's label rides along, so the outcome can name it.
@@ -36,20 +52,25 @@ const lockedVersionOf = (error: unknown): LockedVersionRef | null => {
     error?: string;
     locked_version_id?: string | null;
     label?: string | null;
+    environment_label?: string | null;
+    suite_label?: string | null;
   } | null;
   return body?.error === "version_locked" &&
     body.locked_version_id &&
     body.label
-    ? { id: body.locked_version_id, label: body.label }
+    ? {
+        id: body.locked_version_id,
+        label: body.label,
+        environmentLabel: body.environment_label ?? null,
+        suiteLabel: body.suite_label ?? null,
+      }
     : null;
 };
 
 // Shows a refused delete. While a version is locked, an admin gets its Unlock in
-// the refusal; the unlock works with versioning off, so it is always offered.
-export default function useDeleteRefusal(): (
-  envId: string,
-  error: unknown,
-) => void {
+// the refusal; the unlock works with versioning off, so it is always offered. It
+// opens the card's confirmation and sends only once that is confirmed.
+export default function useDeleteRefusal(): DeleteRefusal {
   const { canUnlockVersion } = useSimulationAccess() as {
     canUnlockVersion: boolean;
   };
@@ -77,11 +98,23 @@ export default function useDeleteRefusal(): (
       enqueueSnackbar(errorMessage(failure), { variant: "error" }),
   });
 
-  return (envId, error) => {
+  const [pending, setPending] = useState<PendingUnlock | null>(null);
+  const unlockConfirm = pending && (
+    <UnlockConfirm
+      target={pending.target}
+      onClose={() => setPending(null)}
+      onConfirm={() => {
+        setPending(null);
+        unlock.mutate(pending);
+      }}
+    />
+  );
+
+  const showDeleteRefusal = (envId: string, error: unknown) => {
     const lockedVersion = canUnlockVersion ? lockedVersionOf(error) : null;
     const onUnlock = (key: SnackbarKey, target: LockedVersionRef) => {
       closeSnackbar(key);
-      unlock.mutate({ envId, target });
+      setPending({ envId, target });
     };
     enqueueSnackbar(errorMessage(error), {
       variant: "error",
@@ -98,4 +131,6 @@ export default function useDeleteRefusal(): (
       }),
     });
   };
+
+  return { showDeleteRefusal, unlockConfirm };
 }

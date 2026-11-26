@@ -22,7 +22,9 @@ vi.mock("../hooks/useEnvironmentsTab", () => ({
   default: () => ({ setTab: vi.fn() }),
 }));
 // A refused delete has its own tests (useDeleteRefusal.test.tsx).
-vi.mock("../hooks/useDeleteRefusal", () => ({ default: () => vi.fn() }));
+vi.mock("../hooks/useDeleteRefusal", () => ({
+  default: () => ({ showDeleteRefusal: vi.fn(), unlockConfirm: null }),
+}));
 
 const { default: MyEnvironmentsTab } = await import("../MyEnvironmentsTab");
 
@@ -172,9 +174,7 @@ describe("MyEnvironmentsTab", () => {
       screen.getByText("No environments match these filters"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/create your first environment/i)).toBeNull();
-    fireEvent.click(
-      screen.getAllByRole("button", { name: /^Clear/ })[0],
-    );
+    fireEvent.click(screen.getAllByRole("button", { name: /^Clear/ })[0]);
     expect(location.search).toBe("?tab=my-environments");
   });
 
@@ -210,8 +210,6 @@ describe("MyEnvironmentsTab", () => {
     expect(
       screen.getByText("No environments match these filters"),
     ).toBeInTheDocument();
-    expect(
-      screen.getAllByRole("button", { name: /^Clear/ }),
-    ).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Clear/ })).toHaveLength(1);
   });
 });

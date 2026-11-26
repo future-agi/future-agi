@@ -15,6 +15,7 @@ import SectionCard from "../../components/SectionCard";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
 import { LOCK_COPY, lockPair, versionLine } from "./overview.constants";
+import UnlockConfirm from "./UnlockConfirm";
 
 /*
   An environment's locked version, after Vel's design: the default environment and
@@ -404,24 +405,10 @@ export default function LockedVersionCard({
         />
       )}
       {confirmUnlock && (
-        <ConfirmDialog
-          open
+        <UnlockConfirm
+          target={confirmUnlock}
           onClose={() => setConfirm(null)}
-          PaperProps={{ sx: { maxWidth: 480 } }}
-          title={LOCK_COPY.unlockTitle(
-            lockPair(confirmUnlock.environmentLabel, confirmUnlock.suiteLabel),
-          )}
-          content={LOCK_COPY.unlockBody(confirmUnlock.label)}
-          action={
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={() => onUnlock(confirmUnlock)}
-            >
-              {LOCK_COPY.unlockAction}
-            </Button>
-          }
+          onConfirm={() => onUnlock(confirmUnlock)}
         />
       )}
     </SectionCard>

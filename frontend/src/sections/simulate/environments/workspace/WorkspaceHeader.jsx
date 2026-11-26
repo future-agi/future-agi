@@ -57,7 +57,7 @@ export default function WorkspaceHeader({
     env?.buildStatus === BUILD_STATUS.BUILDING &&
     env?.status !== ENV_STATUS.CANCELLING;
   const deleteEnv = useDeleteEnvironment();
-  const showDeleteRefusal = useDeleteRefusal();
+  const { showDeleteRefusal, unlockConfirm } = useDeleteRefusal();
   // Rename (§8) is live for a real backend-backed env. Its response is the §6
   // body, which the mutation writes back into the §6 cache; the workspace
   // overlays that name onto `env`, so the header reflects the new name at once.
@@ -201,6 +201,7 @@ export default function WorkspaceHeader({
           }
         />
       )}
+      {unlockConfirm}
     </Stack>
   );
 }
