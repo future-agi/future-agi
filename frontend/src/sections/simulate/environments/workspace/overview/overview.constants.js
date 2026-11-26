@@ -229,20 +229,20 @@ export const RELEASE_COPY = {
     unproved: "Not proved",
   },
   lockedLine: (at, train, test, environmentLabel) =>
-    `Locked ${at} · Train ${train} · Test ${test} tasks · scorer environment ${environmentLabel}.`,
+    `Locked ${at} · Train ${train} · Test ${test} scenarios · scorer environment ${environmentLabel}`,
   readyLine: (train, test) =>
-    `Train ${train} · Test ${test} tasks once locked. Lock to freeze tasks, splits and the scorer.`,
+    `Train ${train} · Test ${test} scenarios once locked. Lock to freeze scenarios, splits and the scorer.`,
   lock: "Lock this release",
   addScenarios: "Add scenarios",
   viewer: "You don't have permission to lock releases.",
   unlock: "Unlock",
   lockTitle: "Lock this release?",
   lockBody:
-    "Its tasks, train and test splits and scorer freeze, so every score on it stays comparable. Each task keeps its split in every later release. Edits make a new, unlocked version.",
+    "Its scenarios, train and test splits and scorer freeze, so every score on it stays comparable. Each scenario keeps its split in every later release. Edits make a new, unlocked version.",
   lockAction: "Lock release",
   unlockTitle: (label) => `Unlock release ${label}?`,
   unlockBody:
-    "Its scores stay, but they're no longer a locked comparison. The train/test split of each task never changes.",
+    "Its scores stay, but they're no longer a locked comparison. The train/test split of each scenario never changes.",
   unlockAction: "Unlock release",
   earlier: "Earlier releases",
   earlierLine: (release) =>
