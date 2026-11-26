@@ -1620,7 +1620,7 @@ class HostedHarnessProvider:
     def create_adaptation(self, request) -> Response:
         """Start adapting an agent to a release suite (contract §7.5): a hosted job like any
         other, whose payload carries `metadata.adaptation`."""
-        from simulate.services.harness_fit import resolved_pairing
+        from simulate.services.harness_fit import agent_of, resolved_pairing
         from simulate.services.harness_releases import (
             adaptation_payload,
             check_agent_connection,
@@ -1673,6 +1673,14 @@ class HostedHarnessProvider:
                 agent, secret_values = connected_agent_connection(
                     organization, agent_version
                 )
+            read = agent_of(agent_version)
+            if not read["tools"]:
+                # Nothing of the agent's can stand in for a world tool, so a binding would be empty.
+                raise HostedHarnessError(
+                    "agent_has_no_tools",
+                    "this agent has no tools of its own to pair with the world's",
+                    status_code=409,
+                )
             payload = adaptation_payload(
                 organization,
                 suite=suite,
@@ -1683,7 +1691,9 @@ class HostedHarnessProvider:
                 parallelism=data.get("parallelism"),
                 # Checked and completed here, so the design the person reviewed, the one the
                 # job stores and the one the binding is held to are the same map.
-                pairing=resolved_pairing(suite, agent_version, data.get("pairing")),
+                pairing=resolved_pairing(
+                    suite, agent_version, data.get("pairing"), agent=read
+                ),
                 mode=data.get("mode", "review"),
                 secret_values=secret_values,
             )

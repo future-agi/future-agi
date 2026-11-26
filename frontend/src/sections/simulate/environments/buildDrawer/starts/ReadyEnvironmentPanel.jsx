@@ -554,6 +554,9 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
 
   const { verdict, none, measurable } =
     fit && fitQuery.counted ? fitVerdict(fit) : {};
+  // An agent with no tools of its own has nothing to pair, so there is nothing to adapt.
+  const noAgentTools =
+    Boolean(fit && fitQuery.counted) && !(fit.agent_tools || []).length;
   const blocked = !agent
     ? null
     : agent.sample
@@ -739,16 +742,27 @@ function UseTab({ world, onBusyChange, onOtherWorld }) {
         </Menu>
         <Box flex={1} />
         <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.create}>
-          <Button
-            variant="outlined"
-            size="small"
-            color="inherit"
-            disabled={waiting || !canEdit}
-            onClick={() => start("review")}
-            sx={{ ...BTN_SX, whiteSpace: "nowrap" }}
+          <Tooltip
+            arrow
+            title={
+              canEdit && noAgentTools
+                ? "This agent has no tools of its own to pair with this world's. Add tools to it, or choose another agent."
+                : ""
+            }
           >
-            Adapt to my agent
-          </Button>
+            <span>
+              <Button
+                variant="outlined"
+                size="small"
+                color="inherit"
+                disabled={waiting || !canEdit || noAgentTools}
+                onClick={() => start("review")}
+                sx={{ ...BTN_SX, whiteSpace: "nowrap" }}
+              >
+                Adapt to my agent
+              </Button>
+            </span>
+          </Tooltip>
         </ViewerLock>
         <ViewerLock
           locked={!canEdit || !canRun}

@@ -1765,3 +1765,38 @@ def test_the_fit_waits_one_short_budget_for_the_model_retry_included(monkeypatch
     with pytest.raises(httpx.TimeoutException):
         harness_fit._ask_model("task", {})
     assert timeouts == [12.0]
+
+
+def test_an_agent_with_no_tools_of_its_own_is_not_adapted(
+    auth_client, organization, retail, shopmate, fitted, monkeypatch
+):
+    profile = {
+        "response_engine_type": "retell-llm",
+        "general_prompt": INSTRUCTIONS,
+        "general_tools": [
+            {"type": "end_call", "name": "end_call", "description": "End the call."}
+        ],
+    }
+    monkeypatch.setattr(harness_fit, "profile_for_version", lambda version: profile)
+
+    response = auth_client.post(
+        f"{ADAPTATIONS}/",
+        {
+            "suite_id": str(retail.id),
+            "agent_version_id": str(shopmate.id),
+            "agent": {
+                "connector": "retell_chat",
+                "mode": "provider_import",
+                "config": {"agent_id": "agent_shopmate"},
+            },
+            "name": "Retail",
+            "idempotency_key": f"adapt-{uuid.uuid4()}",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 409, response.content
+    assert "agent_has_no_tools" in response.content.decode()
+    assert not HostedHarnessJob.no_workspace_objects.filter(
+        organization=organization, payload__metadata__adaptation__isnull=False
+    ).exists()

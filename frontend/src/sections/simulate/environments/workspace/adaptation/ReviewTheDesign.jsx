@@ -358,8 +358,8 @@ export default function ReviewTheDesign({ jobId, job, chat }) {
       enqueueSnackbar(errorMessage(error), { variant: "error" }),
   });
   const cancel = useMutation({
-    mutationFn: () =>
-      cancelHarnessJob(jobId, "Cancelled from Review the design"),
+    // The job's cancel takes a reason code, not free text; the default is the user's.
+    mutationFn: () => cancelHarnessJob(jobId),
     onSuccess: () => navigate(paths.dashboard.simulate.environments.root),
     onError: (error) =>
       enqueueSnackbar(errorMessage(error), { variant: "error" }),

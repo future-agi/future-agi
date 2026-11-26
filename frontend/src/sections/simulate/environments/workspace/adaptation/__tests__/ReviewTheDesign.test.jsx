@@ -201,7 +201,8 @@ describe("Review the design", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop adaptation" }));
 
     await waitFor(() => expect(navigate).toHaveBeenCalled());
-    expect(cancelHarnessJob.mock.calls[0][0]).toBe("adapt-job");
+    // The cancel's reason is a code the contract checks, so no free text is sent.
+    expect(cancelHarnessJob.mock.calls[0]).toEqual(["adapt-job"]);
   });
 
   it("keeps an adaptation whose cancel isn't confirmed", async () => {
@@ -272,7 +273,8 @@ describe("Review the design", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop adaptation" }));
 
     await waitFor(() => expect(navigate).toHaveBeenCalled());
-    expect(cancelHarnessJob.mock.calls[0][0]).toBe("adapt-job");
+    // The cancel's reason is a code the contract checks, so no free text is sent.
+    expect(cancelHarnessJob.mock.calls[0]).toEqual(["adapt-job"]);
   });
 
   it("keeps the design up when a later read of it fails", () => {

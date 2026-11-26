@@ -269,6 +269,28 @@ describe("the fit on screen", () => {
     expect(adapt()).toBeEnabled();
   });
 
+  it("can't adapt an agent with no tools of its own, and says why", async () => {
+    render();
+    pick("ShopMate");
+    await waitFor(() => expect(asked).toHaveLength(1));
+    answer(
+      fitOf(
+        "ShopMate",
+        [],
+        { get_order: null, cancel: null, refund: null },
+        ["one", "two", "three"].map((key) => ({ key, title: key })),
+      ),
+    );
+
+    expect(await screen.findByText("Can't be measured")).toBeInTheDocument();
+    expect(adapt()).toBeDisabled();
+    expect(run()).toBeDisabled();
+    fireEvent.mouseOver(adapt().parentElement);
+    expect(
+      await screen.findByText(/has no tools of its own to pair/),
+    ).toBeInTheDocument();
+  });
+
   it("says the agent's versions couldn't be read rather than that it has none", () => {
     render();
     pick("Unread");
