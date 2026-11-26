@@ -436,15 +436,26 @@ class TestVersionsList:
         ]
         for column in ('"credential_blob"', '"agent_payload"'):
             assert all(column not in sql for sql in runtime_selects)
-        # The release's runnable check reads only the sub-goal catalogue key.
         version_selects = [
-            query["sql"].replace("\"documents\" -> 'sub_goals'", "")
+            query["sql"]
             for query in many.captured_queries
             if "simulate_harness_environment_version" in query["sql"]
             or "simulate_harness_suite_version" in query["sql"]
         ]
         assert version_selects
-        assert all('"documents"' not in sql for sql in version_selects)
+        # The release's runnable check reads one key of ONE version: the pinned
+        # environment version's sub-goal catalogue, looked up by id. No read lists
+        # documents across versions.
+        catalogue = "\"documents\" -> 'sub_goals'"
+        catalogue_reads = [sql for sql in version_selects if catalogue in sql]
+        assert len(catalogue_reads) <= 1
+        assert all(
+            '"simulate_harness_environment_version"."id" =' in sql
+            for sql in catalogue_reads
+        )
+        assert all(
+            '"documents"' not in sql.replace(catalogue, "") for sql in version_selects
+        )
         assert all(
             '"configuration_snapshot"' not in query["sql"]
             for query in many.captured_queries
