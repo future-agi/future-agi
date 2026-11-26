@@ -233,8 +233,11 @@ export default function LaunchFixDialog({
             })}
           </Typography>
           {diagnosisUnavailable && (
-            <Typography sx={{ typography: "s2", color: "text.secondary", mb: 1.5 }}>
-              No completed diagnosis is available for this run. You can still start an epoch.
+            <Typography
+              sx={{ typography: "s2", color: "text.secondary", mb: 1.5 }}
+            >
+              No completed diagnosis is available for this run. You can still
+              start an epoch.
             </Typography>
           )}
           <Box>
