@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -19,12 +20,19 @@ import {
   fixtureVerdict,
   outsideAttemptFix,
 } from "src/api/simulate-environments/__tests__/fixtures/codingAgent";
+import type {
+  BlockedCode,
+  BriefRead,
+  VerdictRead,
+} from "src/api/simulate-environments/__tests__/fixtures/codingAgent";
 import { fixtureFixRun } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+import type { AgentFixRunDetailApi } from "src/generated/api-contracts/api.schemas";
 
 // The deployment's setting, as the capabilities read carries it.
 const caps = vi.hoisted(() => ({ codingAgent: true }));
 vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual =
+    await importOriginal<typeof import("src/hooks/useCapabilities")>();
   return {
     ...actual,
     useCapabilities: () => ({
@@ -38,15 +46,17 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
 
 // The two coding-agent routes, answered from the fixtures; anything else is a bug.
 const api = vi.hoisted(() => ({
-  brief: null,
+  brief: null as BriefRead | null,
   briefStatus: 200,
-  verdict: null,
-  get: null,
+  verdict: null as VerdictRead | null,
+  get: vi.fn<
+    (url: string, config?: { params?: unknown }) => Promise<{ data: unknown }>
+  >(),
 }));
 vi.mock("src/utils/axios", async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = await importOriginal<typeof import("src/utils/axios")>();
   const routes = actual.endpoints.agentFixRuns;
-  api.get = vi.fn((url, config = {}) => {
+  api.get.mockImplementation((url, config = {}) => {
     if (url === routes.codingAgentBrief()) {
       expect(config.params).toEqual({ source_run_id: SOURCE_RUN_ID });
       // The app's axios rejects with the body spread plus statusCode.
@@ -63,7 +73,9 @@ vi.mock("src/utils/axios", async (importOriginal) => {
   return { ...actual, default: { ...actual.default, get: api.get } };
 });
 
-const clipboard = vi.hoisted(() => ({ copy: vi.fn(async () => true) }));
+const clipboard = vi.hoisted(() => ({
+  copy: vi.fn(async (_text: unknown) => true),
+}));
 vi.mock("src/utils/copyToClipboard", () => ({
   copyToClipboard: clipboard.copy,
 }));
@@ -88,13 +100,16 @@ const { codingAgentSetup } = await import(
 const { isUncountedAttempt } = await import("../attemptVerdictView");
 
 const SETUP_URL = `${window.location.origin}/dashboard/settings/mcp-server`;
-const attemptFix = () =>
+const attemptFix = (): AgentFixRunDetailApi =>
   outsideAttemptFix(structuredClone(fixtureFixRun("fix-ready-archive")));
 
-// The candidates' chart reads theme.palette.data, so render with the app theme.
-const appTheme = createTheme({ palette: palette("light") });
+// The candidates' chart reads theme.palette.data, so render with the app theme. The
+// palette's mode reads as a string from its JS, so it is named again here.
+const appTheme = createTheme({
+  palette: { ...palette("light"), mode: "light" },
+});
 
-function renderUi(ui) {
+function renderUi(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -143,7 +158,7 @@ describe("Copy for coding agent on the Epoch page's ⋯ menu", () => {
     await waitFor(() => expect(clipboard.copy).toHaveBeenCalledTimes(1));
     const [copied] = clipboard.copy.mock.calls[0];
     expect(copied).toBe(
-      `${codingAgentSetup(SETUP_URL)}\n\n---\n\n${api.brief.instructions}`,
+      `${codingAgentSetup(SETUP_URL)}\n\n---\n\n${api.brief?.instructions}`,
     );
     expect(copied).toContain("npx @future-agi/cli");
     expect(copied).toContain("fagi login");
@@ -154,7 +169,7 @@ describe("Copy for coding agent on the Epoch page's ⋯ menu", () => {
     ).toBeInTheDocument();
   });
 
-  it.each(Object.keys(BLOCKED_BRIEFS))(
+  it.each(Object.keys(BLOCKED_BRIEFS) as BlockedCode[])(
     "says why a brief blocked by %s can't be used, in the platform's words, and copies nothing",
     async (code) => {
       api.brief = fixtureBlockedBrief(code);
@@ -169,6 +184,7 @@ describe("Copy for coding agent on the Epoch page's ⋯ menu", () => {
   it("is disabled, with why, on an epoch that has no run to brief from", async () => {
     await openMenu({ ...attemptFix(), source_run_id: null });
     const item = screen.getByText("Copy for coding agent").closest("li");
+    if (!item) throw new Error("Copy for coding agent is not a menu item");
     expect(item).toHaveAttribute("aria-disabled", "true");
     expect(
       within(item).getByText(
@@ -325,17 +341,18 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
 
   // Only the static check's own refusal blames the change: an attempt that ended with
   // no improvement and no check, whatever the reason, is not read as one.
-  it.each([
-    ["no_improvement", true],
-    ["out_of_budget", false],
-    ["not_reproduced", false],
-    ["stopped", false],
+  // A stopped attempt has no ending (the verdict's ending has no "stopped").
+  it.each<[VerdictRead["state"], VerdictRead["ending"], boolean]>([
+    ["no_improvement", "no_improvement", true],
+    ["out_of_budget", "out_of_budget", false],
+    ["not_reproduced", "not_reproduced", false],
+    ["stopped", null, false],
   ])(
     "never says the change did not apply when the %s attempt has no static refusal",
-    async (state, counted) => {
+    async (state, ending, counted) => {
       api.verdict = fixtureVerdict({
         state,
-        ending: state,
+        ending,
         tiers: [],
         summary: "",
         counted,
@@ -396,7 +413,7 @@ describe("Copy for coding agent reads the brief fresh", () => {
 
 describe("The candidates table of an attempt", () => {
   // One candidate the held-back check stopped, as the engine records it.
-  const heldBackRejected = (fix) => ({
+  const heldBackRejected = (fix: AgentFixRunDetailApi) => ({
     ...fix,
     state: "no_improvement",
     candidates: [
@@ -524,7 +541,7 @@ describe("An attempt's running stages and ending", () => {
 describe("Which attempts the Epochs list marks as not counted", () => {
   it("is the one the platform says does not count, whatever its state and candidates", () => {
     const fix = attemptFix();
-    for (const state of ["out_of_budget", "stopped", "failed"]) {
+    for (const state of ["out_of_budget", "stopped", "failed"] as const) {
       expect(
         isUncountedAttempt({ ...fix, state, candidates: [], counted: false }),
       ).toBe(true);
