@@ -20,7 +20,7 @@ from uuid import UUID
 
 import structlog
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, QuerySet
 from django.utils import timezone
 
 from simulate.models.harness_versioning import (
@@ -51,6 +51,8 @@ from tfc.constants.levels import Level
 from tfc.permissions.utils import get_effective_workspace_level
 
 if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
+
     from accounts.models.user import User
 
 logger = structlog.get_logger(__name__)
@@ -274,22 +276,34 @@ def _assigned(tasks: list[Task]) -> dict[UUID, str]:
     )
 
 
+class _PairNumbers(TypedDict):
+    """A locked version's pair, by version number."""
+
+    environment_number: int | None
+    suite_number: int | None
+
+
+def _with_pair_numbers(
+    rows: QuerySet[HarnessLockedVersion],
+) -> QuerySet[WithAnnotations[HarnessLockedVersion, _PairNumbers]]:
+    """The rows with their pair's version numbers, for its labels. A version row
+    carries large documents no lock read needs, so only the numbers are joined."""
+    return rows.annotate(
+        environment_number=F("environment_version__version_number"),
+        suite_number=F("suite_version__version_number"),
+    )
+
+
 def _locked_version(
     environment_version_id: UUID, suite_version_id: UUID
-) -> HarnessLockedVersion | None:
-    return (
+) -> WithAnnotations[HarnessLockedVersion, _PairNumbers] | None:
+    return _with_pair_numbers(
         HarnessLockedVersion.no_workspace_objects.filter(
             environment_version_id=environment_version_id,
             suite_version_id=suite_version_id,
             unlocked_at__isnull=True,
         )
-        # The pair's labels for its refusal; a version row's documents stay unread.
-        .annotate(
-            environment_number=F("environment_version__version_number"),
-            suite_number=F("suite_version__version_number"),
-        )
-        .first()
-    )
+    ).first()
 
 
 def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
@@ -522,17 +536,12 @@ def locked_version_items(job: HostedHarnessJob) -> list[LockedVersionItem]:
     Unlock clears the delete guard, and the newest unlocked ones."""
     from simulate.services.harness_versioning.read import _label, _person
 
-    rows = (
+    rows = _with_pair_numbers(
         HarnessLockedVersion.no_workspace_objects.filter(environment=job)
-        # Labels only: a version row carries large documents the read never needs.
         .select_related("locked_by", "unlocked_by")
-        .annotate(
-            environment_number=F("environment_version__version_number"),
-            suite_number=F("suite_version__version_number"),
-        )
         .order_by("-locked_at")
     )
-    locked_versions = sorted(
+    locked_versions: list[WithAnnotations[HarnessLockedVersion, _PairNumbers]] = sorted(
         [
             *rows.filter(unlocked_at__isnull=True),
             *rows.filter(unlocked_at__isnull=False)[:UNLOCKED_HISTORY],
