@@ -159,7 +159,7 @@ class MixedWorkersJobTest(unittest.TestCase):
             'run: echo "sha256=$(bash .ci/temporal-cli.sh digest)" >> "$GITHUB_OUTPUT"',
             self.job,
         )
-        key = "key: temporal-cli-linux-amd64-sha256-${{ steps.temporal-cli.outputs.sha256 }}"
+        key = "key: temporal-cli-linux-amd64-v1.10.1-sha256-${{ steps.temporal-cli.outputs.sha256 }}"
         self.assertEqual(self.job.count(key), 1)
         order = [
             "id: temporal-cli\n",
@@ -181,8 +181,12 @@ class MixedWorkersJobTest(unittest.TestCase):
     def test_only_a_miss_saves_and_it_saves_the_restored_key(self):
         restore = self._step("uses: actions/cache/restore@")
         save = self._step("uses: actions/cache/save@")
+        fetch = self._step("bash .ci/temporal-cli.sh fetch")
+        install = self._step("bash .ci/temporal-cli.sh install")
         self.assertIn("id: temporal-cli-cache\n", restore)
+        self.assertIn("if: steps.temporal-cli-cache.outputs.cache-hit != 'true'", fetch)
         self.assertIn("if: steps.temporal-cli-cache.outputs.cache-hit != 'true'", save)
+        self.assertNotIn("if: steps.temporal-cli-cache.outputs.cache-hit", install)
         self.assertIn(
             "key: ${{ steps.temporal-cli-cache.outputs.cache-primary-key }}", save
         )

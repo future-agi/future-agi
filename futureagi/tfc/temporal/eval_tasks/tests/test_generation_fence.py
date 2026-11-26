@@ -239,6 +239,84 @@ def _answers(task):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_reaped_error_replaces_a_prior_success_answer(instant_stale_entry):
+    """A config-hash requeue can leave the previous success in the projection.
+    The later terminal error is a new write and must replace that answer."""
+    from django.utils import timezone
+
+    from tracer.models.instant_eval import InstantEvalAnswer, InstantEvalRow
+    from tracer.services.eval_tasks import reaper
+    from tracer.services.instant_eval_summary import ERROR
+
+    task, entry = instant_stale_entry
+    row = InstantEvalRow.objects.get(task=task)
+    InstantEvalAnswer.objects.create(
+        task=task,
+        row=row,
+        config_id=entry.custom_eval_config_id,
+        label="Yes",
+        confidence=0.9,
+        time=row.time,
+        answered_at=timezone.now(),
+    )
+    EvalLogger.objects.filter(pk=entry.pk).update(
+        status=EvalEntryStatus.RUNNING,
+        attempts=3,
+    )
+
+    result = activities._reap_sync(str(task.pk), 600, 3, True)
+
+    assert (result["requeued"], result["failed"]) == (0, 1)
+    assert _answers(task) == [ERROR]
+    assert InstantEvalAnswer.objects.get(task=task).label == ERROR
+
+
+@pytest.mark.django_db(transaction=True)
+def test_reaper_locks_the_run_before_entries(instant_stale_entry, monkeypatch):
+    """A project delete holding the run lock can still take its entry lock.
+
+    The copier must wait for the retained run first; taking an entry and then
+    waiting for the run would deadlock with the deletion lock order."""
+    import tracer.services.instant_eval_answers as answer_service
+    from tracer.models.instant_eval import InstantEvalRun
+    from tracer.services.eval_tasks import reaper
+
+    task, entry = instant_stale_entry
+    EvalLogger.objects.filter(pk=entry.pk).update(
+        status=EvalEntryStatus.ERRORED,
+        error=True,
+        error_message=reaper._GAVE_UP,
+    )
+    run_requested = Event()
+    original_lock_run = answer_service._lock_retained_run
+
+    def lock_run(task_id):
+        run_requested.set()
+        return original_lock_run(task_id)
+
+    monkeypatch.setattr(answer_service, "_lock_retained_run", lock_run)
+
+    def copier():
+        try:
+            reaper._record_instant_answers(task)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with transaction.atomic():
+            InstantEvalRun.objects.select_for_update().get(eval_task=task)
+            copied = pool.submit(copier)
+            assert run_requested.wait(10), "the copier did not request the run lock"
+            with connection.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '2s'")
+            try:
+                EvalLogger.objects.select_for_update().get(pk=entry.pk)
+            except OperationalError as exc:
+                pytest.fail(f"entry lock deadlocked with the copier: {exc}")
+        copied.result(timeout=10)
+
+
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("guard", ["generation", "require_running"])
 def test_fenced_reap_records_given_up_answers_after_the_task_lock(
     instant_stale_entry, monkeypatch, guard

@@ -30,7 +30,7 @@ import structlog
 from django.conf import settings
 from django.core.cache import cache
 from django.core.exceptions import TooManyFieldsSent
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import F
 from django.http import StreamingHttpResponse
 from django.utils import timezone
@@ -101,6 +101,7 @@ from tracer.views.instant_eval import (
 
 logger = structlog.get_logger(__name__)
 
+_EVAL_LOGGER_TABLE = EvalLogger._meta.db_table
 UNITS = ["traces", "spans", "sessions", "users"]
 # The Observe date options a view's window comes from.
 DATE_PRESETS = ["Today", "Yesterday", "7D", "30D", "3M", "6M", "12M", "Custom"]
@@ -1709,14 +1710,30 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         with transaction.atomic():
             if not running and (busy := self._busy_locked(request, task)):
                 return busy
-            ids = list(failed.values_list("id", flat=True))
-            retried = failed.update(
-                status=EvalEntryStatus.PENDING,
-                error=False,
-                error_message=None,
-                skipped_reason=None,
-                attempts=0,
-            )
+            # Recheck the failure state in the UPDATE itself. A worker can
+            # requeue an entry after the pricing read and before this block;
+            # RETURNING is the only reliable list of rows whose answers this
+            # retry is now responsible for forgetting.
+            with connection.cursor() as cur:
+                cur.execute(
+                    f"UPDATE {_EVAL_LOGGER_TABLE} "  # noqa: S608 — table name is a trusted model attribute; values are bound
+                    "SET status = %s, error = %s, error_message = %s, "
+                    "skipped_reason = %s, attempts = %s "
+                    "WHERE eval_task_id = %s AND deleted = false "
+                    "AND status IN (%s, %s) RETURNING id",
+                    [
+                        EvalEntryStatus.PENDING,
+                        False,
+                        None,
+                        None,
+                        0,
+                        str(task.id),
+                        EvalEntryStatus.ERRORED,
+                        EvalEntryStatus.SKIPPED,
+                    ],
+                )
+                ids = [row[0] for row in cur.fetchall()]
+            retried = len(ids)
             if not retried:
                 return self._gm.bad_request("No rows failed.")
             # Their rows wait for an answer again.

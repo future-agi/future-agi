@@ -175,7 +175,13 @@ def _lock_unanswered_given_up(task_id) -> list:
     entries under their row locks, and an answer copied for one of those would
     outlive the Retry that dropped it. One that stays given up and unanswered
     is selected again by the next reap."""
-    from tracer.services.instant_eval_answers import _ENTRY_RID
+    from tracer.services.instant_eval_answers import _ENTRY_RID, _lock_retained_run
+
+    # Match the lock order used by project deletion: the run is retained before
+    # any of its entries. Otherwise deletion can hold the run while waiting for
+    # an entry that this copier holds while waiting for the run.
+    if not _lock_retained_run(task_id):
+        return []
 
     with connection.cursor() as cur:
         cur.execute(
@@ -186,7 +192,8 @@ def _lock_unanswered_given_up(task_id) -> list:
             "AND l.custom_eval_config_id IS NOT NULL "
             "AND NOT EXISTS (SELECT 1 FROM tracer_instant_eval_answer a "
             "WHERE a.task_id = %(task)s AND a.row_id = r.id "
-            "AND a.config_id = l.custom_eval_config_id) "
+            "AND a.config_id = l.custom_eval_config_id "
+            "AND a.answered_at = l.updated_at) "
             "ORDER BY l.id FOR UPDATE OF l SKIP LOCKED",
             {
                 "task": str(task_id),

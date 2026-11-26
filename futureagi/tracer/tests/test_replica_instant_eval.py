@@ -459,6 +459,45 @@ def test_d26_retry_is_priced_for_a_failure_only_the_primary_has(
     assert _answers(task) == 2
 
 
+def test_d26_retry_forgets_only_rows_still_failed_at_update(
+    lagging_replica,  # noqa: F811
+    auth_client,
+    observe_project,
+    yes_no,  # noqa: F811
+    fake_view,  # noqa: F811
+    started,  # noqa: F811
+    monkeypatch,
+):
+    """A failure can be requeued after pricing but before Retry's UPDATE.
+    Only rows returned by that UPDATE may have their old answers forgotten."""
+    _workflow_drains(monkeypatch)
+    task, entries = _two_failures_one_replicated(
+        lagging_replica, auth_client, observe_project, yes_no
+    )
+    requeued_between_reads = entries[0]
+
+    def requeue_one(*_args, **_kwargs):
+        EvalLogger.objects.filter(pk=requeued_between_reads.pk).update(
+            status=EvalEntryStatus.PENDING,
+            error=False,
+            error_message=None,
+            skipped_reason=None,
+            attempts=0,
+        )
+        return None
+
+    monkeypatch.setattr(instant_eval_scale, "check_credits", requeue_one)
+    response = _control(auth_client, observe_project, task, "retry_failed")
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["result"]["retried"] == 1
+    assert _primary(entries[0]).status == EvalEntryStatus.PENDING
+    assert _primary(entries[1]).status == EvalEntryStatus.PENDING
+    # The row requeued by the interleaving kept its answer; only the UPDATE's
+    # RETURNING id was passed to forget_answers.
+    assert _answers(task) == 1
+
+
 def test_d26_retry_forgets_both_answers_and_resume_prices_both_rows(
     lagging_replica,  # noqa: F811
     auth_client,

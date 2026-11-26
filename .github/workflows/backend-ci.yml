@@ -987,13 +987,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/mixed-histories"
           echo "HISTORICAL_REPLAY_HISTORY_DIR=$RUNNER_TEMP/mixed-histories" >> "$GITHUB_ENV"
 
-      # The Temporal CLI archive is cached under its SHA-256, and temporal-cli.sh
-      # verifies the digest on a cache hit and on a download alike. A merge
-      # group restores only caches saved on the default branch (or its own
-      # queue ref), so it downloads nothing once a run on main has saved the
-      # archive; until then it fetches the GitHub release, not Temporal's
-      # rate-limited download proxy.
-      - name: Key the pinned Temporal CLI by its digest
+      # The Temporal CLI archive is cached under both its release version and
+      # SHA-256. A cache hit must never turn a missing versioned archive into a
+      # network fetch: the install step verifies the hit and fails instead.
+      - name: Key the pinned Temporal CLI by version and digest
         id: temporal-cli
         run: echo "sha256=$(bash .ci/temporal-cli.sh digest)" >> "$GITHUB_OUTPUT"
 
@@ -1002,13 +999,16 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/temporal-cli-archive
-          key: temporal-cli-linux-amd64-sha256-${{ steps.temporal-cli.outputs.sha256 }}
+          key: temporal-cli-linux-amd64-v1.10.1-sha256-${{ steps.temporal-cli.outputs.sha256 }}
+
+      - name: Fetch the pinned Temporal CLI archive on a cache miss
+        if: steps.temporal-cli-cache.outputs.cache-hit != 'true'
+        run: bash .ci/temporal-cli.sh fetch "$RUNNER_TEMP/temporal-cli-archive"
 
       - name: Install the pinned Temporal dev server
-        # temporalio 1.36.1's default CLI; the test's local server uses it
-        # instead of downloading one. Fetched only on a cache miss.
+        # temporalio 1.36.1's default CLI; install verifies every cache hit and
+        # fails if the cache claimed a hit without the versioned archive.
         run: |
-          bash .ci/temporal-cli.sh fetch "$RUNNER_TEMP/temporal-cli-archive"
           bash .ci/temporal-cli.sh install "$RUNNER_TEMP/temporal-cli-archive" "$RUNNER_TEMP/temporal-cli"
           echo "TEMPORAL_DEV_SERVER=$RUNNER_TEMP/temporal-cli/temporal" >> "$GITHUB_ENV"
 
