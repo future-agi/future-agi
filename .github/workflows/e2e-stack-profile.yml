@@ -42,6 +42,9 @@ env:
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
+  # E2E CI's hold rule, so the parity aggregate stays a copy of E2E Tests
+  # Pass. A dispatch is never held.
+  HOLD_SUITES: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
 
 jobs:
   changes:
@@ -51,6 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      hold: "false"
       any: ${{ steps.stacks.outputs.any }}
       stacks: ${{ steps.stacks.outputs.stacks }}
       shards: ${{ steps.shards.outputs.shards }}
@@ -922,8 +926,10 @@ jobs:
           E2E_NEEDED: ${{ needs.changes.outputs.any }}
           E2E: ${{ needs.e2e.result }}
           REPORT: ${{ needs.report.result }}
+          PLAN_HOLD: ${{ needs.changes.outputs.hold }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
-          echo "changes: $CHANGES, e2e needed: ${E2E_NEEDED:-<none>}, e2e: $E2E, report: $REPORT"
+          echo "changes: $CHANGES, e2e needed: ${E2E_NEEDED:-<none>}, e2e: $E2E, report: $REPORT, held: ${HOLD_SUITES:-<none>}"
           # Stricter than "every dependency succeeded or was skipped": a skip
           # passes only when the changes job said there was nothing to run. A
           # skipped report job would otherwise pass without the parity proof.
@@ -931,10 +937,26 @@ jobs:
             echo "::error::The changes job did not succeed ($CHANGES)."
             exit 1
           fi
+          # HOLD_SUITES is evaluated again here, from the event, not read from
+          # the changes job. A held run passes only on its first attempt. A
+          # re-run replays the held event after the pull request may be ready:
+          # push, or re-run the ready_for_review run.
+          if [ "$HOLD_SUITES" != true ] && [ "$HOLD_SUITES" != false ] || [ "$PLAN_HOLD" != "$HOLD_SUITES" ]; then
+            echo "::error::The plan's hold flag (${PLAN_HOLD:-<none>}) does not match the event (${HOLD_SUITES:-<none>})."
+            exit 1
+          fi
+          if [ "$HOLD_SUITES" = true ] && [ "$ATTEMPT" != 1 ]; then
+            echo "::error::A re-run of a held run cannot prove the suite. Push, or re-run the ready_for_review run."
+            exit 1
+          fi
           if [ "$E2E_NEEDED" = true ] && [ "$E2E" = success ] && [ "$REPORT" = success ]; then
             echo "Every shard passed and the report job proved they ran the whole suite."
           elif [ "$E2E_NEEDED" = false ] && [ "$E2E" = skipped ] && [ "$REPORT" = skipped ]; then
-            echo "No path that the E2E suite covers changed, so it was not needed."
+            if [ "$HOLD_SUITES" = true ]; then
+              echo "HOLD_SUITES held the suite: it runs when the pull request is marked ready for review."
+            else
+              echo "No path that the E2E suite covers changed, so it was not needed."
+            fi
           else
             echo "::error::E2E did not pass (e2e: $E2E, report: $REPORT, e2e needed: ${E2E_NEEDED:-<none>})."
             exit 1

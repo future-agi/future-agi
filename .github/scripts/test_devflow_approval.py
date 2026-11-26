@@ -4,7 +4,10 @@
 import copy
 import json
 import re
+import subprocess
 import sys
+import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -305,39 +308,123 @@ class TrainLabelTests(unittest.TestCase):
                 self.assertEqual(da.train_labels(case.pr), [])
 
 
-class ModeTests(unittest.TestCase):
-    WORKFLOW = CODEOWNERS.parent / "workflows" / "devflow-approval.yml"
+WORKFLOW = CODEOWNERS.parent / "workflows" / "devflow-approval.yml"
 
-    def test_observe_mode_takes_no_action(self):
-        # main() returns before any gh write in observe mode.
-        calls = []
-        real = da.gh
 
-        def fake(*args, stdin=None):
-            calls.append(args)
-            if args[:2] == ("api", "repos/org/repo/pulls/1"):
-                return json.dumps(Case().pr)
-            if "--paginate" in args:
-                path = args[2]
-                if path.endswith("/reviews?per_page=100"):
-                    return json.dumps(review())
-                return json.dumps(marker())
-            return "write\n"
+def run_main(mode, case, author_permission="write"):
+    """(exit code, gh calls, the decision main() printed) with a fake gh."""
+    calls, printed = [], []
+    real_gh = da.gh
+    args = ["--mode", "devflow", "--dry-run"] if mode == "dry" else ["--mode", mode]
 
-        da.gh = fake
-        try:
-            self.assertEqual(da.main(["--repo", REPO, "--pr", "1", "--mode", "observe"]), 0)
-        finally:
-            da.gh = real
+    def fake(*args, stdin=None):
+        calls.append(args)
+        if args[:2] == ("api", f"repos/{REPO}/pulls/1"):
+            return json.dumps(case.pr)
+        if "--paginate" in args:
+            items = case.reviews if args[2].endswith("/reviews?per_page=100") else case.comments
+            return "\n".join(json.dumps(item) for item in items)
+        if args[1].endswith("/collaborators/author/permission"):
+            return author_permission + "\n"
+        return "write\n"
+
+    da.gh = fake
+    da.print = lambda *a, **k: printed.append(" ".join(map(str, a)))
+    try:
+        code = da.main(["--repo", REPO, "--pr", "1", *args])
+    finally:
+        da.gh = real_gh
+        del da.print
+    decision = json.loads(next(p for p in printed if p.startswith("{")))
+    return code, calls, decision
+
+
+class ObserveModeTests(unittest.TestCase):
+    """observe = the admin rule exactly, plus the devflow decision in the log."""
+
+    def admin_step(self):
+        text = WORKFLOW.read_text()
+        job = text.split("\n  admin:\n", 1)[1].split("\n  devflow:\n", 1)[0]
+        return job, textwrap.dedent(job.split("        run: |\n", 1)[1])
+
+    def run_admin(self, author, sender="", permissions=None):
+        """Run the admin job's script with a fake gh; return the approvals it posted."""
+        _, script = self.admin_step()
+        permissions = permissions or {}
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "calls"
+            fake = Path(tmp) / "gh"
+            cases = "\n".join(
+                f'  *"/collaborators/{login}/permission"*) echo {perm} ;;' for login, perm in permissions.items()
+            )
+            fake.write_text(
+                "#!/usr/bin/env bash\n"
+                f'echo "$*" >> "{log}"\n'
+                'case "$*" in\n'
+                f"{cases}\n"
+                '  *"/collaborators/"*) echo write ;;\n'
+                f'  *"/pulls/1 --jq .head.sha"*) echo {HEAD} ;;\n'
+                '  *"--paginate"*) ;;\n'
+                '  *"-X POST"*) echo "approved" ;;\n'
+                "esac\n"
+            )
+            fake.chmod(0o755)
+            env = {
+                "PATH": f"{tmp}:/usr/bin:/bin",
+                "GH_TOKEN": "x", "REPO": REPO, "PR": "1",
+                "AUTHOR": author, "SENDER": sender or author, "HEAD_SHA": HEAD,
+            }
+            done = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=False)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            return [line for line in log.read_text().splitlines() if "-X POST" in line]
+
+    def test_the_admin_job_runs_in_observe_mode_and_not_in_devflow_mode(self):
+        job, _ = self.admin_step()
+        self.assertIn("vars.APPROVAL_MODE != 'devflow' &&", job)
+        devflow = WORKFLOW.read_text().split("\n  devflow:\n", 1)[1]
+        self.assertIn("(vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe')", devflow)
+        self.assertIn('--mode "$APPROVAL_MODE"', devflow)
+
+    def test_observe_approves_an_admin_pr_as_admin_mode_does(self):
+        posted = self.run_admin("boss", permissions={"boss": "admin"})
+        self.assertEqual(len(posted), 1)
+        self.assertIn(f"commit_id={HEAD}", posted[0])
+        self.assertIn("event=APPROVE", posted[0])
+
+    def test_observe_never_approves_a_non_admin_pr(self):
+        # Neither rule: the admin script stops, and the devflow job writes nothing.
+        self.assertEqual(self.run_admin("dev", permissions={"dev": "write"}), [])
+        self.assertEqual(self.run_admin("boss", "dev", {"boss": "admin", "dev": "write"}), [])
+        code, calls, decision = run_main("observe", Case())
+        self.assertEqual((code, decision["action"]), (0, "approve"))
+        self.assertEqual([c for c in calls if "-X" in c], [])
+
+    def test_the_logged_decision_is_what_devflow_mode_would_do(self):
+        for name, change in [
+            ("approve", lambda c: None),
+            ("high tier", lambda c: setattr(c, "reviews", [review(tier="high")])),
+            ("no review", lambda c: setattr(c, "reviews", [])),
+            ("draft", lambda c: c.pr.update(draft=True)),
+        ]:
+            with self.subTest(case=name):
+                case = Case()
+                change(case)
+                _, _, observed = run_main("observe", case)
+                _, _, devflow = run_main("dry", case)
+                self.assertEqual(observed, devflow)
+
+    def test_observe_still_decides_a_head_the_admin_rule_approved(self):
+        case = Case()
+        case.reviews.append(review("github-actions[bot]", state="APPROVED", body="Approved automatically."))
+        _, _, observed = run_main("observe", case)
+        self.assertEqual(observed["action"], "approve")
+
+    def test_devflow_mode_approves_then_admits_to_the_train(self):
+        code, calls, decision = run_main("devflow", Case())
         writes = [c for c in calls if "-X" in c]
-        self.assertEqual(writes, [])
-
-    def test_the_workflow_runs_the_devflow_job_in_both_modes(self):
-        text = self.WORKFLOW.read_text()
-        self.assertIn("(vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe')", text)
-        self.assertIn('--mode "$APPROVAL_MODE"', text)
-        # The admin rule keeps approving until the mode is devflow.
-        self.assertIn("vars.APPROVAL_MODE != 'devflow' &&", text)
+        self.assertEqual((code, decision["action"]), (0, "approve"))
+        self.assertIn("event=APPROVE", writes[0])
+        self.assertEqual(writes[1][-1], "labels[]=devflow:train")
 
 
 def codeowners_regex(pattern: str):
