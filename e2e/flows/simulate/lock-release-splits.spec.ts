@@ -77,7 +77,7 @@ test(
       ],
       browserChecks: [
         'the card reads Release and Ready, with "Lock this release" enabled',
-        'the dialog reads "Lock this release?"; after confirming the card title is "Release <label>", its badge is Locked and its line reads "Locked <d Mon> · Train 8 · Test 4 tasks · scorer environment <vN>."',
+        'the dialog reads "Lock this release?"; after confirming the card title is "Release <label>", its badge is Locked and its line reads "Locked <d Mon> · Train 8 · Test 4 scenarios · scorer environment <vN>"',
       ],
     }),
   },
@@ -179,7 +179,7 @@ test(
       await expect(card.getByText('Locked', { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(card.getByText('Ready', { exact: true })).toHaveCount(0);
       await expect(card.getByText(new RegExp(
-        `^Locked (?:\\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \\d{1,2}) · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} tasks · scorer environment ${environmentLabel}\\.$`,
+        `^Locked (?:\\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \\d{1,2}) · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} scenarios · scorer environment ${environmentLabel}$`,
       ))).toBeVisible();
       await expect(card.getByRole('button', { name: LOCK_BUTTON })).toHaveCount(0);
     });

@@ -148,7 +148,7 @@ describe("ReleaseCard", () => {
     expect(screen.getByText("Not proved")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Train 54 · Test 14 tasks once locked. Lock to freeze tasks, splits and the scorer.",
+        "Train 54 · Test 14 scenarios once locked. Lock to freeze scenarios, splits and the scorer.",
       ),
     ).toBeInTheDocument();
 
@@ -258,7 +258,7 @@ describe("ReleaseCard", () => {
     expect(screen.getByText("Locked")).toBeInTheDocument();
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(
-      screen.getByText(/Train 54 · Test 14 tasks · scorer environment v3\./),
+      screen.getByText(/Train 54 · Test 14 scenarios · scorer environment v3$/),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Lock this release" }),
@@ -271,7 +271,7 @@ describe("ReleaseCard", () => {
     ).toBeInTheDocument();
     expect(
       within(dialog).getByText(
-        "Its scores stay, but they're no longer a locked comparison. The train/test split of each task never changes.",
+        "Its scores stay, but they're no longer a locked comparison. The train/test split of each scenario never changes.",
       ),
     ).toBeInTheDocument();
     await userEvent.click(
