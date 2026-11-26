@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Alert, Box, Button, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import useSourceAcceptedToast from "./useSourceAcceptedToast";
 import Iconify from "src/components/iconify";
@@ -178,6 +178,13 @@ export default function SourcesSection({ env, locked }) {
   const draftGeneration = unsaved && generation;
   const resumable = draftGeneration && generationId;
   const pendingReview = reviewId || selecting;
+  const addHold = unsaved
+    ? "Save or discard the current draft before adding another source."
+    : pendingReview
+      ? "Finish the current source review before adding another source."
+      : !capabilities.data
+        ? "Loading the upload limits…"
+        : null;
   const generationHeld =
     draftGeneration &&
     ["failed", "queued", "running", "stale"].includes(draftGeneration.state);
@@ -205,15 +212,21 @@ export default function SourcesSection({ env, locked }) {
             </Button>
           )}
           {writable && (
-            <Button
-              size="small"
-              variant="outlined"
-              disabled={Boolean(pendingReview || unsaved) || !capabilities.data}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-              onClick={(event) => setAnchor(event.currentTarget)}
-            >
-              Add source
-            </Button>
+            <Tooltip title={addHold || ""}>
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={Boolean(addHold)}
+                  startIcon={
+                    <Iconify icon="solar:add-circle-linear" width={16} />
+                  }
+                  onClick={(event) => setAnchor(event.currentTarget)}
+                >
+                  Add source
+                </Button>
+              </span>
+            </Tooltip>
           )}
         </Stack>
       }
@@ -241,9 +254,7 @@ export default function SourcesSection({ env, locked }) {
           color="text.secondary"
           sx={{ px: 1.5, py: 1 }}
         >
-          {unsaved
-            ? "Save or discard the current draft before adding another source."
-            : "Finish the current source review before adding another source."}
+          {addHold}
         </Typography>
       )}
       {summary.isLoading && (
