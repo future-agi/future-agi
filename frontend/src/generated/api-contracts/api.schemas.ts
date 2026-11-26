@@ -587,6 +587,29 @@ export interface TimezoneResponseApi {
   timezone: string;
 }
 
+export type EmailUnsubscribeRequestApiAction =
+  (typeof EmailUnsubscribeRequestApiAction)[keyof typeof EmailUnsubscribeRequestApiAction];
+
+export const EmailUnsubscribeRequestApiAction = {
+  unsubscribe: "unsubscribe",
+  resubscribe: "resubscribe",
+} as const;
+
+export interface EmailUnsubscribeRequestApi {
+  action?: EmailUnsubscribeRequestApiAction;
+}
+
+export type SnoozeRequestApiAction =
+  (typeof SnoozeRequestApiAction)[keyof typeof SnoozeRequestApiAction];
+
+export const SnoozeRequestApiAction = {
+  snooze: "snooze",
+} as const;
+
+export interface SnoozeRequestApi {
+  action?: SnoozeRequestApiAction;
+}
+
 export interface UserOnboardingResultApi {
   role: string;
   goals: string[];
@@ -19809,6 +19832,46 @@ export const AgentFixRunDetailApiEvalGrading = {
   incomplete: "incomplete",
 } as const;
 
+export type AgentFixRunDetailApiScenarioNames = { [key: string]: string };
+
+export type AgentFixCandidateDetailApiOutcome =
+  (typeof AgentFixCandidateDetailApiOutcome)[keyof typeof AgentFixCandidateDetailApiOutcome];
+
+export const AgentFixCandidateDetailApiOutcome = {
+  pending: "pending",
+  rejected: "rejected",
+  finalist: "finalist",
+  winner: "winner",
+} as const;
+
+export interface AgentFixCandidateWordingApi {
+  headline: string;
+  must_pass: string;
+  /** @minimum 0 */
+  must_pass_broken: number;
+  changes: string | null;
+  caveats: string[];
+}
+
+export interface AgentFixCandidateDetailApi {
+  readonly id?: string;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  attempt: number;
+  agent_version_id: string;
+  version_number: number;
+  summary?: string;
+  outcome?: AgentFixCandidateDetailApiOutcome;
+  verdict: AgentFixVerdictApi;
+  readonly check_runs?: readonly AgentFixCheckRunApi[];
+  override?: AgentFixOverrideApi;
+  pull_request_url: string;
+  readonly created_at?: string;
+  wording?: AgentFixCandidateWordingApi;
+}
+
 export interface AgentFixEvalWarningApi {
   /** @minLength 1 */
   name: string;
@@ -19846,12 +19909,14 @@ export interface AgentFixRunDetailApi {
   readonly from_issue?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
-  candidates: AgentFixCandidateApi[];
+  candidates: AgentFixCandidateDetailApi[];
   started_at?: string | null;
   finished_at?: string | null;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
   readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
+  readonly flaky_protected_text?: readonly string[];
+  readonly scenario_names?: AgentFixRunDetailApiScenarioNames;
 }
 
 export interface AgentFixShipApi {
@@ -47036,6 +47101,49 @@ export type AccountsAwsMarketplaceVerifyTokenCreateBody = {
 
 export type AccountsGcpMarketplaceVerifyTokenCreateBody = {
   "x-gcp-marketplace-token": string;
+};
+
+export type AccountsNotificationsEmailUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsEmailUnsubscribeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsSnoozeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsSnoozeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
 };
 
 export type AccountsOrganizationMembersListParams = {

@@ -2377,46 +2377,30 @@
             },
             "parameters": []
         },
-        "/accounts/notifications/snooze/": {
+        "/accounts/notifications/email/unsubscribe/": {
             "get": {
-                "operationId": "accounts_notifications_snooze_list",
-                "description": "Snooze the realtime track for N days (default 7). Daily still fires.",
-                "parameters": [],
+                "operationId": "accounts_notifications_email_unsubscribe_list",
+                "description": "Per-category unsubscribe for notification emails. Token is signed.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML snooze result",
+                        "description": "HTML unsubscribe confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2426,52 +2410,201 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "accounts_notifications_email_unsubscribe_create",
+                "description": "Per-category unsubscribe for notification emails. Token is signed.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmailUnsubscribeRequest"
+                        }
+                    },
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML unsubscribe result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/accounts/notifications/snooze/": {
+            "get": {
+                "operationId": "accounts_notifications_snooze_list",
+                "description": "Snooze the realtime track for N days (default 7). Daily still fires.\nGET asks first, because link scanners prefetch URLs; POST snoozes.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "description": "Days to pause realtime digests, 1 to 30 (default 7).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML snooze confirmation page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "accounts_notifications_snooze_create",
+                "description": "Snooze the realtime track for N days (default 7). Daily still fires.\nGET asks first, because link scanners prefetch URLs; POST snoozes.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SnoozeRequest"
+                        }
+                    },
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "description": "Days to pause realtime digests, 1 to 30 (default 7).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML snooze result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
         "/accounts/notifications/unsubscribe/": {
             "get": {
                 "operationId": "accounts_notifications_unsubscribe_list",
-                "description": "One-click unsubscribe from both digest tracks. Token is HMAC-signed.",
-                "parameters": [],
+                "description": "Digest unsubscribe link from older emails. Token is HMAC-signed.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML unsubscribe result",
+                        "description": "HTML unsubscribe confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2481,9 +2614,15 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -92749,6 +92888,31 @@
                 }
             }
         },
+        "EmailUnsubscribeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "unsubscribe",
+                        "resubscribe"
+                    ]
+                }
+            }
+        },
+        "SnoozeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "snooze"
+                    ]
+                }
+            }
+        },
         "UserOnboardingResult": {
             "required": [
                 "role",
@@ -147622,6 +147786,117 @@
                 }
             }
         },
+        "AgentFixCandidateWording": {
+            "required": [
+                "headline",
+                "must_pass",
+                "must_pass_broken",
+                "changes",
+                "caveats"
+            ],
+            "type": "object",
+            "properties": {
+                "headline": {
+                    "title": "Headline",
+                    "type": "string"
+                },
+                "must_pass": {
+                    "title": "Must pass",
+                    "type": "string"
+                },
+                "must_pass_broken": {
+                    "title": "Must pass broken",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "changes": {
+                    "title": "Changes",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "caveats": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AgentFixCandidateDetail": {
+            "required": [
+                "attempt",
+                "agent_version_id",
+                "version_number",
+                "verdict",
+                "pull_request_url"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "attempt": {
+                    "title": "Attempt",
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": 0
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer"
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "rejected",
+                        "finalist",
+                        "winner"
+                    ]
+                },
+                "verdict": {
+                    "$ref": "#/definitions/AgentFixVerdict"
+                },
+                "check_runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixCheckRun"
+                    },
+                    "readOnly": true
+                },
+                "override": {
+                    "$ref": "#/definitions/AgentFixOverride"
+                },
+                "pull_request_url": {
+                    "title": "Pull request url",
+                    "type": "string"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "wording": {
+                    "$ref": "#/definitions/AgentFixCandidateWording"
+                }
+            }
+        },
         "AgentFixEvalWarning": {
             "required": [
                 "name",
@@ -147806,7 +148081,7 @@
                 "candidates": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/AgentFixCandidate"
+                        "$ref": "#/definitions/AgentFixCandidateDetail"
                     }
                 },
                 "started_at": {
@@ -147843,6 +148118,23 @@
                         "done",
                         "incomplete"
                     ],
+                    "readOnly": true
+                },
+                "flaky_protected_text": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "scenario_names": {
+                    "title": "Scenario names",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    },
                     "readOnly": true
                 }
             }
