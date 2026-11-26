@@ -381,6 +381,69 @@ class Stats(unittest.TestCase):
         self.assertIsNone(t.dirty_share([]))
 
 
+class Flaky(unittest.TestCase):
+    def test_a_fail_then_pass_pair_on_the_same_commit_is_flaky(self):
+        # Run 7: shard 3 failed on attempt 1 and passed on the re-run (attempt 2).
+        run = {"id": 7, "path": ".github/workflows/e2e-ci.yml", "run_attempt": 2, "html_url": "https://x/runs/7"}
+        jobs = {7: [
+            {"name": "e2e shard 3", "run_attempt": 1, "conclusion": "failure", "html_url": "https://x/job/1"},
+            {"name": "e2e shard 3", "run_attempt": 2, "conclusion": "success", "html_url": "https://x/job/2"},
+            {"name": "e2e shard 4", "run_attempt": 1, "conclusion": "failure", "html_url": "https://x/job/3"},
+            {"name": "e2e shard 4", "run_attempt": 2, "conclusion": "failure", "html_url": "https://x/job/4"},
+            {"name": "e2e shard 5", "run_attempt": 2, "conclusion": "success"},
+        ]}
+        flakes = t.rerun_flakes([run], jobs)
+        self.assertEqual(flakes, [{"job": "e2e shard 3", "workflow": run["path"], "url": "https://x/job/1"}])
+        top = t.top_flaky(flakes * 2 + [{"job": "b", "workflow": "w", "url": None}])
+        self.assertEqual(top[0], {"workflow": run["path"], "job": "e2e shard 3", "count": 2, "url": "https://x/job/1"})
+        text = t.render_digest(0, t.queue_stats([], {}, NOW), {"count": 0, "total": 0, "rate": 0, "tight": False}, None, [], top)
+        self.assertIn("`e2e shard 3` (e2e-ci.yml) x2 <https://x/job/1|run>", text)
+
+    def test_a_queue_failure_whose_pr_landed_with_that_head_is_flaky(self):
+        runs = [group(1, 10, "1" * 40), group(2, 11, "2" * 40, base="1" * 40)]
+        for r in runs:
+            r["html_url"] = f"https://x/runs/{r['id']}"
+        jobs = {r["id"]: shard_failed() for r in runs}
+        failures = t.independent(t.queue_failures(runs, jobs), runs, jobs)  # the cascade on #11 is gone
+        landed = {10: "e" * 40, 11: "f" * 40}
+        self.assertEqual(
+            t.queue_flakes(failures, runs, {1: "e" * 40, 2: "f" * 40}, landed),
+            [{"job": SHARD, "workflow": runs[0]["path"], "url": "https://x/runs/1"}],
+        )
+        # Pushed again before landing: a different head, so not flaky.
+        self.assertEqual(t.queue_flakes(failures, runs, {1: "9" * 40}, landed), [])
+
+
+class ReviewQuality(unittest.TestCase):
+    def test_fixed_and_answered_findings_per_engine(self):
+        def verdict(engine, *ids):
+            body = {"schema": "devflow-review/v1", "engine": engine, "findings": [{"id": i} for i in ids]}
+            return f"{t.REVIEW_MARKER}\n```json\n{json.dumps(body)}\n```"
+
+        reviews = [
+            {"databaseId": 5, "body": verdict("opus", "F1", "F2", "F3"), "authorAssociation": "MEMBER"},
+            {"databaseId": 6, "body": verdict("sonnet", "F1"), "authorAssociation": "MEMBER"},
+            {"databaseId": 7, "body": verdict("forged", "F1"), "authorAssociation": "NONE"},
+        ]
+        reply = "<!-- devflow-land:v1 round=2 review=5 -->\nReplies.\n- F1: fixed in abc1234\n- F2: answer: not a bug\n"
+        comments = [
+            {"body": reply, "author": {"login": "Dev"}},
+            # Not the author: ignored.
+            {"body": "<!-- devflow-land:v1 round=2 review=6 -->\n- F1: fixed in abc1234\n", "author": {"login": "x"}},
+        ]
+        quality = t.review_quality(reviews, comments, "dev")
+        self.assertEqual(quality, {
+            "opus": {"findings": 3, "fixed": 1, "answered": 1},
+            "sonnet": {"findings": 1, "fixed": 0, "answered": 0},
+        })
+        summed = t.quality_by_engine({1: {"quality": quality}, 2: {"quality": quality}, 3: {}}, [1, 2, 3, 2])
+        self.assertEqual(summed["opus"], {"findings": 6, "fixed": 2, "answered": 2})
+        esc = {"count": 0, "total": 100, "rate": 0, "tight": False}
+        text = t.render_digest(0, t.queue_stats([], {}, NOW), esc, None, [], (), summed)
+        self.assertIn("`opus`: 50.0% fixed (2 fixed, 2 answered, 2 without a reply, of 6)", text)
+        self.assertIn("`sonnet`: n/a fixed", text)
+
+
 class Digest(unittest.TestCase):
     def test_render_contains_every_field_and_breaker(self):
         stats = t.queue_stats([], {}, NOW)

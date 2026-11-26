@@ -20,7 +20,12 @@ Slack message:
   the threshold the tight-approval mode is wanted. When devflow-review/v1
   reviews exist, also one rate per review engine.
 - Digest: landings, queue red rate by class, queue p90, runner wait p95,
-  escape rate and the share of open pull requests that conflict.
+  escape rate, review quality per engine (findings fixed vs answered away
+  in the author's devflow-land:v1 replies), the share of open pull requests
+  that conflict, and the top flaky jobs. Retries stay at 0: a job is flaky
+  when it failed and then passed on a re-run of the same commit, or failed
+  on a queue group (not as a cascade) whose pull request then landed with
+  the same head.
 
 The repo variable APPROVAL_MODE_TIGHT can only be written with a token that
 has the Variables permission, which GITHUB_TOKEN never has. With
@@ -102,6 +107,12 @@ PR_REF = re.compile(r"#(\d+)\b")
 REVIEW_MARKER = "<!-- devflow-review:v1 -->"
 JSON_BLOCK = re.compile(r"```json\s*\n(.*?)\n\s*```", re.DOTALL)
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
+# The author's replies to an agent review (the land skill writes them).
+REPLY_MARKER = re.compile(r"<!--\s*devflow-land:v1\s+round=\d+\s+review=(\d+)\s*-->")
+REPLY_LINE = re.compile(r"^\s*-\s*([A-Z]+\d+)\s*:\s*(fixed in [0-9a-f]{7,40}|answer:.*)$", re.MULTILINE)
+FLAKY_TOP = 5
+# Workflows whose re-runs of the same commit show flaky jobs.
+RERUN_WORKFLOWS = ("backend-ci.yml", "e2e-ci.yml", "backend-queue-ci.yml")
 
 
 def parse_ts(value: str) -> datetime:
@@ -368,6 +379,94 @@ def by_engine(window_prs: list, escapes: list[dict], details: dict[int, dict]) -
     }
 
 
+def rerun_flakes(runs: list[dict], jobs_all: dict[int, list[dict]]) -> list[dict]:
+    """{job, workflow, url} per job that failed on one attempt of a run and
+    passed on a later attempt of the same run (the same commit).
+    jobs_all: jobs?filter=all of runs with run_attempt > 1."""
+    out = []
+    for r in runs:
+        jobs = jobs_all.get(r["id"]) or []
+        for name in {j["name"] for j in jobs}:
+            mine = [j for j in jobs if j["name"] == name]
+            failed = [j for j in mine if j.get("conclusion") == "failure"]
+            first = min((j.get("run_attempt") or 1 for j in failed), default=None)
+            if first is not None and any(
+                j.get("conclusion") == "success" and (j.get("run_attempt") or 1) > first for j in mine
+            ):
+                url = min(failed, key=lambda j: j.get("run_attempt") or 1).get("html_url") or r.get("html_url")
+                out.append({"job": name, "workflow": r.get("path"), "url": url})
+    return out
+
+
+def queue_flakes(failures: list[dict], runs: list[dict], group_heads: dict[int, str], landed: dict[int, str]) -> list[dict]:
+    """{job, workflow, url} per independent() queue failure whose pull request
+    later landed with the head that group tested.
+    group_heads: {run id: the PR head in that group}; landed: {PR: landed head}."""
+    by_id = {r["id"]: r for r in runs}
+    return [
+        {"job": f["job"], "workflow": f.get("workflow"), "url": (by_id.get(f["run"]) or {}).get("html_url")}
+        for f in failures
+        if not f.get("dev") and f.get("pr") in landed and group_heads.get(f.get("run")) == landed[f["pr"]]
+    ]
+
+
+def top_flaky(flakes: list[dict], n: int = 5) -> list[dict]:
+    """[{job, workflow, count, url}] most frequent first, one link each."""
+    counts: dict[tuple, list] = defaultdict(list)
+    for f in flakes:
+        counts[(f.get("workflow") or "", f["job"])].append(f.get("url"))
+    ranked = sorted(counts.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    return [
+        {"workflow": wf, "job": job, "count": len(urls), "url": next((u for u in urls if u), None)}
+        for (wf, job), urls in ranked[:n]
+    ]
+
+
+def review_quality(reviews: list[dict], comments: list[dict], author: str) -> dict:
+    """{engine: {"findings", "fixed", "answered"}} on one pull request.
+
+    Findings come from trusted devflow-review/v1 reviews; the author's
+    devflow-land:v1 replies (review=<id>) answer each one "fixed in <sha>" or
+    "answer: <reason>". A finding without a reply counts in neither."""
+    replies: dict[str, dict[str, str]] = defaultdict(dict)
+    for c in comments:
+        header = REPLY_MARKER.search(c.get("body") or "")
+        if header and ((c.get("author") or {}).get("login") or "").lower() == author.lower():
+            for fid, answer in REPLY_LINE.findall(c["body"]):
+                replies[header.group(1)][fid] = "fixed" if answer.startswith("fixed") else "answered"
+    out: dict[str, dict[str, int]] = {}
+    for r in reviews:
+        if REVIEW_MARKER not in (r.get("body") or "") or r.get("authorAssociation") not in TRUSTED:
+            continue
+        match = JSON_BLOCK.search(r["body"])
+        try:
+            verdict = json.loads(match.group(1)) if match else None
+        except ValueError:
+            continue
+        if not isinstance(verdict, dict) or verdict.get("schema") != "devflow-review/v1":
+            continue
+        engine = verdict.get("engine") if isinstance(verdict.get("engine"), str) and verdict.get("engine") else "unknown"
+        tally = out.setdefault(engine, {"findings": 0, "fixed": 0, "answered": 0})
+        answers = replies.get(str(r.get("databaseId")), {})
+        for finding in verdict.get("findings") or []:
+            fid = finding.get("id") if isinstance(finding, dict) else None
+            tally["findings"] += 1
+            if fid in answers:
+                tally[answers[fid]] += 1
+    return out
+
+
+def quality_by_engine(details: dict[int, dict], window_prs: list) -> dict:
+    """review_quality() summed per engine over the window's pull requests."""
+    total: dict[str, dict[str, int]] = {}
+    for n in set(window_prs):
+        for engine, tally in ((details.get(n) or {}).get("quality") or {}).items():
+            agg = total.setdefault(engine, {"findings": 0, "fixed": 0, "answered": 0})
+            for key, value in tally.items():
+                agg[key] += value
+    return dict(sorted(total.items()))
+
+
 def queue_stats(runs: list[dict], jobs_by_run: dict[int, list[dict]], now: datetime, hours: int = 24) -> dict:
     """Red rate by class and queue p90 over completed merge_group runs in the
     window; runner wait p95 over the last hour's runs."""
@@ -411,7 +510,10 @@ def pct(x: float | None) -> str:
     return "n/a" if x is None else f"{x * 100:.1f}%"
 
 
-def render_digest(landings: int, stats: dict, esc: dict, dirty: float | None, breaker: list[dict]) -> str:
+def render_digest(
+    landings: int, stats: dict, esc: dict, dirty: float | None, breaker: list[dict],
+    flaky: list[dict] = (), quality: dict | None = None,
+) -> str:
     lines = ["*dev flow, last hour*"]
     for b in breaker:
         lines.append(breaker_line(b))
@@ -426,7 +528,21 @@ def render_digest(landings: int, stats: dict, esc: dict, dirty: float | None, br
     lines.append(f"- escape rate (last {esc['total']} merges): {pct(esc['rate'])} ({esc['count']}){flag}")
     for name, e in (esc.get("by_engine") or {}).items():
         lines.append(f"  - reviewed by `{name}`: {pct(e['rate'])} ({e['count']} of {e['total']})")
+    if quality:
+        lines.append(f"- review quality (last {esc['total']} merges): findings fixed vs answered away")
+        for name, q in quality.items():
+            replied = q["fixed"] + q["answered"]
+            share = q["fixed"] / replied if replied else None
+            lines.append(
+                f"  - `{name}`: {pct(share)} fixed ({q['fixed']} fixed, {q['answered']} answered, "
+                f"{q['findings'] - replied} without a reply, of {q['findings']})"
+            )
     lines.append(f"- open PRs in conflict (DIRTY): {pct(dirty)}")
+    if flaky:
+        lines.append("- flaky jobs (24h: failed, then passed on the same commit):")
+        for f in flaky:
+            link = f" <{f['url']}|run>" if f.get("url") else ""
+            lines.append(f"  - `{f['job']}` ({f['workflow'].rsplit('/', 1)[-1]}) x{f['count']}{link}")
     return "\n".join(lines)
 
 
@@ -486,16 +602,43 @@ class Api:
         return self.call("POST", "/graphql", {"query": query})
 
 
-def list_runs(api: Api, workflow: str, since: datetime, until: datetime) -> list[dict]:
-    """Every merge_group run of a workflow created in [since, until]. A filtered
-    listing stops at LISTING_CAP results, so a fuller window is split in two."""
+def list_runs(api: Api, workflow: str, since: datetime, until: datetime, event: str = "merge_group") -> list[dict]:
+    """Every run of a workflow created in [since, until], of one event ("" is
+    every event). A filtered listing stops at LISTING_CAP results, so a fuller
+    window is split in two."""
     created = urllib.parse.quote(f"{iso(since)}..{iso(until)}")
-    path = f"/actions/workflows/{workflow}/runs?event=merge_group&per_page=100&created={created}"
+    path = f"/actions/workflows/{workflow}/runs?{f'event={event}&' if event else ''}per_page=100&created={created}"
     first = api.get(path)
     if first.get("total_count", 0) >= LISTING_CAP and until - since > timedelta(minutes=2):
         mid = since + (until - since) / 2
-        return list_runs(api, workflow, since, mid) + list_runs(api, workflow, mid + timedelta(seconds=1), until)
+        return list_runs(api, workflow, since, mid, event) + list_runs(api, workflow, mid + timedelta(seconds=1), until, event)
     return api.get_all(path, "workflow_runs")
+
+
+def collect_flaky(api: Api, now: datetime, runs: list[dict], failures: list[dict], jobs_by_run, commits: list[dict]) -> list[dict]:
+    """top_flaky() over the stats window: re-runs of the same commit, and queue
+    failures (cascades removed) whose pull request landed with the tested head."""
+    reruns = [
+        r for wf in RERUN_WORKFLOWS for r in list_runs(api, wf, now - STATS_WINDOW, now, event="")
+        if (r.get("run_attempt") or 1) > 1
+    ]
+    jobs_all = {r["id"]: api.get_all(f"/actions/runs/{r['id']}/jobs?filter=all&per_page=100", "jobs") for r in reruns}
+    # A merge landing's second parent is the head that landed.
+    landed = {land["own"]: c["parents"][1] for c in commits if len(c.get("parents") or []) == 2
+              for land in [landing(c)] if land["own"]}
+    mine = [f for f in independent(failures, runs, jobs_by_run) if f.get("pr") in landed]
+    by_id = {r["id"]: r for r in runs}
+    group_heads = {}
+    for run_id in {f["run"] for f in mine}:
+        try:
+            parents = (api.get(f"/commits/{by_id[run_id]['head_sha']}") or {}).get("parents") or []
+        except urllib.error.HTTPError as err:
+            # A group commit nothing refers to any more can be gone: not counted.
+            print(f"flaky: group commit of run {run_id} unreadable ({err.code})")
+            continue
+        if len(parents) == 2:
+            group_heads[run_id] = parents[1]["sha"]
+    return top_flaky(rerun_flakes(reruns, jobs_all) + queue_flakes(mine, runs, group_heads, landed), FLAKY_TOP)
 
 
 def collect_queue(api: Api, now: datetime, breaker_only: bool):
@@ -528,22 +671,27 @@ def collect_dev(api: Api) -> tuple[list[dict], list[dict]]:
 
 
 def pr_details(api: Api, numbers: list[int]) -> dict[int, dict]:
-    """{pr: {"body", "engine"}} in batches of 25 per GraphQL query."""
+    """{pr: {"body", "engine", "quality"}} in batches of 25 per GraphQL query."""
     owner, name = api.repo.split("/")
     out: dict[int, dict] = {}
     numbers = sorted(set(numbers))
     for i in range(0, len(numbers), 25):
         fields = " ".join(
-            f"p{n}: pullRequest(number: {n}) {{ number body "
-            "reviews(last: 20) { nodes { body authorAssociation submittedAt } } }"
+            f"p{n}: pullRequest(number: {n}) {{ number body author {{ login }} "
+            "reviews(last: 20) { nodes { databaseId body authorAssociation submittedAt } } "
+            "comments(last: 50) { nodes { body author { login } } } }"
             for n in numbers[i:i + 25]
         )
         data = api.graphql(f'{{ repository(owner: "{owner}", name: "{name}") {{ {fields} }} }}')
         for node in ((data or {}).get("data") or {}).get("repository", {}).values():
             if node:
+                reviews = node["reviews"]["nodes"]
                 out[node["number"]] = {
                     "body": node.get("body") or "",
-                    "engine": review_engine(node["reviews"]["nodes"]),
+                    "engine": review_engine(reviews),
+                    "quality": review_quality(
+                        reviews, node["comments"]["nodes"], (node.get("author") or {}).get("login") or ""
+                    ),
                 }
     return out
 
@@ -565,14 +713,14 @@ def open_pr_mergeables(api: Api) -> list[str]:
 
 def git_first_parent(n: int) -> list[dict]:
     out = subprocess.run(
-        ["git", "log", "--first-parent", f"-{n}", "--format=%H%x1f%s%x1f%b%x1e", "origin/dev"],
+        ["git", "log", "--first-parent", f"-{n}", "--format=%H%x1f%P%x1f%s%x1f%b%x1e", "origin/dev"],
         check=True, capture_output=True, text=True,
     ).stdout
     commits = []
     for rec in out.split("\x1e"):
         if rec.strip():
-            sha, subject, body = (rec.strip("\n").split("\x1f") + ["", ""])[:3]
-            commits.append({"sha": sha.strip(), "subject": subject, "body": body})
+            sha, parents, subject, body = (rec.strip("\n").split("\x1f") + ["", "", ""])[:4]
+            commits.append({"sha": sha.strip(), "parents": parents.split(), "subject": subject, "body": body})
     return commits
 
 
@@ -683,7 +831,8 @@ def main(argv: list[str]) -> int:
         esc = escape_rate(commits, details)
     landings = len(api.get_all(f"/commits?sha=dev&since={iso(now - timedelta(hours=1))}&per_page=100"))
     dirty = dirty_share(open_pr_mergeables(api))
-    text = render_digest(landings, stats, esc, dirty, breaker)
+    flaky = collect_flaky(api, now, runs, failures, jobs_by_run, commits)
+    text = render_digest(landings, stats, esc, dirty, breaker, flaky, quality_by_engine(details, window))
     print(text)
     for e in esc["escapes"]:
         print(f"  escape {e['kind']}: #{e['pr']} {e['subject'][:90]} -> {', '.join(f'#{n}' for n in e['refs']) or 'no PR named'}")

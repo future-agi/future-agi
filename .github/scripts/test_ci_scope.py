@@ -8,9 +8,9 @@ import runpy
 import subprocess
 import tempfile
 import textwrap
-import types
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -634,7 +634,7 @@ class CandidateScope(unittest.TestCase):
         def evaluate(value, **github):
             # GitHub's && and || return an operand, as Python's and/or do.
             parts = re.findall(r"\$\{\{(.*?)\}\}|([^$]+)", value)
-            ctx = {"github": types.SimpleNamespace(**{"workflow": "Backend CI", "run_id": "9", **github})}
+            ctx = {"github": SimpleNamespace(**{"workflow": "Backend CI", "run_id": "9", **github})}
             return "".join(
                 str(eval(expr.replace("&&", " and ").replace("||", " or "), {}, ctx)) if expr else lit
                 for expr, lit in parts
