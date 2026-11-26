@@ -5,7 +5,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("simulate", "0121_agent_fix_candidate_changed_files"),
+        ("simulate", "0122_agent_fix_candidate_changed_files"),
     ]
 
     operations = [
