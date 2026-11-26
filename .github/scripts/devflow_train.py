@@ -124,6 +124,10 @@ LOG_TAIL_LINES = 400
 CHECK_CACHE_SECONDS = 900
 # Below this many calls left in a rate limit window, wait for its reset.
 RATE_FLOOR = 200
+# A long loop reads the policy files and required checks on dev again.
+CONFIG_SECONDS = 600
+# Consecutive failed ticks before a live loop stops with the error.
+MAX_FAILED_TICKS = 3
 
 
 def env_int(name: str, default: int) -> int:
@@ -514,6 +518,8 @@ def wants_full_run(m: dict, reason: str | None) -> bool:
         and "goes alone" in reason
         and not m["fork"]
         and not m["draft"]
+        and not m["in_queue"]
+        and m["approved_on_head"]
         and "deferred" in m["checks"].values()
     )
 
@@ -899,9 +905,9 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
         "full_runs": full_runs,
         "train_slots": slots,
         "batches": [[m["number"] for m in b] for b in batches],
-        # A paused train with work waiting stays awake: closing the issue
-        # is not a push to dev, so nothing else would wake it.
-        "busy": bool(still_open or new_from_splits or batches or (paused and ordered)),
+        # Eligible work waiting (paused, or no free slot) keeps the loop
+        # awake: closing a base-red issue is not a push to dev.
+        "busy": bool(still_open or new_from_splits or batches or ordered),
         "_members": live,
         "_rollups": {r["number"]: r for r in rollups},
     }
@@ -941,11 +947,13 @@ def build_query(label: str | None = None) -> str:
     runs and the aggregates finish last, so a head's first 100 contexts miss
     them, and filtered lookups per pull request exceed GraphQL's resource
     limits. GitHub.attach_checks reads them by name over REST."""
-    head = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { "
+    head = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { "
     if label is None:
         return head + (
             f'mergeQueue(branch: "{BASE}") {{ entries(first: 100) {{ nodes {{ pullRequest {{ number }} }} }} }} }} }}'
         )
+    # GraphQL rejects a declared variable that the query does not use.
+    head = head.replace("$name: String!)", "$name: String!, $after: String)")
     return head + (
         f'pullRequests(states: OPEN, baseRefName: "{BASE}", labels: ["{label}"], '
         f"first: {PAGE_SIZE}, after: $after) {{ pageInfo {{ hasNextPage endCursor }} "
@@ -1113,20 +1121,24 @@ class GitHub:
                 )
         return runs
 
-    def permission(self, login: str) -> str:
-        """A login's repository permission (admin, write, read or none), once per run."""
-        if login not in self.permissions:
-            status, out = self.request(
-                "GET",
-                f"repos/{self.repo}/collaborators/{urllib.parse.quote(login)}/permission",
-            )
-            if status == 404:
-                self.permissions[login] = "none"
-            elif status == 200:
-                self.permissions[login] = out.get("permission") or "none"
-            else:
-                raise RuntimeError(f"permission of {login}: {status} {str(out)[:300]}")
-        return self.permissions[login]
+    def permission(self, login: str, now=time.monotonic) -> str:
+        """A login's repository permission (admin, write, read or none), read
+        again after CHECK_CACHE_SECONDS."""
+        hit = self.permissions.get(login)
+        if hit and now() - hit[0] < CHECK_CACHE_SECONDS:
+            return hit[1]
+        status, out = self.request(
+            "GET",
+            f"repos/{self.repo}/collaborators/{urllib.parse.quote(login)}/permission",
+        )
+        if status == 404:
+            value = "none"
+        elif status == 200:
+            value = out.get("permission") or "none"
+        else:
+            raise RuntimeError(f"permission of {login}: {status} {str(out)[:300]}")
+        self.permissions[login] = (now(), value)
+        return value
 
     def attach_permissions(self, data: dict, required: list, cfg: Config):
         """Approvers' permissions, only where the tier is medium."""
@@ -1478,7 +1490,11 @@ def execute(result: dict, live: Live, red_runs: dict):
     for change in result["label_changes"]:
         live.unlabel(change["pr"], change["remove"])
     for full in result["full_runs"]:
-        full["done"] = live.full_run(full["pr"], full["head_sha"], full["labelled"])
+        try:
+            full["done"] = live.full_run(full["pr"], full["head_sha"], full["labelled"])
+        except RuntimeError as err:  # one member's re-run must not stop the batches
+            full["done"] = f"failed: {err}"
+            print(f"::warning title=train full run #{full['pr']}::{err}", flush=True)
     for batch in result["batches"]:
         live.open_rollup([members[pr] for pr in batch])
 
@@ -1676,12 +1692,17 @@ def main(argv=None) -> int:
         )
         return 0 if ok else 1
 
-    cfg = Config(
-        high_globs=parse_high_globs(reader.file_text(POLICY_FILE)),
-        signatures=parse_signatures(reader.file_text(SIGNATURES_FILE)),
-        codeowners=reader.file_text(CODEOWNERS_FILE) or "",
-    )
-    required = reader.required_checks()
+    def load() -> tuple:
+        """Policy from dev: read again every CONFIG_SECONDS, so a change to
+        CODEOWNERS or the required checks reaches a long loop."""
+        cfg = Config(
+            high_globs=parse_high_globs(reader.file_text(POLICY_FILE)),
+            signatures=parse_signatures(reader.file_text(SIGNATURES_FILE)),
+            codeowners=reader.file_text(CODEOWNERS_FILE) or "",
+        )
+        return time.monotonic(), cfg, reader.required_checks()
+
+    loaded, cfg, required = load()
     minter = live = None
     if args.mode == "live":
         minter = AppToken(
@@ -1690,11 +1711,25 @@ def main(argv=None) -> int:
         live = Live(repo, GitHub(minter.get(), repo), reader)
     start = last_busy = time.monotonic()
     deadline = start + args.loop_minutes * 60
+    failed = 0
     try:
         while True:
+            if time.monotonic() - loaded > CONFIG_SECONDS:
+                loaded, cfg, required = load()
             if minter:
                 live.app.token = minter.get()
-            result = tick(reader, required, cfg, live)
+            try:
+                result = tick(reader, required, cfg, live)
+                failed = 0
+            except (RuntimeError, OSError) as err:
+                # State lives in GitHub, so the next tick starts clean. A
+                # run of failures is not transient: stop and show it.
+                failed += 1
+                print(f"::error title=train tick failed ({failed})::{err}", flush=True)
+                if failed >= MAX_FAILED_TICKS or not args.loop_minutes:
+                    raise
+                time.sleep(args.interval)
+                continue
             result["mode"] = args.mode
             result["loop"] = {
                 "minutes": round((time.monotonic() - start) / 60, 1),
@@ -1712,7 +1747,10 @@ def main(argv=None) -> int:
                 now, deadline, last_busy, args.idle_minutes * 60, args.interval
             ):
                 return 0
-            wait = backoff_seconds(reader.limits, time.time(), RATE_FLOOR)
+            limits = {**reader.limits}
+            if live:
+                limits.update({f"app {k}": v for k, v in live.app.limits.items()})
+            wait = backoff_seconds(limits, time.time(), RATE_FLOOR)
             if wait:
                 print(
                     f"rate limit below {RATE_FLOOR}: waiting {wait:.0f} s", flush=True

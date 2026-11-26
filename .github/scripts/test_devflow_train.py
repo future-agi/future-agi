@@ -275,6 +275,28 @@ class Globs(unittest.TestCase):
 
 
 class Checks(unittest.TestCase):
+    def test_every_declared_variable_is_used(self):
+        for query in (train.build_query(), train.build_query(train.ADMIT_LABEL)):
+            declared = re.findall(r"\$(\w+):", query)
+            for name in declared:
+                with self.subTest(query=query[:60], name=name):
+                    self.assertGreater(query.count(f"${name}"), 1, f"${name} is unused")
+
+    def test_permission_is_read_again_after_the_cache_window(self):
+        reads, clock = [], [0.0]
+
+        class Perm(train.GitHub):
+            def request(self, method, path, body=None, raw=False):
+                reads.append(path)
+                return 200, {"permission": "write"}
+
+        gh = Perm("t", "o/r")
+        self.assertEqual(gh.permission("w", lambda: clock[0]), "write")
+        gh.permission("w", lambda: clock[0])
+        clock[0] += train.CHECK_CACHE_SECONDS
+        gh.permission("w", lambda: clock[0])
+        self.assertEqual(len(reads), 2)
+
     def test_query_reads_no_check_runs(self):
         for query in (train.build_query(), train.build_query(train.ADMIT_LABEL)):
             self.assertNotIn("checkRuns", query)
@@ -502,6 +524,33 @@ class Deferred(unittest.TestCase):
             result["rollup_actions"][0],
             {"action": "rebuild", "drop": [1], "rollup": 70},
         )
+
+    def test_no_full_run_when_queued_or_not_approved(self):
+        queued = pr_node(1, title='Revert "feat: x"', isInMergeQueue=True)
+        unapproved = pr_node(2, title='Revert "feat: y"')
+        unapproved["reviews"]["nodes"] = unapproved["reviews"]["nodes"][1:]
+        for node in (queued, unapproved):
+            node["_check_runs"] = self.deferred_runs()
+        self.assertEqual(
+            train.plan(data([queued, unapproved]), REQUIRED, cfg())["full_runs"], []
+        )
+
+    def test_a_failing_full_run_does_not_stop_the_batches(self):
+        alone = pr_node(1, title='Revert "feat: x"')
+        alone["_check_runs"] = self.deferred_runs()
+        result = train.plan(data([alone, pr_node(2)]), REQUIRED, cfg())
+        opened = []
+
+        class Recorder(train.Live):
+            def full_run(self, pr, head, labelled):
+                raise RuntimeError("POST rerun: 403")
+
+            def open_rollup(self, members, parent=None):
+                opened.append([m["number"] for m in members])
+
+        train.execute(result, Recorder("o/r", FakeGitHub({}), FakeGitHub({})), {})
+        self.assertEqual(opened, [[2]])
+        self.assertIn("failed", result["full_runs"][0]["done"])
 
     def test_go_alone_member_on_a_deferred_head_gets_a_full_run(self):
         alone = pr_node(1, title='Revert "feat: x"')
@@ -1177,6 +1226,11 @@ class Plan(unittest.TestCase):
             (4, [[1], [3], [2]], True),
         )
         self.assertIn("needs-human", out["excluded"][4])
+
+    def test_eligible_work_without_a_slot_keeps_the_loop_awake(self):
+        result = train.plan(data([pr_node(1)], queue=range(100, 106)), REQUIRED, cfg())
+        self.assertEqual((result["train_slots"], result["batches"]), (0, []))
+        self.assertTrue(result["busy"])
 
     def test_idle_is_not_busy(self):
         self.assertFalse(train.plan(data(), REQUIRED, cfg())["busy"])
