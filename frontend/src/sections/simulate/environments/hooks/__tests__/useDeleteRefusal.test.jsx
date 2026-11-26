@@ -91,6 +91,17 @@ describe("useDeleteRefusal", () => {
     expect(shown.options.action).toBeUndefined();
   });
 
+  it("offers no Unlock when the refusal names no label", () => {
+    const shown = refuse({
+      response: {
+        ...LOCKED.response,
+        data: { ...LOCKED.response.data, label: null },
+      },
+    });
+
+    expect(shown.options.action).toBeUndefined();
+  });
+
   it("shows any other refusal as it is", () => {
     const shown = refuse({
       response: { status: 409, data: { error: "run_live", message: "Busy." } },
