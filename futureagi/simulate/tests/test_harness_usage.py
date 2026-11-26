@@ -116,7 +116,9 @@ def test_malformed_legacy_authoring_credits_are_rejected(hosted_attempt, credits
     attempt.authoring_usage_report = {"records": [{"credits": credits}]}
     attempt.save(update_fields=["authoring_usage_report"])
 
-    with pytest.raises(TypeError, match="Authoring credits must be an integer or float"):
+    with pytest.raises(
+        TypeError, match="Authoring credits must be an integer or float"
+    ):
         harness_usage.harness_consumption(attempt.job, turn_totals={})
 
 
