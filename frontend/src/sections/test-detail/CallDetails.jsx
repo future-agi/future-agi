@@ -2,7 +2,6 @@ import { Box } from "@mui/material";
 import React, { useCallback, useEffect, useState } from "react";
 import TestRunDetailBar from "./TestRunDetailBar";
 import TestRunDetailGrid from "./TestRunDetailGrid";
-// import TestRunInsight from "./TestRunInsight";
 import PerformanceMetrics from "./PerformanceMetrics/PerformanceMetrics";
 import LiveCallMonitor from "src/components/live-call-monitor/LiveCallMonitor";
 
