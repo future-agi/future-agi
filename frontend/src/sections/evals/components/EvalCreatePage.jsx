@@ -1316,10 +1316,6 @@ const EvalCreatePage = () => {
                                 prev.filter((item) => item !== tag),
                               )
                             }
-                            sx={{
-                              fontSize: "12px",
-                              "& .MuiChip-icon": { fontSize: "14px" },
-                            }}
                           />
                         ))}
                     </Box>
