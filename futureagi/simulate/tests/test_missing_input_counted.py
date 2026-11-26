@@ -465,9 +465,11 @@ def _grade_or_refuse(*, template, mappings, **_):
 
 
 def _run_native(call_execution, eval_config_ids):
+    """Runs the native runner; returns its module logger, patched."""
     from simulate.services.test_executor import TestExecutor
 
     with (
+        patch("simulate.services.test_executor.logger") as logger,
         patch("simulate.services.test_executor.close_old_connections", lambda: None),
         patch(
             "simulate.services.test_executor.run_eval_func",
@@ -478,12 +480,15 @@ def _run_native(call_execution, eval_config_ids):
         TestExecutor(initialize_voice_service=False)._run_simulate_evaluations(
             call_execution, eval_config_ids=eval_config_ids, skip_status_update=True
         )
+    return logger
 
 
 def _run_activity(call_execution, eval_config_ids):
+    """Runs the activity's runner; returns its module logger, patched."""
     from simulate.temporal.activities.xl import _run_evaluations_standalone
 
     with (
+        patch("simulate.temporal.activities.xl.logger") as logger,
         patch("simulate.temporal.activities.xl.close_old_connections", lambda: None),
         patch(
             "model_hub.views.utils.evals.run_eval_func",
@@ -491,6 +496,7 @@ def _run_activity(call_execution, eval_config_ids):
         ),
     ):
         _run_evaluations_standalone(call_execution, eval_config_ids=eval_config_ids)
+    return logger
 
 
 @pytest.mark.django_db
@@ -500,8 +506,6 @@ def _run_activity(call_execution, eval_config_ids):
 def test_each_runner_logs_the_graded_eval_as_ran_and_the_skip_only_as_missing(
     runner, run_test, organization, eval_config, call_execution
 ):
-    from structlog.testing import capture_logs
-
     graded = SimulateEvalConfig.objects.create(
         name=f"Eval {uuid.uuid4().hex[:6]}",
         eval_template=EvalTemplate.objects.create(
@@ -525,18 +529,19 @@ def test_each_runner_logs_the_graded_eval_as_ran_and_the_skip_only_as_missing(
             end_time_ms=at * 1000 + 500,
         )
 
-    with capture_logs() as logs:
-        runner(call_execution, [eval_config.id, graded.id])
+    # The module's own logger is patched: structlog caches a logger on first
+    # use, so capturing its output would depend on which test ran first.
+    logger = runner(call_execution, [eval_config.id, graded.id])
 
     def events(name):
-        return [entry for entry in logs if entry["event"] == name]
+        return [
+            logged.kwargs["eval_config_id"]
+            for logged in logger.info.call_args_list
+            if logged.args and logged.args[0] == name
+        ]
 
-    assert [entry["eval_config_id"] for entry in events("simulate_evaluation_ran")] == [
-        str(graded.id)
-    ]
-    assert [
-        entry["eval_config_id"] for entry in events("simulate_eval_input_missing")
-    ] == [str(eval_config.id)]
+    assert events("simulate_evaluation_ran") == [str(graded.id)]
+    assert events("simulate_eval_input_missing") == [str(eval_config.id)]
     call_execution.refresh_from_db()
     assert call_execution.eval_outputs[str(graded.id)]["output"] == "Passed"
     assert call_execution.eval_outputs[str(eval_config.id)]["reason_code"] == (
