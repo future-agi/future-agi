@@ -84,7 +84,7 @@ def pr_node(
                 {
                     "state": "APPROVED",
                     "commit": {"oid": head},
-                    "author": {"login": "github-actions"},
+                    "author": {"__typename": "Bot", "login": "github-actions"},
                 }
             ]
         },
@@ -107,6 +107,7 @@ def verdict_review(
     assoc="MEMBER",
     when="2026-11-26T11:00:00Z",
     needs_person=False,
+    login="reviewer",
 ):
     body = {
         "schema": "devflow-review/v1",
@@ -121,7 +122,7 @@ def verdict_review(
         "authorAssociation": assoc,
         "submittedAt": when,
         "commit": {"oid": head},
-        "author": {"login": "reviewer"},
+        "author": {"__typename": "User", "login": login},
         "body": f"{train.VERDICT_MARKER}\n```json\n{json.dumps(body)}\n```",
     }
 
@@ -324,12 +325,46 @@ class Verdicts(unittest.TestCase):
             "submittedAt": "2026-11-26T12:00:00Z",
         }
         good = verdict_review(sha(1), tier="high")
-        self.assertEqual(train.latest_verdict([good, broken, bad])["tier"], "high")
+        self.assertEqual(train.latest_verdict([good, broken, bad], "author-a")["tier"], "high")
 
     def test_newest_trusted_wins(self):
         old = verdict_review(sha(1), tier="high", when="2026-11-26T10:00:00Z")
         new = verdict_review(sha(1), tier="low", when="2026-11-26T11:00:00Z")
-        self.assertEqual(train.latest_verdict([new, old])["tier"], "low")
+        self.assertEqual(train.latest_verdict([new, old], "author-a")["tier"], "low")
+
+
+    def test_the_authors_own_verdict_never_counts(self):
+        own = verdict_review(sha(1), login="author-a", when="2026-11-26T12:00:00Z")
+        self.assertIsNone(train.latest_verdict([own], "author-a"))
+        self.assertIsNone(
+            train.latest_verdict([own], "Author-A"), "logins compare without case"
+        )
+        other = verdict_review(sha(1), tier="high", when="2026-11-26T10:00:00Z")
+        self.assertEqual(train.latest_verdict([own, other], "author-a")["tier"], "high")
+
+    def test_the_assigned_reviewer_wins_over_a_newer_verdict(self):
+        assigned = verdict_review(sha(1), tier="high", login="bob", when="2026-11-26T10:00:00Z")
+        newer = verdict_review(sha(1), tier="low", login="carol", when="2026-11-26T11:00:00Z")
+        self.assertEqual(train.latest_verdict([assigned, newer], "a", "bob")["tier"], "high")
+        self.assertEqual(train.latest_verdict([assigned, newer], "a", "dave")["tier"], "low")
+
+    def test_assignment_marker_only_from_the_bot(self):
+        marker = "<!-- devflow-assigned:v1 login={} at=2026-11-26T05:00:00Z by=reviewer-assigner round=1 -->"
+        bot = {"__typename": "Bot", "login": "github-actions"}
+        node = {
+            "comments": {
+                "nodes": [
+                    {"author": bot, "body": marker.format("bob")},
+                    {"author": bot, "body": marker.format("carol")},
+                    {
+                        "author": {"__typename": "User", "login": "github-actions"},
+                        "body": marker.format("mallory"),
+                    },
+                ]
+            }
+        }
+        self.assertEqual(train.assigned_reviewer(node), "carol")
+        self.assertIsNone(train.assigned_reviewer({"comments": {"nodes": []}}))
 
 
 class Exclusions(unittest.TestCase):
@@ -416,7 +451,7 @@ class Exclusions(unittest.TestCase):
         node["comments"] = {
             "nodes": [
                 {
-                    "author": {"login": "github-actions"},
+                    "author": {"__typename": "Bot", "login": "github-actions"},
                     "body": f"<!-- devflow-train:red pr=1 sha={sha(1)} -->",
                 }
             ]
@@ -826,7 +861,7 @@ class Plan(unittest.TestCase):
         node["comments"] = {
             "nodes": [
                 {
-                    "author": {"login": "github-actions"},
+                    "author": {"__typename": "Bot", "login": "github-actions"},
                     "body": f"<!-- devflow-train:red pr=1 sha={sha(5)} -->",
                 }
             ]

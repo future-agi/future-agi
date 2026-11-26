@@ -58,6 +58,8 @@ RED_MARKER = re.compile(
     r"<!--\s*devflow-train:red\s+pr=(\d+)\s+sha=([0-9a-f]{40})\s*-->"
 )
 VERDICT_MARKER = "<!-- devflow-review:v1 -->"
+# reviewer-assigner names the reviewer it asked, as github-actions[bot].
+ASSIGN_MARKER = re.compile(r"<!--\s*devflow-assigned:v1\b([^>]*)-->")
 JSON_BLOCK = re.compile(r"```json\s*\n(.*?)\n\s*```", re.DOTALL)
 MIGRATION = re.compile(r"^(?P<app>.+)/migrations/\d{4}_[^/]+\.py$")
 
@@ -173,16 +175,53 @@ def labels_of(node: dict) -> set:
     return {label["name"] for label in (node.get("labels") or {}).get("nodes", [])}
 
 
-def latest_verdict(reviews: list) -> dict | None:
-    """The newest devflow-review/v1 verdict posted by someone with write access."""
+def by_actions_bot(item: dict) -> bool:
+    """Written by GITHUB_TOKEN: a user may be called github-actions, a Bot may not."""
+    author = item.get("author") or {}
+    return (
+        author.get("__typename") == "Bot"
+        and bot_login(author.get("login")) == ACTIONS_LOGIN
+    )
+
+
+def assigned_reviewer(node: dict) -> str | None:
+    """The login in the newest bot comment that carries the assignment marker."""
+    for comment in reversed((node.get("comments") or {}).get("nodes", [])):
+        if not by_actions_bot(comment):
+            continue
+        match = ASSIGN_MARKER.search(comment.get("body") or "")
+        if match:
+            pairs = dict(p.split("=", 1) for p in match.group(1).split() if "=" in p)
+            if pairs.get("login"):
+                return pairs["login"]
+    return None
+
+
+def latest_verdict(
+    reviews: list, author: str, assigned: str | None = None
+) -> dict | None:
+    """The newest devflow-review/v1 verdict posted by someone with write access
+    who is not the author. The assigned reviewer's newest one wins when there
+    is one: a later verdict by someone else does not replace it."""
     trusted = [
         r
         for r in reviews
         if VERDICT_MARKER in (r.get("body") or "")
         and r.get("authorAssociation") in TRUSTED
+        and lower_login(r) != author.lower()
     ]
     trusted.sort(key=lambda r: r.get("submittedAt") or "")
-    for review in reversed(trusted):
+    own = [r for r in trusted if assigned and lower_login(r) == assigned.lower()]
+    return parse_verdict(own) or parse_verdict(trusted)
+
+
+def lower_login(item: dict) -> str:
+    return bot_login((item.get("author") or {}).get("login")).lower()
+
+
+def parse_verdict(reviews: list) -> dict | None:
+    """The verdict JSON of the newest well-formed review in an oldest-first list."""
+    for review in reversed(reviews):
         match = JSON_BLOCK.search(review.get("body") or "")
         if not match:
             continue
@@ -239,7 +278,7 @@ def red_sha(node: dict, number: int) -> str | None:
     """The head on which the train last saw this pull request red alone."""
     sha = None
     for comment in (node.get("comments") or {}).get("nodes", []):
-        if bot_login((comment.get("author") or {}).get("login")) != ACTIONS_LOGIN:
+        if not by_actions_bot(comment):
             continue
         for match in RED_MARKER.finditer(comment.get("body") or ""):
             if int(match.group(1)) == number:
@@ -272,7 +311,11 @@ def member_view(node: dict, required: list) -> dict:
         "in_queue": bool(node.get("isInMergeQueue")),
         "review_decision": node.get("reviewDecision"),
         "approved_on_head": approved_on_head(reviews, head),
-        "verdict": latest_verdict(reviews),
+        "verdict": latest_verdict(
+            reviews,
+            bot_login((node.get("author") or {}).get("login")),
+            assigned_reviewer(node),
+        ),
         "checks": check_states(head_contexts(node), required),
         "files": [f["path"] for f in files],
         "files_complete": len(files) >= (node.get("changedFiles") or 0),
@@ -693,8 +736,8 @@ PR_FIELDS = """
   autoMergeRequest { enabledAt }
   labels(first: 50) { nodes { name } }
   files(first: 100) { nodes { path changeType } }
-  reviews(last: 50) { nodes { state authorAssociation submittedAt body commit { oid } author { login } } }
-  comments(last: 30) { nodes { body author { login } } }
+  reviews(last: 50) { nodes { state authorAssociation submittedAt body commit { oid } author { __typename login } } }
+  comments(last: 50) { nodes { body author { __typename login } } }
   timelineItems(last: 20, itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]) {
     nodes { __typename ... on RemovedFromMergeQueueEvent { reason createdAt } }
   }
