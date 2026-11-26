@@ -29,7 +29,7 @@ ASSIGN_MARKER = re.compile(r"<!--\s*devflow-assigned:v1\b([^>]*)-->")
 JSON_BLOCK = re.compile(r"```json\s*\n(.*?)\n\s*```", re.S)
 # reviewer-assigner writes the assignment marker with GITHUB_TOKEN. Anyone can
 # post the marker text on a public repo, so only the bot's comment counts.
-BOT = re.compile(r"^github-actions(\[bot\])?$")
+BOT = re.compile(r"^github-actions\[bot\]$")  # the REST login of GITHUB_TOKEN writes
 WRITE = {"admin", "write"}
 STOP_LABEL = "needs-human"
 BASE = "dev"
@@ -205,8 +205,12 @@ def permission(repo: str, login: str) -> str:
             "--jq",
             ".permission",
         ).strip()
-    except subprocess.CalledProcessError:
-        return "none"  # 404 for a user who is not a collaborator
+    except subprocess.CalledProcessError as err:
+        # A public repo answers "read" for any real user; 404 means no such user.
+        # Any other failure exits, so a transient error never adds needs-human.
+        if "HTTP 404" in (err.stderr or ""):
+            return "none"
+        raise
 
 
 def main(argv=None) -> int:

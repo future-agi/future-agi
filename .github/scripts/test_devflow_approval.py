@@ -171,6 +171,11 @@ class DecideTests(unittest.TestCase):
         case.comments = [marker("rev", by="author")]
         self.check(case, "wait", "no devflow-assigned marker")
 
+    def test_marker_needs_the_exact_bot_login(self):
+        case = Case()
+        case.comments = [marker("rev", by="github-actions")]
+        self.check(case, "wait", "no devflow-assigned marker")
+
     def test_marker_naming_the_author_waits(self):
         case = Case()
         case.comments = [marker("author")]
@@ -264,6 +269,16 @@ class DecideTests(unittest.TestCase):
             "frontend/src/pages/dashboard/settings/BillingPage.jsx",
             "agentcc-gateway/scripts/merge_pricing.py",
             "billing.py",
+            "agentcc-gateway/internal/middleware/auth.go",
+            "agentcc-gateway/internal/middleware/license_auth.go",
+            "agentcc-gateway/internal/plugins/rbac/rbac.go",
+            "agentcc-gateway/internal/plugins/quota/quota.go",
+            "futureagi/agentcc/views/api_key.py",
+            "futureagi/agentcc/permissions.py",
+            "futureagi/tracer/views/feed/_permissions.py",
+            "futureagi/mcp_server/views/oauth.py",
+            "futureagi/tfc/licensing/types.py",
+            "futureagi/simulate/authentication.py",
         ):
             with self.subTest(path=path):
                 case = Case()
