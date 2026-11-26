@@ -61,6 +61,8 @@ export default function ReadyToRunSection({
   const [pressed, setPressed] = useState(null);
   // One line open at a time keeps the section short; the dialog body scrolls.
   const [openArea, setOpenArea] = useState(null);
+  // After an agent retry, until the report has been read again.
+  const [refreshing, setRefreshing] = useState(false);
   const picksKey = JSON.stringify(picks || {});
   const agentId = readiness.data?.pairing?.agent_version?.id;
   const missing = useMissingCredentials(
@@ -69,7 +71,11 @@ export default function ReadyToRunSection({
     picksKey,
     Boolean(view?.groups),
   );
-  const sending = recheck.isPending || retryAgent.isPending || missing.checking;
+  const sending =
+    recheck.isPending ||
+    retryAgent.isPending ||
+    refreshing ||
+    missing.checking;
   useEffect(() => {
     onSendingChange?.(sending);
   }, [sending, onSendingChange]);
@@ -119,7 +125,19 @@ export default function ReadyToRunSection({
   const runRetryAgent = (from = null) => {
     setPressed(from);
     recheck.reset();
-    retryAgent.mutate({ versionId: agentId });
+    setRefreshing(true);
+    retryAgent.mutate(
+      { versionId: agentId },
+      {
+        onSettled: async () => {
+          try {
+            await readiness.refetch();
+          } finally {
+            setRefreshing(false);
+          }
+        },
+      },
+    );
   };
   const blockers = view.open.filter((line) => line.status === "blocked").length;
   const readyLabels = view.ready.map(areaLabel);
@@ -204,7 +222,7 @@ export default function ReadyToRunSection({
             {COPY.title}
           </Box>
           <Box component="span" sx={{ color: "text.secondary" }}>
-            {` · ${COPY.blockers(blockers)}`}
+            {` · ${checking ? COPY.checkingPair : COPY.blockers(blockers)}`}
           </Box>
         </Typography>
         <Button

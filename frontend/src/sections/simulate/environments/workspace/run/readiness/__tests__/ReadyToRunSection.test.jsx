@@ -62,18 +62,23 @@ const { default: ReadyToRunSection } = await import("../ReadyToRunSection");
 const { readinessView } = await import("../readinessView");
 
 // As the run plan renders it: it owns the report.
-function Section({ error, ...props }) {
+function Section({ error, refetch, ...props }) {
   return (
     <ReadyToRunSection
       envId="env-1"
       picks={{}}
-      readiness={{ data: error ? undefined : report, isError: !!error, error }}
+      readiness={{
+        data: error ? undefined : report,
+        isError: !!error,
+        error,
+        refetch,
+      }}
       view={error ? null : readinessView(report)}
       {...props}
     />
   );
 }
-Section.propTypes = { error: PropTypes.object };
+Section.propTypes = { error: PropTypes.object, refetch: PropTypes.func };
 const details = (name = /^Details for/) => screen.getByRole("button", { name });
 
 const blockedReport = (recheckScope) => ({
@@ -289,16 +294,39 @@ describe("ReadyToRunSection", () => {
     expect(recheck).toHaveBeenCalledWith(picks);
   });
 
-  it("retries the agent version when the fix is the agent's own startup", async () => {
+  it("retries the agent version when the fix is the agent's own startup, holding Run until it reads again", async () => {
     report = blockedReport("agent");
-    render(<Section picks={picks} />);
+    let reread;
+    const refetch = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          reread = resolve;
+        }),
+    );
+    const onSendingChange = vi.fn();
+    render(
+      <Section
+        picks={picks}
+        refetch={refetch}
+        onSendingChange={onSendingChange}
+      />,
+    );
 
     await userEvent.click(screen.getByRole("button", { name: /^Details for/ }));
     await userEvent.click(
       screen.getByRole("button", { name: "Retry the agent's start" }),
     );
-    expect(retryAgent).toHaveBeenCalledWith({ versionId: "agent-v2" });
+    const [args, { onSettled }] = retryAgent.mock.lastCall;
+    expect(args).toEqual({ versionId: "agent-v2" });
     expect(recheck).not.toHaveBeenCalled();
+
+    onSettled();
+    expect(refetch).toHaveBeenCalled();
+    expect(onSendingChange).toHaveBeenLastCalledWith(true);
+    reread();
+    await waitFor(() =>
+      expect(onSendingChange).toHaveBeenLastCalledWith(false),
+    );
   });
 
   it("takes the values the default's start check found missing, in place of Retry, only while Fix is offered", async () => {

@@ -83,9 +83,18 @@ const areaLine = (area, rowsById) => {
   };
 };
 
+// Who fixes a line when the server doesn't say: a re-check alone, or the user.
+const fallbackGroup = ({ fix }) =>
+  (fix?.type === "recheck" && fix.recheck?.scope === "pair") ||
+  fix?.type === "agent_tools_unread"
+    ? "recheck"
+    : "needs_you";
+
 const byGroup = (lines) => {
   const groups = { needs_you: [], builder: [], recheck: [] };
-  lines.forEach((line) => (groups[line.group] ?? groups.needs_you).push(line));
+  lines.forEach((line) =>
+    (groups[line.group ?? fallbackGroup(line)] ?? groups.needs_you).push(line),
+  );
   return groups;
 };
 

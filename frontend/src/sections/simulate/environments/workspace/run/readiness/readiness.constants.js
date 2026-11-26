@@ -8,6 +8,7 @@ export const READY_TO_RUN_COPY = {
   namesMore: (n) => `and ${n} more`,
   recheck: "Re-check",
   checking: "Checking…",
+  checkingPair: "Checking these versions together…",
   areas: {
     start_and_message: "Starts and replies",
     tool_binding: "Tools wired to the test world",

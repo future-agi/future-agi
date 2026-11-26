@@ -135,7 +135,7 @@ const refusal = (error, message, extra = {}) => ({
 
 const renderDialog = (props = {}) => {
   const onSubmit = vi.fn();
-  render(
+  const dialog = () => (
     <RunDialog
       open
       env={ENV}
@@ -144,9 +144,10 @@ const renderDialog = (props = {}) => {
       onClose={vi.fn()}
       onSubmit={onSubmit}
       {...props}
-    />,
+    />
   );
-  return { onSubmit };
+  const { rerender } = render(dialog());
+  return { onSubmit, rerender: () => rerender(dialog()) };
 };
 
 const pickOption = async (user, picker, option) => {
@@ -1417,6 +1418,19 @@ describe("RunDialog", () => {
         ),
       ).toBeInTheDocument();
       expect(runButton()).toBeDisabled();
+    });
+
+    it("leaves a pair_validating refusal to Ready to run, and drops it once the check ends", () => {
+      state.report = report({ state: "validating" });
+      const { rerender } = renderDialog({
+        error: { statusCode: 409, error: "pair_validating" },
+      });
+      expect(screen.queryByTestId("run-error")).toBeNull();
+
+      state.report = report();
+      rerender();
+      expect(screen.queryByTestId("run-error")).toBeNull();
+      expect(runButton()).toBeEnabled();
     });
 
     describe("while the server offers Fix", () => {
