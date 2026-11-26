@@ -41,3 +41,40 @@ describe("SummaryTable Pass column", () => {
     expect(passCell("Run 3")).not.toHaveTextContent("66.67");
   });
 });
+
+describe("SummaryTable split runs", () => {
+  it("tags a run of a split with its own locked version and split", () => {
+    render(
+      <SummaryTable
+        evals={[]}
+        rows={[
+          {
+            id: "a",
+            label: "Run 3",
+            status: "passed",
+            passRate: 80,
+            split: "test",
+            lockedVersion: { id: "lv2", label: "2026.11.2", locked: true },
+          },
+          {
+            id: "b",
+            label: "Run 2",
+            status: "passed",
+            passRate: 80,
+            split: "test",
+            lockedVersion: { id: "lv1", label: "2026.11.1", locked: false },
+          },
+          { id: "c", label: "Run 1", status: "passed", passRate: 80 },
+        ]}
+      />,
+    );
+    const row = (label) => screen.getByText(label).closest("tr");
+    expect(
+      within(row("Run 3")).getByText("locked version 2026.11.2 · test"),
+    ).toBeInTheDocument();
+    expect(
+      within(row("Run 2")).getByText("locked version 2026.11.1 · test"),
+    ).toBeInTheDocument();
+    expect(within(row("Run 1")).queryByText(/^locked version /)).toBeNull();
+  });
+});

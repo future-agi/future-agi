@@ -62,6 +62,7 @@ const {
   movingAgent,
   refreshDrafts,
   draftReviewKey,
+  currentLockedVersion,
 } = await import("../versions");
 const { harnessEnvironmentKey, harnessJobQuery } = await import(
   "../environment"
@@ -215,6 +216,28 @@ describe("versionFromApi / toVersions", () => {
     expect(none.empty).toBe(true);
     expect(none.defaults.environment).toBeNull();
     expect(toVersions(undefined).empty).toBe(true);
+  });
+});
+
+describe("currentLockedVersion", () => {
+  const lockedVersion = (overrides) => ({
+    id: "r1",
+    environmentVersionId: "e2",
+    suiteVersionId: "s3",
+    unlockedAt: null,
+    ...overrides,
+  });
+
+  it("finds the pair's locked version, never an unlocked one", () => {
+    const unlocked = lockedVersion({
+      id: "r0",
+      unlockedAt: "2026-11-01T09:00:00Z",
+    });
+    const locked = lockedVersion();
+    expect(currentLockedVersion([unlocked, locked], "e2", "s3")).toBe(locked);
+    expect(currentLockedVersion([unlocked], "e2", "s3")).toBeNull();
+    expect(currentLockedVersion([locked], "e1", "s3")).toBeNull();
+    expect(currentLockedVersion(undefined, "e2", "s3")).toBeNull();
   });
 });
 
@@ -492,6 +515,7 @@ describe("useRunPlan", () => {
       "e1",
       null,
       null,
+      null,
     ]);
     expect(
       client.getQueryData(runPlanKey("env-1", { environment: "e1" })),
@@ -508,6 +532,22 @@ describe("useRunPlan", () => {
     expect(axios.get).toHaveBeenCalledWith(
       "/simulate/api/harness-environments/env-1/run-plan/",
       { params: { scenario_keys: "k1,k2" } },
+    );
+  });
+
+  it("asks about a split, keyed apart from the whole suite", async () => {
+    axios.get.mockResolvedValue({ data: PLAN });
+    const { result } = renderHook(
+      () => useRunPlan("env-1", {}, { split: "test" }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/run-plan/",
+      { params: { split: "test" } },
+    );
+    expect(runPlanKey("env-1", {}, null, "test")).not.toEqual(
+      runPlanKey("env-1", {}, null),
     );
   });
 

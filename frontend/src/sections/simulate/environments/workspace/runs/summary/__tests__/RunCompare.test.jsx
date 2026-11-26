@@ -310,6 +310,69 @@ describe("RunCompare", () => {
     });
     renderCompare();
 
-    expect(within(section()).getByText(/^2 trials left out/)).toBeInTheDocument();
+    expect(
+      within(section()).getByText(/^2 trials left out/),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about comparability for runs that compare", () => {
+    useCompareRuns.mockReturnValue({
+      data: {
+        ...comparison,
+        comparability: { comparable: true, reasons: [] },
+      },
+      isPending: false,
+      isError: false,
+    });
+    renderCompare();
+
+    expect(screen.queryByTestId("compare-not-comparable")).toBeNull();
+    expect(
+      within(row("Card dispute")).getByText("Regressed"),
+    ).toBeInTheDocument();
+  });
+
+  it("names each run's split and locked version and withholds the verdicts across splits", () => {
+    const split = (versions, name, label) => ({
+      ...versions,
+      split: name,
+      locked_version: { id: `lv-${label}`, label, locked: true },
+    });
+    useCompareRuns.mockReturnValue({
+      data: {
+        ...comparison,
+        // The server clears every verdict and its count.
+        pairs: comparison.pairs.map((one) => ({ ...one, verdict: null })),
+        summary: {
+          ...comparison.summary,
+          improved: null,
+          regressed: null,
+          no_meaningful_change: null,
+          inconclusive: null,
+        },
+        versions: {
+          current: split(comparison.versions.current, "test", "2026.11.2"),
+          against: split(comparison.versions.current, "train", "2026.11.1"),
+        },
+        comparability: { comparable: false, reasons: ["different_split"] },
+      },
+      isPending: false,
+      isError: false,
+    });
+    renderCompare();
+
+    expect(screen.getByTestId("compare-not-comparable")).toHaveTextContent(
+      "Not comparable: these runs ran different versions or splits.",
+    );
+    expect(
+      within(section()).getByText(
+        "Run 2: Agent v2 · Environment v2 · Scenarios v3 · Locked version 2026.11.2 · Test split · Run 1: Agent v2 · Environment v2 · Scenarios v3 · Locked version 2026.11.1 · Train split",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(section()).getByText("1 new · 1 n/a · 1 criteria changed"),
+    ).toBeInTheDocument();
+    expect(within(section()).queryByText("Regressed")).toBeNull();
+    expect(within(section()).queryByText("Improved")).toBeNull();
   });
 });

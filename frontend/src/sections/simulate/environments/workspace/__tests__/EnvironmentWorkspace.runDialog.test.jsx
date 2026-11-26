@@ -64,6 +64,7 @@ const dialogPicks = { current: { environment: "e1" } };
 const dialogResolved = {
   current: { agent: "a1", environment: "e1", suite: "s1" },
 };
+const dialogSplit = { current: null };
 function RunDialogStub({
   scenarioIds,
   trials,
@@ -87,6 +88,7 @@ function RunDialogStub({
             scenarioIds,
             dialogResolved.current,
             initialSeed ?? null,
+            dialogSplit.current,
           )
         }
       >
@@ -194,6 +196,7 @@ describe("EnvironmentWorkspace run start", () => {
     access.current = { canEdit: true, canRun: true };
     dialogPicks.current = { environment: "e1" };
     dialogResolved.current = { agent: "a1", environment: "e1", suite: "s1" };
+    dialogSplit.current = null;
     enqueueSnackbar.mockReset();
     getHarnessJob.mockReset();
     axios.get.mockReset();
@@ -263,7 +266,9 @@ describe("EnvironmentWorkspace run start", () => {
     getHarnessJob.mockResolvedValue(JOB);
     renderWorkspace();
 
-    const button = await screen.findByRole("button", { name: /Run simulation/ });
+    const button = await screen.findByRole("button", {
+      name: /Run simulation/,
+    });
     await expect(
       waitFor(() => expect(button).toBeEnabled(), { timeout: 1000 }),
     ).rejects.toThrow();
@@ -501,6 +506,58 @@ describe("EnvironmentWorkspace run start", () => {
     await user.click(screen.getByRole("button", { name: "submit picks" }));
     await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(3));
     expect(axios.post.mock.calls[2][2].headers["Idempotency-Key"]).toBe(
+      "key-2",
+    );
+  });
+
+  it("runs a split of the locked version from the header without listing the scenarios", async () => {
+    getHarnessJob.mockResolvedValue(VERSIONED_JOB);
+    dialogSplit.current = "test";
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(await headerRun());
+    axios.get.mockClear();
+    await user.click(screen.getByRole("button", { name: "submit picks" }));
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(
+        RUN_URL,
+        { trials: 1, environment_version_id: "e1", split: "test" },
+        { headers: { "Idempotency-Key": "key-1" } },
+      ),
+    );
+    expect(axios.post.mock.calls[0][1]).not.toHaveProperty("scenario_ids");
+    expect(axios.get).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\/scenarios\/$/),
+      expect.anything(),
+    );
+  });
+
+  it("asks with a new key when only the split changed", async () => {
+    getHarnessJob.mockResolvedValue(VERSIONED_JOB);
+    axios.post
+      .mockRejectedValueOnce({ statusCode: 503, message: "busy" })
+      .mockRejectedValueOnce({ statusCode: 503, message: "busy" });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(
+      await screen.findByRole("button", { name: "run selection" }),
+    );
+    await user.click(screen.getByRole("button", { name: "submit picks" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+
+    dialogSplit.current = "train";
+    await screen.findByText("submitting:false");
+    await user.click(screen.getByRole("button", { name: "submit picks" }));
+    await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(2));
+    expect(axios.post.mock.calls[1][1]).toEqual({
+      scenario_ids: ["k1", "k2"],
+      trials: 2,
+      environment_version_id: "e1",
+      split: "train",
+    });
+    expect(axios.post.mock.calls[1][2].headers["Idempotency-Key"]).toBe(
       "key-2",
     );
   });
