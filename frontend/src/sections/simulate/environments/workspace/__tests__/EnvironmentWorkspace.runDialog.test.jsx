@@ -246,7 +246,7 @@ describe("EnvironmentWorkspace run start", () => {
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(
         RUN_URL,
-        { scenario_ids: ["refund-happy-path"], trials: 1 },
+        { trials: 1 },
         { headers: { "Idempotency-Key": "key-1" } },
       ),
     );
@@ -291,7 +291,6 @@ describe("EnvironmentWorkspace run start", () => {
       expect(axios.post).toHaveBeenCalledWith(
         RUN_URL,
         {
-          scenario_ids: ["refund-happy-path"],
           trials: 1,
           environment_version_id: "e1",
         },

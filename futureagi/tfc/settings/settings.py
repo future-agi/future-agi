@@ -1101,6 +1101,11 @@ ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
 ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
     os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "10800")
 )
+# How long a Validate (a check of an environment's cases) may run before it is stopped: generous, so a suite of a
+# thousand cases is proved; cases a stopped check did not reach keep their earlier proofs.
+HARNESS_VALIDATION_CHECK_SECONDS = int(
+    os.getenv("HARNESS_VALIDATION_CHECK_SECONDS", "") or 7200
+)
 # Derived from the budget above so the two cannot disagree.
 ALK_HOSTED_AUTHORING_TIMEOUT = int(
     os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
@@ -1228,6 +1233,11 @@ HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower()
     "true",
     "yes",
 )
+# Validate before Save on every draft save where validation is available, not only once a change was decided: the
+# Save bar validates the drafts, then saves the validated versions. Set to false to let an undecided draft save as is.
+HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = os.getenv(
+    "HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE", "true"
+).lower() in ("1", "true", "yes")
 # A pinned run that misses the bundle cache certifies its own bundle; off, it runs the
 # environment's default pair as before.
 HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
@@ -1309,7 +1319,9 @@ def _reading_call_limit() -> int:
 
 ALK_HOSTED_READING_MAX_MODEL_CALLS = _reading_call_limit()
 # Most scenarios × trials one simulation Run may submit.
-HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
+HARNESS_MAX_EXECUTIONS_PER_RUN = int(
+    os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "1000")
+)
 # Each profile is an operator-certified size/connector/snapshot combination.
 HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
 # Comma-separated allowlist of provider runtime identifiers certified for W>1.
