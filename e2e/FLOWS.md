@@ -75,6 +75,25 @@
 - the scan of the uploaded folder reached found in PG simulate_agent_scan, scoped to the actor org
 - exactly one PG simulate_agent_definition row has the minted name in the actor org after Connect
 
+### AGENT-E2E-004 — node editor actions are named and remain guarded for viewers
+
+**Goal:** Identify node deletion and editor close actions by hover or keyboard without allowing a viewer to delete the saved draft.  
+**Spec:** `flows/agents/node-editor-accessibility.spec.ts:14`  
+**Tags:** —
+
+**User steps:**
+
+1. seed one uniquely named draft and prompt node through the public API
+2. hover the canvas delete action, then reveal it using Tab with the pointer away
+3. open node settings, inspect the Close tooltip and activate close with the keyboard
+4. inspect the same draft as a viewer and attempt Delete and Backspace without deletion controls
+5. confirm owner deletion from the drawer of the existing draft
+
+**Backend state verified:**
+
+- the graph detail retains the exact seeded node after owner inspection and viewer keyboard deletion attempts
+- confirmed owner deletion addresses the saved version and leaves its node set empty
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window

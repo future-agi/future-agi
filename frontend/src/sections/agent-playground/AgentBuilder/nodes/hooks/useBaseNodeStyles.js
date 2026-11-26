@@ -57,7 +57,7 @@ export default function useBaseNodeStyles({
               ? statusColors(theme, "danger").solid
               : statusColors(theme, "info").solid,
           },
-          "&:hover .node-delete-btn": {
+          "&:hover .node-delete-btn, &:focus-within .node-delete-btn": {
             opacity: 1,
             pointerEvents: "auto",
           },
