@@ -2130,7 +2130,7 @@ class HostedHarnessProvider:
                 if split is not None:
                     raise HostedHarnessError(
                         "split_not_for_coding_agent",
-                        "A coding agent runs the whole suite. Leave out the split.",
+                        "A coding agent runs every scenario. Leave out the split.",
                         status_code=422,
                     )
                 # The cases a coding agent may not run are chosen before its first run,
