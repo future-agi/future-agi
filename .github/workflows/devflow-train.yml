@@ -50,6 +50,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: read # open base-red issues pause the train
       actions: read # failed job logs of a red rollup
       checks: read
     steps:

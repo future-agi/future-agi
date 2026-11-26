@@ -69,6 +69,9 @@ RED_LABEL = "train:red"
 CONFLICT_LABEL = "train:conflict"
 STALE_LABEL = "train:stale"
 HIGH_LABELS = ("needs-human", "autopilot-high")
+# The base-health breaker (devflow_tick.py) files an open issue with this
+# label per job that fails across queue builds: "Base looks red: <job>".
+BASE_RED_LABEL = "base-red"
 BRANCH_PREFIX = "chore/devflow-train-"
 BASE = "dev"
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
@@ -649,8 +652,14 @@ def stale_members(manifest: dict, live: dict) -> list:
     return stale
 
 
-def rollup_action(rollup: dict, live: dict, failure: str | None) -> dict:
-    """What one tick does with one open rollup pull request."""
+def rollup_action(
+    rollup: dict, live: dict, failure: str | None, paused: bool = False
+) -> dict:
+    """What one tick does with one open rollup pull request.
+
+    While the base is red (paused), a red rollup is closed, not split and
+    not evicted: its red says nothing about its members, which re-batch
+    once dev is fixed."""
     manifest = rollup["manifest"]
     stale = stale_members(manifest, live)
     if stale:
@@ -674,6 +683,8 @@ def rollup_action(rollup: dict, live: dict, failure: str | None) -> dict:
         if kind == "manual":
             return {"action": "release"}
     signal = red_signal(rollup)
+    if signal and paused:
+        return {"action": "close-red", "signal": signal}
     if signal:
         act = on_red(manifest, failure or "red")
         act["signal"] = signal
@@ -723,6 +734,7 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
     """
     failures = failures or {}
     repo = data["repository"]
+    paused = list(data.get("base_red") or [])
     queue = [
         e["pullRequest"]["number"]
         for e in ((repo.get("mergeQueue") or {}).get("entries") or {}).get("nodes", [])
@@ -737,7 +749,9 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
 
     actions, reserved, evicted = [], {}, {}
     for rollup in rollups:
-        act = rollup_action(rollup, live, failures.get(rollup["number"]))
+        act = rollup_action(
+            rollup, live, failures.get(rollup["number"]), bool(paused)
+        )
         act["rollup"] = rollup["number"]
         actions.append(act)
         if act["action"] in ("wait", "ensure", "retry", "split"):
@@ -766,8 +780,9 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
             eligible.append(m)
     ordered = round_robin(eligible)
     slots = train_slots(cfg, still_open + new_from_splits, len(queue))
-    batches = plan_batches(ordered, slots, cfg.max_batch)
+    batches = [] if paused else plan_batches(ordered, slots, cfg.max_batch)
     return {
+        "paused_by": paused,
         "queue_entries": len(queue),
         "rollup_actions": actions,
         "label_changes": labels,
@@ -775,7 +790,11 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
         "eligible": [m["number"] for m in ordered],
         "train_slots": slots,
         "batches": [[m["number"] for m in b] for b in batches],
-        "busy": bool(still_open or new_from_splits or batches),
+        # A paused train with work waiting stays awake: closing the issue
+        # is not a push to dev, so nothing else would wake it.
+        "busy": bool(
+            still_open or new_from_splits or batches or (paused and ordered)
+        ),
         "_members": live,
         "_rollups": {r["number"]: r for r in rollups},
     }
@@ -899,6 +918,14 @@ class GitHub:
         if status != 200:
             raise RuntimeError(f"reading {path}: {status}")
         return base64.b64decode(out["content"]).decode()
+
+    def base_red(self) -> list:
+        """Open issues (not pull requests) with the base-red label."""
+        out = self.call(
+            "GET",
+            f"repos/{self.repo}/issues?labels={BASE_RED_LABEL}&state=open&per_page=100",
+        )
+        return sorted(i["number"] for i in out if "pull_request" not in i)
 
     def gather(self) -> dict:
         owner, name = self.repo.split("/")
@@ -1214,6 +1241,13 @@ def execute(result: dict, live: Live, red_runs: dict):
                 f"Closed by the batch train: rebuilding{': ' + act['why'] if act.get('why') else ''}."
                 f" Dropped: {act['drop'] or 'none'}.",
             )
+        elif kind == "close-red":
+            live.close(
+                rollup,
+                f"Closed by the batch train: red ({act['signal']}) while the base is red "
+                f"({', '.join(f'#{n}' for n in result['paused_by'])}). Nothing is split "
+                "or marked red; the members re-batch once dev is fixed.",
+            )
         elif kind == "release":
             live.close(
                 rollup,
@@ -1247,6 +1281,7 @@ def execute(result: dict, live: Live, red_runs: dict):
 def summary(result: dict) -> str:
     lines = [
         f"## Batch train ({result['mode']})",
+        f"- Paused by base-red issues: {result['paused_by'] or 'none'}",
         f"- Queue entries: {result['queue_entries']}; free train slots: {result['train_slots']}",
         f"- Eligible in order: {result['eligible'] or 'none'}",
         f"- Planned batches: {result['batches'] or 'none'}",
@@ -1263,13 +1298,14 @@ def summary(result: dict) -> str:
 
 def tick(reader: GitHub, required: list, cfg: Config, live: Live | None) -> dict:
     data = reader.gather()
+    data["base_red"] = reader.base_red()
     reader.attach_permissions(data, required, cfg)
     reader.attach_checks(data, required, cfg)
     red_runs, failures = {}, {}
     for node in data["repository"]["rollups"]["nodes"]:
         rollup = rollup_view(node, cfg, required)
         signal = rollup and red_signal(rollup)
-        if signal:
+        if signal and not data["base_red"]:
             runs = reader.failed_runs(rollup, signal)
             red_runs[rollup["number"]] = runs
             failures[rollup["number"]] = classify_failure(

@@ -179,8 +179,9 @@ def rollup_node(
     return node
 
 
-def data(admitted=(), rollups=(), queue=()):
+def data(admitted=(), rollups=(), queue=(), base_red=()):
     return {
+        "base_red": list(base_red),
         "repository": {
             "mergeQueue": {
                 "entries": {"nodes": [{"pullRequest": {"number": n}} for n in queue]}
@@ -892,6 +893,38 @@ class Plan(unittest.TestCase):
             cfg(),
         )
         self.assertEqual(out["rollup_actions"][0]["action"], "split")
+
+    def test_base_red_pauses_new_rollups_and_closes_red_ones(self):
+        one = rollup_node(80, [(1, sha(1)), (2, sha(2))], checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:])
+        solo = rollup_node(81, [(3, sha(3))], checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:])
+        busy = rollup_node(82, [(4, sha(4))], checks=[])
+        members = [pr_node(n) for n in (1, 2, 3, 4, 5)]
+        result = train.plan(
+            data(members, [one, solo, busy], base_red=[900]),
+            REQUIRED,
+            cfg(),
+            {80: "red", 81: "red"},
+        )
+        acts = {a["rollup"]: a["action"] for a in result["rollup_actions"]}
+        self.assertEqual(acts, {80: "close-red", 81: "close-red", 82: "ensure"})
+        self.assertEqual(result["batches"], [], "no new rollups while paused")
+        self.assertEqual(result["eligible"], [1, 2, 3, 5], "closed members stay eligible")
+        self.assertTrue(result["busy"], "waiting work keeps the loop awake")
+        self.assertEqual(result["paused_by"], [900])
+        resumed = train.plan(data(members, [], base_red=[]), REQUIRED, cfg())
+        self.assertEqual(resumed["batches"], [[1, 2], [3, 4], [5]])
+
+    def test_execute_close_red_neither_splits_nor_evicts(self):
+        app, actions = FakeGitHub({}), FakeGitHub({})
+        live = train.Live("o/r", app, actions)
+        red = rollup_node(81, [(3, sha(3))], checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:])
+        result = train.plan(data([pr_node(3)], [red], base_red=[900]), REQUIRED, cfg(), {81: "red"})
+        train.execute(result, live, {})
+        writes = [(c[0], c[1]) for c in app.calls + actions.calls]
+        self.assertIn(("PATCH", "repos/o/r/pulls/81"), writes)
+        self.assertFalse(any("/merges" in w[1] or "/labels" in w[1] for w in writes), writes)
+        comment = next(c[2]["body"] for c in actions.calls if c[1].endswith("/issues/81/comments"))
+        self.assertIn("#900", comment)
 
     def test_conflict_and_manual_removals(self):
         prs = [pr_node(1)]
