@@ -9,8 +9,12 @@ cut it makes, and refuses a call from another organisation or workspace.
 
 from __future__ import annotations
 
+import io
 import json
+import os
+import tarfile
 import uuid
+import zlib
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -1255,7 +1259,7 @@ class _Stored:
     def __init__(self, body):
         self.body = body
 
-    def read(self):
+    def read(self, amount=None):
         return self.body
 
     def close(self):
@@ -1456,36 +1460,6 @@ def test_a_deleted_call_run_or_run_test_is_refused(voice_call, deleted):
         _read(call, Kind.TRANSCRIPT)
 
 
-# --- the seed is read alone from its archive ---------------------------------------
-
-
-@pytest.mark.django_db
-def test_only_the_seed_store_is_read_from_the_environment_archive():
-    import io
-    import tarfile
-
-    from simulate.services.harness_versioning import archives
-
-    raw = io.BytesIO()
-    with tarfile.open(fileobj=raw, mode="w:gz") as archive:
-        for name, data in (("store.json", b'{"rows": {}}'), ("big.bin", b"0" * 4096)):
-            info = tarfile.TarInfo(name)
-            info.size = len(data)
-            archive.addfile(info, io.BytesIO(data))
-    version = SimpleNamespace(archive_object_key="envs/v1.tar.gz")
-    with (
-        patch(
-            "simulate.models.harness_versioning.HarnessEnvironmentVersion.objects"
-        ) as versions,
-        patch.object(archives, "get_archive", return_value=raw.getvalue()),
-        patch.object(archives, "read_archive", side_effect=AssertionError("whole")),
-    ):
-        versions.filter.return_value.first.return_value = version
-        files = reader.environment_files(uuid.uuid4())
-
-    assert files == {"store.json": b'{"rows": {}}'}
-
-
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("said", "secret"),
@@ -1506,9 +1480,7 @@ def test_a_secret_is_masked_to_the_end_of_its_value(voice_call, said, secret):
 
 
 @pytest.mark.django_db
-def test_a_value_under_a_secrets_name_is_masked_as_the_kit_masks_it(
-    execution, scenario
-):
+def test_text_under_a_secrets_name_is_masked_wherever_it_sits(execution, scenario):
     trace = [
         {
             "name": "lookup_order",
@@ -1531,8 +1503,435 @@ def test_a_value_under_a_secrets_name_is_masked_as_the_kit_masks_it(
     assert entry["arguments"] == {
         "x-goog-api-key": "[REDACTED]",
         "session_cookie": "[REDACTED]",
-        "client_credential": "[REDACTED]",
+        "client_credential": {"id": "[REDACTED]", "key": "[REDACTED]"},
         "passphrase": "[REDACTED]",
         "order": 7,
     }
     assert entry["headers"] == {"X-Custom": "[REDACTED]"}
+
+
+# --- round 1 review: what masking keeps, what it finds, and how long it takes ------
+
+# Built at run time so no key-shaped text sits in the source.
+FAKE_LIVE_KEY = "sk_" + "live_" + "Zx9q" * 6
+FAKE_JWT = ".".join(("eyJ" + "a1B2c3D4e5", "eyJ" + "f6G7h8I9j0", "k1L2m3N4o5p6"))
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "If the caller asks about a token: explain that one-time codes expire "
+        "after 5 minutes and never read one aloud.",
+        "When asked for a password: tell them we never ask for one on a call.",
+        "Never say your secret: the refund limit is only for staff to know.",
+    ],
+)
+def test_a_rule_after_a_secrets_name_in_the_instructions_is_kept(
+    voice_call, agent_version, rule
+):
+    agent_version.configuration_snapshot = {
+        **agent_version.configuration_snapshot,
+        "description": f"You are a bank agent.\n{rule}",
+    }
+    agent_version.save(update_fields=["configuration_snapshot"])
+
+    evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert evidence.content == f"You are a bank agent.\n{rule}"
+    assert evidence.marks == ()
+
+
+@pytest.mark.django_db
+def test_a_live_key_a_jwt_and_a_named_value_in_json_text_are_masked(
+    execution, scenario
+):
+    inner = json.dumps({"body": json.dumps({"api_key": "plainvalue"})})
+    trace = [
+        {"name": "fetch", "result": f"key {FAKE_LIVE_KEY} and {FAKE_JWT} done"},
+        {"name": "relay", "result": inner},
+    ]
+    call = _call(
+        execution, scenario, provider_call_data={"livekit": {"tool_calls": trace}}
+    )
+    with _hosted():
+        evidence = _one(call, Kind.TOOL_CALLS)
+
+    text = json.dumps(evidence.content)
+    for secret in (FAKE_LIVE_KEY, FAKE_JWT, "plainvalue"):
+        assert secret not in text
+    assert evidence.content[0]["result"].startswith("key [REDACTED] and [REDACTED]")
+    assert reader.SECRETS_MASKED in evidence.marks
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "sk-",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "0123456789abcdef",
+        None,  # x://a: then a run with no @
+    ],
+)
+def test_masking_a_long_text_takes_linear_time(unit):
+    import time
+
+    size = 200_000
+    text = "x://a:" + "b" * size if unit is None else unit * (size // len(unit))
+
+    started = time.perf_counter()
+    reader._mask(text)
+    took = time.perf_counter() - started
+
+    # Quadratic scans took 8 s on 80k characters; linear ones take milliseconds.
+    assert took < 2.0, f"{took:.2f}s for {len(text)} characters"
+
+
+@pytest.mark.django_db
+def test_under_a_secrets_name_only_text_is_masked(execution, scenario):
+    body = {
+        "schema": "futureagi.world-state.v1",
+        "tables": {
+            "password_resets": [{"id": 1, "email": "a@example.com", "used": True}],
+            "usage": [{"token_count": 12, "max_tokens": 100}],
+        },
+        "skipped": [],
+        "action_log": [],
+    }
+    call = _call(
+        execution,
+        scenario,
+        call_metadata={"harness_trial_state": {"end_state_artifact": END}},
+    )
+    with (
+        _hosted(),
+        patch.object(reader, "stored_artifact", return_value=json.dumps(body).encode()),
+    ):
+        tables = _one(call, Kind.WORLD_STATE_END).content["tables"]
+
+    assert tables["password_resets"] == [{"id": 1, "email": "[REDACTED]", "used": True}]
+    assert tables["usage"] == [{"token_count": 12, "max_tokens": 100}]
+
+
+@pytest.mark.django_db
+def test_a_recording_link_loses_its_password_and_keeps_its_signature(
+    execution, scenario
+):
+    url = "https://rec:pw-98765@example.com/r.mp3?token=signed-123456"
+    call = _call(execution, scenario, recording_url=url)
+
+    evidence = _one(call, Kind.AUDIO)
+
+    assert evidence.content == {
+        "recording_url": "https://rec:***@example.com/r.mp3?token=signed-123456"
+    }
+    assert evidence.marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.django_db
+def test_every_answer_carries_the_readers_version(voice_call):
+    for evidence in _read(voice_call, Kind.TRANSCRIPT, Kind.AUDIO).values():
+        assert evidence.reader_version == reader.READER_VERSION
+
+
+# --- round 1 review: sizes are checked before anything is fetched or masked --------
+
+
+def _artifact_call(organization, workspace, execution, scenario, *, size):
+    job = _job(organization, workspace)
+    HostedHarnessArtifact.no_workspace_objects.create(
+        job=job,
+        sha256=TRACE,
+        kind="world_state",
+        size=size,
+        content_type="application/json",
+        object_key="own/key",
+    )
+    call = _call(
+        execution,
+        scenario,
+        call_metadata={
+            "harness_trial_state": {"end_state_artifact": f"sha256:{TRACE}"}
+        },
+    )
+    return job, call
+
+
+@pytest.mark.django_db
+def test_a_world_file_over_the_cap_is_too_large_and_never_fetched(
+    organization, workspace, execution, scenario
+):
+    job, call = _artifact_call(
+        organization,
+        workspace,
+        execution,
+        scenario,
+        size=reader._ARTIFACT_MAX_BYTES + 1,
+    )
+    storage = SimpleNamespace(get_object=lambda *_: pytest.fail("fetched"))
+    with (
+        _hosted(job_id=job.id),
+        patch("tfc.utils.storage_client.get_storage_client", return_value=storage),
+    ):
+        evidence = _one(call, Kind.WORLD_STATE_END)
+
+    assert (evidence.state, evidence.cause) == (State.NOT_CAPTURED, Cause.TOO_LARGE)
+
+
+@pytest.mark.django_db
+def test_a_world_file_larger_than_its_row_says_is_read_only_to_the_cap(
+    organization, workspace, execution, scenario
+):
+    job, call = _artifact_call(organization, workspace, execution, scenario, size=2)
+    asked = []
+
+    class Big(_Stored):
+        def read(self, amount=None):
+            asked.append(amount)
+            return b"x" * (amount or reader._ARTIFACT_MAX_BYTES + 1)
+
+    storage = SimpleNamespace(get_object=lambda *_: Big(b""))
+    with (
+        _hosted(job_id=job.id),
+        patch("tfc.utils.storage_client.get_storage_client", return_value=storage),
+    ):
+        evidence = _one(call, Kind.WORLD_STATE_END)
+
+    assert asked == [reader._ARTIFACT_MAX_BYTES + 1]
+    assert (evidence.state, evidence.cause) == (State.NOT_CAPTURED, Cause.TOO_LARGE)
+
+
+@pytest.mark.django_db
+def test_a_record_over_the_limit_is_refused_before_it_is_masked(execution, scenario):
+    call = _call(
+        execution,
+        scenario,
+        call_metadata={"harness_trial_state": {"end_state_artifact": END}},
+    )
+    body = {"schema": "futureagi.world-state.v1", "tables": {"t": ["x" * 500]}}
+    with (
+        _hosted(),
+        patch.object(reader, "stored_artifact", return_value=json.dumps(body).encode()),
+        patch.object(reader, "_masked", side_effect=AssertionError("masked")),
+    ):
+        evidence = _one(call, Kind.WORLD_STATE_END, max_chars=100)
+
+    assert (evidence.state, evidence.cause) == (State.NOT_CAPTURED, Cause.TOO_LARGE)
+
+
+@pytest.mark.django_db
+def test_entries_past_the_limit_are_never_masked(execution, scenario):
+    trace = [{"name": f"tool-{index}", "note": "n" * 40} for index in range(50)]
+    call = _call(
+        execution, scenario, provider_call_data={"livekit": {"tool_calls": trace}}
+    )
+    masked = []
+    real = reader._masked
+
+    def counting(value):
+        masked.append(value)
+        return real(value)
+
+    with _hosted(), patch.object(reader, "_masked", side_effect=counting):
+        evidence = _one(call, Kind.TOOL_CALLS, max_chars=200)
+
+    assert evidence.cut["entries_total"] == 50
+    assert len(masked) < 5
+
+
+# --- round 1 review: the seed is streamed, and a bad read sinks one kind only ------
+
+
+class _Streamed(io.BytesIO):
+    def release_conn(self):
+        pass
+
+
+def _seed_archive(files):
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w:gz") as archive:
+        for name, data in sorted(files.items()):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return raw.getvalue()
+
+
+def _seeded_call(execution, scenario):
+    trial = {
+        "recorded": True,
+        "start": {"state": "seeded", "against": "sealed_seed"},
+    }
+    return _call(execution, scenario, call_metadata={"harness_trial_state": trial})
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("cut", "expected"),
+    [(None, State.PRESENT), (30, State.NOT_CAPTURED), (0.5, State.NOT_CAPTURED)],
+)
+def test_the_seed_is_streamed_and_a_truncated_archive_is_not_readable_yet(
+    execution, scenario, cut, expected
+):
+    from simulate.services.harness_versioning import archives
+
+    # A member that does not compress sorts before the store, so half the archive
+    # ends before the store is reached.
+    body = _seed_archive(
+        {
+            "a.bin": os.urandom(8192),
+            "store.json": b'{"rows": {"orders": [{"id": 7}]}}',
+            "zz.bin": b"0" * 4096,
+        }
+    )
+    if cut is not None:
+        body = body[: int(len(body) * cut) if cut < 1 else cut]
+    version = SimpleNamespace(archive_object_key="envs/v1.tar.gz")
+    storage = SimpleNamespace(get_object=lambda bucket, key: _Streamed(body))
+    with (
+        _hosted(environment_version_id=uuid.uuid4()),
+        patch(
+            "simulate.models.harness_versioning.HarnessEnvironmentVersion"
+            ".no_workspace_objects"
+        ) as versions,
+        patch.object(archives, "get_storage_client", return_value=storage),
+        patch.object(archives, "get_archive", side_effect=AssertionError("whole")),
+    ):
+        versions.filter.return_value.first.return_value = version
+        evidence = _one(_seeded_call(execution, scenario), Kind.WORLD_STATE_START)
+
+    assert evidence.state == expected
+    if expected == State.NOT_CAPTURED:
+        assert evidence.cause == Cause.NOT_READABLE_YET
+    else:
+        assert evidence.content == {"orders": [{"id": 7}]}
+
+
+@pytest.mark.django_db
+def test_a_store_that_cannot_be_reached_is_unreadable_not_missing(execution, scenario):
+    from simulate.services.harness_versioning import archives
+
+    def down(*_):
+        raise ConnectionError("storage is down")
+
+    version = SimpleNamespace(archive_object_key="envs/v1.tar.gz")
+    with (
+        _hosted(environment_version_id=uuid.uuid4()),
+        patch(
+            "simulate.models.harness_versioning.HarnessEnvironmentVersion"
+            ".no_workspace_objects"
+        ) as versions,
+        patch.object(
+            archives,
+            "get_storage_client",
+            return_value=SimpleNamespace(get_object=down),
+        ),
+    ):
+        versions.filter.return_value.first.return_value = version
+        evidence = _one(_seeded_call(execution, scenario), Kind.WORLD_STATE_START)
+
+    assert (evidence.state, evidence.cause) == (State.NOT_CAPTURED, Cause.UNREADABLE)
+
+
+@pytest.mark.django_db
+def test_one_kind_that_cannot_be_read_leaves_the_others(voice_call):
+    _turn(voice_call, "user", "I want a refund.", 0)
+    with (
+        patch.object(reader, "run_traces_source", return_value=object()),
+        patch.object(reader, "read_run_traces", side_effect=TimeoutError("ch")),
+    ):
+        read = _read(voice_call, Kind.TRANSCRIPT, Kind.SCENARIO, Kind.AGENT_TRACES)
+
+    assert read[Kind.TRANSCRIPT].state == State.PRESENT
+    assert read[Kind.SCENARIO].state == State.PRESENT
+    assert (read[Kind.AGENT_TRACES].state, read[Kind.AGENT_TRACES].cause) == (
+        State.NOT_CAPTURED,
+        Cause.UNREADABLE,
+    )
+
+
+# --- round 1 review: deleted rows and the ambient workspace ----------------------
+
+
+@pytest.mark.django_db
+def test_a_deleted_agent_version_gives_no_whole_instructions(voice_call, agent_version):
+    type(agent_version)._base_manager.filter(id=agent_version.id).update(deleted=True)
+    call = CallExecution.objects.get(id=voice_call.id)
+
+    evidence = _one(call, Kind.AGENT_INSTRUCTIONS)
+
+    assert (evidence.state, evidence.cause) == (
+        State.NOT_CAPTURED,
+        Cause.NO_WHOLE_INSTRUCTIONS,
+    )
+
+
+@pytest.mark.django_db
+def test_an_artifact_of_a_deleted_job_is_not_read(
+    organization, workspace, execution, scenario
+):
+    job, call = _artifact_call(organization, workspace, execution, scenario, size=2)
+    HostedHarnessJob.all_objects.filter(id=job.id).update(deleted=True)
+    storage = SimpleNamespace(get_object=lambda *_: pytest.fail("fetched"))
+    with (
+        _hosted(job_id=job.id),
+        patch("tfc.utils.storage_client.get_storage_client", return_value=storage),
+    ):
+        evidence = _one(call, Kind.WORLD_STATE_END)
+
+    assert (evidence.state, evidence.cause) == (
+        State.NOT_CAPTURED,
+        Cause.NO_LONGER_KEPT,
+    )
+
+
+@pytest.mark.django_db
+def test_a_chat_is_read_by_its_call_whatever_workspace_is_current(
+    text_call, organization, user
+):
+    from tfc.middleware.workspace_context import workspace_context
+
+    _message(text_call, ChatMessageModel.RoleChoices.USER, messages=["Refund 150."])
+    other = _workspace(organization, user)
+
+    with workspace_context(other, organization=organization):
+        evidence = _one(text_call, Kind.TRANSCRIPT)
+
+    assert evidence.state == State.PRESENT
+    assert evidence.content == [{"speaker": "customer", "text": "Refund 150."}]
+
+
+@pytest.mark.django_db
+def test_a_private_key_with_no_end_line_is_masked_to_the_end(voice_call):
+    body = "MIIEow" + "Kq9Z" * 10
+    _turn(voice_call, "user", f"-----BEGIN RSA PRIVATE KEY-----\n{body}\nbye", 0)
+
+    text = json.dumps(_one(voice_call, Kind.TRANSCRIPT).content)
+
+    assert body not in text
+    assert "bye" not in text
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("error", [EOFError("cut"), zlib.error("bad stream")])
+def test_an_archive_cut_short_in_any_way_is_not_readable_yet(
+    execution, scenario, error
+):
+    from simulate.services.harness_versioning import archives
+
+    version = SimpleNamespace(archive_object_key="envs/v1.tar.gz")
+    with (
+        _hosted(environment_version_id=uuid.uuid4()),
+        patch(
+            "simulate.models.harness_versioning.HarnessEnvironmentVersion"
+            ".no_workspace_objects"
+        ) as versions,
+        patch.object(archives, "stream_members", side_effect=error),
+    ):
+        versions.filter.return_value.first.return_value = version
+        evidence = _one(_seeded_call(execution, scenario), Kind.WORLD_STATE_START)
+
+    assert (evidence.state, evidence.cause) == (
+        State.NOT_CAPTURED,
+        Cause.NOT_READABLE_YET,
+    )

@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -28,6 +28,7 @@ from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.services.call_evidence import (
     CallDeleted,
     CallNotInWorkspace,
+    Cause,
     Kind,
     State,
     in_workspace,
@@ -121,7 +122,22 @@ def freeze_selection(
     asked_by_id: Any = None,
 ) -> FrozenSelection:
     """The calls a person picked, as an ordered list, or a refusal saying why."""
-    kind = SelectionKind(kind)
+    try:
+        kind = SelectionKind(kind)
+    except ValueError:
+        raise SelectionRefused(
+            "bad_kind",
+            "Calls can be selected by run, by call, by scenario or by filter.",
+        ) from None
+    # What a person sends is bounded before any of it is read or kept.
+    if len(dict.fromkeys(str(one) for one in run_ids)) > MAX_CALLS:
+        raise SelectionRefused(
+            "too_many_runs",
+            f"An ask can take calls from at most {MAX_CALLS} runs.",
+            count=len(run_ids),
+        )
+    if kind == SelectionKind.CALLS:
+        _refuse_too_many(len(call_ids))
     runs = _runs(run_ids, organization_id, workspace_id)
     description: dict[str, Any] = {
         "kind": kind.value,
@@ -129,11 +145,7 @@ def freeze_selection(
         "note": note,
     }
     if kind == SelectionKind.RUNS:
-        _refuse_too_many(
-            CallExecution._base_manager.filter(
-                test_execution_id__in=[run.id for run in runs], deleted=False
-            ).count()
-        )
+        _refuse_too_many(_calls_where(runs, Q()).count())
         calls = _calls_of(runs, Q())
     elif kind == SelectionKind.CALLS:
         description["call_ids"] = [str(one) for one in call_ids]
@@ -142,8 +154,7 @@ def freeze_selection(
         description["scenario_ids"] = [str(one) for one in scenario_ids]
         calls = _scenario_calls(runs, scenario_ids)
     else:
-        description["filters"] = filters or {}
-        calls = _filtered_calls(runs, filters or {})
+        description["filters"], calls = _filtered_calls(runs, filters or {})
 
     if not calls:
         raise SelectionRefused("empty", "No calls match this selection.")
@@ -210,12 +221,16 @@ def _uuids(values: Iterable[Any]) -> list[uuid.UUID]:
     return ids
 
 
+def _calls_where(runs: list, where: Q) -> Any:
+    return CallExecution._base_manager.filter(
+        where, test_execution_id__in=[run.id for run in runs], deleted=False
+    )
+
+
 def _calls_of(runs: list, where: Q) -> list[CallExecution]:
     """The runs' calls matching ``where``, run by run in the order picked."""
     rows = (
-        CallExecution._base_manager.filter(
-            where, test_execution_id__in=[run.id for run in runs], deleted=False
-        )
+        _calls_where(runs, where)
         .only("id", "status", "test_execution_id")
         .order_by("created_at", "id")
     )
@@ -236,20 +251,22 @@ def _chosen_calls(runs: list, call_ids: Sequence[Any]) -> list[CallExecution]:
 def _scenario_calls(runs: list, scenario_ids: Sequence[Any]) -> list[CallExecution]:
     ids = _uuids(scenario_ids)
     # A hosted trial names its scenario; its call's own scenario row may be shared.
-    return _calls_of(
-        runs,
-        Q(hosted_harness_execution__source_scenario__scenario_id__in=ids)
-        | Q(hosted_harness_execution__isnull=True, scenario_id__in=ids),
+    where = Q(hosted_harness_execution__source_scenario__scenario_id__in=ids) | Q(
+        hosted_harness_execution__isnull=True, scenario_id__in=ids
     )
+    _refuse_too_many(_calls_where(runs, where).count())
+    return _calls_of(runs, where)
 
 
-def _filtered_calls(runs: list, filters: dict[str, Any]) -> list[CallExecution]:
-    """The calls the run page's filter matches now, in the page's order."""
+def _filtered_calls(
+    runs: list, filters: Any
+) -> tuple[dict[str, Any], list[CallExecution]]:
+    """The filter as validated, and the calls it matches now, in the page's order."""
+    from simulate.serializers.run_call_filters import RunCallFiltersSerializer
     from simulate.services.run_results_v3_queries import (
         apply_run_call_query,
         run_calls_queryset,
     )
-    from simulate.views.run_results_v3 import RunCallFiltersSerializer
 
     query = RunCallFiltersSerializer(data={"filters": filters})
     if not query.is_valid():
@@ -264,7 +281,9 @@ def _filtered_calls(runs: list, filters: dict[str, Any]) -> list[CallExecution]:
         ids.extend(matched.values_list("id", flat=True))
     _refuse_too_many(len(ids))
     found = {call.id: call for call in _calls_of(runs, Q(id__in=ids))}
-    return [found[one] for one in ids if one in found]
+    return query.validated_data.get("filters") or {}, [
+        found[one] for one in ids if one in found
+    ]
 
 
 def _one_agent(runs: list) -> str:
@@ -291,14 +310,11 @@ def check_before_launch(
     workspace_id: Any,
 ) -> dict[str, Any]:
     """For each question, how many calls are ready, unmeasured or not applicable,
-    by kind and cause, and the credits the ready ones would cost."""
-    if not 1 <= len(questions) <= MAX_QUESTIONS or any(
-        not question.kinds for question in questions
-    ):
-        raise LaunchRefused(
-            "questions",
-            f"An ask takes 1 to {MAX_QUESTIONS} questions, each reading at least one kind.",
-        )
+    by kind and cause, and the credits the ready ones would cost.
+
+    Each kind's state is read without fetching what is kept elsewhere (world files,
+    agent traces), and what every call of a run shares is read once."""
+    questions = _checked_questions(questions)
     if (str(organization.id), None if workspace_id is None else str(workspace_id)) != (
         selection.organization_id,
         selection.workspace_id,
@@ -316,7 +332,9 @@ def check_before_launch(
             deleted=False,
             test_execution__deleted=False,
             test_execution__run_test__deleted=False,
-        ).select_related("test_execution__run_test")
+        ).select_related(
+            "test_execution__run_test", "test_execution__agent_version", "scenario"
+        )
     }
     if gone := len(selection.call_ids) - len(calls):
         raise LaunchRefused(
@@ -336,6 +354,7 @@ def check_before_launch(
                     organization_id=organization.id,
                     workspace_id=workspace_id,
                     shared=shared,
+                    states_only=True,
                 ).items()
             }
             for call_id in selection.call_ids
@@ -348,6 +367,14 @@ def check_before_launch(
             "calls_gone",
             "A selected call has been deleted since the ask was made.",
         ) from None
+    if unreadable := sum(
+        any(cause == Cause.UNREADABLE for _, cause in call.values()) for call in states
+    ):
+        raise LaunchRefused(
+            "evidence_unavailable",
+            "Some calls can't be read right now. Please retry in a moment.",
+            calls=unreadable,
+        )
     counted = [_count(question, states) for question in questions]
     priced = [
         one["ready"]
@@ -363,6 +390,27 @@ def check_before_launch(
         # Questions billed on what they use, with no price before they run.
         "priced_by_use": [q.name for q in questions if q.priced_by_use],
     }
+
+
+def _checked_questions(questions: Sequence[Question]) -> list[Question]:
+    """1 to ``MAX_QUESTIONS`` questions, each reading known kinds, each kind once."""
+    refused = LaunchRefused(
+        "questions",
+        f"An ask takes 1 to {MAX_QUESTIONS} questions, each reading at least one kind.",
+    )
+    if not 1 <= len(questions) <= MAX_QUESTIONS:
+        raise refused
+    checked = []
+    for question in questions:
+        try:
+            kinds = tuple(dict.fromkeys(Kind(kind) for kind in question.kinds))
+        except ValueError:
+            raise refused from None
+        if not kinds:
+            raise refused
+        # Every other field kept as given (a question priced by use stays so).
+        checked.append(replace(question, kinds=kinds))
+    return checked
 
 
 def _count(question: Question, states: list[dict]) -> dict[str, Any]:
@@ -423,6 +471,7 @@ def launch_gate(
     ``priced_answers`` are the answers with a price per answer (all of them when not
     given); a question priced by use gets the shared evaluator's checks instead.
     Nothing is spent or kept here; a key that is read is dropped at once."""
+    questions = _checked_questions(questions)
     if answers < 1:
         raise LaunchRefused(
             "nothing_ready", "No selected call has the evidence these questions read."
@@ -510,10 +559,6 @@ def _check_capability(organization: Any) -> None:
         ) from None
 
 
-def _no_description(error: BaseException) -> dict | None:
-    return None
-
-
 def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
     from agentic_eval.core_evals.run_prompt.litellm_models import (
         MissingProviderKeyError,
@@ -521,22 +566,11 @@ def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
     )
     from evaluations.decision_models import get_decision_model
     from evaluations.engine import instance
-    from tfc.ee_gates import is_jev_model
+    from tfc.ee_gates import describe_jev_error, is_jev_model
     from tfc.middleware.workspace_context import (
         get_current_workspace,
         set_workspace_context,
     )
-
-    # A build without ee has no decision models to key: it catches nothing here.
-    gateway_errors: tuple[type[Exception], ...] = ()
-    describe: Callable[[BaseException], dict | None] = _no_description
-    try:
-        from ee.decisions import errors as decision_errors
-    except ImportError:
-        pass
-    else:
-        gateway_errors = (decision_errors.DecisionGatewayError,)
-        describe = decision_errors.describe
 
     if not is_jev_model(model) and get_decision_model(model) is None:
         raise LaunchRefused(
@@ -557,20 +591,16 @@ def _check_key(model: str, organization: Any, workspace_id: Any) -> None:
         raise LaunchRefused(
             "JEV_KEY_MISSING", str(missing), settings_path=AI_PROVIDERS_SETTINGS_PATH
         ) from None
-    except gateway_errors as failed:
-        code = getattr(failed, "code", None)
-        if code == "DECISION_KEY_MISSING":
-            raise LaunchRefused(
-                code,
-                missing_provider_key_message(getattr(failed, "provider", None)),
-                settings_path=AI_PROVIDERS_SETTINGS_PATH,
-            ) from None
-        # The gateway's own body-free wording for its code; nothing upstream.
-        described = describe(failed) or {}
+    except Exception as failed:
+        # Another decision model's missing key comes wrapped as a gateway error;
+        # the key read raises no other.
+        described = describe_jev_error(failed)
+        if described is None or described.get("code") != "DECISION_KEY_MISSING":
+            raise
         raise LaunchRefused(
-            code or "decision_check_unavailable",
-            described.get("message")
-            or "The decision model's key can't be checked right now. Please retry in a moment.",
+            "DECISION_KEY_MISSING",
+            missing_provider_key_message(getattr(failed, "provider", None)),
+            settings_path=AI_PROVIDERS_SETTINGS_PATH,
         ) from None
     finally:
         set_workspace_context(workspace=scope)
@@ -596,6 +626,7 @@ def _check_credits(organization: Any, answers: int) -> None:
         raise LaunchRefused(
             code,
             CREDIT_MESSAGES.get(code)
+            or getattr(refused, "reason", None)
             or f"This ask needs about {credits:g} credits, more than your "
             "organization has left this month.",
             credits_estimate=credits,

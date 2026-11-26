@@ -4,7 +4,7 @@ import { keyframes } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import FalconIcon from "src/components/falcon-icon";
 
-import { CONSOLE_COPY } from "../build.constants";
+import { CONSOLE_COPY, JUMP_BAR_HEIGHT } from "../build.constants";
 
 const SHIP_SIZE = 14;
 const DASH_PERIOD = 12;
@@ -190,7 +190,7 @@ export function JumpToLatestBar({ hasNewMessage, onClick }) {
           left: 0,
           right: 0,
           bottom: 0,
-          height: 32,
+          height: JUMP_BAR_HEIGHT,
           display: "flex",
           alignItems: "center",
           gap: 1,

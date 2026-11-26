@@ -195,3 +195,47 @@ it("does not spend a cursor or a read joining a peer's layout-effect refetch aft
   chip.unmount();
   client.clear();
 });
+
+it("spends one continuation budget across chips that share a query", async () => {
+  const { wrapper, client } = sharedCache();
+  let served = 0;
+  // No page carries the saved ids. The chain ends after 40 pages only so an
+  // unshared budget (12 per chip, 36 here) still settles instead of running on.
+  readQuery.mockImplementation(() => {
+    served += 1;
+    return Promise.resolve(
+      page([cached], served < 40 ? `cursor-${served}` : null),
+    );
+  });
+  const ids = ["gone-a", "gone-b", "gone-c"];
+
+  const chips = render(
+    <>
+      {ids.map((id) => (
+        <FilterValueLabel
+          key={id}
+          filter={{ ...filter, value: [id] }}
+          source="traces"
+        />
+      ))}
+    </>,
+    { wrapper },
+  );
+  await waitFor(
+    () => {
+      for (const id of ids) expect(screen.getByText(id)).toBeVisible();
+    },
+    { timeout: 5000 },
+  );
+  // Let any trailing dispatch surface before counting.
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+
+  // Page one plus twelve continuation reads for the shared query, not 12 × 3.
+  expect(requestedCursors()).toEqual([
+    undefined,
+    ...Array.from({ length: 12 }, (_, i) => `cursor-${i + 1}`),
+  ]);
+  expect(chips.container.querySelector(".MuiSkeleton-root")).toBeNull();
+  chips.unmount();
+  client.clear();
+});

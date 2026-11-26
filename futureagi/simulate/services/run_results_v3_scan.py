@@ -478,6 +478,8 @@ def _outcome(
     failed: Truth,
     errored: Truth,
     passed: Truth,
+    *,
+    agent_failed: bool = False,
 ) -> str:
     """The ``result_outcome`` CASE, in its order."""
     if status in QUEUED_CALL_STATUSES:
@@ -489,6 +491,9 @@ def _outcome(
         and harness_status not in SKIPPED_HARNESS_STATUSES
     ):
         return "cancelled"
+    if harness_status in _HARNESS_ERROR and agent_failed:
+        # The trial ended on the agent's own failure (it stalled, it hung up): the agent failed it.
+        return "failed"
     if harness_status in _HARNESS_ERROR or status in ERRORED_CALL_STATUSES:
         return "error"
     if status != "completed":
@@ -550,7 +555,7 @@ class _Judge:
         self._natives = _Memo()
 
     def _entry(self, text: str) -> Any:
-        """One entry from its ``[status, output, output_type, source]`` text."""
+        """One entry from its JSON array text, one value per ``_ENTRY_KEYS``."""
         if (entry := self._parsed.get(text, MISSING)) is MISSING:
             values = _loads(text)
             # Absent keys read as JSON null here; no rule below tells them apart.
@@ -652,6 +657,7 @@ SELECT ce.id, ce.status, ce.duration_seconds,
   ce.avg_stop_time_after_interruption_ms, ce.ai_interruption_count, ce.row_id,
   CASE WHEN jsonb_typeof(ce.call_metadata -> 'harness_outcome_status') = 'string'
     THEN ce.call_metadata ->> 'harness_outcome_status' END,
+  ce.call_metadata #>> '{{hosted_harness_receipt,failure,domain}}',
   NULLIF(ce.call_metadata ->> 'harness_scenario_key', ''),
   NULLIF(ce.call_metadata ->> 'use_case', ''),
   NULLIF(ce.call_metadata ->> 'goal', ''),
@@ -827,6 +833,7 @@ def scan_call_values(
                 ai_interruptions,
                 row_id,
                 harness_status,
+                failure_domain,
                 scenario_key,
                 *metadata_goals,
                 metric_latency,
@@ -872,7 +879,12 @@ def scan_call_values(
                     "result_attack": UNGROUPED,
                     "result_task": UNGROUPED,
                     "result_outcome": _outcome(
-                        status, harness_status, failed, errored, passed
+                        status,
+                        harness_status,
+                        failed,
+                        errored,
+                        passed,
+                        agent_failed=failure_domain == "agent",
                     ),
                     "scores": scores,
                 }

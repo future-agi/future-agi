@@ -106,8 +106,8 @@ describe("AddExistingDataset", () => {
   });
 
   /** Drive the full form flow: render → select dataset → click submit. */
-  async function selectDatasetAndSubmit() {
-    renderComponent();
+  async function selectDatasetAndSubmit(props = {}) {
+    renderComponent(props);
     const user = userEvent.setup();
 
     // Select a dataset — fires the columns query.
@@ -321,5 +321,49 @@ describe("AddExistingDataset", () => {
       { col_name: "input.text", data_type: "text", span_field: "input.text" },
     ]);
     expect(payload.new_mapping_config).toEqual([]);
+    expect(payload).not.toHaveProperty("filters");
+  });
+
+  it("sends the grid filters with select-all", async () => {
+    GET.mockResolvedValueOnce({
+      data: {
+        result: {
+          columns: [{ id: "col-1", name: "input.text", data_type: "text" }],
+        },
+      },
+    });
+    POST.mockResolvedValueOnce({
+      data: {
+        status: true,
+        result: { status: "processing" },
+      },
+    });
+    const gridFilters = [
+      {
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
+            "2026-11-01T00:00:00.000Z",
+            "2026-11-08T00:00:00.000Z",
+          ],
+        },
+      },
+    ];
+
+    await selectDatasetAndSubmit({
+      selectAll: true,
+      selectedTraces: ["deselected-trace"],
+      selectAllFilters: gridFilters,
+    });
+
+    expect(POST).toHaveBeenCalledTimes(1);
+    const [, payload] = POST.mock.lastCall;
+    expect(payload).toMatchObject({
+      select_all: true,
+      trace_ids: ["deselected-trace"],
+      filters: gridFilters,
+    });
   });
 });

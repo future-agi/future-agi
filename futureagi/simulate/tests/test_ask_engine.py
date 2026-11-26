@@ -13,6 +13,7 @@ ones.
 from __future__ import annotations
 
 import json
+import time
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -197,8 +198,11 @@ class FakeDecisionModel:
         self.requests = []
         self.answer = answer or _answer()
         self.error = error
+        self.before = None
 
     def __call__(self, client, payload, timeout):
+        if self.before is not None:
+            self.before()
         self.requests.append(json.loads(json.dumps(payload)))
         if self.error is not None:
             raise self.error
@@ -951,3 +955,504 @@ def test_every_result_is_a_call_of_the_selection_and_the_counts_add_up(
     )
     ask.refresh_from_db()
     assert ask.status == SimulateAsk.Status.FINISHED
+
+
+# --- round 1 review ------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _settle_not_queued():
+    # The later settle is queued next to the job; no test reaches a real queue.
+    with patch.object(engine.settle_ask_later, "apply_async") as later:
+        yield later
+
+
+def _put_template(auth_client, template_id, body):
+    response = auth_client.put(
+        f"/model-hub/eval-templates/{template_id}/update/", body, format="json"
+    )
+    assert response.status_code == 200, getattr(response, "data", response)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("edit", ["label_definitions", "choice_scores"])
+def test_an_in_place_edit_through_the_update_view_is_not_graded(
+    organization,
+    workspace,
+    user,
+    auth_client,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    edit,
+):
+    """The update view edits a template in place, with no new version; a row is
+    graded only on the definition the ask launched."""
+    from ee.usage.models.usage import APICallLog
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    ask = _launch(selection, organization, workspace, user)
+    template = EvalTemplate.objects.get(id=ask.questions[0]["eval_template_id"])
+    versions = EvalTemplateVersion.objects.filter(eval_template=template).count()
+    if edit == "label_definitions":
+        mapping = json.loads(json.dumps(template.config["jev_mapping"]))
+        mapping["choice"]["descriptions"]["Yes"] = "Only when it refunded twice."
+        _put_template(auth_client, template.id, {"jev_mapping": mapping})
+    else:
+        _put_template(auth_client, template.id, {"choice_scores": {"Yes": 0, "No": 1}})
+    assert (
+        EvalTemplateVersion.objects.filter(eval_template=template).count() == versions
+    )
+
+    _grade_all(ask)
+
+    assert {(r.state, r.cause) for r in _rows(ask)} == {
+        (STATE.GRADING_ERROR, "question_changed")
+    }
+    assert decision_model.requests == []
+    assert not APICallLog.objects.filter(organization=organization).exists()
+
+
+@pytest.mark.django_db
+def test_a_display_only_edit_through_the_update_view_still_grades(
+    organization,
+    workspace,
+    user,
+    auth_client,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+):
+    ask = _launch(selection, organization, workspace, user)
+    template_id = ask.questions[0]["eval_template_id"]
+    _put_template(auth_client, template_id, {"description": "Renamed for the library"})
+
+    _grade_all(ask)
+
+    assert {r.state for r in _rows(ask)} == {STATE.ANSWERED}
+
+
+class _WorkerKilled(BaseException):
+    """The worker process dying: no ``except Exception`` in the path catches it."""
+
+
+@pytest.mark.django_db
+def test_a_row_closed_as_dead_while_its_grading_still_ran_keeps_the_charge(
+    organization, workspace, user, selection, gate_passes, queued, decision_model
+):
+    """The grading outlived the give-up time: the row stays closed, and it names
+    the evaluator's log row that was charged."""
+    from ee.usage.models.usage import APICallLog
+
+    ask = _launch(selection, organization, workspace, user)
+    row = _rows(ask)[0]
+
+    def closed_before_the_evaluator_logs(*_args):
+        # Closed before the evaluator writes its log row, so only the grading's
+        # own late write can name what it charged.
+        SimulateEvalResult.objects.filter(id=row.id).update(
+            claimed_at=timezone.now() - engine.GRADING_GIVE_UP - timedelta(seconds=1)
+        )
+        engine._close_dead(ask.id)
+        return False
+
+    with patch.object(
+        engine, "_too_large", side_effect=closed_before_the_evaluator_logs
+    ):
+        grade_row(str(row.id))
+
+    row.refresh_from_db()
+    (log,) = APICallLog.objects.filter(organization=organization)
+    assert (row.state, row.cause) == (STATE.INFRASTRUCTURE_ERROR, "worker_died")
+    assert row.evaluator_log_id == log.log_id
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("dies", ["inside_the_evaluator", "before_the_evaluator"])
+def test_a_dead_workers_row_says_whether_the_evaluator_logged_a_call(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    dies,
+):
+    from ee.usage.models.usage import APICallLog
+
+    ask = _launch(selection, organization, workspace, user)
+    row = _rows(ask)[0]
+    if dies == "inside_the_evaluator":
+        decision_model.error = _WorkerKilled()
+        killed = patch.object(engine, "_too_large", wraps=engine._too_large)
+    else:
+        killed = patch.object(engine, "_too_large", side_effect=_WorkerKilled())
+    with killed, pytest.raises(_WorkerKilled):
+        grade_row(str(row.id))
+    SimulateEvalResult.objects.filter(id=row.id).update(
+        claimed_at=timezone.now() - engine.GRADING_GIVE_UP - timedelta(seconds=1)
+    )
+
+    engine.settle_ask(ask.id)
+
+    row.refresh_from_db()
+    assert (row.state, row.cause) == (STATE.INFRASTRUCTURE_ERROR, "worker_died")
+    logged = APICallLog.objects.filter(organization=organization)
+    if dies == "inside_the_evaluator":
+        (log,) = logged
+        assert row.evaluator_log_id == log.log_id
+    else:
+        assert not logged.exists()
+        assert row.evaluator_log_id is None
+
+
+@pytest.mark.django_db
+def test_a_lost_start_response_leaves_rows_a_worker_already_claimed(
+    organization, workspace, user, selection, gate_passes
+):
+    """The queue raised, but the job had started and claimed a row: that row is
+    left to its worker, and the ask is not finished over it."""
+    claimed = {}
+
+    def started_then_raised(*args, **kwargs):
+        row = SimulateEvalResult.objects.order_by("created_at", "id").first()
+        claimed["id"] = row.id
+        engine._claim(row)
+        raise RuntimeError("start response lost")
+
+    with patch.object(engine.run_ask, "apply_async", side_effect=started_then_raised):
+        ask = _launch(selection, organization, workspace, user)
+
+    rows = {r.id: r for r in _rows(ask)}
+    taken = rows.pop(claimed["id"])
+    assert (taken.state, taken.claimed_at is not None) == (STATE.PENDING, True)
+    assert {(r.state, r.cause) for r in rows.values()} == {
+        (STATE.INFRASTRUCTURE_ERROR, "queue_refused")
+    }
+    ask.refresh_from_db()
+    assert ask.status == SimulateAsk.Status.RUNNING
+
+
+def test_the_job_is_delivered_again_after_a_worker_restart():
+    from tfc.temporal.drop_in.decorator import get_activity_by_name
+
+    assert get_activity_by_name("run_ask")["max_retries"] >= 1
+
+
+@pytest.mark.django_db
+def test_an_ask_is_settled_later_even_when_every_delivery_of_its_job_died(
+    organization, workspace, user, selection, gate_passes, queued, _settle_not_queued
+):
+    ask = _launch(selection, organization, workspace, user)
+
+    _settle_not_queued.assert_called_once()
+    options = _settle_not_queued.call_args.kwargs
+    assert options["args"] == (str(ask.id),)
+    assert options["start_delay"] > engine.SETTLE_AFTER
+
+
+@pytest.mark.django_db
+def test_a_second_delivery_grades_what_is_left_and_the_later_settle_closes_the_rest(
+    organization, workspace, user, selection, gate_passes, queued, decision_model
+):
+    ask = _launch(selection, organization, workspace, user)
+    dead, left = _rows(ask)
+    # The first delivery claimed one row, then its worker restarted.
+    SimulateEvalResult.objects.filter(id=dead.id).update(claimed_at=timezone.now())
+
+    _run_ask(ask)
+
+    dead.refresh_from_db()
+    left.refresh_from_db()
+    assert left.state == STATE.ANSWERED
+    assert (dead.state, dead.cause) == (STATE.PENDING, "")
+    ask.refresh_from_db()
+    assert ask.status == SimulateAsk.Status.RUNNING
+
+    SimulateEvalResult.objects.filter(id=dead.id).update(
+        claimed_at=timezone.now() - engine.GRADING_GIVE_UP - timedelta(seconds=1)
+    )
+    engine.settle_ask_later._original_func(str(ask.id))
+
+    dead.refresh_from_db()
+    assert (dead.state, dead.cause) == (STATE.INFRASTRUCTURE_ERROR, "worker_died")
+    ask.refresh_from_db()
+    assert ask.status == SimulateAsk.Status.FINISHED
+    assert len(decision_model.requests) == 1
+
+
+def test_a_busy_organisation_is_polled_less_often_the_longer_it_waits(monkeypatch):
+    outcomes = iter(["busy"] * 8 + ["done"])
+    slept = []
+    monkeypatch.setattr(engine, "grade_row", lambda row_id: next(outcomes))
+    monkeypatch.setattr(engine.time, "sleep", slept.append)
+
+    assert engine._grade_when_free("row", time.monotonic() + 3600) == "done"
+
+    assert slept == sorted(slept)
+    assert slept[0] == engine.BUSY_WAIT_SECONDS
+    assert slept[-1] == engine.MAX_BUSY_WAIT_SECONDS
+
+
+@pytest.mark.django_db
+def test_no_row_is_graded_once_the_jobs_time_is_up(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    monkeypatch,
+):
+    """The organisation has free places; the job's own time has run out."""
+    ask = _launch(selection, organization, workspace, user)
+    monkeypatch.setattr(engine, "RUN_TIME_LIMIT_SECONDS", 300)
+
+    _run_ask(ask)
+
+    assert {(r.state, r.cause) for r in _rows(ask)} == {
+        (STATE.INFRASTRUCTURE_ERROR, "not_run")
+    }
+    assert decision_model.requests == []
+
+
+@pytest.mark.django_db
+def test_one_rows_database_error_does_not_leave_the_ask_unsettled(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    monkeypatch,
+):
+    from django.db import OperationalError
+
+    ask = _launch(selection, organization, workspace, user)
+    first, second = _rows(ask)
+    write = engine._write
+
+    def write_fails_once(row, claimed, **fields):
+        if row.id == first.id:
+            raise OperationalError("connection lost")
+        return write(row, claimed, **fields)
+
+    monkeypatch.setattr(engine, "_write", write_fails_once)
+    settled = []
+    settle = engine.settle_ask
+    monkeypatch.setattr(
+        engine, "settle_ask", lambda ask_id: settled.append(ask_id) or settle(ask_id)
+    )
+
+    _run_ask(ask)
+
+    second.refresh_from_db()
+    assert second.state == STATE.ANSWERED
+    assert settled == [str(ask.id)]
+
+
+@pytest.mark.django_db
+def test_counts_leave_out_deleted_calls_and_still_add_up(
+    organization, workspace, user, selection, calls, gate_passes, queued, decision_model
+):
+    ask = _launch(selection, organization, workspace, user)
+    _grade_all(ask)
+    CallExecution.objects.filter(id=calls[0].id).update(deleted=True)
+
+    counts = result_counts(ask)["q1"]
+
+    six = (
+        "answered",
+        "unmeasured",
+        "not_applicable",
+        "grading_error",
+        "infrastructure_error",
+        "cancelled",
+    )
+    assert counts["answered"] == 1
+    assert counts["calls_gone"] == 1
+    assert (
+        sum(counts[name] for name in six) + counts["calls_gone"] + counts["pending"]
+        == counts["requested"]
+        == 2
+    )
+    assert counts["rate"] == {"answered": 1, "labels": {"Yes": 1}}
+
+
+@pytest.mark.django_db
+def test_counts_leave_out_a_deleted_run(
+    organization, workspace, user, selection, run, gate_passes, queued, decision_model
+):
+    ask = _launch(selection, organization, workspace, user)
+    _grade_all(ask)
+    TestExecution.objects.filter(id=run.id).update(deleted=True)
+
+    counts = result_counts(ask)["q1"]
+
+    assert counts["answered"] == 0
+    assert counts["calls_gone"] == counts["requested"] == 2
+
+
+@pytest.mark.django_db
+def test_a_marker_at_the_end_of_the_last_tool_result_reaches_the_model_whole(
+    organization,
+    workspace,
+    user,
+    selection,
+    calls,
+    gate_passes,
+    queued,
+    decision_model,
+):
+    """Pass line 1, its second marker: inside the last tool result."""
+    from simulate.models.test_execution import CallTranscript
+
+    long_result = ("Order 1 refunded in full. " * 1500) + LONG_TAIL_MARKER
+    for call in calls:
+        for at, role, content in (
+            (0, CallTranscript.SpeakerRole.TOOL_CALLS, "lookup_order(1)"),
+            (1000, CallTranscript.SpeakerRole.TOOL_CALL_RESULT, long_result),
+        ):
+            CallTranscript.objects.create(
+                call_execution=call,
+                speaker_role=role,
+                content=content,
+                start_time_ms=at,
+                end_time_ms=at + 500,
+            )
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        _question(kinds=(Kind.TOOL_CALLS,)),
+    )
+
+    grade_row(str(_rows(ask)[0].id))
+
+    (sent,) = decision_model.requests
+    tools = sent["state"]
+    assert tools[-1]["content"] == long_result
+    assert tools[-1]["content"].endswith(LONG_TAIL_MARKER)
+    assert _rows(ask)[0].state == STATE.ANSWERED
+
+
+@pytest.mark.django_db
+def test_a_question_key_longer_than_the_column_is_refused_before_anything_is_written(
+    organization, workspace, user, selection, gate_passes, queued
+):
+    with pytest.raises(LaunchRefused) as refused:
+        _launch(selection, organization, workspace, user, _question("k" * 256))
+
+    assert refused.value.code == "questions"
+    assert not SimulateAsk.objects.filter(organization=organization).exists()
+    queued.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_a_repeated_question_saves_a_new_template_for_now(
+    organization, workspace, user, selection, gate_passes, queued
+):
+    """Today each ask saves its own template; reusing one is plan row 9."""
+    first = _launch(selection, organization, workspace, user)
+    second = _launch(selection, organization, workspace, user)
+
+    assert (
+        first.questions[0]["eval_template_id"]
+        != second.questions[0]["eval_template_id"]
+    )
+    assert (
+        EvalTemplate.objects.filter(
+            organization=organization, eval_tags__contains=[TEMPLATE_TAG]
+        ).count()
+        == 2
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_two_asks_of_one_organisation_on_four_threads_keep_the_limit_and_finish(
+    organization, workspace, user, selection, gate_passes, queued, monkeypatch
+):
+    """The threaded path, on real connections: at most four claims live at once,
+    one evaluator call per row, and both asks finish."""
+    import threading
+
+    from django.db import connections
+
+    from ee.usage.models.usage import APICallLog
+
+    monkeypatch.setattr(engine, "GRADING_THREADS", 4)
+    monkeypatch.setattr(engine, "BUSY_WAIT_SECONDS", 0.01)
+    first = _launch(selection, organization, workspace, user)
+    second = _launch(selection, organization, workspace, user)
+    live = []
+    lock = threading.Lock()
+
+    def answer(client, payload, timeout):
+        with lock:
+            live.append(
+                SimulateEvalResult.objects.filter(
+                    organization=organization,
+                    state=STATE.PENDING,
+                    claimed_at__isnull=False,
+                ).count()
+            )
+        time.sleep(0.05)
+        return _answer()
+
+    def run(ask):
+        try:
+            run_ask._original_func(str(ask.id))
+        finally:
+            connections.close_all()
+
+    with (
+        patch(
+            "ee.jev.client.JevSystemOneClient._request",
+            autospec=True,
+            side_effect=answer,
+        ),
+        patch(
+            "evaluations.engine.instance._get_typesafe_api_key",
+            return_value="fixture-org-key",
+        ),
+        patch("tfc.capabilities.service.check_or_raise"),
+        patch(
+            "model_hub.views.eval_runner.EvaluationRunner.get_few_shot_examples",
+            return_value=[],
+        ),
+    ):
+        workers = [threading.Thread(target=run, args=(ask,)) for ask in (first, second)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=120)
+
+    assert not any(worker.is_alive() for worker in workers)
+    assert live and max(live) <= MAX_GRADING_AT_ONCE_PER_ORG
+    rows = _rows(first) + _rows(second)
+    assert {r.state for r in rows} == {STATE.ANSWERED}
+    assert APICallLog.objects.filter(organization=organization).count() == len(rows)
+    for ask in (first, second):
+        ask.refresh_from_db()
+        assert ask.status == SimulateAsk.Status.FINISHED
+
+
+@pytest.mark.django_db
+def test_the_same_launch_sent_twice_makes_two_asks_for_now(
+    organization, workspace, user, selection, gate_passes, queued
+):
+    """Today a launch has no key, so a request sent twice makes two asks, and both
+    would be graded and charged. The launch endpoint (#4464, the run page's ask)
+    adds the client's key and returns the first ask on a repeat; it does not
+    merge until it does. This test then changes to one ask."""
+    first = _launch(selection, organization, workspace, user)
+    second = _launch(selection, organization, workspace, user)
+
+    assert first.id != second.id
+    assert SimulateAsk.objects.filter(organization=organization).count() == 2

@@ -121,6 +121,24 @@ describe("FixRunPage", () => {
     expect(screen.queryByRole("link", { name: "Back to epochs" })).toBeNull();
   });
 
+  it("offers a retry instead of blaming the agent when variations time out", async () => {
+    updateFixtureFixRun("fix-failed", (fix) => ({
+      ...fix,
+      failure: {
+        code: "fix_variations_timeout",
+        message: "writing and checking variations of the failing cases took over 10 minutes",
+      },
+      retryable: true,
+    }));
+    renderPage("fix-failed");
+    expect(
+      await screen.findByText(
+        "This epoch stopped because of a problem on our side, not your agent. Nothing changed. Retry it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  });
+
   it("offers no Stop and no stage on a finished fix", async () => {
     renderPage("fix-ready-archive");
     expect(await screen.findByText("Epoch 10")).toBeInTheDocument();

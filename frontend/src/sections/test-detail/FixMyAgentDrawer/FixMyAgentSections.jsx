@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import React from "react";
 import PropTypes from "prop-types";
 import { ShowComponent } from "../../../components/show";
@@ -25,15 +25,20 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis }) => {
         <Box
           sx={{
             display: "flex",
+            flexDirection: "column",
             justifyContent: "center",
             alignItems: "center",
+            gap: 2,
             height: "100%",
           }}
         >
           <Typography variant="s2_1" fontWeight="fontWeightMedium">
-            There are no suggestions yet, click the refresh button to get
-            suggestions
+            There are no suggestions yet. Press Refresh to analyse this run.
           </Typography>
+          {/* A run nobody has analysed has no other way to start one. */}
+          <Button variant="contained" size="small" onClick={() => refetch?.()}>
+            Refresh
+          </Button>
         </Box>
       </ShowComponent>
       <ShowComponent condition={optimizerAnalysis?.response}>
