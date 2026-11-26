@@ -284,6 +284,34 @@ class TestSettleCustomization:
         again = complete_customization(settled, None)
         assert again.terminal_at == settled.terminal_at
 
+    def test_the_sandbox_ending_keeps_a_settled_copys_outcome(self, job, settings):
+        from simulate.services.hosted_harness import record_cleanup, register_attempt
+
+        settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
+        attempt = register_attempt(
+            job.id, endpoint_base_url="https://platform.example"
+        ).attempt
+        settled = complete_customization(job, None)
+        attempt.provider_ref = "sbx-copy"
+        attempt.terminal_stage = "completed"
+        attempt.terminal_event_received = True
+        attempt.save(
+            update_fields=[
+                "provider_ref",
+                "terminal_stage",
+                "terminal_event_received",
+                "updated_at",
+            ]
+        )
+
+        ended = record_cleanup(
+            attempt.id, provider_ref="sbx-copy", verified_absent=True
+        )
+
+        # Settled from its design output, the copy is not judged as a build's snapshot.
+        assert ended.state == settled.state
+        assert ended.failure["code"] == "design_result_missing"
+
 
 # --- the gateway: asking the builder, and settling from the sandbox ------------------------------
 
