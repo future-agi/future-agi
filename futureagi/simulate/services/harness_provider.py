@@ -425,6 +425,7 @@ def _public_metadata(value):
                 "object_key",
                 "source_review_basis",
                 "source_review_receipt",
+                "assigned_source_cases",
                 "design_source_pin",
                 "design_source_selection",
                 "build_source_selection",

@@ -353,6 +353,7 @@ RUN_DROPPED_METADATA = (
     "source_review_id",
     "source_review_documents",
     "source_review_receipt",
+    "assigned_source_cases",
     "scenario_extend",
     "usage_limit",
     "harness_spend",
