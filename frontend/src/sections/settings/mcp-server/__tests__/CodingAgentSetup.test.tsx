@@ -4,7 +4,8 @@ import { render, screen } from "src/utils/test-utils";
 
 const caps = vi.hoisted(() => ({ codingAgent: true }));
 vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual =
+    await importOriginal<typeof import("src/hooks/useCapabilities")>();
   return {
     ...actual,
     useCapabilities: () => ({
@@ -17,7 +18,9 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
 });
 
 vi.mock("src/components/iconify", () => ({
-  default: ({ icon }) => <span data-testid="iconify" data-icon={icon} />,
+  default: ({ icon }: { icon: string }) => (
+    <span data-testid="iconify" data-icon={icon} />
+  ),
 }));
 
 const { default: ClientSetupGuide } = await import("../ClientSetupGuide");
