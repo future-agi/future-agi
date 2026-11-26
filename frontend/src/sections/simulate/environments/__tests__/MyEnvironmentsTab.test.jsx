@@ -21,7 +21,7 @@ vi.mock("src/api/agents/connectedAgents", () => ({
 vi.mock("../hooks/useEnvironmentsTab", () => ({
   default: () => ({ setTab: vi.fn() }),
 }));
-// A refused delete has its own tests (useDeleteRefusal.test.jsx).
+// A refused delete has its own tests (useDeleteRefusal.test.tsx).
 vi.mock("../hooks/useDeleteRefusal", () => ({ default: () => vi.fn() }));
 
 const { default: MyEnvironmentsTab } = await import("../MyEnvironmentsTab");
