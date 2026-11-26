@@ -97,7 +97,6 @@ BACKEND_WORKFLOW = "backend-ci.yml"
 GREEN = ("success", "deferred")
 CHECKS_NOT_GREEN = "required checks not green: "
 BASE = "dev"
-TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 WRITE = {"admin", "write"}
 # Tier contract v2: ordinal, and anything else (case, empty, null) is high.
 TIERS = ("low", "medium", "high")
@@ -283,18 +282,27 @@ def assigned_reviewer(node: dict) -> str | None:
 
 
 def latest_verdict(
-    reviews: list, author: str, assigned: str | None = None
+    reviews: list,
+    author: str,
+    assigned: str | None = None,
+    permissions: dict | None = None,
 ) -> dict | None:
     """The verdict of the newest devflow-review/v1 review posted by someone with
     write access who is not the author. The assigned reviewer's newest review
     wins when there is one: a later review by someone else does not replace
     it. A malformed newest review means no verdict; an older one never stands
-    in for it."""
+    in for it.
+
+    `permissions` maps a lower-case login to its repository permission
+    (GitHub.attach_reviewer_permissions). The review's authorAssociation is
+    not used: GitHub shows an org member with private membership as
+    CONTRIBUTOR to the bot token."""
+    permissions = permissions or {}
     trusted = [
         r
         for r in reviews
         if VERDICT_MARKER in (r.get("body") or "")
-        and r.get("authorAssociation") in TRUSTED
+        and permissions.get(lower_login(r)) in WRITE
         and lower_login(r) != author.lower()
     ]
     trusted.sort(key=lambda r: r.get("submittedAt") or "")
@@ -447,12 +455,14 @@ def member_view(node: dict, required: list) -> dict:
         "human_approvers": human_approvers(
             reviews, head, bot_login((node.get("author") or {}).get("login"))
         ),
-        # Approver -> repository permission, from GitHub.attach_permissions.
+        # Reviewer and approver -> repository permission, from
+        # GitHub.attach_reviewer_permissions and attach_permissions.
         "permissions": node.get("_permissions") or {},
         "verdict": latest_verdict(
             reviews,
             bot_login((node.get("author") or {}).get("login")),
             assigned_reviewer(node),
+            node.get("_permissions") or {},
         ),
         "checks": check_states(head_contexts(node), required, deferred=True),
         "files": [f["path"] for f in files],
@@ -1165,15 +1175,31 @@ class GitHub:
         self.permissions[login] = (now(), value)
         return value
 
+    def attach_reviewer_permissions(self, data: dict):
+        """Permissions of every devflow-review/v1 reviewer who is not the
+        author: a verdict counts only from someone with write access."""
+        for node in data["repository"]["admitted"]["nodes"]:
+            author = bot_login((node.get("author") or {}).get("login")).lower()
+            logins = {
+                lower_login(r)
+                for r in (node.get("reviews") or {}).get("nodes", [])
+                if VERDICT_MARKER in (r.get("body") or "")
+            } - {"", author}
+            node["_permissions"] = {
+                login: self.permission(login) for login in sorted(logins)
+            }
+
     def attach_permissions(self, data: dict, required: list, cfg: Config):
         """Approvers' permissions, only where the tier is medium."""
         for node in data["repository"]["admitted"]["nodes"]:
             m = member_view(node, required)
             if m["human_approvers"] and member_tier(m, cfg) == "medium":
-                node["_permissions"] = {
-                    login: self.permission(login)
-                    for login in sorted(m["human_approvers"])
-                }
+                node.setdefault("_permissions", {}).update(
+                    {
+                        login: self.permission(login)
+                        for login in sorted(m["human_approvers"])
+                    }
+                )
 
     def member_check_runs(self, sha: str, required: list, now=time.monotonic) -> list:
         """A member head's runs, from the cache while they are all green."""
@@ -1561,6 +1587,7 @@ def tick(reader: GitHub, required: list, cfg: Config, live: Live | None) -> dict
     before = reader.calls, live.app.calls if live else 0
     data = reader.gather()
     data["base_red"] = reader.base_red()
+    reader.attach_reviewer_permissions(data)
     reader.attach_permissions(data, required, cfg)
     reader.attach_checks(data, required, cfg)
     red_runs, failures = {}, {}
