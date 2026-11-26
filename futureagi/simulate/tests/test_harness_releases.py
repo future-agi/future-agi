@@ -185,7 +185,16 @@ def _tests_by_category(assign, names):
 class TestTestTarget:
     @pytest.mark.parametrize(
         ("scorable", "expected"),
-        [(10, 3), (11, 4), (20, 6), (100, 30), (200, 60), (300, 60), (500, 100)],
+        [
+            (10, 3),
+            (11, 4),
+            (20, 6),
+            (100, 30),
+            (200, 60),
+            (250, 60),
+            (300, 60),
+            (500, 100),
+        ],
     )
     def test_thirty_percent_small_twenty_percent_large(self, scorable, expected):
         assert target_test_size(scorable) == expected
