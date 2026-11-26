@@ -23,6 +23,7 @@ import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import ErrorStatusChip from "./ErrorStatusChip";
+import { escalationReasonText } from "./EscalationReason";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
 import {
@@ -592,7 +593,11 @@ export default function ErrorFeedTable({
 
                     {/* Status */}
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <ErrorStatusChip status={row.status} />
+                      <Tooltip title={escalationReasonText(row)} arrow>
+                        <span>
+                          <ErrorStatusChip status={row.status} />
+                        </span>
+                      </Tooltip>
                     </TableCell>
 
                     {/* Events */}

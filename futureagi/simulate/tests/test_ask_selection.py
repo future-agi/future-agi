@@ -712,7 +712,7 @@ def test_each_saved_contract_and_seed_is_read_once_for_the_whole_check(
         patch.object(call_evidence, "hosted_trial", return_value=trial),
         patch.object(
             call_evidence,
-            "environment_files",
+            "_environment_files",
             return_value={"store.json": b'{"rows": {"orders": []}}'},
         ) as seed,
     ):
@@ -1109,7 +1109,7 @@ def test_evidence_that_cannot_be_read_just_now_refuses_the_check_with_a_retry(
 
     with (
         patch.object(call_evidence, "hosted_trial", return_value=trial),
-        patch.object(call_evidence, "environment_files", side_effect=down),
+        patch.object(call_evidence, "_environment_files", side_effect=down),
         patch.dict(call_evidence._READERS, {Kind.TRANSCRIPT: down}),
         pytest.raises(LaunchRefused) as refused,
     ):

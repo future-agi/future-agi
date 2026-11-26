@@ -15,6 +15,7 @@ optimiser job, and the list of code that may start the summary at all.
 from __future__ import annotations
 
 import ast
+import re
 import threading
 from datetime import timedelta
 from pathlib import Path
@@ -625,6 +626,56 @@ def test_optimiser_job_remakes_a_summary_that_is_not_current(
     assert seen["cluster_dict_by_eval"] == made
 
 
+@pytest.mark.django_db
+def test_optimiser_job_waits_for_a_summary_already_on_its_way_and_makes_none(
+    finished_run,
+):
+    """Refresh in the pane, then in the drawer: the summary job the pane queued
+    is alive when the Fix My Agent job starts. The job waits for it and analyses
+    what it stores; it pays for no second summary."""
+    _summary(finished_run, Summary.RUNNING, timezone.now())
+    run = _optimiser_run(finished_run, cluster_dict_by_eval=None)
+
+    def _the_panes_job_finishes(_seconds):
+        _summary(finished_run, Summary.COMPLETED, timezone.now(), summary=EARLIER)
+
+    with patch(
+        "simulate.tasks.agent_optimiser_tasks.time.sleep",
+        side_effect=_the_panes_job_finishes,
+    ):
+        seen, summary_ran, _ = _analysed_with(run)
+
+    summary_ran.assert_not_called()
+    assert seen["cluster_dict_by_eval"] == EARLIER
+
+
+@pytest.mark.django_db
+def test_optimiser_job_that_outwaits_a_summary_job_analyses_without_one(
+    finished_run,
+):
+    """The summary job on its way is still running when the wait ends: the
+    analysis runs without a summary rather than paying for a second, and the
+    other job's claim is left as it is."""
+    asked = timezone.now()
+    _summary(finished_run, Summary.RUNNING, asked, summary={"old": []})
+    run = _optimiser_run(finished_run, cluster_dict_by_eval=None)
+
+    with (
+        patch("simulate.tasks.agent_optimiser_tasks.SUMMARY_WAIT_SECONDS", 0),
+        patch(
+            "simulate.tasks.agent_optimiser_tasks.time.sleep",
+            side_effect=AssertionError("waited past the end of the wait"),
+        ),
+    ):
+        seen, summary_ran, _ = _analysed_with(run)
+
+    summary_ran.assert_not_called()
+    assert seen["cluster_dict_by_eval"] is None
+    finished_run.refresh_from_db()
+    assert finished_run.eval_explanation_summary_status == Summary.RUNNING
+    assert finished_run.eval_explanation_summary_last_updated == asked
+
+
 # --- the summary job ------------------------------------------------------------
 
 
@@ -1009,6 +1060,53 @@ def test_a_failing_summary_job_marks_its_summary_failed(finished_run, finished_c
 
 
 @pytest.mark.django_db
+def test_a_summary_job_that_starts_after_another_stored_a_current_one_makes_none(
+    finished_run, finished_call
+):
+    """Another job stored a current summary between the press and this job's
+    start (Fix My Agent's, say): this job has nothing to make. It calls no
+    model, and a failure it would have had cannot mark the current one failed."""
+    _summary(finished_run, Summary.COMPLETED, timezone.now(), summary=EARLIER)
+    called = []
+
+    def _model_call():
+        called.append(True)
+        raise RuntimeError("model call failed")
+
+    _summarised(finished_run, side_effect=_model_call)
+
+    assert called == []
+    assert finished_run.eval_explanation_summary == EARLIER
+    assert finished_run.eval_explanation_summary_status == Summary.COMPLETED
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("this_job", ["fails", "finishes"])
+def test_a_summary_job_overtaken_by_a_newer_one_leaves_the_run_to_it(
+    finished_run, finished_call, this_job
+):
+    """A newer job started while this one ran (it stamped the run with its own
+    start): this job writes neither its failure nor its result over the newer
+    job's running summary."""
+    _summary(finished_run, Summary.RUNNING, timezone.now())
+    newer = {}
+
+    def _a_newer_job_starts():
+        newer["at"] = timezone.now() + timedelta(seconds=1)
+        TestExecution.objects.filter(id=finished_run.id).update(
+            eval_explanation_summary_last_updated=newer["at"]
+        )
+        if this_job == "fails":
+            raise RuntimeError("model call failed")
+
+    _summarised(finished_run, side_effect=_a_newer_job_starts)
+
+    assert finished_run.eval_explanation_summary_status == Summary.RUNNING
+    assert finished_run.eval_explanation_summary_last_updated == newer["at"]
+    assert finished_run.eval_explanation_summary is None
+
+
+@pytest.mark.django_db
 def test_a_summary_job_whose_first_read_fails_does_not_raise(finished_run):
     """A read that fails with something other than not-found (a dropped
     connection) is handled: the job does not raise out of its own handler,
@@ -1074,6 +1172,24 @@ def test_the_optimiser_limit_covers_a_summary_made_inside_it():
     assert SUMMARY_JOB_GIVE_UP >= _OPTIMISER_RUN_GIVE_UP
 
 
+def test_neither_job_can_start_once_it_would_be_read_as_lost():
+    """A job waits in the queue at most so long that it starts, and ends, before
+    the give-up that reads it as lost. A job that would start later never
+    starts, so a second press after the give-up pays for the only job."""
+    import simulate.tasks.agent_optimiser_tasks  # noqa: F401 - registers it
+    import simulate.tasks.eval_summary_tasks  # noqa: F401 - registers it
+    from tfc.temporal.drop_in.decorator import get_activity_by_name
+
+    for name, give_up in (
+        ("run_eval_summary_task", SUMMARY_JOB_GIVE_UP),
+        ("execute_optimiser_run", _OPTIMISER_RUN_GIVE_UP),
+    ):
+        activity = get_activity_by_name(name)
+        queue_wait = activity["schedule_to_start_timeout"]
+        assert queue_wait, name
+        assert timedelta(seconds=queue_wait + activity["time_limit"]) < give_up, name
+
+
 # --- the grading digest ----------------------------------------------------------
 
 
@@ -1088,6 +1204,21 @@ def test_the_grading_digest_is_made_in_the_database(finished_run, finished_call)
 
     sqls = [q["sql"] for q in queries.captured_queries]
     assert sqls and all("md5(" in sql.lower() for sql in sqls), sqls
+
+
+@pytest.mark.django_db
+def test_the_grading_digest_hashes_each_row_before_joining_them(
+    finished_run, finished_call
+):
+    """Each row is hashed first, so the joined text is a fixed size per call,
+    never one text of every call's verdicts."""
+    from simulate.tasks.eval_summary_tasks import _grading_digest
+
+    with CaptureQueriesContext(connection) as queries:
+        _grading_digest(finished_run)
+
+    sqls = [q["sql"].lower() for q in queries.captured_queries]
+    assert sqls and all(re.search(r"string_agg\(md5\(", sql) for sql in sqls), sqls
 
 
 @pytest.mark.django_db
