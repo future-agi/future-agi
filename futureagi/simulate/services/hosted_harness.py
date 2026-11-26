@@ -1312,7 +1312,7 @@ def refuse_unpaired_pins(
     sites: only a compatible pair runs.
 
     It reads the pinned agent's stored contract, from storage, so a caller makes it once for a
-    run's pins, and never while it holds a row lock.
+    run's pins, before the row lock; only a recheck after the pins moved runs under it.
     """
     if pins is None:
         return
