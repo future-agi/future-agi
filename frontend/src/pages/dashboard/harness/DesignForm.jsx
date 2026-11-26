@@ -32,6 +32,7 @@ import useBuildSources from "src/sections/simulate/environments/buildDrawer/form
 
 import DescribeFlowCard from "src/sections/simulate/environments/buildDrawer/starts/DescribeFlowCard";
 import { BUILD_FILES_ACCEPT } from "src/sections/simulate/environments/buildDrawer/forms/shared/buildFiles";
+import { suggestedNameOf } from "src/sections/simulate/environments/design/design";
 import { errorMessage } from "./harnessShared";
 
 const MODALITIES = [
@@ -94,7 +95,8 @@ export default function DesignForm({
       const body = {
         name:
           name.trim() ||
-          requirements.trim().split(/\s+/).slice(0, 8).join(" ").slice(0, 100),
+          suggestedNameOf(requirements, sources.uploads.done) ||
+          "Untitled environment",
         ...(scratch && sources.selection
           ? { personal_data_mode: privacy }
           : {}),
@@ -124,14 +126,19 @@ export default function DesignForm({
   if (scratch) {
     return (
       <Stack spacing={2}>
+        <Typography variant="body2" color="text.secondary">
+          No agent yet? Fine. Connect it later.
+        </Typography>
         <TextField
           size="small"
+          disabled={!canEdit || submitting}
+          placeholder="e.g. Support desk sandbox"
           label="Environment name (optional)"
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
         <DescribeFlowCard
-          prompt="Describe the flow, or drop files to learn from"
+          prompt="Describe the flow to build"
           description="Describe the trigger, tools and hand-offs. Attach policies, records or notes for context."
           placeholder="A customer asks for a refund. The agent checks the order and escalates purchases over $500."
           chips={[
@@ -143,6 +150,42 @@ export default function DesignForm({
           value={requirements}
           onChange={setRequirements}
           files={sources.uploads.files}
+          preparing={submitting}
+          filesFooter={
+            <>
+              {canEdit && (
+                <BuildSourceFields
+                  sources={sources}
+                  disabled={submitting}
+                  showUpload={false}
+                />
+              )}
+              {sources.selection && (
+                <Stack>
+                  <Typography id="scratch-personal-data">
+                    Personal data in the sources
+                  </Typography>
+                  <RadioGroup
+                    row
+                    aria-labelledby="scratch-personal-data"
+                    value={privacy}
+                    onChange={(event) => setPrivacy(event.target.value)}
+                  >
+                    <FormControlLabel
+                      value="synthetic_replace"
+                      control={<Radio disabled={!canEdit || submitting} />}
+                      label="Replace with stand-ins"
+                    />
+                    <FormControlLabel
+                      value="none"
+                      control={<Radio disabled={!canEdit || submitting} />}
+                      label="There’s no personal data"
+                    />
+                  </RadioGroup>
+                </Stack>
+              )}
+            </>
+          }
           onAdd={sources.uploads.add}
           onRetry={sources.uploads.retry}
           onRemove={sources.uploads.remove}
@@ -150,52 +193,10 @@ export default function DesignForm({
           disabled={!canEdit || submitting}
           canSubmit={ready}
           onNext={submit}
-          submitLabel={submitting ? "Starting…" : "Build environment"}
+          submitLabel={
+            submitting ? "Starting the builder…" : "Build environment"
+          }
         />
-        {canEdit && (
-          <BuildSourceFields
-            sources={sources}
-            disabled={submitting}
-            showUpload={false}
-          />
-        )}
-        {sources.selection && (
-          <Stack>
-            <Typography id="scratch-personal-data">
-              Personal data in the sources
-            </Typography>
-            <RadioGroup
-              row
-              aria-labelledby="scratch-personal-data"
-              value={privacy}
-              onChange={(event) => setPrivacy(event.target.value)}
-            >
-              <FormControlLabel
-                value="synthetic_replace"
-                control={<Radio />}
-                label="Replace with stand-ins"
-              />
-              <FormControlLabel
-                value="none"
-                control={<Radio />}
-                label="There’s no personal data"
-              />
-            </RadioGroup>
-          </Stack>
-        )}
-        <TextField
-          select
-          size="small"
-          label="Channel"
-          value={modality}
-          onChange={(event) => setModality(event.target.value)}
-        >
-          {MODALITIES.map((item) => (
-            <MenuItem key={item.value} value={item.value}>
-              {item.label}
-            </MenuItem>
-          ))}
-        </TextField>
         {error && <Alert severity="error">{error}</Alert>}
       </Stack>
     );

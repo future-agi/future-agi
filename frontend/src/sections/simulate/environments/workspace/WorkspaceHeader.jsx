@@ -37,6 +37,7 @@ export default function WorkspaceHeader({
   canRun,
   runBlockedReason,
   locked = false,
+  allowBuildRename = false,
   backed = false,
   onFork,
   onStartRun,
@@ -63,7 +64,7 @@ export default function WorkspaceHeader({
   // body, which the mutation writes back into the §6 cache; the workspace
   // overlays that name onto `env`, so the header reflects the new name at once.
   // Gate on `backed` (like Delete) — a forked/template env has no row to PATCH.
-  const canRename = backed && !locked;
+  const canRename = backed && (!locked || allowBuildRename);
   // Delete (§2) is live today, but only a real backend-backed env has a row to
   // remove — a forked/template env has none, so it is offered only when backed.
   const canDelete = backed && !locked;
@@ -228,6 +229,7 @@ WorkspaceHeader.propTypes = {
   canRun: PropTypes.bool,
   runBlockedReason: PropTypes.string,
   locked: PropTypes.bool,
+  allowBuildRename: PropTypes.bool,
   backed: PropTypes.bool,
   onFork: PropTypes.func,
   // Starts a run — (ids, trials); the header run-all passes ids = undefined.

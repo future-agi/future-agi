@@ -81,7 +81,13 @@ describe("DesignForm", () => {
   beforeEach(() => Object.values(mocks).forEach((mock) => mock.mockReset()));
 
   it("submits the combined scratch composer with an inferred name and reviewed file preferences", async () => {
-    mocks.create.mockResolvedValue({ job: { job_id: "scratch-doc" } });
+    let saved;
+    mocks.create.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          saved = resolve;
+        }),
+    );
     mocks.upload.mockResolvedValue({ id: "doc-17" });
     form(null, true);
     const description =
@@ -93,12 +99,16 @@ describe("DesignForm", () => {
     fireEvent.change(screen.getByTestId("describe-files"), {
       target: { files: [new File(["policy"], "returns.pdf")] },
     });
-    fireEvent.click(await screen.findByLabelText("Use returns.pdf as policy"));
+    const policy = await screen.findByLabelText("Use returns.pdf as policy");
+    expect(screen.getByText(/· Background/)).toBeInTheDocument();
+    fireEvent.click(policy);
+    expect(screen.getByText(/· Policy/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Channel")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Build environment" }));
     await waitFor(() =>
       expect(mocks.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: "Customer asks for a refund and the agent",
+          name: "Refund desk",
           requirements: description,
           personal_data_mode: "synthetic_replace",
           source_selection: {
@@ -108,6 +118,27 @@ describe("DesignForm", () => {
           },
         }),
       ),
+    );
+    expect(screen.getByLabelText(/Environment name/)).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: /describe the flow/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Select Knowledge Base" }),
+    ).toBeDisabled();
+    expect(policy).toBeDisabled();
+    expect(screen.getByLabelText("Replace with stand-ins")).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Remove returns.pdf" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", {
+        name: "Preparing returns.pdf for review",
+      }),
+    ).toBeVisible();
+    await act(async () => saved({ job: { job_id: "scratch-doc" } }));
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/scratch-doc",
     );
   });
 

@@ -35,7 +35,7 @@ function uploadErrorText({ error, name }) {
   return "The upload didn't finish. Retry it, or remove it.";
 }
 
-function FileRow({ file, accept, onRetry, onRemove, timeout }) {
+function FileRow({ file, accept, onRetry, onRemove, timeout, preparing }) {
   const status = file.status || "done";
   const role = readAsOf(file.name, accept);
   const sub =
@@ -45,7 +45,8 @@ function FileRow({ file, accept, onRetry, onRemove, timeout }) {
         ? uploadErrorText(file)
         : [
             formatFileSize(file.size, { wholeKb: true }),
-            role ? `Likely read as ${role}` : "Can't be read",
+            file.roleLabel ||
+              (role ? `Likely read as ${role}` : "Can't be read"),
           ].join(" · ");
   return (
     <Box>
@@ -112,6 +113,12 @@ function FileRow({ file, accept, onRetry, onRemove, timeout }) {
           </IconButton>
         )}
       </Stack>
+      {preparing && (
+        <Box role="status" sx={{ mt: 0.5 }}>
+          <Typography variant="caption">Reading {file.name}…</Typography>
+          <LinearProgress aria-label={`Preparing ${file.name} for review`} />
+        </Box>
+      )}
       <Collapse in={status === "uploading"} timeout={timeout} unmountOnExit>
         <LinearProgress
           variant="determinate"
@@ -135,6 +142,7 @@ FileRow.propTypes = {
   onRetry: PropTypes.func,
   onRemove: PropTypes.func,
   timeout: PropTypes.number,
+  preparing: PropTypes.bool,
 };
 
 /**
@@ -150,6 +158,7 @@ export default function UploadingFiles({
   label,
   accept = BUILD_FILES_ACCEPT,
   chips = false,
+  preparing = false,
   sx,
 }) {
   const reduce = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -205,6 +214,7 @@ export default function UploadingFiles({
             >
               <FileRow
                 file={f}
+                preparing={preparing}
                 accept={accept}
                 onRetry={onRetry}
                 onRemove={onRemove}
@@ -225,5 +235,6 @@ UploadingFiles.propTypes = {
   label: PropTypes.string.isRequired,
   accept: PropTypes.string,
   chips: PropTypes.bool,
+  preparing: PropTypes.bool,
   sx: PropTypes.object,
 };

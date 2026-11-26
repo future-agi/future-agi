@@ -789,6 +789,34 @@ describe("EnvironmentWorkspace route shell", () => {
     ).toBeDisabled();
   });
 
+  it("shows the active design request and four design stages in the normal building workspace", async () => {
+    getHarnessJob.mockResolvedValue({
+      ...BUILDING_JOB,
+      job: {
+        ...BUILDING_JOB.job,
+        metadata: {
+          name: "Refund desk",
+          design: { requirements: "Handle disputed refunds." },
+        },
+      },
+      conversation: {
+        events: [{ kind: "tool_result", payload: { tool: "save_world" } }],
+        messages: [],
+      },
+    });
+    renderWorkspace("/dashboard/simulate/environments/job-build");
+    expect(
+      await screen.findByText(PIPELINE_CHECKS_COPY.heading),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Handle disputed refunds.")).toBeInTheDocument();
+    expect(screen.getByText("2 of 4")).toBeInTheDocument();
+    expect(screen.getByText("Sealed as your environment")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Rename environment" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Design progress")).not.toBeInTheDocument();
+  });
+
   it.each(["design", "build_job"])(
     "restores the parked %s source review before showing build progress",
     async (kind) => {

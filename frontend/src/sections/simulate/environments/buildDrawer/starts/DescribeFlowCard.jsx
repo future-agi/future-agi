@@ -4,12 +4,11 @@ import {
   Box,
   Button,
   ButtonBase,
-  Collapse,
+  CircularProgress,
   IconButton,
   Stack,
   TextField,
   Typography,
-  useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
@@ -35,10 +34,10 @@ export default function DescribeFlowCard({
   submitLabel,
   accept,
   filesFooter = null,
+  preparing = false,
 }) {
   const inputRef = useRef(null);
   const [dragging, setDragging] = useState(false);
-  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
 
   const onFiles = (list) => {
     // Copied now: the input is cleared right after, which empties a live FileList.
@@ -91,7 +90,7 @@ export default function DescribeFlowCard({
         <Box
           onDragOver={(e) => {
             e.preventDefault();
-            setDragging(true);
+            if (!disabled) setDragging(true);
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
@@ -117,6 +116,7 @@ export default function DescribeFlowCard({
               maxRows={12}
               variant="standard"
               placeholder={placeholder}
+              disabled={disabled}
               value={value}
               onChange={(e) => onChange(e.target.value)}
               inputProps={{ "aria-label": prompt }}
@@ -130,8 +130,9 @@ export default function DescribeFlowCard({
               label="Attached files"
               files={files}
               accept={accept}
-              onRetry={onRetry}
-              onRemove={onRemove}
+              onRetry={disabled ? undefined : onRetry}
+              onRemove={disabled ? undefined : onRemove}
+              preparing={preparing}
               sx={{ mt: 1 }}
             />
             <Stack
@@ -143,7 +144,7 @@ export default function DescribeFlowCard({
               <Typography sx={{ ...T12, color: "text.disabled", flex: 1 }}>
                 {words
                   ? `${words} word${words === 1 ? "" : "s"}`
-                  : "Type a description or drop a file"}
+                  : "A description is required"}
               </Typography>
               <CustomTooltip
                 show
@@ -165,11 +166,7 @@ export default function DescribeFlowCard({
           </Box>
         </Box>
 
-        {filesFooter && (
-          <Collapse in={files.length > 0} timeout={reduceMotion ? 0 : "auto"}>
-            {filesFooter}
-          </Collapse>
-        )}
+        {filesFooter && <Box sx={{ mt: 1 }}>{filesFooter}</Box>}
 
         {chips?.length > 0 && (
           <Stack
@@ -183,6 +180,7 @@ export default function DescribeFlowCard({
             {chips.map((c) => (
               <ButtonBase
                 key={c}
+                disabled={disabled}
                 onClick={() => onChange(value ? `${value.trim()} ${c}` : c)}
                 sx={{
                   px: 1,
@@ -232,6 +230,11 @@ export default function DescribeFlowCard({
           variant="contained"
           color="primary"
           onClick={onNext}
+          startIcon={
+            preparing ? (
+              <CircularProgress size={14} color="inherit" />
+            ) : undefined
+          }
           disabled={!canSubmit}
           sx={BTN_SX}
         >
@@ -261,4 +264,5 @@ DescribeFlowCard.propTypes = {
   accept: PropTypes.string,
   // What the attached files need before building, right under the box.
   filesFooter: PropTypes.node,
+  preparing: PropTypes.bool,
 };

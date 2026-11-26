@@ -1,6 +1,13 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Button, Checkbox, Chip, FormControlLabel, Stack } from "@mui/material";
+import {
+  Button,
+  Checkbox,
+  Chip,
+  FormControlLabel,
+  Stack,
+  Typography,
+} from "@mui/material";
 import KnowledgeBasePicker from "../../../workspace/sources/KnowledgeBasePicker";
 import BuildFilesField from "./BuildFilesField";
 
@@ -36,6 +43,14 @@ export default function BuildSourceFields({
             label={`Use ${name} as policy`}
           />
         ))}
+      {sources.uploads.done.some(({ name }) =>
+        name.toLowerCase().endsWith(".pdf"),
+      ) && (
+        <Typography variant="caption" color="text.secondary">
+          Policy mode proposes supported instructions as rules. Other passages
+          remain background.
+        </Typography>
+      )}
       {sources.knowledge.map(({ label, selection }) => (
         <Chip
           key={selection.kb_id}

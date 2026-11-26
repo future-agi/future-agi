@@ -129,6 +129,7 @@ export default function BuilderConsole({
   working = canStop,
   stopping = false,
   preComposer,
+  emptyMessage,
   frozen = false,
   frozenReason,
   answerWithOptions = false,
@@ -423,7 +424,7 @@ export default function BuilderConsole({
                     maxWidth: 320,
                   }}
                 >
-                  {CONSOLE_COPY.empty}
+                  {emptyMessage || CONSOLE_COPY.empty}
                 </Typography>
               </Stack>
             ) : (
@@ -731,6 +732,7 @@ export default function BuilderConsole({
 }
 
 BuilderConsole.propTypes = {
+  emptyMessage: PropTypes.string,
   turns: PropTypes.array,
   running: PropTypes.bool,
   onSend: PropTypes.func,

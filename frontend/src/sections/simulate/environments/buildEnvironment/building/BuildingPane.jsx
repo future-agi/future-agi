@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Stack, Tab } from "@mui/material";
+import { Box, Stack, Tab, Typography } from "@mui/material";
 import { CustomTabs } from "src/components/tabs/tabs";
 
 import { ENV_TABS_SX } from "../../environmentOptions";
@@ -11,6 +11,7 @@ import { DERIVING_LABEL, BUILDING_TABS } from "../build.constants";
 import { pipelineStatus } from "../buildPipeline.constants";
 import DerivingAnimation from "./DerivingAnimation";
 import PipelineChecks from "./PipelineChecks";
+import { DESIGN_STEPS, designProgress } from "src/pages/dashboard/harness/harnessShared";
 
 // The deriving copy climbs a four-rung ladder off the builder's `done` set:
 // each milestone that has landed swaps the line for the next thing the engine
@@ -38,6 +39,8 @@ const derivingLabel = (done = []) => {
  * designer's DerivedPanels isLoading → panels swap, on the same build page.
  */
 export default function BuildingPane({
+  design,
+  conversation,
   done = [],
   running = false,
   failure = null,
@@ -50,6 +53,19 @@ export default function BuildingPane({
 }) {
   const [tab, setTab] = useState("overview");
 
+  const reached = design && designProgress(conversation);
+  const next = design && DESIGN_STEPS.find((step) => !reached.has(step.key));
+  const timeline = design
+    ? DESIGN_STEPS.map((step) => ({
+        id: step.key,
+        label: step.label,
+        phase: "setup",
+        status: reached.has(step.key) ? "done" : step === next ? "running" : "pending",
+      }))
+    : pipelineStatus(done, running, "setup", failure);
+  const workingLabel = design
+    ? next?.activeLabel || "Finalizing your environment"
+    : derivingLabel(done);
   const isLoading = !done.includes("scenarios") || !primed;
 
   if (!isLoading) {
@@ -91,23 +107,33 @@ export default function BuildingPane({
 
       {/* body */}
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto", px: 2 }}>
+        {design?.requirements && (
+          <Box sx={{ px: 3, pt: 2 }}>
+            <Typography variant="subtitle2">Requested environment</Typography>
+            <Typography variant="body2" sx={{ whiteSpace: "pre-wrap" }}>
+              {design.requirements}
+            </Typography>
+          </Box>
+        )}
         <DerivingAnimation
           label={
             failure
               ? (failure.canceled ? DERIVING_LABEL.canceled : DERIVING_LABEL.failed)
-              : derivingLabel(done)
+              : workingLabel
           }
           source={source}
           world={world}
           failed={!!failure}
         />
-        <PipelineChecks pipeline={pipelineStatus(done, running, "setup", failure)} />
+        <PipelineChecks pipeline={timeline} showAll={Boolean(design)} />
       </Box>
     </Stack>
   );
 }
 
 BuildingPane.propTypes = {
+  design: PropTypes.object,
+  conversation: PropTypes.object,
   done: PropTypes.arrayOf(PropTypes.string),
   running: PropTypes.bool,
   failure: PropTypes.shape({

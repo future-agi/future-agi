@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { extOf } from "./buildFiles";
 import { useFileUploads } from "./useFileUploads";
 
 export default function useBuildSources() {
@@ -24,7 +25,17 @@ export default function useBuildSources() {
       : undefined;
 
   return {
-    uploads,
+    uploads: {
+      ...uploads,
+      files: uploads.files.map((file) => ({
+        ...file,
+        roleLabel: policy[file.documentId]
+          ? "Policy"
+          : ["csv", "tsv", "json", "jsonl", "xlsx"].includes(extOf(file.name))
+            ? "Records"
+            : "Background",
+      })),
+    },
     knowledge,
     policy,
     setPolicy,

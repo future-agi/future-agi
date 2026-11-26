@@ -28,6 +28,8 @@ import BuildingPane from "./BuildingPane";
  */
 export default function BuildingStage({
   progress,
+  design,
+  conversation,
   chat,
   env,
   envState,
@@ -61,6 +63,8 @@ export default function BuildingStage({
     >
       <PanelBoundary>
         <BuildingPane
+          design={design}
+          conversation={conversation}
           done={p.done}
           running={p.running}
           failure={p.failure}
@@ -77,6 +81,8 @@ export default function BuildingStage({
 }
 
 BuildingStage.propTypes = {
+  design: PropTypes.object,
+  conversation: PropTypes.object,
   progress: PropTypes.shape({
     done: PropTypes.arrayOf(PropTypes.string),
     running: PropTypes.bool,

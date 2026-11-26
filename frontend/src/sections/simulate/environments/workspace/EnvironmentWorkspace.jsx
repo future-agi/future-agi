@@ -398,6 +398,10 @@ export default function EnvironmentWorkspace() {
   // a dead-end error page. Run is gated off and Fork is hidden (locked) until it
   // goes Live, at which point buildStatus flips and the branch below takes over.
   if (building || buildFailed) {
+    const buildingEnv = {
+      ...env,
+      name: evalDetailQuery.data?.overview?.name || metadata.name || env.name,
+    };
     const question = metadata.design && designQuestion(designJob?.conversation);
     const awaiting =
       jobQuery.data?.status?.stage === "awaiting_source_review" || question;
@@ -414,11 +418,11 @@ export default function EnvironmentWorkspace() {
           env={
             awaiting
               ? {
-                  ...env,
+                  ...buildingEnv,
                   buildingLabel: "Awaiting approval",
                   buildingTooltip: "Review and approve to continue.",
                 }
-              : env
+              : buildingEnv
           }
           envState={envState}
           canRun={false}
@@ -428,10 +432,14 @@ export default function EnvironmentWorkspace() {
               : WORKSPACE_COPY.buildingTooltip
           }
           locked
+          backed={backed}
+          allowBuildRename={Boolean(metadata.design)}
         />
         {creditBanner}
         {refusalLine}
-        {metadata.design || (reviewId && reviewStage) ? (
+        {question ||
+        (reviewId && reviewStage) ||
+        (metadata.design && buildFailed) ? (
           <DesignWorkspace
             chat={chat}
             canEdit={canEdit}
@@ -443,6 +451,7 @@ export default function EnvironmentWorkspace() {
             review={
               reviewId && reviewStage ? (
                 <SourceReviewPanel
+                  compact
                   reviewId={reviewId}
                   ownerId={envId}
                   canEdit={canEdit}
@@ -462,10 +471,12 @@ export default function EnvironmentWorkspace() {
           />
         ) : (
           <>
-            {designPanel}
+            {!metadata.design && designPanel}
             <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
               <BuildingStage
                 progress={progress}
+                design={metadata.design}
+                conversation={designJob?.conversation}
                 chat={chat}
                 env={env}
                 envState={envState}

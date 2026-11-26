@@ -32,7 +32,7 @@ const shimmer = keyframes`
   100% { background-position: 200% 0; }
 `;
 
-export default function PipelineChecks({ pipeline }) {
+export default function PipelineChecks({ pipeline, showAll = false }) {
   const all = useMemo(() => pipeline.filter((s) => s.phase === "setup"), [pipeline]);
   const total = all.length;
   const done = all.filter((s) => s.status === "done").length;
@@ -47,12 +47,13 @@ export default function PipelineChecks({ pipeline }) {
     all seven are done, the whole timeline is visible.
   */
   const rows = useMemo(() => {
+    if (showAll) return all;
     const runningIdx = all.findIndex((s) => s.status === "running");
     const failedIdx = all.findIndex((s) => s.status === "failed");
     if (failedIdx >= 0) return all.slice(0, failedIdx + 1);
     if (runningIdx >= 0) return all.slice(0, Math.min(all.length, runningIdx + 2));
     return all; /* everything done, or nothing running yet */
-  }, [all]);
+  }, [all, showAll]);
 
   if (!all.length) return null;
 
@@ -112,4 +113,4 @@ export default function PipelineChecks({ pipeline }) {
   );
 }
 
-PipelineChecks.propTypes = { pipeline: PropTypes.array };
+PipelineChecks.propTypes = { pipeline: PropTypes.array, showAll: PropTypes.bool };

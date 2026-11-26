@@ -13,7 +13,7 @@ vi.mock("../building/DerivingAnimation", () => ({
 }));
 vi.mock("../building/PipelineChecks", () => ({
   default: ({ pipeline }) => (
-    <div data-testid="checks">{pipeline.filter((s) => s.status === "done").length} done</div>
+    <div data-testid="checks" data-states={pipeline.map(s => s.id + ":" + s.status).join(",")}>{pipeline.filter((s) => s.status === "done").length} done</div>
   ),
 }));
 
@@ -93,6 +93,15 @@ describe("BuildingStage", () => {
     );
     expect(screen.getByTestId("deriving")).toHaveTextContent(DERIVING_LABEL.loading);
     expect(screen.getByTestId("checks")).toHaveTextContent("7 done");
+  });
+
+  it("uses successful design tool results for the four design steps and renders the original request", () => {
+    render(<BuildingStage progress={makeProgress({ done: ["scenarios"] })} design={{ requirements: "Check escalation for disputed refunds" }} conversation={{ events: [
+      { kind: "tool_result", payload: { tool: "save_world" } },
+      { kind: "tool_result", payload: { tool: "check_design", is_error: true } },
+    ] }} />);
+    expect(screen.getByText("Check escalation for disputed refunds")).toBeInTheDocument();
+    expect(screen.getByTestId("checks")).toHaveAttribute("data-states", "approved:done,world:done,suite:running,sealed:pending");
   });
 
   it("null-guards a mid-init progress without crashing", () => {

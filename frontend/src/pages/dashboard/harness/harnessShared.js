@@ -292,6 +292,7 @@ export const DESIGN_STEPS = [
   {
     key: "approved",
     label: "Design approved",
+    activeLabel: "Preparing your design",
     tools: [
       "create_schema",
       "define_tool",
@@ -303,16 +304,19 @@ export const DESIGN_STEPS = [
   {
     key: "world",
     label: "World, tools and rules built",
+    activeLabel: "Building the world, tools and rules",
     tools: ["save_world"],
   },
   {
     key: "suite",
     label: "Scenarios written and proved",
+    activeLabel: "Writing and proving scenarios",
     tools: ["check_design"],
   },
   {
     key: "sealed",
     label: "Sealed as your environment",
+    activeLabel: "Sealing your environment",
     tools: ["finish_design"],
   },
 ];

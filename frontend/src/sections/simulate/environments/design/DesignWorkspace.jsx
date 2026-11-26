@@ -124,6 +124,11 @@ export default function DesignWorkspace({
         busy={chat.running || chat.inFlight}
         chat={({ collapse, open, collapseRef }) => (
           <BuilderConsole
+            emptyMessage={
+              review
+                ? "The builder starts after source review. Check the status of your files beside this conversation."
+                : undefined
+            }
             turns={chat.turns}
             running={chat.running}
             working={chat.working}
