@@ -264,7 +264,7 @@ def _build_input_schema(
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
     properties: dict[str, Any] = {}
     required: list[str] = []
-    request_mapping = {"path": [], "query": [], "body": []}
+    request_mapping: dict[str, list[str]] = {"path": [], "query": [], "body": []}
 
     def add_property(name: str, schema: dict[str, Any], is_required: bool) -> None:
         if name in properties:
@@ -403,6 +403,7 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             parameters, contract, method=method
         )
         _apply_pagination_policy(entry, input_schema, request_mapping)
+        headers: dict[str, str] = {}
         # A view that requires an Idempotency-Key header gets it as a required argument, so a
         # client's retry with the same key returns the first answer instead of repeating the work.
         if entry.get("idempotency_header"):
@@ -418,7 +419,7 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
                 "description": "Any unique value; reuse it to repeat this call safely.",
             }
             input_schema.setdefault("required", []).append("idempotency_key")
-            request_mapping["headers"] = {"idempotency_key": "Idempotency-Key"}
+            headers["idempotency_key"] = "Idempotency-Key"
         annotations = _annotations(method, access)
         if "idempotent" in entry:
             if not isinstance(entry["idempotent"], bool):
@@ -444,7 +445,10 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             "request": {
                 "method": method.upper(),
                 "path": path,
-                "parameters": request_mapping,
+                "parameters": {
+                    **request_mapping,
+                    **({"headers": headers} if headers else {}),
+                },
             },
             "response": _response_policy(entry, operation, contract),
             "source": {"operationId": operation.get("operationId")},
