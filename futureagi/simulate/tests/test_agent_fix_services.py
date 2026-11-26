@@ -3061,6 +3061,82 @@ class TestWinnerGrading:
             call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
         } == {call_id: sorted([str(first.id), str(second.id)]) for call_id in graded}
 
+    def _limited(self, source_run, settings, budget_usd):
+        """A fix with a winner to grade whose limit is ``budget_usd``, and a second eval
+        added to the environment after its last check run was admitted."""
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run, candidate, runs, first = self._fix(source_run)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "budget_usd": budget_usd}
+        )
+        fix_run.refresh_from_db()
+        # The checks' sealed $0.03, and one eval's worst case on the baseline and the
+        # final check: what the limit was held against before the eval was added.
+        assert committed_usd(fix_run) == Decimal("0.53")
+        added = _mapped_eval(
+            source_run, name="Accuracy", template_name="accuracy_regrade"
+        )
+        graded = {
+            str(execution.call_execution_id)
+            for key in ("base", "final")
+            for execution in _executions(runs[key])
+        }
+        return fix_run, candidate, graded, first, added
+
+    def test_an_eval_added_mid_fix_is_not_graded_past_the_limit(
+        self, source_run, settings
+    ):
+        fix_run, candidate, graded, first, _added = self._limited(
+            source_run, settings, 0.6
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        # Both evals on both runs would bring the fix to $1.03 of its $0.60: the eval the
+        # checks were held for is graded, the one added after them is not.
+        queued = {
+            call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
+        }
+        assert queued == {call_id: [str(first.id)] for call_id in graded}
+        evals = {config for configs in queued.values() for config in configs}
+        priced = Decimal("0.03") + len(graded) * len(evals) * Decimal("0.25")
+        assert priced <= Decimal("0.6")
+
+    def test_an_eval_added_mid_fix_is_graded_when_the_limit_covers_it(
+        self, source_run, settings
+    ):
+        fix_run, candidate, graded, first, added = self._limited(
+            source_run, settings, 1.03
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        assert {
+            call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
+        } == {call_id: sorted([str(first.id), str(added.id)]) for call_id in graded}
+
+    def test_grading_no_eval_fits_queues_nothing(self, source_run, settings):
+        fix_run, candidate, _graded, _first, _added = self._limited(
+            source_run, settings, 0.5
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        dispatched.assert_not_called()
+        winner = AgentFixCandidate.no_workspace_objects.get(id=candidate.id)
+        assert winner.outcome == Outcome.WINNER
+
+    def test_what_a_fix_holds_without_its_evals_reserves(self, source_run, settings):
+        fix_run, _candidate_, _graded, _first, _added = self._limited(
+            source_run, settings, 0.6
+        )
+
+        # Two evals now on the baseline and the final check; without them, what it billed.
+        assert committed_usd(fix_run) == Decimal("1.03")
+        assert committed_usd(fix_run, eval_count=0) == Decimal("0.03")
+        assert committed_usd(fix_run, eval_count=1) == Decimal("0.53")
+
     def test_a_failed_hand_off_unstamps_every_config_of_the_calls_it_did_not_reach(
         self, source_run
     ):

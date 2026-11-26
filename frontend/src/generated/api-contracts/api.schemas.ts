@@ -37578,6 +37578,93 @@ export interface EvalTaskUpdateResponseApi {
   result: EvalTaskUpdateResultApi;
 }
 
+export interface FeedEscalationValuesApi {
+  /**
+   * @minimum 2
+   * @maximum 1000000
+   */
+  min_findings: number;
+  entry_multiplier: string;
+  /**
+   * @minimum 1
+   * @maximum 1000000
+   */
+  entry_delta: number;
+  /**
+   * @minimum 5
+   * @maximum 60
+   */
+  entry_confirmation_minutes: number;
+  /** @minimum 0 */
+  recovery_min: number;
+  recovery_multiplier: string;
+  /** @minimum 0 */
+  recovery_delta: number;
+  /**
+   * @minimum 5
+   * @maximum 60
+   */
+  recovery_confirmation_minutes: number;
+}
+
+export type FeedEscalationSettingsApiRanges = {
+  [key: string]: { [key: string]: number };
+};
+
+export interface FeedEscalationSettingsApi {
+  values: FeedEscalationValuesApi;
+  defaults: FeedEscalationValuesApi;
+  ranges: FeedEscalationSettingsApiRanges;
+  revision: number;
+  /** @minLength 1 */
+  algorithm_version: string;
+  defaults_version: number;
+  workspace_id: string;
+  /** @minLength 1 */
+  workspace_name: string;
+  can_edit: boolean;
+  window_minutes: number;
+  baseline_hours: number;
+  cadence_minutes: number;
+  processing_allowance_minutes: number;
+}
+
+export interface FeedEscalationSettingsApiResponseApi {
+  status?: boolean;
+  result: FeedEscalationSettingsApi;
+}
+
+export interface FeedEscalationSettingsBodyApi {
+  /**
+   * @minimum 2
+   * @maximum 1000000
+   */
+  min_findings?: number;
+  entry_multiplier?: string;
+  /**
+   * @minimum 1
+   * @maximum 1000000
+   */
+  entry_delta?: number;
+  /**
+   * @minimum 5
+   * @maximum 60
+   */
+  entry_confirmation_minutes?: number;
+  /** @minimum 0 */
+  recovery_min?: number;
+  recovery_multiplier?: string;
+  /** @minimum 0 */
+  recovery_delta?: number;
+  /**
+   * @minimum 5
+   * @maximum 60
+   */
+  recovery_confirmation_minutes?: number;
+  /** @minimum 0 */
+  revision: number;
+}
+
 export interface LinearTeamApi {
   /** @minLength 1 */
   id: string;
@@ -37596,6 +37683,52 @@ export interface LinearTeamsResponseApi {
   result: LinearTeamsResultApi;
 }
 
+export type FeedListRowApiStatusOrigin =
+  (typeof FeedListRowApiStatusOrigin)[keyof typeof FeedListRowApiStatusOrigin];
+
+export const FeedListRowApiStatusOrigin = {
+  system: "system",
+  manual: "manual",
+  legacy_unknown: "legacy_unknown",
+} as const;
+
+export type FeedEscalationApiUnit =
+  (typeof FeedEscalationApiUnit)[keyof typeof FeedEscalationApiUnit];
+
+export const FeedEscalationApiUnit = {
+  findings: "findings",
+  failed_evaluations: "failed_evaluations",
+} as const;
+
+export interface FeedEscalationApi {
+  current_count: number;
+  affected_trace_count: number;
+  baseline: number;
+  entry_threshold: number;
+  recovery_threshold: number;
+  unit: FeedEscalationApiUnit;
+  window_start: string;
+  window_end: string;
+  evaluated_at: string;
+  /** @minLength 1 */
+  algorithm_version: string;
+  policy_revision: number;
+  input_revision: number;
+  entry_confirmation_minutes: number;
+  recovery_confirmation_minutes: number;
+}
+
+/**
+ * Why the latest automatic escalation check failed; null when it succeeded.
+ */
+export type FeedListRowApiEscalationError =
+  (typeof FeedListRowApiEscalationError)[keyof typeof FeedListRowApiEscalationError];
+
+export const FeedListRowApiEscalationError = {
+  evidence_unavailable: "evidence_unavailable",
+  calculation_failed: "calculation_failed",
+} as const;
+
 export interface ErrorNameApi {
   /** @minLength 1 */
   name: string;
@@ -37609,6 +37742,11 @@ export interface TrendPointApi {
 }
 
 export interface FeedListRowApi {
+  status_origin?: FeedListRowApiStatusOrigin;
+  status_revision?: number;
+  escalation?: FeedEscalationApi;
+  /** Why the latest automatic escalation check failed; null when it succeeded. */
+  escalation_error?: FeedListRowApiEscalationError;
   /** @minLength 1 */
   severity_assessment_status?: string;
   /** @minLength 1 */
@@ -39685,6 +39823,83 @@ export interface SimulationEvidenceRequestApi {
   lease_token: string;
   /** @minimum 0 */
   cursor: number;
+}
+
+export interface SimulationEvidenceTurnApi {
+  id: string;
+  /** @minLength 1 */
+  speaker: string;
+  content: string;
+  start_time: number;
+  end_time: number;
+}
+
+export interface SimulationEvidenceGoalsApi {
+  use_case: string | null;
+  sub_goals: string[];
+  expected_outcome: string | null;
+}
+
+export interface SimulationEvidenceEvaluationApi {
+  /** @minLength 1 */
+  name: string;
+  value: string | null;
+  passed: boolean | null;
+  reason: string | null;
+}
+
+export type SimulationEvidenceToolApiArguments = JsonValueApi;
+
+export type SimulationEvidenceToolApiResult = JsonValueApi;
+
+export type SimulationEvidenceToolApiOk = JsonValueApi;
+
+export type SimulationEvidenceToolApiError = JsonValueApi;
+
+export type SimulationEvidenceToolApiRefused = JsonValueApi;
+
+export interface SimulationEvidenceToolApi {
+  /** @minLength 1 */
+  name: string;
+  arguments?: SimulationEvidenceToolApiArguments;
+  result?: SimulationEvidenceToolApiResult;
+  ok?: SimulationEvidenceToolApiOk;
+  error?: SimulationEvidenceToolApiError;
+  refused?: SimulationEvidenceToolApiRefused;
+  /** @minimum 0 */
+  start_time_ms?: number;
+}
+
+export type SimulationEvidenceCallApiPersona = {
+  [key: string]: JsonValueApi;
+} | null;
+
+export interface SimulationEvidenceCallApi {
+  call_execution_id: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  simulation_call_type: string;
+  /** @minLength 1 */
+  scenario: string;
+  call_summary: string | null;
+  error_message: string | null;
+  ended_reason: string | null;
+  transcript: SimulationEvidenceTurnApi[];
+  goals: SimulationEvidenceGoalsApi | null;
+  situation: string | null;
+  persona: SimulationEvidenceCallApiPersona;
+  evaluations: SimulationEvidenceEvaluationApi[];
+  agent_prompt: string | null;
+  tool_calls?: SimulationEvidenceToolApi[];
+}
+
+export interface SimulationEvidenceResponseApi {
+  calls: SimulationEvidenceCallApi[];
+  /** @minimum 0 */
+  next_cursor: number;
+  /** @minimum 0 */
+  total_calls: number;
 }
 
 export interface ClaimInvestigationsRequestApi {

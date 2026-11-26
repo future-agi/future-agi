@@ -44,9 +44,6 @@ const { seedFromTemplate } = await import("../helpers/seedEnvState");
 const { PIPELINE_CHECKS_COPY } = await import(
   "../../buildEnvironment/build.constants"
 );
-const { INFRASTRUCTURE_LINE } = await import(
-  "../../buildEnvironment/failureWords"
-);
 const { SAVE_GRACE_MS } = await import(
   "src/api/simulate-environments/environment"
 );
@@ -804,6 +801,7 @@ describe("EnvironmentWorkspace route shell", () => {
           stage: "understanding_agent",
           code: "sandbox_launch_failed",
           message: "Sandbox launch failed",
+          person_message: "The build can be retried now.",
         },
       },
     });
@@ -816,7 +814,7 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(screen.queryByText("Building")).toBeNull();
     expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
-    expect(screen.getByText(INFRASTRUCTURE_LINE)).toBeInTheDocument();
+    expect(screen.getByText("The build can be retried now.")).toBeInTheDocument();
   });
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {

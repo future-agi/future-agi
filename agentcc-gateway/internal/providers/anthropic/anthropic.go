@@ -106,6 +106,9 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	ar, err := translateRequest(req)
 	if err != nil {
+		if apiErr, ok := err.(*models.APIError); ok {
+			return nil, apiErr
+		}
 		return nil, models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err))
 	}
 	ar.Stream = false
@@ -165,6 +168,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		ar, err := translateRequest(req)
 		if err != nil {
+			if apiErr, ok := err.(*models.APIError); ok {
+				errs <- apiErr
+				return
+			}
 			errs <- models.ErrInternal(fmt.Sprintf("anthropic: translating request: %v", err))
 			return
 		}

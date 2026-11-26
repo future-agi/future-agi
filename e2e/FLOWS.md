@@ -1099,6 +1099,31 @@
 - the in-document link moves the preview to its page and the external link opens in a new tab
 - a section link scrolls its destination position to the top of the preview, on its own page or another
 
+### DATA-E2E-005 — a missing dataset or deleted Observe project link shows a recovery page that returns to its list
+
+**Goal:** A user who opens a link to a dataset that does not exist, or to an Observe project that was deleted, sees that it is unavailable and goes back to the list instead of waiting on a loading page.
+
+**Spec:** `flows/datasets/unavailable-links.spec.ts:61`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a dataset link whose id matches no dataset
+2. read the "doesn't exist or you don't have access" message and click Back to datasets
+3. land on the dataset list
+4. create two Observe projects through the API and open one of them
+5. delete that project through the API (the Observe list's delete request) and reopen its link
+6. read the same message for the project and click Back to Observe
+7. land on the Observe list, which shows the other project and not the deleted one
+
+**Backend state verified:**
+
+- no Postgres model_hub_dataset row exists for the opened dataset id, and the browser's own dataset read is refused as not found (404, or 400 with the exact missing-dataset message)
+- the deleted project keeps its Postgres tracer_project row in the actor organization, marked deleted, while the other project stays live
+- the browser's project read answers 200 before the delete and is refused as not found after it (404, or 400 with the exact missing-project message)
+- the Observe list read after Back to Observe includes the live project and not the deleted one
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
@@ -1256,6 +1281,205 @@
 - the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
 - the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
 - the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
+
+### ESC-E2E-001 — New issues require evidence before showing Escalating
+
+**Goal:** An engineer sees a newly detected issue start in review before growth is confirmed
+
+**Spec:** `flows/error-feed/creation-defaults.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish singleton and large initial scanner, F6 and evaluation clusters
+2. inspect each new issue and its filter results before confirmation
+3. check its original occurrence timestamps
+
+**Backend state verified:**
+
+- PG stores the exact source memberships with system ownership, For review and revision zero
+- collector timestamps remain original completion times
+- detail/list/status-filter APIs and the browser show those exact issues For review
+
+### ESC-E2E-002 — Confirm sustained growth and recover a quiet issue without new findings
+
+**Goal:** An engineer sees sustained growth escalate and a quiet issue return to review
+
+**Spec:** `flows/error-feed/automatic-escalation-recovery.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish baseline findings, then attach a burst through collector and fenced publishers
+2. inspect review before confirmation
+3. advance four normal boundaries through Temporal
+4. inspect escalation and evidence
+5. publish nothing further and advance quiet recovery
+6. inspect review
+
+**Backend state verified:**
+
+- PG has exactly one status revision at entry and one at recovery, including duplicate checks
+- frozen baseline, counts, thresholds and boundary timestamps equal the independently seeded windows
+- detail/list/status-filter/statistics APIs and UI agree with each persisted transition
+
+### ESC-E2E-003 — Preserve user-selected statuses and F6 attachment protection
+
+**Goal:** An engineer keeps any chosen status while automatic trend checks and new findings run
+
+**Spec:** `flows/error-feed/manual-status-protection.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish qualifying findings
+2. select all four statuses through detail controls, including the current value
+3. use the bulk status action
+4. advance growth and quiet boundaries
+5. attempt an F6 attachment and inspect rejection
+
+**Backend state verified:**
+
+- PG manual ownership, actor, status revision and F6 protection persist for all selections
+- real publisher rejects attachment to the protected issue without adding its finding
+- Feed APIs and UI retain each chosen status after both automatic cycles
+
+### ESC-E2E-004 — Configure and restore workspace escalation thresholds
+
+**Goal:** An administrator saves thresholds and can cancel, retry, or restore defaults safely
+
+**Spec:** `flows/error-feed/escalation-settings.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. inspect defaults
+2. reject invalid thresholds
+3. save eight valid values
+4. cancel edits and a reset
+5. retain and retry a failed save
+6. save a reset
+
+**Backend state verified:**
+
+- scoped settings API equals each saved policy
+- PG policy has all eight values, one revision per changed save, and the updating user
+- canceled and failed saves do not mutate the policy
+
+### ESC-E2E-005 — Share workspace settings across projects and enforce scope permissions
+
+**Goal:** An administrator configures one workspace while other workspaces and read-only users stay isolated
+
+**Spec:** `flows/error-feed/escalation-settings-scope.spec.ts:10`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two uniquely named projects in workspace A
+2. save A settings
+3. inspect settings under each project filter
+4. inspect sibling and foreign workspace defaults
+5. inspect member and viewer read-only controls
+6. attempt forbidden and foreign-scope saves
+
+**Backend state verified:**
+
+- collector traces and PG projects belong to workspace A
+- PG and scoped settings API contain one saved A policy and unchanged defaults in other workspaces
+- unauthorized PATCHes return 403 and do not change policy values or revision
+
+### ESC-E2E-006 — Apply saved thresholds without arrivals and preserve manual choices
+
+**Goal:** An administrator changes thresholds and automatic decisions update after fresh confirmation
+
+**Spec:** `flows/error-feed/settings-reevaluation.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. prepare a system escalation, candidate, review issue and manually controlled issue
+2. save workspace thresholds
+3. publish no new findings
+4. advance four eligible boundaries
+5. inspect policy revision, frozen incident baseline and preserved manual choice
+
+**Backend state verified:**
+
+- PG settings save does not itself transition any issue
+- new policy revision resets candidate confirmation and preserves the active baseline after history ages out
+- only qualifying system-owned issues change after full confirmation; API and UI show those exact decisions
+
+### ESC-E2E-007 — Evaluate current findings after merge, split, removal and supersession
+
+**Goal:** An engineer sees decisions follow current evidence when issues are regrouped or reinvestigated
+
+**Spec:** `flows/error-feed/membership-revisions.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish and confirm two small issues with a real workspace policy
+2. merge through fenced reconciliation
+3. confirm the surviving issue
+4. split and remove through reconciliation
+5. replace a source report
+6. inspect surviving issues and original occurrence times
+
+**Backend state verified:**
+
+- PG current memberships match exact source finding IDs and keep original timestamps
+- structural changes request fresh confirmation and retired issues stop evaluation
+- source supersession removes obsolete findings; list APIs and UI contain only current surviving issues
+
+### ESC-E2E-008 — Resolve concurrent settings edits without losing another save
+
+**Goal:** An administrator reloads a conflicting edit and explicitly reapplies their changes
+
+**Spec:** `flows/error-feed/settings-conflicts.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. open two sessions at one revision
+2. save in the first session
+3. see a conflict with retained draft in the second
+4. reload and explicitly save a new edit
+
+**Backend state verified:**
+
+- real stale PATCH returns 409 and leaves stored values and revision unchanged
+- scoped API and PG policy equal the last successful edit, with exactly two revision increments
+
+### ESC-E2E-009 — Pick a sensitivity preset instead of typing thresholds
+
+**Goal:** An administrator picks a sensitivity preset instead of typing eight thresholds, and exactly that preset is saved for the workspace
+
+**Spec:** `flows/error-feed/escalation-presets.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. open settings on Balanced with the defaults
+2. pick Calm and see its eight values
+3. save and reopen on Calm
+4. fine-tune one value, see Custom and Edited, save
+5. reopen, pick Balanced, save
+
+**Backend state verified:**
+
+- PG policy holds Calm's eight values, revision +1 and the updating user
+- scoped settings API returns Calm's values
+- a fine-tuned save stores Calm with only min_findings changed, revision +2
+- picking Balanced stores the server defaults in PG and the API, revision +3
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
@@ -3071,7 +3295,7 @@
 
 **Goal:** Write a question for Jev, add example questions without losing the Ask button, confirm the read, and start the run
 
-**Spec:** `flows/observe/ask-jev-composer.spec.ts:82`
+**Spec:** `flows/observe/ask-jev-composer.spec.ts:123`
 
 **Tags:** —
 
@@ -3079,20 +3303,25 @@
 
 1. send 4 traces to a new Observe project
 2. save the org TypeSafe key through the endpoint AI Providers uses
-3. open the project's Traces view, its Evaluate menu, and choose Ask a question
-4. type a question and add two example questions from Try one
-5. click Ask Jev and read the confirm for 4 traces
-6. click Start
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question, with the count held back
+4. open Past questions, switch to the horizontal nav layout and narrow the window 40 px at a time, then restore the window, Past questions and the vertical layout
+5. type a question and add two example questions from Try one
+6. click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back
+7. click Ask Jev again and click Start
 
 **Backend state verified:**
 
 - POST /tracer/instant-eval/estimate/ answers rows_to_read 4 and needs_confirm true for the project's traces
+- no POST /tracer/instant-eval/start/ is sent from Enter on the confirm's focused Back
 - POST /tracer/instant-eval/start/ is sent confirmed for 4 rows and returns a task_id, and PG holds its tracer_eval_task and tracer_instant_eval_run for the actor org with rows_requested 4
 
 **Browser observations:**
 
+- Question 1 stays at the same height on the page while the count is held back and after the size cards land
+- with Past questions open on the horizontal nav layout, narrowing the window 40 px at a time from 1280 px to 600 px (until the composer is under 220 px), the size card stays inside its pane, the size block never overflows, and the pane does not scroll sideways while the composer has 240 px
 - the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it
-- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button and has focus
+- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus
+- Enter on the focused Back closes the confirm and gives Ask Jev focus again
 
 ### OBS-E2E-065 — Ask Jev reads every trace and shows each answer
 
@@ -3120,6 +3349,31 @@
 
 - the status line says 3 traces answered and the counts read 2 Yes · 1 No
 - the traces table shows exactly the three seeded traces, each with the same answer as the rows API
+
+### OBS-E2E-071 — select-all add to a new dataset keeps the grid filter, time window and deselections
+
+**Goal:** A developer filters the trace list, narrows the time window, selects all but one trace and gets a new dataset holding exactly those traces
+
+**Spec:** `flows/observe/bulk-add-to-dataset.spec.ts:74`
+
+**Tags:** —
+
+**User steps:**
+
+1. send three matching traces now, one non-matching trace now and two matching traces ten days ago
+2. open the project's trace list and widen the date range to Past 30D
+3. filter by the shared trace name and see all five matching traces
+4. narrow the date range to Past 7D and see only the three recent ones
+5. select all with the header checkbox, then untick one row
+6. Actions → Move to dataset → Add to a new dataset with the default mapping
+7. filter by a trace name that matches nothing, select all and try to add to another new dataset
+
+**Backend state verified:**
+
+- all twelve seeded spans present in CH `spans` (FINAL) under the auto-created project
+- the new dataset has exactly the grid count minus one rows in PG model_hub_row
+- the dataset's `id` cells in PG model_hub_cell are exactly the root spans of the two still-selected recent traces: no unticked, non-matching or out-of-window trace
+- the no-match add is refused with a 400 and the "No rows match the selection." toast, and no dataset of that name exists in PG model_hub_dataset
 
 ## prompts
 
@@ -3221,7 +3475,7 @@
 
 **Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
 
-**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+**Spec:** `flows/settings/api-key-expiry.spec.ts:34`
 
 **Tags:** —
 
@@ -3375,14 +3629,14 @@
 
 **Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
 
-**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:44`
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:50`
 
 **Tags:** —
 
 **User steps:**
 
 1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
-2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
+2. open the environment's Scenarios tab, choose Add scenarios, then Upload transcript or file
 3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
 4. fix the line, name the transcript and import it
 5. land on the Scenarios tab with the import's review open

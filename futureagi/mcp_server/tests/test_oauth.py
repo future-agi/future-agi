@@ -1,5 +1,6 @@
 """Tests for MCP OAuth utilities and models."""
 
+import hashlib
 import time
 from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import patch
@@ -132,10 +133,33 @@ class TestClientSecretHashing:
         hashed = hash_client_secret("correct-secret")
         assert not verify_client_secret("wrong-secret", hashed)
 
-    def test_deterministic_hash(self):
+    def test_hash_is_salted(self):
+        # Same secret twice must produce different hashes (per-hash salt) and
+        # each stored hash must still verify against the original secret.
         h1 = hash_client_secret("same")
         h2 = hash_client_secret("same")
-        assert h1 == h2
+        assert h1 != h2
+        assert verify_client_secret("same", h1)
+        assert verify_client_secret("same", h2)
+
+    def test_hash_uses_versioned_hasher_format(self):
+        # Django hasher format (<algorithm>$[params]$<salt>$<digest>) rather
+        # than a bare digest, so the algorithm can evolve without a migration.
+        hashed = hash_client_secret("same")
+        assert hashed.split("$", 1)[0]  # names the algorithm, e.g. md5/argon2id
+        assert "$" in hashed
+
+    def test_legacy_unsalted_hash_still_verifies(self):
+        # Rows provisioned before salting was introduced store a bare SHA-256
+        # hex digest; those must keep verifying (now via a constant-time
+        # compare) so existing clients are not locked out.
+        legacy = hashlib.sha256(b"legacy-secret").hexdigest()
+        assert verify_client_secret("legacy-secret", legacy)
+        assert not verify_client_secret("other-secret", legacy)
+
+    def test_verify_rejects_malformed_stored_hash(self):
+        assert not verify_client_secret("same", "")
+        assert not verify_client_secret("same", "not-a-valid-hash")
 
 
 @pytest.mark.django_db
