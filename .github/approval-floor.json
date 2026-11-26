@@ -1,0 +1,32 @@
+{
+  "_comment": "Path floor for .github/workflows/admin-pr-approval.yml in devflow mode. A pull request that changes or renames a file matching any glob is never approved by the bot: it gets the needs-human label. Globs use ** and * and match case-insensitively. Migrations are not here: the agent review sets the tier for them.",
+  "paths": [
+    ".github/**",
+    "futureagi/accounts/**",
+    "futureagi/saml2_auth/**",
+    "futureagi/tfc/permissions/**",
+    "futureagi/tfc/middleware/auth_monitoring.py",
+    "futureagi/tfc/middleware/jwt_auth.py",
+    "futureagi/tfc/middleware/workspace_context.py",
+    "futureagi/tfc/middleware/workspace_permissions.py",
+    "futureagi/tfc/ee_gating.py",
+    "futureagi/tracer/permissions/**",
+    "futureagi/ee/licensing/**",
+    "futureagi/ee/usage/**",
+    "fi-collector/pkg/auth/**",
+    "fi-collector/pkg/pricing/**",
+    "agentcc-gateway/internal/auth/**",
+    "agentcc-gateway/internal/rbac/**",
+    "agentcc-gateway/internal/budget/**",
+    "agentcc-gateway/internal/plugins/budget/**",
+    "agentcc-gateway/internal/plugins/credits/**",
+    "agentcc-gateway/internal/redisstate/credits.go",
+    "frontend/src/auth/**",
+    "**/*billing*",
+    "**/*billing*/**",
+    "**/*pricing*",
+    "**/*pricing*/**",
+    "**/*stripe*",
+    "**/*stripe*/**"
+  ]
+}

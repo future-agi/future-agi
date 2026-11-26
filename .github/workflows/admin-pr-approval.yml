@@ -1,34 +1,50 @@
 name: Admin PR approval
 
-# Repository admins land changes through the same merge queue as everyone
-# else, without waiting for a second reviewer. This approves a pull request
-# when its author has admin permission on this repository. Other authors keep
-# the normal review requirement. Every merge to dev still goes through the
-# queue and its three required checks.
+# Approves a pull request into dev for the merge queue, so it does not wait
+# for a second reviewer. Every merge to dev still goes through the queue and
+# its three required checks. Dev dismisses stale approvals on push, so each
+# new head is approved again. The repository variable APPROVAL_MODE picks the
+# rule:
 #
-# pull_request_target runs this file from the base branch with no checkout,
-# so no pull request code executes here. Fork pull requests and drafts are
-# ignored. Both the author and the event's sender must be admins, so a push by
-# a non-admin to an admin's branch keeps the normal review. Dev dismisses stale
-# approvals on push, so each new head is approved again.
+# - admin (the default, also when unset): approve when the author and the
+#   event's sender are both repository admins, so a push by a non-admin to an
+#   admin's branch keeps the normal review.
+# - devflow: approve the head commit on a passing low-tier devflow agent
+#   review by the assigned reviewer, unless a file is on the approval floor
+#   (.github/approval-floor.json). A floor hit or a high tier gets the
+#   needs-human label instead. See .github/scripts/devflow_approval.py.
+#
+# pull_request and pull_request_review run this file from the pull request's
+# merge with dev, never from main. Fork pull requests and drafts are ignored;
+# only same-repository pull requests get a token that can write.
 on:
-  pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
     branches: [dev]
+  pull_request_review:
+    types: [submitted]
 
 permissions:
   contents: read
-  pull-requests: write
-
-concurrency:
-  group: admin-pr-approval-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
 
 jobs:
-  approve:
-    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+  admin:
+    # Only events whose sender pushed or opened the change: a label or a review
+    # by an admin must not approve a non-admin's push.
+    if: >-
+      vars.APPROVAL_MODE != 'devflow' &&
+      github.event_name == 'pull_request' &&
+      github.event.action != 'labeled' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: admin-pr-approval-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     steps:
       - name: Approve the head commit when the author is a repository admin
         env:
@@ -56,7 +72,46 @@ jobs:
             echo "Head moved to $current; the newer event approves it."
             exit 0
           fi
+          # Main's copy of this workflow can approve the same head until the next release.
+          approved=$(gh api --paginate "repos/$REPO/pulls/$PR/reviews" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and .state == \"APPROVED\" and .commit_id == \"$HEAD_SHA\") | .id")
+          if [[ -n $approved ]]; then
+            echo "Already approved $HEAD_SHA."
+            exit 0
+          fi
           gh api -X POST "repos/$REPO/pulls/$PR/reviews" \
             -f commit_id="$HEAD_SHA" -f event=APPROVE \
             -f body="Approved automatically: the author is a repository admin. The change still lands only through the dev merge queue and its required checks." \
             --jq '"approved \(.commit_id)"'
+
+  devflow:
+    # A new review, a new head, or the devflow:reviewed label (the nudge when a
+    # review was posted by a token whose events start no workflow).
+    if: >-
+      vars.APPROVAL_MODE == 'devflow' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'dev' &&
+      !github.event.pull_request.draft &&
+      (github.event.action != 'labeled' || github.event.label.name == 'devflow:reviewed')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write # adds the needs-human label
+    # Job level, so a skipped run (another label) never cancels a decision.
+    # Each run reads the pull request live, so the newest queued run is enough.
+    concurrency:
+      group: devflow-approval-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+      - name: Approve, ask for a person, or wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 -I .github/scripts/devflow_approval.py --repo "$REPO" --pr "$PR"
