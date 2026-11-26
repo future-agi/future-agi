@@ -19,6 +19,16 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
   useFeatureAllowed: () => ({ allowed: true }),
 }));
 
+// The toast the drawer hands over with, read without a provider.
+const snack = vi.hoisted(() => ({ enqueue: vi.fn(), close: vi.fn() }));
+vi.mock("src/components/snackbar", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useSnackbar: () => ({
+    enqueueSnackbar: snack.enqueue,
+    closeSnackbar: snack.close,
+  }),
+}));
+
 const { default: RunEpochDrawer } = await import("../RunEpochDrawer");
 
 const CLUSTER = "S-1A2B3C4D";
@@ -152,7 +162,7 @@ const answer = (url, config) => {
   return Promise.reject(new Error(`unexpected GET ${url}`));
 };
 
-const renderDrawer = () => {
+const renderDrawer = ({ onClose = () => {} } = {}) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -160,7 +170,7 @@ const renderDrawer = () => {
     <QueryClientProvider client={client}>
       <RunEpochDrawer
         open
-        onClose={() => {}}
+        onClose={onClose}
         clusterId={CLUSTER}
         projectId={PROJECT}
         issueTitle="Quotes a fare"
@@ -175,6 +185,8 @@ const planReads = () =>
 beforeEach(() => {
   api.get.mockReset().mockImplementation(answer);
   api.post.mockReset();
+  snack.enqueue.mockReset();
+  snack.close.mockReset();
   jobs = [];
   detail = () => Promise.resolve({ data: reviewJob });
   plans = {
@@ -200,6 +212,47 @@ describe("RunEpochDrawer: the plan", () => {
       { cluster_id: CLUSTER, project_id: PROJECT },
       { cluster_id: CLUSTER, project_id: PROJECT, environment_id: ENV },
     ]);
+  });
+
+  it("splits the picker by agent type, with counts, and keeps search within the tab", async () => {
+    const VOICE_CODE = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.resolve({
+            data: {
+              results: [
+                envRow(ENV, "Support line", "github"),
+                {
+                  ...envRow(VOICE_CODE, "Booking line", "archive"),
+                  agent_type: "voice",
+                },
+              ],
+            },
+          })
+        : answer(url, config),
+    );
+    const user = userEvent.setup();
+    renderDrawer();
+    const list = await screen.findByTestId("epoch-environments");
+    const types = screen.getByRole("group", { name: "Agent type" });
+    expect(
+      within(types)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["All2", "Chat1", "Voice1"]);
+    expect(within(list).getAllByRole("radio")).toHaveLength(2);
+    await user.click(within(types).getByRole("button", { name: /Voice/ }));
+    const radios = within(list).getAllByRole("radio");
+    expect(radios).toHaveLength(1);
+    expect(radios[0]).toHaveAccessibleName("Booking line");
+  });
+
+  it("shows no type tabs when every environment is one type", async () => {
+    renderDrawer();
+    await screen.findByTestId("epoch-environments");
+    expect(
+      screen.queryByRole("group", { name: "Agent type" }),
+    ).not.toBeInTheDocument();
   });
 
   it("drafts the picks after a swap, with no launch settings, as the contract takes them", async () => {
@@ -498,6 +551,66 @@ describe("RunEpochDrawer: the review", () => {
     expect(planReads()).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Run Epoch again" }));
     await waitFor(() => expect(planReads()).toHaveLength(1));
+  });
+
+  const EPOCH = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const withEpoch = (state) => ({
+    ...reviewJob,
+    phase: "launched",
+    epoch: {
+      id: EPOCH,
+      number: 4,
+      environment_id: ENV,
+      state,
+      step: null,
+      failure_code: null,
+      retryable: false,
+      limited_validation: false,
+    },
+  });
+  const measureThen = async (next) => {
+    const measuring = { ...reviewJob, phase: "measuring" };
+    jobs = listed(measuring);
+    detail = () => Promise.resolve({ data: measuring });
+    const onClose = vi.fn();
+    const client = renderDrawer({ onClose });
+    expect(
+      await screen.findByTestId("epoch-step-measuring"),
+    ).toBeInTheDocument();
+    jobs = listed(next);
+    detail = () => Promise.resolve({ data: next });
+    await client.refetchQueries();
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    return onClose;
+  };
+
+  it("hands over to the epoch when it starts with the drawer open: closes, toasts a link, never navigates", async () => {
+    await measureThen(withEpoch("running"));
+    expect(snack.enqueue).toHaveBeenCalledTimes(1);
+    const [message, options] = snack.enqueue.mock.calls[0];
+    expect(message).toBe("Epoch 4 started.");
+    expect(options.variant).toBe("success");
+    render(options.action("toast-1"));
+    expect(
+      screen.getByRole("button", { name: "View Epoch 4" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Epoch 4 started")).not.toBeInTheDocument();
+    expect(planReads()).toEqual([]);
+  });
+
+  it("hands over once, not on every read of the same epoch", async () => {
+    const running = withEpoch("running");
+    const onClose = await measureThen(running);
+    await waitFor(() => expect(snack.enqueue).toHaveBeenCalledTimes(1));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("toasts how the epoch ended when it ends with the drawer open", async () => {
+    await measureThen(withEpoch("ready"));
+    const [message, options] = snack.enqueue.mock.calls[0];
+    expect(message).toMatch(/^Epoch 4/);
+    expect(options.variant).toBe("info");
+    expect(screen.queryByText("Run Epoch again")).not.toBeInTheDocument();
   });
 
   it("runs the kept scenarios with the launch rows, as the contract takes them", async () => {

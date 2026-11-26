@@ -1,23 +1,28 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
   Button,
   Checkbox,
-  FormControlLabel,
+  InputAdornment,
   Link,
   Radio,
   Stack,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 
 import ContentSkeleton from "src/components/content-skeleton";
-import EmptyState from "src/components/empty-state";
 import ErrorState from "src/components/error-state";
-import Section from "src/components/section";
+import Iconify from "src/components/iconify";
+import { useSnackbar } from "src/components/snackbar";
 import { RouterLink } from "src/routes/components";
+import { useRouter } from "src/routes/hooks";
 import { paths } from "src/routes/paths";
 import {
   useCodeAgentEnvironments,
@@ -69,6 +74,58 @@ const MODELS_NOTE =
 const NO_JOB = "none";
 
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+// Above this many environments the picker gets a search box.
+const SEARCH_FROM = 8;
+
+// A step's heading and the sentence under it.
+function StepIntro({ title, children }) {
+  return (
+    <Box sx={{ mb: 1.5 }}>
+      {title ? (
+        <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+          {title}
+        </Typography>
+      ) : null}
+      {children ? (
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
+        >
+          {children}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+}
+StepIntro.propTypes = { title: PropTypes.node, children: PropTypes.node };
+
+// A small list heading: 11/500, tertiary, sentence case.
+function GroupLabel({ children }) {
+  return (
+    <Typography
+      sx={{
+        typography: "s3",
+        fontWeight: 500,
+        color: "text.tertiary",
+        mt: 1.5,
+        mb: 0.75,
+        "&:first-of-type": { mt: 0 },
+      }}
+    >
+      {children}
+    </Typography>
+  );
+}
+GroupLabel.propTypes = { children: PropTypes.node };
+
+// A bordered key-value sheet: the plan's rows read as one block.
+const sheetSx = {
+  border: 1,
+  borderColor: "divider",
+  borderRadius: 1,
+  px: 1.5,
+  py: 0.5,
+  "& > *:first-of-type": { pt: 1 },
+};
 const scenariosHref = (envId) =>
   paths.dashboard.simulate.environments.workspaceTab(envId, "scenarios");
 // A refusal's body: its code, message and any fields it names, at the top level
@@ -112,73 +169,184 @@ Footer.propTypes = { note: PropTypes.node, children: PropTypes.node };
 // opens in a new tab; the list is read again when the person comes back to this one.
 function NoEnvironment() {
   return (
-    <EmptyState
-      variant="no-results"
-      icon="solar:box-linear"
-      title="No environment can run an epoch yet"
-      description="An epoch runs on a code agent, uploaded or from GitHub, in one of its environments. Build one for this issue's agent, then come back here."
-      action={
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          href={paths.dashboard.simulate.environments.root}
-          target="_blank"
-          rel="noopener"
-          data-testid="epoch-build-environment"
-        >
-          Build an environment
-        </Button>
-      }
-    />
+    <Box sx={{ px: 2, pt: 2, pb: 2 }} data-testid="epoch-no-environment">
+      <StepIntro title="No environment can run an epoch yet">
+        An epoch runs on a code agent, uploaded or from GitHub, in one of its
+        environments. Build one for this issue&apos;s agent, then come back
+        here.
+      </StepIntro>
+      <Button
+        size="small"
+        variant="contained"
+        color="primary"
+        href={paths.dashboard.simulate.environments.root}
+        target="_blank"
+        rel="noopener"
+        data-testid="epoch-build-environment"
+      >
+        Build an environment
+      </Button>
+    </Box>
   );
 }
 
 // The first time per project: which environment runs this issue's epochs. The
-// plan remembers the choice for the project's next ones.
+// plan remembers the choice for the project's next ones. One bordered row per
+// environment, grouped by the agent's channel.
+// The picker's tabs: every environment, then one per agent type present.
+const TYPE_ORDER = ["Chat", "Voice", "Other"];
+const typeOf = (env) => AGENT_TYPE[env.agent_type] || "Other";
+
 function EnvironmentPicker({ environments, value, onPick }) {
   const [picked, setPicked] = useState(value);
+  const [query, setQuery] = useState("");
+  const [tab, setTab] = useState("All");
+  const types = TYPE_ORDER.filter((t) =>
+    environments.some((env) => typeOf(env) === t),
+  );
+  const q = query.trim().toLowerCase();
+  const inTab =
+    tab === "All"
+      ? environments
+      : environments.filter((env) => typeOf(env) === tab);
+  const shown = q
+    ? inTab.filter((env) => env.name.toLowerCase().includes(q))
+    : inTab;
+  const meta = (env) =>
+    [
+      AGENT_SOURCE[env.source_kind],
+      tab === "All" ? AGENT_TYPE[env.agent_type] : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
   return (
     <>
-      <Box sx={{ px: 3, pb: 2 }}>
-        <Section
-          title="Where it runs"
-          description="Pick the environment that tests this issue's agent. This project's next epochs use it too."
-        >
-          <Stack data-testid="epoch-environments">
-            {environments.map((env) => (
-              <FormControlLabel
-                key={env.id}
-                value={env.id}
-                control={
-                  <Radio
-                    size="small"
-                    checked={picked === env.id}
-                    onChange={() => setPicked(env.id)}
-                  />
-                }
-                label={
-                  <Box sx={{ py: 0.5 }}>
-                    <Typography sx={{ typography: "s1" }}>
-                      {env.name}
-                    </Typography>
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary" }}
-                    >
-                      {[
-                        AGENT_SOURCE[env.source_kind],
-                        AGENT_TYPE[env.agent_type],
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </Typography>
+      <Box sx={{ px: 2, pt: 2, pb: 2 }}>
+        <StepIntro title="Where it runs">
+          Pick the environment that tests this issue&apos;s agent. This
+          project&apos;s next epochs use it too.
+        </StepIntro>
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
+          {environments.length > SEARCH_FROM ? (
+            <TextField
+              size="small"
+              placeholder="Search environments"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              inputProps={{ "aria-label": "Search environments" }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Iconify
+                      icon="solar:magnifer-linear"
+                      width={16}
+                      sx={{ color: "text.disabled" }}
+                    />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{ flex: 1, minWidth: 0 }}
+            />
+          ) : null}
+          {types.length > 1 ? (
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={tab}
+              onChange={(_, next) => next && setTab(next)}
+              aria-label="Agent type"
+              sx={{ flexShrink: 0 }}
+            >
+              {["All", ...types].map((t) => (
+                <ToggleButton key={t} value={t}>
+                  {t}
+                  <Box
+                    component="span"
+                    sx={{ ml: 0.5, color: "text.disabled" }}
+                  >
+                    {t === "All"
+                      ? environments.length
+                      : environments.filter((env) => typeOf(env) === t).length}
                   </Box>
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+          ) : null}
+        </Stack>
+        <Box
+          data-testid="epoch-environments"
+          role="radiogroup"
+          aria-label="Environments"
+          sx={
+            shown.length
+              ? {
+                  border: 1,
+                  borderColor: "divider",
+                  borderRadius: 1,
+                  overflow: "hidden",
                 }
-                sx={{ mx: 0, alignItems: "flex-start" }}
-              />
-            ))}
-          </Stack>
-        </Section>
+              : null
+          }
+        >
+          {shown.map((env, i) => {
+            const selected = picked === env.id;
+            return (
+              <Box
+                key={env.id}
+                component="label"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.25,
+                  px: 1.25,
+                  minHeight: 40,
+                  borderTop: i ? 1 : 0,
+                  borderColor: "divider",
+                  cursor: "pointer",
+                  bgcolor: selected
+                    ? (t) => alpha(t.palette.primary.main, 0.06)
+                    : "transparent",
+                  "&:hover": selected ? {} : { bgcolor: "action.hover" },
+                }}
+              >
+                <Radio
+                  size="small"
+                  checked={selected}
+                  onChange={() => setPicked(env.id)}
+                  inputProps={{ "aria-label": env.name }}
+                  sx={{ p: 0 }}
+                />
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s1",
+                    flex: 1,
+                    minWidth: 0,
+                    fontWeight: selected ? 500 : 400,
+                  }}
+                >
+                  {env.name}
+                </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    flexShrink: 0,
+                  }}
+                >
+                  {meta(env)}
+                </Typography>
+              </Box>
+            );
+          })}
+          {!shown.length ? (
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              {q
+                ? `No environment matches "${query.trim()}".`
+                : "No environment of this type."}
+            </Typography>
+          ) : null}
+        </Box>
       </Box>
       <Footer note="Only environments of code agents are listed.">
         <Button
@@ -206,7 +374,14 @@ function PickRow({ pick, projectId, taken, onSwap }) {
       direction="row"
       alignItems="center"
       spacing={1.5}
-      sx={{ py: 0.5 }}
+      sx={{
+        px: 1.25,
+        py: 0.5,
+        minHeight: 36,
+        borderTop: 1,
+        borderColor: "divider",
+        "&:first-of-type": { borderTop: 0 },
+      }}
       data-testid="epoch-pick"
     >
       <Link
@@ -214,11 +389,7 @@ function PickRow({ pick, projectId, taken, onSwap }) {
         target="_blank"
         rel="noopener"
         underline="hover"
-        sx={{
-          typography: "s2",
-          fontFamily: "monospace",
-          color: "text.primary",
-        }}
+        sx={{ typography: "code_sm", color: "text.primary" }}
       >
         {String(pick.source_id ?? "").slice(0, 12)}
       </Link>
@@ -340,57 +511,70 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
 
   return (
     <>
-      <Box sx={{ px: 3, pb: 2 }} data-testid="epoch-plan">
-        <Row k="Runs in">
-          <Stack direction="row" alignItems="baseline" spacing={1}>
+      <Box sx={{ px: 2, pt: 2, pb: 2 }} data-testid="epoch-plan">
+        <StepIntro title="The plan">
+          Nothing runs yet. Drafting turns these traces into scenarios you
+          review next.
+        </StepIntro>
+        <Box sx={sheetSx}>
+          <Row k="Runs in">
+            <Stack direction="row" alignItems="baseline" spacing={1}>
+              <Typography sx={{ typography: "s2" }}>
+                {environment.name}
+              </Typography>
+              <Link
+                component="button"
+                type="button"
+                underline="hover"
+                onClick={onChangeEnvironment}
+                sx={{ typography: "s3", color: "text.secondary" }}
+              >
+                Change
+              </Link>
+            </Stack>
+            {held ? (
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {`Holds ${held.held} of at most ${held.limit} scenarios from issues.`}
+              </Typography>
+            ) : null}
+          </Row>
+          <Row k="Traces">
             <Typography sx={{ typography: "s2" }}>
-              {environment.name}
+              {picks.length
+                ? `${plural(picks.length, unit)} from this issue, picked to vary. Each becomes a scenario the builder drafts when you start.`
+                : "No trace of this issue can be drafted in this environment."}
             </Typography>
-            <Link
-              component="button"
-              type="button"
-              underline="hover"
-              onClick={onChangeEnvironment}
-              sx={{ typography: "s3", color: "text.secondary" }}
+            <Box
+              sx={{
+                mt: 0.75,
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 1,
+              }}
             >
-              Change
-            </Link>
-          </Stack>
-          {held ? (
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {`Holds ${held.held} of at most ${held.limit} scenarios from issues.`}
+              {picks.map((pick, i) => (
+                <PickRow
+                  key={pick.member_id}
+                  pick={pick}
+                  projectId={projectId}
+                  taken={taken.has(pick.member_id)}
+                  onSwap={spares.length ? () => swap(i) : undefined}
+                />
+              ))}
+            </Box>
+          </Row>
+          <Row k="Drafting">
+            <Typography sx={{ typography: "s2" }}>
+              One builder turn, billed as authoring credits.
             </Typography>
-          ) : null}
-        </Row>
-        <Row k="Traces">
-          <Typography sx={{ typography: "s2" }}>
-            {picks.length
-              ? `${plural(picks.length, unit)} from this issue, picked to vary. Each becomes a scenario the builder drafts when you start.`
-              : "No trace of this issue can be drafted in this environment."}
-          </Typography>
-          <Box sx={{ mt: 0.5 }}>
-            {picks.map((pick, i) => (
-              <PickRow
-                key={pick.member_id}
-                pick={pick}
-                projectId={projectId}
-                taken={taken.has(pick.member_id)}
-                onSwap={spares.length ? () => swap(i) : undefined}
-              />
-            ))}
-          </Box>
-        </Row>
-        <Row k="Drafting">
-          <Typography sx={{ typography: "s2" }}>
-            One builder turn, billed as authoring credits.
-          </Typography>
-        </Row>
-        <Row k="Budget">
-          <Typography sx={{ typography: "s2" }}>
-            {`You set the epoch's budget and limits after the review, before anything runs. It stops at your budget, ${plan.defaults.budget_credits.toLocaleString("en-US")} credits by default.`}
-          </Typography>
-        </Row>
-        {plan.ship ? <ShipsAsRow ship={plan.ship} /> : null}
+          </Row>
+          <Row k="Budget">
+            <Typography sx={{ typography: "s2" }}>
+              {`You set the epoch's budget and limits after the review, before anything runs. It stops at your budget, ${plan.defaults.budget_credits.toLocaleString("en-US")} credits by default.`}
+            </Typography>
+          </Row>
+          {plan.ship ? <ShipsAsRow ship={plan.ship} /> : null}
+        </Box>
         {!blocked && !picks.length ? (
           <Alert
             severity="info"
@@ -468,12 +652,16 @@ function NewPlan({ clusterId, projectId }) {
   if (none && !choosing) return <NoEnvironment />;
   if (picking) {
     if (environments.isLoading) {
-      return <ContentSkeleton variant="rows" rows={3} sx={{ mx: 3 }} />;
+      return (
+        <Box sx={{ px: 2, pt: 2 }}>
+          <ContentSkeleton variant="rows" rows={3} />
+        </Box>
+      );
     }
     // A failed read is not an empty list: building an environment would not help.
     if (environments.isError) {
       return (
-        <Box sx={{ mx: 3 }}>
+        <Box sx={{ mx: 2, mt: 2 }}>
           <ErrorState
             title="Could not load your environments."
             onRetry={() => environments.refetch()}
@@ -495,19 +683,16 @@ function NewPlan({ clusterId, projectId }) {
   }
   if (plan.isLoading) {
     return (
-      <ContentSkeleton
-        variant="rows"
-        rows={4}
-        label="Reading the issue"
-        sx={{ mx: 3 }}
-      />
+      <Box sx={{ px: 2, pt: 2 }}>
+        <ContentSkeleton variant="rows" rows={4} label="Reading the issue" />
+      </Box>
     );
   }
   if (plan.error || !plan.data) {
     // The picked environment may not take evidence from this issue's project: offer
     // another one beside the retry, which can't succeed then.
     return (
-      <Stack alignItems="center" spacing={1} sx={{ mx: 3 }}>
+      <Stack alignItems="center" spacing={1} sx={{ mx: 2, mt: 2 }}>
         <ErrorState
           title={
             fixErrorOf(plan.error).message ||
@@ -691,17 +876,19 @@ function ReviewStep({ status }) {
     );
   return (
     <>
-      <Box sx={{ px: 3, pb: 2 }} data-testid="epoch-step-review">
-        <Typography sx={{ typography: "s1", color: "text.secondary", mb: 1.5 }}>
+      <Box sx={{ px: 2, pt: 2, pb: 2 }} data-testid="epoch-step-review">
+        <StepIntro>
           {`${plural(keepable.length, "scenario")} to review. Keep the ones that show the issue. Run Epoch adds the kept ones to the environment's scenarios and runs them on the current version first.`}
-        </Typography>
+        </StepIntro>
+        <GroupLabel>{`Scenarios · ${kept.length} of ${keepable.length} kept`}</GroupLabel>
         <CaseList
           evidence={evidence}
           cases={keepable}
           dropped={dropped}
           onToggle={toggle}
         />
-        <Box sx={{ mt: 2 }} data-testid="epoch-launch-form">
+        <GroupLabel>What the epoch is held to</GroupLabel>
+        <Box sx={sheetSx} data-testid="epoch-launch-form">
           <SurfacesRow
             surfaces={status.defaults.surfaces}
             value={f.surfaces}
@@ -777,7 +964,7 @@ function JobProgress({ status, onPlan }) {
   const baseline = status.baseline;
   return (
     <>
-      <Box sx={{ px: 3, pb: 2 }} data-testid={`epoch-step-${key}`}>
+      <Box sx={{ px: 2, pt: 2, pb: 2 }} data-testid={`epoch-step-${key}`}>
         <Alert
           severity={key === "blocked" ? "warning" : "info"}
           sx={{ mb: 1.5 }}
@@ -786,6 +973,7 @@ function JobProgress({ status, onPlan }) {
             ? `Ran ${baseline.completed_count} of ${plural(baseline.scenarios, "scenario")} on the current version, ${baseline.failed_count} failing so far. The epoch starts when this run ends.`
             : epochSentence(status)}
         </Alert>
+        <GroupLabel>{`Scenarios · ${evidence.cases.length}`}</GroupLabel>
         <CaseList evidence={evidence} cases={evidence.cases} />
         {stop.error ? (
           <Alert severity="error" sx={{ mt: 1.5 }}>
@@ -822,61 +1010,16 @@ JobProgress.propTypes = {
   onPlan: PropTypes.func.isRequired,
 };
 
-// The epoch is running: say so, and open it from here.
-function Started({ fix }) {
-  return (
-    <EmptyState
-      variant="no-results"
-      icon="solar:magic-stick-3-linear"
-      title={`${fixName(fix)} started`}
-      description="It searches for a change on its own. Its page shows each step, and this issue shows how it ends."
-      action={
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          component={RouterLink}
-          href={epochHref(fix)}
-        >
-          {`View ${fixName(fix)}`}
-        </Button>
-      }
-    />
-  );
-}
-Started.propTypes = { fix: PropTypes.object.isRequired };
-
-// The job ended while the drawer was open: say how, and plan again only on a click.
+// The job ended before any epoch, with the drawer open: say how, and plan again
+// only on a click.
 function Ended({ status, onPlan }) {
   return (
-    <EmptyState
-      variant="no-results"
-      icon="solar:magic-stick-3-linear"
-      title={epochLabel(status)}
-      description={epochSentence(status)}
-      action={
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          onClick={onPlan}
-        >
-          Run Epoch again
-        </Button>
-      }
-      secondaryAction={
-        status.epoch ? (
-          <Button
-            size="small"
-            variant="outlined"
-            component={RouterLink}
-            href={epochHref(status.epoch)}
-          >
-            {`View ${fixName(status.epoch)}`}
-          </Button>
-        ) : null
-      }
-    />
+    <Box sx={{ px: 2, pt: 2, pb: 2 }} data-testid="epoch-ended">
+      <StepIntro title={epochLabel(status)}>{epochSentence(status)}</StepIntro>
+      <Button size="small" variant="contained" color="primary" onClick={onPlan}>
+        Run Epoch again
+      </Button>
+    </Box>
   );
 }
 Ended.propTypes = {
@@ -901,26 +1044,60 @@ const planningFor = (status) => {
 };
 
 // Mounted while the drawer is open, so what it opened on decides the first view.
-function DrawerBody({ status, clusterId, projectId, issueTitle }) {
+function DrawerBody({ status, clusterId, projectId, issueTitle, onClose }) {
   const [planFor, setPlanFor] = useState(() => planningFor(status));
   const jobId = status?.jobId ?? NO_JOB;
   const key = epochKey(status);
   const planning = planFor === jobId;
   const plan = () => setPlanFor(jobId);
+  // Once the job launched its epoch, the epoch's own page takes over: the drawer
+  // closes and a toast links there. It never navigates on its own, since the
+  // launch follows a background read, not a click. A job that ended before any
+  // epoch keeps its ending here, with Run Epoch again.
+  const handoff = !planning && !!status?.epoch;
+  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
+  const router = useRouter();
+  const handedOff = useRef(null);
+  useEffect(() => {
+    if (!handoff || handedOff.current === status.epoch.id) return;
+    const fix = status.epoch;
+    handedOff.current = fix.id;
+    const live = isEpochLive(status);
+    enqueueSnackbar(live ? `${fixName(fix)} started.` : epochSentence(status), {
+      variant: live ? "success" : "info",
+      action: (id) => (
+        <Button
+          size="small"
+          color="inherit"
+          onClick={() => {
+            closeSnackbar(id);
+            router.push(epochHref(fix));
+          }}
+        >
+          {`View ${fixName(fix)}`}
+        </Button>
+      ),
+    });
+    onClose();
+  }, [handoff, status, enqueueSnackbar, closeSnackbar, router, onClose]);
   let body;
-  if (planning) {
+  if (handoff) {
+    body = null;
+  } else if (planning) {
     body = <NewPlan clusterId={clusterId} projectId={projectId} />;
   } else if (PRE_LAUNCH[key]) {
     // The job's own read carries its drafts and defaults; the list's summary doesn't.
     if (!status.evidenceImport || !status.defaults) {
-      body = <ContentSkeleton variant="rows" rows={3} sx={{ mx: 3 }} />;
+      body = (
+        <Box sx={{ px: 2, pt: 2 }}>
+          <ContentSkeleton variant="rows" rows={3} />
+        </Box>
+      );
     } else if (key === "review") {
       body = <ReviewStep key={status.jobId} status={status} />;
     } else {
       body = <JobProgress key={status.jobId} status={status} onPlan={plan} />;
     }
-  } else if (isEpochLive(status)) {
-    body = <Started fix={status.epoch} />;
   } else {
     body = <Ended status={status} onPlan={plan} />;
   }
@@ -929,12 +1106,24 @@ function DrawerBody({ status, clusterId, projectId, issueTitle }) {
       sx={{ display: "flex", flexDirection: "column", minHeight: "100%" }}
       data-testid="run-epoch-drawer"
     >
-      <Box sx={{ px: 3, pt: 3, pb: 1, pr: 6 }}>
+      <Box
+        sx={{
+          px: 2,
+          pt: 2,
+          pb: 1.5,
+          pr: 6,
+          borderBottom: 1,
+          borderColor: "divider",
+        }}
+      >
         <Typography sx={{ typography: "m2", fontWeight: 600 }}>
           {(!planning && TITLES[key]) || "Run Epoch"}
         </Typography>
         {issueTitle ? (
-          <Typography noWrap sx={{ typography: "s1", color: "text.tertiary" }}>
+          <Typography
+            noWrap
+            sx={{ typography: "s2", color: "text.tertiary", mt: 0.25 }}
+          >
             {issueTitle}
           </Typography>
         ) : null}
@@ -945,6 +1134,7 @@ function DrawerBody({ status, clusterId, projectId, issueTitle }) {
 }
 DrawerBody.propTypes = {
   status: PropTypes.object,
+  onClose: PropTypes.func.isRequired,
   clusterId: PropTypes.string.isRequired,
   projectId: PropTypes.string.isRequired,
   issueTitle: PropTypes.string,
@@ -969,6 +1159,7 @@ export default function RunEpochDrawer({
         clusterId={clusterId}
         projectId={projectId}
         issueTitle={issueTitle}
+        onClose={onClose}
       />
     </SideDrawer>
   );

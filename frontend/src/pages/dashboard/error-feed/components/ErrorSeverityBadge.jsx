@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import PropTypes from "prop-types";
+import { severityExplanation } from "./severityExplanation";
 
 // Severity reads as a status role: the dot carries the hue, the word stays
 // neutral except for critical.
@@ -24,9 +25,13 @@ export default function ErrorSeverityBadge({
       ? "Pending"
       : "Unassessed"
     : cfg.label;
-  const explanation = fallback
-    ? `Severity has not been established (${assessmentStatus || "unassessed"}). Medium is only a compatibility default. ${reason || ""}`
-    : `${reason || cfg.label}${assessmentStatus === "pending" ? " — reassessment pending" : ""}`;
+  const explanation = severityExplanation({
+    severity,
+    assessmentStatus,
+    source,
+    reason,
+    label: cfg.label,
+  });
 
   return (
     <Tooltip title={explanation}>

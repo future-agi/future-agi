@@ -139,7 +139,7 @@ describe("Error Feed detail: Export", () => {
   };
 
   it("downloads the traces as CSV", async () => {
-    await choose(/Traces/);
+    await choose(/^Traces/);
 
     expect(exportMutate).toHaveBeenCalledWith(
       { clusterId: CLUSTER_ID },
@@ -153,7 +153,7 @@ describe("Error Feed detail: Export", () => {
   });
 
   it("downloads the stored analysis as Markdown", async () => {
-    await choose(/Analysis/);
+    await choose(/^Analysis/);
 
     expect(exportMutate).toHaveBeenCalledWith(
       { clusterId: CLUSTER_ID, repLimit: 10 },
