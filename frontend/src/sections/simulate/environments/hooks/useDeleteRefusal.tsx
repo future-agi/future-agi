@@ -6,36 +6,27 @@ import {
   lockPreviewKey,
   unlockVersion as unlockVersionJs,
 } from "src/api/simulate-environments/versions";
+import type { HarnessVersionsApi } from "src/generated/api-contracts/api.schemas";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { DELETE_REFUSAL_COPY } from "../myEnvironments.constants";
 import { lockPair } from "../workspace/overview/overview.constants";
 import useSimulationAccess from "./useSimulationAccess";
-
-// One locked version as the unlock's answer lists it.
-interface LockedVersionRow {
-  id: string;
-  environment_label: string | null;
-  suite_label: string | null;
-}
-
-interface VersionsAnswer {
-  locked_versions?: LockedVersionRow[];
-}
 
 interface LockedVersionRef {
   id: string;
   label: string;
 }
 
+// The lock's label rides along, so the outcome can name it.
 interface UnlockArgs {
   envId: string;
-  lockedVersionId: string;
+  target: LockedVersionRef;
 }
 
 const unlockVersion = unlockVersionJs as unknown as (
   envId: string,
   lockedVersionId: string,
-) => Promise<VersionsAnswer | null>;
+) => Promise<HarnessVersionsApi | null>;
 
 // The locked version a refused delete names, when the refusal is one. Both its id
 // and its label are optional in the contract, so the action needs both.
@@ -63,39 +54,34 @@ export default function useDeleteRefusal(): (
     canUnlockVersion: boolean;
   };
   const queryClient = useQueryClient();
-  const unlock = useMutation<VersionsAnswer | null, unknown, UnlockArgs>({
+  // The outcome is shown here, not in the mutate call's own callbacks: those
+  // never run once the list that refused the delete has unmounted.
+  const unlock = useMutation<HarnessVersionsApi | null, unknown, UnlockArgs>({
     meta: { errorHandled: true },
-    mutationFn: ({ envId, lockedVersionId }) =>
-      unlockVersion(envId, lockedVersionId),
-    onSuccess: (data, { envId }) => {
+    mutationFn: ({ envId, target }) => unlockVersion(envId, target.id),
+    onSuccess: (data, { envId, target }) => {
       if (data) queryClient.setQueryData(environmentVersionsKey(envId), data);
       queryClient.invalidateQueries({ queryKey: lockPreviewKey(envId) });
+      // The answer's history names the pair the lock covered.
+      const unlocked = data?.locked_versions.find(
+        (one) => one.id === target.id,
+      );
+      const pair = unlocked
+        ? lockPair(unlocked.environment_label, unlocked.suite_label)
+        : null;
+      enqueueSnackbar(DELETE_REFUSAL_COPY.unlocked(target.label, pair), {
+        variant: "success",
+      });
     },
+    onError: (failure) =>
+      enqueueSnackbar(errorMessage(failure), { variant: "error" }),
   });
 
   return (envId, error) => {
     const lockedVersion = canUnlockVersion ? lockedVersionOf(error) : null;
     const onUnlock = (key: SnackbarKey, target: LockedVersionRef) => {
       closeSnackbar(key);
-      unlock.mutate(
-        { envId, lockedVersionId: target.id },
-        {
-          onSuccess: (data) => {
-            // The answer's history names the pair the lock covered.
-            const unlocked = (data?.locked_versions || []).find(
-              (one) => one.id === target.id,
-            );
-            const pair = unlocked
-              ? lockPair(unlocked.environment_label, unlocked.suite_label)
-              : null;
-            enqueueSnackbar(DELETE_REFUSAL_COPY.unlocked(target.label, pair), {
-              variant: "success",
-            });
-          },
-          onError: (failure) =>
-            enqueueSnackbar(errorMessage(failure), { variant: "error" }),
-        },
-      );
+      unlock.mutate({ envId, target });
     };
     enqueueSnackbar(errorMessage(error), {
       variant: "error",
