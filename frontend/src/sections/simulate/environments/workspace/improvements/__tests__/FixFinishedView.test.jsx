@@ -65,13 +65,18 @@ vi.mock("../LaunchFixDialog", () => ({
 }));
 
 const axios = (await import("src/utils/axios")).default;
-const { listResult } = await import("../fixRunView");
+// Mocked for every test in setupTests.js; a viewer case overrides it.
+const { default: useSimulationAccess } = await import(
+  "../../../hooks/useSimulationAccess"
+);
+const { headline, listResult } = await import("../fixRunView");
 const { default: FixRunPage } = await import("../FixRunPage");
 const { default: FixFinishedView, FinishedActions } = await import(
   "../FixFinishedView"
 );
 const { default: FixVerdict } = await import("../FixVerdict");
 const { default: FixDecisionDrawer } = await import("../FixDecisionDrawer");
+const { default: CandidatesTable } = await import("../CandidatesTable");
 
 const fixOf = (id, extra = {}) => ({
   ...structuredClone(fixtureFixRun(id)),
@@ -96,8 +101,7 @@ const wrap = (ui) => (
   </QueryClientProvider>
 );
 const renderUi = (ui) => render(wrap(ui));
-const renderPage = (fixId) =>
-  renderUi(<FixRunPage envId="env-1" fixId={fixId} />);
+const renderPage = (fixId) => renderUi(<FixRunPage fixId={fixId} />);
 
 const shipPosts = () =>
   axios.post.mock.calls.filter(([url]) =>
@@ -151,7 +155,7 @@ describe("FixVerdict", () => {
   it("lists must-pass breaks, noting what was within noise", () => {
     renderUi(<FixVerdict fix={fixOf("fix-ready-archive")} />);
     const breaks = within(screen.getByTestId("must-pass-breaks"));
-    expect(breaks.getByText("on-time-cancel")).toBeInTheDocument();
+    expect(breaks.getByText("on-time-cancel: escalated")).toBeInTheDocument();
     expect(breaks.getByText(/refund-window/)).toBeInTheDocument();
     expect(
       breaks.getByText(/within normal noise, not counted/),
@@ -209,6 +213,25 @@ describe("FixVerdict", () => {
     return fix;
   };
 
+  it("shows the winner's cost and reply time as cards, and none without a ceilings check", () => {
+    const { unmount } = renderUi(<FixVerdict fix={withCeilingParts()} />);
+    const latency = within(screen.getByTestId("verdict-card-latency"));
+    expect(latency.getByText("Reply time")).toBeInTheDocument();
+    expect(latency.getByText("+10%")).toBeInTheDocument();
+    expect(
+      latency.getByText("1.10 s against 1.00 s on the current version"),
+    ).toBeInTheDocument();
+    const cost = within(screen.getByTestId("verdict-card-cost"));
+    expect(cost.getByText("Cost / conversation")).toBeInTheDocument();
+    expect(cost.getByText("Not measured")).toBeInTheDocument();
+    unmount();
+
+    renderUi(<FixVerdict fix={fixOf("fix-ready-archive")} />);
+    expect(screen.queryByTestId("verdict-card-latency")).toBeNull();
+    expect(screen.queryByTestId("verdict-card-cost")).toBeNull();
+    expect(screen.getByTestId("verdict-card-held")).toBeInTheDocument();
+  });
+
   it("shows each ceiling's own status in the verdict's full list of checks", async () => {
     renderUi(<FixVerdict fix={withCeilingParts()} />);
 
@@ -216,8 +239,9 @@ describe("FixVerdict", () => {
       .setup()
       .click(screen.getByRole("button", { name: "Show all" }));
 
-    const latency = screen.getByText("Reply time").parentElement;
-    const cost = screen.getByText("Agent's cost").parentElement;
+    const checks = within(screen.getByTestId("verdict-checks"));
+    const latency = checks.getByText("Reply time").parentElement;
+    const cost = checks.getByText("Agent's cost").parentElement;
     expect(within(latency).queryByText("Reply time unknown")).toBeNull();
     expect(
       within(latency).getByText(
@@ -341,9 +365,16 @@ describe("FixVerdict", () => {
 describe("finished trial presentation", () => {
   function showTrials(fix) {
     renderUi(
-      <FixFinishedView fix={fix} tab="trials" onTab={vi.fn()} renderTab={() => null} />,
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
     );
-    const plot = screen.getByRole("img", { name: "Target pass rate per candidate" });
+    const plot = screen.getByRole("img", {
+      name: "Target pass rate per candidate",
+    });
     return within(plot.parentElement.parentElement);
   }
 
@@ -355,7 +386,7 @@ describe("finished trial presentation", () => {
     expect(chart.queryByText(/best so far|winner/i)).toBeNull();
   });
 
-  it("explains rejections in product words without displaying engine text", () => {
+  it("explains rejections in product words without displaying engine text", async () => {
     const fix = fixOf("fix-no-improvement");
     const [first, second] = fix.candidates;
     first.verdict = {
@@ -364,17 +395,31 @@ describe("finished trial presentation", () => {
     };
     second.verdict.reason = "INTERNAL_VERDICT_B";
     showTrials(fix);
-    const firstRow = within(screen.getByTestId("trial-1"));
-    const secondRow = within(screen.getByTestId("trial-2"));
+    // Rejected groups start folded: open both, so the rows are on the page.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("candidate-group-rejected"));
+    await user.click(screen.getByTestId("candidate-group-target"));
+    const firstRow = within(screen.getByTestId("candidate-1"));
+    const secondRow = within(screen.getByTestId("candidate-2"));
     expect(firstRow.queryByText(first.verdict.reason)).not.toBeInTheDocument();
-    expect(secondRow.queryByText(second.verdict.reason)).not.toBeInTheDocument();
-    expect(firstRow.getByText("No failed check was recorded.")).toBeVisible();
-    expect(secondRow.getByText("This candidate didn't improve the target scenarios.")).toBeVisible();
+    expect(
+      secondRow.queryByText(second.verdict.reason),
+    ).not.toBeInTheDocument();
+    // Replaces "No failed check was recorded.": a verdict with no checks keeps its numbers.
+    expect(
+      firstRow.getByText("Rejected. Target scenarios 0% → 90%."),
+    ).toBeVisible();
+    expect(screen.getByTestId("candidate-group-target")).toHaveTextContent(
+      "Didn't improve the target scenarios",
+    );
+    expect(secondRow.getByText("0% → 0%, not a clear gain.")).toBeVisible();
   });
 
   it("leads with the kept candidate even when a rejected candidate scored higher", () => {
     const fix = fixOf("fix-ready-archive");
-    fix.candidates.find((c) => c.outcome === "rejected").verdict.target_pass_rate = [0, 1];
+    fix.candidates.find(
+      (c) => c.outcome === "rejected",
+    ).verdict.target_pass_rate = [0, 1];
     const kept = fix.candidates.find((c) => c.outcome === "winner");
     kept.verdict.target_pass_rate = [0.1, 0.7];
     const chart = showTrials(fix);
@@ -400,11 +445,15 @@ describe("FixFinishedView, no safe improvement", () => {
       />,
     );
 
+    // The badge names the ending; the sentence says what stopped the candidates.
+    const ending = within(screen.getByTestId("epoch-ending"));
     expect(
-      screen.getByText(
-        "No safe improvement: neither candidate improved the target scenarios.",
-      ),
+      ending.getByText("Epoch 6 · No safe improvement"),
     ).toBeInTheDocument();
+    expect(
+      ending.getByText("Neither candidate improved the target scenarios."),
+    ).toBeInTheDocument();
+    expect(ending.getByText("Spent 412 credits.")).toBeInTheDocument();
     // The engine's summary is not the headline any more.
     expect(
       screen.queryByText(
@@ -643,22 +692,341 @@ describe("FixFinishedView", () => {
     ).toBeNull();
   });
 
-  it("offers Retry on a retryable failed fix and opens the new fix", async () => {
-    const user = userEvent.setup();
-    const { unmount } = renderUi(
-      <FinishedActions
-        fix={fixOf("fix-failed", { retryable: false })}
-        onReview={vi.fn()}
+  const view = (fix) =>
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
       />,
     );
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    unmount();
-    renderUi(<FinishedActions fix={fixOf("fix-failed")} onReview={vi.fn()} />);
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+  it("offers Retry Epoch N as the ending's one way on, and opens the new fix", async () => {
+    const user = userEvent.setup();
+    view(fixOf("fix-failed"));
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(ending.getByText("Epoch 2 · Failed")).toBeInTheDocument();
+    expect(
+      ending.getByText("Spent 412 credits before it stopped."),
+    ).toBeInTheDocument();
+    expect(
+      ending.queryByRole("button", { name: "Run Epoch again" }),
+    ).toBeNull();
+    await user.click(ending.getByRole("button", { name: "Retry Epoch 2" }));
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     expect(navigate.mock.calls[0][0]).toMatch(
       /^\/dashboard\/simulate\/environments\/env-1\/improvements\/fix-new-\d+$/,
     );
+  });
+
+  it("keeps Retry out of the header, so the ending's is the one primary", () => {
+    renderUi(<FinishedActions fix={fixOf("fix-failed")} onReview={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /^Retry/ })).toBeNull();
+  });
+
+  it("runs a new epoch from the same run once a failed fix was retried", async () => {
+    view(fixOf("fix-failed", { retryable: false }));
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(ending.queryByRole("button", { name: /^Retry/ })).toBeNull();
+    await userEvent
+      .setup()
+      .click(ending.getByRole("button", { name: "Run Epoch again" }));
+    expect(screen.getByTestId("launch-fix-dialog")).toHaveAttribute(
+      "data-source",
+      "te-source-run-1",
+    );
+  });
+
+  it.each([
+    [
+      "fix-stopped",
+      "Epoch 3 · Stopped",
+      "Spent 412 credits before it stopped.",
+    ],
+    [
+      "fix-out-of-budget",
+      "Epoch 4 · Stopped at budget",
+      "Spent 1,500 credits before it stopped.",
+    ],
+    [
+      "fix-not-reproduced",
+      "Epoch 5 · Could not reproduce",
+      "Spent 412 credits on this check.",
+    ],
+  ])(
+    "reads %s in the one ending layout: badge, sentence, spent, one way on",
+    (id, label, spent) => {
+      const fix = fixOf(id);
+      view(fix);
+      const ending = within(screen.getByTestId("epoch-ending"));
+      expect(ending.getByText(label)).toBeInTheDocument();
+      expect(ending.getByText(headline(fix))).toBeInTheDocument();
+      expect(ending.getByText(spent)).toBeInTheDocument();
+      expect(
+        ending.getAllByRole("button", { name: "Run Epoch again" }),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("says nothing about spend for an epoch that never started", () => {
+    view(
+      fixOf("fix-failed", {
+        started_at: null,
+        failure: { code: "fix_queue_timeout", message: "" },
+      }),
+    );
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(ending.getByText(/could not start/)).toBeInTheDocument();
+    expect(ending.queryByText(/^Spent/)).toBeNull();
+  });
+
+  it("runs an issue's epoch again from its issue", () => {
+    view(
+      fixOf("fix-stopped", {
+        issue: { job_id: "j", cluster_id: "S-1A2B3C4D", project_id: "p" },
+      }),
+    );
+    expect(
+      within(screen.getByTestId("epoch-ending")).getByRole("link", {
+        name: "Run Epoch again",
+      }),
+    ).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
+  });
+
+  it("keeps an issue's rerun on an epoch that found no safe improvement", () => {
+    view(
+      fixOf("fix-no-improvement", {
+        issue: { job_id: "j", cluster_id: "S-1A2B3C4D", project_id: "p" },
+      }),
+    );
+    expect(
+      within(screen.getByTestId("epoch-ending")).getAllByRole("link", {
+        name: "Run Epoch again",
+      }),
+    ).toHaveLength(1);
+    // From a run, What to try next has the one way on.
+    expect(
+      screen.getAllByRole("button", {
+        name: /^Run (Epoch again|a new epoch)$/,
+      }),
+    ).toHaveLength(1);
+  });
+
+  it.each([
+    ["a failed epoch's Retry", "fix-failed", {}, /^Retry Epoch/],
+    ["a stopped epoch's rerun", "fix-stopped", {}, "Run Epoch again"],
+    [
+      "a no-safe epoch's new epoch",
+      "fix-no-improvement",
+      {},
+      "Run a new epoch",
+    ],
+  ])("locks %s for a viewer, with why", async (_, id, extra, name) => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
+    });
+    try {
+      view(fixOf(id, extra));
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      await userEvent.setup().hover(button.parentElement);
+      expect(
+        await screen.findByText("You don't have permission to start runs."),
+      ).toBeInTheDocument();
+    } finally {
+      vi.mocked(useSimulationAccess).mockReturnValue({
+        canEdit: true,
+        canRun: true,
+      });
+    }
+  });
+
+  it("offers no way on when the run it started from is gone", () => {
+    view(fixOf("fix-stopped", { source_run_id: null }));
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(
+      ending.queryByRole("button", { name: "Run Epoch again" }),
+    ).toBeNull();
+    expect(ending.getByText(/You stopped this epoch/)).toBeInTheDocument();
+  });
+});
+
+describe("FixFinishedView, candidates", () => {
+  const view = (id) =>
+    renderUi(
+      <FixFinishedView
+        fix={fixOf(id)}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+
+  it("groups the candidates by where they stopped, the closest calls open", async () => {
+    view("fix-ready-archive");
+    expect(screen.getByTestId("candidate-group-winner")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(
+      within(screen.getByTestId("candidate-3")).getByText("Winner"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("candidate-2")).getByText("Passed, not picked"),
+    ).toBeInTheDocument();
+    // A rejected group starts folded.
+    const rejected = screen.getByTestId("candidate-group-target");
+    expect(rejected).toHaveTextContent("Didn't improve the target scenarios");
+    expect(screen.queryByTestId("candidate-1")).toBeNull();
+    await userEvent.setup().click(rejected);
+    const row = within(screen.getByTestId("candidate-1"));
+    expect(row.getByText("0% → 0%, not a clear gain.")).toBeInTheDocument();
+    expect(row.getByText("Not run")).toBeInTheDocument();
+  });
+
+  it("opens each candidate's own check run, and keeps the pass-rate chart below", () => {
+    view("fix-ready-archive");
+    expect(
+      within(screen.getByTestId("candidate-3")).getByRole("link", {
+        name: "Open run",
+      }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/runs/rt-fix-ready-archive/te-fix-ready-archive-c3",
+    );
+    expect(screen.getAllByTestId("trial-point")).toHaveLength(3);
+  });
+
+  it("folds a finished epoch's diagnosis into one line that opens to every cause", async () => {
+    const fix = fixOf("fix-ready-archive", {
+      diagnosis: {
+        causes: [
+          "the instructions never ask it to escalate",
+          "it replies before it looks the order up",
+        ],
+      },
+    });
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    const diagnosis = within(screen.getByTestId("finished-diagnosis"));
+    const toggle = diagnosis.getByRole("button");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent(
+      "The instructions never ask it to escalate. · 1 more",
+    );
+    await userEvent.setup().click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      diagnosis.getByText("It replies before it looks the order up."),
+    ).toBeInTheDocument();
+    // Open, each cause shows once: the folded summary does not repeat the first.
+    expect(
+      diagnosis.getAllByText(/The instructions never ask it to escalate\./),
+    ).toHaveLength(1);
+    expect(diagnosis.queryByText(/· 1 more/)).toBeNull();
+  });
+
+  it("labels a failed epoch's diagnosis as from before it stopped, beside not your agent", () => {
+    const view = (fix) =>
+      renderUi(
+        <FixFinishedView
+          fix={fix}
+          tab="trials"
+          onTab={vi.fn()}
+          renderTab={() => null}
+        />,
+      );
+    const failed = fixOf("fix-failed", {
+      failure: { code: "fix_engine_died", message: "" },
+    });
+    const { unmount } = view(failed);
+    expect(screen.getByText(/not your agent/)).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("finished-diagnosis")).getByText(
+        "Diagnosis, before it stopped",
+      ),
+    ).toBeInTheDocument();
+    unmount();
+
+    // Nothing found before it failed: no line at all.
+    view({ ...failed, diagnosis: { causes: [] } });
+    expect(screen.queryByTestId("finished-diagnosis")).toBeNull();
+  });
+
+  it("shows the gap's size, its side in words", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.target_pass_rate = [0.3, 0.71];
+    winner.verdict.held_back_pass_rate = [0.2, 0.8];
+    renderUi(<FixVerdict fix={fix} />);
+    const gap = within(screen.getByTestId("verdict-card-gap"));
+    expect(gap.getByText("9 pts")).toBeInTheDocument();
+    expect(
+      gap.getByText("held back did better than target"),
+    ).toBeInTheDocument();
+    expect(gap.queryByText(/-9/)).toBeNull();
+  });
+
+  it("says nothing about a diagnosis a finished epoch never ran", () => {
+    renderUi(
+      <FixFinishedView
+        fix={fixOf("fix-stopped", { diagnosis: null })}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    expect(screen.queryByTestId("finished-diagnosis")).toBeNull();
+  });
+
+  it("opens a group that appears on a later read as its default says, and keeps a person's fold", async () => {
+    const before = fixOf("fix-ready-archive");
+    before.candidates = before.candidates.filter((c) => c.outcome !== "winner");
+    const { rerender } = renderUi(<CandidatesTable fix={before} />);
+    expect(screen.queryByTestId("candidate-group-winner")).toBeNull();
+    // The person folds Passed, not picked.
+    await userEvent
+      .setup()
+      .click(screen.getByTestId("candidate-group-finalist"));
+    expect(screen.getByTestId("candidate-group-finalist")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    rerender(wrap(<CandidatesTable fix={fixOf("fix-ready-archive")} />));
+    expect(screen.getByTestId("candidate-group-winner")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByTestId("candidate-3")).toBeInTheDocument();
+    expect(screen.getByTestId("candidate-group-finalist")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("opens a candidate's change beside the page", async () => {
+    const user = userEvent.setup();
+    view("fix-no-improvement");
+    await user.click(screen.getByTestId("candidate-group-target"));
+    await user.click(
+      within(screen.getByTestId("candidate-2")).getByRole("button", {
+        name: "See its change",
+      }),
+    );
+    const drawer = within(await screen.findByTestId("candidate-change"));
+    expect(drawer.getByText("Candidate 2's change")).toBeInTheDocument();
+    expect(
+      await drawer.findByText("<!-- fix-no-improvement-c2 -->"),
+    ).toBeInTheDocument();
   });
 });
 
@@ -807,6 +1175,21 @@ describe("Ship", () => {
     expect(
       await screen.findByRole("button", { name: "Make default" }),
     ).toBeEnabled();
+  });
+
+  it("says a winner waiting for its check becomes the default once it passes", async () => {
+    hooks.ship = {
+      isPending: false,
+      mutateAsync: vi.fn().mockResolvedValue({ kind: "validating" }),
+    };
+    const user = userEvent.setup();
+    renderPage("fix-ready-archive");
+    await user.click((await confirmShip(user, "Make default")).confirm);
+    expect(
+      await screen.findByText(
+        "It becomes the default once it passes a check with this environment",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {
