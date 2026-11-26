@@ -232,8 +232,9 @@ class ImageHandler(BaseModelHandler):
         if "style" in config:
             image_params["style"] = config["style"]
 
-        # Handle n parameter (number of images)
-        if "n" in config:
+        # Handle n parameter (number of images). A null count means the
+        # provider default of one image, which is also what is priced.
+        if config.get("n") is not None:
             image_params["n"] = config["n"]
         else:
             image_params["n"] = 1

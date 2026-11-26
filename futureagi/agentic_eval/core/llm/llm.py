@@ -220,7 +220,7 @@ class LLM:
         self.last_finish_reason: Optional[str] = None
 
         # Initialize usage tracking
-        self.cost = {
+        self.cost: dict[str, Any] = {
             "total_cost": 0,
             "prompt_cost": 0,
             "completion_cost": 0,
@@ -637,21 +637,47 @@ class LLM:
         Update cost statistics.
         """
         catalog = calculate_total_cost(self.model_name, self.token_usage)
+        previous_usage = getattr(self, "_last_cost_usage", {})
+        self._last_cost_usage = self.token_usage.copy()
 
         if catalog.get("pricing_source") != "default":
             self.cost.update(catalog)
             return
 
-        response_cost = 0.0
-        if response is not None:
-            hidden = getattr(response, "_hidden_params", None)
-            if hidden and isinstance(hidden, dict):
-                response_cost = hidden.get("response_cost", 0) or 0
-
-        if response_cost > 0:
-            self.cost["total_cost"] = self.cost.get("total_cost", 0) + response_cost
-        else:
-            self.cost.update(catalog)
+        # Usage is cumulative, but LiteLLM's response cost is per request. Price
+        # only the new usage when alternating between these two estimate sources.
+        usage_delta = {
+            key: max(value - previous_usage.get(key, 0), 0)
+            for key, value in self.token_usage.items()
+            if isinstance(value, (int, float))
+        }
+        increment = calculate_total_cost(self.model_name, usage_delta)
+        hidden = getattr(response, "_hidden_params", None)
+        response_cost = (
+            hidden.get("response_cost") if isinstance(hidden, dict) else None
+        )
+        if (
+            isinstance(response_cost, (int, float))
+            and not isinstance(response_cost, bool)
+            and 0 <= response_cost < float("inf")
+        ):
+            # A reported zero is valid. LiteLLM pricing is still an estimate,
+            # not a provider invoice, and must retain that provenance.
+            increment = {
+                "total_cost": response_cost,
+                "prompt_cost": 0.0,
+                "completion_cost": 0.0,
+                "pricing_source": "litellm",
+            }
+        previous_source = self.cost.get("pricing_source")
+        source = increment["pricing_source"]
+        self.cost["pricing_source"] = (
+            "mixed_estimate"
+            if previous_source and previous_source != source
+            else source
+        )
+        for key in ("total_cost", "prompt_cost", "completion_cost"):
+            self.cost[key] = round(self.cost.get(key, 0) + increment[key], 6)
 
     def _set_last_finish_reason_from_response(self, response: Any) -> None:
         self.last_finish_reason = None

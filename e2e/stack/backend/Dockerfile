@@ -14,3 +14,4 @@ COPY e2e/stack/backend/e2e_legacy_eval.py /app/backend/sdk/views/e2e_legacy_eval
 
 COPY e2e/stack/backend/e2e_google.py /app/backend/tfc/views/e2e_google.py
 COPY e2e/stack/backend/bootstrap_sql.py /app/backend/bootstrap_sql.py
+COPY e2e/stack/backend/e2e_saved_prompt.py /app/backend/model_hub/views/e2e_saved_prompt.py

@@ -6,6 +6,7 @@ from accounts.views.e2e_clean_signup import clean_signup
 from tfc.views.e2e_google import GoogleFixtureDeploymentInfoView
 from django.urls import path
 
+from model_hub.views.e2e_saved_prompt import E2ESavedPromptView
 from sdk.views.e2e_legacy_eval import E2ELegacyEvalView
 from tfc.urls import urlpatterns as product_urlpatterns
 
@@ -14,6 +15,7 @@ urlpatterns = [
     *product_urlpatterns,
     path("accounts/e2e/clean-signup/", clean_signup),
     path("sdk/e2e/legacy-eval/", E2ELegacyEvalView.as_view()),
+    path("model-hub/e2e/saved-prompt/", E2ESavedPromptView.as_view()),
 ]
 if find_spec("tracer.services.feed_alerts") is not None:
     from tracer.views.e2e_feed_issue import E2EFeedIssueView

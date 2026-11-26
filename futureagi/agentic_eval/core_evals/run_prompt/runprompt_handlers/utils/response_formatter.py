@@ -18,7 +18,10 @@ from typing import Any, Dict, List, Optional, Tuple
 import structlog
 
 from agentic_eval.core.utils.json_utils import strip_code_fence
-from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from agentic_eval.core_evals.fi_utils.token_count_helper import (
+    calculate_total_cost,
+    optional_usage_count,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -35,22 +38,26 @@ class UsageInfo:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    input_characters: int | None = None
+    output_characters: int | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API response."""
-        return {
+        usage = {
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
         }
+        # Omit unavailable counts rather than turning them into zero usage.
+        for field in ("input_characters", "output_characters"):
+            count = getattr(self, field)
+            if count is not None:
+                usage[field] = count
+        return usage
 
     def to_cost_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format expected by calculate_total_cost."""
-        return {
-            "prompt_tokens": self.prompt_tokens,
-            "completion_tokens": self.completion_tokens,
-            "total_tokens": self.total_tokens,
-        }
+        return self.to_dict()
 
 
 class ResponseFormatter:
@@ -154,6 +161,12 @@ class ResponseFormatter:
             prompt_tokens=response.usage.prompt_tokens,
             completion_tokens=response.usage.completion_tokens,
             total_tokens=response.usage.total_tokens,
+            input_characters=optional_usage_count(
+                getattr(response.usage, "input_characters", None)
+            ),
+            output_characters=optional_usage_count(
+                getattr(response.usage, "output_characters", None)
+            ),
         )
 
         # Build metadata
