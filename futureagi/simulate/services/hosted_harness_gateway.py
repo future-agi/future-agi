@@ -35,10 +35,7 @@ from django.utils import timezone
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
-from agentcc.services.url_safety import (
-    ensure_public_http_url,
-    private_provider_urls_allowed,
-)
+from agentcc.services.url_safety import ensure_public_http_url
 from integrations.services.github_app import (
     GitHubAppError,
     installation_credential,
@@ -2309,20 +2306,22 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
 
 
 def _base_url_host(values: Mapping[str, Any], names: tuple[str, ...]) -> str | None:
-    """The host of the base URL the agent calls its provider at (a gateway or proxy), as preflight
-    probed it; ``None`` when it sets none or one preflight would refuse to call."""
+    """The host of the base URL the agent calls its provider at (a gateway or proxy), opened in egress in place
+    of the provider's own host. ``None`` when it sets none, or when its host is private or resolves to a private
+    address: egress never opens one, so the launch keeps the provider's own host as before. A host that does not
+    resolve from here is still the one the agent calls, so it is kept, never swapped for the provider's."""
     _name, base = configured_base(
         {name: str(values.get(name) or "") for name in names}, names
     )
-    if not base:
+    host = _hostname_from_url(base) if base else None
+    if not host:
         return None
     try:
-        ensure_public_http_url(
-            base, "base URL", allow_private=private_provider_urls_allowed()
-        )
-    except ValueError:
+        _validate_egress_host(host)
+        ensure_public_http_url(base, "base URL", allow_unresolvable=True)
+    except (HostedHarnessError, ValueError):
         return None
-    return _hostname_from_url(base)
+    return host
 
 
 def _resolved_egress_domains(

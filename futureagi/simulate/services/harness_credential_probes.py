@@ -336,18 +336,20 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
 }
 
 
-def _request(method: str, url: str, *, guarded: bool, **kwargs: Any) -> Any:
+def _request(
+    method: str, url: str, *, guarded: bool, timeout: float, **kwargs: Any
+) -> Any:
     """Send one probe. A URL under a base the agent set is checked again as the request is sent, on the
     same rules it was checked by, so a name that resolved to a public address at the check cannot be
     answered by a private one at the send."""
     if not guarded:
-        return requests.request(method, url, **kwargs)
+        return requests.request(method, url, timeout=timeout, **kwargs)
     session = build_ssrf_safe_session(
         "the base URL does not resolve to an address this check may call",
         allow_private=private_provider_urls_allowed(),
     )
     try:
-        return session.request(method, url, **kwargs)
+        return session.request(method, url, timeout=timeout, **kwargs)
     finally:
         session.close()
 

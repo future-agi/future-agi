@@ -440,13 +440,28 @@ def test_provider_egress_includes_scoped_claude_gateway():
             },
             {"gateway.example.com"},
         ),
-        # A base preflight refuses to call is never opened: the provider's own host stays.
+        # A private base is never opened in egress: the provider's own host stays, as without a base.
         (
             {
                 "OPENAI_API_KEY": "k",
                 "OPENAI_BASE_URL": "http://metadata.example.com/v1",
             },
             {"api.openai.com"},
+        ),
+        (
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "http://192.168.1.20:4000/v1",
+            },
+            {"api.openai.com"},
+        ),
+        # A base that does not resolve from here is still the host the agent calls.
+        (
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.unresolved.example/v1",
+            },
+            {"gateway.unresolved.example"},
         ),
     ],
 )
@@ -459,10 +474,30 @@ def test_provider_egress_follows_the_agent_s_base_url_as_preflight_probes_it(
     }
 
     def resolve(host, *_args, **_kwargs):
+        if host not in hosts:
+            raise socket.gaierror(socket.EAI_NONAME, "unknown host")
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (hosts[host], 0))]
 
     with patch("agentcc.services.url_safety.socket.getaddrinfo", resolve):
-        assert _provider_egress_domains(values) == expected
+        domains = _provider_egress_domains(values)
+        assert domains == expected
+        _validate_resolved_egress_domains(domains)
+
+
+def test_a_private_gateway_the_deployment_allows_launches_as_without_a_base(
+    monkeypatch,
+):
+    """A private gateway passes preflight where private provider URLs are allowed; egress never opens a private
+    host, so the launch keeps the provider's own host and is not refused."""
+    from agentcc.services.url_safety import ALLOW_PRIVATE_PROVIDER_URLS_ENV
+
+    monkeypatch.setenv(ALLOW_PRIVATE_PROVIDER_URLS_ENV, "true")
+    domains = _provider_egress_domains(
+        {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://192.168.1.20:4000/v1"}
+    )
+
+    assert domains == {"api.openai.com"}
+    _validate_resolved_egress_domains(domains)
 
 
 def test_provider_egress_includes_vapi_and_retell_call_hosts():
