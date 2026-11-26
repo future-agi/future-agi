@@ -1,12 +1,26 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import {
   isVersioningDisabled,
   useEnvironmentVersions,
   useRefreshWhenChecked,
 } from "src/api/simulate-environments/versions";
-import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
+import { named } from "./agents/agentVersionStatus";
+import { WORKSPACE_COPY } from "./workspace.constants";
+
+// A long version name is cut off, whole on hover.
+const versionSx = {
+  display: "inline-block",
+  maxWidth: 240,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  verticalAlign: "bottom",
+  color: "text.primary",
+  fontWeight: "fontWeightSemiBold",
+};
 
 // What is being tested, against what. A run is a pairing — this environment
 // version against that agent version — and a result nobody can attribute to a
@@ -36,7 +50,6 @@ export default function VersionBar({ env, envState }) {
   const agentV = data?.defaults?.agent;
   const suiteV = data?.defaults?.suite;
   const versioned = Boolean(envV || agentV || suiteV);
-  const named = (version) => version.label || VERSIONS_COPY.unlabelled;
   const envLabel = envV ? named(envV) : versionBar.beforeVersioning;
   const agentLabel = agentV ? named(agentV) : versionBar.noAgent;
   const fromSuite = showPairing && suiteV?.scenarioCount != null;
@@ -88,10 +101,7 @@ export default function VersionBar({ env, envState }) {
               />
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {versionBar.envPrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
+                <Box component="span" sx={versionSx}>
                   {envLabel}
                 </Box>
               </Typography>
@@ -116,10 +126,7 @@ export default function VersionBar({ env, envState }) {
               </Typography>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {versionBar.agentPrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
+                <Box component="span" sx={versionSx}>
                   {agentLabel}
                 </Box>
               </Typography>
@@ -134,12 +141,11 @@ export default function VersionBar({ env, envState }) {
             <>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 {versionBar.suitePrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
-                  {named(suiteV)}
-                </Box>
+                <OverflowTooltip title={named(suiteV)}>
+                  <Box component="span" sx={versionSx}>
+                    {named(suiteV)}
+                  </Box>
+                </OverflowTooltip>
               </Typography>
               <Typography
                 sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
