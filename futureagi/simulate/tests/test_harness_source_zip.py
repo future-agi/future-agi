@@ -44,3 +44,10 @@ def test_zip_bounds_uncompressed_bytes():
     with pytest.raises(HostedHarnessError, match="unpacked ZIP"):
         with unpack_source_zip(source_zip([("agent.py", "a" * 8192)]), 4096, 10):
             pytest.fail("Oversized archive accepted")
+
+
+def test_zip_refuses_conflicting_file_and_directory():
+    archive = source_zip([("repo/src", b"file"), ("repo/src/main.py", b"code")])
+    with pytest.raises(HostedHarnessError, match="conflicting source paths"):
+        with unpack_source_zip(archive, 4096, 10):
+            pytest.fail("Conflicting paths accepted")

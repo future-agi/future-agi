@@ -126,7 +126,7 @@ export default function FolderUploadField({
                 ? fData(shown.bytes)
                 : shown
                   ? `${shown.files} file${shown.files === 1 ? "" : "s"} · ${fData(shown.bytes)}`
-                  : "Secrets files and dependencies are left out."}
+                  : ".env files and dependency folders are excluded from the source package."}
             </Typography>
           </Box>
           {shown && !busy && (
