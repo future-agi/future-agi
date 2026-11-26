@@ -106,9 +106,10 @@ def production_bound(job: HostedHarnessJob) -> frozenset[str]:
     read stays off the contract and the suite documents."""
     if not actors_enabled():
         return frozenset()
-    # The pins the default run would use, as default_bundle_key reads them.
+    # The pins the default run would use, as default_bundle_key reads them. The
+    # agent's side row gives its bundle key; its credential blob is never read.
     try:
-        pins = resolve_run_pins(job)
+        pins = resolve_run_pins(job, credential_blob=False)
     except HostedHarnessError:
         pins = None
     return frozenset(
@@ -536,7 +537,8 @@ class LockPreview(TypedDict):
 def lock_preview(job: HostedHarnessJob) -> LockPreview:
     """Whether the default pair can be locked now, why not, and the splits it would
     get. It reads what the lock reads, the default run's contract and scenario
-    documents included, so it has its own read, apart from the versions list."""
+    documents included, so it has its own read, apart from the versions list. The
+    agent version's credential blob is never read."""
     proved = HarnessSuiteValidation.no_workspace_objects.filter(
         suite_version_id=job.suite_version_id,
         environment_version_id=job.environment_version_id,

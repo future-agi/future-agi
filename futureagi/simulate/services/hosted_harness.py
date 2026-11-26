@@ -13,7 +13,7 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import BooleanField, ExpressionWrapper, Q
 from django.utils import timezone
 
 from simulate.models import (
@@ -860,6 +860,7 @@ def resolve_run_pins(
     rerun_of: HostedHarnessJob | None = None,
     picks: VersionPicks | None = None,
     fix_run: Any = None,
+    credential_blob: bool = True,
 ) -> ResolvedPins | None:
     """The versions a new run would be pinned to, when versioning pins runs.
 
@@ -867,7 +868,8 @@ def resolve_run_pins(
     rerun keeps its source's pins when they can run: they are the defaults, their
     bundle is cached, or certifying is on; otherwise it runs the defaults. Picks that
     cannot run are refused rather than run as the defaults. Only a check run of
-    ``fix_run`` may pick the suite version private to it.
+    ``fix_run`` may pick the suite version private to it. Without ``credential_blob``
+    the agent's side row comes without its blob, for a caller that never runs it.
     """
     from simulate.services.harness_versioning.assembly import (
         bundle_ready,
@@ -893,7 +895,7 @@ def resolve_run_pins(
         and rerun_of.environment_version_id is not None
         and rerun_of.suite_version_id is not None
     ):
-        loaded = _load_pins(environment, rerun_of)
+        loaded = _load_pins(environment, rerun_of, credential_blob=credential_blob)
         _, environment_version, suite_version, runtime = loaded
         kept = _source_bundle(environment, rerun_of)
         if _pin_ids(rerun_of) == defaults or (
@@ -926,7 +928,7 @@ def resolve_run_pins(
         if picked != ids:
             ids, loaded = picked, None
     if loaded is None:
-        loaded = _load_ids(environment, ids)
+        loaded = _load_ids(environment, ids, credential_blob=credential_blob)
     agent_version, environment_version, suite_version, runtime = loaded
     # A rerun of its source's very pins replays the bundle its source ran.
     if source is not rerun_of or ids != _pin_ids(rerun_of) or runtime is None:
@@ -1256,19 +1258,25 @@ def _pin_ids(job: HostedHarnessJob) -> tuple[Any, Any, Any]:
 
 
 def _load_pins(
-    environment: HostedHarnessJob, source: HostedHarnessJob
+    environment: HostedHarnessJob,
+    source: HostedHarnessJob,
+    *,
+    credential_blob: bool = True,
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions ``source`` is pinned to, and the agent's
     side row."""
-    return _load_ids(environment, _pin_ids(source))
+    return _load_ids(environment, _pin_ids(source), credential_blob=credential_blob)
 
 
 def _load_ids(
-    environment: HostedHarnessJob, ids: tuple[Any, Any, Any]
+    environment: HostedHarnessJob,
+    ids: tuple[Any, Any, Any],
+    *,
+    credential_blob: bool = True,
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions of these ids, and the agent's side
     row with the facts it runs with in ``environment``: a shared legacy row stands
-    for the environment's own."""
+    for the environment's own. Without ``credential_blob`` the row's blob is unread."""
     from simulate.models import (
         AgentVersion,
         HarnessAgentVersionRuntime,
@@ -1297,13 +1305,19 @@ def _load_ids(
         )
     from simulate.services.harness_versioning.backfill import effective_runtime
 
-    runtime = (
-        effective_runtime(
-            environment,
-            HarnessAgentVersionRuntime.no_workspace_objects.filter(
-                agent_version=agent_version
-            ).first(),
+    runtimes = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=agent_version
+    )
+    if not credential_blob:
+        runtimes = runtimes.defer("credential_blob").annotate(
+            # Whether a discarded row was a legacy one, without reading its blob.
+            blobless=ExpressionWrapper(
+                Q(credential_blob__isnull=True) | Q(credential_blob=""),
+                output_field=BooleanField(),
+            )
         )
+    runtime = (
+        effective_runtime(environment, runtimes.first())
         if agent_version is not None
         else None
     )

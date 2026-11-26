@@ -358,7 +358,8 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """Whether the default environment and suite versions can be locked now, why
         not, and the train and test splits a lock would give. It plans as the lock does,
         so it reads the default run's environment contract and scenario documents by
-        design; the versions list stays off them."""
+        design, and the agent version's facts its bundle key needs, never its
+        credential blob; the versions list stays off them."""
         from simulate.services.harness_versioning.locked_versions import lock_preview
 
         version_reads.require_versioning()
