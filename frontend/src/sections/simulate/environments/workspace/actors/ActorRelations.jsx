@@ -31,7 +31,12 @@ export default function ActorRelations({ cast }) {
               {Object.values(R.columns).map((label) => (
                 <TableCell
                   key={label}
-                  sx={{ ...CELL, fontWeight: 600, color: "text.secondary" }}
+                  sx={{
+                    ...CELL,
+                    fontWeight: 600,
+                    color: "text.secondary",
+                    whiteSpace: "nowrap",
+                  }}
                 >
                   {label}
                 </TableCell>

@@ -13,7 +13,7 @@ export default function ActorPressureFields({ form }) {
         {F.pressure}
       </Typography>
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-        {F.moreDetailsHelp}
+        {F.pressureHelp}
       </Typography>
       <ActorField
         form={form}

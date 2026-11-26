@@ -1027,11 +1027,12 @@ describe("WorldActorsPanel", () => {
     for (const label of folded)
       expect(screen.getByLabelText(label)).not.toBeVisible();
     expect(screen.getByText("Pressure")).toBeVisible();
-    expect(
-      screen.getAllByText(
-        /Given to them as background whenever they speak or decide in the moment/,
-      )[0],
-    ).toBeVisible();
+    const [pressureHelp] = screen.getAllByText(
+      /Given to them as background whenever they speak or decide in the moment/,
+    );
+    expect(pressureHelp).toBeVisible();
+    // "Brought in by" sits in the fold, so its note stays there.
+    expect(pressureHelp).not.toHaveTextContent(/Brought in by/);
     fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     for (const label of folded)
       expect(screen.getByLabelText(label)).toBeVisible();

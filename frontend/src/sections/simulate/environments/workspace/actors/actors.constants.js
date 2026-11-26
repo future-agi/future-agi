@@ -124,6 +124,8 @@ export const ACTORS_COPY = {
       advanced: "Advanced settings",
       lessAdvanced: "Hide advanced settings",
       pressure: "Pressure",
+      pressureHelp:
+        "Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them.",
       moreDetailsHelp:
         'Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them, and "Brought in by" is for reading only.',
       editTitle: (name) => `Edit ${name}`,
