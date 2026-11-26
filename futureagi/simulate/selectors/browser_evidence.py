@@ -86,7 +86,11 @@ def browser_evidence(call: CallExecution) -> BrowserEvidence:
         "more": 0,
         "blocked_source": "record" if from_record else "unreadable",
     }
-    stored = end_state_artifact(call, metadata, state)
+    # The kit names a file holding only the browser's record as the browser's own, and one with the world's tables as
+    # the end state; the Browser tab reads whichever the trial has. Older kits named both as the end state.
+    stored = end_state_artifact(
+        call, metadata, state, key="browser_state_artifact"
+    ) or end_state_artifact(call, metadata, state)
     if stored is None:
         return shown
     try:

@@ -519,12 +519,18 @@ def _end_state_url(
 
 
 def end_state_artifact(
-    call: CallExecution, metadata: Mapping[str, Any], state: Mapping[str, Any]
+    call: CallExecution,
+    metadata: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    key: str = "end_state_artifact",
 ) -> HostedHarnessArtifact | None:
-    """The stored world_state file this trial's sealed record names by digest, kept by the job that sent the trial's
-    receipt, in the run's organisation and workspace; None when the record names none or it is not stored. Never
-    found by scenario key: a key spans attempts, and a digest a job already holds keeps its first trial's key."""
-    sealed = state.get("end_state_artifact")
+    """The stored world_state file this trial's sealed record names by digest under ``key``, kept by the job that sent
+    the trial's receipt, in the run's organisation and workspace; None when the record names none or it is not stored.
+    Never found by scenario key: a key spans attempts, and a digest a job already holds keeps its first trial's key.
+    The world's end state is ``end_state_artifact``; a file holding only the browser's record is
+    ``browser_state_artifact``, and is never the world's end."""
+    sealed = state.get(key)
     if not (isinstance(sealed, str) and sealed.startswith("sha256:")):
         return None
     receipt = metadata.get("hosted_harness_receipt")
