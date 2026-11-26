@@ -165,6 +165,7 @@ def _call(
     workspace_id="same",
     recorded=False,
     job_id=None,
+    key="end_state_artifact",
 ):
     state = {"state_changes": []}
     if recorded is False:
@@ -172,7 +173,7 @@ def _call(
     else:
         state["door"] = True
     if end_state:
-        state["end_state_artifact"] = end_state
+        state[key] = end_state
     run_test = SimpleNamespace(
         organization_id=organization_id or job.organization_id,
         workspace_id=job.workspace_id if workspace_id == "same" else workspace_id,
@@ -685,3 +686,24 @@ def test_every_field_of_a_listed_answer_is_served_as_read(job, store):
 
     assert shown["complete"] is False
     assert served == json.loads(json.dumps(shown))
+
+
+@pytest.mark.django_db
+def test_a_file_named_as_the_browser_s_own_is_read_and_never_taken_for_the_world_s_end(
+    job, store
+):
+    # The kit names a world_state file holding the browser's record but not the world's tables under
+    # browser_state_artifact: the Browser tab reads it, the world's records link does not.
+    from simulate.selectors.call_detail import end_state_artifact
+
+    for text in KIT_FILES["shot_bytes"].values():
+        _stored(job, hashlib.sha256(text.encode()).hexdigest())
+    no_door = _file(job, store, KIT_FILES["no_door"])
+    call = _call(job, no_door, key="browser_state_artifact")
+
+    shown = be.browser_evidence(call)
+    assert shown["state"] == "listed"
+    assert [one["when"] for one in shown["screenshots"]] == ["load", "end"]
+    assert shown["blocked_source"] == "file"
+    state = call.call_metadata[TRIAL_STATE_KEY]
+    assert end_state_artifact(call, call.call_metadata, state) is None
