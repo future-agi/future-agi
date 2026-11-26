@@ -61,6 +61,11 @@ HELD_BACK_RULE = (
     "Do not read held-back cases or any held-back field of an Epoch. Future AGI checks"
     " your fix on cases you were not given."
 )
+# A run with too few failing cases holds none back (split_held_back).
+NONE_HELD_BACK = (
+    "This run has too few failing cases to hold any back. Future AGI checks your fix on"
+    " the failing cases above and on the cases that pass today."
+)
 # The tiers whose detail a coding agent may read, as the engine tells its own proposer
 # (verdict-service.mjs feedbackFor): the others are named, never shown, because the
 # held-back, must-pass and repeats checks run on cases it was not given.
@@ -280,22 +285,26 @@ def attempt_budget_credits(
     given: int | None = None,
 ) -> int:
     """An attempt's limit in credits. Left out, its worst-case hold with BUDGET_HEADROOM
-    on top, since a check run holds its actual cost once that is more than the estimate.
-    Given, at least the hold, or the attempt's own check runs would be refused. An
-    attempt that needs more than an Epoch may use is refused, never cut short."""
+    on top, since a check run holds its actual cost once that is more than the estimate,
+    up to what an Epoch may use. Given, at least the hold, or the attempt's own check runs
+    would be refused. An attempt whose hold is more than an Epoch may use is refused,
+    never cut short."""
     hold = max(
         1, math.ceil(outside_attempt_hold_usd(source_run, scope, previous) * 100)
     )
-    credits = max(1, math.ceil(hold * BUDGET_HEADROOM)) if given is None else given
-    if max(hold, credits) > BUDGET_CREDITS_MAX:
-        needed = max(hold, credits) if given is None else hold
+    if hold > BUDGET_CREDITS_MAX:
         raise HostedHarnessError(
             "fix_attempt_too_large",
-            f"An attempt on this run could need {needed:,} credits, more than the"
+            f"An attempt on this run could need {hold:,} credits, more than the"
             f" {BUDGET_CREDITS_MAX:,} an Epoch may use. Run the environment on fewer"
             " scenarios, then fix the new run.",
             status_code=422,
         )
+    credits = (
+        min(BUDGET_CREDITS_MAX, math.ceil(hold * BUDGET_HEADROOM))
+        if given is None
+        else given
+    )
     if credits < hold:
         raise HostedHarnessError(
             "fix_budget_below_hold",
@@ -358,6 +367,7 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
             commit=commit,
             used=used,
             locked=request.locked_paths if request else [],
+            held_back=bool(held_back),
         ),
     )
 
@@ -371,8 +381,10 @@ def _instructions(
     commit: str,
     used: int,
     locked: list[str],
+    held_back: bool,
 ) -> str:
-    """The brief as the prompt a coding agent follows, in markdown."""
+    """The brief as the prompt a coding agent follows, in markdown. It promises a check
+    on cases the coding agent was not given only when the attempt holds some back."""
     reasons = {
         record.scenario_key: {
             name: record.reasons.get(name, "")[:REASON_CHARS]
@@ -444,7 +456,7 @@ def _instructions(
         "",
         "## Held-back cases",
         "",
-        HELD_BACK_RULE,
+        HELD_BACK_RULE if held_back else NONE_HELD_BACK,
         "",
     ]
     return "\n".join(lines)

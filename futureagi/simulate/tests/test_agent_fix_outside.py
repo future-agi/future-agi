@@ -270,6 +270,22 @@ class TestSettingOff:
         assert (response.status_code, response.json()["error"]) == (404, "not_found")
         assert AgentFixRun.no_workspace_objects.count() == 1
 
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [("get", "coding-agent-brief/"), ("post", "coding-agent-attempts/")],
+        ids=["brief", "submit"],
+    )
+    def test_a_request_they_would_refuse_still_answers_not_found(
+        self, settings, auth_client, method, path
+    ):
+        """Off, the routes are not there for any request: one with no run, or no tree,
+        reads as not found, never as a request the route would check."""
+        settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED = False
+
+        response = getattr(auth_client, method)(f"{EPOCHS}/{path}")
+
+        assert (response.status_code, response.json()["error"]) == (404, "not_found")
+
 
 class TestSubmit:
     def test_the_first_attempt_verifies_the_tree_on_every_failing_case(
@@ -314,10 +330,10 @@ class TestSubmit:
     def test_an_attempt_too_large_for_an_epoch_is_refused_not_cut_short(
         self, auth_client, source_run
     ):
-        # $401 of holds is 50,125 credits with the room, past the 50,000 an Epoch may use.
+        # $501 of holds is 50,100 credits, past the 50,000 an Epoch may use.
         with patch(
             "simulate.selectors.agent_fix_outside.outside_attempt_hold_usd",
-            return_value=Decimal("401"),
+            return_value=Decimal("501"),
         ):
             response = _submit(auth_client, source_run)
             brief = auth_client.get(
@@ -329,9 +345,28 @@ class TestSubmit:
             422,
             "fix_attempt_too_large",
         )
-        assert "50,125 credits" in response.json()["message"]
+        assert "50,100 credits" in response.json()["message"]
         assert brief["blocked"]["code"] == "fix_attempt_too_large"
         assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_a_hold_an_epoch_can_take_is_not_refused_for_its_room(
+        self, auth_client, source_run
+    ):
+        # $401 of holds is 40,100 credits: an Epoch can hold it, though the room on top
+        # (50,125) is more than the 50,000 it may use. The default stops at that limit.
+        with patch(
+            "simulate.selectors.agent_fix_outside.outside_attempt_hold_usd",
+            return_value=Decimal("401"),
+        ):
+            brief = auth_client.get(
+                f"{EPOCHS}/coding-agent-brief/",
+                {"source_run_id": str(source_run.test_execution_id)},
+            ).json()
+            response = _submit(auth_client, source_run)
+
+        assert brief["blocked"] is None
+        assert response.status_code == 201, response.content
+        assert response.json()["request"]["budget_credits"] == 50_000
 
     def test_a_summary_may_be_left_out(self, auth_client, source_run):
         response = auth_client.post(
@@ -376,6 +411,24 @@ class TestSubmit:
         assert brief["attempts"]["used"] == 1
         assert one_byte.status_code == 201, one_byte.content
         assert one_byte.json()["request"]["outside_candidate"]["number"] == 2
+
+    def test_a_twin_sent_while_its_first_is_checked_is_told_an_epoch_runs(
+        self, auth_client, source_run
+    ):
+        """Two sends of one tree at once: the second passed the refusals before the run's
+        lock while the first was not stored yet. Under the lock it reads the first as the
+        Epoch in progress, not as a change already checked."""
+        first = _submit(auth_client, source_run)
+        assert first.status_code == 201, first.content
+
+        # The second's checks before the lock ran before the first was stored.
+        with patch(
+            "simulate.services.agent_fix_outside.launch_blocker", return_value=None
+        ):
+            again = _submit(auth_client, source_run)
+
+        assert (again.status_code, again.json()["error"]) == (409, "fix_run_active")
+        assert AgentFixRun.no_workspace_objects.count() == 1
 
     def test_a_change_whose_attempt_failed_unchecked_may_be_sent_again(
         self, auth_client, source_run
@@ -1010,6 +1063,52 @@ class TestLineage:
         baseline.refresh_from_db()
         assert (baseline.graded_at is not None) is graded
 
+    def test_a_baseline_whose_dispatch_reached_only_some_calls_is_not_graded(
+        self, auth_client, source_run
+    ):
+        """A dispatch that failed partway puts back the calls it did not reach: the run
+        reads graded only once every finished call holds its evals, so the next winner
+        grades the rest."""
+        attempt = _running(
+            AgentFixRun.no_workspace_objects.get(
+                id=_submit(auth_client, source_run).json()["id"]
+            )
+        )
+        winner = _add(attempt)
+        baseline = _check(attempt, label="baseline-r1", keys=KEYS)
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed"
+        )
+        AgentFixCandidate.no_workspace_objects.filter(id=winner.id).update(
+            outcome="winner"
+        )
+        calls = CallExecution.objects.filter(
+            test_execution_id=baseline.test_execution_id
+        ).order_by("id")
+        calls.update(status=CallExecution.CallStatus.COMPLETED)
+        reached = calls.first()
+        assert calls.count() == 2
+
+        def queue(execution, chosen):
+            CallExecution.objects.filter(id=reached.id).update(
+                eval_outputs={one.id: {"status": "pending"} for one in chosen}
+            )
+            return {one.id: {"queued": 2, "skipped_existing": 0} for one in chosen}
+
+        with (
+            patch.object(
+                engine,
+                "runnable_eval_configs",
+                return_value=_Configs([SimpleNamespace(id="relevance")]),
+            ),
+            patch.object(engine, "queue_evals_for_finished_calls", side_effect=queue),
+            TestCase.captureOnCommitCallbacks(execute=True),
+        ):
+            engine._grade_winner(attempt, winner.id)
+
+        baseline.refresh_from_db()
+        assert baseline.graded_at is None
+
     def test_the_hold_holds_each_check_at_its_worst(self, source_run):
         request = FixRequest(
             target_scenario_keys=[f"case-{n}" for n in range(12)],
@@ -1040,6 +1139,12 @@ class TestLineage:
         _finished(first, "baseline-r2-again", key="r2-again")
         _finished(first, "baseline-r3")
         assert hold(second) == Decimal("17.20")
+        # A repeat a winner graded keeps its grading (start_check_run): read again, it
+        # holds nothing more. Each holds $1.20 of evals until then.
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run=first, fix_label__in=["baseline-r1", "baseline-r2-again"]
+        ).update(graded_at=timezone.now())
+        assert hold(second) == Decimal("14.80")
 
 
 class TestBrief:
@@ -1092,6 +1197,22 @@ class TestBrief:
             "greeted",
         ):
             assert line in instructions
+
+    def test_a_run_with_no_case_held_back_promises_no_unseen_check(
+        self, auth_client, both_failing
+    ):
+        """A run with too few failing cases holds none back: the brief says every check
+        runs on the cases it names, never that some were kept from the coding agent."""
+        body = auth_client.get(
+            f"{EPOCHS}/coding-agent-brief/",
+            {"source_run_id": str(both_failing.test_execution_id)},
+        ).json()
+
+        assert {one["key"] for one in body["targets"]} == set(KEYS)
+        instructions = body["instructions"]
+        assert HELD_BACK_RULE not in instructions
+        assert "not given" not in instructions
+        assert "too few failing cases to hold any back" in instructions
 
     def test_says_when_the_run_s_attempts_are_used(self, auth_client, source_run):
         previous = None
@@ -2079,6 +2200,29 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
             "fix_candidate_still_checking",
             "This version is Candidate 1 of Epoch 1, which is still checking it. Wait"
             " for the Epoch to finish.",
+        )
+
+    @pytest.mark.parametrize("state", [State.STOPPED, State.FAILED])
+    def test_a_candidate_its_ended_epoch_never_checked_says_so(
+        self, browser_client, planted, state
+    ):
+        """An Epoch that ended never finishes checking: no one is told to wait for it."""
+        AgentFixRun.no_workspace_objects.filter(id=planted.id).update(state=state)
+        AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
+            outcome="pending", verdict=None
+        )
+
+        response = _move(
+            browser_client,
+            planted.environment,
+            planted.candidates.get().agent_version_id,
+        )
+
+        assert response.status_code == 409, response.content
+        assert (response.json()["error"], response.json()["message"]) == (
+            "fix_candidate_not_checked",
+            "This version is Candidate 1 of Epoch 1, which ended before checking it, so"
+            " it can't be made the default.",
         )
 
     def test_a_candidate_that_passed_but_was_not_picked_says_so(

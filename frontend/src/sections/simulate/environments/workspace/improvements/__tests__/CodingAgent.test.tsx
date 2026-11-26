@@ -49,6 +49,8 @@ const api = vi.hoisted(() => ({
   brief: null as AgentFixCodingAgentBriefApi | null,
   briefStatus: 200,
   verdict: null as AgentFixAttemptVerdictApi | null,
+  // How many verdict reads fail before one answers.
+  verdictFailures: 0,
   get: vi.fn<
     (url: string, config?: { params?: unknown }) => Promise<{ data: unknown }>
   >(),
@@ -66,6 +68,10 @@ vi.mock("src/utils/axios", async (importOriginal) => {
       return Promise.resolve({ data: api.brief });
     }
     if (url === routes.verdict(ATTEMPT_ID)) {
+      if (api.verdictFailures > 0) {
+        api.verdictFailures -= 1;
+        return Promise.reject(new Error("network"));
+      }
       return Promise.resolve({ data: api.verdict });
     }
     return Promise.reject(new Error(`unexpected GET ${url}`));
@@ -97,7 +103,9 @@ const { default: OutsideAttemptVerdict } = await import(
 const { codingAgentSetup } = await import(
   "src/api/simulate-environments/codingAgent"
 );
-const { isUncountedAttempt } = await import("../attemptVerdictView");
+const { attemptNote, isUncountedAttempt } = await import(
+  "../attemptVerdictView"
+);
 
 const SETUP_URL = `${window.location.origin}/dashboard/settings/mcp-server`;
 const attemptFix = (): AgentFixRunDetailApi =>
@@ -132,6 +140,7 @@ beforeEach(() => {
   api.brief = fixtureBrief();
   api.briefStatus = 200;
   api.verdict = fixtureVerdict();
+  api.verdictFailures = 0;
   api.get.mockClear();
   clipboard.copy.mockClear();
 });
@@ -246,6 +255,45 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
     expect(api.get).toHaveBeenCalledWith(
       expect.stringContaining(`/agent-fix-runs/${ATTEMPT_ID}/verdict/`),
     );
+  });
+
+  it("promises no check on unseen cases when the run held none back", () => {
+    const fix = attemptFix();
+    renderUi(
+      <OutsideAttemptVerdict
+        fix={{
+          ...fix,
+          request: { ...fix.request, held_back_scenario_keys: [] },
+        }}
+      />,
+    );
+    const panel = screen.getByTestId("outside-attempt");
+    expect(
+      within(panel).queryByText(
+        "Your coding agent wrote this change. Future AGI checks every fix on cases your agent wasn't given.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).getByText(
+        "Your coding agent wrote this change. Future AGI checks it on the run's failing cases and on the cases that pass today.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Retry when the verdict read fails, and reads it again", async () => {
+    api.verdictFailures = 1;
+    const user = userEvent.setup();
+    renderUi(<OutsideAttemptVerdict fix={attemptFix()} />);
+    const panel = screen.getByTestId("outside-attempt");
+    await user.click(
+      await within(panel).findByRole("button", { name: /Retry/ }),
+    );
+    expect(
+      await within(panel).findByTestId("outside-attempt-checks"),
+    ).toBeInTheDocument();
+    expect(
+      api.get.mock.calls.filter(([url]) => url.includes("/verdict/")),
+    ).toHaveLength(2);
   });
 
   it("says Future AGI is still checking while the attempt runs with no check yet", async () => {
@@ -483,6 +531,51 @@ describe("An attempt's running stages and ending", () => {
     expect(text).not.toMatch(
       /diagnos|propos|Tries changes|Reads the failures/i,
     );
+  });
+
+  it("names no unseen cases in its stages when the run held none back", () => {
+    const base = attemptFix();
+    const fix = {
+      ...base,
+      state: "running",
+      step: "verify",
+      candidates: [],
+      request: { ...base.request, held_back_scenario_keys: [] },
+    };
+    const text = stepRows(fix)
+      .flatMap((row) => [row.label, ...row.lines])
+      .join(" ");
+    expect(text).not.toMatch(/held-back|wasn't given/i);
+    expect(stageLabel(fix)).toBe("Checking must-pass");
+  });
+
+  it("tells the run's last counted attempt to run the environment again, not to submit", () => {
+    const base = attemptFix();
+    const last = {
+      ...base,
+      state: "no_improvement",
+      counted: true,
+      request: {
+        ...base.request,
+        outside_candidate: { summary: "", number: 4 },
+      },
+    };
+    const runAgain =
+      "This run has had its 4 attempts. Run the environment again, then fix the new run.";
+    expect(headline(last)).toContain(runAgain);
+    expect(headline(last)).not.toContain("fagi epoch submit");
+    // The static check's refusal of the last attempt, under its checks.
+    const refused = fixtureVerdict({
+      number: 4,
+      counted: true,
+      tiers: [{ name: "static", status: "failed", detail: "" }],
+    });
+    expect(attemptNote(refused)).toContain(runAgain);
+    expect(attemptNote(refused)).not.toContain("fagi epoch submit");
+    // Attempt 4 that ended before a verdict did not count: it may be sent again.
+    expect(
+      headline({ ...last, state: "out_of_budget", counted: false }),
+    ).toContain("fagi epoch submit");
   });
 
   it.each([

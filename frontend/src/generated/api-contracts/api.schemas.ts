@@ -19566,11 +19566,11 @@ export interface AgentFixRequestApi {
   allowed_models?: string[];
   reply_latency_margin_pct?: number;
   cost_margin_pct?: number;
-  cost_limit_usd?: number;
+  cost_limit_usd?: number | null;
   observes_models?: boolean;
   meters_agent_cost?: boolean;
   measured_automatically?: boolean;
-  outside_candidate?: AgentFixOutsideCandidateApi;
+  outside_candidate?: AgentFixOutsideCandidateApi | null;
 }
 
 export interface AgentFixReportApi {
@@ -49880,19 +49880,7 @@ export type SimulateApiAgentFixRunsListParams = {
   state?: string;
 };
 
-export type SimulateApiAgentFixRunsSubmitAttemptBodyOne = {
-  source_run_id: string;
-  /** A `source/`-rooted tar.gz: each file of the brief it keeps, changed or not, and any new file. A file of the brief left out is deleted. */
-  tree: Blob;
-  summary?: string;
-  /** A GitHub agent's change is refused unless this is the brief's base_commit. */
-  base_commit?: string;
-  locked_paths?: string[];
-  /** The attempt's limit in credits. Left out, the most its check runs can hold at once: a hold on the budget, not spend. */
-  budget_credits?: number;
-};
-
-export type SimulateApiAgentFixRunsSubmitAttemptBodyTwo = {
+export type SimulateApiAgentFixRunsSubmitAttemptBody = {
   source_run_id: string;
   /** A `source/`-rooted tar.gz: each file of the brief it keeps, changed or not, and any new file. A file of the brief left out is deleted. */
   tree: Blob;

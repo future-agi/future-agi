@@ -38737,7 +38737,7 @@ export const simulateApiAgentFixRunsListResponseResultsItemRequestMetersAgentCos
   false;
 export const simulateApiAgentFixRunsListResponseResultsItemRequestMeasuredAutomaticallyDefault =
   false;
-export const simulateApiAgentFixRunsListResponseResultsItemRequestOutsideCandidateNumberMax = 4;
+export const simulateApiAgentFixRunsListResponseResultsItemRequestOutsideCandidateOneNumberMax = 4;
 
 export const simulateApiAgentFixRunsListResponseResultsItemReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -38907,7 +38907,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           .default(
             simulateApiAgentFixRunsListResponseResultsItemRequestCostMarginPctDefault,
           ),
-        cost_limit_usd: zod.number().optional(),
+        cost_limit_usd: zod.union([zod.number(), zod.null()]).optional(),
         observes_models: zod
           .boolean()
           .default(
@@ -38924,15 +38924,18 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
             simulateApiAgentFixRunsListResponseResultsItemRequestMeasuredAutomaticallyDefault,
           ),
         outside_candidate: zod
-          .object({
-            summary: zod.string(),
-            number: zod
-              .number()
-              .min(1)
-              .max(
-                simulateApiAgentFixRunsListResponseResultsItemRequestOutsideCandidateNumberMax,
-              ),
-          })
+          .union([
+            zod.object({
+              summary: zod.string(),
+              number: zod
+                .number()
+                .min(1)
+                .max(
+                  simulateApiAgentFixRunsListResponseResultsItemRequestOutsideCandidateOneNumberMax,
+                ),
+            }),
+            zod.null(),
+          ])
           .optional(),
       }),
       spent_credits: zod.number(),
@@ -39223,7 +39226,8 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
 
 /**
  * Submit the tree a person's own coding agent made for a finished run. Future AGI
-verifies it as a short Epoch that calls no model; read its verdict.
+checks it as a short Epoch: no model proposes a change, but each check runs the
+agent on the run's cases and uses credits. Read its verdict.
  */
 export const simulateApiAgentFixRunsSubmitAttemptBodyLockedPathsItemMax = 512;
 
@@ -39508,7 +39512,7 @@ export const simulateApiAgentFixRunsReadResponseRequestMetersAgentCostDefault =
   false;
 export const simulateApiAgentFixRunsReadResponseRequestMeasuredAutomaticallyDefault =
   false;
-export const simulateApiAgentFixRunsReadResponseRequestOutsideCandidateNumberMax = 4;
+export const simulateApiAgentFixRunsReadResponseRequestOutsideCandidateOneNumberMax = 4;
 
 export const simulateApiAgentFixRunsReadResponseReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -39651,7 +39655,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     cost_margin_pct: zod
       .number()
       .default(simulateApiAgentFixRunsReadResponseRequestCostMarginPctDefault),
-    cost_limit_usd: zod.number().optional(),
+    cost_limit_usd: zod.union([zod.number(), zod.null()]).optional(),
     observes_models: zod
       .boolean()
       .default(simulateApiAgentFixRunsReadResponseRequestObservesModelsDefault),
@@ -39666,15 +39670,18 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
         simulateApiAgentFixRunsReadResponseRequestMeasuredAutomaticallyDefault,
       ),
     outside_candidate: zod
-      .object({
-        summary: zod.string(),
-        number: zod
-          .number()
-          .min(1)
-          .max(
-            simulateApiAgentFixRunsReadResponseRequestOutsideCandidateNumberMax,
-          ),
-      })
+      .union([
+        zod.object({
+          summary: zod.string(),
+          number: zod
+            .number()
+            .min(1)
+            .max(
+              simulateApiAgentFixRunsReadResponseRequestOutsideCandidateOneNumberMax,
+            ),
+        }),
+        zod.null(),
+      ])
       .optional(),
   }),
   spent_credits: zod.number(),
@@ -40004,7 +40011,7 @@ export const simulateApiAgentFixRunsStopResponseRequestMetersAgentCostDefault =
   false;
 export const simulateApiAgentFixRunsStopResponseRequestMeasuredAutomaticallyDefault =
   false;
-export const simulateApiAgentFixRunsStopResponseRequestOutsideCandidateNumberMax = 4;
+export const simulateApiAgentFixRunsStopResponseRequestOutsideCandidateOneNumberMax = 4;
 
 export const simulateApiAgentFixRunsStopResponseReportOneFlakyProtectedItemPassedMin = 0;
 
@@ -40145,7 +40152,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     cost_margin_pct: zod
       .number()
       .default(simulateApiAgentFixRunsStopResponseRequestCostMarginPctDefault),
-    cost_limit_usd: zod.number().optional(),
+    cost_limit_usd: zod.union([zod.number(), zod.null()]).optional(),
     observes_models: zod
       .boolean()
       .default(simulateApiAgentFixRunsStopResponseRequestObservesModelsDefault),
@@ -40160,15 +40167,18 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
         simulateApiAgentFixRunsStopResponseRequestMeasuredAutomaticallyDefault,
       ),
     outside_candidate: zod
-      .object({
-        summary: zod.string(),
-        number: zod
-          .number()
-          .min(1)
-          .max(
-            simulateApiAgentFixRunsStopResponseRequestOutsideCandidateNumberMax,
-          ),
-      })
+      .union([
+        zod.object({
+          summary: zod.string(),
+          number: zod
+            .number()
+            .min(1)
+            .max(
+              simulateApiAgentFixRunsStopResponseRequestOutsideCandidateOneNumberMax,
+            ),
+        }),
+        zod.null(),
+      ])
       .optional(),
   }),
   spent_credits: zod.number(),

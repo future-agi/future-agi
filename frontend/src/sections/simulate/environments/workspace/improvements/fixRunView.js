@@ -1,5 +1,9 @@
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
-import { isOutsideAttempt } from "src/api/simulate-environments/codingAgent";
+import {
+  RUN_AGAIN,
+  isOutsideAttempt,
+  usedTheRunsLastAttempt,
+} from "src/api/simulate-environments/codingAgent";
 
 import { mustPassScenarioKeys } from "./scenarioOutcomes";
 
@@ -66,10 +70,20 @@ export const ATTEMPT_STAGE_LABEL = {
   search: "Checking the change",
   verify: "Checking held-back",
 };
-const ATTEMPT_STAGES = ["reproduce", "search", "verify"].map((id) => ({
-  id,
-  label: ATTEMPT_STAGE_LABEL[id],
-}));
+// A run with too few failing cases holds none back: the last stage checks only
+// the must-pass cases.
+const heldBackAny = (fix) => !!fix.request?.held_back_scenario_keys?.length;
+const attemptStageLabels = (fix) =>
+  heldBackAny(fix)
+    ? ATTEMPT_STAGE_LABEL
+    : { ...ATTEMPT_STAGE_LABEL, verify: "Checking must-pass" };
+const attemptStages = (fix) => {
+  const labels = attemptStageLabels(fix);
+  return ["reproduce", "search", "verify"].map((id) => ({
+    id,
+    label: labels[id],
+  }));
+};
 
 // The engine has no diagnose step: it diagnoses as its search starts, and names
 // that stage Diagnose. A search reads as diagnosing only while the engine says
@@ -88,8 +102,9 @@ export function stageOf(fix) {
 
 // The stage a running epoch is in, beside its status.
 export const stageLabel = (fix) =>
-  (isOutsideAttempt(fix) ? ATTEMPT_STAGE_LABEL : STAGE_LABEL)[stageOf(fix)] ||
-  null;
+  (isOutsideAttempt(fix) ? attemptStageLabels(fix) : STAGE_LABEL)[
+    stageOf(fix)
+  ] || null;
 
 export const pct = (x) => Math.round(x * 100);
 export const pts = (rate) => Math.round((rate[1] - rate[0]) * 100);
@@ -188,26 +203,32 @@ const sentence = (text) =>
     ? `${text.charAt(0).toUpperCase()}${text.slice(1).replace(/\.?$/, ".")}`
     : "";
 
-const SUBMIT_AGAIN = "Submit it again with fagi epoch submit.";
-
 // How an attempt from a person's own coding agent ended, in attempt words: the next
-// step is always the coding agent's, never Run Epoch or a retry.
+// step is always the coding agent's, never Run Epoch or a retry. After the run's
+// last counted attempt, that step is a new run.
 function attemptEndingText(fix) {
   const code = fix.failure?.code;
+  const last = usedTheRunsLastAttempt(
+    fix.request?.outside_candidate?.number,
+    fix.counted,
+  );
+  const submitAgain = last
+    ? RUN_AGAIN
+    : "Submit it again with fagi epoch submit.";
   switch (fix.state) {
     case "no_improvement":
-      return "Your coding agent's change did not pass every check, so nothing changed. The checks above say which. Fix the change, then submit it again with fagi epoch submit.";
+      return `Your coding agent's change did not pass every check, so nothing changed. The checks above say which. ${last ? RUN_AGAIN : "Fix the change, then submit it again with fagi epoch submit."}`;
     case "not_reproduced":
       return "The run's failing cases did not fail often enough on the current version to check a fix. Nothing changed.";
     case "out_of_budget":
-      return "This attempt reached its budget. Nothing changed. Submit it again with a larger budget: fagi epoch submit --budget-credits.";
+      return `This attempt reached its budget. Nothing changed. ${last ? RUN_AGAIN : "Submit it again with a larger budget: fagi epoch submit --budget-credits."}`;
     case "stopped":
       return "You stopped this attempt. Nothing changed.";
     case "failed":
       if (code === "fix_deadline")
-        return `This attempt ran out of its time limit. Nothing changed. ${SUBMIT_AGAIN}`;
+        return `This attempt ran out of its time limit. Nothing changed. ${submitAgain}`;
       if (!code || code === "fix_queue_timeout" || OUR_FAILURES.has(code))
-        return `This attempt stopped because of a problem on our side, not your change. Nothing changed. ${SUBMIT_AGAIN}`;
+        return `This attempt stopped because of a problem on our side, not your change. Nothing changed. ${submitAgain}`;
       return `This attempt stopped on something only you can change: ${sentence(fix.failure.message)}`;
     default:
       return null;
@@ -933,7 +954,9 @@ function attemptLines(id, fix, state) {
     ];
   }
   return [
-    `${done ? "Ran" : "Runs"} it on cases your agent wasn't given and on the must-pass cases`,
+    heldBackAny(fix)
+      ? `${done ? "Ran" : "Runs"} it on cases your agent wasn't given and on the must-pass cases`
+      : `${done ? "Ran" : "Runs"} it on the must-pass cases`,
   ];
 }
 
@@ -984,7 +1007,7 @@ function stepLines(id, fix, state) {
 // it interrupts.
 export function stepRows(fix) {
   let stages = hasVariations(fix) ? [VARIATIONS_STAGE, ...STAGES] : STAGES;
-  if (isOutsideAttempt(fix)) stages = ATTEMPT_STAGES;
+  if (isOutsideAttempt(fix)) stages = attemptStages(fix);
   const current = stages.findIndex((s) => s.id === stageOf(fix));
   const finished = fix.step === "done";
   return stages.map((s, i) => {

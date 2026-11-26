@@ -137,6 +137,8 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   // failed one has a failure.
   AgentFixRun: EPOCH_NULLABLE_REFS,
   AgentFixRunDetail: EPOCH_NULLABLE_REFS,
+  // Only an attempt from a person's own coding agent has an outside candidate.
+  AgentFixRequest: ["outside_candidate"],
   // An Epoch that ended with no winner names none.
   AgentFixReport: [],
   AgentFixCandidate: ["verdict"],

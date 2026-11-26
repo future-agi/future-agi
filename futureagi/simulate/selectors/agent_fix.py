@@ -866,7 +866,8 @@ def outside_attempt_hold_usd(
     re-run the budget refused would read as broken and refuse a good fix. The baseline
     runs every scenario OUTSIDE_REPEATS times, graded, except for a repeat an earlier
     attempt on the run finished: read again, it still holds its evals, which a winner's
-    grading runs."""
+    grading runs, unless a winner graded it already. That grading stays with its run
+    (start_check_run), so the repeat holds nothing."""
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
@@ -878,7 +879,7 @@ def outside_attempt_hold_usd(
     every = inventory_size(source_run)
     held_back = set(request.held_back_scenario_keys)
     searched = len(set(request.target_scenario_keys) - held_back)
-    reused = 0
+    reused: list[HostedHarnessJob] = []
     if attempt_of is not None:
         finished = HostedHarnessJob.no_workspace_objects.filter(
             fix_run_id__in=fix_lineage(attempt_of),
@@ -886,12 +887,13 @@ def outside_attempt_hold_usd(
             state=HostedHarnessJob.State.COMPLETED,
             deleted=False,
         )
-        reused = min(OUTSIDE_REPEATS, len(_each_repeat(finished, _BASELINE_LABEL)))
+        reused = _each_repeat(finished, _BASELINE_LABEL)[:OUTSIDE_REPEATS]
+    to_grade = sum(1 for run in reused if run.graded_at is None)
     screen = (2 * searched + len(held_back)) * ungraded
     final = every * OUTSIDE_REPEATS * graded
     confirm = every * OUTSIDE_REPEATS * ungraded
     baseline = every * (
-        (OUTSIDE_REPEATS - reused) * graded + reused * (graded - ungraded)
+        (OUTSIDE_REPEATS - len(reused)) * graded + to_grade * (graded - ungraded)
     )
     return screen + final + confirm + baseline
 
@@ -1585,15 +1587,8 @@ def launch_blocker(
         )
     if blocked := agent_blocker(environment) or unversioned_blocker(environment):
         return blocked
-    if AgentFixRun.no_workspace_objects.filter(
-        environment=source_run.environment, state__in=AgentFixRun.ACTIVE_STATES
-    ).exists():
-        return HostedHarnessError(
-            "fix_run_active",
-            "An epoch is already running in this environment. Open it, or wait for it to"
-            " finish.",
-            status_code=409,
-        )
+    if blocked := active_fix_blocker(environment):
+        return blocked
     # An issue's baseline holds the environment for the epoch launched from it.
     measuring = (
         AgentFixIssueJob.no_workspace_objects.filter(
@@ -1628,6 +1623,20 @@ def launch_blocker(
                 status_code=402,
             )
     return None
+
+
+def active_fix_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
+    """The refusal while an Epoch is already running in the environment: one at a time."""
+    if not AgentFixRun.no_workspace_objects.filter(
+        environment=environment, state__in=AgentFixRun.ACTIVE_STATES
+    ).exists():
+        return None
+    return HostedHarnessError(
+        "fix_run_active",
+        "An epoch is already running in this environment. Open it, or wait for it to"
+        " finish.",
+        status_code=409,
+    )
 
 
 HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE

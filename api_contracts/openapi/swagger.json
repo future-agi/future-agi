@@ -52137,7 +52137,7 @@
         "/simulate/api/agent-fix-runs/coding-agent-attempts/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-runs_submit_attempt",
-                "description": "Submit the tree a person's own coding agent made for a finished run. Future AGI\nverifies it as a short Epoch that calls no model; read its verdict.",
+                "description": "Submit the tree a person's own coding agent made for a finished run. Future AGI\nchecks it as a short Epoch: no model proposes a change, but each check runs the\nagent on the run's cases and uses credits. Read its verdict.",
                 "parameters": [
                     {
                         "name": "source_run_id",
@@ -52206,8 +52206,7 @@
                     }
                 },
                 "consumes": [
-                    "multipart/form-data",
-                    "application/x-www-form-urlencoded"
+                    "multipart/form-data"
                 ],
                 "tags": [
                     "simulate"

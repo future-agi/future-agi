@@ -63,6 +63,8 @@ export function readyEpoch(ids: Ids): Json {
       locked_paths: [],
       budget_credits: 1500,
       max_minutes: 150,
+      // The serializer sends null on an Epoch no coding agent submitted.
+      outside_candidate: null,
     },
     spent_credits: 480,
     committed_credits: 480,

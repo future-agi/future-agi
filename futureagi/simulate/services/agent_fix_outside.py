@@ -8,7 +8,11 @@ import structlog
 from django.db import transaction
 
 from simulate.models import AgentFixRun, HostedHarnessJob
-from simulate.selectors.agent_fix import base_commit, launch_blocker
+from simulate.selectors.agent_fix import (
+    active_fix_blocker,
+    base_commit,
+    launch_blocker,
+)
 from simulate.selectors.agent_fix_outside import (
     attempts_used,
     outside_attempt_request,
@@ -84,6 +88,10 @@ def submit_outside_attempt(
     with transaction.atomic():
         # Two submissions at once take their numbers one after the other.
         HostedHarnessJob.no_workspace_objects.select_for_update().get(id=source_run.id)
+        # The same tree sent twice at once: the second reads the first as in progress
+        # here, before any "already checked", which only a verdict makes true.
+        if blocked := active_fix_blocker(environment):
+            raise blocked
         attempts = list(outside_attempts(source_run))
         counted = used_attempts(source_run)
         used = len(counted)

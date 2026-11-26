@@ -1365,8 +1365,7 @@ import type {
   SimulateApiAgentFixRunsBriefParams,
   SimulateApiAgentFixRunsLaunchOptionsParams,
   SimulateApiAgentFixRunsListParams,
-  SimulateApiAgentFixRunsSubmitAttemptBodyOne,
-  SimulateApiAgentFixRunsSubmitAttemptBodyTwo,
+  SimulateApiAgentFixRunsSubmitAttemptBody,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
@@ -60656,20 +60655,53 @@ export const getSimulateApiAgentFixRunsSubmitAttemptUrl = () => {
 
 /**
  * Submit the tree a person's own coding agent made for a finished run. Future AGI
-verifies it as a short Epoch that calls no model; read its verdict.
+checks it as a short Epoch: no model proposes a change, but each check runs the
+agent on the run's cases and uses credits. Read its verdict.
  */
 export const simulateApiAgentFixRunsSubmitAttempt = async (
-  simulateApiAgentFixRunsSubmitAttemptBody?:
-    | SimulateApiAgentFixRunsSubmitAttemptBodyOne
-    | SimulateApiAgentFixRunsSubmitAttemptBodyTwo,
+  simulateApiAgentFixRunsSubmitAttemptBody?: SimulateApiAgentFixRunsSubmitAttemptBody,
   options?: RequestInit,
 ): Promise<simulateApiAgentFixRunsSubmitAttemptResponse> => {
+  const formData = new FormData();
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.source_run_id !== undefined) {
+    formData.append(
+      `source_run_id`,
+      simulateApiAgentFixRunsSubmitAttemptBody.source_run_id,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.tree !== undefined) {
+    formData.append(`tree`, simulateApiAgentFixRunsSubmitAttemptBody.tree);
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.summary !== undefined) {
+    formData.append(
+      `summary`,
+      simulateApiAgentFixRunsSubmitAttemptBody.summary,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.base_commit !== undefined) {
+    formData.append(
+      `base_commit`,
+      simulateApiAgentFixRunsSubmitAttemptBody.base_commit,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.locked_paths !== undefined) {
+    simulateApiAgentFixRunsSubmitAttemptBody?.locked_paths.forEach((value) =>
+      formData.append(`locked_paths`, value),
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.budget_credits !== undefined) {
+    formData.append(
+      `budget_credits`,
+      simulateApiAgentFixRunsSubmitAttemptBody.budget_credits.toString(),
+    );
+  }
+
   return apiMutator<simulateApiAgentFixRunsSubmitAttemptResponse>(
     getSimulateApiAgentFixRunsSubmitAttemptUrl(),
     {
       ...options,
       method: "POST",
-      body: JSON.stringify(simulateApiAgentFixRunsSubmitAttemptBody),
+      body: formData,
     },
   );
 };

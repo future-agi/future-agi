@@ -122,9 +122,17 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     and ship its winner: the environment's default, or a GitHub pull request."""
 
     permission_classes = [IsAuthenticated]
+    # A coding agent's own attempts: not there at all, for any request, while the
+    # deployment has them off.
+    OUTSIDE_ATTEMPT_ACTIONS = frozenset({"brief", "submit_attempt", "verdict"})
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
+        if (
+            self.action in self.OUTSIDE_ATTEMPT_ACTIONS
+            and not settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED
+        ):
+            raise HostedHarnessError("not_found", "Not found", status_code=404)
         check_ee_feature(
             EEFeature.FIX_MY_AGENT, org_id=str(request_organization(request).id)
         )
@@ -236,8 +244,6 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     def brief(self, request):
         """What a person's own coding agent reads to fix a finished run: its failing cases,
         never a held-back one, the agent's files, the rules, and how to submit."""
-        if not settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED:
-            return _not_found()
         source_run = self._source_run(
             request, request.validated_query_data["source_run_id"]
         )
@@ -256,13 +262,13 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         detail=False,
         methods=["post"],
         url_path="coding-agent-attempts",
-        parser_classes=[MultiPartParser, FormParser],
+        # Multipart only: the tree is a file, which a urlencoded form cannot carry.
+        parser_classes=[MultiPartParser],
     )
     def submit_attempt(self, request):
         """Submit the tree a person's own coding agent made for a finished run. Future AGI
-        verifies it as a short Epoch that calls no model; read its verdict."""
-        if not settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED:
-            return _not_found()
+        checks it as a short Epoch: no model proposes a change, but each check runs the
+        agent on the run's cases and uses credits. Read its verdict."""
         data = request.validated_data
         source_run = self._source_run(request, data["source_run_id"])
         if source_run is None:
@@ -288,8 +294,6 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     def verdict(self, request, pk=None):
         """An outside attempt's verdict: each tier's status, the static and target tiers'
         detail, and its must-pass regressions, none on a held-back case."""
-        if not settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED:
-            return _not_found()
         fix_run = self._fix_run(request, pk)
         if fix_run is None:
             return _not_found()

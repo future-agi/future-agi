@@ -1,3 +1,7 @@
+import {
+  RUN_AGAIN,
+  usedTheRunsLastAttempt,
+} from "src/api/simulate-environments/codingAgent";
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import type {
   AgentFixAttemptTierApi,
@@ -135,7 +139,12 @@ export function attemptNote(
       : "Future AGI is checking this attempt. Its checks show here when they have run.";
   }
   if (refusedBeforeChecks(verdict)) {
-    return "Future AGI checked nothing else. Fix the change, then submit it again with fagi epoch submit.";
+    // A refusal counts: after the run's last attempt, the next step is a new run.
+    return `Future AGI checked nothing else. ${
+      usedTheRunsLastAttempt(verdict.number, verdict.counted)
+        ? RUN_AGAIN
+        : "Fix the change, then submit it again with fagi epoch submit."
+    }`;
   }
   // An attempt that ended before a verdict on its change told its coding agent
   // nothing, so the platform does not count it against the run's attempts.

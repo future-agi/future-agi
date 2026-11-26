@@ -84,6 +84,8 @@ interface AttemptVerdictRead {
   verdict: AgentFixAttemptVerdictApi | undefined;
   isLoading: boolean;
   error: Error | null;
+  // Read the verdict again, after a read that failed.
+  refetch: () => Promise<unknown>;
 }
 
 // An outside attempt's verdict, as its coding agent reads it: each check's status,
@@ -93,7 +95,7 @@ export function useAttemptVerdict(
   { enabled }: { enabled: boolean },
 ): AttemptVerdictRead {
   const fixId = fix?.id;
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: attemptVerdictKey(fixId),
     // Only enabled with an id (an outside attempt is a stored Epoch).
     queryFn: () => getAttemptVerdict(fixId as string),
@@ -104,5 +106,19 @@ export function useAttemptVerdict(
         : false,
     meta: { errorHandled: true },
   });
-  return { verdict: data, isLoading, error };
+  return { verdict: data, isLoading, error, refetch };
 }
+
+// The most outside attempts a run takes: the API's cap on an attempt's number
+// (OUTSIDE_ATTEMPTS_MAX); codingAgent.contract.test.ts holds the two equal.
+export const OUTSIDE_ATTEMPTS_MAX = 4;
+
+// The run's last attempt: one that counts, numbered at the cap. Its coding agent can
+// submit nothing more on the run; the next step is a new run.
+export const usedTheRunsLastAttempt = (
+  number: number | undefined,
+  counted: boolean | null | undefined,
+): boolean =>
+  counted === true && number != null && number >= OUTSIDE_ATTEMPTS_MAX;
+
+export const RUN_AGAIN = `This run has had its ${OUTSIDE_ATTEMPTS_MAX} attempts. Run the environment again, then fix the new run.`;

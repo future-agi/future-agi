@@ -1,6 +1,7 @@
 import { Box, Stack, Typography } from "@mui/material";
 
 import ContentSkeleton from "src/components/content-skeleton";
+import ErrorState from "src/components/error-state";
 import Section from "src/components/section";
 import {
   isOutsideAttempt,
@@ -23,7 +24,7 @@ export default function OutsideAttemptVerdict({
 }) {
   const enabled = useCodingAgentAttemptsEnabled();
   const outside = isOutsideAttempt(fix);
-  const { verdict, isLoading, error } = useAttemptVerdict(fix, {
+  const { verdict, isLoading, error, refetch } = useAttemptVerdict(fix, {
     enabled: enabled && outside,
   });
   if (!enabled || !outside) return null;
@@ -39,7 +40,12 @@ export default function OutsideAttemptVerdict({
         variant="panel"
         data-testid="outside-attempt"
         title={`Attempt ${number} from your coding agent`}
-        description="Your coding agent wrote this change. Future AGI checks every fix on cases your agent wasn't given."
+        description={
+          // A run with too few failing cases holds none back.
+          fix.request.held_back_scenario_keys.length
+            ? "Your coding agent wrote this change. Future AGI checks every fix on cases your agent wasn't given."
+            : "Your coding agent wrote this change. Future AGI checks it on the run's failing cases and on the cases that pass today."
+        }
         sx={{ p: 2 }}
       >
         {summary && (
@@ -54,10 +60,10 @@ export default function OutsideAttemptVerdict({
         )}
         {isLoading && <ContentSkeleton variant="panel" />}
         {error && (
-          <Typography sx={note}>
-            Could not read this attempt&apos;s verdict. Reload the page to try
-            again.
-          </Typography>
+          <ErrorState
+            title="Couldn't load this attempt's verdict"
+            onRetry={() => refetch()}
+          />
         )}
         {checks.length > 0 && (
           <Stack spacing={0.75} data-testid="outside-attempt-checks">

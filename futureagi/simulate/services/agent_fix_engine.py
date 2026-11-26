@@ -681,15 +681,21 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
 
 def _graded_once_dispatched(run_id: Any, config_ids: list[str]) -> Callable[[], None]:
     def mark() -> None:
-        """Mark the run graded if its calls still hold the evals' entries: a dispatch
-        that failed put each call back as it was, and the next winner grades it."""
+        """Mark the run graded once every finished call holds every eval's entry: a
+        dispatch that failed, even partway, put each call it did not reach back as it
+        was, and the next winner grades those."""
         run = HostedHarnessJob.no_workspace_objects.filter(id=run_id).first()
-        if (
-            run is None
-            or not CallExecution.objects.filter(
-                test_execution_id=run.test_execution_id,
-                eval_outputs__has_any_keys=config_ids,
-            ).exists()
+        if run is None:
+            return
+        calls = CallExecution.objects.filter(test_execution_id=run.test_execution_id)
+        if not calls.filter(eval_outputs__has_any_keys=config_ids).exists():
+            return
+        finished = calls.filter(status=CallExecution.CallStatus.COMPLETED).values_list(
+            "eval_outputs", flat=True
+        )
+        if not all(
+            isinstance(outputs, dict) and all(one in outputs for one in config_ids)
+            for outputs in finished
         ):
             return
         HostedHarnessJob.no_workspace_objects.filter(id=run_id).update(
