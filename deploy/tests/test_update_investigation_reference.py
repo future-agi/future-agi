@@ -802,11 +802,30 @@ class InvestigationReferenceTests(unittest.TestCase):
         self.assertLess(m.PREPARE.index('target-only physical column'), m.PREPARE.index('transaction.atomic()'))
 
     def test_buckets_partition_the_uuid_space_and_refuse_bad_indices(self):
+        probes = []
         class Recorded:
+            rows = 0
             def __init__(self, filters=()): self.filters = filters
             def filter(self, **kwargs): return Recorded(self.filters + tuple(kwargs.items()))
+            def order_by(self): return self
+            def values(self, *fields): return self
+            def __getitem__(self, window):
+                probes.append((dict(self.filters), window))
+                return self
+            def count(self): return Recorded.rows
+        Recorded.model = SimpleNamespace(_base_manager=Recorded())
         env = {'a': {}, 'uuid': uuid}
         exec(m.BUCKET, env)
+        # The probe reads the unfiltered table's share of the same range, capped
+        # one row past the bound, and refuses a range over the bound.
+        env['a'] = dict(scale=2, buckets=2, bucket=1)
+        Recorded.rows = m.BUCKET_ROWS
+        self.assertIn(('pk__gte', uuid.UUID(int=2**127)), env['bucket'](Recorded()).filters)
+        self.assertEqual(probes[-1], ({'pk__gte': uuid.UUID(int=2**127)}, slice(None, m.BUCKET_ROWS + 1)))
+        Recorded.rows = m.BUCKET_ROWS + 1
+        with self.assertRaisesRegex(AssertionError, 'bucket over BUCKET_ROWS rows'):
+            env['bucket'](Recorded())
+        Recorded.rows = 0
         for scale in (1, 2, 3, 1000):
             bounds = []
             for index in range(scale):

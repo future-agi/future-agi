@@ -46,6 +46,9 @@ separate calls count physical and fixture rows before the first chunk, including
 on resume. These counts and the final physical, fixture and cohort counts use
 one UUID-range bucket per scale block. The host sums the disjoint ranges, so
 extra rows are counted too. At scale one the single bucket covers the table.
+Each bucket first probes the whole table's rows in its key range with a LIMIT
+of BUCKET_ROWS + 1 and refuses a range over BUCKET_ROWS (1,000,000), so a large
+pre-existing table or a skewed range cannot make one call unbounded.
 
 After the target migrates, qualification's large_volume_migrations assertion
 runs the same bounded slices and buckets on the target. It checks that every
@@ -338,15 +341,24 @@ def check_context(context):
 """
 
 # One UUID-range share of a table per call. Together the buckets read every row
-# exactly once, including rows no payload predicts, and one bucket holds about
-# one scale block, so a call's work does not grow with the requested scale.
-BUCKET = '\nVERIFY_JOBS = ' + repr(VERIFY_JOBS) + '\n' + """
+# exactly once, including rows no payload predicts. Fixture IDs are uuid5, so one
+# bucket holds about one scale block; BUCKET_ROWS is the enforced bound, which
+# also covers rows that existed before the fixture or a skewed key range.
+BUCKET_ROWS = 1000000
+BUCKET = '\nVERIFY_JOBS = ' + repr(VERIFY_JOBS) + '\nBUCKET_ROWS = ' + repr(BUCKET_ROWS) + '\n' + """
+def key_range(queryset,low,high):
+    queryset=queryset.filter(pk__gte=uuid.UUID(int=low))
+    return queryset if high==2**128 else queryset.filter(pk__lt=uuid.UUID(int=high))
 def bucket(queryset):
     count,index=a['buckets'],a['bucket']
     assert type(count) is int and count==a['scale'] and type(index) is int and 0<=index<count, 'investigation_reference: invalid bucket'
     low,high=index*2**128//count,(index+1)*2**128//count
-    queryset=queryset.filter(pk__gte=uuid.UUID(int=low))
-    return queryset if high==2**128 else queryset.filter(pk__lt=uuid.UUID(int=high))
+    # Probe the whole table's share of the range, not only the filtered rows: a
+    # filtered count can still scan the full range. The probe stops at
+    # BUCKET_ROWS+1 rows, so it and every count on this range are bounded.
+    probe=key_range(queryset.model._base_manager.order_by(),low,high).values('pk')[:BUCKET_ROWS+1].count()
+    assert probe<=BUCKET_ROWS, 'investigation_reference: bucket over BUCKET_ROWS rows'
+    return key_range(queryset,low,high)
 def verify_slice(start,stop):
     assert type(a['scale']) is int and a['scale']>0, 'investigation_reference: invalid scale'
     assert type(start) is int and 0<=start<stop<=100000*a['scale'], 'investigation_reference: invalid slice'
