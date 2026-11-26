@@ -1,8 +1,6 @@
 """Start, stop and close "Fix my agent" runs, and make a candidate the default."""
 
-from collections import Counter
-from collections.abc import Mapping, Sequence
-from hashlib import sha256
+from collections.abc import Sequence
 from typing import Any
 
 import structlog
@@ -20,8 +18,6 @@ from simulate.models import (
     Scenarios,
 )
 from simulate.pydantic_schemas.agent_fix import (
-    HELD_BACK_SHARE,
-    HELD_BACK_VERIFIED_MIN,
     MARGIN_PCT_DEFAULT,
     VARIATIONS_PER_CASE,
     EvalGrading,
@@ -42,6 +38,7 @@ from simulate.selectors.agent_fix import (
     recent_lost_models,
     scenario_results,
     source_run_usage,
+    split_held_back,
     variations_blocker,
     was_the_retry,
     written_variations,
@@ -66,45 +63,6 @@ from simulate.temporal.client import (
 )
 
 logger = structlog.get_logger(__name__)
-
-
-HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
-
-
-def split_held_back(
-    seed: str,
-    failing: Mapping[str, list[str]],
-    parents: Mapping[str, str] | None = None,
-) -> list[str]:
-    """The failing cases the worker never sees, so the verdict can prove the fix holds beyond
-    the cases it was made on: one in three, picked by a stable hash of ``seed`` and the key,
-    and never the last cases left to search on for a failing sub-goal. None below twelve.
-
-    A variation (a key of ``parents``) goes with the case it varies: a case and its
-    variations are held back together or not at all."""
-    parents = parents or {}
-    cases = [key for key, names in failing.items() if names]
-    if len(cases) < HELD_BACK_MIN_CASES:
-        return []
-    families: dict[str, list[str]] = {}
-    for key in cases:
-        families.setdefault(parents.get(key, key), []).append(key)
-    quota = len(cases) // HELD_BACK_SHARE
-    searched = Counter(name for key in cases for name in failing[key])
-    held: list[str] = []
-    for parent in sorted(
-        families, key=lambda key: sha256(f"{seed}:{key}".encode()).hexdigest()
-    ):
-        if len(held) == quota:
-            break
-        family = families[parent]
-        names = Counter(name for key in family for name in failing[key])
-        if len(held) + len(family) <= quota and all(
-            searched[name] > count for name, count in names.items()
-        ):
-            held.extend(family)
-            searched.subtract(names)
-    return held
 
 
 def launch_fix_run(
@@ -653,7 +611,10 @@ def make_candidate_default(
     candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
 ) -> str:
     """Make a finished fix's winner the environment's default, on the user's word; never
-    over a default that moved since the fix's base, whatever the reason given."""
+    over a default that moved since the fix's base, whatever the reason given.
+
+    ``validating``: the default moves once the winner's pairing validates.
+    """
     require_shippable(candidate, override_reason=override_reason)
     fix_run = candidate.fix_run
     base = f"v{fix_run.base_agent_version.version_number}"
@@ -683,7 +644,7 @@ def make_candidate_default(
                 else None
             ),
         )
-    if outcome not in ("activated", "already_default"):
+    if outcome not in ("activated", "already_default", "validating"):
         raise HostedHarnessError(
             "fix_candidate_not_activated",
             "The version could not become the environment default. Try again.",

@@ -239,6 +239,10 @@ func toolName(tool models.Tool) string {
 // has one job and many callers, and a validation error does not belong in its
 // return values.
 func RejectUnsupportedTools(tools []models.Tool) *models.APIError {
+	return rejectUnsupportedTools(tools, true)
+}
+
+func rejectUnsupportedTools(tools []models.Tool, warnMixed bool) *models.APIError {
 	var unsupported []models.Tool
 	served := 0
 	for _, tool := range tools {
@@ -258,11 +262,11 @@ func RejectUnsupportedTools(tools []models.Tool) *models.APIError {
 		return nil
 	case served == 0:
 		return UnsupportedToolError(unsupported[0])
-	default:
+	case warnMixed:
 		slog.Warn("gemini: tool entries this provider cannot serve were left out of the request",
-			"dropped", len(unsupported), "kept", served, "first", toolName(unsupported[0]))
-		return nil
+			"dropped", len(unsupported), "kept", served, "first", unsupported[0].Capability())
 	}
+	return nil
 }
 
 type geminiFuncDecl struct {
