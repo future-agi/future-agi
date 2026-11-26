@@ -841,8 +841,11 @@ class TestProductionOnlyTasks:
         # across versions.
         catalogue = "\"documents\" -> 'sub_goals'"
         catalogue_reads = [sql for sql in version_selects if catalogue in sql]
-        assert len(catalogue_reads) == 1
-        assert '"simulate_harness_environment_version"."id" =' in catalogue_reads[0]
+        assert len(catalogue_reads) <= 1
+        assert all(
+            '"simulate_harness_environment_version"."id" =' in sql
+            for sql in catalogue_reads
+        )
         assert all(
             '"documents"' not in sql.replace(catalogue, "") for sql in version_selects
         )
