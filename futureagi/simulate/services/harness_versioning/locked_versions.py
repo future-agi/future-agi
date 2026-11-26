@@ -435,7 +435,7 @@ def lock_version(
     return locked
 
 
-def locked_version_members(locked_version_id: UUID | str) -> dict[UUID, str]:
+def locked_version_members(locked_version_id: UUID) -> dict[UUID, str]:
     """A lock's members, scenario id to split, as it locked them. A later rule
     change, an edit or a new default never moves them."""
     return dict(
