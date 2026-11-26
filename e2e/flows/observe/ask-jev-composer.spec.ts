@@ -36,7 +36,7 @@ const ASK_A_QUESTION = /Ask a question/;
 // page/AskComposer.jsx: the composer's own confirm, for a run past confirm_rows
 // with no credits billed (self-hosted).
 const CONFIRM_TEXT = new RegExp(
-  `^Read ${TRACES} traces for 3 questions\\? It takes about .+\\. You can pause or cancel it while it runs\\.$`);
+  `^Read ${TRACES} traces for 3 questions\\? It takes about .+\\. You can pause or stop it while it runs\\.$`);
 
 interface Estimate { result: { population: number; rows_to_read: number; needs_confirm: boolean; confirm_rows: number } }
 interface Started { result: { task_id: string; rows_requested: number; population: number } }
@@ -68,6 +68,47 @@ function placement(actions: Locator) {
   });
 }
 
+// page/AskComposer.jsx: two size cards of 240 px and their 10 px gap. Under
+// this the composer stacks them, whatever the window's width.
+const TWO_CARDS = 490;
+const ONE_CARD = 240;
+// MUI's sm breakpoint: past it, a breakpoint-based row would stay side by side.
+const SM = 600;
+// Under this a sample card's title and size menu (about 215 px on one line)
+// can't fit, whatever the layout; 240 px is the floor a card used to keep.
+const LEAST_ROOM = 220;
+// src/components/settings: the layout picked in the settings drawer, kept in
+// localStorage "settings". The vertical nav's frame is at least 1200 px wide,
+// which keeps the composer over 590 px with Past questions open; the
+// horizontal nav's frame has no minimum, so the composer narrows with the window.
+async function setNavLayout(page: Page, themeLayout: 'horizontal' | 'vertical'): Promise<void> {
+  await page.evaluate(layout => {
+    const saved = JSON.parse(localStorage.getItem('settings') ?? '{}');
+    localStorage.setItem('settings', JSON.stringify({ ...saved, themeLayout: layout }));
+  }, themeLayout);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+}
+
+/** The size cards against their scrolling pane: the width of the block the
+ * cards' container query measures, whether that block or the pane overflows
+ * sideways, and how far past the pane's right edge the furthest card reaches. */
+function cardsInPane(group: Locator) {
+  return group.evaluate(row => {
+    let pane = row.parentElement;
+    while (pane && !/(auto|scroll)/.test(getComputedStyle(pane).overflowY)) pane = pane.parentElement;
+    if (!pane) return null;
+    const block = row.parentElement!;
+    const paneRight = pane.getBoundingClientRect().right;
+    const cards = Array.from(row.children).map(card => card.getBoundingClientRect().right);
+    return {
+      room: Math.round(block.clientWidth),
+      blockOverflows: block.scrollWidth > block.clientWidth,
+      paneOverflows: pane.scrollWidth > pane.clientWidth,
+      pastRight: Math.max(0, Math.round(Math.max(...cards) - paneRight)),
+    };
+  });
+}
+
 /** The row's box lies wholly inside the viewport. */
 async function expectOnScreen(page: Page, actions: Locator): Promise<void> {
   const viewport = page.viewportSize();
@@ -87,18 +128,23 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     steps: [
       'send 4 traces to a new Observe project',
       'save the org TypeSafe key through the endpoint AI Providers uses',
-      'open the project\'s Traces view, its Evaluate menu, and choose Ask a question',
+      'open the project\'s Traces view, its Evaluate menu, and choose Ask a question, with the count held back',
+      'open Past questions, switch to the horizontal nav layout and narrow the window 40 px at a time, then restore the window, Past questions and the vertical layout',
       'type a question and add two example questions from Try one',
-      'click Ask Jev and read the confirm for 4 traces',
-      'click Start',
+      'click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back',
+      'click Ask Jev again and click Start',
     ],
     backendChecks: [
       'POST /tracer/instant-eval/estimate/ answers rows_to_read 4 and needs_confirm true for the project\'s traces',
+      'no POST /tracer/instant-eval/start/ is sent from Enter on the confirm\'s focused Back',
       'POST /tracer/instant-eval/start/ is sent confirmed for 4 rows and returns a task_id, and PG holds its tracer_eval_task and tracer_instant_eval_run for the actor org with rows_requested 4',
     ],
     browserChecks: [
+      'Question 1 stays at the same height on the page while the count is held back and after the size cards land',
+      'with Past questions open on the horizontal nav layout, narrowing the window 40 px at a time from 1280 px to 600 px (until the composer is under 220 px), the size card stays inside its pane, the size block never overflows, and the pane does not scroll sideways while the composer has 240 px',
       'the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it',
-      'Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button and has focus',
+      'Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus',
+      'Enter on the focused Back closes the confirm and gives Ask Jev focus again',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -138,19 +184,74 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
 
   await test.step('seed: the org TypeSafe key', () => ensureTypesafeKey(actor));
 
-  await test.step('UI + API: Ask a question counts the 4 traces, past the confirm size', async () => {
+  await test.step('UI + API: Ask a question counts the 4 traces, past the confirm size, without moving Question 1', async () => {
     await page.goto(`/dashboard/observe/${projectId}/llm-tracing?tab=traces&selectedTab=trace`,
       { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'Evaluate', exact: true }).click();
+    // Hold the count back until Question 1's place while counting is read.
+    let release = () => {};
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const isEstimate = (url: URL) => url.pathname === ESTIMATE;
+    await page.route(isEstimate, async route => {
+      await held;
+      await route.continue();
+    });
     const estimated = page.waitForResponse(r => new URL(r.url()).pathname === ESTIMATE
       && r.request().method() === 'POST', { timeout: UI_READY });
     await page.getByRole('menu').getByRole('menuitem').filter({ hasText: ASK_A_QUESTION }).click();
+    const question1 = page.getByRole('textbox', { name: 'Question 1' });
+    await ui(page.getByTestId('scope-choices-loading')).toBeVisible();
+    const counting = (await question1.boundingBox())?.y;
+    release();
     const response = await estimated;
+    await page.unroute(isEstimate);
+    await ui(page.getByRole('radiogroup', { name: 'How many to read' })).toBeVisible();
+    const counted = (await question1.boundingBox())?.y;
+    await testInfo.attach('question-1-y', { contentType: 'application/json', body: JSON.stringify({ counting, counted }) });
+    expect(counting).toBeDefined();
+    expect(counted).toBe(counting);
     expect(response.request().postDataJSON()).toMatchObject({ project_id: projectId, unit: 'traces' });
     const estimate = (await response.json() as Estimate).result;
     await testInfo.attach('estimate', { contentType: 'application/json', body: JSON.stringify(estimate) });
     expect(estimate).toMatchObject({ population: TRACES, rows_to_read: TRACES, needs_confirm: true,
       confirm_rows: CONFIRM_ROWS });
+  });
+
+  await test.step('UI: with Past questions open in a narrower window, the size card stays inside the composer', async () => {
+    const group = page.getByRole('radiogroup', { name: 'How many to read' });
+    const full = page.viewportSize()!;
+    await page.getByRole('button', { name: 'Show past questions', exact: true }).click();
+    const hide = page.getByRole('button', { name: 'Hide past questions', exact: true });
+    await ui(hide).toBeVisible();
+    await setNavLayout(page, 'horizontal');
+    await ui(group).toBeVisible();
+    await ui(hide).toBeVisible();
+    // Narrow the window 40 px at a time, staying past sm, through the band
+    // where one card fits but two don't and on below one card's 240 px.
+    const samples = [];
+    for (let width = full.width; width >= SM; width -= 40) {
+      await page.setViewportSize({ width, height: full.height });
+      const fit = await cardsInPane(group);
+      expect(fit).not.toBeNull();
+      if (fit!.room < LEAST_ROOM) break;
+      samples.push({ width, ...fit! });
+      if (fit!.room < TWO_CARDS && fit!.room >= ONE_CARD && samples.filter(x => x.room < TWO_CARDS).length === 1)
+        await testInfo.attach('narrow-with-history', { body: await page.screenshot(), contentType: 'image/png' });
+    }
+    await testInfo.attach('cards-in-pane', { contentType: 'application/json', body: JSON.stringify(samples) });
+    expect(samples.some(x => x.room < TWO_CARDS && x.room >= ONE_CARD)).toBe(true);
+    for (const x of samples) {
+      expect(x, `at ${x.width} px`).toMatchObject({ blockOverflows: false, pastRight: 0 });
+      // Under one card's width the question box may need the room too; the
+      // pane must not scroll sideways wherever a card fits.
+      if (x.room >= ONE_CARD) expect(x.paneOverflows, `pane at ${x.width} px`).toBe(false);
+    }
+    await page.setViewportSize(full);
+    await hide.click();
+    await ui(page.getByRole('button', { name: 'Show past questions', exact: true })).toBeVisible();
+    await setNavLayout(page, 'vertical');
+    await ui(group).toBeVisible();
+    await ui(page.getByRole('button', { name: 'Show past questions', exact: true })).toBeVisible();
   });
 
   const actions = page.getByTestId('ask-actions');
@@ -174,17 +275,30 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     await testInfo.attach('composer', { body: await page.screenshot(), contentType: 'image/png' });
   });
 
-  await test.step('UI: Ask Jev restates the read, with Start the only primary action', async () => {
+  await test.step('UI + API: Ask Jev restates the read with Start the only primary action, and a second Enter goes Back', async () => {
+    const starts: string[] = [];
+    const onRequest = (r: { url(): string; method(): string }) => {
+      if (new URL(r.url()).pathname === START && r.method() === 'POST') starts.push(r.url());
+    };
+    page.on('request', onRequest);
     await askJev.click();
     // The alert also holds Back and Start; its message is the confirm.
     await ui(actions.getByRole('alert').getByText(CONFIRM_TEXT)).toBeVisible();
-    const start = actions.getByRole('button', { name: 'Start', exact: true });
-    await ui(start).toBeFocused();
+    // Focus on Back, not Start: a second Enter must not spend the run.
+    const back = actions.getByRole('button', { name: 'Back', exact: true });
+    await ui(back).toBeFocused();
     await ui(askJev).toHaveCount(0);
     // MUI marks a variant="contained" color="primary" button with this class;
     // AskPage.test.jsx primaryButtons() reads the same marker.
     await ui(page.locator('button.MuiButton-containedPrimary')).toHaveText(['Start']);
     await testInfo.attach('confirm', { body: await page.screenshot(), contentType: 'image/png' });
+    await page.keyboard.press('Enter');
+    await ui(askJev).toBeFocused();
+    await ui(actions.getByRole('alert')).toHaveCount(0);
+    page.off('request', onRequest);
+    expect(starts).toEqual([]);
+    await askJev.click();
+    await ui(actions.getByRole('alert').getByText(CONFIRM_TEXT)).toBeVisible();
   });
 
   const taskId = await test.step('UI + API: Start launches the confirmed run', async () => {

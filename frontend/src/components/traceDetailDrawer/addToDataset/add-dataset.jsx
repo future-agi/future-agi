@@ -33,6 +33,7 @@ const AddDataset = ({
   selectedSpans,
   currentTab,
   selectAll,
+  selectAllFilters,
   onSuccess,
 }) => {
   const [selectedOptionDataset, setSelectedOptionDataset] =
@@ -177,6 +178,7 @@ const AddDataset = ({
           selectedTraces={selectedTraces}
           selectedSpans={selectedSpans}
           selectAll={selectAll}
+          selectAllFilters={selectAllFilters}
           currentTab={currentTab}
           onSuccess={onSuccess}
         />
@@ -188,6 +190,7 @@ const AddDataset = ({
           selectedTraces={selectedTraces}
           selectedSpans={selectedSpans}
           selectAll={selectAll}
+          selectAllFilters={selectAllFilters}
           currentTab={currentTab}
           onSuccess={onSuccess}
         />
@@ -204,6 +207,7 @@ AddDataset.propTypes = {
   selectedSpans: PropTypes.array,
   currentTab: PropTypes.string,
   selectAll: PropTypes.bool,
+  selectAllFilters: PropTypes.array,
   onSuccess: PropTypes.func,
 };
 

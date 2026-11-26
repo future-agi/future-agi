@@ -631,7 +631,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.processTextInspection(ctx, rc, "messages.create", func(ctx context.Context, rc *models.RequestContext) error {
-		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
+		noteRouteDrops(w, rc, provider, canonicalReq)
 		var callErr error
 		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
 		if callErr != nil {
@@ -758,7 +758,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// Do not commit a 200/SSE response until the upstream has actually
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
-		noteResponsesRouteDrops(w, rc, provider, canonicalReq)
+		noteRouteDrops(w, rc, provider, canonicalReq)
 		for attempt := 0; attempt < 2; attempt++ {
 			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
 			if rawChunkCh == nil {
@@ -1131,35 +1131,18 @@ func setUsageResponse(rc *models.RequestContext, promptTokens, completionTokens 
 	}
 }
 
-// noteResponsesRouteDrops adds what provider's Responses route drops from a
-// translated request to the drops the route reports (x-agentcc-translation-drops
-// and the log's translation_drops). It runs in the provider call, after the
-// pre-plugins, so a request a policy changed or refused reports only what its
-// final form loses.
-func noteResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
-	rc.ResponsesCarriage = responsesCarriage(provider, req)
-	setResponsesRouteDrops(w, rc, responsesRouteDrops(provider, req))
-}
-
-// noteChatResponsesRouteDrops records what provider's Responses route drops
-// from any chat request: each as <name>_unsupported in the log's translation_drops
-// and the x-agentcc-translation-drops header, the gateway's notes channel. It
-// runs per provider attempt, so a failover attempt never keeps another's.
-func noteChatResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
-	rc.ResponsesCarriage = responsesCarriage(provider, req)
-	drops := responsesRouteDrops(provider, req)
-	names := make([]string, len(drops))
-	for i, drop := range drops {
-		names[i] = drop + "_unsupported"
+// noteRouteDrops rebuilds the serving attempt's notes after routing and pre-plugins.
+// A fallback must not inherit warnings or a cache marker from a prior attempt.
+func noteRouteDrops(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, req *models.ChatCompletionRequest) {
+	var drops []string
+	rc.ChatRoute = ""
+	if p, ok := provider.(interface {
+		ChatRouteDrops(*models.ChatCompletionRequest) (models.ChatRoute, []string)
+	}); ok {
+		rc.ChatRoute, drops = p.ChatRouteDrops(req)
 	}
-	setResponsesRouteDrops(w, rc, names)
-}
-
-// Rebuild per attempt from trusted translator notes, never from headers or
-// arbitrary metadata. A nil writer supports async/scheduled request logs;
-// their admission response precedes execution and cannot report future drops.
-func setResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, extra []string) {
-	joined := rc.SetResponsesRouteDrops(extra)
+	joined := rc.SetRouteDrops(models.RouteNotes(req, drops))
+	// Async/scheduled requests have no response writer at dispatch time.
 	if w == nil {
 		return
 	}
@@ -1168,26 +1151,4 @@ func setResponsesRouteDrops(w http.ResponseWriter, rc *models.RequestContext, ex
 		return
 	}
 	w.Header().Set("x-agentcc-translation-drops", joined)
-}
-
-// responsesCarriage reports whether provider sends req over its Responses
-// route. The response cache stores this with the response, so a hit can name
-// what that route omits from the request the cached answer is served to.
-func responsesCarriage(provider providers.Provider, req *models.ChatCompletionRequest) bool {
-	rp, ok := provider.(interface {
-		ChatNeedsResponses(*models.ChatCompletionRequest) bool
-	})
-	return ok && rp.ChatNeedsResponses(req)
-}
-
-// responsesRouteDrops names what provider's Responses route will omit;
-// nil for any other provider, route or invalid conversion.
-func responsesRouteDrops(provider providers.Provider, req *models.ChatCompletionRequest) []string {
-	rp, ok := provider.(interface {
-		ResponsesDrops(*models.ChatCompletionRequest) []string
-	})
-	if !ok {
-		return nil
-	}
-	return rp.ResponsesDrops(req)
 }
