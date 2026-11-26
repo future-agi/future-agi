@@ -61,10 +61,11 @@ HELD_BACK_RULE = (
     "Do not read held-back cases or any held-back field of an Epoch. Future AGI checks"
     " your fix on cases you were not given."
 )
-# A run with too few failing cases holds none back (split_held_back).
+# split_held_back holds none back for a run with too few failing cases, and for one whose
+# every family would give up a sub-goal's last searchable case.
 NONE_HELD_BACK = (
-    "This run has too few failing cases to hold any back. Future AGI checks your fix on"
-    " the failing cases above and on the cases that pass today."
+    "This run holds no case back. Future AGI checks your fix on the failing cases above"
+    " and on the cases that pass today."
 )
 # The tiers whose detail a coding agent may read, as the engine tells its own proposer
 # (verdict-service.mjs feedbackFor): the others are named, never shown, because the
@@ -367,7 +368,7 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
             commit=commit,
             used=used,
             locked=request.locked_paths if request else [],
-            held_back=bool(held_back),
+            held_back=bool(held_back) if request else None,
         ),
     )
 
@@ -381,10 +382,11 @@ def _instructions(
     commit: str,
     used: int,
     locked: list[str],
-    held_back: bool,
+    held_back: bool | None,
 ) -> str:
     """The brief as the prompt a coding agent follows, in markdown. It promises a check
-    on cases the coding agent was not given only when the attempt holds some back."""
+    on cases the coding agent was not given only when the attempt holds some back, and
+    says nothing of them when the brief has no attempt scope (``held_back`` is None)."""
     reasons = {
         record.scenario_key: {
             name: record.reasons.get(name, "")[:REASON_CHARS]
@@ -454,11 +456,14 @@ def _instructions(
         "",
         "The command is `fagi`. To install it, run `npm install -g @future-agi/cli`.",
         "",
-        "## Held-back cases",
-        "",
-        HELD_BACK_RULE if held_back else NONE_HELD_BACK,
-        "",
     ]
+    if held_back is not None:
+        lines += [
+            "## Held-back cases",
+            "",
+            HELD_BACK_RULE if held_back else NONE_HELD_BACK,
+            "",
+        ]
     return "\n".join(lines)
 
 

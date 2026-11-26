@@ -1213,6 +1213,8 @@ class TestBrief:
         assert body["agent"] is None
         # The launch's own refusal, as launch options give it.
         assert body["blocked"]["code"] == "environment_agent_unversioned"
+        # A brief with no cases above says nothing of cases held back.
+        assert "Held-back cases" not in body["instructions"]
 
     def test_never_names_a_held_back_case_and_says_how_to_submit(
         self, auth_client, both_failing
@@ -1260,7 +1262,8 @@ class TestBrief:
         instructions = body["instructions"]
         assert HELD_BACK_RULE not in instructions
         assert "not given" not in instructions
-        assert "too few failing cases to hold any back" in instructions
+        assert "This run holds no case back." in instructions
+        assert "too few failing cases" not in instructions
 
     def test_says_when_the_run_s_attempts_are_used(self, auth_client, source_run):
         previous = None
