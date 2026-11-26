@@ -35,6 +35,10 @@ const suiteMembersPath = (envId, versionId) =>
     { id: envId, version_id: versionId },
   );
 
+const lockPreviewPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/versions/lock-preview/", {
+    id: envId,
+  });
 const lockVersionPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/versions/lock/", {
     id: envId,
@@ -130,6 +134,9 @@ export const versionPickFields = (picks = {}) =>
 
 export const getEnvironmentVersions = async (envId) =>
   (await axios.get(versionsPath(envId))).data;
+
+export const getLockPreview = async (envId) =>
+  (await axios.get(lockPreviewPath(envId))).data;
 
 export const getVersionDiff = async (envId, piece, versionId, against) =>
   (
@@ -323,6 +330,13 @@ export const suiteMembersKey = (envId, versionId) => [
   versionId,
 ];
 
+// Under the versions, so whatever refreshes them (a default move, a draft save)
+// refreshes the preview too.
+export const lockPreviewKey = (envId) => [
+  ...environmentVersionsKey(envId),
+  "lock-preview",
+];
+
 export const nudgesKey = (envId) => [
   ...environmentVersionsKey(envId),
   "nudges",
@@ -482,13 +496,7 @@ export const toVersions = (data = {}) => {
   const lockedVersions = (
     Array.isArray(data?.locked_versions) ? data.locked_versions : []
   ).map(lockedVersionFromApi);
-  return {
-    ...lists,
-    defaults,
-    empty,
-    lockedVersions,
-    lock: lockFromApi(data?.lock),
-  };
+  return { ...lists, defaults, empty, lockedVersions };
 };
 
 export function useEnvironmentVersions(envId, { enabled = true } = {}) {
@@ -500,6 +508,19 @@ export function useEnvironmentVersions(envId, { enabled = true } = {}) {
     retry: retryUnlessNotFound,
     refetchInterval: (query) =>
       awaitsCheck(query.state.data) ? PREFLIGHT_POLL_MS : false,
+    meta: { errorHandled: true },
+  });
+}
+
+// Whether the default pair can be locked now: its own read, since it plans
+// as the lock does and so costs more than the versions list.
+export function useLockPreview(envId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: lockPreviewKey(envId),
+    queryFn: () => getLockPreview(envId),
+    select: lockFromApi,
+    enabled: Boolean(envId) && enabled,
+    retry: retryUnlessNotFound,
     meta: { errorHandled: true },
   });
 }
@@ -598,8 +619,8 @@ export function useMoveDefault(envId) {
 }
 
 // Lock or unlock a version. The answer is every version and locked version, so it seeds
-// the list. A conflict or a refusal means what the user saw is out of date:
-// refresh so the card shows the current state and its reason.
+// the list; the preview is asked again. A conflict or a refusal means what the user
+// saw is out of date: refresh so the card shows the current state and its reason.
 const useLockAction = (envId, action) => {
   const queryClient = useQueryClient();
   return useMutation({
@@ -607,6 +628,7 @@ const useLockAction = (envId, action) => {
     mutationFn: (args) => action(envId, args),
     onSuccess: (data) => {
       if (data) queryClient.setQueryData(environmentVersionsKey(envId), data);
+      queryClient.invalidateQueries({ queryKey: lockPreviewKey(envId) });
     },
     onError: (error) => {
       if ([404, 409, 422].includes(errorStatus(error))) {

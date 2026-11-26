@@ -6,6 +6,7 @@ import StatusBadgeJs from "src/components/status-badge";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   useEnvironmentVersions,
+  useLockPreview as useLockPreviewJs,
   useLockVersion as useLockVersionJs,
   useUnlockVersion as useUnlockVersionJs,
 } from "src/api/simulate-environments/versions";
@@ -76,6 +77,9 @@ interface LockMutation<Variables> {
     options: { onError: (error: unknown) => void },
   ) => void;
 }
+const useLockPreview = useLockPreviewJs as unknown as (envId: string) => {
+  data?: LockPreview;
+};
 const useLockVersion = useLockVersionJs as unknown as (
   envId: string,
 ) => LockMutation<VersionPair>;
@@ -106,13 +110,14 @@ export default function LockedVersionCard({
   onGo,
 }: LockedVersionCardProps) {
   const { data } = useEnvironmentVersions(envId);
+  const { data: lock } = useLockPreview(envId);
   const { canEdit, canUnlockVersion } = useSimulationAccess();
   const lockVersion = useLockVersion(envId);
   const unlockVersion = useUnlockVersion(envId);
   const [confirm, setConfirm] = useState<Confirm>(null);
-  if (!data?.lock) return null;
+  // Shown once both reads answer, so no state stands in for the other's.
+  if (!data || !lock) return null;
 
-  const lock: LockPreview = data.lock;
   const lockedVersions: LockedVersion[] = data.lockedVersions;
   const { defaults } = data;
   const current = lockedVersions.find(

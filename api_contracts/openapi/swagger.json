@@ -55283,6 +55283,39 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/versions/lock-preview/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_versions_lock_preview",
+                "description": "Whether the default environment and suite versions can be locked now, why\nnot, and the train and test splits a lock would give. It plans as the lock does,\nso it reads the default run's environment contract and scenario documents by\ndesign; the versions list stays off them.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockPreview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/versions/lock/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_versions_lock_version",
@@ -153366,8 +153399,7 @@
                 "agent",
                 "environment",
                 "suite",
-                "locked_versions",
-                "lock"
+                "locked_versions"
             ],
             "type": "object",
             "properties": {
@@ -153394,9 +153426,6 @@
                     "items": {
                         "$ref": "#/definitions/HarnessLockedVersion"
                     }
-                },
-                "lock": {
-                    "$ref": "#/definitions/HarnessLockPreview"
                 }
             }
         },

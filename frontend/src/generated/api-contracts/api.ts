@@ -698,6 +698,7 @@ import type {
   HarnessJobCreateApi,
   HarnessJobExtendApi,
   HarnessJobReadApi,
+  HarnessLockPreviewApi,
   HarnessLockRefusalApi,
   HarnessLockVersionApi,
   HarnessManifestApi,
@@ -64364,6 +64365,54 @@ export const simulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersion =
       },
     );
   };
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponse200 = {
+  data: HarnessLockPreviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsLockPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseError =
+  simulateApiHarnessEnvironmentsVersionsLockPreviewResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponse =
+  | simulateApiHarnessEnvironmentsVersionsLockPreviewResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsLockPreviewResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsLockPreviewUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/lock-preview/`;
+};
+
+/**
+ * Whether the default environment and suite versions can be locked now, why
+not, and the train and test splits a lock would give. It plans as the lock does,
+so it reads the default run's environment contract and scenario documents by
+design; the versions list stays off them.
+ */
+export const simulateApiHarnessEnvironmentsVersionsLockPreview = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsLockPreviewResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsLockPreviewResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsLockPreviewUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
 
 export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse200 = {
   data: HarnessVersionsApi;

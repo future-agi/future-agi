@@ -22384,31 +22384,11 @@ export interface HarnessLockedVersionApi {
   test: number;
 }
 
-export interface HarnessRefusalApi {
-  /** @minLength 1 */
-  code: string;
-  /** @minLength 1 */
-  message: string;
-}
-
-export interface HarnessLockPreviewApi {
-  environment_version_id: string | null;
-  suite_version_id: string | null;
-  /** The suite version passed its proofs against this environment version. */
-  proved: boolean;
-  can_lock: boolean;
-  refusal: HarnessRefusalApi | null;
-  train: number | null;
-  test: number | null;
-  test_target: number | null;
-}
-
 export interface HarnessVersionsApi {
   agent: HarnessVersionApi[];
   environment: HarnessVersionApi[];
   suite: HarnessVersionApi[];
   locked_versions: HarnessLockedVersionApi[];
-  lock: HarnessLockPreviewApi;
 }
 
 export interface HarnessDraftSaveResponseApi {
@@ -23376,6 +23356,25 @@ export interface HarnessAgentVersionCreateApi {
 
 export interface HarnessAgentCredentialsResponseApi {
   agent_version: HarnessVersionApi;
+}
+
+export interface HarnessRefusalApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface HarnessLockPreviewApi {
+  environment_version_id: string | null;
+  suite_version_id: string | null;
+  /** The suite version passed its proofs against this environment version. */
+  proved: boolean;
+  can_lock: boolean;
+  refusal: HarnessRefusalApi | null;
+  train: number | null;
+  test: number | null;
+  test_target: number | null;
 }
 
 export interface HarnessLockVersionApi {

@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1208,
+  endpointCount: 1209,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -971,6 +971,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/retry/":
         ["post"],
+      "/simulate/api/harness-environments/{id}/versions/lock-preview/": ["get"],
       "/simulate/api/harness-environments/{id}/versions/lock/": ["post"],
       "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
         ["get"],
@@ -2439,6 +2440,7 @@ export const API_SURFACE_PATHS = Object.freeze({
     ["post"],
   "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/retry/":
     ["post"],
+  "/simulate/api/harness-environments/{id}/versions/lock-preview/": ["get"],
   "/simulate/api/harness-environments/{id}/versions/lock/": ["post"],
   "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
     ["get"],

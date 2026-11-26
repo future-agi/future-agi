@@ -47821,26 +47821,6 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
           test: zod.number(),
         }),
       ),
-      lock: zod.object({
-        environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
-        suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
-        proved: zod
-          .boolean()
-          .describe(
-            "The suite version passed its proofs against this environment version.",
-          ),
-        can_lock: zod.boolean(),
-        refusal: zod.union([
-          zod.object({
-            code: zod.string().min(1),
-            message: zod.string().min(1),
-          }),
-          zod.null(),
-        ]),
-        train: zod.union([zod.number(), zod.null()]),
-        test: zod.union([zod.number(), zod.null()]),
-        test_target: zod.union([zod.number(), zod.null()]),
-      }),
     }),
   });
 
@@ -51414,26 +51394,6 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
       test: zod.number(),
     }),
   ),
-  lock: zod.object({
-    environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
-    suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
-    proved: zod
-      .boolean()
-      .describe(
-        "The suite version passed its proofs against this environment version.",
-      ),
-    can_lock: zod.boolean(),
-    refusal: zod.union([
-      zod.object({
-        code: zod.string().min(1),
-        message: zod.string().min(1),
-      }),
-      zod.null(),
-    ]),
-    train: zod.union([zod.number(), zod.null()]),
-    test: zod.union([zod.number(), zod.null()]),
-    test_target: zod.union([zod.number(), zod.null()]),
-  }),
 });
 
 /**
@@ -51777,26 +51737,6 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
         test: zod.number(),
       }),
     ),
-    lock: zod.object({
-      environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
-      suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
-      proved: zod
-        .boolean()
-        .describe(
-          "The suite version passed its proofs against this environment version.",
-        ),
-      can_lock: zod.boolean(),
-      refusal: zod.union([
-        zod.object({
-          code: zod.string().min(1),
-          message: zod.string().min(1),
-        }),
-        zod.null(),
-      ]),
-      train: zod.union([zod.number(), zod.null()]),
-      test: zod.union([zod.number(), zod.null()]),
-      test_target: zod.union([zod.number(), zod.null()]),
-    }),
   });
 
 /**
@@ -51810,6 +51750,39 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionParams 
 
 export const SimulateApiHarnessEnvironmentsVersionsAgentRetryAgentVersionBody =
   zod.object({});
+
+/**
+ * Whether the default environment and suite versions can be locked now, why
+not, and the train and test splits a lock would give. It plans as the lock does,
+so it reads the default run's environment contract and scenario documents by
+design; the versions list stays off them.
+ */
+export const SimulateApiHarnessEnvironmentsVersionsLockPreviewParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsVersionsLockPreviewResponse =
+  zod.object({
+    environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
+    suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
+    proved: zod
+      .boolean()
+      .describe(
+        "The suite version passed its proofs against this environment version.",
+      ),
+    can_lock: zod.boolean(),
+    refusal: zod.union([
+      zod.object({
+        code: zod.string().min(1),
+        message: zod.string().min(1),
+      }),
+      zod.null(),
+    ]),
+    train: zod.union([zod.number(), zod.null()]),
+    test: zod.union([zod.number(), zod.null()]),
+    test_target: zod.union([zod.number(), zod.null()]),
+  });
 
 /**
  * Lock the default environment and suite versions with train and test splits;
@@ -52104,26 +52077,6 @@ export const SimulateApiHarnessEnvironmentsVersionsLockVersionResponse =
         test: zod.number(),
       }),
     ),
-    lock: zod.object({
-      environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
-      suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
-      proved: zod
-        .boolean()
-        .describe(
-          "The suite version passed its proofs against this environment version.",
-        ),
-      can_lock: zod.boolean(),
-      refusal: zod.union([
-        zod.object({
-          code: zod.string().min(1),
-          message: zod.string().min(1),
-        }),
-        zod.null(),
-      ]),
-      train: zod.union([zod.number(), zod.null()]),
-      test: zod.union([zod.number(), zod.null()]),
-      test_target: zod.union([zod.number(), zod.null()]),
-    }),
   });
 
 /**
@@ -52436,26 +52389,6 @@ export const SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse =
         test: zod.number(),
       }),
     ),
-    lock: zod.object({
-      environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
-      suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
-      proved: zod
-        .boolean()
-        .describe(
-          "The suite version passed its proofs against this environment version.",
-        ),
-      can_lock: zod.boolean(),
-      refusal: zod.union([
-        zod.object({
-          code: zod.string().min(1),
-          message: zod.string().min(1),
-        }),
-        zod.null(),
-      ]),
-      train: zod.union([zod.number(), zod.null()]),
-      test: zod.union([zod.number(), zod.null()]),
-      test_target: zod.union([zod.number(), zod.null()]),
-    }),
   });
 
 /**
@@ -52751,26 +52684,6 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
         test: zod.number(),
       }),
     ),
-    lock: zod.object({
-      environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
-      suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
-      proved: zod
-        .boolean()
-        .describe(
-          "The suite version passed its proofs against this environment version.",
-        ),
-      can_lock: zod.boolean(),
-      refusal: zod.union([
-        zod.object({
-          code: zod.string().min(1),
-          message: zod.string().min(1),
-        }),
-        zod.null(),
-      ]),
-      train: zod.union([zod.number(), zod.null()]),
-      test: zod.union([zod.number(), zod.null()]),
-      test_target: zod.union([zod.number(), zod.null()]),
-    }),
   });
 
 /**
