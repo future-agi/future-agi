@@ -139,6 +139,7 @@ from simulate.services import (
     harness_actors,
     harness_file_roles,
 )
+from simulate.services.agent_fix_agents import with_epoch_pickable
 from simulate.services.evidence_import import (
     TranscriptInput,
     add_to_suite,
@@ -1745,11 +1746,13 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         query = request.validated_query_data
-        jobs = filter_for_list(
-            with_version_contract(self._queryset(request)),
-            search=query.get("search"),
-            status=query.get("status"),
-            agent_type=query.get("agent_type"),
+        jobs = with_epoch_pickable(
+            filter_for_list(
+                with_version_contract(self._queryset(request)),
+                search=query.get("search"),
+                status=query.get("status"),
+                agent_type=query.get("agent_type"),
+            )
         )
         agent_definition_id = query.get("agent_definition_id")
         if agent_definition_id is not None:

@@ -49,6 +49,7 @@ from simulate.pydantic_schemas.agent_fix import (
     VerdictTier,
 )
 from simulate.selectors.agent_fix import (
+    HELD_BACK_MIN_CASES,
     TRANSCRIPT_CHARS,
     VERDICT_TIERS,
     _record,
@@ -64,20 +65,19 @@ from simulate.selectors.agent_fix import (
     launch_options,
     limited_validation,
     ran_at,
+    split_held_back,
     verdict_tiers,
     with_spend,
 )
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_runs import (
-    HELD_BACK_MIN_CASES,
     close_fix_run,
     launch_fix_run,
     make_candidate_default,
     request_stop,
     require_shippable,
     retry_fix_run,
-    split_held_back,
 )
 from simulate.services.agent_setup import store_agent
 from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
