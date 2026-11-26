@@ -96,31 +96,45 @@ def scorable_tasks(suite_version_id: Any) -> list[Task]:
     return scorable_tasks_by_suite([suite_version_id]).get(suite_version_id, [])
 
 
-def _quotas(sizes: Mapping[str, int], target: int, seed: str) -> dict[str, int]:
-    """Each category's share of the test split, in proportion to its size. A category
-    always keeps one task for train, and one with none in test yet gets a spare seat
-    first, so every category with two tasks or more is in both splits when seats allow."""
+def _seats(
+    sizes: Mapping[str, int],
+    kept_test: Mapping[str, int],
+    room: Mapping[str, int],
+    target: int,
+    seed: str,
+) -> dict[str, int]:
+    """New test seats for each category: the seats ``target`` leaves after the test
+    tasks the categories already have.
+
+    A category with no test task yet gets a seat first, larger ones first. Then each
+    seat goes to the category furthest below its share of the target, counting the
+    test tasks it already has. ``room`` caps a category, so it keeps a train task.
+    """
     total = sum(sizes.values())
-    exact = {name: target * size / total for name, size in sizes.items()}
-    quotas = {
-        name: min(sizes[name] - 1, math.floor(share)) for name, share in exact.items()
-    }
-    spare = target - sum(quotas.values())
-    while spare > 0:
-        open_ = [name for name in sizes if quotas[name] < sizes[name] - 1]
+    budget = max(0, target - sum(kept_test.values()))
+    share = {name: target * size / total for name, size in sizes.items()}
+    seats = dict.fromkeys(sizes, 0)
+    uncovered = sorted(
+        (name for name in sizes if not kept_test[name] and room[name] > 0),
+        key=lambda name: (-sizes[name], _order(seed, name)),
+    )
+    for name in uncovered[:budget]:
+        seats[name] = 1
+    budget -= sum(seats.values())
+    while budget > 0:
+        open_ = [name for name in sizes if seats[name] < room[name]]
         if not open_:
             break
-        open_.sort(
+        best = min(
+            open_,
             key=lambda name: (
-                quotas[name] > 0,
-                -(exact[name] - math.floor(exact[name])),
+                kept_test[name] + seats[name] - share[name],
                 _order(seed, name),
-            )
+            ),
         )
-        for name in open_[:spare]:
-            quotas[name] += 1
-        spare = target - sum(quotas.values())
-    return quotas
+        seats[best] += 1
+        budget -= 1
+    return seats
 
 
 def plan_splits(
@@ -128,9 +142,11 @@ def plan_splits(
 ) -> SplitPlan:
     """The split of every task: the one it already has, or a new one.
 
-    New tasks fill each category's test seats left after its existing test tasks, in a
-    stable hash order of ``seed`` and the key. Nobody picks them. A category with one
-    task, or with none named, shares one group with the others like it.
+    The test split aims for the suite's target. Test tasks it already has count
+    towards it, so new tasks take only the seats left, and no task ever moves. New
+    tasks take their category's seats in a stable hash order of ``seed`` and the key.
+    Nobody picks them. A category with one task, or with none named, shares one group
+    with the others like it.
     """
     tasks = list(tasks)
     named: dict[str, int] = defaultdict(int)
@@ -141,31 +157,34 @@ def plan_splits(
     for task in tasks:
         by_group[group[task.category]].append(task)
     target = target_test_size(len(tasks))
-    quotas = (
-        _quotas(
-            {name: len(members) for name, members in by_group.items()}, target, seed
-        )
-        if tasks
-        else {}
-    )
-    assign: dict[Any, str] = {}
+    kept_test: dict[str, int] = {}
+    room: dict[str, int] = {}
+    new: dict[str, list[Task]] = {}
     for name, members in by_group.items():
         kept = [
             assigned[task.scenario_id]
             for task in members
             if task.scenario_id in assigned
         ]
-        new = sorted(
+        new[name] = sorted(
             (task for task in members if task.scenario_id not in assigned),
             key=lambda task: _order(seed, task.key),
         )
-        seats = max(0, quotas[name] - kept.count(TaskSplit.TEST))
-        if TaskSplit.TRAIN not in kept:
-            # The category's only train tasks are new ones: keep one of them in train.
-            seats = min(seats, len(new) - 1)
-        for index, task in enumerate(new):
+        kept_test[name] = kept.count(TaskSplit.TEST)
+        # The category's only train tasks are new ones: keep one of them in train.
+        room[name] = max(0, len(new[name]) - (TaskSplit.TRAIN not in kept))
+    seats = _seats(
+        {name: len(members) for name, members in by_group.items()},
+        kept_test,
+        room,
+        target,
+        seed,
+    )
+    assign: dict[Any, str] = {}
+    for name, members in new.items():
+        for index, task in enumerate(members):
             assign[task.scenario_id] = (
-                TaskSplit.TEST if index < seats else TaskSplit.TRAIN
+                TaskSplit.TEST if index < seats[name] else TaskSplit.TRAIN
             )
     splits = [
         assigned.get(task.scenario_id) or assign[task.scenario_id] for task in tasks
