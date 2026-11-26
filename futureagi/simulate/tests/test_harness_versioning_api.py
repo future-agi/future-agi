@@ -76,7 +76,8 @@ class TestVersionsList:
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body) == {"agent", "environment", "suite", "locked_versions", "lock"}
+        # The lock preview has its own read.
+        assert set(body) == {"agent", "environment", "suite", "locked_versions"}
         suites = body["suite"]
         assert [one["label"] for one in suites] == ["v2", "v1"]
         assert [one["is_default"] for one in suites] == [True, False]
@@ -163,8 +164,10 @@ class TestVersionsList:
             "suite": [],
         }
         assert body["locked_versions"] == []
-        assert body["lock"]["can_lock"] is False
-        assert body["lock"]["refusal"] == {
+        lock = _get(auth_client, f"{BASE}/{environment.id}/versions/lock-preview/")
+        assert lock.status_code == 200
+        assert lock.json()["can_lock"] is False
+        assert lock.json()["refusal"] == {
             "code": "lock_not_ready",
             "message": "Build this environment before you lock a version.",
         }
@@ -189,6 +192,8 @@ class TestVersionsList:
 
         paths = [
             f"{BASE}/{unknown}/versions/",
+            f"{BASE}/{environment.id}/versions/lock-preview/",
+            f"{BASE}/{unknown}/versions/lock-preview/",
             f"{BASE}/{environment.id}/versions/suite/"
             f"{environment.suite_version_id}/diff/",
             f"{BASE}/{unknown}/versions/suite/{environment.suite_version_id}/diff/",

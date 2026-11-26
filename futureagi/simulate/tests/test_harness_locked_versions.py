@@ -136,6 +136,13 @@ def _lock(auth_client, environment):
     )
 
 
+def _preview(auth_client, environment):
+    """Whether the default pair can be locked now, as the card reads it."""
+    response = auth_client.get(f"{BASE}/{environment.id}/versions/lock-preview/")
+    assert response.status_code == 200, response.content
+    return response.json()
+
+
 def _splits(environment):
     return dict(
         HarnessTaskSplit.no_workspace_objects.filter(
@@ -415,22 +422,34 @@ class TestLock:
         assert locked_version["locked_by"]["id"] == str(user.id)
         assert locked_version["unlocked_at"] is None
         assert locked_version["suite_label"] == "v2"
-        assert response.json()["lock"]["refusal"]["code"] == "version_already_locked"
+        assert "lock" not in response.json()
+        assert _preview(auth_client, environment)["refusal"]["code"] == (
+            "version_already_locked"
+        )
         assert len(_splits(environment)) == 42
 
-    def test_the_read_previews_the_splits_before_a_lock(
+    def test_the_preview_reads_the_splits_before_a_lock(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
 
         body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+        lock = _preview(auth_client, environment)
 
+        # The versions read carries the history only; the preview has its own read.
         assert body["locked_versions"] == []
-        assert body["lock"]["can_lock"] is True
-        assert (body["lock"]["train"], body["lock"]["test"]) == (14, 6)
-        assert body["lock"]["proved"] is False
-        assert body["lock"]["suite_version_id"] == str(environment.suite_version_id)
+        assert "lock" not in body
+        assert lock == {
+            "environment_version_id": str(environment.environment_version_id),
+            "suite_version_id": str(environment.suite_version_id),
+            "proved": False,
+            "can_lock": True,
+            "refusal": None,
+            "train": 14,
+            "test": 6,
+            "test_target": 6,
+        }
 
     def test_unscorable_scenarios_get_no_split(
         self, auth_client, user, workspace, storage
@@ -473,12 +492,12 @@ class TestLock:
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(12, goal="resolved"))
 
-        body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+        lock = _preview(auth_client, environment)
         response = _lock(auth_client, environment)
 
-        assert body["lock"]["can_lock"] is False
-        assert body["lock"]["refusal"]["code"] == "lock_too_few_test"
-        assert (body["lock"]["train"], body["lock"]["test"]) == (0, 0)
+        assert lock["can_lock"] is False
+        assert lock["refusal"]["code"] == "lock_too_few_test"
+        assert (lock["train"], lock["test"]) == (0, 0)
         assert response.status_code == 422
         assert not HarnessLockedVersion.no_workspace_objects.exists()
 
@@ -528,15 +547,11 @@ class TestLock:
             _scenarios(20) + [("bad", "refunds", malformed)],
         )
 
-        response = auth_client.get(f"{BASE}/{environment.id}/versions/")
+        lock = _preview(auth_client, environment)
 
         # The run refuses only a list naming no graded goal, so this member counts:
         # N = 21, target min(7, 60) = 7.
-        assert response.status_code == 200
-        assert (response.json()["lock"]["train"], response.json()["lock"]["test"]) == (
-            14,
-            7,
-        )
+        assert (lock["train"], lock["test"]) == (14, 7)
 
     def test_the_target_counts_scorable_tasks(
         self, auth_client, user, workspace, storage
@@ -547,7 +562,7 @@ class TestLock:
             _scenarios(80) + _scenarios(20, prefix="x", scorable=False),
         )
 
-        lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
+        lock = _preview(auth_client, environment)
 
         # N is the 80 scorable tasks, not the 100 members: min(24, max(60, 16)).
         assert (lock["train"], lock["test"], lock["test_target"]) == (56, 24, 24)
@@ -659,7 +674,7 @@ class TestLock:
             state="running",
         )
 
-        lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
+        lock = _preview(auth_client, environment)
         response = _lock(auth_client, environment)
 
         # The preview offers no lock the write would refuse.
@@ -745,7 +760,7 @@ class TestProductionOnlyTasks:
             "issue_refund"
         ]
 
-        lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
+        lock = _preview(auth_client, environment)
         response = _lock(auth_client, environment)
 
         assert (lock["train"], lock["test"]) == (15 - target_test_size(15), 5)
@@ -760,7 +775,7 @@ class TestProductionOnlyTasks:
             blocked
         )
 
-    def test_with_actors_off_every_task_splits_and_the_read_stays_off_documents(
+    def test_with_actors_off_every_task_splits_and_the_preview_stays_off_documents(
         self, auth_client, user, workspace, storage, settings
     ):
         settings.HARNESS_ACTORS_ENABLED = False
@@ -769,7 +784,7 @@ class TestProductionOnlyTasks:
         _needs_production(environment, {f"s{index}" for index in range(5)})
 
         with CaptureQueriesContext(connection) as read:
-            lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
+            lock = _preview(auth_client, environment)
         response = _lock(auth_client, environment)
 
         assert (lock["train"], lock["test"]) == (14, 6)
@@ -791,13 +806,50 @@ class TestProductionOnlyTasks:
         _suite(environment, _scenarios(20))
         _needs_production(environment, {f"s{index}" for index in range(20)})
 
+        lock = _preview(auth_client, environment)
         response = _lock(auth_client, environment)
 
+        # The preview offers no lock the write would refuse.
+        assert (lock["can_lock"], lock["refusal"]["code"]) == (
+            False,
+            "lock_too_few_test",
+        )
+        assert (lock["train"], lock["test"]) == (0, 0)
         assert response.status_code == 422
         assert response.json()["error"] == "lock_too_few_test"
         assert (response.json()["train"], response.json()["test"]) == (0, 0)
         assert not HarnessLockedVersion.no_workspace_objects.exists()
         assert _splits(environment) == {}
+
+    def test_the_preview_reads_a_flat_number_of_queries_as_locked_versions_grow(
+        self, auth_client, user, workspace, storage, settings
+    ):
+        settings.HARNESS_ACTORS_ENABLED = True
+        environment = _environment(user, workspace, storage)
+
+        def unlocked_default():
+            """A new default suite, not locked yet, whose ``s0`` needs production."""
+            _suite(environment, _scenarios(20))
+            _needs_production(environment, {"s0"})
+
+        def measure():
+            with CaptureQueriesContext(connection) as read:
+                lock = _preview(auth_client, environment)
+            # A refusal stops before the split plan, so the plan must run both times.
+            assert lock["can_lock"] is True, lock
+            assert (lock["train"], lock["test"]) == (19 - target_test_size(19), 6)
+            return len(read.captured_queries)
+
+        unlocked_default()
+        assert _lock(auth_client, environment).status_code == 200
+        unlocked_default()
+        few = measure()
+        for _ in range(4):
+            assert _lock(auth_client, environment).status_code == 200
+            unlocked_default()
+
+        assert HarnessLockedVersion.no_workspace_objects.count() == 5
+        assert measure() == few
 
 
 class TestUnlockAndDelete:
@@ -822,7 +874,7 @@ class TestUnlockAndDelete:
         environment.refresh_from_db()
         assert environment.deleted is False
 
-    def test_unlock_with_versioning_off_says_why_nothing_can_be_locked(
+    def test_unlock_works_with_versioning_off(
         self, auth_client, user, workspace, storage, settings
     ):
         environment = _environment(user, workspace, storage)
@@ -837,12 +889,12 @@ class TestUnlockAndDelete:
         )
 
         assert response.status_code == 200, response.content
-        assert response.json()["lock"]["can_lock"] is False
-        assert response.json()["lock"]["refusal"] == {
-            "code": "versioning_disabled",
-            "message": "environment versioning is not enabled",
-        }
+        assert "lock" not in response.json()
         assert HarnessLockedVersion.no_workspace_objects.get().unlocked_at is not None
+        # The preview is a versions read: off, it answers as the others do.
+        preview = auth_client.get(f"{BASE}/{environment.id}/versions/lock-preview/")
+        assert preview.status_code == 404
+        assert preview.json()["error"] == "versioning_disabled"
 
     def test_a_member_may_not_unlock(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
@@ -1062,13 +1114,14 @@ class TestLockedVersionsStay:
         # An edit makes a new, unlocked version and moves the default to it.
         _suite(environment, _scenarios(25))
         body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+        lock = _preview(auth_client, environment)
 
         [kept] = body["locked_versions"]
         assert kept == locked_version
         locked_suite.refresh_from_db()
         assert locked_suite.status == "active"
-        assert body["lock"]["suite_version_id"] == str(environment.suite_version_id)
-        assert body["lock"]["can_lock"] is True
+        assert lock["suite_version_id"] == str(environment.suite_version_id)
+        assert lock["can_lock"] is True
 
     def test_the_whole_job_can_still_be_removed(
         self, auth_client, user, workspace, storage

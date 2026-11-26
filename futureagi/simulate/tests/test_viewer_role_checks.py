@@ -11,6 +11,13 @@ from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion, RunTest
 from simulate.services.agent_definition import sync_provider_credentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
+from simulate.tests.test_harness_locked_versions import (
+    _environment,
+    _scenarios,
+    _suite,
+)
+from simulate.tests.test_harness_versioning_backfill import _RealisticStorage
+from tfc.utils import storage_client
 
 # Fixed, not uuid4(): these values are part of the pytest ids. Every CI shard
 # collects the tests in its own process, and pytest-split runs each case
@@ -148,6 +155,27 @@ def test_an_unlabelled_write_still_gets_the_viewer_message(organization, workspa
         "Viewers can't make changes in this workspace. "
         "Ask a workspace admin for the Member role."
     )
+
+
+@pytest.mark.django_db
+def test_a_viewer_reads_the_lock_preview(
+    organization, workspace, user, settings, monkeypatch
+):
+    settings.HARNESS_VERSIONING_ENABLED = True
+    storage = _RealisticStorage()
+    monkeypatch.setattr(storage_client, "_client", storage)
+    environment = _environment(user, workspace, storage)
+    _suite(environment, _scenarios(20))
+    viewer = _viewer_client(organization, workspace)
+
+    response = viewer.get(
+        f"/simulate/api/harness-environments/{environment.id}/versions/lock-preview/"
+    )
+
+    # A read: a viewer sees what a lock would give, though only a member may lock.
+    assert response.status_code == status.HTTP_200_OK, response.data
+    assert response.data["can_lock"] is True
+    assert (response.data["train"], response.data["test"]) == (14, 6)
 
 
 def test_a_write_outside_simulation_keeps_its_original_refusal():
