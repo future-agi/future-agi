@@ -2,7 +2,7 @@
 #
 # Deploying: the table is new and empty, but each foreign key briefly takes a
 # SHARE ROW EXCLUSIVE lock on its parent table (simulate_call_execution,
-# simulate_simulate_eval_config, accounts_organization, accounts_workspace and
+# simulate_eval_config, accounts_organization, accounts_workspace and
 # the user table). On a busy call table that lock waits behind long
 # transactions and writes queue behind it: run with a short lock_timeout and
 # retry, or off-peak.
