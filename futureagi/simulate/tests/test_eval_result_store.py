@@ -289,6 +289,26 @@ def test_only_the_evals_graded_again_are_kept(
             None,
             id="other-skip",
         ),
+        pytest.param(
+            # The slot the shared evaluator's refusal writes when one of an
+            # eval's inputs was empty on the call: not graded, not an error.
+            {
+                "name": "Tone",
+                "output": None,
+                "reason": "Missing required input: transcript",
+                "output_type": "Pass/Fail",
+                "status": "skipped",
+                "skipped": True,
+                "reason_code": "input_missing",
+                "missing_fields": ["transcript"],
+                "timestamp": "2026-11-26T10:00:00+00:00",
+            },
+            "unmeasured",
+            "input_missing",
+            None,
+            None,
+            id="input-missing",
+        ),
     ],
 )
 def test_each_kind_of_stored_verdict_is_kept_with_its_state(

@@ -52,6 +52,8 @@ def state_of_stored_verdict(slot: Mapping[str, Any]) -> tuple[str, str]:
     if status == "failed":
         return State.GRADING_ERROR, ""
     if status == "pending":
+        # Not reached when a verdict is replaced: its placeholders are dropped
+        # before they get here. Kept so every slot maps to what it says.
         return State.PENDING, ""
     if status == "timed_out":
         # Only the platform's scoring sweep writes this status, when the
@@ -59,6 +61,10 @@ def state_of_stored_verdict(slot: Mapping[str, Any]) -> tuple[str, str]:
         # evaluator's own failure or timeout is stored as failed, above.
         return State.INFRASTRUCTURE_ERROR, "timed_out"
     code = slot.get("code") or slot.get("reason_code")
+    if code == "input_missing":
+        # An input the eval needs was empty on the call: nothing was graded,
+        # and nothing failed.
+        return State.UNMEASURED, "input_missing"
     if code == "run_cancelled" or slot.get("reason") == REASON_EVAL_RUN_CANCELLED:
         return State.CANCELLED, "run_cancelled"
     return State.UNMAPPED, "skipped"
@@ -253,7 +259,9 @@ def forget_replacement(
     back, when the request put back only some of them. Only call this inside
     the transaction that puts the slots back.
     """
-    rows = SimulateEvalResult.all_objects.filter(
+    # Not the workspace-scoped manager: the rows carry the run's workspace,
+    # which need not be the request's. The request's id already scopes them.
+    rows = SimulateEvalResult._base_manager.filter(
         origin=SimulateEvalResult.Origin.REPLACED_OWN_SCORE,
         replacement_id=replacement_id,
     )
