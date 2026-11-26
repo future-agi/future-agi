@@ -29,10 +29,14 @@ export const ACTORS_COPY = {
     title: "Who can reach whom",
     subtitle:
       "Each actor's role, when it comes in and who its actions reach, from the records themselves.",
-    comesIn: (when) => `Comes in: ${when}`,
-    broughtBy: (name) => `Brought in by ${name}`,
-    reaches: (names) => `Its actions reach ${names.join(", ")}`,
-    reachesNoOne: "Its actions reach no other actor",
+    columns: {
+      actor: "Actor",
+      comesIn: "Comes in",
+      broughtBy: "Brought in by",
+      reaches: "Its actions reach",
+    },
+    reachesNoOne: "No other actor",
+    none: "—",
   },
   showSettings: "Limits",
   hideSettings: "Hide limits",

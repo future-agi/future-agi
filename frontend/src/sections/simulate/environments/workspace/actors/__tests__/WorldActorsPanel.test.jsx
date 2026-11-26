@@ -660,7 +660,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.queryByText("Acts in the world")).toBeNull();
   });
 
-  it("shows who can reach whom from each actor's reaches and when it comes in, once there is more than one actor", () => {
+  it("shows who can reach whom as a table, one row per actor, once there is more than one actor", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.queryByText("Who can reach whom")).toBeNull();
     actorsData = cast([
@@ -671,12 +671,28 @@ describe("WorldActorsPanel", () => {
     expect(
       within(container).getByText("Who can reach whom"),
     ).toBeInTheDocument();
+    const table = within(container).getByRole("table");
     expect(
-      within(container).getByText("Its actions reach Dana"),
-    ).toBeInTheDocument();
-    expect(
-      within(container).getByText("Comes in: When contacted"),
-    ).toBeInTheDocument();
+      within(table)
+        .getAllByRole("columnheader")
+        .map((one) => one.textContent),
+    ).toEqual(["Actor", "Comes in", "Brought in by", "Its actions reach"]);
+    const [priya, dana] = within(table)
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) =>
+        within(row)
+          .getAllByRole("cell")
+          .map((one) => one.textContent),
+      );
+    expect(priya).toEqual([
+      "Priya Raman · sales manager",
+      "When contacted",
+      "—",
+      "Dana",
+    ]);
+    expect(dana[0]).toBe("Dana");
+    expect(dana[3]).toBe("No other actor");
     expect(
       within(container).getByRole("button", { name: "Limits" }),
     ).toBeInTheDocument();
