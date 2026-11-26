@@ -1,4 +1,4 @@
-"""Complete 118/123-pending-migration inventory and A9 scope regressions, without Django.
+"""Complete 139/144-pending-migration inventory and A9 scope regressions, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -84,6 +84,23 @@ LATEST = (
     ('simulate','0114_agent_definition_source_checked_at'),
     ('simulate','0115_merge_agent_definition_synced_and_actors'),
     ('simulate','0116_agent_fix_issue_job'),
+    ('simulate','0116_harness_releases'),
+    ('simulate','0117_harness_release_policy'),
+    ('simulate','0118_hosted_agent_spec'),
+    ('simulate','0119_merge_agent_fix_issue_job_and_hosted_agent_spec'),
+    ('simulate','0104_hosted_job_capability_snapshot'),
+    ('simulate','0114_harness_certification_files'),
+    ('simulate','0117_merge_certification_files_and_agent_fix_issue_job'),
+    ('simulate','0115_hosted_job_cancel_confirmation'),
+    ('simulate','0118_merge_cancel_confirmation_and_agent_fix_issue_job'),
+    ('simulate','0115_harness_version_name'),
+    ('simulate','0116_harness_version_candidate'),
+    ('simulate','0118_merge_version_candidate_and_dev'),
+    ('simulate','0119_merge_cancel_confirmation_and_version_candidate'),
+    ('simulate','0117_scenario_lifecycle'),
+    ('simulate','0119_merge_scenario_lifecycle_and_dev'),
+    ('simulate','0120_merge_cancel_confirmation_and_scenario_lifecycle'),
+    ('simulate','0121_merge_harness_releases_and_scenario_lifecycle'),
     ('mcp_server','0005_enable_epoch_tool_group'),
 )
 # Eight SQL additions shared with the SQL-only candidate. These identities
@@ -154,7 +171,14 @@ METRICS_ADDITIONS = (
     ('tracer','0141_metric_refresh_busy_guard'),
     ('tracer','0142_merge_metrics_and_eval_put_back'),
 )
-LATEST = BASELINE_ADDITIONS + METRICS_ADDITIONS
+# Error Feed escalation (TH-8613) and its joins with dev's tracer leaves.
+FEED_ESCALATION_ADDITIONS = (
+    ('tracer','0117_feed_escalation_policy'),
+    ('tracer','0118_backfill_feed_issue_statuses'),
+    ('tracer','0131_merge_feed_escalation_and_internal_span_type'),
+    ('tracer','0143_merge_feed_escalation_and_metrics'),
+)
+LATEST = BASELINE_ADDITIONS + METRICS_ADDITIONS + FEED_ESCALATION_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
     ('simulate','0101_agent_fix_candidate_override'),
@@ -418,7 +442,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         self.assertTrue(set(SKILLS_ADDITIONS).isdisjoint(METRICS_ADDITIONS))
         self.assertTrue(set(BASELINE_ADDITIONS).isdisjoint(METRICS_ADDITIONS))
         self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,118),(REVISIONS[0],LATEST+FLOOR_ONLY,123)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,139),(REVISIONS[0],LATEST+FLOOR_ONLY,144)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
 
@@ -426,8 +450,8 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # Preserve the SQL-layer negative controls when adding sampling's graph.
         # Same-count replacement must fail just as an extra or missing file does.
         unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 118),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 123)):
+        for revision, identities, count in ((REVISIONS[1], LATEST, 139),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 144)):
             paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
                 '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
                 'futureagi/**/migrations/*.py'], text=True).splitlines()
@@ -465,7 +489,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         with mock.patch.object(subprocess,'check_output',return_value=paths+
                 'futureagi/tracer/migrations/9999_unexpected.py\n'):
             with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,118)
+                self.assert_complete_inventory(REVISIONS[1],LATEST,139)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -514,7 +538,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 self.assertEqual(list(p.select_reference_registry(registry,[row],plan=plan)),[])
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
-        for revision,identities,count in ((REVISIONS[1],LATEST,118),(REVISIONS[0],LATEST+FLOOR_ONLY,123)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,139),(REVISIONS[0],LATEST+FLOOR_ONLY,144)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
                 # Keep the complete gate fail-closed on undeclared Metrics operations.
@@ -544,6 +568,9 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # simulate 0116 adds the evidence import's relation to the issue it came from.
         expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog',
             'tracer_trace_error_group'}
+        if set(FEED_ESCALATION_ADDITIONS) <= set(identities):
+            expected|={'tracer_error_cluster_traces','tracer_trace_investigation_finding',
+                'tracer_trace_investigation_job','tracer_trace_investigation_report'}
         if revision==REVISIONS[0]: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
         self.assertEqual({row['table'] for row in selected},expected)
         self.assertTrue(all(row['database']=='postgres' for row in selected))
@@ -560,6 +587,9 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
             elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
             elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
             elif row['name']=='0116_agent_fix_issue_job': expected_row={'tracer_trace_error_group'}  # Relation to the source issue.
+            elif row['name']=='0117_feed_escalation_policy': expected_row={'tracer_error_cluster_traces','tracer_trace_error_group'}
+            elif row['name']=='0118_backfill_feed_issue_statuses': expected_row={'tracer_error_cluster_traces',
+                'tracer_trace_investigation_finding','tracer_trace_investigation_job','tracer_trace_investigation_report'}
             else: expected_row=set()
             self.assertEqual(names,expected_row,(row['app_label'],row['name']))
 

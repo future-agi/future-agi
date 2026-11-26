@@ -19,6 +19,13 @@ export const EDITOR_COPY = {
   personaSection: "Persona",
   callerSection: "Caller",
   constraintsSection: "Call constraints",
+  markedSection: "How it's marked",
+  gradingOnly: "Grading only",
+  gradingOnlyHint:
+    "Private to grading. Never shown to the agent or the simulated people.",
+  simulatedPeopleSee: "Simulated people see",
+  simulatedPeopleSeeHint:
+    "The simulated caller plays this person. The agent only hears what they say.",
 };
 
 // Which surfaces have a human on the other end (a caller to shape) and which of

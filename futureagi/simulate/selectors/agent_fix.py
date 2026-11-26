@@ -18,6 +18,7 @@ from django.db.models import (
     Exists,
     ExpressionWrapper,
     F,
+    IntegerField,
     Max,
     OuterRef,
     Prefetch,
@@ -95,7 +96,11 @@ from simulate.services.hosted_harness import (
     HostedHarnessError,
     run_max_duration_seconds,
 )
-from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
+from simulate.services.hosted_harness_ingestion import (
+    SUB_GOAL_PASSED,
+    graded_call_receipt,
+    sub_goal_result,
+)
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
@@ -320,9 +325,7 @@ def source_failures(
         .order_by("trial_index", "execution_key")
     ):
         key = execution.source_scenario.scenario_key
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if key in found or not isinstance(receipt, Mapping):
             continue
         record = _record(key, execution.trial_index, receipt, "")
@@ -372,9 +375,7 @@ def check_run_status(
     latencies = _reply_latencies(calls) if finished else {}
     records = []
     for execution in executions:
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         records.append(
@@ -451,9 +452,23 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     )
 
 
+# What a trial failed on when no check of its did: a write the world committed twice, or another failure of the agent's.
+REPEATED_WRITE = "committed_a_write_twice"
+FAILED_BEYOND_CHECKS = "failed_beyond_its_checks"
+
+
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
-    Not applicable and inconclusive sub-goals are left out."""
+    Not applicable and inconclusive sub-goals are left out, and a trial that ended on a failure of ours judges none."""
+    failure = (
+        receipt.get("failure") if isinstance(receipt.get("failure"), Mapping) else None
+    )
+    if (
+        receipt.get("status") == "errored"
+        and failure is not None
+        and failure.get("domain") != "agent"
+    ):
+        return {}
     # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
     checks = [
         one
@@ -472,6 +487,19 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     }
     if (receipt.get("failure") or {}).get("domain") == "agent":
         judged = {name: held is True for name, held in judged.items()}
+    # A check never verified for this scenario is undecided: never the agent's pass, never its failure.
+    judged.update(
+        {name: None for name, result in results.items() if result == "unmeasured"}
+    )
+    # A trial graded failed with no check failing failed beyond its checks: the world committed a write twice.
+    found = receipt.get("call")
+    call: Mapping[str, Any] = found if isinstance(found, Mapping) else {}
+    if (
+        call.get("duplicate_commits") or receipt.get("status") == "failed"
+    ) and False not in judged.values():
+        judged[
+            REPEATED_WRITE if call.get("duplicate_commits") else FAILED_BEYOND_CHECKS
+        ] = False
     return {
         name: held if isinstance(held, bool) else None for name, held in judged.items()
     }
@@ -750,9 +778,7 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
                 failing_sub_goals=[],
             ),
         )
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         for name, held in judged_sub_goals(receipt).items():
@@ -1000,11 +1026,24 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         .annotate(total=Count("id"))
         .values("total")
     )
+    # A deleted run keeps its row, but its page no longer opens: the fix names no run.
+    source_live = Q(
+        source_run__deleted=False, source_run__test_execution__deleted=False
+    )
     return (
         with_spend(runs)
         .annotate(
             number=Subquery(number),
-            source_run_number=run_number("source_run__"),
+            source_execution_id=Case(
+                When(source_live, then=F("source_run__test_execution_id")),
+                default=None,
+                output_field=UUIDField(),
+            ),
+            source_run_number=Case(
+                When(source_live, then=run_number("source_run__")),
+                default=None,
+                output_field=IntegerField(),
+            ),
             retry_taken=Exists(
                 retries_taking_the_retry(
                     Coalesce(
@@ -1382,10 +1421,15 @@ def eval_review(fix_run: AgentFixRun) -> EvalReview:
     )
 
 
-def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
+def fix_runs_for_environment(
+    environment: HostedHarnessJob, states: list[str] | None = None
+) -> QuerySet[AgentFixRun]:
+    """An environment's fixes, newest first; with `states`, only those in them."""
+    fixes = AgentFixRun.no_workspace_objects.filter(environment=environment)
+    if states:
+        fixes = fixes.filter(state__in=states)
     return fix_runs_for_read(
-        AgentFixRun.no_workspace_objects.filter(environment=environment)
-        .select_related("base_agent_version", "source_run")
+        fixes.select_related("base_agent_version", "source_run")
         # The id breaks ties, so a page holds still while fixes are added.
         .order_by("-created_at", "-id")
     )

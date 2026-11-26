@@ -39,8 +39,11 @@ from simulate.serializers.harness_job import (
     HarnessSourceUploadResponseSerializer,
 )
 from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationHistoryPageSerializer,
+    HarnessConversationHistoryQuerySerializer,
     HarnessConversationMessageCreateSerializer,
     HarnessConversationReadSerializer,
+    HarnessJobReadQuerySerializer,
 )
 from simulate.services.harness_credentials import (
     HOSTED_FILE_KEY_PREFIX,
@@ -309,7 +312,10 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def preflight(self, request):
         return get_harness_provider().preflight(request)
 
-    @swagger_auto_schema(responses={200: HarnessJobReadSerializer})
+    @validated_request(
+        query_serializer=HarnessJobReadQuerySerializer,
+        responses={200: HarnessJobReadSerializer},
+    )
     def retrieve(self, request, pk=None):
         """One harness job. A coding agent key reads its own run narrowly, outside
         this schema: only `status` (its failure as domain, stage, code and a fixed
@@ -402,6 +408,16 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path=r"conversation/messages")
     def conversation_message(self, request, pk=None):
         return get_harness_provider().send_message(request, pk)
+
+    @validated_request(
+        query_serializer=HarnessConversationHistoryQuerySerializer,
+        responses={200: HarnessConversationHistoryPageSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path=r"conversation/history")
+    def conversation_history(self, request, pk=None):
+        """The builder chat's messages or events just before a sequence, oldest first, for reading back past the
+        window a job read carries."""
+        return get_harness_provider().conversation_history(request, pk)
 
     @action(detail=False, methods=["get"])
     def health(self, request):

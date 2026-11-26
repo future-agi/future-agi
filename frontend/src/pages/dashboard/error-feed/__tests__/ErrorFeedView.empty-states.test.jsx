@@ -31,6 +31,13 @@ vi.mock("notistack", async (importOriginal) => ({
   ...(await importOriginal()),
   enqueueSnackbar: vi.fn(),
 }));
+// The settings button's context hooks; their providers import the real snackbar.
+vi.mock("src/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => ({ currentWorkspaceId: "workspace-1" }),
+}));
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({ currentOrganizationId: "organization-1" }),
+}));
 // The rows' epoch icons read their own endpoint; these tests count feed reads only.
 vi.mock("src/api/errorFeed/epochFromIssue", async (importOriginal) => ({
   ...(await importOriginal()),

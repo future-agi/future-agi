@@ -107,7 +107,7 @@ export function collectFlowEntries(run = execFileSync) {
   const listFile = path.join(directory, "entries.json");
   try {
     // The catalog documents which flows exist, independent of what a given run
-    // executes — quarantining or live-LLM-gating a flow must not delete it from FLOWS.md.
+    // executes — quarantining, live-LLM-gating or stack-gating a flow must not delete it from FLOWS.md.
     run(
       "npx",
       [
@@ -125,6 +125,7 @@ export function collectFlowEntries(run = execFileSync) {
           FLOW_CATALOG_OUT: listFile,
           E2E_INCLUDE_QUARANTINED: "1",
           E2E_LIVE_LLM: "1",
+          E2E_INCLUDE_ERROR_FEED_STACK: "1",
           // The ordinary legs run with SKILLS_COHORT=ordinary, which narrows the
           // suite to what the Skills cohorts do not own (playwright.config.ts).
           SKILLS_COHORT: undefined,

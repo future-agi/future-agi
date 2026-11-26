@@ -24,12 +24,31 @@ function ordinaryGrep(): RegExp | undefined {
   return new RegExp(pattern);
 }
 
+// These specs need the entitled Error Feed stack (E2E_STACK=error-feed bin/e2e);
+// other stacks leave them out of the listing instead of skipping them at run time.
+const ERROR_FEED_STACK_ONLY = [
+  'flows/error-feed/automatic-escalation-recovery.spec.ts',
+  'flows/error-feed/creation-defaults.spec.ts',
+  'flows/error-feed/escalation-presets.spec.ts',
+  'flows/error-feed/escalation-settings-scope.spec.ts',
+  'flows/error-feed/escalation-settings.spec.ts',
+  'flows/error-feed/manual-status-protection.spec.ts',
+  'flows/error-feed/membership-revisions.spec.ts',
+  'flows/error-feed/settings-conflicts.spec.ts',
+  'flows/error-feed/settings-reevaluation.spec.ts',
+  'harness/error-feed-source.spec.ts',
+];
+
 export default defineConfig({
   testDir: '.',
   globalSetup: process.env.SKILLS_CAMPAIGN_PREFLIGHT === '1' ? './stack/check-skills-capabilities.ts' : undefined,
   testMatch: shardTestMatch() ?? SPEC_GLOBS,
-  // Native flows require their separate, fail-closed cloud qualification setup.
-  testIgnore: ['**/*.native.spec.ts'],
+  testIgnore: [
+    // Native flows require their separate, fail-closed cloud qualification setup.
+    '**/*.native.spec.ts',
+    ...(process.env.E2E_STACK === 'error-feed' || process.env.E2E_INCLUDE_ERROR_FEED_STACK
+      ? [] : ERROR_FEED_STACK_ONLY),
+  ],
   grep: ordinaryGrep(),
   grepInvert: grepInvertPattern(),
   fullyParallel: true,

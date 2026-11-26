@@ -61,6 +61,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.tasks",
     "tracer.tasks.trace_scanner",
     "tracer.tasks.eval_task_sweeper",
+    "tracer.services.feed_escalation",
     # The sweep-lost-insight-runs schedule's activity
     "tfc.temporal.insights.activities",
     "tracer.tasks.outbox_cdc",
@@ -81,6 +82,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.tasks.chat_sim",
     "simulate.tasks.alk_sim",
     "simulate.tasks.hosted_harness_usage",
+    "simulate.tasks.hosted_harness_cancel",
     "simulate.tasks.agent_scans",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",

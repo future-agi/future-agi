@@ -767,6 +767,24 @@
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
+    },
+    {
+      "path": "futureagi/tracer/queries/scan_clustering.py",
+      "before_sha256": "a50f8e7c1fe3a6342301757ed3a650f1200f830c3fdba7a4ebcb2f05400144a3",
+      "after_sha256": "6a0e6c562753ffe92f9606034d05582f77336dd3576c806dd4b2677a1f47f577",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:cluster_centroids"
+        ],
+        "mitigation": "No ClickHouse statement is added, removed or edited. The only schema/mutation statement in this file is the pre-existing lightweight ALTER TABLE cluster_centroids DELETE in delete_cluster_centroid; it moved because Postgres-only membership and lock code above it changed (issue status default, bind_scan_occurrence, ordered issue locks in _merge_pg).",
+        "review": "https://github.com/future-agi/future-agi/pull/3560#discussion_r4690931478",
+        "reviewer": "NVJKKartik",
+        "large_volume_rehearsal": true
+      }
     }
   ]
 }
