@@ -4,9 +4,11 @@ import {
   SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse,
   SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse,
   SimulateApiHarnessEnvironmentsVersionsLockPreviewResponse,
+  SimulateApiHarnessEnvironmentsVersionsLockVersionBody,
   SimulateApiHarnessEnvironmentsVersionsLockVersionResponse,
   SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse,
   SimulateApiHarnessEnvironmentsVersionsResponse,
+  SimulateApiHarnessEnvironmentsVersionsUnlockVersionBody,
   SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse,
 } from "src/generated/api-contracts/api.zod";
 import type { HarnessLockRefusalApi } from "src/generated/api-contracts/api.schemas";
@@ -207,5 +209,31 @@ describe("generated lock refusal", () => {
     };
 
     expect(refusal.piece).toBeNull();
+  });
+});
+
+// The server refuses an unknown field of these bodies with 400
+// (test_harness_locked_versions.py::TestRequestScope); the schemas say so too.
+describe.each([
+  [
+    "lock",
+    SimulateApiHarnessEnvironmentsVersionsLockVersionBody,
+    {
+      environment_version_id: "7d4c1a52-8d43-4c55-9d3e-0c5d0b1f6a10",
+      suite_version_id: "0c5d0b1f-6a10-4c55-9d3e-7d4c1a528d43",
+    },
+  ],
+  [
+    "unlock",
+    SimulateApiHarnessEnvironmentsVersionsUnlockVersionBody,
+    { locked_version_id: "7d4c1a52-8d43-4c55-9d3e-0c5d0b1f6a10" },
+  ],
+])("generated %s request", (_name, schema, body) => {
+  it("accepts its own fields", () => {
+    expect(schema.parse(body)).toEqual(body);
+  });
+
+  it("refuses an unknown field, as the server does", () => {
+    expect(schema.safeParse({ ...body, release_id: "x" }).success).toBe(false);
   });
 });
