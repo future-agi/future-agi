@@ -922,14 +922,14 @@ def harness_consumption(
                 else "voice_sim_minutes"
             )
             consumption[dimension] += item["amount"]
-    consumption["ai_credits"] = sum(
-        (
-            float(record["credits"])
-            for report in authoring_reports.values()
-            for record in report["records"]
-        ),
-        start=turn_credits or 0.0,
-    )
+    ai_credits = turn_credits or 0.0
+    for report in authoring_reports.values():
+        for record in report["records"]:
+            value = record["credits"]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError("Authoring credits must be an integer or float.")
+            ai_credits += float(value)
+    consumption["ai_credits"] = ai_credits
     authoring_estimate_unavailable = False
     if authoring_spend and not is_oss():
         try:

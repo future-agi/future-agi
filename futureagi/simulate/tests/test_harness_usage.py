@@ -109,6 +109,17 @@ def _report(records):
     }
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("credits", ["1.25", True])
+def test_malformed_legacy_authoring_credits_are_rejected(hosted_attempt, credits):
+    attempt = hosted_attempt.attempt
+    attempt.authoring_usage_report = {"records": [{"credits": credits}]}
+    attempt.save(update_fields=["authoring_usage_report"])
+
+    with pytest.raises(TypeError, match="Authoring credits must be an integer or float"):
+        harness_usage.harness_consumption(attempt.job, turn_totals={})
+
+
 def _receipt(attempt, *, failure_domain="simulator", started=True):
     registration = attempt.job.scenario_registrations.get()
     return HostedHarnessReceipt.objects.create(
