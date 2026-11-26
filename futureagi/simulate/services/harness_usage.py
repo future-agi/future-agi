@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid5
 
 from django.conf import settings
@@ -912,6 +913,7 @@ def harness_consumption(
     ):
         return None
 
+    consumption: dict[str, Any]
     consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
     for attempt_id, report in reports.items():
         attempt = attempts[attempt_id]
