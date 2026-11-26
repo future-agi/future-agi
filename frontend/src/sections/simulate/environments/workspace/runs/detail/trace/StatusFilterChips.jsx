@@ -4,12 +4,13 @@ import { Box, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import { STATUS_CHIPS } from "./traceTable.constants";
 
-// Outcome quick-filter — one chip per status bucket plus All. The active chip is
-// the selected (grey) state; the dot carries the status colour. Each chip
-// carries its count so the distribution is legible before you click. Counts follow the table's other filters, not the status one.
-// Once counts load, a bucket with no calls has no chip. All and the selected
-// chip always stay, so the current filter is never lost. Until then every chip
-// shows greyed, so the bar doesn't jump on first paint.
+// Outcome quick-filter: one joined group of segments, All plus one per status
+// bucket. The label carries the status colour, the count stays grey, and the
+// selected segment has a grey fill. Counts follow the table's other filters,
+// not the status one.
+// Once counts load, a bucket with no calls has no segment. All and the
+// selected segment always stay, so the current filter is never lost. Until
+// then every segment shows greyed, so the bar doesn't jump on first paint.
 export default function StatusFilterChips({
   value,
   counts,
@@ -20,9 +21,18 @@ export default function StatusFilterChips({
   return (
     <Stack
       direction="row"
-      alignItems="center"
-      spacing={0.75}
-      sx={{ flexWrap: "wrap", rowGap: 0.75 }}
+      alignItems="stretch"
+      role="group"
+      aria-label="Filter by status"
+      sx={{
+        display: "inline-flex",
+        alignSelf: "flex-start",
+        flexWrap: "wrap",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+      }}
     >
       {STATUS_CHIPS.filter(
         (chip) =>
@@ -60,37 +70,37 @@ export default function StatusFilterChips({
               sx={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: 0.625,
-                height: 28,
-                px: 1.125,
-                borderRadius: 1,
-                border: "1px solid",
-                borderColor: active ? "text.primary" : "divider",
+                gap: 0.75,
+                // 26 + the group's 1px border = 28, the Columns button's height.
+                height: 26,
+                px: 1.25,
+                borderLeft: "1px solid",
+                borderColor: "divider",
+                "&:first-of-type": { borderLeft: "none" },
                 bgcolor: active ? "action.selected" : "transparent",
-                color: disabled ? "text.disabled" : "text.primary",
                 cursor: disabled ? "default" : "pointer",
                 opacity: disabled ? 0.5 : 1,
-                transition: "border-color 120ms, background-color 120ms",
-                "&:hover": disabled
-                  ? {}
-                  : { borderColor: active ? "text.primary" : "text.disabled" },
+                transition: "background-color 120ms",
+                "&:hover":
+                  disabled || active ? {} : { bgcolor: "action.hover" },
+                "&:focus-visible": {
+                  outline: "2px solid",
+                  outlineColor: "border.focus",
+                  outlineOffset: -2,
+                },
               }}
             >
-              {chip.id !== "all" && (
-                <Box
-                  sx={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    bgcolor: chip.role
-                      ? `status.${chip.role}.solid`
-                      : "text.disabled",
-                    flexShrink: 0,
-                  }}
-                />
-              )}
               <Typography
-                sx={{ typography: "s2", fontWeight: 500, whiteSpace: "nowrap" }}
+                sx={{
+                  typography: "s2",
+                  fontWeight: 500,
+                  whiteSpace: "nowrap",
+                  color: disabled
+                    ? "text.disabled"
+                    : chip.role
+                      ? `status.${chip.role}.fg`
+                      : "text.primary",
+                }}
               >
                 {chip.label}
               </Typography>
@@ -99,7 +109,7 @@ export default function StatusFilterChips({
                   typography: "s3",
                   fontWeight: 500,
                   fontVariantNumeric: "tabular-nums",
-                  color: active ? "inherit" : "text.subtitle",
+                  color: "text.disabled",
                 }}
               >
                 {count}
