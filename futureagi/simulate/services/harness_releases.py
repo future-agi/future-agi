@@ -1,0 +1,1920 @@
+"""Prebuilt environment releases on the platform: registration, compositions and run manifests.
+
+`api_contracts/harness/environment-releases.md` §3, §6, §7. ALK seals and verifies releases; the
+platform stores their archives, produces bindings and run manifests with the same canonical digest,
+and delivers all of them to the run sandbox, where `fi.alk.harness.releases compose` verifies them
+before anything runs.
+
+A composition is the "adapted environment": a completed `HostedHarnessJob` whose payload points at
+immutable releases and a binding instead of an authoring archive. Its scenario records are created
+from the suite's `provision.json`, so runs use the existing selected-run machinery unchanged.
+"""
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import io
+import json
+import re
+import shlex
+import tarfile
+import uuid
+from collections.abc import Callable
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+import structlog
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+from minio.error import S3Error
+
+from simulate.constants.harness_environment import (
+    ADAPTATION_APPROVAL_PREFIX,
+    ADAPTATION_APPROVALS,
+)
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HarnessAgentBinding,
+    HarnessEnvironmentRelease,
+    HarnessRunManifest,
+    HarnessSuiteRelease,
+    HostedAgentSpec,
+    HostedHarnessJob,
+    HostedHarnessScenario,
+)
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    canonical_digest,
+    canonical_json_bytes,
+    create_hosted_job,
+)
+from simulate.services.hosted_harness_validation import validate_jsonb_strings
+from tfc.settings.settings import UPLOAD_BUCKET_NAME
+from tfc.utils.evaluation_denials import EvaluationDenied
+from tfc.utils.storage_client import ensure_bucket, get_storage_client
+
+logger = structlog.get_logger(__name__)
+
+ENVIRONMENT_RELEASE_SCHEMA = "futureagi.environment-release.v1"
+SUITE_RELEASE_SCHEMA = "futureagi.suite-release.v1"
+AGENT_BINDING_SCHEMA = "futureagi.agent-binding.v1"
+BINDING_PROOF_SCHEMA = "futureagi.binding-proof.v1"
+RUN_MANIFEST_SCHEMA = "futureagi.run-manifest.v1"
+ADAPTATION_RESULT_SCHEMA = "futureagi.adaptation-result.v1"
+RUNTIME_ENGINE = "postgres"
+# What `compose` builds (contract §6); anything else would fail inside the sandbox.
+HOSTED_AGENT = "hosted_agent"
+COMPOSABLE = {
+    ("retell_chat", "provider_import"),
+    ("retell", "provider_import"),
+    ("vapi", "provider_import"),
+    (HOSTED_AGENT, None),
+}
+MODALITY = {
+    "retell_chat": "text",
+    "retell": "voice",
+    "vapi": "voice",
+    HOSTED_AGENT: "text",
+}
+# Contract §2.4: a normalized binding always carries every field.
+BINDING_FIELDS = frozenset(
+    {
+        "schema_version",
+        "digest",
+        "agent",
+        "environment",
+        "mode",
+        "agent_tools",
+        "tools",
+        "fixtures",
+        "aliases",
+        "rendering",
+        "prompt_changes",
+    }
+)
+
+RELEASES_ROOT = "/work/releases"
+BINDING_PATH = "/work/binding.json"
+RUN_MANIFEST_PATH = "/work/run-manifest.json"
+BINDING_PROOF_PATH = "/work/binding-proof.json"
+
+
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _error(code: str, message: str, status_code: int = 400) -> HostedHarnessError:
+    return HostedHarnessError(code, message, status_code=status_code)
+
+
+def _hex(digest: str) -> str:
+    if not _DIGEST.fullmatch(digest):
+        raise _error("release_invalid", f"{digest!r} is not a release digest")
+    return digest.removeprefix("sha256:")
+
+
+def _read(directory: Path, name: str) -> Any:
+    try:
+        return json.loads((directory / name).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise _error("release_invalid", f"{directory / name}: {exc}") from exc
+
+
+def _read_object(directory: Path, name: str) -> dict[str, Any]:
+    document = _read(directory, name)
+    if not isinstance(document, dict):
+        raise _error("release_invalid", f"{directory / name} is not an object")
+    return document
+
+
+def _digest_of(reference: Any) -> Any:
+    return reference.get("digest") if isinstance(reference, dict) else None
+
+
+def _release_digest(manifest: dict[str, Any]) -> str:
+    """ALK's release digest (`object_digest`, contract §3): the manifest without `digest` and
+    `files`, then each file record in its listed order, length-prefixed."""
+    core = {
+        key: value for key, value in manifest.items() if key not in {"digest", "files"}
+    }
+    digest = hashlib.sha256(canonical_json_bytes(core))
+    for record in manifest.get("files") or []:
+        encoded = canonical_json_bytes(record)
+        digest.update(len(encoded).to_bytes(8, "big"))
+        digest.update(encoded)
+    return "sha256:" + digest.hexdigest()
+
+
+def _verified(directory: Path, name: str) -> dict[str, Any]:
+    """A sealed manifest whose digest is recomputed and whose files are exactly those listed,
+    byte for byte. A release is registered on what it holds, not on what its manifest claims."""
+    manifest = _read_object(directory, name)
+    files = manifest.get("files") or []
+    if not isinstance(files, list) or not all(
+        isinstance(one, dict) and isinstance(one.get("path"), str) for one in files
+    ):
+        raise _error("release_invalid", f"{name}: files is not a list of records")
+    if _release_digest(manifest) != manifest.get("digest"):
+        raise _error(
+            "release_invalid", f"{name}: the digest does not match its contents"
+        )
+    listed = {
+        record.get("path"): (record.get("sha256"), record.get("size"))
+        for record in files
+    }
+    present = {}
+    for path in sorted(directory.rglob("*")):
+        relative = path.relative_to(directory).as_posix()
+        if path.is_symlink():
+            raise _error("release_invalid", f"{name}: {relative} is a symlink")
+        if path.is_dir() or relative == name:
+            continue
+        content = path.read_bytes()
+        present[relative] = (hashlib.sha256(content).hexdigest(), len(content))
+    if listed != present:
+        changed = sorted(
+            path
+            for path in set(listed) | set(present)
+            if listed.get(path) != present.get(path)
+        )
+        raise _error(
+            "release_invalid", f"{name}: files do not match: {', '.join(changed)}"
+        )
+    return manifest
+
+
+def _archive(directory: Path) -> bytes:
+    """A reproducible tar.gz of a sealed release directory."""
+    raw = io.BytesIO()
+    with tarfile.open(fileobj=raw, mode="w") as tar:
+        for path in sorted(directory.rglob("*")):
+            if path.is_dir():
+                continue
+            info = tarfile.TarInfo(path.relative_to(directory).as_posix())
+            content = path.read_bytes()
+            info.size, info.mtime, info.mode = len(content), 0, 0o644
+            tar.addfile(info, io.BytesIO(content))
+    return gzip.compress(raw.getvalue(), mtime=0)
+
+
+def _upload(object_key: str, body: bytes) -> None:
+    client = get_storage_client()
+    ensure_bucket(client, UPLOAD_BUCKET_NAME)
+    client.put_object(
+        bucket_name=UPLOAD_BUCKET_NAME,
+        object_name=object_key,
+        data=io.BytesIO(body),
+        length=len(body),
+        content_type="application/gzip",
+    )
+
+
+def _download(object_key: str) -> bytes:
+    response = None
+    try:
+        response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+        return response.read()
+    except S3Error as exc:
+        if exc.code != "NoSuchKey":
+            raise
+        raise _error(
+            "release_archive_missing", f"release archive {object_key} is missing", 422
+        ) from exc
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+
+def _key(organization, kind: str, digest: str) -> str:
+    owner = str(organization.id) if organization is not None else "system"
+    return f"harness-releases/{owner}/{kind}/{_hex(digest)}.tar.gz"
+
+
+# --- registration ------------------------------------------------------------------------------
+
+
+@contextmanager
+def _owned_by(organization):
+    """Write rows owned by exactly `organization`, `None` meaning a system release.
+
+    The tenant-context save hooks (`tfc/utils/signals.py`, `BaseModel.save`) fill a missing
+    organization from the current request; for a system release that would silently make it one
+    organization's. The caller's context is restored afterwards.
+    """
+    from tfc.middleware.workspace_context import (
+        get_current_organization,
+        get_current_workspace,
+        set_workspace_context,
+    )
+
+    previous = (get_current_workspace(), get_current_organization())
+    set_workspace_context(workspace=None, organization=organization)
+    try:
+        yield
+    finally:
+        set_workspace_context(workspace=previous[0], organization=previous[1])
+
+
+def _visible(model, organization, digest: str):
+    """The release `organization` may build on: its own first, otherwise a system release.
+    Never another organization's, whatever digest it holds."""
+    candidates = model.no_workspace_objects.filter(digest=digest)
+    own = candidates.filter(organization=organization).first() if organization else None
+    return own or candidates.filter(organization__isnull=True).first()
+
+
+def _usable(model, organization):
+    return model.no_workspace_objects.filter(
+        Q(organization=organization) | Q(organization__isnull=True), deleted=False
+    )
+
+
+def visible_suite(organization, suite_id) -> HarnessSuiteRelease:
+    suite: HarnessSuiteRelease | None = (
+        _usable(HarnessSuiteRelease, organization)
+        .select_related("environment", "environment__parent")
+        .filter(id=suite_id)
+        .first()
+    )
+    if suite is None:
+        raise _error("release_not_found", "suite release not found", 404)
+    return suite
+
+
+def organization_agent_version(organization, workspace, version_id) -> AgentVersion:
+    """A version of an agent in `workspace`, as the Agents page lists them: the default
+    workspace also holds the organization's agents that name none."""
+    where = Q(agent_definition__workspace=workspace)
+    if workspace is None or workspace.is_default:
+        where |= Q(agent_definition__workspace__isnull=True)
+    version = AgentVersion.no_workspace_objects.filter(
+        where, id=version_id, organization=organization, deleted=False
+    ).first()
+    if version is None:
+        raise _error("agent_version_not_found", "agent version not found", 404)
+    return version
+
+
+def _suite_summary(suite: HarnessSuiteRelease) -> dict[str, Any]:
+    scenarios = suite.manifest.get("scenarios") or []
+    origins = {"base": 0, "specialized": 0, "custom": 0}
+    for entry in scenarios:
+        origins[entry["origin"]] = origins.get(entry["origin"], 0) + 1
+    return {
+        "id": str(suite.id),
+        "digest": suite.digest,
+        "name": suite.name,
+        "scenario_count": len(scenarios),
+        "origins": origins,
+        "policy_profile": suite.manifest.get("policy_profile") or {},
+    }
+
+
+def list_releases(organization) -> list[dict[str, Any]]:
+    """The environment releases `organization` may compose (contract §7.6): system releases and
+    its own, each with the suites it may use. A release sealed again under its name replaces the
+    earlier one in the list; what was made from the earlier one still finds it by digest."""
+    newest = {
+        (release.organization_id, release.name): release
+        for release in _usable(HarnessEnvironmentRelease, organization)
+        .select_related("parent")
+        .order_by("name", "created_at", "id")
+    }
+    environments = list(newest.values())
+    suites: dict[Any, list[HarnessSuiteRelease]] = {}
+    for suite in (
+        _usable(HarnessSuiteRelease, organization)
+        .filter(environment__in=environments)
+        .order_by("name", "created_at")
+    ):
+        suites.setdefault(suite.environment_id, []).append(suite)
+    results = []
+    for environment in environments:
+        rules = (environment.policy or {}).get("rules") or []
+        results.append(
+            {
+                "id": str(environment.id),
+                "digest": environment.digest,
+                "name": environment.name,
+                "system": environment.organization_id is None,
+                "parent": (
+                    {
+                        "digest": environment.parent.digest,
+                        "name": environment.parent.name,
+                    }
+                    if environment.parent_id
+                    else None
+                ),
+                "tools": [
+                    {
+                        "name": tool["name"],
+                        "description": tool.get("description") or "",
+                        "mutates_state": bool(tool.get("mutates_state")),
+                    }
+                    for tool in environment.tools
+                ],
+                "policy": {
+                    "parameters": [
+                        {
+                            "name": name,
+                            "type": spec.get("type"),
+                            "default": spec.get("default"),
+                            "allowed": spec.get("allowed"),
+                        }
+                        for rule in rules
+                        if rule.get("class") == "configurable_environment_policy"
+                        for name, spec in (rule.get("parameters") or {}).items()
+                    ],
+                    "agent_rules": [
+                        {"id": rule["id"], "text": rule.get("text") or ""}
+                        for rule in rules
+                        if rule.get("class") == "agent_policy"
+                    ],
+                },
+                "suites": [
+                    _suite_summary(suite) for suite in suites.get(environment.id, [])
+                ],
+                "catalogue": (environment.manifest.get("metadata") or {}).get(
+                    "catalogue"
+                ),
+            }
+        )
+    return results
+
+
+def _check_entries(suite: dict[str, Any]) -> None:
+    """Every scenario of a verified suite is read at its entry's `path`, so each one names a
+    folder of the suite whose scenario its manifest lists: relative, normalized and never out of
+    the suite."""
+    listed = {record.get("path") for record in suite.get("files") or []}
+    entries = suite.get("scenarios")
+    if not isinstance(entries, list):
+        raise _error("release_invalid", "suite.json lists no scenarios")
+    for entry in entries:
+        entry = entry if isinstance(entry, dict) else {}
+        path = entry.get("path")
+        if not (
+            isinstance(entry.get("key"), str)
+            and isinstance(entry.get("origin"), str)
+            and isinstance(path, str)
+            and path not in {"", "."}
+            and not PurePosixPath(path).is_absolute()
+            and ".." not in PurePosixPath(path).parts
+            and PurePosixPath(path).as_posix() == path
+            and f"{path}/scenario.json" in listed
+        ):
+            raise _error(
+                "release_invalid", f"suite.json has an invalid scenario path: {path!r}"
+            )
+
+
+def _checked_suite(
+    suite_dir: Path, environment_digest: str
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """A suite's manifest and personas after the §7.2 checks against its environment."""
+    suite = _verified(suite_dir, "suite.json")
+    if suite.get("schema_version") != SUITE_RELEASE_SCHEMA:
+        raise _error("release_invalid", "suite.json is not a suite release")
+    if _digest_of(suite.get("environment")) != environment_digest:
+        raise _error(
+            "release_invalid", "the suite was proved against another environment"
+        )
+    _check_entries(suite)
+    runtime = _read_object(suite_dir, "proofs.json").get("runtime") or {}
+    proved = runtime.get("scenarios") or {}
+    if runtime.get("engine") != RUNTIME_ENGINE or not all(
+        (proved.get(entry["key"]) or {}).get("holds") for entry in suite["scenarios"]
+    ):
+        raise _error(
+            "suite_runtime_unproved", f"{suite['name']} has no PostgreSQL proof"
+        )
+    personas = _read_object(suite_dir, "provision.json").get("personas") or []
+    if [persona.get("scenario_key") for persona in personas] != [
+        entry["key"] for entry in suite["scenarios"]
+    ]:
+        raise _error(
+            "release_invalid", "provision.json does not match the suite's scenarios"
+        )
+    return suite, personas
+
+
+def _store_suite(
+    organization,
+    suite_dir: Path,
+    suite: dict[str, Any],
+    personas: list[dict[str, Any]],
+    environment: HarnessEnvironmentRelease,
+) -> HarnessSuiteRelease:
+    """Insert the suite row unless it exists; the caller holds `_owned_by(organization)`."""
+    existing = HarnessSuiteRelease.no_workspace_objects.filter(
+        organization=organization, digest=suite["digest"]
+    ).first()
+    if existing is not None:
+        return existing
+    parent = None
+    if suite.get("parent"):
+        parent = _visible(HarnessSuiteRelease, organization, suite["parent"]["digest"])
+        if parent is None:
+            raise _error("release_parent_missing", "register the parent suite first")
+    object_key = _key(organization, "suite", suite["digest"])
+    _upload(object_key, _archive(suite_dir))
+    return HarnessSuiteRelease.no_workspace_objects.create(
+        organization=organization,
+        digest=suite["digest"],
+        name=suite["name"],
+        environment=environment,
+        parent=parent,
+        object_key=object_key,
+        manifest=suite,
+        personas=personas,
+    )
+
+
+def member_bytes(source: tarfile.TarFile, member: tarfile.TarInfo) -> bytes:
+    body = source.extractfile(member)
+    if body is None:
+        raise _error("release_invalid", f"{member.name} is not a regular file")
+    return body.read()
+
+
+def archive_files(archive: bytes) -> dict[str, bytes]:
+    """Every regular file in a release archive, by its path in the release."""
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
+        return {
+            member.name: member_bytes(source, member)
+            for member in source.getmembers()
+            if member.isfile()
+        }
+
+
+def scenario_documents(
+    suite: dict[str, Any], read: Callable[[str], bytes]
+) -> list[dict[str, Any]]:
+    """A suite's scenarios as the scenario index reads them, in suite order; `read` returns a
+    file of the suite by its path in the release."""
+    return [
+        {
+            **json.loads(read(f"{entry['path']}/scenario.json")),
+            "scenario_key": entry["key"],
+            "folder": entry["path"],
+        }
+        for entry in suite["scenarios"]
+    ]
+
+
+def register_release(
+    environment_dir: Path, suite_dir: Path, *, organization=None
+) -> tuple[HarnessEnvironmentRelease, HarnessSuiteRelease]:
+    """Store one sealed environment release and a suite proved against it.
+
+    Both digests are recomputed and every file is checked against its manifest. The suite must
+    carry a passing PostgreSQL proof, because hosted runs refuse one without it. An extension's
+    parent must already be registered. Re-registering identical releases returns the existing
+    rows.
+    """
+    environment_dir, suite_dir = Path(environment_dir), Path(suite_dir)
+    release = _verified(environment_dir, "release.json")
+    if release.get("schema_version") != ENVIRONMENT_RELEASE_SCHEMA:
+        raise _error("release_invalid", "release.json is not an environment release")
+    suite, personas = _checked_suite(suite_dir, release["digest"])
+    parent = None
+    if release.get("extends"):
+        parent = _visible(
+            HarnessEnvironmentRelease, organization, release["extends"]["digest"]
+        )
+        if parent is None:
+            raise _error("release_parent_missing", "register the parent release first")
+
+    with _owned_by(organization), transaction.atomic():
+        environment = HarnessEnvironmentRelease.no_workspace_objects.filter(
+            organization=organization, digest=release["digest"]
+        ).first()
+        if environment is None:
+            object_key = _key(organization, "environment", release["digest"])
+            _upload(object_key, _archive(environment_dir))
+            environment = HarnessEnvironmentRelease.no_workspace_objects.create(
+                organization=organization,
+                digest=release["digest"],
+                name=release["name"],
+                parent=parent,
+                object_key=object_key,
+                manifest=release,
+                tools=_read(environment_dir, "tools.json"),
+                policy=_read(environment_dir, "policy.json"),
+            )
+        return environment, _store_suite(
+            organization, suite_dir, suite, personas, environment
+        )
+
+
+# --- bindings and compositions -------------------------------------------------------------------
+
+
+def _with_digest(document: dict[str, Any]) -> dict[str, Any]:
+    return {**document, "digest": canonical_digest(document)}
+
+
+def agent_reference(
+    agent_version: AgentVersion, connector: str, config: dict[str, Any]
+) -> dict[str, Any]:
+    """The platform's half of a binding's agent identity (contract §2.4); adaptation adds the
+    provider agent it inspected. `config` is the connection's non-secret config: the provider
+    target and its dynamic variables, so another target is another identity."""
+    return {
+        "agent_definition_id": str(agent_version.agent_definition_id),
+        "agent_version_id": str(agent_version.id),
+        "configuration_digest": canonical_digest(
+            agent_version.configuration_snapshot or {}
+        ),
+        "connector": connector,
+        "agent_config_digest": canonical_digest(config or {}),
+    }
+
+
+def _checked_binding(
+    document: Any,
+    *,
+    agent: dict[str, Any],
+    target_id: str,
+    environment_digest: str,
+    suite_digest: str,
+    proof: Any,
+    scenario_keys: set[str],
+) -> dict[str, Any]:
+    """A given binding the composition may use: normalized, sealed over exactly its content,
+    adapted for this agent version, connection and provider target, targeting this environment,
+    and proved against this suite when routed: a passing proof that names this binding, suite
+    and environment and gives every scenario of the suite, and no other, a verdict.
+    """
+    if (
+        not isinstance(document, dict)
+        or set(document) != BINDING_FIELDS
+        or document.get("schema_version") != AGENT_BINDING_SCHEMA
+    ):
+        raise _error("binding_invalid", "the binding is not a normalized agent binding")
+    if canonical_digest(
+        {key: value for key, value in document.items() if key != "digest"}
+    ) != document.get("digest"):
+        raise _error(
+            "binding_invalid", "the binding's digest does not match its content"
+        )
+    bound = document["agent"] if isinstance(document["agent"], dict) else {}
+    if {key: bound.get(key) for key in agent} != agent:
+        raise _error(
+            "binding_invalid",
+            "the binding was adapted for another agent version or connection config",
+        )
+    if bound.get("provider_target_id") != target_id or not bound.get("provider_digest"):
+        raise _error(
+            "binding_invalid", "the binding was adapted for another provider agent"
+        )
+    if document["environment"] != {"digest": environment_digest}:
+        raise _error("binding_invalid", "the binding targets another environment")
+    if document["prompt_changes"]:
+        raise _error("binding_invalid", "prompt_changes must be empty")
+    mode = document["mode"]
+    if mode == "conversation_only":
+        raise _error(
+            "compose_unsupported",
+            "a conversation_only binding reaches no environment tool and is not composed",
+        )
+    if mode == "tool_routed":
+        verdicts = proof.get("scenarios") if isinstance(proof, dict) else None
+        statuses = (
+            {
+                key: entry.get("status") if isinstance(entry, dict) else None
+                for key, entry in verdicts.items()
+            }
+            if isinstance(verdicts, dict)
+            else {}
+        )
+        if not (
+            isinstance(proof, dict)
+            and proof.get("schema_version") == BINDING_PROOF_SCHEMA
+            and proof.get("passed") is True
+            and _digest_of(proof.get("binding")) == document["digest"]
+            and _digest_of(proof.get("suite")) == suite_digest
+            and _digest_of(proof.get("environment")) == environment_digest
+            # Exactly the suite: a case the proof leaves out, or one the suite does not have,
+            # is a proof of something else.
+            and set(statuses) == scenario_keys
+            and all(status in ("proved", "unscorable") for status in statuses.values())
+            # A binding with nothing to run must not become a composition.
+            and "proved" in statuses.values()
+        ):
+            raise _error(
+                "binding_unproved",
+                "a tool_routed binding needs a passing proof against this suite",
+            )
+    elif mode != "canonical":
+        raise _error("binding_invalid", f"unknown binding mode {mode!r}")
+    elif any(
+        document[field] for field in ("agent_tools", "tools", "fixtures", "aliases")
+    ):
+        raise _error("binding_invalid", "a canonical binding maps no agent tools")
+    return document
+
+
+def _check_modality(agent_version: AgentVersion, connector: str) -> None:
+    """The runs record calls under the agent's definition, which must be of the same modality."""
+    if agent_version.agent_definition.agent_type != MODALITY[connector]:
+        raise _error(
+            "agent_modality_mismatch",
+            f"a {connector} agent needs a {MODALITY[connector]} agent version",
+        )
+
+
+def _chain(suite: HarnessSuiteRelease) -> list[HarnessEnvironmentRelease]:
+    environment = suite.environment
+    parent = environment.parent
+    return [parent, environment] if parent is not None else [environment]
+
+
+def _admitted_parallelism(payload: dict[str, Any]) -> int:
+    """The most worlds this deployment admits for a composition's runs: the parallelism flag,
+    certified templates and the sandbox's resources, as admission would clamp a request for 8. A
+    release world is a fresh database clone with no fixed ports, so its scenarios can always run
+    side by side; voice runs also stay within the sandbox's CPU units."""
+    from simulate.services.harness_capacity import configured_capacity
+    from simulate.services.hosted_harness import clamp_parallelism
+    from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+    runtime = payload["runtime"]
+    # Not bounded by today's suite size: an edit may add scenarios, and each run's launch is
+    # bounded by its own scenario count.
+    widest = {**payload, "scenario_count": 8, "runtime": {**runtime, "parallelism": 8}}
+    try:
+        capacity = configured_capacity(widest)
+    except ValueError as exc:
+        raise _error("composition_invalid", str(exc)) from exc
+    admitted, _ = clamp_parallelism(
+        8, capacity.snapshot_digest or sandbox_runtime_policy().digest
+    )
+    admitted = min(admitted, capacity.parallelism)
+    if MODALITY.get(payload["agent"]["connector"]) == "voice":
+        admitted = min(admitted, runtime["cpu_units"])
+    return max(1, admitted)
+
+
+# One transaction: a retried call must never find the idempotent job without its scenarios.
+@transaction.atomic
+def create_composition(
+    organization,
+    workspace,
+    *,
+    suite: HarnessSuiteRelease,
+    agent: dict[str, Any],
+    agent_version: AgentVersion,
+    name: str,
+    idempotency_key: str,
+    binding: dict[str, Any],
+    alignment: dict[str, Any] | None = None,
+    binding_proof: dict[str, Any] | None = None,
+    trajectories: dict[str, Any] | None = None,
+    parallelism: int | None = None,
+) -> HostedHarnessJob:
+    """A completed environment that runs `agent` against `suite` and its environment.
+
+    `agent` is the same connection a hosted job carries (connector, mode, config, secret refs).
+    `agent_version` is the platform identity results are attributed to. `binding` is the sealed
+    document adaptation produced, the only way an agent is admitted (§7.5), with its `alignment`
+    and, when tool-routed, `binding_proof` and the agent's proved `trajectories`, which a suite
+    edit re-proves the binding with (§7.8). Every run copies the composition's `parallelism`;
+    unset, it is as many worlds as this deployment admits (§7.3).
+    """
+    from simulate.serializers.harness_job import HarnessJobCreateSerializer
+    from simulate.services.alk_simulate_ingestion import (
+        ALKSimulateIngestionError,
+        provision_alk_sim_run_test,
+    )
+    from simulate.services.harness_scenarios import index_scenarios
+
+    if suite.organization_id not in (None, organization.id):
+        raise _error("release_not_found", "suite release not found", 404)
+    if (
+        agent_version.organization_id != organization.id
+        or agent_version.agent_definition.deleted
+    ):
+        raise _error("agent_version_not_found", "agent version not found", 404)
+    personas = list(suite.personas)
+    serializer = HarnessJobCreateSerializer(
+        data={
+            "agent": agent,
+            "artifacts": {"level": "full"},
+            "scenario_count": len(personas),
+            "metadata": {"name": name},
+            **({"runtime": {"parallelism": parallelism}} if parallelism else {}),
+        },
+        # Our hosted agent runs only on an environment it is composed with.
+        context={"composition": True},
+    )
+    if not serializer.is_valid():
+        raise _error("composition_invalid", json.dumps(serializer.errors, default=str))
+    payload = serializer.validated_data
+    if not parallelism:
+        payload["runtime"]["parallelism"] = _admitted_parallelism(payload)
+    connector = payload["agent"]["connector"]
+    if (connector, payload["agent"].get("mode")) not in COMPOSABLE:
+        raise _error(
+            "compose_unsupported",
+            f"{connector} agents are not composed; retell_chat, retell and vapi agents "
+            "in provider_import mode and our hosted agent are",
+        )
+    _check_modality(agent_version, connector)
+    chain = _chain(suite)
+    config = payload["agent"].get("config") or {}
+    target_key = "assistant_id" if connector == "vapi" else "agent_id"
+    binding = _checked_binding(
+        binding,
+        agent=agent_reference(agent_version, connector, config),
+        # Our hosted agent is its own target: the agent version that holds its spec.
+        target_id=str(agent_version.id)
+        if connector == HOSTED_AGENT
+        else str(config.get(target_key) or ""),
+        environment_digest=chain[-1].digest,
+        suite_digest=suite.digest,
+        proof=binding_proof,
+        scenario_keys={
+            str(entry["key"]) for entry in suite.manifest.get("scenarios") or []
+        },
+    )
+    HarnessAgentBinding.no_workspace_objects.get_or_create(
+        organization=organization,
+        digest=binding["digest"],
+        defaults={
+            "agent_version": agent_version,
+            "environment": chain[-1],
+            "mode": binding["mode"],
+            "document": binding,
+        },
+    )
+    payload["metadata"]["release_composition"] = {
+        "environment": [
+            {
+                "digest": release.digest,
+                "name": release.name,
+                "object_key": release.object_key,
+            }
+            for release in chain
+        ],
+        "suite": {
+            "digest": suite.digest,
+            "name": suite.name,
+            "object_key": suite.object_key,
+        },
+        "binding": binding,
+        "alignment": alignment,
+        "binding_proof": binding_proof,
+        "trajectories": trajectories or {},
+    }
+    job, created = create_hosted_job(
+        organization,
+        json.loads(json.dumps(payload, default=str)),
+        idempotency_key=idempotency_key,
+        workspace=workspace,
+    )
+    if not created:
+        return job
+    try:
+        run_test, scenarios, _definition = provision_alk_sim_run_test(
+            organization,
+            workspace=workspace,
+            name=name,
+            personas=[
+                {key: value for key, value in persona.items() if key != "scenario_key"}
+                for persona in personas
+            ],
+            # Found by `organization_agent_version`, whose rule also covers the organization's
+            # agents that name no workspace.
+            agent_definition=agent_version.agent_definition,
+            modality=MODALITY[connector],
+        )
+    except ALKSimulateIngestionError as exc:
+        raise _error("composition_invalid", str(exc)) from exc
+    dataset = scenarios[0].dataset
+    rows = (
+        list(dataset.row_set.filter(deleted=False).order_by("order", "id"))
+        if dataset is not None
+        else []
+    )
+    if len(scenarios) != 1 or len(rows) != len(personas):
+        raise _error(
+            "scenario_provision_count_mismatch", "scenario rows were not created", 500
+        )
+    run_test.agent_version = agent_version
+    run_test.save(update_fields=["agent_version", "updated_at"])
+    with transaction.atomic():
+        HostedHarnessScenario.no_workspace_objects.bulk_create(
+            [
+                HostedHarnessScenario(
+                    job=job,
+                    scenario_key=persona["scenario_key"],
+                    scenario=scenarios[0],
+                    dataset_row=row,
+                )
+                for persona, row in zip(personas, rows, strict=True)
+            ]
+        )
+        # The scenarios the chat and the Scenarios tab address by number (contract §7.8).
+        files = archive_files(_download(suite.object_key))
+        index_scenarios(
+            job,
+            scenario_documents(suite.manifest, files.__getitem__),
+            strict_keys=True,
+        )
+        now = timezone.now()
+        job.run_test = run_test
+        job.state = HostedHarnessJob.State.COMPLETED
+        job.current_stage = "completed"
+        job.terminal_at = now
+        job.content_updated_at = now
+        job.save(
+            update_fields=[
+                "run_test",
+                "state",
+                "current_stage",
+                "terminal_at",
+                "content_updated_at",
+                "updated_at",
+            ]
+        )
+    return job
+
+
+def hosted_agent_binding(
+    agent_version: AgentVersion, config: dict[str, Any], environment_digest: str
+) -> dict[str, Any]:
+    """The canonical binding the platform builds for our own agent (contract §6.4): no
+    adaptation, because no model is needed to bind an agent to the tools it was written for. Its
+    target is the agent version and its provider digest the spec's, exactly as ALK computes it."""
+    return _with_digest(
+        {
+            "schema_version": AGENT_BINDING_SCHEMA,
+            "agent": {
+                **agent_reference(agent_version, HOSTED_AGENT, config),
+                "provider_target_id": str(agent_version.id),
+                "provider_digest": canonical_digest(config),
+            },
+            "environment": {"digest": environment_digest},
+            "mode": "canonical",
+            "agent_tools": [],
+            "tools": [],
+            "fixtures": {},
+            "aliases": {},
+            "rendering": {},
+            "prompt_changes": [],
+        }
+    )
+
+
+@transaction.atomic
+def create_hosted_agent_composition(
+    organization,
+    workspace,
+    *,
+    suite: HarnessSuiteRelease,
+    name: str,
+    instructions: str,
+    model: str,
+    idempotency_key: str,
+    parallelism: int | None = None,
+) -> HostedHarnessJob:
+    """Our own agent (a new text agent definition and version holding its spec) composed with
+    `suite` through the binding the platform builds for it."""
+    config = {"name": name, "instructions": instructions, "model": model}
+    existing = HostedHarnessJob.no_workspace_objects.filter(
+        organization=organization, idempotency_key=idempotency_key
+    ).first()
+    if existing is not None:
+        payload = existing.payload or {}
+        if (
+            existing.workspace_id != getattr(workspace, "id", None)
+            or (payload.get("agent") or {}).get("config") != config
+            or (
+                parallelism
+                and (payload.get("runtime") or {}).get("parallelism") != parallelism
+            )
+        ):
+            raise _error(
+                "idempotency_conflict",
+                "the idempotency key was already used for a different request",
+                409,
+            )
+        return existing
+    if suite.organization_id not in (None, organization.id):
+        raise _error("release_not_found", "suite release not found", 404)
+    definition = AgentDefinition.objects.create(
+        agent_name=name,
+        agent_type=MODALITY[HOSTED_AGENT],
+        inbound=True,
+        # The platform's home for an agent's instructions (eval mappings read `agent_prompt` here).
+        description=instructions,
+        model=model,
+        organization=organization,
+        workspace=workspace,
+    )
+    version = definition.create_version(
+        description="Hosted agent spec",
+        commit_message="Created to run on a prebuilt environment",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    HostedAgentSpec.objects.create(
+        agent_version=version, digest=canonical_digest(config), document=config
+    )
+    chain = _chain(suite)
+    return create_composition(
+        organization,
+        workspace,
+        suite=suite,
+        agent={"connector": HOSTED_AGENT, "config": config},
+        agent_version=version,
+        name=name,
+        idempotency_key=idempotency_key,
+        parallelism=parallelism,
+        binding=hosted_agent_binding(version, config, chain[-1].digest),
+        # It calls the environment's tools by their own names (attached servers' tools too).
+        alignment={
+            "mode": "canonical",
+            "admission": [],
+            "mapped": [
+                {"agent_tool": tool["name"], "steps": [tool["name"]]}
+                for tool in chain[-1].tools
+            ],
+            "unsupported": [],
+            "extension_candidates": [],
+            "unscorable": [],
+            "conflicts": [],
+        },
+    )
+
+
+# --- run manifests ---------------------------------------------------------------------------------
+
+
+def composition_of(job: HostedHarnessJob) -> dict[str, Any] | None:
+    value = ((job.payload or {}).get("metadata") or {}).get("release_composition")
+    return value if isinstance(value, dict) else None
+
+
+def held_composition(job: HostedHarnessJob) -> dict[str, Any]:
+    """`composition_of` where the job has to be a composition."""
+    composition = composition_of(job)
+    if composition is None:
+        raise _error(
+            "composition_missing", "this environment is not a composition", 409
+        )
+    return composition
+
+
+def _voice_choice(settings: dict[str, str], prefix: str) -> str | None:
+    """`provider/model` of one simulator voice stage as the gateway passes it; either half may be
+    empty, and None means ALK picks both."""
+    provider = settings.get(f"{prefix}_PROVIDER", "")
+    model = settings.get(f"{prefix}_MODEL", "")
+    return f"{provider}/{model}" if provider or model else None
+
+
+def _simulator(run_test, connector: str) -> dict[str, Any]:
+    """What the gateway will give the simulator, from the gateway's own resolver at submission
+    and then frozen; the gateway applies these values rather than re-reading them.
+    """
+    from simulate.services.hosted_harness_gateway import simulator_settings
+
+    settings = simulator_settings()
+    agent = getattr(run_test, "simulator_agent", None)
+    prompt = str(getattr(agent, "prompt", "") or "")
+    fallbacks = settings.get("SIMULATOR_LLM_FALLBACK_MODELS", "")
+    return {
+        "llm": {
+            "provider": settings["SIMULATOR_LLM_PROVIDER"],
+            "model": settings["SIMULATOR_LLM_MODEL"],
+            # Every simulator model call goes through AgentCC, so no region is chosen here.
+            "location": None,
+            "thinking": settings.get("SIMULATOR_LLM_THINKING"),
+            "fallback_models": fallbacks.split(",") if fallbacks else [],
+        },
+        "voice": (
+            {
+                "stt": _voice_choice(settings, "SIMULATOR_STT"),
+                "tts": _voice_choice(settings, "SIMULATOR_TTS"),
+                "voice": settings.get("SIMULATOR_TTS_VOICE"),
+            }
+            if MODALITY.get(connector) == "voice"
+            else None
+        ),
+        "persona": {
+            "prompt_digest": (
+                "sha256:" + hashlib.sha256(prompt.encode()).hexdigest()
+                if prompt
+                else None
+            ),
+            "temperature": getattr(agent, "llm_temperature", None),
+            "interrupt_sensitivity": getattr(agent, "interrupt_sensitivity", None),
+            "conversation_speed": getattr(agent, "conversation_speed", None),
+            "finished_speaking_sensitivity": getattr(
+                agent, "finished_speaking_sensitivity", None
+            ),
+            "max_call_duration_in_minutes": getattr(
+                agent, "max_call_duration_in_minutes", None
+            ),
+            "initial_message_delay": getattr(agent, "initial_message_delay", None),
+        },
+    }
+
+
+def proof_digest(proof: dict[str, Any]) -> str:
+    """A binding proof's content address, as agent-learning-kit computes it
+    (`binding_proof.proof_digest`): every status, reason and reference in it."""
+    return canonical_digest(proof)
+
+
+def _frozen_proof(composition: dict[str, Any]) -> dict[str, Any]:
+    """The manifest's `binding_proof`: the digest of the proof this platform holds for a
+    tool-routed composition. Compose reads scenario statuses only from a proof with this digest,
+    so the proof a run is given cannot differ from the one accepted with the composition."""
+    proof = composition.get("binding_proof")
+    if composition["binding"].get("mode") != "tool_routed" or not isinstance(
+        proof, dict
+    ):
+        return {}
+    return {"binding_proof": {"digest": proof_digest(proof)}}
+
+
+def freeze_run_manifest(
+    environment: HostedHarnessJob,
+    child: HostedHarnessJob,
+    *,
+    scenario_keys: list[str],
+    trials: int,
+) -> dict[str, Any]:
+    """The run's manifest (contract §2.5), stored against the run job and returned for dispatch."""
+    from simulate.models import SimulateEvalConfig
+    from simulate.services.hosted_sandbox.factory import (
+        sandbox_provider_name,
+        sandbox_runtime_reference,
+    )
+
+    composition = held_composition(environment)
+    binding = composition["binding"]
+    # A tool-routed binding is scored only on the scenarios its proof proved; compose refuses the
+    # rest (`scenario_unscorable`), so the run is refused here, before a sandbox starts.
+    unscorable = {
+        one["scenario_key"]: one.get("reason") or ""
+        for one in (composition.get("alignment") or {}).get("unscorable") or []
+    }
+    if refused := [key for key in scenario_keys if key in unscorable]:
+        raise _error(
+            "scenario_unscorable",
+            "not scored with this agent: "
+            + "; ".join(f"{key} ({unscorable[key]})" for key in refused),
+            409,
+        )
+    from simulate.services.harness_capacity import configured_capacity
+
+    # The same selection the gateway makes at launch: a resource profile may pin its own image.
+    image_name, image_digest = sandbox_runtime_reference()
+    try:
+        capacity = configured_capacity(child.payload)
+    except ValueError as exc:
+        raise _error("sandbox_capacity_unavailable", str(exc), 503) from exc
+    image_name = capacity.snapshot_name or image_name
+    image_digest = capacity.snapshot_digest or image_digest
+    evals = sorted(
+        (
+            {
+                "name": str(config.name or config.eval_template_id),
+                "version": str(config.updated_at.isoformat()),
+            }
+            for config in SimulateEvalConfig.no_workspace_objects.filter(
+                run_test=environment.run_test, deleted=False
+            )
+        ),
+        key=lambda item: item["name"],
+    )
+    document = _with_digest(
+        {
+            "schema_version": RUN_MANIFEST_SCHEMA,
+            "environment": [
+                {"digest": entry["digest"], "name": entry["name"]}
+                for entry in composition["environment"]
+            ],
+            "suite": {"digest": composition["suite"]["digest"]},
+            "binding": {"digest": binding["digest"]},
+            **_frozen_proof(composition),
+            "agent": binding["agent"],
+            "selection": {"scenario_keys": list(scenario_keys), "trials": trials},
+            "simulator": _simulator(
+                environment.run_test, binding["agent"]["connector"]
+            ),
+            "scorer": {"alk_version": image_name, "evals": evals},
+            "runtime": {
+                "provider": sandbox_provider_name(),
+                "image_name": image_name,
+                "image_digest": image_digest,
+            },
+        }
+    )
+    HarnessRunManifest.no_workspace_objects.create(
+        organization=environment.organization,
+        digest=document["digest"],
+        document=document,
+        job=child,
+    )
+    return document
+
+
+# --- delivery ----------------------------------------------------------------------------------------
+
+
+def _release_archives(
+    organization, environment: list[dict[str, Any]], suite: dict[str, Any]
+) -> tuple[list[tuple[str, bytes]], str]:
+    """The release archives for the §6 layout under /work/releases, and the command that
+    extracts them. Archives land directly in /work, which exists; the command creates the tree.
+
+    Job metadata only names digests: the archives come from release records `organization`
+    may use, and the environment chain must be the suite's own.
+    """
+    record = _visible(HarnessSuiteRelease, organization, str(suite.get("digest") or ""))
+    if record is None:
+        raise _error("release_not_found", "suite release not found", 404)
+    chain = _chain(record)
+    if [str(entry.get("digest") or "") for entry in environment] != [
+        release.digest for release in chain
+    ]:
+        raise _error(
+            "release_invalid", "the environment chain is not the suite's own", 422
+        )
+    archives = [
+        (
+            f"/work/release-{_hex(release.digest)}.tar.gz",
+            f"{RELEASES_ROOT}/environment/{_hex(release.digest)}",
+            release.object_key,
+        )
+        for release in chain
+    ] + [("/work/release-suite.tar.gz", f"{RELEASES_ROOT}/suite", record.object_key)]
+    uploads: list[tuple[str, bytes]] = []
+    extract: list[str] = []
+    for archive, target, object_key in archives:
+        uploads.append((archive, _download(object_key)))
+        archive, target = shlex.quote(archive), shlex.quote(target)
+        extract.append(
+            f"mkdir -p {target} && tar -xzf {archive} -C {target} && rm {archive}"
+        )
+    return uploads, " && ".join(extract)
+
+
+@dataclass(frozen=True)
+class ReleaseLaunch:
+    """What the gateway puts in a release-based run's sandbox, and how it builds the bundle."""
+
+    uploads: tuple[tuple[str, bytes], ...]
+    prepare_command: str
+    bundle_command: str
+    simulator: dict[str, Any]
+    runtime: dict[str, Any]
+
+
+def release_launch_for(job: HostedHarnessJob) -> ReleaseLaunch | None:
+    metadata = (job.payload or {}).get("metadata") or {}
+    composition = metadata.get("release_composition")
+    manifest = metadata.get("run_manifest")
+    if not isinstance(composition, dict):
+        return None
+    if not isinstance(manifest, dict):
+        raise _error(
+            "run_manifest_missing",
+            "a release run must be submitted from a composition",
+            409,
+        )
+    uploads, prepare_command = _release_archives(
+        job.organization, composition["environment"], composition["suite"]
+    )
+    uploads.append((BINDING_PATH, json.dumps(composition["binding"]).encode()))
+    uploads.append((RUN_MANIFEST_PATH, json.dumps(manifest).encode()))
+    # Compose runs a tool-routed binding only on the subset its proof proved, and needs the proof.
+    proof = composition.get("binding_proof")
+    if proof:
+        uploads.append((BINDING_PROOF_PATH, json.dumps(proof).encode()))
+    return ReleaseLaunch(
+        uploads=tuple(uploads),
+        prepare_command=prepare_command,
+        bundle_command=(
+            "rm -rf /work/bundle && python -m fi.alk.harness.releases compose "
+            f"--releases {RELEASES_ROOT} --binding {BINDING_PATH} "
+            f"--manifest {RUN_MANIFEST_PATH} --job /work/job.json --output /work/bundle"
+            + (f" --binding-proof {BINDING_PROOF_PATH}" if proof else "")
+        ),
+        simulator=manifest["simulator"],
+        runtime=manifest["runtime"],
+    )
+
+
+def apply_frozen_simulator(values: dict[str, str], simulator: dict[str, Any]) -> None:
+    """Replace the gateway's simulator env with what a release run's manifest froze. A setting
+    frozen as unset is removed, so a later deployment value cannot leak into the run."""
+    llm = simulator["llm"]
+    voice = simulator.get("voice") or {}
+    frozen: dict[str, str | None] = {
+        "SIMULATOR_LLM_PROVIDER": llm["provider"],
+        "SIMULATOR_LLM_MODEL": llm["model"],
+        "SIMULATOR_LLM_THINKING": llm.get("thinking"),
+        "SIMULATOR_LLM_FALLBACK_MODELS": ",".join(llm.get("fallback_models") or [])
+        or None,
+        "SIMULATOR_TTS_VOICE": voice.get("voice"),
+    }
+    if llm.get("location"):
+        frozen["GOOGLE_CLOUD_LOCATION"] = llm["location"]
+        frozen["ALK_VERTEX_LOCATION"] = llm["location"]
+    for stage in ("stt", "tts"):
+        provider, _, model = (voice.get(stage) or "/").partition("/")
+        frozen[f"SIMULATOR_{stage.upper()}_PROVIDER"] = provider or None
+        frozen[f"SIMULATOR_{stage.upper()}_MODEL"] = model or None
+    for name, value in frozen.items():
+        if value:
+            values[name] = value
+        else:
+            values.pop(name, None)
+
+
+# --- adaptation (contract §7.5) -------------------------------------------------------------------
+
+ADAPTATION_OUTPUT = "/work/authoring/adaptation"
+# What the adaptation's control process verified (agent-learning-kit `hosted.record_verified`):
+# written beside the workspace, in the folder the builder session's tools refuse, and read from
+# there on its own, never from the output directory the session can write.
+ADAPTATION_VERIFIED = "/work/.authoring-credentials/adaptation-verified.json"
+ADAPTATION_VERIFIED_SCHEMA = "futureagi.adaptation-verified.v1"
+
+
+def adaptation_of(job: HostedHarnessJob) -> dict[str, Any] | None:
+    value = ((job.payload or {}).get("metadata") or {}).get("adaptation")
+    return value if isinstance(value, dict) else None
+
+
+def connected_agent_connection(
+    organization, agent_version: AgentVersion
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """How a run reaches the hosted agent of a version connected on the Agents page: an
+    adaptation's `agent` (the provider and its agent id from the definition), and the provider
+    key from the version's stored credentials, stored as a secret only once a job is made.
+    Only Retell and Vapi agents are adapted (contract §7.5)."""
+    from simulate.services.harness_agent_versions import (
+        _own_provider_row,
+        _row_values,
+        _version_values,
+    )
+
+    definition = agent_version.agent_definition
+    provider = str(definition.provider or "").strip().lower()
+    if provider not in ("retell", "vapi"):
+        raise _error(
+            "adaptation_agent_unsupported",
+            "only Retell and Vapi agents can be adapted to a ready environment yet",
+            409,
+        )
+    target = str(definition.assistant_id or "").strip()
+    if not target:
+        raise _error(
+            "adaptation_agent_unsupported",
+            "the agent has no provider agent id; reconnect it on the Agents page",
+            409,
+        )
+    key_name = "VAPI_API_KEY" if provider == "vapi" else "RETELL_API_KEY"
+    secret_values = _version_values(organization.id, agent_version.id) or {}
+    if not secret_values.get(key_name):
+        secret_values = _row_values(_own_provider_row(agent_version.id))
+    if not secret_values.get(key_name):
+        raise _error(
+            "provider_credentials_missing",
+            f"the agent's version holds no {key_name}; add it on the Agents page",
+            409,
+        )
+    if provider == "vapi":
+        connector, config = "vapi", {"assistant_id": target}
+    else:
+        chat = str(definition.agent_type or "").lower() == "text"
+        connector, config = ("retell_chat" if chat else "retell"), {"agent_id": target}
+    return (
+        {"connector": connector, "mode": "provider_import", "config": config},
+        {key_name: secret_values[key_name]},
+    )
+
+
+_PROVIDER_CONNECTORS = {"vapi": {"vapi"}, "retell": {"retell", "retell_chat"}}
+
+
+def check_agent_connection(agent_version: AgentVersion, agent: Any) -> None:
+    """Refuse a connection given with an adaptation request that reaches another provider agent
+    than the selected version's own. The adaptation inspects and binds the agent the connection
+    reaches, while the composition and its results are recorded under the version."""
+    definition = agent_version.agent_definition
+    provider = str(definition.provider or "").strip().lower()
+    target = str(definition.assistant_id or "").strip()
+    agent = agent if isinstance(agent, dict) else {}
+    connector = str(agent.get("connector") or "").strip().lower()
+    config = agent.get("config") if isinstance(agent.get("config"), dict) else {}
+    given = str(
+        config.get("assistant_id" if connector == "vapi" else "agent_id") or ""
+    ).strip()
+    if (
+        connector not in _PROVIDER_CONNECTORS.get(provider, set())
+        or not target
+        or given != target
+    ):
+        raise _error(
+            "agent_connection_mismatch",
+            "the connection given does not reach the selected agent version's own provider "
+            "agent; leave it out to use the version's connection",
+            409,
+        )
+
+
+def adaptation_payload(
+    organization,
+    *,
+    suite: HarnessSuiteRelease,
+    agent: dict[str, Any],
+    agent_version: AgentVersion,
+    name: str,
+    parallelism: int | None = None,
+    pairing: dict[str, str | None] | None = None,
+    mode: str = "review",
+    secret_values: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """The validated hosted job payload of an adaptation of `agent` to `suite`. `parallelism` is
+    the composition's, kept until adaptation completes (unset: what the deployment admits).
+    `pairing` is the tool pairing the person reviewed. `mode` "review" waits for the person to
+    approve the design; "run" drafts and checks the binding without a session and runs the
+    measurable cases once it is sealed. `secret_values` are the agent's own keys, taken out of
+    the payload before a job is made (`HostedHarnessProvider._submit`)."""
+    from simulate.serializers.harness_job import HarnessJobCreateSerializer
+
+    if suite.organization_id not in (None, organization.id):
+        raise _error("release_not_found", "suite release not found", 404)
+    if agent_version.organization_id != organization.id:
+        raise _error("agent_version_not_found", "agent version not found", 404)
+    serializer = HarnessJobCreateSerializer(
+        data={
+            "agent": agent,
+            "artifacts": {"level": "full"},
+            "scenario_count": len(suite.personas),
+            "metadata": {"name": name},
+            **({"credential_values": secret_values} if secret_values else {}),
+        }
+    )
+    if not serializer.is_valid():
+        raise _error("adaptation_invalid", json.dumps(serializer.errors, default=str))
+    payload = serializer.validated_data
+    connector = payload["agent"]["connector"]
+    if (connector, payload["agent"].get("mode")) not in COMPOSABLE:
+        raise _error(
+            "compose_unsupported",
+            f"{connector} agents are not adapted; retell_chat, retell and vapi agents "
+            "in provider_import mode are",
+        )
+    _check_modality(agent_version, connector)
+    payload["metadata"]["adaptation"] = {
+        "environment": [
+            {
+                "digest": release.digest,
+                "name": release.name,
+                "object_key": release.object_key,
+            }
+            for release in _chain(suite)
+        ],
+        "suite": {
+            "digest": suite.digest,
+            "name": suite.name,
+            "object_key": suite.object_key,
+        },
+        "agent_version_id": str(agent_version.id),
+        "parallelism": parallelism,
+        "agent": agent_reference(
+            agent_version, connector, payload["agent"].get("config") or {}
+        ),
+        # The complete pairing (`harness_fit.resolved_pairing`), every world tool in it.
+        **({"pairing": pairing} if pairing else {}),
+        "mode": mode,
+    }
+    document: dict[str, Any] = json.loads(json.dumps(payload, default=str))
+    return document
+
+
+@dataclass(frozen=True)
+class AdaptationLaunch:
+    """What the gateway puts in an adaptation job's sandbox, and the process it runs there."""
+
+    uploads: tuple[tuple[str, bytes], ...]
+    prepare_command: str
+    command: str
+
+
+def adaptation_launch_for(job: HostedHarnessJob) -> AdaptationLaunch | None:
+    adaptation = adaptation_of(job)
+    if adaptation is None:
+        return None
+    uploads, prepare_command = _release_archives(
+        job.organization, adaptation["environment"], adaptation["suite"]
+    )
+    return AdaptationLaunch(
+        uploads=tuple(uploads),
+        prepare_command=prepare_command,
+        command=(
+            "python -m fi.alk.harness.adaptation hosted --job /work/job.json "
+            f"--releases {RELEASES_ROOT} --output {ADAPTATION_OUTPUT}"
+            # Run mode drafts the binding in the control process; no builder session.
+            + (" --auto" if adaptation.get("mode") == "run" else "")
+        ),
+    )
+
+
+# What a hosted job never leaves; an adaptation in one is settled.
+_TERMINAL_STATES = frozenset(
+    {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+)
+
+
+def adaptation_settled(job: HostedHarnessJob) -> bool:
+    """An adaptation whose outcome is recorded: how its sandbox ends no longer changes it."""
+    return adaptation_of(job) is not None and job.state in _TERMINAL_STATES
+
+
+def _adaptation_failure(code: str, message: str) -> dict[str, Any]:
+    return {
+        "domain": "environment",
+        "stage": "adapting",
+        "code": code,
+        "message": message[:1000],
+    }
+
+
+def _output(directory: Path, name: str) -> dict[str, Any]:
+    """A document the adaptation left in its output, which its builder's session can write:
+    anything but an object the platform can store is refused."""
+    try:
+        document = _read(directory, name)
+        validate_jsonb_strings(document, field=name)
+    except (HostedHarnessError, RecursionError) as exc:
+        raise _error(
+            "adaptation_result_invalid", f"{name} cannot be read: {exc}"
+        ) from exc
+    if not isinstance(document, dict):
+        raise _error("adaptation_result_invalid", f"{name} is not an object")
+    return document
+
+
+def _object(document: dict[str, Any], field: str, name: str) -> dict[str, Any]:
+    value = document.get(field) or {}
+    if not isinstance(value, dict):
+        raise _error("adaptation_result_invalid", f"{field} in {name} is not an object")
+    return value
+
+
+def _check_unscorable(entries: Any) -> None:
+    if not isinstance(entries, list) or not all(
+        isinstance(one, dict) and isinstance(one.get("scenario_key"), str)
+        for one in entries
+    ):
+        raise _error(
+            "adaptation_result_invalid",
+            "alignment.unscorable in result.json is not a list of scenarios",
+        )
+
+
+def _verified_digests(verified: Any) -> tuple[str | None, str | None, str | None]:
+    """(binding digest, binding mode, proof digest) the control process recorded, or Nones when
+    it recorded nothing this platform reads."""
+    if (
+        not isinstance(verified, dict)
+        or verified.get("schema_version") != ADAPTATION_VERIFIED_SCHEMA
+    ):
+        return None, None, None
+    binding = verified.get("binding")
+    proof = verified.get("binding_proof")
+    return (
+        binding.get("digest") if isinstance(binding, dict) else None,
+        binding.get("mode") if isinstance(binding, dict) else None,
+        proof.get("digest") if isinstance(proof, dict) else None,
+    )
+
+
+def unscorable_in(proof: dict[str, Any]) -> list[dict[str, str]]:
+    """The scenarios a binding proof leaves unscored, as a composition's alignment lists them."""
+    return [
+        {"scenario_key": key, "reason": entry.get("reason") or ""}
+        for key, entry in sorted((proof.get("scenarios") or {}).items())
+        if entry.get("status") == "unscorable"
+    ]
+
+
+def _adapt(
+    job: HostedHarnessJob, output: Path, verified: Any = None
+) -> tuple[dict[str, Any], dict | None]:
+    """Register what a completed adaptation produced; returns (adaptation_result, failure).
+    `verified` is the control process's own record of what it sealed (`ADAPTATION_VERIFIED`),
+    read apart from `output`: the binding and the proof in `output` are taken only when they
+    are the ones it names."""
+    result = _output(output, "result.json")
+    if result.get("schema_version") != ADAPTATION_RESULT_SCHEMA:
+        raise _error(
+            "adaptation_result_invalid", "result.json is not an adaptation result"
+        )
+    if result.get("status") == "failed":
+        failure = _object(result, "failure", "result.json")
+        return {}, _adaptation_failure(
+            str(failure.get("code") or "adaptation_failed"),
+            str(failure.get("message") or "the adaptation failed"),
+        )
+    if result.get("status") != "completed":
+        raise _error("adaptation_result_invalid", "result.json has no final status")
+    adaptation = adaptation_of(job)
+    if adaptation is None:
+        raise _error(
+            "adaptation_inputs_missing", "this environment is not an adaptation", 409
+        )
+    organization = job.organization
+    base = _visible(HarnessSuiteRelease, organization, adaptation["suite"]["digest"])
+    agent_version = AgentVersion.no_workspace_objects.filter(
+        id=adaptation["agent_version_id"], organization=organization, deleted=False
+    ).first()
+    if base is None or agent_version is None:
+        raise _error(
+            "adaptation_inputs_missing",
+            "the base suite or agent version of this adaptation no longer exists",
+        )
+    # Adaptation never changes the suite (§7.5): the composition runs the base suite as sealed.
+    suite = base
+    reported = _object(result, "suite", "result.json")
+    if reported.get("derived") or reported.get("digest") != suite.digest:
+        raise _error(
+            "adaptation_result_invalid",
+            "result.json names another suite than the one adapted to",
+        )
+    binding = _output(output, "binding.json")
+    mode = binding.get("mode")
+    adaptation_result = {
+        "composition_id": None,
+        "suite_digest": suite.digest,
+        "binding_digest": binding.get("digest"),
+        "mode": mode,
+    }
+    if mode == "conversation_only":
+        # Recorded, not composed: no world-state claim can be made for such an agent.
+        adaptation_result["compose"] = {
+            "code": "compose_unsupported",
+            "message": "the agent reaches no environment tool",
+        }
+        return adaptation_result, None
+    if adaptation.get("mode") == "review" and (
+        not adaptation.get("approved_at") or open_approval(job) is not None
+    ):
+        raise _error(
+            "adaptation_not_approved",
+            "the binding was sealed without the person's approval",
+        )
+    # The control process proves the sealed binding itself and records both digests outside the
+    # workspace. result.json and binding-proof.json come from a directory the builder session
+    # can write, so agreeing with each other proves nothing: the binding, its mode and the
+    # proof are held to the record.
+    verified_binding, verified_mode, verified_proof = _verified_digests(verified)
+    if not verified_binding or (mode == "tool_routed" and not verified_proof):
+        raise _error(
+            "binding_unproved",
+            "the adaptation's control process recorded no verified proof",
+        )
+    if binding.get("digest") != verified_binding or mode != verified_mode:
+        raise _error(
+            "binding_unproved",
+            "binding.json is not the binding the control process verified",
+        )
+    alignment = _object(result, "alignment", "result.json") or None
+    if alignment is not None:
+        _check_unscorable(alignment.get("unscorable") or [])
+    # A missing proof is refused by the composition as binding_unproved.
+    binding_proof = (
+        _output(output, "binding-proof.json")
+        if mode == "tool_routed" and (output / "binding-proof.json").is_file()
+        else None
+    )
+    if mode == "tool_routed":
+        if binding_proof is None or proof_digest(binding_proof) != verified_proof:
+            raise _error(
+                "binding_unproved",
+                "binding-proof.json is not the proof the control process verified",
+            )
+        # What cannot be scored is what the verified proof says, not what result.json does.
+        alignment = {**(alignment or {}), "unscorable": unscorable_in(binding_proof)}
+    composition = create_composition(
+        organization,
+        job.workspace,
+        suite=suite,
+        agent=job.payload["agent"],
+        agent_version=agent_version,
+        name=str((job.payload.get("metadata") or {}).get("name") or suite.name),
+        idempotency_key=f"adaptation:{job.id}",
+        parallelism=adaptation.get("parallelism"),
+        binding=binding,
+        alignment=alignment,
+        binding_proof=binding_proof,
+        trajectories=(
+            _output(output, "trajectories.json")
+            if mode == "tool_routed" and (output / "trajectories.json").is_file()
+            else None
+        ),
+    )
+    adaptation_result["composition_id"] = str(composition.id)
+    return adaptation_result, None
+
+
+def complete_adaptation(
+    job: HostedHarnessJob, output: Path | None, verified: Any = None
+) -> HostedHarnessJob:
+    """Finish an adaptation job from its `/work/authoring/adaptation` output (contract §7.5).
+
+    `output` is None when the process left no readable output. `verified` is the control
+    process's record of what it sealed, read from `ADAPTATION_VERIFIED`. A completed result
+    registers the binding and the composition on the base suite and records
+    `metadata.adaptation_result`; anything the platform refuses, or a failed result, fails the
+    job with the reason. One that was canceled or deleted composes nothing, and one already
+    settled keeps its outcome: only the run it still owes is started.
+    """
+    with transaction.atomic():
+        locked = HostedHarnessJob._base_manager.select_for_update().get(id=job.id)
+        if not adaptation_settled(locked):
+            _settle_adaptation(locked, output, verified)
+    result = (locked.payload.get("metadata") or {}).get("adaptation_result") or {}
+    if (
+        (adaptation_of(locked) or {}).get("mode") == "run"
+        and locked.state == HostedHarnessJob.State.COMPLETED
+        and not locked.deleted
+        and result.get("composition_id")
+        and not {"run", "run_failure"} & set(result)
+    ):
+        locked = _run_measurable(locked, result["composition_id"])
+    return locked
+
+
+def _settle_adaptation(
+    job: HostedHarnessJob, output: Path | None, verified: Any
+) -> None:
+    """Record the outcome of an adaptation; the caller holds its row lock."""
+    from simulate.models import HostedHarnessConversation
+
+    adaptation_result: dict[str, Any] = {}
+    failure: dict[str, Any] | None = None
+    canceled = bool(job.cancel_requested_at or job.deleted)
+    if not canceled:
+        if output is None or not (Path(output) / "result.json").is_file():
+            failure = _adaptation_failure(
+                "adaptation_result_missing",
+                "the adaptation process left no readable result.json",
+            )
+        else:
+            try:
+                adaptation_result, failure = _adapt(job, Path(output), verified)
+            except HostedHarnessError as exc:
+                failure = _adaptation_failure(exc.code, exc.message)
+    now = timezone.now()
+    payload = dict(job.payload)
+    payload["metadata"] = {
+        **(payload.get("metadata") or {}),
+        "adaptation_result": adaptation_result or None,
+    }
+    job.payload = payload
+    job.state = (
+        HostedHarnessJob.State.CANCELED
+        if canceled
+        else HostedHarnessJob.State.FAILED
+        if failure
+        else HostedHarnessJob.State.COMPLETED
+    )
+    job.current_stage = job.state
+    job.failure = failure
+    job.terminal_at = now
+    job.content_updated_at = now
+    job.save(
+        update_fields=[
+            "payload",
+            "state",
+            "current_stage",
+            "failure",
+            "terminal_at",
+            "content_updated_at",
+            "updated_at",
+        ]
+    )
+    # The builder has finished; nothing it asked is left to answer.
+    HostedHarnessConversation.no_workspace_objects.filter(job=job).update(
+        blocking_input=None, updated_at=now
+    )
+
+
+def is_approval(question: Any) -> bool:
+    """Whether a conversation's open question is the adaptation's approval."""
+    return isinstance(question, dict) and str(question.get("prompt") or "").startswith(
+        ADAPTATION_APPROVAL_PREFIX
+    )
+
+
+def open_approval(job: HostedHarnessJob) -> dict[str, Any] | None:
+    """The adaptation's approval question while it is open: asked and not answered. An open one
+    is what "awaiting approval" means, whatever was approved before it was asked again."""
+    from simulate.models import HostedHarnessConversation
+
+    question = (
+        HostedHarnessConversation.no_workspace_objects.filter(job=job)
+        .values_list("blocking_input", flat=True)
+        .first()
+    )
+    return question if is_approval(question) else None
+
+
+def record_approval(job: HostedHarnessJob, question: Any, answer: str) -> None:
+    """Keep on an adaptation how its approval `question` was answered, whether with Approve and
+    build or typed in the chat: yes approves what was asked, any other answer approves nothing.
+    The caller holds the job's row lock."""
+    if not is_approval(question):
+        return
+    adaptation = job.payload["metadata"]["adaptation"]
+    if answer.strip().lower() in ADAPTATION_APPROVALS:
+        adaptation["approved_at"] = timezone.now().isoformat()
+    else:
+        adaptation.pop("approved_at", None)
+    job.save(update_fields=["payload", "updated_at"])
+
+
+def reset_approval(job: HostedHarnessJob) -> None:
+    """A new attempt's builder checks the mapping and asks again: what an earlier one asked or
+    was told approves nothing the new one seals. The caller holds the job's row lock and saves
+    its payload."""
+    from simulate.models import HostedHarnessConversation
+
+    adaptation = adaptation_of(job)
+    if adaptation is None:
+        return
+    adaptation.pop("approved_at", None)
+    HostedHarnessConversation.no_workspace_objects.filter(
+        job=job, blocking_input__prompt__startswith=ADAPTATION_APPROVAL_PREFIX
+    ).update(blocking_input=None, updated_at=timezone.now())
+
+
+def approve_adaptation(job: HostedHarnessJob) -> HostedHarnessJob:
+    """Approve and build: answer the open approval question of an adaptation in review yes. It
+    is open once the mapping has been checked on every case; until then there's nothing to
+    approve."""
+    from simulate.services.hosted_harness_conversation import enqueue_message
+
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        if locked.cancel_requested_at or locked.state in _TERMINAL_STATES:
+            raise _error(
+                "conversation_closed",
+                "This adaptation has finished; start a new one to change it.",
+                409,
+            )
+        question = open_approval(locked)
+        if question is None:
+            raise _error(
+                "adaptation_not_awaiting_approval",
+                "the mapping is still being checked on every case; approve it once it has been",
+                409,
+            )
+        # The answer and the approval are kept together (`record_approval`).
+        enqueue_message(
+            locked,
+            content="yes",
+            client_request_id=f"approve-{question['message_id']}",
+            kind="user_response",
+            reply_to=uuid.UUID(question["message_id"]),
+        )
+    return locked
+
+
+def _run_measurable(job: HostedHarnessJob, composition_id: str) -> HostedHarnessJob:
+    """Start the run an adaptation was asked to make: the composition's measurable cases, once.
+    The run is recorded on the adaptation as `adaptation_result.run`, and why one can't start as
+    `adaptation_result.run_failure`, which leaves the composition Ready to run by hand."""
+    from django.conf import settings
+
+    from simulate.services.harness_usage import require_harness_call_usage
+    from simulate.services.hosted_harness import (
+        create_selected_harness_run,
+        fail_unscheduled_run,
+        run_idempotency_key,
+    )
+    from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+    environment = HostedHarnessJob.no_workspace_objects.get(id=composition_id)
+    run = None
+    outcome: dict[str, Any] = {}
+    try:
+        composition = held_composition(environment)
+        suite = _visible(
+            HarnessSuiteRelease,
+            environment.organization,
+            composition["suite"]["digest"],
+        )
+        unscorable = {
+            one["scenario_key"]
+            for one in (composition.get("alignment") or {}).get("unscorable") or []
+        }
+        key = f"adaptation-run:{job.id}"
+        # A worker can die between creating the run and starting it, or recording it.
+        run = HostedHarnessJob.no_workspace_objects.filter(
+            organization=environment.organization,
+            idempotency_key=run_idempotency_key(environment, key),
+        ).first()
+        if run is None:
+            require_harness_call_usage(environment)
+            run, _created = create_selected_harness_run(
+                environment,
+                scenario_keys=[
+                    entry["key"]
+                    for entry in suite.manifest["scenarios"]
+                    if entry["key"] not in unscorable
+                ],
+                trials=1,
+                idempotency_key=key,
+            )
+        if run.state == HostedHarnessJob.State.QUEUED:
+            retry = run.payload["retry"]
+            start_hosted_harness_gateway_workflow(
+                str(run.id),
+                str(getattr(settings, "HARNESS_PUBLIC_BASE_URL", "") or "").rstrip("/"),
+                retry["max_infrastructure_attempts"],
+                retry["initial_backoff_seconds"],
+                retry["max_backoff_seconds"],
+            )
+        outcome["run"] = {
+            "job_id": str(run.id),
+            "run_test_id": str(run.run_test_id),
+            "test_execution_id": str(run.test_execution_id),
+        }
+    except HostedHarnessError as exc:
+        outcome["run_failure"] = {"code": exc.code, "message": exc.message}
+    except EvaluationDenied as exc:
+        outcome["run_failure"] = {"code": exc.code, "message": str(exc)}
+    except Exception:
+        logger.exception("adaptation_run_not_started", adaptation_id=str(job.id))
+        outcome["run_failure"] = {
+            "code": "run_not_started",
+            "message": "the run could not be started; run the environment to try again",
+        }
+    if run is not None and "run_failure" in outcome:
+        fail_unscheduled_run(run)
+    metadata = job.payload["metadata"]
+    metadata["adaptation_result"] = {**metadata["adaptation_result"], **outcome}
+    job.save(update_fields=["payload", "updated_at"])
+    return job

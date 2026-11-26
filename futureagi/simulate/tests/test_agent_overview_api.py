@@ -1520,6 +1520,36 @@ def test_the_list_reads_observe_projects_without_a_query_per_agent(
         assert len(_rows(auth_client)) == 4
 
 
+@pytest.mark.django_db
+def test_the_list_says_which_environments_epoch_can_pick_without_a_query_per_row(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Epoch picks")
+    # Uploaded and GitHub, with no agent version yet; a hosted agent never.
+    for minutes, kind in enumerate(("github", "archive", "provider", "remote"), 1):
+        _environment(agent, minutes, kind=kind)
+
+    # The list reads the annotation; a read per row would call this.
+    with patch(
+        "simulate.services.agent_fix_agents.pickable_kind",
+        side_effect=AssertionError("read per row"),
+    ):
+        rows = _list(auth_client, agent)
+
+    assert {row["name"]: row["epoch_pickable"] for row in rows} == {
+        "env-1": True,
+        "env-2": True,
+        "env-3": False,
+        "env-4": False,
+    }
+
+
+def _list(client, agent):
+    response = client.get(ENVIRONMENTS, {"agent_definition_id": str(agent.id)})
+    assert response.status_code == status.HTTP_200_OK, response.content
+    return response.json()["results"]
+
+
 def test_an_agent_version_cannot_be_deleted(auth_client, organization, workspace):
     agent = _agent(organization, workspace, "kept")
     version = agent.create_version(description="p", commit_message="v1")

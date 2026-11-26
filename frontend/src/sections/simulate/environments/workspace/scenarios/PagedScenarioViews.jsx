@@ -41,6 +41,7 @@ export default function PagedScenarioViews({
   groupBy,
   showInspector,
   locked,
+  editLocked,
   lockTooltip,
   rowHeight,
   isValidating,
@@ -141,6 +142,7 @@ export default function PagedScenarioViews({
             pageIds={pageIds}
             onTogglePage={onTogglePage}
             locked={locked}
+            editLocked={editLocked}
             lockTooltip={lockTooltip}
             rowHeight={rowHeight}
             isValidating={isValidating}
@@ -154,6 +156,7 @@ export default function PagedScenarioViews({
             onHideGroup={onHideGroup}
             selection={selection}
             locked={locked}
+            editLocked={editLocked}
             lockTooltip={lockTooltip}
             isValidating={isValidating}
           />
@@ -300,6 +303,7 @@ PagedScenarioViews.propTypes = {
   groupBy: PropTypes.string,
   showInspector: PropTypes.bool,
   locked: PropTypes.bool,
+  editLocked: PropTypes.bool,
   lockTooltip: PropTypes.string,
   rowHeight: PropTypes.string,
   // (row) => whether a running validation is proving it.
