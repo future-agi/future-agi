@@ -628,7 +628,7 @@ export const TestRunLoadingStatus = [
 ];
 
 // A run that will make no more calls: Debug failures checks its connected calls.
-const FINISHED_RUN_STATUSES = [
+export const FINISHED_RUN_STATUSES = [
   TestRunExecutionStatus.COMPLETED,
   TestRunExecutionStatus.CANCELLED,
   TestRunExecutionStatus.FAILED,
@@ -954,14 +954,24 @@ export const getCompareBaselineTooltipTitle = (status) => {
  * The KPIs key is not under `["test-execution-detail", executionId]`, so the
  * prefix match alone leaves the last in-run snapshot cached for five minutes,
  * and Debug failures would judge a finished run by a stale connected count.
+ *
+ * Pass `cancelInFlightKpis` when the page saw the run finish: a first KPI read
+ * still in flight then began before the run finished, and React Query would
+ * hand the invalidation that read's answer instead of reading again.
  */
-export const invalidateSettledRun = (queryClient, executionId) => {
+export const invalidateSettledRun = async (
+  queryClient,
+  executionId,
+  { cancelInFlightKpis = false } = {},
+) => {
+  const kpisKey = kpisQueryOptions(executionId).queryKey;
   queryClient.invalidateQueries({
     queryKey: ["test-execution-detail", executionId],
   });
-  queryClient.invalidateQueries({
-    queryKey: kpisQueryOptions(executionId).queryKey,
-  });
+  if (cancelInFlightKpis) {
+    await queryClient.cancelQueries({ queryKey: kpisKey });
+  }
+  await queryClient.invalidateQueries({ queryKey: kpisKey });
 };
 
 export const useFixMyAgentBlocked = (executionId) => {

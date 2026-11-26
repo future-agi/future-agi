@@ -3,6 +3,7 @@ import { AgGridReact } from "ag-grid-react";
 import "src/utils/ag-grid-setup";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  FINISHED_RUN_STATUSES,
   getColumnDefsSignature,
   getSelectedCallExecutionIdsFilter,
   getTestRunDetailColumnQuery,
@@ -92,6 +93,10 @@ const TestRunDetailGrid = () => {
   const setStatus = useShallow(useTestExecutionStore.getState().setStatus);
   const isRefreshingRef = useRef(false);
   const timeoutRef = useRef(null);
+  // The run this page saw in progress, and the run whose final KPIs it already
+  // refetched, so overlapping reads that all see it finished refetch once.
+  const runInProgressRef = useRef(null);
+  const settledRunRef = useRef(null);
   const visibleReasonColumnsRef = useRef(new Set());
   const [_, setRowIndex] = useUrlState("rowIndex");
   const { columnDef, setColumnDef } = useTestDetailStoreShallow((state) => ({
@@ -162,6 +167,28 @@ const TestRunDetailGrid = () => {
       .filter(Boolean);
   }, [filters]);
 
+  // Polls while the run makes calls. The first finished status, on a return
+  // visit too, refetches the final KPIs. Any other value changes nothing.
+  const trackRunStatus = useCallback(
+    (status) => {
+      const runStatus = status?.toLowerCase();
+      if (TestRunLoadingStatus.includes(runStatus)) {
+        isRefreshingRef.current = true;
+        runInProgressRef.current = executionId;
+        settledRunRef.current = null;
+      } else if (FINISHED_RUN_STATUSES.includes(runStatus)) {
+        isRefreshingRef.current = false;
+        if (settledRunRef.current !== executionId) {
+          settledRunRef.current = executionId;
+          void invalidateSettledRun(queryClient, executionId, {
+            cancelInFlightKpis: runInProgressRef.current === executionId,
+          });
+        }
+      }
+    },
+    [executionId, queryClient],
+  );
+
   const dataSource = useMemo(
     () => {
       // Hide stale overlay immediately when datasource changes (search/filter change)
@@ -186,9 +213,7 @@ const TestRunDetailGrid = () => {
           try {
             const { data } = await queryClient.fetchQuery(query);
             const status = data?.status;
-            if (TestRunLoadingStatus.includes(status?.toLowerCase())) {
-              isRefreshingRef.current = true;
-            }
+            trackRunStatus(status);
             const totalRows = data?.count ?? 0;
             params.api.setGridOption("context", {
               totalRowCount: totalRows ?? 0,
@@ -205,7 +230,7 @@ const TestRunDetailGrid = () => {
               setColumnDef(applyReasonColumnVisibility(newColDefs));
             }
 
-            setStatus(data?.status);
+            if (status) setStatus(status);
 
             const updatedRows = replaceToolOutputIdsWithNames(data.results);
 
@@ -256,7 +281,13 @@ const TestRunDetailGrid = () => {
       };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [executionId, queryClient, debouncedSearchQuery, validatedFilters],
+    [
+      executionId,
+      queryClient,
+      debouncedSearchQuery,
+      validatedFilters,
+      trackRunStatus,
+    ],
   );
 
   const applyReasonColumnVisibility = useCallback((colDefs) => {
@@ -330,8 +361,6 @@ const TestRunDetailGrid = () => {
 
         queryClient.setQueryData(query.queryKey, d);
 
-        setStatus(data?.status);
-
         const currentColumnDef = useTestDetailStore.getState().columnDef;
         const newColDefs = getTestRunDetailGridColumnDefs(columns);
         if (
@@ -356,14 +385,17 @@ const TestRunDetailGrid = () => {
         logger.error("Error:", e);
       }
     }
+    // No page read a status: keep the store and keep polling.
+    if (!status) return;
     setStatus(status);
-    if (TestRunLoadingStatus.includes(status?.toLowerCase())) {
-      isRefreshingRef.current = true;
-    } else {
-      isRefreshingRef.current = false;
-      invalidateSettledRun(queryClient, executionId);
-    }
-  }, [executionId, queryClient, setStatus, applyReasonColumnVisibility]);
+    trackRunStatus(status);
+  }, [
+    executionId,
+    queryClient,
+    setStatus,
+    applyReasonColumnVisibility,
+    trackRunStatus,
+  ]);
 
   const onRowSelectionChanged = useCallback(({ api, context }) => {
     const totalRowCount = context?.totalRowCount;
