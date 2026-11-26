@@ -169,6 +169,8 @@ jobs:
           # A fork never gets the light plan; ci:full asks for the full one.
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           FULL_LABEL: ${{ steps.labels.outputs.full }}
+          # Light is for pull requests into dev, where the train and the queue gate are.
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
           STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
         # Bootstrap is workflow policy; never execute a candidate loader.
         run: |

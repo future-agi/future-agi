@@ -324,6 +324,7 @@ def plan(
     head_ref="",
     fork=False,
     full=False,
+    target="dev",
 ):
     sha(tested)
     if git("rev-parse", "HEAD").decode().strip() != tested:
@@ -382,6 +383,8 @@ def plan(
         mode == "light"
         and event == "pull_request"
         and not (rollup or fork or full)
+        # Only dev has the train and the queue gate; a PR into main stays full.
+        and target == "dev"
         # Unknown impact may touch an owned path.
         and paths is not None
         and not code_owned(paths, base)
@@ -445,6 +448,8 @@ def main():
         # No head repository (a deleted fork) counts as a fork.
         os.environ.get("PR_HEAD_REPO", "") != os.environ.get("GITHUB_REPOSITORY"),
         os.environ.get("FULL_LABEL") == "true",
+        # A workflow that predates the variable keeps the old rule.
+        os.environ.get("PR_BASE_REF") or "dev",
     )
     print(json.dumps(p, sort_keys=True))
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:

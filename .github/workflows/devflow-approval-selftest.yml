@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/CODEOWNERS"
       - ".github/scripts/devflow_approval.py"
+      - ".github/scripts/ci_scope.py" # the CODEOWNERS matcher the tests reuse
       - ".github/scripts/test_devflow_approval.py"
       - ".github/workflows/devflow-approval.yml"
       - ".github/workflows/devflow-approval-selftest.yml"

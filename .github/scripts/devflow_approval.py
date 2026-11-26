@@ -35,6 +35,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import tomllib
 import urllib.parse
 
@@ -47,6 +48,7 @@ BOT = re.compile(r"^github-actions\[bot\]$")  # the REST login of GITHUB_TOKEN w
 WRITE = {"admin", "write"}
 STOP_LABEL = "needs-human"
 TRAIN_LABEL = "devflow:train"
+FULL_LABEL = "ci:full"  # Backend CI's full plan under CI_SCOPE_MODE=light
 BASE = "dev"
 MODES = ("devflow", "observe")
 TIERS = ("low", "medium", "high")  # ordinal
@@ -236,8 +238,10 @@ def risk_scan(files: list, read) -> list:
                 continue
             if status == "renamed":
                 hits.append(f"{path} is renamed from {item.get('previous_filename')}")
-            # The listing leaves out the patch of a large diff: scan the whole file.
-            text = added_lines(item["patch"]) if item.get("patch") else read(path, "head")
+            # A changed migration may keep its RunPython line untouched, and the
+            # listing leaves out the patch of a large diff: both scan the whole file.
+            patch = item.get("patch") if status == "added" else None
+            text = added_lines(patch) if patch else read(path, "head")
             if text is None:
                 hits.append(f"{path} could not be read")
                 continue
@@ -464,6 +468,50 @@ def scan_pr(repo: str, number: int, pr: dict) -> list:
     return risk_scan(files, read)
 
 
+def full_run_action(run, jobs: list) -> str:
+    """What a high pull request's newest Backend CI run needs so its head gets
+    a full run under CI_SCOPE_MODE=light: "none" (full, or no run yet: a new
+    run reads ci:full live), "wait" (its plan is not decided yet), "rerun"
+    (a finished light run) or "cancel-rerun" (a light run still going).
+    The light plan skips the `plan` job."""
+    if not run:
+        return "none"
+    plan = next((j for j in jobs if j.get("name") == "plan"), None)
+    if plan is None or plan.get("status") != "completed":
+        return "wait"
+    if plan.get("conclusion") != "skipped":
+        return "none"
+    return "rerun" if run.get("status") == "completed" else "cancel-rerun"
+
+
+def start_full_run(repo: str, head: str) -> None:
+    """One whole-run re-run of the newest light Backend CI run on the head, so
+    its changes job reads ci:full live and runs the full plan. Not
+    rerun-failed-jobs: that keeps the light plan."""
+    runs = json.loads(
+        gh("api", f"repos/{repo}/actions/workflows/backend-ci.yml/runs?event=pull_request&head_sha={head}&per_page=20")
+    ).get("workflow_runs") or []
+    run = max(runs, key=lambda r: r["created_at"]) if runs else None
+    jobs = []
+    if run:
+        out = gh("api", "--paginate", f"repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100", "--jq", ".jobs[]")
+        jobs = [json.loads(line) for line in out.splitlines() if line.strip()]
+    action = full_run_action(run, jobs)
+    print(f"full run for {head[:12]}: {action}")
+    if action == "cancel-rerun":
+        gh("api", "-X", "POST", f"repos/{repo}/actions/runs/{run['id']}/cancel")
+        for _ in range(18):
+            if json.loads(gh("api", f"repos/{repo}/actions/runs/{run['id']}")).get("status") == "completed":
+                break
+            time.sleep(5)
+        else:
+            print(f"::warning::run {run['id']} did not stop in 90 s; re-run it after adding ci:full")
+            return
+    if action in ("rerun", "cancel-rerun"):
+        gh("api", "-X", "POST", f"repos/{repo}/actions/runs/{run['id']}/rerun")
+        print(f"re-ran run {run['id']} for the full plan")
+
+
 def add_labels(repo: str, number: int, labels: list) -> None:
     args = ["api", "-X", "POST", f"repos/{repo}/issues/{number}/labels"]
     for label in labels:
@@ -506,7 +554,12 @@ def main(argv=None) -> int:
         if observe or args.dry_run or result["action"] in ("skip", "wait"):
             return 0
         if result["action"] == "needs-human":
-            add_labels(repo, number, [STOP_LABEL])
+            # High goes to the queue alone, and the train never takes it, so
+            # under light CI this job starts its full run (contract v2).
+            light = os.environ.get("CI_SCOPE_MODE") == "light"
+            add_labels(repo, number, [STOP_LABEL, FULL_LABEL] if light else [STOP_LABEL])
+            if light:
+                start_full_run(repo, result["head"])
             return 0
         # Act only on the commit that was judged; a later push gets its own run.
         current = json.loads(gh("api", f"repos/{repo}/pulls/{number}"))

@@ -89,6 +89,9 @@ class Case:
         # For main(): the pulls/{n}/files items and {(path, sha): text}.
         self.files = []
         self.texts = {}
+        # For main(): Backend CI runs on the head and the newest run's jobs.
+        self.ci_runs = []
+        self.ci_jobs = []
 
     def decide(self, tight=False, observe=False):
         return da.decide(
@@ -343,8 +346,13 @@ def run_main(mode, case, author_permission="write"):
             items = {
                 "/reviews?per_page=100": case.reviews,
                 "/files?per_page=100": case.files,
+                "/jobs?filter=latest&per_page=100": case.ci_jobs,
             }.get(args[2][args[2].rindex("/"):], case.comments)
             return "\n".join(json.dumps(item) for item in items)
+        if "/actions/workflows/backend-ci.yml/runs?" in args[1]:
+            return json.dumps({"workflow_runs": case.ci_runs})
+        if "/actions/runs/" in args[1] and "-X" not in args:
+            return json.dumps({"status": "completed"})
         if "/compare/" in args[1]:
             return MERGE_BASE + "\n"
         if "/contents/" in args[-1]:
@@ -550,6 +558,41 @@ class TierContractTests(unittest.TestCase):
         self.assertEqual(writes[0][-1], "labels[]=devflow:train")
         self.assertFalse(any("event=APPROVE" in c for c in writes[0]))
 
+    def test_medium_never_gets_needs_human(self):
+        for extra in ((), (approval("lead"),)):
+            with self.subTest(approved=bool(extra)):
+                code, calls, decision = run_main("devflow", self.case(*extra, tier="medium"))
+                self.assertNotEqual(decision["action"], "needs-human")
+                self.assertFalse(any(f"labels[]={da.STOP_LABEL}" in c for c in calls))
+
+    def test_the_full_run_a_high_pull_request_needs_under_light(self):
+        plan = {"name": "plan", "status": "completed", "conclusion": "skipped"}
+        done, going = {"id": 9, "status": "completed"}, {"id": 9, "status": "in_progress"}
+        self.assertEqual(da.full_run_action(None, []), "none")
+        self.assertEqual(da.full_run_action(going, [{"name": "changes", "status": "in_progress"}]), "wait")
+        self.assertEqual(da.full_run_action(done, [dict(plan, conclusion="success")]), "none")
+        self.assertEqual(da.full_run_action(done, [plan]), "rerun")
+        self.assertEqual(da.full_run_action(going, [plan]), "cancel-rerun")
+
+        def high(mode, run, jobs):
+            case = self.case(tier="high")
+            case.ci_runs, case.ci_jobs = run, jobs
+            os.environ["CI_SCOPE_MODE"] = mode
+            try:
+                return [c for c in run_main("devflow", case)[1] if "-X" in c]
+            finally:
+                del os.environ["CI_SCOPE_MODE"]
+
+        writes = high("light", [dict(done, created_at="b"), {"id": 8, "status": "completed", "created_at": "a"}], [plan])
+        self.assertEqual(writes[0][-3:], (f"labels[]={da.STOP_LABEL}", "-f", f"labels[]={da.FULL_LABEL}"))
+        self.assertEqual(writes[1][3], f"repos/{REPO}/actions/runs/9/rerun")  # whole run, the newest
+        self.assertEqual(len(writes), 2)
+        writes = high("light", [dict(going, created_at="b")], [plan])
+        self.assertEqual([w[3] for w in writes[1:]], [f"repos/{REPO}/actions/runs/9/cancel", f"repos/{REPO}/actions/runs/9/rerun"])
+        # Full mode: only needs-human, no label for the plan and no re-run.
+        writes = high("", [dict(done, created_at="b")], [plan])
+        self.assertEqual([w[-1] for w in writes], [f"labels[]={da.STOP_LABEL}"])
+
     def test_an_unknown_tier_string_is_high(self):
         for tier in ("Medium", "", None, "critical", "LOW", ["low"]):
             with self.subTest(tier=tier):
@@ -596,9 +639,13 @@ class RiskScanTests(unittest.TestCase):
         body = patch("+        migrations.AddField(", "+            model_name='span',", " # RunPython stays")
         self.assertEqual(scan({"filename": MIGRATION, "status": "added", "patch": body}), [])
 
-    def test_only_added_lines_count(self):
-        body = patch("-        migrations.RunPython(noop),", "+        migrations.AddField(")
-        self.assertEqual(scan({"filename": MIGRATION, "status": "modified", "patch": body}), [])
+    def test_a_changed_migration_is_scanned_whole(self):
+        # Its RunPython line can stay untouched while the function it calls changes.
+        body = patch(" def forwards(apps, schema_editor):", "+    delete_everything()")
+        head = {MIGRATION: "operations = [migrations.RunPython(forwards)]"}
+        item = {"filename": MIGRATION, "status": "modified", "patch": body}
+        self.assertEqual(scan(item, head=head), [f"{MIGRATION} adds RunPython"])
+        self.assertEqual(scan(item, head={MIGRATION: "operations = [migrations.AddField()]"}), [])
 
     def test_a_migration_without_a_patch_is_read_whole(self):
         item = {"filename": MIGRATION, "status": "added"}

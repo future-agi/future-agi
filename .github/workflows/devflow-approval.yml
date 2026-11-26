@@ -18,7 +18,8 @@ name: PR approval
 #   head and add devflow:train so the batch train may take it. Medium: no
 #   bot approval; once a person with write access approves the head (a
 #   pull_request_review event), add devflow:train. High: the needs-human
-#   label, and the pull request goes alone. When the variable
+#   label, and the pull request goes alone; under CI_SCOPE_MODE=light the
+#   job also adds ci:full and re-runs the head's light Backend CI run in full. When the variable
 #   APPROVAL_MODE_TIGHT is "1", the lowest tier is medium; it never adds
 #   needs-human. Paths that need a person are the floor block in
 #   .github/CODEOWNERS: the dev ruleset's code owner review enforces it,
@@ -113,7 +114,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-      issues: write # adds the needs-human or devflow:train label
+      issues: write # adds the needs-human, ci:full or devflow:train label
+      actions: write # re-runs a high pull request's light Backend CI run in full
     # Job level, so a skipped run (another label) never cancels a decision.
     # Each run reads the pull request live, so the newest queued run is enough.
     concurrency:
@@ -131,4 +133,5 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           APPROVAL_MODE: ${{ vars.APPROVAL_MODE }}
           APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}
+          CI_SCOPE_MODE: ${{ vars.CI_SCOPE_MODE }}
         run: python3 -I .github/scripts/devflow_approval.py --repo "$REPO" --pr "$PR" --mode "$APPROVAL_MODE"

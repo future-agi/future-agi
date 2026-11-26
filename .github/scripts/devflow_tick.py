@@ -38,6 +38,7 @@ recorded shapes. Only `Api` and `main` touch the network or git.
 
 from __future__ import annotations
 
+import http.client
 import json
 import math
 import os
@@ -79,6 +80,7 @@ INFRA_STEP_PATTERN = re.compile(
 # per pull request (a light PR without ci:full), and the breaker is this.
 NOT_BASE_SIGNALS = frozenset({
     "Backend Tests Pass",
+    "backend / Backend Tests Pass",  # the reusable call's aggregate inside the queue
     "E2E Tests Pass",
     "Members ran the internal suite",
     "Base-health breaker",
@@ -572,7 +574,7 @@ class Api:
                 with urllib.request.urlopen(req, timeout=60) as res:
                     raw = res.read()
                     return (json.loads(raw) if raw else None), res.headers.get("Link", "")
-            except (TimeoutError, urllib.error.URLError) as err:
+            except (TimeoutError, urllib.error.URLError, http.client.IncompleteRead) as err:
                 # Reads only: a write is never retried, so it is never doubled.
                 transient = not isinstance(err, urllib.error.HTTPError) or err.code in (502, 503, 504)
                 if method != "GET" or not transient or attempt == 2:
@@ -831,7 +833,13 @@ def main(argv: list[str]) -> int:
         esc = escape_rate(commits, details)
     landings = len(api.get_all(f"/commits?sha=dev&since={iso(now - timedelta(hours=1))}&per_page=100"))
     dirty = dirty_share(open_pr_mergeables(api))
-    flaky = collect_flaky(api, now, runs, failures, jobs_by_run, commits)
+    try:
+        flaky = collect_flaky(api, now, runs, failures, jobs_by_run, commits)
+    except (OSError, http.client.HTTPException, ValueError) as err:
+        # The flaky list is a report: its failure must not stop the digest or
+        # the tight-mode write below.
+        print(f"::warning::flaky jobs not read: {err}")
+        flaky = []
     text = render_digest(landings, stats, esc, dirty, breaker, flaky, quality_by_engine(details, window))
     print(text)
     for e in esc["escapes"]:

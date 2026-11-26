@@ -105,6 +105,27 @@ class GateTests(unittest.TestCase):
         self.assertIn("no receipt", text)
         self.assertIn("ci:full", text)
 
+    def test_a_light_run_re_run_with_ci_full_counts_on_its_second_attempt(self):
+        # The train adds ci:full and re-runs the whole light run. Attempt 1 has
+        # only "Backend Tests Deferred" and no receipt; attempt 2 is full.
+        api = Api()
+        head = api.member(4454, BASE)
+        api.run(4454, 9001)
+        receipt = api.artifacts[9001][0]
+        receipt["name"] = "ci-candidate-backend-attempt-2"
+        api.jobs[9001] = [
+            {"name": "Backend Tests Deferred", "run_attempt": 1, "conclusion": "success", "started_at": "a", "completed_at": "b"},
+            {"name": "Backend Tests Pass", "run_attempt": 2, "conclusion": "success", "started_at": "c", "completed_at": "d"},
+            {"name": gate.RECEIPT_JOB, "run_attempt": 2, "conclusion": "success", "started_at": "c", "completed_at": "d"},
+        ]
+        code, text = judge(api, head)
+        self.assertEqual(code, 0, text)
+        # Attempt 1 alone (the light run) does not count.
+        api.jobs[9001] = api.jobs[9001][:1]
+        code, text = judge(api, head)
+        self.assertEqual(code, 1)
+        self.assertIn("Backend Tests Pass did not pass", text)
+
     def test_every_member_is_checked_not_only_the_group_head(self):
         # HEADGREEN: a green entry behind cannot carry a light one ahead of it.
         api = Api()

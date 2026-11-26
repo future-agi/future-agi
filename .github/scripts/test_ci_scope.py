@@ -610,6 +610,15 @@ class CandidateScope(unittest.TestCase):
         tested, base, head = self.pull_request("futureagi/tracer/span.py")
         self.assertEqual(plan("pull_request", tested, base, head, "light")["mode"], "light")
 
+    def test_a_pull_request_into_main_keeps_the_full_plan_under_light(self):
+        # Main has no train and no queue gate, so a light run there would only
+        # ever show "Backend Tests Deferred".
+        tested, base, head = self.pull_request()
+        self.assertEqual(plan("pull_request", tested, base, head, "light", target="main")["mode"], "full")
+        self.assertEqual(plan("pull_request", tested, base, head, "light", target="dev")["mode"], "light")
+        text = (SCRIPTS.parent / "workflows" / "backend-ci.yml").read_text()
+        self.assertIn("PR_BASE_REF: ${{ github.event.pull_request.base.ref }}\n", text)
+
     def test_a_candidate_cannot_drop_its_own_code_owner(self):
         self.write(".github/CODEOWNERS", "/futureagi/accounts/ @org/team\n")
         self.commit()
