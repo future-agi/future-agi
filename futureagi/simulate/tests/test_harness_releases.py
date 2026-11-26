@@ -612,6 +612,10 @@ class TestLock:
 
         assert response.status_code == 409
         assert response.json()["error"] == "release_already_locked"
+        label = HarnessRelease.no_workspace_objects.get().label
+        assert response.json()["message"] == (
+            f"These versions are already locked as {label}."
+        )
         assert HarnessRelease.no_workspace_objects.count() == 1
 
     def test_a_default_that_moved_since_the_page_loaded_is_refused(
@@ -695,7 +699,7 @@ class TestUnlockAndDelete:
         assert response.status_code == 409
         assert response.json()["error"] == "release_locked"
         assert response.json()["message"] == (
-            f"A workspace admin or owner must unlock release {label} first."
+            f"A workspace admin or owner must unlock version {label} first."
         )
         environment.refresh_from_db()
         assert environment.deleted is False
@@ -714,6 +718,9 @@ class TestUnlockAndDelete:
 
         assert response.status_code == 403
         assert response.json()["error"] == "release_admin_only"
+        assert response.json()["message"] == (
+            "Only a workspace admin or owner can unlock a version."
+        )
         assert HarnessRelease.no_workspace_objects.get().unlocked_at is None
 
     def test_a_workspace_admin_may_unlock(self, auth_client, user, workspace, storage):
@@ -959,3 +966,4 @@ def test_unlock_of_an_unknown_release_is_not_found(user, workspace, storage):
         unlock_release(environment, "00000000-0000-0000-0000-000000000000", user=user)
 
     assert refused.value.code == "release_not_found"
+    assert refused.value.message == "This locked version doesn't exist."

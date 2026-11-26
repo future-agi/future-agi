@@ -25,9 +25,9 @@ const versions = (env: string) => `${ENVIRONMENTS}/${env}/versions/`;
 const LOCK = (env: string) => `${ENVIRONMENTS}/${env}/versions/lock/`;
 // Copy, pinned from frontend/src/sections/simulate/environments/workspace/overview/overview.constants.js
 // (RELEASE_COPY).
-const LOCK_BUTTON = 'Lock this release';
-const LOCK_TITLE = 'Lock this release?';
-const LOCK_ACTION = 'Lock release';
+const LOCK_BUTTON = 'Lock this version';
+const LOCK_TITLE = 'Lock this version?';
+const LOCK_ACTION = 'Lock version';
 // The release label is "YYYY.M.N" (releases.py::_next_label).
 const LABEL = /^\d{4}\.\d{1,2}\.\d+$/;
 // Scorable scenarios the seed holds: 6 refunds + 6 lookups, each with one sub-goal
@@ -103,11 +103,11 @@ test(
     // The card sits on the environment's Overview; it has no test id, so it is found as the innermost
     // block holding the Reference passes table and the lock (or, once locked, unlock) button.
     const card = page.locator('div').filter({ hasText: 'Reference passes' })
-      .filter({ has: page.getByRole('button', { name: /^(Lock this release|Unlock)$/ }) }).last();
+      .filter({ has: page.getByRole('button', { name: /^(Lock this version|Unlock)$/ }) }).last();
 
     await test.step('open Overview: the release is ready', async () => {
       await page.goto(`/dashboard/simulate/environments/${env}?tab=overview`);
-      await expect(card.getByText('Release', { exact: true })).toBeVisible({ timeout: UI_READY });
+      await expect(card.getByText('Lock a version', { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(card.getByText('Ready', { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(card.getByRole('button', { name: LOCK_BUTTON })).toBeEnabled();
       await expect(card.getByText('Locked', { exact: true })).toHaveCount(0);
@@ -175,8 +175,9 @@ test(
     expect(environmentLabel).toMatch(/^v\d+$/);
 
     await test.step('read the locked card', async () => {
-      await expect(card.getByText(`Release ${release.label}`, { exact: true })).toBeVisible({ timeout: UI_READY });
-      await expect(card.getByText('Locked', { exact: true })).toBeVisible({ timeout: UI_READY });
+      await expect(card.getByText(`Locked version ${release.label}`, { exact: true })).toBeVisible({ timeout: UI_READY });
+      // The title says Locked: a locked card shows no status badge.
+      await expect(card.getByText('Locked', { exact: true })).toHaveCount(0);
       await expect(card.getByText('Ready', { exact: true })).toHaveCount(0);
       await expect(card.getByText(new RegExp(
         `^Locked (?:\\d{1,2} [A-Z][a-z]{2}|[A-Z][a-z]{2} \\d{1,2}) · Train ${TRAIN_TASKS} · Test ${TEST_TASKS} scenarios · scorer environment ${environmentLabel}$`,
@@ -188,7 +189,7 @@ test(
     // simulate/tests/test_harness_releases.py delete test reads it: error and message.
     const refused = await actor.api.request<{ error: string; message: string }>('delete', `${ENVIRONMENTS}/${env}/`);
     expect(refused.status).toBe(409);
-    expect(refused.body).toMatchObject({ error: 'release_locked', message: `A workspace admin or owner must unlock release ${release.label} first.` });
+    expect(refused.body).toMatchObject({ error: 'release_locked', message: `A workspace admin or owner must unlock version ${release.label} first.` });
     const still = await actor.api.get<Versions>(versions(env));
     expect(still.releases.map((one) => one.id)).toEqual([release.id]);
   },

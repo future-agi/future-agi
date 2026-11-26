@@ -143,7 +143,7 @@ describe("ReleaseCard", () => {
   it("offers the lock with the splits it would get", async () => {
     render(<ReleaseCard envId="env" />);
 
-    expect(screen.getByText("Release")).toBeInTheDocument();
+    expect(screen.getByText("Lock a version")).toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
     expect(screen.getByText("Not proved")).toBeInTheDocument();
     expect(
@@ -153,12 +153,17 @@ describe("ReleaseCard", () => {
     ).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Lock this release" }),
+      screen.getByRole("button", { name: "Lock this version" }),
     );
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Lock this release?")).toBeInTheDocument();
+    expect(within(dialog).getByText("Lock this version?")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "Its scenarios, train and test splits and scorer freeze, so every score on it stays comparable. Each scenario keeps its split in every later locked version. Edits make a new, unlocked version.",
+      ),
+    ).toBeInTheDocument();
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Lock release" }),
+      within(dialog).getByRole("button", { name: "Lock version" }),
     );
 
     expect(calls.lock).toEqual([
@@ -169,7 +174,7 @@ describe("ReleaseCard", () => {
   it("locks the pair that opened the dialog, even if the default moved since", async () => {
     const { rerender } = render(<ReleaseCard envId="env" />);
     await userEvent.click(
-      screen.getByRole("button", { name: "Lock this release" }),
+      screen.getByRole("button", { name: "Lock this version" }),
     );
 
     // The versions refresh behind the open dialog with a newer default pair.
@@ -179,7 +184,7 @@ describe("ReleaseCard", () => {
     rerender(<ReleaseCard envId="env" />);
     await userEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
-        name: "Lock release",
+        name: "Lock version",
       }),
     );
 
@@ -209,7 +214,7 @@ describe("ReleaseCard", () => {
       screen.getByText("Add scenarios to lock: a test split needs at least 4."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Lock this release" }),
+      screen.getByRole("button", { name: "Lock this version" }),
     ).toBeDisabled();
     await userEvent.click(
       screen.getByRole("button", { name: "Add scenarios" }),
@@ -236,14 +241,18 @@ describe("ReleaseCard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps the lock from someone who can't edit", () => {
+  it("keeps the lock from someone who can't edit, and says why", async () => {
     state.canEdit = false;
 
     render(<ReleaseCard envId="env" />);
 
     expect(
-      screen.getByRole("button", { name: "Lock this release" }),
+      screen.getByRole("button", { name: "Lock this version" }),
     ).toBeDisabled();
+    await userEvent.tab();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "You don't have permission to lock versions.",
+    );
   });
 
   it("shows a locked release with its splits, and an admin can unlock it", async () => {
@@ -254,20 +263,21 @@ describe("ReleaseCard", () => {
 
     render(<ReleaseCard envId="env" />);
 
-    expect(screen.getByText("Release 2026.11.1")).toBeInTheDocument();
-    expect(screen.getByText("Locked")).toBeInTheDocument();
+    expect(screen.getByText("Locked version 2026.11.1")).toBeInTheDocument();
+    // The title already says Locked: a locked card shows no status badge.
+    expect(screen.queryByText("Locked")).not.toBeInTheDocument();
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(
       screen.getByText(/Train 54 · Test 14 scenarios · scorer environment v3$/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Lock this release" }),
+      screen.queryByRole("button", { name: "Lock this version" }),
     ).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
     const dialog = screen.getByRole("dialog");
     expect(
-      within(dialog).getByText("Unlock release 2026.11.1?"),
+      within(dialog).getByText("Unlock version 2026.11.1?"),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByText(
@@ -275,7 +285,7 @@ describe("ReleaseCard", () => {
       ),
     ).toBeInTheDocument();
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Unlock release" }),
+      within(dialog).getByRole("button", { name: "Unlock version" }),
     );
 
     expect(calls.unlock).toEqual([{ releaseId: "rel-1" }]);
@@ -310,10 +320,10 @@ describe("ReleaseCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
     const dialog = screen.getByRole("dialog");
     expect(
-      within(dialog).getByText("Unlock release 2026.11.1?"),
+      within(dialog).getByText("Unlock version 2026.11.1?"),
     ).toBeInTheDocument();
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Unlock release" }),
+      within(dialog).getByRole("button", { name: "Unlock version" }),
     );
 
     expect(calls.unlock).toEqual([{ releaseId: "rel-1" }]);
@@ -335,7 +345,7 @@ describe("ReleaseCard", () => {
 
     render(<ReleaseCard envId="env" />);
 
-    expect(screen.getByText("Release")).toBeInTheDocument();
+    expect(screen.getByText("Lock a version")).toBeInTheDocument();
     expect(
       screen.getByText(
         "2026.11.1 · environment v3 · scenarios v4 · Train 54 · Test 14 · unlocked",

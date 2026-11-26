@@ -164,7 +164,10 @@ class TestVersionsList:
         }
         assert body["releases"] == []
         assert body["lock"]["can_lock"] is False
-        assert body["lock"]["refusal"]["code"] == "release_not_ready"
+        assert body["lock"]["refusal"] == {
+            "code": "release_not_ready",
+            "message": "Build this environment before you lock a version.",
+        }
 
     def test_versioning_off_is_not_found(
         self, auth_client, user, workspace, storage, settings

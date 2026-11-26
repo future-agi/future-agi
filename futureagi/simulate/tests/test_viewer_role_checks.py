@@ -36,8 +36,8 @@ VIEWER_REFUSALS = [
     ("patch", ENVIRONMENT, "edit an environment"),
     ("delete", ENVIRONMENT, "delete an environment"),
     ("post", f"{ENVIRONMENT}versions/agent/", "create an agent version"),
-    ("post", f"{ENVIRONMENT}versions/lock/", "lock a release"),
-    ("post", f"{ENVIRONMENT}versions/unlock/", "unlock a release"),
+    ("post", f"{ENVIRONMENT}versions/lock/", "lock a version"),
+    ("post", f"{ENVIRONMENT}versions/unlock/", "unlock a version"),
     ("post", f"{ENVIRONMENT}nudges/{OTHER}/answer/", "answer a rebuild prompt"),
     ("delete", f"{ENVIRONMENT}evaluations/{OTHER}/", "remove evaluations"),
     ("patch", f"{ENVIRONMENT}evaluations/{OTHER}/", "edit evaluations"),
@@ -60,7 +60,7 @@ VIEWER_REFUSALS = [
 ]
 
 # A Member can't take these either, so the refusal names who can.
-ADVICE = {"unlock a release": "Ask a workspace admin or owner to unlock it."}
+ADVICE = {"unlock a version": "Ask a workspace admin or owner to unlock it."}
 MEMBER_ROLE_ADVICE = "Ask a workspace admin for the Member role."
 
 LABELS_WITHOUT_A_ROUTE_CASE = {

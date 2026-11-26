@@ -65,7 +65,7 @@ const previews = {
     can_lock: false,
     refusal: {
       code: "release_not_ready",
-      message: "Build this environment before you lock a release.",
+      message: "Build this environment before you lock a version.",
     },
     train: null,
     test: null,
