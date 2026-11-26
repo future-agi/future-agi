@@ -211,14 +211,15 @@ def run_usage_sql() -> str:
     counts for the call it names, else for the call its trace names, as in the list.
 
     An agent with two exporters sends one span twice, and the table keeps the copies
-    apart, by service name or by kind. They are read as the one span they are, each
-    fact from whichever copy carries it, so no copy is chosen and none is lost."""
+    apart, by service name or by kind. They are counted and priced as the one span they
+    are, each fact from whichever copy carries it, so no copy is chosen and none is
+    lost. The model names are each LLM copy's own, as when every copy was read
+    alone."""
     attrs = cols.ATTRS_STRING
     reported = _reported_cost_sql()
-    # The request model a span names, else the model column, for an instrumentor that
-    # names its model in another convention; across its copies, the greatest of each.
-    # So a span reads by a name one of its copies read by alone.
-    request_model = f"max({cols.LLM_REQUEST_MODEL})"
+    # The request model a copy names, else the model column, for an instrumentor that
+    # names its model in another convention.
+    model = f"if({cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
     spans = (
         "SELECT trace_id, "
         f"max(mapContains({attrs}, '{CALL_MARK_KEY}')) AS names_call, "
@@ -228,7 +229,10 @@ def run_usage_sql() -> str:
         "max(observation_type = 'llm') AS is_llm, "
         "max(observation_type IN ('llm', 'embedding')) AS is_billed, "
         f"max({attrs}['{UNMEASURED_KEY}'] = 'partial') AS is_partial, "
-        f"if({request_model} != '', {request_model}, max(model)) AS span_model, "
+        f"groupUniqArrayIf({model}, observation_type = 'llm' AND {model} != '') "
+        "AS llm_models, "
+        f"groupUniqArrayIf({model}, observation_type IN ('llm', 'embedding') "
+        f"AND {model} != '') AS billed_models, "
         # A cost the sender reported, a zero too, before one the collector estimated.
         f"max({reported}) AS span_reported, "
         f"if(span_reported, maxIf(cost, {reported}), max(cost)) AS span_cost, "
@@ -250,13 +254,13 @@ def run_usage_sql() -> str:
         # Summed by trace and named call first: finding a trace's call sorts its rows,
         # and these are far fewer than its spans.
         "SELECT trace_id, names_call, span_call, min(span_start) AS first_start, "
-        "groupUniqArrayIf(span_model, is_llm AND span_model != '') AS models, "
+        "groupUniqArrayArray(llm_models) AS models, "
         "countIf(is_llm) AS llm_spans, "
         "countIf(is_billed) AS billed_spans, "
         "sumIf(span_cost, is_billed) AS cost, "
         "countIf(is_billed AND NOT span_priced) AS unpriced, "
-        "groupUniqArrayIf(span_model, is_billed AND NOT span_priced "
-        "AND span_model != '') AS unpriced_models, "
+        "groupUniqArrayArrayIf(billed_models, is_billed AND NOT span_priced) "
+        "AS unpriced_models, "
         "countIf(is_partial) AS partial "
         f"FROM ({spans}) "
         "GROUP BY trace_id, names_call, span_call"

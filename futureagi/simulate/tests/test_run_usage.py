@@ -276,13 +276,12 @@ def test_a_span_exported_twice_counts_once_by_its_request_model(spans, monkeypat
             CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(0.01)),
             id="the_price_on_one_copy_the_model_on_the_other",
         ),
-        # Nothing ranks these two, so a read that kept one row could keep either.
+        # Nothing ranks these two, so a read that kept one row could keep either. The
+        # chain copy's model names no model call.
         pytest.param(
             {"service": "agent", "kind": "llm"},
             {"service": "agent", "model_column": "m1"},
-            CallUsage(
-                models=["m1"], llm_spans=1, cost_usd=None, unpriced_models=["m1"]
-            ),
+            CallUsage(models=[], llm_spans=1, cost_usd=None),
             id="one_service_two_kinds",
         ),
         pytest.param(
@@ -291,8 +290,8 @@ def test_a_span_exported_twice_counts_once_by_its_request_model(spans, monkeypat
             CallUsage(models=["m1"], llm_spans=1, cost_usd=None, partial=True),
             id="the_priced_copy_and_the_partial_marker",
         ),
-        # Two copies that each name a model and report a cost: the greater of each,
-        # every read.
+        # Two copies that each name a model and report a cost: both names, the
+        # greater cost, every read.
         pytest.param(
             {
                 "service": "agent",
@@ -308,7 +307,7 @@ def test_a_span_exported_twice_counts_once_by_its_request_model(spans, monkeypat
                 "cost": 0.02,
                 "numbers": {"gen_ai.cost.total": 0.02},
             },
-            CallUsage(models=["m2"], llm_spans=1, cost_usd=pytest.approx(0.02)),
+            CallUsage(models=["m1", "m2"], llm_spans=1, cost_usd=pytest.approx(0.02)),
             id="two_names_two_reported_costs",
         ),
     ],
@@ -465,39 +464,116 @@ def test_a_span_s_request_model_outranks_its_model_column(spans, monkeypatch):
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    ("one", "other", "model"),
+    ("one", "other", "models"),
     [
-        pytest.param({"model": "m2"}, {"model": "m1"}, "m2", id="two_request_models"),
-        # A request model on any copy outranks a model column, as on one copy.
+        pytest.param(
+            {"model": "m2"}, {"model": "m1"}, ["m1", "m2"], id="two_request_models"
+        ),
         pytest.param(
             {"model_column": "zz-column"},
             {"model": "m1", "model_column": "gateway:m1"},
-            "m1",
+            ["m1", "zz-column"],
             id="a_request_model_and_a_model_column",
         ),
         pytest.param(
-            {"model_column": "m2"}, {"model_column": "m1"}, "m2", id="two_columns"
+            {"model_column": "m2"},
+            {"model_column": "m1"},
+            ["m1", "m2"],
+            id="two_columns",
         ),
     ],
 )
-def test_a_span_whose_copies_name_two_models_reads_by_one_of_them(
-    spans, monkeypatch, one, other, model
+def test_a_span_whose_copies_name_two_models_keeps_both_names(
+    spans, monkeypatch, one, other, models
 ):
     _traced(monkeypatch)
     calls = {}
-    # Each copy under each service name: the name never hangs on which one is which.
+    # A lock checks every name a copy gave, so no name hides another; the span still
+    # counts and costs once.
     for agent, omega in ((one, other), (other, one)):
         call, trace, span_id = (str(uuid.uuid4()) for _ in range(3))
         spans(trace, call=call)
         spans(trace, span_id=span_id, service="agent", kind="llm", cost=0.01, **agent)
         spans(trace, span_id=span_id, service="omega", kind="llm", cost=0.01, **omega)
         calls[call] = CallUsage(
-            models=[model], llm_spans=1, cost_usd=pytest.approx(0.01)
+            models=models, llm_spans=1, cost_usd=pytest.approx(0.01)
         )
 
     reads = [run_traces_v3.run_usage(SimpleNamespace()) for _ in range(3)]
 
     assert reads == [calls] * 3
+
+
+@pytest.mark.integration
+def test_a_model_only_a_span_s_non_llm_copy_names_is_never_read(spans, monkeypatch):
+    _traced(monkeypatch)
+    call, trace, span_id = (str(uuid.uuid4()) for _ in range(3))
+    spans(trace, call=call)
+    spans(trace, span_id=span_id, service="agent", kind="llm", model_column="m1")
+    spans(trace, span_id=span_id, service="omega", model="m2", cost=0.01)
+
+    assert run_traces_v3.run_usage(SimpleNamespace()) == {
+        call: CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(0.01))
+    }
+
+
+def _dev_name(copy):
+    """The name a copy had read alone: its request model, else its model column."""
+    return copy.get("model") or copy.get("model_column") or ""
+
+
+@pytest.mark.integration
+def test_a_run_s_model_names_are_those_its_copies_had_each_read_alone(
+    spans, monkeypatch
+):
+    _traced(monkeypatch)
+    llm = {"kind": "llm", "cost": 0.01}
+    # Each call's spans: one copy, or two that share a span id.
+    runs = [
+        [
+            # Two exporters that agree, the Future AGI copy naming the bare model.
+            [
+                {**llm, "model": "gateway:m1", "model_column": "gateway:m1"},
+                {
+                    **llm,
+                    "model": "gateway:m1",
+                    "model_column": "m1",
+                    "extra": {"llm.model_name": "m1"},
+                },
+            ],
+            [{**llm, "model": "m2"}, {**llm, "model_column": "m3"}],
+            [{**llm, "model_column": "m4"}, {"model": "m5"}],
+            [{**llm, "model": "llama3:8b"}],
+            [{"model": "m6"}],
+            [{"kind": "embedding", "model": "m7", "cost": 0.01}],
+        ],
+        [[{**llm, "model": "m2"}], [{"kind": "llm"}, {"model_column": "m8"}]],
+    ]
+    expected = {}
+    for copies_of_spans in runs:
+        call, trace = str(uuid.uuid4()), str(uuid.uuid4())
+        spans(trace, call=call)
+        for copies in copies_of_spans:
+            span_id = str(uuid.uuid4())
+            for service, copy in zip(("agent", "omega"), copies, strict=False):
+                spans(trace, span_id=span_id, service=service, **copy)
+        expected[call] = sorted(
+            {
+                _dev_name(copy)
+                for copies in copies_of_spans
+                for copy in copies
+                if copy.get("kind") == "llm" and _dev_name(copy)
+            }
+        )
+
+    usage = run_traces_v3.run_usage(SimpleNamespace())
+
+    assert {call: one.models for call, one in usage.items()} == expected
+    # What the reader on dev returns for these rows, so the names are its own.
+    assert list(expected.values()) == [
+        ["gateway:m1", "llama3:8b", "m2", "m3", "m4"],
+        ["m2"],
+    ]
 
 
 @pytest.mark.integration
