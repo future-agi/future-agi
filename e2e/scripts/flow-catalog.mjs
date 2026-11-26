@@ -92,7 +92,7 @@ function main() {
   const listFile = path.join(os.tmpdir(), `flow-list-${process.pid}.json`);
   try {
     // The catalog documents which flows exist, independent of what a given run
-    // executes — quarantining or live-LLM-gating a flow must not delete it from FLOWS.md.
+    // executes — quarantining, live-LLM-gating or stack-gating a flow must not delete it from FLOWS.md.
     execFileSync(
       "npx",
       [
@@ -110,6 +110,7 @@ function main() {
           FLOW_CATALOG_OUT: listFile,
           E2E_INCLUDE_QUARANTINED: "1",
           E2E_LIVE_LLM: "1",
+          E2E_INCLUDE_ERROR_FEED_STACK: "1",
         },
       },
     );
