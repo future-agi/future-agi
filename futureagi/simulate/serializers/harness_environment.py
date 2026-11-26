@@ -1380,6 +1380,10 @@ class HarnessLockRefusalSerializer(serializers.Serializer):
     locked_version_id = serializers.UUIDField(
         required=False, help_text="version_locked: the locked version to unlock first."
     )
+    # A field named label shadows DRF's own Field.label (a str), so mypy flags it.
+    label = serializers.CharField(  # type: ignore[assignment]
+        required=False, help_text="version_locked: that locked version's label."
+    )
 
 
 class HarnessUnlockForbiddenSerializer(ViewerReadOnlyErrorSerializer):

@@ -150459,6 +150459,12 @@
                     "description": "version_locked: the locked version to unlock first.",
                     "type": "string",
                     "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "description": "version_locked: that locked version's label.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },

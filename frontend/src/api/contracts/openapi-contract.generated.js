@@ -73271,6 +73271,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
         },
+        label: {
+          title: "Label",
+          description: "version_locked: that locked version's label.",
+          type: "string",
+          minLength: 1,
+        },
       },
     },
     HarnessLockVersion: {

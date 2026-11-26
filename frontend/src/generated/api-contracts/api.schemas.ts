@@ -21380,6 +21380,11 @@ export interface HarnessLockRefusalApi {
   test?: number;
   /** version_locked: the locked version to unlock first. */
   locked_version_id?: string;
+  /**
+   * version_locked: that locked version's label.
+   * @minLength 1
+   */
+  label?: string;
 }
 
 /**

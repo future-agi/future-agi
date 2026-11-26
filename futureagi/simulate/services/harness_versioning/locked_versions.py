@@ -270,7 +270,10 @@ def _plan_lock(
     ``locked_versions``, a read's own list, says which pair is locked, so the read's preview
     and history agree; without it the database says."""
     from simulate.services.harness_agent_versions import _busy
+    from simulate.services.harness_versioning.read import require_versioning
 
+    # An unlock still answers with versioning off: its preview says why nothing locks.
+    require_versioning()
     if job.environment_version_id is None or job.suite_version_id is None:
         raise HostedHarnessError(
             "lock_not_ready",
@@ -452,7 +455,11 @@ def require_no_locked_version(environment: HostedHarnessJob) -> None:
             "version_locked",
             f"A workspace admin or owner must unlock version {locked_version.label} first.",
             status_code=409,
-            details={"locked_version_id": str(locked_version.id)},
+            # What an admin's Unlock in the refusal names and sends.
+            details={
+                "locked_version_id": str(locked_version.id),
+                "label": locked_version.label,
+            },
         )
 
 

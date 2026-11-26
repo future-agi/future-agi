@@ -1,14 +1,12 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { enqueueSnackbar } from "notistack";
 import { Box, Stack, Typography, Button, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { paths } from "src/routes/paths";
 import { useDeleteEnvironment } from "src/api/simulate-environments/environments";
-import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { ENTRY_TAB } from "../environmentOptions";
 import {
   DELETE_DIALOG_COPY,
@@ -23,6 +21,7 @@ import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import useSimulationAccess from "../hooks/useSimulationAccess";
+import useDeleteRefusal from "../hooks/useDeleteRefusal";
 
 // The environment workspace header: back to the list, the
 // name + status badge + env-version pin, the primary "Run simulation" action, and
@@ -58,6 +57,7 @@ export default function WorkspaceHeader({
     env?.buildStatus === BUILD_STATUS.BUILDING &&
     env?.status !== ENV_STATUS.CANCELLING;
   const deleteEnv = useDeleteEnvironment();
+  const showDeleteRefusal = useDeleteRefusal();
   // Rename (§8) is live for a real backend-backed env. Its response is the §6
   // body, which the mutation writes back into the §6 cache; the workspace
   // overlays that name onto `env`, so the header reflects the new name at once.
@@ -70,7 +70,7 @@ export default function WorkspaceHeader({
     deleteEnv.mutate(env.id, {
       onSuccess: () =>
         navigate(`${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`),
-      onError: (error) => enqueueSnackbar(errorMessage(error), { variant: "error" }),
+      onError: (error) => showDeleteRefusal(env.id, error),
     });
 
   return (
