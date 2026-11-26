@@ -344,7 +344,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+			noteRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
@@ -442,7 +442,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 			rc.Provider = provider.ID()
 
 			providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-				noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+				noteRouteDrops(nil, callRC, provider, callRC.Request)
 				resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 				if err != nil {
 					return err
@@ -519,7 +519,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		Reason: "exact model catalog operation emits only configured model identifiers, owner, numeric limits/pricing and capability flags; it neither reads nor returns inference content",
 	}}
 	router.handleInspected("GET", "/v1/models", handlers.ListModels, modelCatalogInspection)
-	router.handleInspected("GET", "/v1/models/{model}", handlers.GetModel, modelCatalogInspection)
+	router.handleInspected("GET", "/v1/models/{model...}", handlers.GetModel, modelCatalogInspection)
 
 	// Assistants API.
 	router.Handle("POST", "/v1/assistants", handlers.CreateAssistant)
@@ -655,7 +655,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+			noteRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err

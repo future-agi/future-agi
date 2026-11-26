@@ -337,6 +337,31 @@ class TestIsContentKey:
 # scrub_pii_in_span_batch
 # ---------------------------------------------------------------------------
 class TestScrubPiiInSpanBatch:
+    @pytest.mark.parametrize("encoded", [False, True])
+    def test_nested_member_name_collisions_preserve_all_values(self, encoded):
+        from tracer.utils import pii_scrubber
+
+        token = "<EMAIL_ADDRESS>"
+        content = [{"a@example.com": 1, "b@example.com": 2, token: 3, f"{token}_2": 4}]
+        attributes = {
+            "fi.input.value": json.dumps(content) if encoded else content,
+            "gen_ai.request.model": "a@example.com",
+        }
+
+        def scrub(text, *, strict):
+            assert strict
+            assert text not in attributes  # attribute names are structural
+            return token if "@" in text else text
+
+        with mock.patch.object(pii_scrubber, "scrub_pii_in_string", side_effect=scrub):
+            result = pii_scrubber.scrub_span_attributes(attributes, strict=True)
+
+        output = result["fi.input.value"]
+        assert (json.loads(output) if encoded else output) == [
+            {f"{token}_3": 1, f"{token}_4": 2, token: 3, f"{token}_2": 4}
+        ]
+        assert result["gen_ai.request.model"] == "a@example.com"
+
     def test_enabled_project_fails_closed_when_engines_unavailable(self):
         from tracer.utils.pii_scrubber import PIIScrubError, scrub_pii_in_span_batch
 

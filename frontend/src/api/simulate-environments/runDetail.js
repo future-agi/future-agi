@@ -221,7 +221,9 @@ export function useRunDetail(
                 : summary?.outcomes?.passed > 0
                   ? "passed"
                   : "failed",
-      runState: runStateFor(execution.status),
+      runState: runStateFor(execution.status, execution.stop),
+      stop: execution.stop ?? null,
+      voice: execution.agent_type === "voice",
       stoppable: STOPPABLE_EXECUTION_STATUSES.has(execution.status),
       // Evals can only be graded again once the execution is `completed`.
       executionStatus: execution.status ?? null,
@@ -234,10 +236,15 @@ export function useRunDetail(
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
       agentDiffers: Boolean(execution.agent_differs),
+      // The run readiness the run started under, and the cases it held back.
+      capabilitySnapshot: execution.capability_snapshot ?? null,
+      readinessSelection: execution.readiness_selection ?? null,
       // Said by the server when the run replayed a build without its environment's actors.
       buildNotice: execution.build_notice ?? null,
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
+      // Must-pass cases this run failed, by name.
+      mustPassFailed: Array.isArray(execution.must_pass_failed) ? execution.must_pass_failed : [],
       // How far an interrupted run got and whether it can resume; null when the
       // backend does not say.
       resume: execution.resume

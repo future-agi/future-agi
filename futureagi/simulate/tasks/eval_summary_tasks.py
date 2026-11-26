@@ -1,7 +1,7 @@
-import hashlib
-import json
-
 import structlog
+from django.contrib.postgres.aggregates import StringAgg
+from django.db.models import CharField, F, Func, TextField, Value
+from django.db.models.functions import Cast, Coalesce
 from django.utils import timezone
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
@@ -14,29 +14,29 @@ logger = structlog.get_logger(__name__)
 Summary = EvalExplanationSummaryStatus
 
 
+def _md5_of(*fields):
+    """md5, in the database, of the rows' fields in id order: the rows are
+    never read into the job. A row is written whole (``ROW(...)::text``), so
+    a NULL field still counts."""
+    row = Cast(Func(*(F(f) for f in fields), function="ROW"), TextField())
+    return Func(
+        Coalesce(StringAgg(row, delimiter=",", ordering="id"), Value("")),
+        function="md5",
+        output_field=CharField(),
+    )
+
+
 def _grading_digest(test_execution):
     """A digest of the grading the summary reads: the run's calls with their
     status and verdicts, and its eval configs. When it changes while the job
     runs, the summary was made without the change."""
-    calls = list(
-        CallExecution.objects.filter(test_execution_id=test_execution.id)
-        .order_by("id")
-        .values_list("id", "status", "eval_outputs")
-    )
-    configs = list(
-        SimulateEvalConfig.objects.filter(
-            run_test_id=test_execution.run_test_id, deleted=False
-        )
-        .order_by("id")
-        .values_list("id", flat=True)
-    )
-    grading = {
-        "calls": [[str(id_), status, outputs] for id_, status, outputs in calls],
-        "configs": [str(id_) for id_ in configs],
-    }
-    # Verdicts may hold values strict JSON refuses (NaN), so not canonical_json.
-    text = json.dumps(grading, sort_keys=True, default=str)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    calls = CallExecution.objects.filter(test_execution_id=test_execution.id).aggregate(
+        digest=_md5_of("id", "status", "eval_outputs")
+    )["digest"]
+    configs = SimulateEvalConfig.objects.filter(
+        run_test_id=test_execution.run_test_id, deleted=False
+    ).aggregate(digest=_md5_of("id"))["digest"]
+    return f"{calls}:{configs}"
 
 
 @temporal_activity(
@@ -49,9 +49,9 @@ def run_eval_summary_task(test_execution_id):
 
     The result is stored as current (completed) only when the run's grading
     did not change while it was made. Otherwise it is stored as out of date
-    (pending): the page shows it with a note to press Refresh, and nothing
-    more is queued. When another summary job stored a current summary first,
-    that one is kept.
+    (pending), and nothing more is queued. When another summary job stored a
+    current summary first, that one is kept, and this job's failure does not
+    replace it.
     """
     try:
         logger.info(
@@ -60,8 +60,12 @@ def run_eval_summary_task(test_execution_id):
 
         test_execution = TestExecution.objects.get(id=test_execution_id)
 
-        test_execution.eval_explanation_summary_status = Summary.RUNNING
-        test_execution.save(update_fields=["eval_explanation_summary_status"])
+        # Stamped at the start, so a job that waited in the queue is timed
+        # from when it began (see SUMMARY_JOB_GIVE_UP).
+        TestExecution.objects.filter(id=test_execution_id).update(
+            eval_explanation_summary_status=Summary.RUNNING,
+            eval_explanation_summary_last_updated=timezone.now(),
+        )
 
         before = _grading_digest(test_execution)
         summary = _get_cluster_dict_by_eval(
@@ -103,13 +107,21 @@ def run_eval_summary_task(test_execution_id):
         logger.error(f"TestExecution {test_execution_id} not found")
         return
     except Exception as e:
-        test_execution.eval_explanation_summary_status = Summary.FAILED
-        test_execution.eval_explanation_summary_last_updated = timezone.now()
-        test_execution.save(
-            update_fields=[
-                "eval_explanation_summary_status",
-                "eval_explanation_summary_last_updated",
-            ]
-        )
         logger.exception(f"Error calculating eval explanation summary: {e}")
+        try:
+            # By id, not through the row read above (which may be what
+            # failed). A current summary another job stored is left as it is.
+            TestExecution.objects.filter(id=test_execution_id).exclude(
+                eval_explanation_summary_status=Summary.COMPLETED
+            ).update(
+                eval_explanation_summary_status=Summary.FAILED,
+                eval_explanation_summary_last_updated=timezone.now(),
+            )
+        except Exception:
+            # The database itself is gone: the status stays running and is
+            # read as failed once SUMMARY_JOB_GIVE_UP passes.
+            logger.exception(
+                "eval_summary_failure_not_recorded",
+                test_execution_id=str(test_execution_id),
+            )
         return

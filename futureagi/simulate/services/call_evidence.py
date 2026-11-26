@@ -2,7 +2,8 @@
 
 For each call and each of ten kinds it answers ``present`` (with the content, the
 source it was read from and a digest of exactly that content), ``not_captured``
-with a cause taken from stored data only, or ``not_applicable``.
+with a cause taken from stored data (or ``unreadable`` when a store could not be
+read just then), or ``not_applicable``.
 
 Its rules:
 
@@ -12,9 +13,13 @@ Its rules:
 - An empty record is present, sent as a plain statement, never as an empty value.
 - World changes always say they were cut when they were taken in.
 - Who spoke each turn is decided here, once.
-- Secrets are masked in everything but recording links, and masked content
-  carries the ``secrets_masked`` mark. The digest is of the masked content.
+- Secrets are masked, and masked content carries the ``secrets_masked`` mark; a
+  recording link loses only a password written in it. The digest is of the masked
+  content. Nothing is masked past the point where it would be cut.
 - A call outside the caller's organisation and workspace, or deleted, is refused.
+  Below the run test, a deleted agent version and a deleted job's files are not read;
+  the scenario is read as the call ran it.
+- One kind that cannot be read does not stop the others.
 """
 
 from __future__ import annotations
@@ -26,6 +31,9 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
+
+import structlog
+from django.db import DatabaseError
 
 from accounts.models.workspace import Workspace
 from simulate.models.agent_setup import AgentVersionSetup
@@ -43,8 +51,9 @@ from simulate.services.hosted_harness_ingestion import _ALLOWED_ARTIFACTS
 from simulate.services.run_traces_v3 import read_run_traces, run_traces_source
 from simulate.utils.speaker_roles import SpeakerRoleResolver
 from simulate.utils.stored_transcript_roles import call_actor_label
-from tfc.utils.redaction import redact_url_credentials
 from tracer.models.observability_provider import ProviderChoices
+
+logger = structlog.get_logger(__name__)
 
 READER_VERSION = 1
 
@@ -82,6 +91,7 @@ class Cause(StrEnum):
     NO_LONGER_KEPT = "no_longer_kept"
     NOT_READABLE_YET = "not_readable_yet"
     TOO_LARGE = "too_large"
+    UNREADABLE = "unreadable"
 
 
 class RunKind(StrEnum):
@@ -107,6 +117,8 @@ _STATED_CONNECTORS = frozenset({"phone", "livekit"})
 # The one file of a seed the reader hands over, and the most of it it reads.
 _SEED_STORE = "store.json"
 _SEED_STORE_MAX_BYTES = 32 * 1024 * 1024
+# The most of an uploaded world file the reader fetches.
+_ARTIFACT_MAX_BYTES = 32 * 1024 * 1024
 _RETELL_TOOL_ROLES = frozenset({"tool_call_invocation", "tool_call_result"})
 _VOICE_TOOL_ROLES = (
     CallTranscript.SpeakerRole.TOOL_CALLS,
@@ -132,6 +144,14 @@ class CallDeleted(CallRefused):
     """The call, its run or its run test was deleted."""
 
 
+class ArtifactTooLarge(Exception):
+    """An uploaded file is over the size the reader fetches."""
+
+    def __init__(self, size: int) -> None:
+        super().__init__(size)
+        self.size = size
+
+
 @dataclass(frozen=True)
 class Evidence:
     kind: Kind
@@ -143,6 +163,7 @@ class Evidence:
     cut: dict[str, int] | None = None
     marks: tuple[str, ...] = ()
     note: str | None = None
+    reader_version: int = READER_VERSION
 
 
 @dataclass(frozen=True)
@@ -196,8 +217,12 @@ class _Read:
 
     def chat_messages(self) -> list[ChatMessageModel]:
         if "chat" not in self._cache:
+            # By the call alone: its tenant was checked, and the current workspace
+            # may be another of the organisation's.
             self._cache["chat"] = list(
-                self.call.chat_messages.filter(deleted=False).order_by("created_at")
+                ChatMessageModel.no_workspace_objects.filter(
+                    call_execution=self.call
+                ).order_by("created_at")
             )
         messages: list[ChatMessageModel] = self._cache["chat"]
         return messages
@@ -235,7 +260,23 @@ def read_call_evidence(
         max_chars=max_chars,
         shared=shared if shared is not None else {},
     )
-    return {Kind(kind): _READERS[Kind(kind)](read) for kind in kinds}
+    return {kind: _read_one(read, kind) for kind in map(Kind, kinds)}
+
+
+def _read_one(read: _Read, kind: Kind) -> Evidence:
+    """One kind; a store that fails just then makes this kind ``unreadable``, not the
+    whole read. A database error still raises: the transaction is no longer usable."""
+    try:
+        return _READERS[kind](read)
+    except DatabaseError:
+        raise
+    except Exception:
+        logger.exception(
+            "call_evidence_kind_unreadable",
+            call_execution_id=str(read.call.id),
+            kind=kind.value,
+        )
+        return _missing(kind, Cause.UNREADABLE, note="It could not be read just now.")
 
 
 def in_workspace(run_test: Any, organization_id: Any, workspace_id: Any) -> bool:
@@ -313,10 +354,12 @@ def manifest_lists(
 
 
 def environment_files(environment_version_id: Any) -> dict[str, bytes] | None:
-    """The seed's store file of a saved environment version, read alone from its
+    """The seed's store file of a saved environment version, streamed alone from its
     archive; ``None`` when the archive is gone. A store over the size cap, or an
-    archive that can't be read, gives no file."""
+    archive that is cut short or malformed, gives no file. A store that can't be
+    reached raises."""
     import tarfile
+    import zlib
 
     from minio.error import S3Error
 
@@ -324,25 +367,27 @@ def environment_files(environment_version_id: Any) -> dict[str, bytes] | None:
     from simulate.services.harness_versioning import archives
     from simulate.services.hosted_harness import HostedHarnessError
 
-    version = HarnessEnvironmentVersion.objects.filter(
+    version = HarnessEnvironmentVersion.no_workspace_objects.filter(
         id=environment_version_id
     ).first()
     if version is None or not version.archive_object_key:
         return None
     try:
-        body = archives.get_archive(version.archive_object_key)
+        return archives.stream_members(
+            version.archive_object_key, {_SEED_STORE}, _SEED_STORE_MAX_BYTES
+        )
     except S3Error as exc:
         if exc.code in {"NoSuchKey", "NoSuchBucket"}:
             return None
         raise
-    try:
-        return archives.read_members(body, {_SEED_STORE}, _SEED_STORE_MAX_BYTES)
-    except (tarfile.TarError, HostedHarnessError):
+    except (tarfile.TarError, EOFError, zlib.error, HostedHarnessError):
         return {}
 
 
 def stored_artifact(read: _Read, digest: str, artifact_kind: str) -> bytes | None:
-    """An uploaded artifact of the call's job, in the caller's tenant; ``None`` when not kept."""
+    """An uploaded artifact of the call's job, in the caller's tenant; ``None`` when not
+    kept, or when its job was deleted. Raises ``ArtifactTooLarge`` over the cap, by the
+    size its row records or by what is read."""
     from minio.error import S3Error
 
     from tfc.settings.settings import UPLOAD_BUCKET_NAME
@@ -356,6 +401,7 @@ def stored_artifact(read: _Read, digest: str, artifact_kind: str) -> bytes | Non
         job_id=read.trial.job_id,
         sha256=digest.removeprefix("sha256:"),
         kind=artifact_kind,
+        job__deleted=False,
         job__organization_id=run_test.organization_id,
     )
     rows = (
@@ -363,9 +409,12 @@ def stored_artifact(read: _Read, digest: str, artifact_kind: str) -> bytes | Non
         if run_test.workspace_id is not None
         else rows.filter(job__workspace_id__isnull=True)
     )
-    key = rows.values_list("object_key", flat=True).first()
-    if not key:
+    row = rows.values_list("object_key", "size").first()
+    if row is None or not row[0]:
         return None
+    key, size = row
+    if size is not None and size > _ARTIFACT_MAX_BYTES:
+        raise ArtifactTooLarge(size)
     try:
         response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
     except S3Error as exc:
@@ -373,10 +422,13 @@ def stored_artifact(read: _Read, digest: str, artifact_kind: str) -> bytes | Non
             return None
         raise
     try:
-        return response.read()
+        body: bytes = response.read(_ARTIFACT_MAX_BYTES + 1)
     finally:
         response.close()
         response.release_conn()
+    if len(body) > _ARTIFACT_MAX_BYTES:
+        raise ArtifactTooLarge(len(body))
+    return body
 
 
 # --- one reader for each kind ----------------------------------------------------
@@ -391,8 +443,7 @@ def _transcript(read: _Read) -> Evidence:
         source = "call_transcript"
     if not turns:
         return _missing(Kind.TRANSCRIPT, Cause.NO_RECORD)
-    turns, marks = _masked(turns)
-    kept, cut = _cut_turns(turns, read.max_chars)
+    kept, cut, marks = _cut_turns(turns, read.max_chars)
     return _present(Kind.TRANSCRIPT, source, kept, cut=cut, marks=marks)
 
 
@@ -401,14 +452,23 @@ def _agent_instructions(read: _Read) -> Evidence:
     if whole is None:
         return _missing(Kind.AGENT_INSTRUCTIONS, Cause.NO_WHOLE_INSTRUCTIONS)
     text, source = whole
-    text, marks = _masked(text)
-    if read.max_chars is not None and len(text) > read.max_chars:
-        return _missing(
-            Kind.AGENT_INSTRUCTIONS,
-            Cause.TOO_LARGE,
-            note=f"{len(text)} characters; instructions are never cut.",
-        )
-    return _present(Kind.AGENT_INSTRUCTIONS, source, text, marks=marks)
+    # Checked before masking too, so text that will not be sent is not masked.
+    if (refused := _instructions_too_large(text, read.max_chars)) is not None:
+        return refused
+    content, marks = _masked(text)
+    if (refused := _instructions_too_large(content, read.max_chars)) is not None:
+        return refused
+    return _present(Kind.AGENT_INSTRUCTIONS, source, content, marks=marks)
+
+
+def _instructions_too_large(text: str, max_chars: int | None) -> Evidence | None:
+    if max_chars is None or len(text) <= max_chars:
+        return None
+    return _missing(
+        Kind.AGENT_INSTRUCTIONS,
+        Cause.TOO_LARGE,
+        note=f"{len(text)} characters; instructions are never cut.",
+    )
 
 
 def _scenario(read: _Read) -> Evidence:
@@ -515,7 +575,10 @@ def _world_state_end(read: _Read) -> Evidence:
             if cause == Cause.NOT_UPLOADED
             else None,
         )
-    body = stored_artifact(read, digest, "world_state")
+    try:
+        body = stored_artifact(read, digest, "world_state")
+    except ArtifactTooLarge as exc:
+        return _missing(kind, Cause.TOO_LARGE, note=f"{exc.size} bytes stored.")
     if body is None:
         return _missing(kind, Cause.NO_LONGER_KEPT)
     state = _json(body)
@@ -559,13 +622,16 @@ def _audio(read: _Read) -> Evidence:
     kind = Kind.AUDIO
     if read.call.simulation_call_type == CallExecution.SimulationCallType.TEXT:
         return _not_applicable(kind)
-    recordings = {
+    stored = {
         name: url
         for name in ("recording_url", "stereo_recording_url")
         if (url := getattr(read.call, name, None))
     }
-    if recordings:
-        return _present(kind, "call_recordings", recordings)
+    if stored:
+        # A signed link must still play: only a password written in it is masked.
+        recordings = {name: _mask_url_passwords(url) for name, url in stored.items()}
+        marks = (SECRETS_MASKED,) if recordings != stored else ()
+        return _present(kind, "call_recordings", recordings, marks=marks)
     if read.trial is not None:
         return _missing(kind, _hosted_cause(read.trial, "recording_combined"))
     return _missing(kind, Cause.NO_RECORD)
@@ -579,8 +645,9 @@ def _agent_traces(read: _Read) -> Evidence:
     traces = read_run_traces(source, call_execution_id=str(read.call.id))
     if not traces:
         return _present(kind, "agent_traces", EMPTY_TRACE_RECORD)
-    content, marks = _masked([_trace_row(trace) for trace in traces])
-    kept, cut = _cut_list(content, read.max_chars)
+    kept, cut, marks = _cut_list(
+        [_trace_row(trace) for trace in traces], read.max_chars
+    )
     return _present(kind, "agent_traces", kept, cut=cut, marks=marks)
 
 
@@ -632,6 +699,8 @@ def _whole_instructions(read: _Read) -> tuple[str, str] | None:
     """The agent's instructions and where they came from, only where stored data shows
     an origin that keeps them whole."""
     version = read.call.agent_version or read.call.test_execution.agent_version
+    if version is not None and version.deleted:
+        version = None
     copied = _copied_prompt(read.trial.contract if read.trial else None)
     if copied is None and version is not None:
         copied = _copied_prompt(
@@ -780,8 +849,7 @@ def _tool_record(
 ) -> Evidence:
     if not tools:
         return _present(kind, source, EMPTY_TOOL_RECORD, marks=marks)
-    tools, masked = _masked(tools)
-    kept, cut = _cut_list(tools, max_chars)
+    kept, cut, masked = _cut_list(tools, max_chars)
     return _present(kind, source, kept, cut=cut, marks=marks + masked)
 
 
@@ -808,18 +876,28 @@ def _trace_row(trace: Any) -> dict[str, Any]:
 
 def _cut_turns(
     turns: list[dict[str, str]], max_chars: int | None
-) -> tuple[list[dict[str, str]], dict[str, int] | None]:
-    total = sum(len(turn["text"]) for turn in turns)
-    if max_chars is None or total <= max_chars:
-        return turns, None
+) -> tuple[list[dict[str, str]], dict[str, int] | None, tuple[str, ...]]:
+    """The turns masked, then cut at ``max_chars``. Turns past the cut are not masked,
+    and are counted at their stored length."""
+    if max_chars is None:
+        whole, whole_marks = _masked(turns)
+        return whole, None, whole_marks
     kept: list[dict[str, str]] = []
+    marks: tuple[str, ...] = ()
     left = max_chars
+    total = 0
     for turn in turns:
         if left <= 0:
-            break
-        text = turn["text"][:left]
-        kept.append({**turn, "text": text})
-        left -= len(text)
+            total += len(turn["text"])
+            continue
+        masked_turn, turn_marks = _masked(turn)
+        text = masked_turn["text"]
+        total += len(text)
+        kept.append({**masked_turn, "text": text[:left]})
+        left -= len(kept[-1]["text"])
+        marks = marks or turn_marks
+    if total <= max_chars:
+        return kept, None, marks
     shown = max_chars - left
     kept.append(
         {
@@ -828,35 +906,49 @@ def _cut_turns(
             f"{shown} of {total} characters shown.]",
         }
     )
-    return kept, {
-        "kept_chars": shown,
-        "total_chars": total,
-        "turns_total": len(turns),
-    }
+    return (
+        kept,
+        {"kept_chars": shown, "total_chars": total, "turns_total": len(turns)},
+        marks,
+    )
 
 
 def _cut_list(
     items: list[Any], max_chars: int | None
-) -> tuple[list[Any], dict[str, int] | None]:
-    sizes = [len(json.dumps(item, default=str)) for item in items]
-    total = sum(sizes)
-    if max_chars is None or total <= max_chars:
-        return items, None
+) -> tuple[list[Any], dict[str, int] | None, tuple[str, ...]]:
+    """The entries masked, then cut at the first that does not fit in ``max_chars``.
+    Entries past the cut are not masked, and are counted at their stored size."""
+    if max_chars is None:
+        whole, whole_marks = _masked(items)
+        return whole, None, whole_marks
     kept: list[Any] = []
+    marks: tuple[str, ...] = ()
     used = 0
-    for item, size in zip(items, sizes, strict=True):
+    total = 0
+    full = True
+    for item in items:
+        if not full:
+            total += len(json.dumps(item, default=str))
+            continue
+        masked_item, item_marks = _masked(item)
+        size = len(json.dumps(masked_item, default=str))
+        total += size
         if used + size > max_chars:
-            break
-        kept.append(item)
+            full = False
+            continue
+        kept.append(masked_item)
         used += size
+        marks = marks or item_marks
+    if full:
+        return kept, None, marks
     kept.append(
         f"[{len(items) - len(kept)} of {len(items)} entries were cut by the reader.]"
     )
-    return kept, {
-        "kept_chars": used,
-        "total_chars": total,
-        "entries_total": len(items),
-    }
+    return (
+        kept,
+        {"kept_chars": used, "total_chars": total, "entries_total": len(items)},
+        marks,
+    )
 
 
 def _sized(
@@ -867,7 +959,12 @@ def _sized(
     *,
     marks: tuple[str, ...] = (),
 ) -> Evidence:
-    """A record the reader hands over whole or not at all."""
+    """A record the reader hands over whole or not at all. Its size is checked before
+    masking too, so a record that will not be sent is not masked."""
+    if max_chars is not None:
+        size = len(json.dumps(content, default=str))
+        if size > max_chars:
+            return _missing(kind, Cause.TOO_LARGE, note=f"{size} characters.")
     content, masked = _masked(content)
     size = len(json.dumps(content, default=str))
     if max_chars is not None and size > max_chars:
@@ -878,8 +975,9 @@ def _sized(
 # --- secrets ---------------------------------------------------------------------------
 
 _MASK = "[REDACTED]"
-# A value kept under a key holding one of these is masked whole, as the kit's
-# own cleaner does before its grader sees a prompt; so is every header.
+# Text kept under a key holding one of these is masked wherever it sits below that
+# key; numbers and true/false are kept (a count is not a secret). Every header is
+# masked.
 _SECRET_KEY_MARKERS = (
     "secret",
     "token",
@@ -893,32 +991,53 @@ _SECRET_KEY_MARKERS = (
     "cookie",
     "private_key",
 )
-# In text, a secret's name then its value: a quoted value to its closing quote,
-# otherwise to the end of the line (or a comma, semicolon or brace).
+# In text, a secret's name then its value. The name may be quoted, and its quotes
+# escaped as in JSON text inside JSON text. A quoted value runs to its closing quote,
+# an escaped one to the next backslash or quote, and a bare one to the end of the line
+# (or a comma, semicolon or brace); ``_bare_secret`` says whether a bare one is a
+# secret or a rule written after the name.
 _SECRET_ASSIGNMENT = re.compile(
     r"""(?ix)
-    (["']?(?:authorization|api[_-]?key|secret|token|password|passphrase)["']?\s*[:=]\s*)
-    (?:"[^"\n]*"|'[^'\n]*'|(?!\[REDACTED\])[^\n,;}"']+)
+    (?P<name>(?:\\{0,15}["'])?
+      (?P<word>authorization|api[_-]?key|secret|token|password|passphrase)
+      (?:\\{0,15}["'])?[ \t]{0,16}[:=][ \t]{0,16})
+    (?:
+        (?P<escaped>\\{1,15}")[^"\\\n]*
+      | "[^"\n]*" | '[^'\n]*'
+      | (?!\[REDACTED\])(?P<bare>[^\n,;}"'\\]+)
+    )
     """
 )
-# (pattern, replacement): secrets by their shape, wherever they sit in text.
+_PASSWORD_WORDS = frozenset({"password", "passphrase"})
+_AUTH_SCHEMES = frozenset({"basic", "bearer", "token", "digest", "apikey", "negotiate"})
+# A bare password of a few words is masked whole; a longer tail is a sentence.
+_PASSWORD_MAX_WORDS = 4
+_PROSE_PUNCTUATION = ".,!?:;"
+_KEYISH = re.compile(r"\d|[a-z][A-Z]|[^A-Za-z'\-]")
+# scheme://user:password@. The lookbehind means a start inside a run of scheme
+# characters is never tried, which keeps the scan linear on a long id or hex run.
+_URL_USERINFO = re.compile(
+    r"(?<![A-Za-z0-9+.\-])(?P<head>[A-Za-z][A-Za-z0-9+.\-]*://[^:/?#@\s]*):[^/?#\s]*@"
+)
+_URL_QUERY_PASSWORD = re.compile(r"(?P<head>[?&]password=)[^&#\s]*")
+_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----")
+_PEM_END = re.compile(r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----")
+# (pattern, replacement): secrets by their shape, wherever they sit in text. Each is
+# bounded, so a long run of near-misses is read once.
 _SECRET_SHAPES = (
+    (re.compile(r"(?i)(\bbearer\s{1,16})[A-Za-z0-9._~+/=-]{8,}"), rf"\1{_MASK}"),
+    (re.compile(r"(?i)([?&](?:access_)?token=)[^&\s]+"), rf"\1{_MASK}"),
+    (re.compile(r"\b(?:sk|pk|rk)-(?=[A-Za-z_-]{0,64}\d)[A-Za-z0-9_-]{16,}"), _MASK),
+    (re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"), _MASK),
     (
-        re.compile(
-            r"-----BEGIN [^-\n]*PRIVATE KEY-----.*?-----END [^-\n]*PRIVATE KEY-----",
-            re.DOTALL,
-        ),
+        re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"),
         _MASK,
     ),
-    (re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}"), rf"\1{_MASK}"),
-    (re.compile(r"(?i)([?&](?:access_)?token=)[^&\s]+"), rf"\1{_MASK}"),
-    (re.compile(r"\b(?:sk|pk|rk)-(?=[A-Za-z_-]*\d)[A-Za-z0-9_-]{16,}"), _MASK),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), _MASK),
     (re.compile(r"\bAIza[0-9A-Za-z_-]{35}"), _MASK),
     (re.compile(r"\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}"), _MASK),
     (re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{10,}"), _MASK),
     (re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"), _MASK),
-    (_SECRET_ASSIGNMENT, rf"\1{_MASK}"),
 )
 
 
@@ -928,30 +1047,78 @@ def _masked(content: Any) -> tuple[Any, tuple[str, ...]]:
     return masked, ((SECRETS_MASKED,) if masked != content else ())
 
 
-def _mask(value: Any) -> Any:
+def _mask(value: Any, under_secret: bool = False) -> Any:
     if isinstance(value, str):
-        text = redact_url_credentials(value)
-        for pattern, replacement in _SECRET_SHAPES:
-            text = pattern.sub(replacement, text)
-        return text
+        return _MASK if under_secret and value else _mask_text(value)
     if isinstance(value, Mapping):
-        return {key: _mask_under(key, item) for key, item in value.items()}
+        return {
+            key: _mask_under(key, item, under_secret) for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [_mask(item) for item in value]
+        return [_mask(item, under_secret) for item in value]
     if isinstance(value, tuple):
-        return tuple(_mask(item) for item in value)
+        return tuple(_mask(item, under_secret) for item in value)
     return value
 
 
-def _mask_under(key: Any, value: Any) -> Any:
+def _mask_under(key: Any, value: Any, under_secret: bool) -> Any:
     name = str(key).lower()
-    if value is None or value == "" or isinstance(value, bool):
-        return value
-    if any(marker in name for marker in _SECRET_KEY_MARKERS):
-        return _MASK
     if name == "headers" and isinstance(value, Mapping):
         return dict.fromkeys(value, _MASK)
-    return _mask(value)
+    return _mask(
+        value, under_secret or any(marker in name for marker in _SECRET_KEY_MARKERS)
+    )
+
+
+def _mask_text(text: str) -> str:
+    text = _mask_url_passwords(text)
+    text = _mask_private_keys(text)
+    for pattern, replacement in _SECRET_SHAPES:
+        text = pattern.sub(replacement, text)
+    return _SECRET_ASSIGNMENT.sub(_mask_assignment, text)
+
+
+def _mask_url_passwords(text: str) -> str:
+    text = _URL_USERINFO.sub(r"\g<head>:***@", text)
+    return _URL_QUERY_PASSWORD.sub(r"\g<head>***", text)
+
+
+def _mask_private_keys(text: str) -> str:
+    """Each private-key block masked from its header to its END, or to the end of the
+    text when it has none. One forward search each, so the scan stays linear."""
+    parts: list[str] = []
+    at = 0
+    while begin := _PEM_BEGIN.search(text, at):
+        parts += [text[at : begin.start()], _MASK]
+        end = _PEM_END.search(text, begin.end())
+        at = end.end() if end else len(text)
+    return "".join([*parts, text[at:]])
+
+
+def _mask_assignment(match: re.Match[str]) -> str:
+    name = match.group("name")
+    if match.group("escaped") is not None:
+        return name + match.group("escaped") + _MASK
+    bare = match.group("bare")
+    if bare is not None and not _bare_secret(match.group("word").lower(), bare):
+        return match.group(0)
+    return name + _MASK
+
+
+def _bare_secret(word: str, value: str) -> bool:
+    """Whether an unquoted value after a secret's name is a secret, not a rule: it
+    starts with something shaped like a key (a digit, a capital after a small letter,
+    a symbol, or 16 characters), is an auth scheme and its credential, or is a short
+    phrase after a password's name."""
+    words = value.split()
+    if not words:
+        return False
+    first = words[0].rstrip(_PROSE_PUNCTUATION)
+    if word == "authorization" and first.lower() in _AUTH_SCHEMES and len(words) > 1:
+        return True
+    if len(first) >= 16 or _KEYISH.search(first):
+        return True
+    return word in _PASSWORD_WORDS and len(words) <= _PASSWORD_MAX_WORDS
 
 
 def _present(
