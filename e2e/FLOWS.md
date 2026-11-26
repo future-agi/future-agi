@@ -4001,3 +4001,54 @@
 
 - the URL agent's Run reads Stop requested, its hover says the stop can't be confirmed, and its note says why
 - the runs list reads Stop requested for the URL agent's Run and Stopped for the sandboxed Run
+
+### SIM-E2E-040 — a wrong browser site is refused by its position at preflight, before anything is built
+
+**Goal:** A user building an environment for a browser agent names the sites its browser may open, and a wrong site is refused by its position, before anything is built
+
+**Spec:** `flows/simulate/browser-environment-form-and-filter.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Environments with the Build environment drawer on GitHub
+2. choose Paste a repo link and enter a public repository
+3. in Browser sites, type a good host in capitals and a URL after it
+4. run preflight
+5. read the preflight row
+
+**Backend state verified:**
+
+- the preflight request carries browser.allowed_sites as the two typed entries, trimmed and lower-cased, in order
+- the server answers 400 browser_sites_invalid with positions [2]
+- no PG simulate_hosted_harness_job row is added for the actor org
+
+**Browser observations:**
+
+- the preflight row reads "Preflight couldn't run" and the refusal naming site 2
+
+### SIM-E2E-041 — environments built for browser agents read Browser and are what the Browser filter lists
+
+**Goal:** A user finds the environments built for browser agents by their Browser label and the Browser filter
+
+**Spec:** `flows/simulate/browser-environment-form-and-filter.spec.ts:87`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two built environments: one whose agent contract needs a browser, one chat (e2e/lib/harness_environment_seed.py)
+2. open Environments
+3. search each one's name and read its agent type
+4. choose Agent type › Browser
+5. search each name again and read the rows
+
+**Backend state verified:**
+
+- GET harness-environments/?agent_type=browser lists the browser environment with agent_type browser, and not the chat one
+
+**Browser observations:**
+
+- the browser environment's row reads Browser and the chat one's reads Chat
+- with Browser chosen, the browser environment is listed and the chat one is not
