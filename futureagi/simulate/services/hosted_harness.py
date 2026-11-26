@@ -1285,15 +1285,17 @@ def all_run_keys(
 
     resolved = resolve_run_pins(environment, rerun_of=None, picks=picks, fix_run=None)
     if resolved is not None:
-        keys = HarnessSuiteMember.no_workspace_objects.filter(
+        listed = HarnessSuiteMember.no_workspace_objects.filter(
             suite_version=resolved.suite_version
         ).order_by("number", "scenario_key")
+        found = list(listed.values_list("scenario_key", flat=True))
     else:
-        keys = HostedHarnessScenario.no_workspace_objects.filter(
+        scenarios = HostedHarnessScenario.no_workspace_objects.filter(
             job=environment
         ).order_by("created_at", "id")
+        found = list(scenarios.values_list("scenario_key", flat=True))
     left_out = set(hidden)
-    ordered = dict.fromkeys(keys.values_list("scenario_key", flat=True))
+    ordered = dict.fromkeys(found)
     return [key for key in ordered if key not in left_out]
 
 
@@ -2556,7 +2558,7 @@ def _lock_job_and_current_attempt(
         current = (
             HostedHarnessAttempt.no_workspace_objects.select_for_update()
             .select_related("job")
-            .get(job_id=job_id, attempt_number=number)
+            .get(job_id=uuid.UUID(str(job_id)), attempt_number=number)
         )
         # Registration moves the number only under these locks; re-read if one did.
         if current.job.current_attempt_number == number:

@@ -5413,9 +5413,9 @@ class HostedHarnessGateway:
                     exit_code,
                 )
         if refusal is not None:
-            kept = platform_set_failure(attempt)
+            held_failure = platform_set_failure(attempt)
             attempt.terminal_stage = "failed"
-            attempt.terminal_failure = kept or refusal
+            attempt.terminal_failure = held_failure or refusal
             attempt.state = HostedHarnessAttempt.State.FAILED
             attempt.save(
                 update_fields=[
@@ -5426,7 +5426,7 @@ class HostedHarnessGateway:
                 ]
             )
             retry_pending = (
-                kept is None
+                held_failure is None
                 and refusal["retryable"]
                 and self._should_retry(attempt, str(refusal["domain"]))
             )
@@ -5500,9 +5500,9 @@ class HostedHarnessGateway:
             # write the record, so it never becomes the stored cause or decides anything.
             record = self._failure_record(attempt)
             cause = guest_failure_cause(guest_logs)
-            kept = platform_set_failure(attempt)
+            held_failure = platform_set_failure(attempt)
             attempt.terminal_stage = "failed"
-            attempt.terminal_failure = kept or {
+            attempt.terminal_failure = held_failure or {
                 "domain": "environment" if authoring_invalid else "infrastructure",
                 "stage": (
                     "validating_environment"
@@ -5525,7 +5525,7 @@ class HostedHarnessGateway:
                     **({"harness_failure": record} if record else {}),
                 },
             }
-            if exit_code == 78 and kept is None:
+            if exit_code == 78 and held_failure is None:
                 # The cause belongs to the guest's own failure; one the platform set stays as set.
                 attempt.terminal_failure["cause"] = closed_failure_cause(
                     observation.get("failure_cause")
@@ -5541,7 +5541,7 @@ class HostedHarnessGateway:
             )
             # A failure the platform set is final: the same build would fail again.
             retry_pending = (
-                kept is None
+                held_failure is None
                 and not authoring_invalid
                 and self._should_retry(attempt, "infrastructure")
             )
