@@ -1,7 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
 import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+
+// The app's global error toast, recorded.
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar: toast,
+}));
 
 vi.mock("src/utils/axios", async (importOriginal) => {
   const { withFakeFixRunsApi } = await import(
@@ -17,16 +28,22 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
 }));
 
 const axios = (await import("src/utils/axios")).default;
-const { FIX_RUN_FIXTURES, fixtureFixRun, resetFixRunFixtures } = await import(
-  "./fixtures/fixRuns"
-);
+const {
+  FIX_RUN_FIXTURES,
+  fixtureFixRun,
+  resetFixRunFixtures,
+  updateFixtureFixRun,
+} = await import("./fixtures/fixRuns");
 const {
   useEnvironmentFixRuns,
+  fixRunsKey,
+  FIX_RUNS_PAGE_SIZE,
   fixPollInterval,
   FIX_POLL_MS,
   fixErrorOf,
   collectAllCalls,
   checkRunsForScenarios,
+  shipCandidate,
   epochTargets,
   epochTargetsNote,
 } = await import("../fixRuns");
@@ -128,6 +145,108 @@ describe("fix-run list", () => {
     expect(result.current.count).toBe(FIX_RUN_FIXTURES.length);
   });
 
+  it("asks the server for the filter's states, one page at a time", async () => {
+    const live = ["queued", "running", "stopping"];
+    const { result } = renderHook(
+      () => useEnvironmentFixRuns("env-1", { states: live }),
+      { wrapper: makeWrapper() },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(axios.get).toHaveBeenCalledWith("/simulate/api/agent-fix-runs/", {
+      params: {
+        environment_id: "env-1",
+        page: 1,
+        limit: 25,
+        state: "queued,running,stopping",
+      },
+    });
+    const expected = FIX_RUN_FIXTURES.filter((f) => live.includes(f.state));
+    expect(result.current.count).toBe(expected.length);
+    expect(result.current.fixes.map((f) => f.id).sort()).toEqual(
+      expected.map((f) => f.id).sort(),
+    );
+  });
+
+  it("steps past the end quietly: no toast and no retry of a 404", async () => {
+    const { handleError } = await import("src/utils/queryErrorHandler");
+    // The app's client: its cache toasts every failed read, and it retries once.
+    const client = new QueryClient({
+      queryCache: new QueryCache({ onError: handleError }),
+      defaultOptions: { queries: { retry: 1, retryDelay: 0 } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    toast.mockClear();
+    const { result } = renderHook(
+      () => useEnvironmentFixRuns("env-1", { page: 5, pageSize: 25 }),
+      { wrapper: Wrapper },
+    );
+    await waitFor(() => expect(result.current.error).toBeTruthy());
+    expect(result.current.error.statusCode).toBe(404);
+    expect(toast).not.toHaveBeenCalled();
+    const pageReads = axios.get.mock.calls.filter(
+      ([url, config]) =>
+        url === "/simulate/api/agent-fix-runs/" && config.params.page === 6,
+    );
+    expect(pageReads).toHaveLength(1);
+  });
+
+  it("never shows another environment's fixes while its own load", async () => {
+    const { result, rerender } = renderHook(
+      ({ envId }) => useEnvironmentFixRuns(envId),
+      { wrapper: makeWrapper(), initialProps: { envId: "env-1" } },
+    );
+    await waitFor(() => expect(result.current.fixes.length).toBeGreaterThan(0));
+    rerender({ envId: "env-2" });
+    expect(result.current.fixes).toEqual([]);
+  });
+
+  it("never shows the last filter's fixes while another filter loads", async () => {
+    const { result, rerender } = renderHook(
+      ({ states }) => useEnvironmentFixRuns("env-1", { states }),
+      { wrapper: makeWrapper(), initialProps: { states: ["ready"] } },
+    );
+    await waitFor(() => expect(result.current.fixes.length).toBeGreaterThan(0));
+    rerender({ states: ["failed"] });
+    expect(result.current.fixes).toEqual([]);
+    await waitFor(() =>
+      expect(result.current.fixes.map((f) => f.state)).toEqual(["failed"]),
+    );
+  });
+
+  it("refreshes a list of other statuses once a live fix it lacks ends", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    // The workspace's unfiltered list, and the Epochs tab filtered to Ready.
+    const { result } = renderHook(
+      () => ({
+        all: useEnvironmentFixRuns("env-1"),
+        ready: useEnvironmentFixRuns("env-1", { states: ["ready"] }),
+      }),
+      { wrapper: Wrapper },
+    );
+    await waitFor(() =>
+      expect(result.current.ready.fixes.length).toBeGreaterThan(0),
+    );
+    const readyIds = () => result.current.ready.fixes.map((f) => f.id);
+    expect(readyIds()).not.toContain("fix-search");
+
+    updateFixtureFixRun("fix-search", (f) => ({ ...f, state: "ready" }));
+    // Only the unfiltered list polls (it shows a live fix): its next read.
+    await client.refetchQueries({
+      queryKey: fixRunsKey("env-1", 0, FIX_RUNS_PAGE_SIZE, []),
+      exact: true,
+    });
+    await waitFor(() => expect(readyIds()).toContain("fix-search"));
+  });
+
   it("asks nothing when the org lacks Fix my agent", async () => {
     capability.allowed = false;
     const { result } = renderHook(() => useEnvironmentFixRuns("env-1"), {
@@ -162,6 +281,26 @@ describe("fix-run list", () => {
         false,
       ),
     );
+  });
+});
+
+describe("shipCandidate", () => {
+  it.each([
+    ["activated", "activated"],
+    ["already_default", "already_default"],
+    ["validating", "validating"],
+  ])("reads a make-default %s as %s", async (outcome, kind) => {
+    const post = vi
+      .spyOn(axios, "post")
+      .mockResolvedValueOnce({ data: { outcome } });
+
+    const shipped = await shipCandidate(
+      { id: "f1", agent: { kind: "archive" } },
+      "c1",
+    );
+
+    expect(shipped).toEqual({ kind });
+    post.mockRestore();
   });
 });
 
@@ -224,7 +363,7 @@ describe("fixErrorOf", () => {
   });
 });
 
-describe("Per scenario data", () => {
+describe("Scenarios tab data", () => {
   it("counts every fix-level check run as baseline and reads every page of calls", async () => {
     const fix = structuredClone(fixtureFixRun("fix-ready-archive"));
     fix.check_runs = [

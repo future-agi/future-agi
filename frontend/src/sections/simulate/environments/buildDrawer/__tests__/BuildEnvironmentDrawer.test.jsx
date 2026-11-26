@@ -38,9 +38,48 @@ vi.mock("src/api/agents/connectedAgents", () => ({
   }),
 }));
 
+vi.mock("src/api/harness/releases", () => ({
+  useHarnessReleases: () => ({
+    data: [
+      {
+        id: "rel-1",
+        digest: "sha256:" + "ab".repeat(32),
+        name: "retail",
+        system: true,
+        parent: null,
+        tools: [{ name: "get_order", description: "", mutates_state: false }],
+        policy: {
+          parameters: [],
+          agent_rules: [{ id: "verify_first", text: "Verify first." }],
+        },
+        suites: [
+          {
+            id: "suite-1",
+            digest: "sha256:" + "cd".repeat(32),
+            name: "retail_base",
+            scenario_count: 100,
+            origins: { base: 100, specialized: 0, custom: 0 },
+            policy_profile: {},
+          },
+        ],
+        catalogue: {
+          title: "Retail",
+          summary: "An online clothing store.",
+          channel: "chat",
+          records: { orders: 38 },
+          apps: [],
+          example_requests: ["Where is my order?"],
+        },
+      },
+    ],
+    isLoading: false,
+  }),
+  createHarnessAdaptation: vi.fn(),
+  useHarnessReleaseFit: () => ({}),
+}));
+
 vi.mock("src/api/harness/harness", () => ({
   preflightHarnessJob: vi.fn(),
-  storeHarnessSecretValues: vi.fn(),
   createHarnessJob: vi.fn(),
   harnessIdempotencyKey: () => "idem-test",
   getHarnessJob: vi.fn(),
@@ -135,12 +174,16 @@ describe("BuildEnvironmentDrawer catalog", () => {
     expect(screen.getByText(/No way to connect matches/)).toBeInTheDocument();
   });
 
-  it("hides the prebuilt worlds and shows the SaaS sandbox disabled", () => {
+  it("lists the published ready environments, each with its two ways in", () => {
     render();
+    const card = screen.getByRole("listitem", { name: "Retail" });
+    expect(card).toHaveTextContent("100 scenarios · 1 tools");
     expect(
-      screen.queryByRole("listitem", { name: "Customer Support Line" }),
-    ).toBeNull();
-    expect(screen.getByRole("button", { name: "SaaS sandbox" })).toBeDisabled();
+      within(card).getByRole("button", { name: "Use with my agent" }),
+    ).toBeEnabled();
+    expect(
+      within(card).getByRole("button", { name: "Customize" }),
+    ).toBeEnabled();
   });
 
   it("lists the connected agents, filtered by type", () => {
