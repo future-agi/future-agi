@@ -410,7 +410,9 @@ def _actor_rules():
     }
 
 
-def _authoring(documents, *, certified, production_only, actors=False, tool_detail=False, workers=None):
+def _authoring(
+    documents, *, certified, production_only, actors=False, tool_detail=False, workers=None, environment_needs=None
+):
     # Each tool as ALK writes it: an object named by `name`, so the review lists the contract item by item.
     contract = {
         "agent": "support",
@@ -425,6 +427,9 @@ def _authoring(documents, *, certified, production_only, actors=False, tool_deta
             {"tool": "issue_refund", "endpoint": "/refunds/issue", "method": "POST", "mode": "service", "service": "tools-api"},
         ]
         contract["workers"] = WORKERS
+    if environment_needs:
+        # What the agent needs from its environment, as the contract names it: ["browser"] makes a browser agent.
+        contract["environment_needs"] = list(environment_needs)
     door_files = _door_files(documents, workers)
     if production_only:
         contract["tool_entrypoints"] = [
@@ -520,6 +525,7 @@ def seed_environment(
     tool_detail=False,
     workers=None,
     refund_worker_budget=False,
+    environment_needs=None,
 ):
     """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; ``trial`` picks a
     ``TRIAL_STATES`` variant for its finished trial.
@@ -527,6 +533,7 @@ def seed_environment(
     ``proofs`` (``{key: format-2 entry}``) is the default pair's validation; without it every
     case is proved, so a flow about something else is not held back for validation. A key the
     dict leaves out has no proof. ``archived`` keys are archived with their content kept.
+    ``environment_needs`` is written into the authored contract as is, e.g. ``["browser"]``.
     """
     from simulate.models import (
         AgentDefinition,
@@ -586,6 +593,7 @@ def seed_environment(
         actors=actors,
         tool_detail=tool_detail,
         workers=workers,
+        environment_needs=environment_needs,
     )
     body = archives.pack_archive(authored)
     object_key = archives.pair_key(organization.id, environment.id, body)

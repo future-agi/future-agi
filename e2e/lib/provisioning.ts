@@ -20,7 +20,8 @@ interface KeysEnvelope { status: string; data: { api_key: string; secret_key: st
 const SIGNUP_PATH = '/accounts/e2e/clean-signup/';
 
 export async function provisionActor(req: APIRequestContext, label: string,
-  options: { keyAdministrator?: boolean } = {}): Promise<TestActor> {
+  options: { keyAdministrator?: boolean;
+    createAccount?: (account: { email: string; fullName: string; password: string }) => Promise<void> } = {}): Promise<TestActor> {
   const anon = new ApiClient(req, E2E.apiUrl);
   const signUp = async () => {
     // The domain gives the auto-created organization a stable name.
@@ -28,6 +29,10 @@ export async function provisionActor(req: APIRequestContext, label: string,
     // provision in the same millisecond.
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const identity = { email: `e2e-${label}-${runId}@futureagi.com`, password: `E2e-${label}-${runId}` };
+    if (options.createAccount) {
+      await options.createAccount({ ...identity, fullName: `E2E ${label}` });
+      return identity;
+    }
     // Only the test image exposes this route. Signup flows use the public route.
     await anon.post(SIGNUP_PATH, { ...identity, full_name: `E2E ${label}`,
       ...(options.keyAdministrator ? { key_administrator: true } : {}) });

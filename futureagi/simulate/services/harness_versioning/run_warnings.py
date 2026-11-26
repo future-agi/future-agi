@@ -33,6 +33,7 @@ from simulate.services.hosted_harness import (
     ResolvedPins,
     VersionPicks,
     job_pins,
+    refuse_unpaired_pins,
     resolve_run_pins,
 )
 
@@ -337,6 +338,8 @@ def preview_run(
     from simulate.services.harness_tool_reach import run_verdict
 
     pins = resolve_run_pins(environment, picks=picks)
+    # The run would be refused, so the preview is too.
+    refuse_unpaired_pins(environment, pins)
     return {
         "versions": _versions(pins),
         "warnings": run_warnings(environment, pins),

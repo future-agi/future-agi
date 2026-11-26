@@ -1224,6 +1224,39 @@ def test_sandbox_create_forwards_mapped_flat_payload(user):
 
 @pytest.mark.django_db
 @override_settings(HARNESS_PROVIDER="sandbox")
+@pytest.mark.parametrize(
+    "url", ["/simulate/api/harness-jobs/", "/simulate/api/harness-jobs/preflight/"]
+)
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"browser": {"allowed_sites": ["shop.example.com"]}},
+        {"metadata": {"browser_allowed_sites": ["shop.example.com"]}},
+    ],
+)
+def test_the_sandbox_provider_refuses_a_browser_environment(user, url, extra):
+    # It has none, and it sends metadata on as it came: refused, never dropped in silence.
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    with (
+        patch(
+            "simulate.services.harness_sandbox.HarnessSandboxClient.submit"
+        ) as submit,
+        patch(
+            "simulate.services.harness_sandbox.HarnessSandboxClient.preflight"
+        ) as preflight,
+    ):
+        response = client.post(url, {**_v1_payload(), **extra}, format="json")
+
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] == "browser_environment_unsupported"
+    submit.assert_not_called()
+    preflight.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="sandbox")
 def test_sandbox_source_upload_is_forwarded(user):
     client = APIClient()
     client.force_authenticate(user=user)

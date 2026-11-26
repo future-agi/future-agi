@@ -12,8 +12,9 @@ Each site joins the sandbox's egress list as written, so a page on a host the li
 blocked there even where the browser's own bound would let it through. A site must pass the egress
 list's own rules first, so a list saved here is never refused when the run starts.
 
-Sites are kept in one form: lower case, no trailing dot, a name outside ASCII in its ASCII (IDNA)
-form, without repeats, sorted. ``browser_sites_at_pin`` is the one reading of a job's sites.
+Sites are kept in one form: lower case, no trailing dot, a name outside ASCII in the ASCII form a
+browser asks for (IDNA 2008, UTS 46 non-transitional), without repeats, sorted.
+``browser_sites_at_pin`` is the one reading of a job's sites.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any
+
+import idna
 
 # Every site also joins the sandbox's egress list, which is finite on some providers. Ten leaves
 # room for the hosts every run needs; the provider's own limit is checked on the whole list.
@@ -35,8 +38,21 @@ _LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 _HOST = re.compile(rf"(?:\*\.)?{_LABEL}(?:\.{_LABEL})+", re.ASCII)
 # A host whose last label is a number (decimal, octal or 0x hex) is read as an IPv4 address.
 _NUMBER_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*", re.ASCII)
-# Names that only ever mean a machine on the sandbox's own network, never a site.
-_LOCAL_SUFFIXES = ("localhost", "internal", "local")
+# Names that only ever mean a machine on a private network, or no machine at all, never a site on
+# the internet: the special-use names of RFC 6761 and RFC 8375 (home.arpa), and the names home,
+# office and cluster networks use for themselves.
+_LOCAL_SUFFIXES = (
+    "localhost",
+    "internal",
+    "local",
+    "lan",
+    "localdomain",
+    "svc",
+    "arpa",
+    "test",
+    "invalid",
+    "example",
+)
 _LONGEST_HOST = 253
 
 
@@ -53,8 +69,11 @@ def _one_form(value: Any) -> str | None:
     if not site.isascii():
         wildcard = site.startswith("*.")
         try:
-            # The form a browser sends, so the list matches the host a page is on.
-            ascii_form = (site[2:] if wildcard else site).encode("idna").decode("ascii")
+            # The form a browser asks for (IDNA 2008 as UTS 46 reads it, non-transitional), so
+            # the list names the host a page is on: straße.de stays itself, never strasse.de.
+            ascii_form = idna.encode(
+                site[2:] if wildcard else site, uts46=True, transitional=False
+            ).decode("ascii")
         except UnicodeError:
             return None
         site = f"*.{ascii_form}" if wildcard else ascii_form

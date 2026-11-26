@@ -42,6 +42,20 @@ def test_a_name_outside_ascii_is_kept_in_its_ascii_form():
 
 
 @pytest.mark.parametrize(
+    ("site", "form"),
+    [
+        # IDNA 2003 would read these as strasse.de and fass.de: other names, maybe others' sites.
+        ("straße.de", "xn--strae-oqa.de"),
+        ("faß.de", "xn--fa-hia.de"),
+        ("*.straße.de", "*.xn--strae-oqa.de"),
+    ],
+)
+def test_a_name_is_kept_in_the_form_a_browser_asks_for(site, form, monkeypatch):
+    monkeypatch.setattr("simulate.services.browser_sites.TAKES_WILDCARDS", True)
+    assert browser_sites([site]) == [form]
+
+
+@pytest.mark.parametrize(
     "site", ["*.example.com", "*.example.com.", "*.exämple.com", "*.docs.example.org"]
 )
 def test_a_wildcard_is_refused_until_the_kit_reads_it(site):
@@ -103,6 +117,14 @@ def test_anything_but_a_list_is_refused(value):
         "host.docker.internal",
         "metadata.internal",
         "printer.local",
+        "router.home.arpa",
+        "box.lan",
+        "box.localdomain",
+        "kubernetes.default.svc",
+        "shop.test",
+        "shop.invalid",
+        "shop.example",
+        "straße\u200d.de",  # a joiner: no form a browser asks for
         "192.168.1.10",
         "169.254.169.254",
         "*.",
