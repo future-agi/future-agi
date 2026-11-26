@@ -187,10 +187,14 @@ def failure_cause(failure: Mapping[str, Any]) -> str | None:
 
 
 def has_plain_words(failure: Mapping[str, Any]) -> bool:
-    """Whether a failure reads in fixed plain words for everyone: it has a cause, or it is a
-    run's start timeout."""
+    """Whether a person's failure gets product wording instead of the recorded diagnostic."""
     return (
-        failure_cause(failure) is not None or failure.get("code") == START_TIMEOUT_CODE
+        failure_cause(failure) is not None
+        or failure.get("code") == START_TIMEOUT_CODE
+        or (
+            failure.get("domain") == "infrastructure"
+            and failure.get("retryable") is not False
+        )
     )
 
 
@@ -211,9 +215,16 @@ def person_failure_message(failure: Mapping[str, Any]) -> str:
     """A failure's message on a person's own run: the same words, and, when the failure has a
     cause, what the stored message adds to its label after them. A person may read what their
     agent printed, and it names which crash it was; a coding agent never reads a person's run."""
-    words = coding_agent_failure_message(failure)
     if failure_cause(failure) is None:
-        return words
+        if failure.get("code") == START_TIMEOUT_CODE:
+            return START_TIMEOUT_LINE
+        if has_plain_words(failure):
+            return (
+                "Stopped — an issue occurred while running this. Run it again; "
+                "it doesn't count against the agent."
+            )
+        return str(failure.get("message") or "")
+    words = coding_agent_failure_message(failure)
     message = str(failure.get("message") or "")
     label = _FAILURE_LABELS.get(str(failure.get("code") or ""))
     if label and message.startswith(f"{label}: "):

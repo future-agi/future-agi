@@ -337,6 +337,63 @@ class SimulationEvidenceRequestSerializer(StrictInputSerializer):
     cursor = serializers.IntegerField(min_value=0)
 
 
+class SimulationEvidenceGoalsSerializer(serializers.Serializer):
+    use_case = serializers.CharField(allow_null=True)
+    sub_goals = serializers.ListField(child=serializers.CharField())
+    expected_outcome = serializers.CharField(allow_null=True)
+
+
+class SimulationEvidenceTurnSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    speaker = serializers.CharField()
+    content = serializers.CharField(allow_blank=True)
+    start_time = serializers.FloatField()
+    end_time = serializers.FloatField()
+
+
+class SimulationEvidenceEvaluationSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    value = serializers.CharField(allow_null=True, allow_blank=True)
+    passed = serializers.BooleanField(allow_null=True)
+    reason = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class SimulationEvidenceToolSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    arguments = JsonValueField(required=False, allow_null=True)
+    result = JsonValueField(required=False, allow_null=True)
+    ok = JsonValueField(required=False, allow_null=True)
+    error = JsonValueField(required=False, allow_null=True)
+    refused = JsonValueField(required=False, allow_null=True)
+    start_time_ms = serializers.FloatField(required=False, min_value=0)
+
+
+class SimulationEvidenceCallSerializer(serializers.Serializer):
+    call_execution_id = serializers.UUIDField()
+    status = serializers.CharField()
+    simulation_call_type = serializers.CharField()
+    scenario = serializers.CharField()
+    call_summary = serializers.CharField(allow_null=True, allow_blank=True)
+    error_message = serializers.CharField(allow_null=True, allow_blank=True)
+    ended_reason = serializers.CharField(allow_null=True, allow_blank=True)
+    transcript = SimulationEvidenceTurnSerializer(many=True)
+    goals = SimulationEvidenceGoalsSerializer(allow_null=True)
+    situation = serializers.CharField(allow_null=True)
+    # An authored persona object, or null when the scenario has none.
+    persona = serializers.DictField(
+        child=JsonValueField(allow_null=True), allow_null=True
+    )
+    evaluations = SimulationEvidenceEvaluationSerializer(many=True)
+    agent_prompt = serializers.CharField(allow_null=True)
+    tool_calls = SimulationEvidenceToolSerializer(many=True, required=False)
+
+
+class SimulationEvidenceResponseSerializer(serializers.Serializer):
+    calls = SimulationEvidenceCallSerializer(many=True)
+    next_cursor = serializers.IntegerField(min_value=0)
+    total_calls = serializers.IntegerField(min_value=0)
+
+
 class ConversationEvidenceRequestSerializer(StrictInputSerializer):
     lease_token = serializers.CharField(max_length=255)
 

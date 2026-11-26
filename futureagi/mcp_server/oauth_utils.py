@@ -2,12 +2,14 @@
 
 import base64
 import hashlib
+import hmac
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
 
 from cryptography.fernet import Fernet
 from django.conf import settings
+from django.contrib.auth.hashers import check_password, make_password
 
 
 def _get_fernet():
@@ -80,11 +82,28 @@ def decrypt_oauth_token(token):
         return None
 
 
+_LEGACY_SHA256_HEX_LENGTH = 64  # bare unsalted SHA-256 hex digest (pre-salting format)
+
+
 def hash_client_secret(secret):
-    """Hash a client secret using SHA-256."""
-    return hashlib.sha256(secret.encode()).hexdigest()
+    """Hash a client secret with Django's salted, work-factored password KDF.
+
+    Client secrets are authentication credentials, not integrity digests, so
+    they get the same treatment as passwords and recovery codes
+    (accounts/services/recovery_service.py).
+    """
+    return make_password(secret)
 
 
 def verify_client_secret(secret, stored_hash):
-    """Verify a client secret against a stored hash."""
-    return hashlib.sha256(secret.encode()).hexdigest() == stored_hash
+    """Verify a client secret against a stored hash (constant-time).
+
+    Hashes stored before salting was introduced (bare unsalted SHA-256 hex)
+    are still accepted so existing clients keep working; newly stored hashes
+    always use the salted format.
+    """
+    if stored_hash and len(stored_hash) == _LEGACY_SHA256_HEX_LENGTH:
+        return hmac.compare_digest(
+            hashlib.sha256(secret.encode()).hexdigest(), stored_hash
+        )
+    return check_password(secret, stored_hash)
