@@ -90,7 +90,15 @@ class RegistryRetry(unittest.TestCase):
         self.assertEqual((slept, calls), ([10, 20], 3))
 
     def test_permanent_and_unknown_errors_fail_at_once(self):
-        for message in (MISSING, "unauthorized: authentication required", UNKNOWN, ""):
+        # An apt signature is the batch train's, never a pull retry.
+        apt = "Get:1 http://archive.ubuntu.com/ubuntu noble InRelease exit code 124"
+        for message in (
+            MISSING,
+            "unauthorized: authentication required",
+            UNKNOWN,
+            "",
+            apt,
+        ):
             with self.subTest(message=message):
                 run, slept, calls = self.run_pull([message])
                 self.assertEqual(run.returncode, 18)
@@ -115,10 +123,19 @@ class RegistryRetry(unittest.TestCase):
     def test_signatures_are_a_list_of_named_classified_regexes(self):
         signatures = json.loads(SIGNATURES.read_text())
         self.assertIsInstance(signatures, list)
+        # The batch train reads this file too, with Python's re. It translates
+        # only these POSIX classes, and matches the apt class across lines.
+        posix = {"[:space:]": r"\s", "[:digit:]": r"\d"}
         for entry in signatures:
             self.assertEqual(set(entry), {"name", "class", "regex"}, entry)
-            self.assertIn(entry["class"], {"rate_limit", "transient", "permanent"})
-            re.compile(entry["regex"].replace("[[:space:]]", r"\s"))
+            self.assertIn(
+                entry["class"], {"rate_limit", "transient", "permanent", "apt"}
+            )
+            regex = entry["regex"]
+            for posix_class, python_class in posix.items():
+                regex = regex.replace(posix_class, python_class)
+            self.assertNotRegex(regex, r"\[:[a-z]+:\]", entry["name"])
+            re.compile(regex)
         self.assertEqual(len({entry["name"] for entry in signatures}), len(signatures))
 
     def test_every_registry_pull_in_the_suites_goes_through_the_script(self):

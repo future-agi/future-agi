@@ -18,5 +18,10 @@
     "name": "auth, tag or configuration error",
     "class": "permanent",
     "regex": "unauthorized|authentication required|denied|manifest unknown|name unknown|no matching manifest|not found|certificate|invalid reference|no such service|no space left|(unexpected status.*|status code[:= ]*|HTTP(/[0-9.]+)?[[:space:]]+)4[0-9]{2}([^0-9]|$)"
+  },
+  {
+    "name": "apt index download timeout",
+    "class": "apt",
+    "regex": "Get:[0-9]+ [^[:space:]]*ubuntu\\.com.*exit code 124"
   }
 ]
