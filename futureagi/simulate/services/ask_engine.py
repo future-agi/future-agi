@@ -63,6 +63,7 @@ from simulate.services.call_evidence import (
     kind_for_key,
     read_call_evidence,
 )
+from tfc.ee_gates import agent_criteria_read_context, agent_message_too_large
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.evaluation_denials import EvaluationDenied
 
@@ -152,6 +153,9 @@ class Definition:
     # block was added. A typed question has neither; its template is saved at launch.
     eval_template_id: str | None = None
     own_criteria: str | None = None
+    # The run's modality a configured eval's keys were read for, so the launch can
+    # offer it again on what the library holds then.
+    modality: str | None = None
 
     @property
     def kinds(self) -> tuple[Kind, ...]:
@@ -185,6 +189,7 @@ class Definition:
             "own_criteria": (
                 self.criteria if self.own_criteria is None else self.own_criteria
             ),
+            "modality": self.modality,
         }
 
 
@@ -301,6 +306,10 @@ def configured_eval(key: str, template, *, modality: str) -> Definition:
     own, held_by_version = _own_criteria(template)
     if not own or not own.strip():
         raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    if agent_criteria_read_context(own, config.get("data_injection")):
+        # The evaluator fills these from context its caller passes; an ask passes
+        # none, so they would be graded with that context missing.
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
     unnamed = [(k, kind) for k, kind in inputs if not _names(own, k)]
     if unnamed and held_by_version:
         # The version's own text replaces what the step sends, so a block added
@@ -324,6 +333,7 @@ def configured_eval(key: str, template, *, modality: str) -> Definition:
         inputs=inputs,
         eval_template_id=str(template.id),
         own_criteria=own,
+        modality=modality,
     )
 
 
@@ -609,7 +619,9 @@ def launch_ask(
         questions = []
         for index, definition in enumerate(definitions):
             if definition.eval_template_id is not None:
-                template, version = _configured_template(definition, organization)
+                template, version = _configured_template(
+                    definition, organization, workspace_id
+                )
             else:
                 template, version = save_question_template(
                     definition,
@@ -661,28 +673,41 @@ def launch_ask(
     return ask
 
 
-def _configured_template(definition: Definition, organization):
+def _configured_template(definition: Definition, organization, workspace_id):
     """A configured eval's own template and its current version number, as the
-    definition read them. One changed or gone since is refused."""
-    from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
+    definition read them. One the run offer doesn't show is refused as gone; one
+    that would not be offered as it was chosen is refused as changed."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
 
     template = (
-        EvalTemplate.no_workspace_objects.filter(
-            id=definition.eval_template_id, deleted=False
-        ).first()
+        _offered_templates(organization.id, workspace_id)
+        .filter(id=definition.eval_template_id)
+        .first()
         if definition.eval_template_id
         else None
     )
-    if template is None or template.organization_id not in (None, organization.id):
+    if template is None:
         raise LaunchRefused("not_found", "This eval can't be found.")
-    if _own_criteria(template)[0] != definition.own_criteria or (
-        template.model != definition.model or _labels_of(template) != definition.labels
-    ):
-        raise LaunchRefused(
-            "question_changed", "This eval was changed. Choose it again."
+    changed = LaunchRefused(
+        "question_changed", "This eval was changed. Choose it again."
+    )
+    try:
+        offered = configured_eval(
+            definition.key, template, modality=definition.modality or ""
         )
+    except LaunchRefused:
+        raise changed from None
+    if offered.as_json() != definition.as_json():
+        raise changed
     current = EvalTemplateVersion.objects.get_default(template)
     return template, None if current is None else current.version_number
+
+
+def _offered_templates(organization_id, workspace_id):
+    """The templates the run offer shows this workspace."""
+    from simulate.services.harness_evals import _visible_templates
+
+    return _visible_templates(organization_id, workspace_id)
 
 
 def _queue(ask_id) -> None:
@@ -1050,7 +1075,9 @@ def _grade(row) -> dict[str, Any]:
     template = EvalTemplate.no_workspace_objects.filter(
         id=question["eval_template_id"], deleted=False
     ).first()
-    if template is None or not _as_launched(template, question, row.organization_id):
+    if template is None or not _as_launched(
+        template, question, row.organization_id, row.workspace_id
+    ):
         # The template is in the org's library, so it can be edited or deleted
         # while the ask runs. The question is graded only as it was launched.
         return {
@@ -1084,6 +1111,11 @@ def _grade(row) -> dict[str, Any]:
             workspace=row.ask.workspace,
             source=EVAL_SOURCE,
             input_data_types=dict.fromkeys(values, "text"),
+            # Ground-truth and feedback examples would join the measured message
+            # past the size check, so an ask's grading carries none: what was
+            # measured is what is sent. An eval with examples can then answer
+            # differently here than in a run.
+            with_examples=False,
         )
     except EvaluationDenied:
         raise
@@ -1123,15 +1155,20 @@ def _grade(row) -> dict[str, Any]:
     }
 
 
-def _as_launched(template, question: Mapping[str, Any], organization_id) -> bool:
+def _as_launched(
+    template, question: Mapping[str, Any], organization_id, workspace_id
+) -> bool:
     """Whether the template still grades what the launch saved: every field the
     library can change in place, and its current version."""
     from model_hub.models.evals_metric import EvalTemplateVersion
 
     current = EvalTemplateVersion.objects.get_default(template)
     return (
-        # A system template, or the ask's own organisation's.
-        template.organization_id in (None, organization_id)
+        # Still one the run offer shows this workspace: the organisation's own or a
+        # system template, in this workspace or none, and not a draft.
+        _offered_templates(organization_id, workspace_id)
+        .filter(id=template.id)
+        .exists()
         # The criteria may be held by the current version, outside the digest.
         and _own_criteria(template)[0]
         == question.get("own_criteria", question["criteria"])
@@ -1169,7 +1206,8 @@ def _too_large(model: str, template, values: Mapping[str, str], criteria: str) -
     that evaluator's own functions and limits, so nothing here copies a number; over
     the limit, it is never sent."""
     if (template.config or {}).get("eval_type_id") == AGENT_EVALUATOR:
-        return _too_large_for_agent(
+        # The template's own format, as the shared entry hands it to the evaluator.
+        return agent_message_too_large(
             criteria, values, (template.config or {}).get("template_format", "mustache")
         )
     try:
@@ -1225,28 +1263,6 @@ def _too_large(model: str, template, values: Mapping[str, str], criteria: str) -
         )
         return len(state_text.encode("utf-8")) > spec.max_state_bytes
     return False
-
-
-def _too_large_for_agent(
-    criteria: str, values: Mapping[str, str], template_format: str
-) -> bool:
-    """The agent evaluator's two cuts: a value over its context limit is windowed,
-    and its rendered instructions, sent as one message, are cut head and tail over
-    the per-message cap. Rendered with its own function."""
-    try:
-        from ee.evals.llm.agent_evaluator.context.budget import PER_MESSAGE_CHARS_CAP
-        from ee.evals.llm.agent_evaluator.evaluator import (
-            _MAX_CONTEXT_CHARS,
-            AgentEvaluator,
-        )
-    except ImportError:
-        return False
-    if any(len(value) > _MAX_CONTEXT_CHARS for value in values.values()):
-        return True
-    # The template's own format, as the shared entry hands it to the evaluator.
-    renderer = AgentEvaluator(rule_prompt=criteria, template_format=template_format)
-    rendered = renderer._render_prompt(list(values), dict(values), [])
-    return len(rendered) > PER_MESSAGE_CHARS_CAP
 
 
 # An evaluator failure, by its code. Only the code and the evaluator's own

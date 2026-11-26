@@ -162,6 +162,43 @@ def eval_usage_check(organization_id, api_call_type: str):
     return check_usage(str(organization_id), api_call_type)
 
 
+def agent_message_too_large(criteria: str, values, template_format: str) -> bool:
+    """Whether the agent evaluator would cut this message: a value over its context
+    limit is windowed, and the rendered criteria, sent as one message, are cut head
+    and tail over the per-message cap. Rendered with the evaluator's own function and
+    limits. False where the evaluator is absent: agent evals don't run there."""
+    try:
+        from ee.evals.llm.agent_evaluator.context.budget import PER_MESSAGE_CHARS_CAP
+        from ee.evals.llm.agent_evaluator.evaluator import (
+            _MAX_CONTEXT_CHARS,
+            AgentEvaluator,
+        )
+    except ImportError:
+        return False
+    if any(len(value) > _MAX_CONTEXT_CHARS for value in values.values()):
+        return True
+    renderer = AgentEvaluator(rule_prompt=criteria, template_format=template_format)
+    rendered = renderer._render_prompt(list(values), dict(values), [])
+    return len(rendered) > PER_MESSAGE_CHARS_CAP
+
+
+def agent_criteria_read_context(criteria: str, data_injection) -> bool:
+    """Whether the agent evaluator would fill part of these criteria from context its
+    caller passes: a {{call.x}}, {{row}}, {{span.x}}, {{trace.x}} or {{session.x}}
+    reference, or a data-injection flag that asks for one. True where the evaluator
+    is absent, so nothing is offered on a guess."""
+    from common.utils.data_injection import normalize
+
+    try:
+        from ee.evals.llm.agent_evaluator.evaluator import _detect_auto_context_roots
+    except ImportError:
+        return True
+    if _detect_auto_context_roots(criteria or ""):
+        return True
+    flags = normalize(data_injection)
+    return any(on for flag, on in flags.items() if flag != "variables_only")
+
+
 def is_turing_model(model_name: object) -> bool:
     if not model_name:
         return False

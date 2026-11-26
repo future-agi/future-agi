@@ -55,6 +55,8 @@ selection = typed.selection
 decision_model = typed.decision_model
 gate_passes = typed.gate_passes
 queued = typed.queued
+# The launch also queues a later settle; no test reaches a real queue.
+_settle_not_queued = typed._settle_not_queued
 
 STATE = SimulateEvalResult.State
 OWN_CRITERIA = "Did the agent keep to its refund limit? Answer Yes or No."
@@ -596,10 +598,12 @@ def test_the_gate_checks_usage_for_an_eval_priced_by_use_and_reads_no_decision_k
             answers=2,
         )
     key.assert_not_called()
-    instant_eval.assert_not_called()
+    # Every ask is Instant Eval's; a configured eval needs agent evals as well.
+    instant_eval.assert_called_once_with(organization)
     credits.assert_not_called()
 
     with (
+        patch("simulate.services.ask_selection._check_capability"),
         patch("simulate.services.ask_selection._usage_check", return_value=refused),
         pytest.raises(LaunchRefused) as stopped,
     ):
@@ -706,6 +710,7 @@ def test_a_usage_check_that_cannot_answer_refuses_the_launch(
     ).as_question()
 
     with (
+        patch("simulate.services.ask_selection._check_capability"),
         patch(
             "ee.usage.services.metering.check_usage",
             side_effect=RuntimeError("billing is down"),
@@ -773,6 +778,306 @@ def test_an_eval_moved_to_another_organisation_after_launch_is_not_graded(
     )
     other = Organization.objects.create(name="Someone else")
     EvalTemplate.no_workspace_objects.filter(id=template.id).update(organization=other)
+
+    grade_row(str(_rows(ask)[0].id))
+
+    row = _rows(ask)[0]
+    assert (row.state, row.cause) == (STATE.GRADING_ERROR, "question_changed")
+    assert agent_model.requests == []
+
+
+# --- round 1 review -----------------------------------------------------------------
+
+
+def _long_instructions(agent_version, size):
+    text = ("Refund rules, paragraph after paragraph. " * (size // 41 + 1))[:size]
+    agent_version.configuration_snapshot = {
+        **agent_version.configuration_snapshot,
+        "description": text + LONG_TAIL_MARKER,
+    }
+    agent_version.save(update_fields=["configuration_snapshot"])
+
+
+GROUND_TRUTH_TEXT = "A ground truth example. "
+FEEDBACK_TEXT = "An earlier graded example. "
+
+
+def _with_examples(ground_truth_size, feedback_size):
+    """An eval with a ground-truth set and feedback: both would go into the same
+    message as the criteria, in front of and after them."""
+    from model_hub.services.ground_truth_service import GroundTruthService
+
+    def inject(mapped, eval_template, **_options):
+        mapped["ground_truth_blocks"] = [
+            {"type": "text", "text": GROUND_TRUTH_TEXT * (ground_truth_size // 24)}
+        ]
+        return mapped
+
+    return (
+        patch.object(GroundTruthService, "inject_context", side_effect=inject),
+        patch(
+            "model_hub.views.eval_runner.EvaluationRunner.get_few_shot_examples",
+            return_value=[
+                {"type": "text", "text": FEEDBACK_TEXT * (feedback_size // 27)}
+            ],
+        ),
+    )
+
+
+@pytest.mark.django_db
+def test_an_asks_grading_carries_no_ground_truth_or_feedback_examples(
+    organization,
+    workspace,
+    user,
+    selection,
+    agent_version,
+    gate_passes,
+    queued,
+    agent_model,
+):
+    """The size check measures the criteria and the inputs. Examples would join
+    them in the same message and push it over the cut, so an ask sends none: what
+    was measured is what is sent."""
+    _long_instructions(agent_version, 60_000)
+    template = _agent_template(organization, workspace, user)
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        configured_eval("c1", template, modality="voice"),
+    )
+    ground_truth, feedback = _with_examples(30_800, 31_200)
+
+    with ground_truth, feedback:
+        grade_row(str(_rows(ask)[0].id))
+
+    row = _rows(ask)[0]
+    assert row.state == STATE.ANSWERED, row.reason
+    assert len(agent_model.requests) == 1
+    sent = _sent_text(agent_model)
+    assert LONG_TAIL_MARKER in sent
+    assert GROUND_TRUTH_TEXT not in sent
+    assert FEEDBACK_TEXT not in sent
+    assert "[truncated" not in sent
+
+
+@pytest.mark.django_db
+def test_another_caller_of_the_shared_evaluator_still_gets_its_examples(
+    organization, workspace, user, agent_model
+):
+    from model_hub.views.utils.evals import run_eval_func
+
+    template = _agent_template(
+        organization, workspace, user, criteria=OWN_CRITERIA + " {{ agent_prompt }}"
+    )
+    ground_truth, feedback = _with_examples(240, 270)
+
+    with ground_truth, feedback:
+        run_eval_func(
+            {"run_config": {"model": template.model}},
+            {"agent_prompt": "Refund at most 100."},
+            template,
+            organization,
+            model=template.model,
+            workspace=workspace,
+            input_data_types={"agent_prompt": "text"},
+        )
+
+    sent = _sent_text(agent_model)
+    assert GROUND_TRUTH_TEXT in sent
+    assert FEEDBACK_TEXT in sent
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"multi_choice": True},
+        {"config": {"required_keys": ["agent_prompt", "conversation"]}},
+        {"config": {"eval_type_id": "CustomPromptEvaluator"}},
+        {"config": {"data_injection": {"call_context": True}}},
+    ],
+    ids=["multi_choice", "recording_read", "another_evaluator", "call_context"],
+)
+def test_an_eval_no_longer_offered_when_launched_is_refused(
+    organization, workspace, user, selection, gate_passes, queued, change
+):
+    """Chosen, then changed in the library before the launch: the launch offers the
+    eval again, and refuses one that would no longer be offered as chosen."""
+    template = _agent_template(organization, workspace, user)
+    definition = configured_eval("c1", template, modality="voice")
+    fields = dict(change)
+    if "config" in fields:
+        fields["config"] = {**template.config, **fields["config"]}
+    EvalTemplate.no_workspace_objects.filter(id=template.id).update(**fields)
+
+    with pytest.raises(LaunchRefused) as refused:
+        _launch(selection, organization, workspace, user, definition)
+
+    assert refused.value.code == "question_changed"
+    assert not SimulateEvalResult.objects.filter(organization=organization).exists()
+    queued.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("criteria", "injection"),
+    [
+        (OWN_CRITERIA + " The call ended as {{call.ended_reason}}.", {}),
+        (OWN_CRITERIA + " The whole row: {{ row }}.", {}),
+        (OWN_CRITERIA + " Its trace: {{trace.id}}.", {}),
+        (OWN_CRITERIA, {"call_context": True}),
+        (OWN_CRITERIA, {"full_row": True}),
+        (OWN_CRITERIA, {"spanContext": True}),
+    ],
+    ids=["call", "row", "trace", "call_context", "full_row", "span_context"],
+)
+def test_an_eval_that_reads_the_calls_own_context_is_not_offered(
+    organization, workspace, user, criteria, injection
+):
+    """The evaluator fills these from context its caller passes. An ask passes none,
+    so the criteria would be graded with "(call data not provided)" in its place."""
+    template = _agent_template(organization, workspace, user, criteria=criteria)
+    if injection:
+        template.config = {**template.config, "data_injection": injection}
+        template.save(update_fields=["config"])
+
+    with pytest.raises(LaunchRefused) as refused:
+        configured_eval("c1", template, modality="voice")
+
+    assert refused.value.code == "eval_not_offered"
+
+
+def test_criteria_that_only_look_like_context_are_still_offered():
+    from tfc.ee_gates import agent_criteria_read_context
+
+    assert not agent_criteria_read_context("Did {{agent_prompt}} say call me back?", {})
+    assert not agent_criteria_read_context("Rows of {{ rows }} and {{caller}}.", {})
+    assert agent_criteria_read_context("Ended: {{ call.ended_reason }}", {})
+    assert agent_criteria_read_context("Plain.", {"trace_context": True})
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("hidden", ["another_workspace", "draft"])
+def test_an_eval_the_run_offer_hides_is_refused_at_launch(
+    organization, workspace, user, selection, gate_passes, queued, hidden
+):
+    template = _agent_template(organization, workspace, user)
+    definition = configured_eval("c1", template, modality="voice")
+    _hide(template, hidden, organization, user)
+
+    with pytest.raises(LaunchRefused) as refused:
+        _launch(selection, organization, workspace, user, definition)
+
+    assert refused.value.code == "not_found"
+    assert not SimulateEvalResult.objects.filter(organization=organization).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("hidden", ["another_workspace", "draft"])
+def test_an_eval_hidden_from_the_run_offer_after_launch_is_not_graded(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    agent_model,
+    hidden,
+):
+    template = _agent_template(organization, workspace, user)
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        configured_eval("c1", template, modality="voice"),
+    )
+    _hide(template, hidden, organization, user)
+
+    grade_row(str(_rows(ask)[0].id))
+
+    row = _rows(ask)[0]
+    assert (row.state, row.cause) == (STATE.GRADING_ERROR, "question_changed")
+    assert agent_model.requests == []
+
+
+def _hide(template, hidden, organization, user):
+    if hidden == "another_workspace":
+        from accounts.models.workspace import Workspace
+
+        other = Workspace.objects.create(
+            name="Another team", organization=organization, created_by=user
+        )
+        EvalTemplate.no_workspace_objects.filter(id=template.id).update(workspace=other)
+    else:
+        EvalTemplate.no_workspace_objects.filter(id=template.id).update(
+            visible_ui=False
+        )
+
+
+@pytest.mark.django_db
+def test_a_configured_only_ask_needs_instant_eval_too(organization, workspace, user):
+    from tfc.ee_gating import FeatureUnavailable
+
+    template = _agent_template(organization, workspace, user)
+    configured = configured_eval("c1", template, modality="voice").as_question()
+    allowed = type("Check", (), {"allowed": True})()
+
+    def denied(*_args, **_options):
+        raise FeatureUnavailable("instant_eval")
+
+    with (
+        patch("tfc.ee_gating.check_ee_feature", side_effect=denied),
+        patch(
+            "simulate.services.ask_selection._agent_evals_allowed", return_value=True
+        ),
+        patch("simulate.services.ask_selection._usage_check", return_value=allowed),
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        launch_gate(
+            organization=organization,
+            workspace_id=workspace.id,
+            questions=[configured],
+            answers=2,
+        )
+
+    assert refused.value.code == "ENTITLEMENT_DENIED"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"choice_scores": {"Yes": 0.0, "No": 1.0}},
+        {"config": {"agent_mode": "auto"}},
+    ],
+    ids=["choice_scores", "agent_mode"],
+)
+def test_a_configured_eval_changed_only_where_the_digest_sees_it_is_not_graded(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    agent_model,
+    change,
+):
+    """A change after launch that the criteria, model and labels don't show."""
+    template = _agent_template(organization, workspace, user)
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        configured_eval("c1", template, modality="voice"),
+    )
+    fields = dict(change)
+    if "config" in fields:
+        fields["config"] = {**template.config, **fields["config"]}
+    EvalTemplate.no_workspace_objects.filter(id=template.id).update(**fields)
 
     grade_row(str(_rows(ask)[0].id))
 

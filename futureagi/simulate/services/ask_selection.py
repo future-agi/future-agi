@@ -7,8 +7,10 @@ ask stores.
 
 Before launch, every call is read for the kinds each question lists, and the
 counts by kind and cause are shown. The launch then passes Instant Eval's gate
-(the capability, the organisation's key for the decision model, credits) or is
-refused with the reason. Nothing here calls an evaluator or spends anything.
+or is refused with the reason: every ask needs the Instant Eval capability; a
+typed question also needs the organisation's key for its decision model and
+credits, and a configured eval needs agent evals and usage left. Nothing here
+calls an evaluator or spends anything.
 """
 
 from __future__ import annotations
@@ -484,21 +486,23 @@ def launch_gate(
     priced_answers: int | None = None,
 ) -> None:
     """Instant Eval's own checks before a launch: refuses with the reason, else None.
+    Every ask is Instant Eval's, so the capability is checked for each one.
     ``priced_answers`` are the answers with a price per answer (all of them when not
-    given); a question priced by use gets the shared evaluator's checks instead.
-    Nothing is spent or kept here; a key that is read is dropped at once."""
+    given); a question priced by use gets the shared evaluator's checks instead of a
+    key and credits. Nothing is spent or kept here; a key that is read is dropped at
+    once."""
     questions = _checked_questions(questions)
     if answers < 1:
         raise LaunchRefused(
             "nothing_ready", "No selected call has the evidence these questions read."
         )
+    _check_capability(organization)
     by_use = [question for question in questions if question.priced_by_use]
     priced = [question for question in questions if not question.priced_by_use]
     for model in dict.fromkeys(question.decision_model for question in by_use):
         _check_by_use(organization, model)
     if not priced:
         return
-    _check_capability(organization)
     for model in dict.fromkeys(question.decision_model for question in priced):
         _check_key(model, organization, workspace_id)
     _check_credits(
