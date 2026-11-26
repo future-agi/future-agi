@@ -2314,7 +2314,11 @@ def _base_url_host(values: Mapping[str, Any], names: tuple[str, ...]) -> str | N
         {name: str(values.get(name) or "") for name in names}, names
     )
     host = _hostname_from_url(base) if base else None
-    if not host:
+    # A name ends in a word (example.com); a number in another spelling (2130706433, 0x7f000001, 0177.0.0.1) is an
+    # address, which an egress list never holds, whether or not it resolves from here.
+    if not host or not re.fullmatch(
+        r"[a-z][a-z0-9-]*", host.rsplit(".", 1)[-1].lower()
+    ):
         return None
     try:
         _validate_egress_host(host)

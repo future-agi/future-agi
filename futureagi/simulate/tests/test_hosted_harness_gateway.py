@@ -455,6 +455,15 @@ def test_provider_egress_includes_scoped_claude_gateway():
             },
             {"api.openai.com"},
         ),
+        # An address spelled as a number is never opened, wherever it resolves.
+        (
+            {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://0177.0.0.1/v1"},
+            {"api.openai.com"},
+        ),
+        (
+            {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://0x7f000001/v1"},
+            {"api.openai.com"},
+        ),
         # A base that does not resolve from here is still the host the agent calls.
         (
             {
