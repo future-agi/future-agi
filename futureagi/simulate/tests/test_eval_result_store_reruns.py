@@ -382,6 +382,24 @@ def _grader_stores_meanwhile(call, key):
     return wrapped, seen
 
 
+def _eval_only_rerun(route, run_test, execution):
+    """The URL and body of an eval-only rerun of one run, by either route."""
+    if route == "chosen-calls":
+        url = f"/simulate/test-executions/{execution.id}/rerun-calls/"
+        return url, {"rerun_type": "eval_only", "select_all": True}
+    url = f"/simulate/run-tests/{run_test.id}/rerun-test-executions/"
+    return url, {"rerun_type": "eval_only", "test_execution_ids": [str(execution.id)]}
+
+
+def _locks_the_calls_verdicts(sql):
+    """A query that reads the calls' verdicts under their row lock."""
+    return (
+        'FROM "simulate_call_execution" ' in sql
+        and '"simulate_call_execution"."eval_outputs"' in sql
+        and "FOR UPDATE" in sql
+    )
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("route", ["chosen-calls", "whole-runs"])
 def test_a_verdict_stored_after_the_calls_were_loaded_is_kept_not_lost(
@@ -390,12 +408,7 @@ def test_a_verdict_stored_after_the_calls_were_loaded_is_kept_not_lost(
     config, _, execution, call = _graded_call(run_test, eval_template)
     key = str(config.id)
     wrapped, seen = _grader_stores_meanwhile(call, key)
-    if route == "chosen-calls":
-        url = f"/simulate/test-executions/{execution.id}/rerun-calls/"
-        body = {"rerun_type": "eval_only", "select_all": True}
-    else:
-        url = f"/simulate/run-tests/{run_test.id}/rerun-test-executions/"
-        body = {"rerun_type": "eval_only", "test_execution_ids": [str(execution.id)]}
+    url, body = _eval_only_rerun(route, run_test, execution)
 
     with (
         patch("simulate.views.run_test.reread_under_lock", wrapped),
@@ -412,6 +425,108 @@ def test_a_verdict_stored_after_the_calls_were_loaded_is_kept_not_lost(
     assert call.eval_outputs == {}
     [row] = _kept_rows(call)
     assert row.replaced_verdict == LATE
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("route", ["chosen-calls", "whole-runs"])
+def test_an_eval_only_rerun_reads_the_verdicts_it_clears_under_the_calls_lock(
+    auth_client, run_test, eval_template, route
+):
+    # Without the lock a grader could store a verdict between the re-read and
+    # the save, and the rerun would empty it unkept.
+    _, _, execution, _ = _graded_call(run_test, eval_template)
+    url, body = _eval_only_rerun(route, run_test, execution)
+
+    with (
+        CaptureQueriesContext(connection) as queries,
+        patch(
+            "simulate.temporal.client.rerun_call_executions",
+            return_value={"workflow_id": "kept-rerun", "merged": False},
+        ),
+    ):
+        response = auth_client.post(url, body, format="json")
+
+    assert response.status_code == 200, response.content
+    assert [
+        query["sql"]
+        for query in queries.captured_queries
+        if _locks_the_calls_verdicts(query["sql"])
+    ]
+
+
+@pytest.mark.django_db
+def test_a_call_that_cannot_be_snapshotted_is_left_as_it_was_and_the_others_are_rerun(
+    auth_client, run_test, eval_template
+):
+    from simulate.models import CallExecutionSnapshot
+    from simulate.views import run_test as views
+
+    config, _, execution, good = _graded_call(run_test, eval_template)
+    stored = {str(config.id): dict(VERDICT, output="Failed")}
+    bad = _call(execution, metadata=dict(CLOSED), eval_outputs=stored)
+    real_snapshot = views.eval_snapshot
+
+    def snapshot(call):
+        if call.id == bad.id:
+            raise ValueError("this call's results cannot be read")
+        return real_snapshot(call)
+
+    dispatched = []
+
+    def dispatch(*, call_execution_ids, **kwargs):
+        dispatched.extend(call_execution_ids)
+        return {"workflow_id": "kept-bulk", "merged": False}
+
+    with (
+        patch("simulate.views.run_test.eval_snapshot", side_effect=snapshot),
+        patch("simulate.temporal.client.rerun_call_executions", side_effect=dispatch),
+    ):
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/rerun-test-executions/",
+            {"rerun_type": "eval_only", "test_execution_ids": [str(execution.id)]},
+            format="json",
+        )
+
+    assert response.status_code == 200, response.content
+    assert str(bad.id) in response.content.decode()
+    assert dispatched == [str(good.id)]
+    bad.refresh_from_db()
+    assert bad.eval_outputs == stored
+    assert _kept_rows(bad) == []
+    assert not CallExecutionSnapshot.objects.filter(call_execution=bad).exists()
+    good.refresh_from_db()
+    assert good.eval_outputs == {}
+    assert len(_kept_rows(good)) == 3
+    assert CallExecutionSnapshot.objects.filter(call_execution=good).exists()
+
+
+@pytest.mark.django_db
+def test_a_put_back_forgets_its_rows_whatever_workspace_the_request_is_in(
+    run_test, eval_template, user
+):
+    from accounts.models.workspace import Workspace
+    from simulate.services.eval_result_store import (
+        ClearedVerdicts,
+        forget_replacement,
+    )
+    from tfc.middleware.workspace_context import workspace_context
+
+    _, _, _, call = _graded_call(run_test, eval_template)
+    cleared = ClearedVerdicts()
+    cleared.add(call)
+    cleared.keep()
+    assert _kept_rows(call)
+    other = Workspace.objects.create(
+        name="Other",
+        organization=run_test.organization,
+        is_active=True,
+        created_by=user,
+    )
+
+    with workspace_context(other, organization=run_test.organization):
+        forget_replacement(cleared.replacement_id, [call.id])
+
+    assert _kept_rows(call) == []
 
 
 @pytest.mark.django_db

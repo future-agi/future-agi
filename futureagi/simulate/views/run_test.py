@@ -7516,24 +7516,46 @@ class TestExecutionRerunView(APIView):
                     # Under the lock, so a verdict a grader stored since the
                     # calls were loaded is snapshotted and kept, never lost.
                     reread_under_lock(call_executions_to_update)
+                    rerun = []
                     for call_execution in call_executions_to_update:
-                        snapshots_to_create.append(eval_snapshot(call_execution))
-                        cleared_slots = call_execution.eval_outputs
+                        # A call that cannot be snapshotted or kept is left as
+                        # it was, and the others are still rerun. A database
+                        # error ends the whole transaction instead.
+                        try:
+                            snapshot = eval_snapshot(call_execution)
+                            cleared_slots = call_execution.eval_outputs
+                            metadata = copy.deepcopy(call_execution.call_metadata or {})
+                            metadata["eval_started"] = False
+                            metadata["eval_completed"] = False
+                            # The rerun child grades every runnable config; its
+                            # scoring clock starts here, not at the call's old
+                            # completion.
+                            stamp_eval_queued(
+                                metadata,
+                                rerun_eval_ids[call_execution.test_execution_id],
+                                now=stamped_at,
+                            )
+                            # Last, so no verdict is kept for a call left as it was.
+                            cleared.add(call_execution, slots=cleared_slots)
+                        except DatabaseError:
+                            raise
+                        except Exception as e:
+                            logger.error(
+                                f"Error preparing call execution {call_execution.id} for rerun: {str(e)}"
+                            )
+                            successful_reruns.remove(str(call_execution.id))
+                            failed_reruns.append(
+                                {
+                                    "call_execution_id": str(call_execution.id),
+                                    "error": str(e),
+                                }
+                            )
+                            continue
+                        snapshots_to_create.append(snapshot)
                         call_execution.eval_outputs = {}
-                        call_execution.call_metadata = (
-                            call_execution.call_metadata or {}
-                        )
-                        call_execution.call_metadata["eval_started"] = False
-                        call_execution.call_metadata["eval_completed"] = False
-                        # The rerun child grades every runnable config; its
-                        # scoring clock starts here, not at the call's old
-                        # completion.
-                        stamp_eval_queued(
-                            call_execution.call_metadata,
-                            rerun_eval_ids[call_execution.test_execution_id],
-                            now=stamped_at,
-                        )
-                        cleared.add(call_execution, slots=cleared_slots)
+                        call_execution.call_metadata = metadata
+                        rerun.append(call_execution)
+                    call_executions_to_update = rerun
                 # Bulk delete transcripts for call_and_eval mode
                 if call_ids_to_delete_transcripts:
                     CallTranscript.objects.filter(
