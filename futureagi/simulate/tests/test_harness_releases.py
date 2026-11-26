@@ -9,6 +9,7 @@ from django.utils import timezone
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import WorkspaceMembership
 from simulate.models import (
+    HarnessEnvironmentVersion,
     HarnessRelease,
     HarnessSuiteMember,
     HarnessSuiteVersion,
@@ -16,6 +17,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.services.harness_versioning import releases
 from simulate.services.harness_versioning.backfill import backfill_environment
 from simulate.services.harness_versioning.releases import (
     Task,
@@ -53,13 +55,27 @@ def _environment(user, workspace, storage, key="rel"):
     return environment
 
 
-def _scenarios(count, *, prefix="s", use_case="refunds", scorable=True):
-    return [(f"{prefix}{index}", use_case, scorable) for index in range(count)]
+# The one sub-goal the environment's authored catalogue grades (``_authoring``).
+GOAL = "refunded"
+
+
+def _scenarios(count, *, prefix="s", use_case="refunds", scorable=True, goal=GOAL):
+    sub_goals = [{"name": goal}] if scorable else []
+    return [(f"{prefix}{index}", use_case, sub_goals) for index in range(count)]
+
+
+def _catalogue(environment):
+    return {
+        goal["name"]
+        for goal in HarnessEnvironmentVersion.no_workspace_objects.get(
+            id=environment.environment_version_id
+        ).documents["sub_goals"]
+    }
 
 
 def _suite(environment, scenarios):
-    """A new active suite version of ``scenarios`` ((key, use case, scorable)), made the
-    environment's default."""
+    """A new active suite version of ``scenarios`` ((key, use case, sub-goals)), made
+    the environment's default."""
     number = (
         HarnessSuiteVersion.no_workspace_objects.filter(job=environment).count() + 1
     )
@@ -77,7 +93,7 @@ def _suite(environment, scenarios):
         parent=environment.suite_version,
         scenario_count=len(scenarios),
     )
-    for index, (key, use_case, scorable) in enumerate(scenarios, start=1):
+    for index, (key, use_case, sub_goals) in enumerate(scenarios, start=1):
         row, _ = HostedHarnessScenario.all_objects.update_or_create(
             job=environment,
             scenario_key=key,
@@ -91,7 +107,7 @@ def _suite(environment, scenarios):
             content={
                 "name": key,
                 "use_case": use_case,
-                "sub_goals": [{"name": "resolved"}] if scorable else [],
+                "sub_goals": sub_goals,
             },
         )
     HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
@@ -324,9 +340,94 @@ class TestLock:
             _scenarios(20) + _scenarios(5, prefix="x", scorable=False),
         )
 
-        _lock(auth_client, environment)
+        response = _lock(auth_client, environment)
 
-        assert not any(key.startswith("x") for key in _splits(environment))
+        assert response.status_code == 200, response.json()
+        splits = _splits(environment)
+        assert set(splits) == {f"s{index}" for index in range(20)}
+        assert sorted(splits.values()).count("test") == 6
+
+    def test_a_goal_the_pinned_environment_does_not_grade_is_unscorable(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        assert _catalogue(environment) == {GOAL}
+        # "resolved" is not in the catalogue: a run of this pair refuses these tasks.
+        _suite(
+            environment,
+            _scenarios(20)
+            + _scenarios(12, prefix="r", use_case="billing", goal="resolved"),
+        )
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 200, response.json()
+        [release] = response.json()["releases"]
+        assert release["train"] + release["test"] == 20
+        assert not any(key.startswith("r") for key in _splits(environment))
+
+    def test_a_suite_of_goals_the_environment_does_not_grade_cannot_lock(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(12, goal="resolved"))
+
+        body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+        response = _lock(auth_client, environment)
+
+        assert body["lock"]["can_lock"] is False
+        assert body["lock"]["refusal"]["code"] == "release_too_few_test"
+        assert (body["lock"]["train"], body["lock"]["test"]) == (0, 0)
+        assert response.status_code == 422
+        assert not HarnessRelease.no_workspace_objects.exists()
+
+    def test_an_environment_without_a_catalogue_scores_every_named_goal(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        # A version recorded before sub-goals were catalogued: runs grade every one.
+        version = environment.environment_version
+        version.documents = {**version.documents, "sub_goals": []}
+        version.save(update_fields=["documents"])
+        _suite(environment, _scenarios(20, goal="resolved"))
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 200, response.json()
+        assert len(_splits(environment)) == 20
+
+    @pytest.mark.parametrize("malformed", ["refunded", 5, {"name": "refunded"}])
+    def test_malformed_sub_goals_are_unscorable(
+        self, auth_client, user, workspace, storage, malformed
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(
+            environment,
+            _scenarios(20) + [("bad", "refunds", malformed)],
+        )
+
+        response = auth_client.get(f"{BASE}/{environment.id}/versions/")
+
+        assert response.status_code == 200
+        assert (response.json()["lock"]["train"], response.json()["lock"]["test"]) == (
+            14,
+            6,
+        )
+
+    def test_the_target_counts_scorable_tasks(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(
+            environment,
+            _scenarios(80) + _scenarios(20, prefix="x", scorable=False),
+        )
+
+        lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
+
+        # N is the 80 scorable tasks, not the 100 members: min(24, max(60, 16)).
+        assert releases.TARGET_COUNTS_UNSCORABLE is False
+        assert (lock["train"], lock["test"], lock["test_target"]) == (56, 24, 24)
 
     def test_too_few_test_tasks_is_refused(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
