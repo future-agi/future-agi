@@ -4,14 +4,27 @@ on:
   workflow_dispatch:
   schedule:
     # 10:00 IST (UTC+5:30) → 04:30 UTC
-    - cron: '30 4 * * *'
+    - cron: "30 4 * * *"
     # 18:00 IST (UTC+5:30) → 12:30 UTC
-    - cron: '30 12 * * *'
+    - cron: "30 12 * * *"
+  # Heartbeat for the dev-flow tick (breaker, escape rate, hourly digest).
+  # Scheduled runs use main's copy of this file; a push to dev uses dev's.
+  push:
+    branches: [dev]
+  pull_request:
+    paths:
+      - ".github/scripts/devflow_tick.py"
+      - ".github/scripts/test_devflow_tick.py"
+      - ".github/workflows/pr-digest.yml"
+
+concurrency:
+  group: pr-digest-${{ github.event_name == 'push' && 'tick' || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   digest:
     # Skip on forks — secrets aren't available there and the run would just spam Actions logs.
-    if: github.repository == 'future-agi/future-agi'
+    if: github.repository == 'future-agi/future-agi' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
@@ -21,7 +34,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Build and post PR digest
         env:
@@ -31,3 +44,63 @@ jobs:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node .github/scripts/pr-digest.mjs
+
+  tick:
+    # At most one tick an hour: the cache key is the UTC hour, so later pushes
+    # in the same hour find it and stop. See .github/scripts/devflow_tick.py.
+    if: github.repository == 'future-agi/future-agi' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      issues: write
+    steps:
+      - name: Hour bucket
+        id: hour
+        run: echo "key=devflow-tick-$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
+
+      - name: Already ticked this hour?
+        id: seen
+        uses: actions/cache/restore@v4
+        with:
+          path: .tick-marker
+          key: ${{ steps.hour.outputs.key }}
+          lookup-only: true
+
+      - uses: actions/checkout@v4
+        if: steps.seen.outputs.cache-hit != 'true'
+        with:
+          ref: dev
+          fetch-depth: 500
+
+      - name: Run tick
+        if: steps.seen.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Optional. A token with the Variables permission lets the tick set
+          # APPROVAL_MODE_TIGHT; without it the tick only warns.
+          DEVFLOW_VARS_TOKEN: ${{ secrets.DEVFLOW_VARS_TOKEN }}
+        run: |
+          git fetch origin dev
+          python3 -I .github/scripts/devflow_tick.py | tee -a "$GITHUB_STEP_SUMMARY"
+          date -u > .tick-marker
+
+      - name: Mark the hour as done
+        if: steps.seen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tick-marker
+          key: ${{ steps.hour.outputs.key }}
+
+  tick-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -I .github/scripts/test_devflow_tick.py -v
