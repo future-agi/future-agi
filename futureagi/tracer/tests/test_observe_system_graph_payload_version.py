@@ -234,8 +234,14 @@ def test_worker_ignores_the_version_key(monkeypatch, namespace, reader, module):
     # The worker writes the statistic into the payload it caches: the marker
     # that tells readers this snapshot holds the latency mean.
     # (``_load_exact_payload`` is what refresh_exact_aggregation_snapshot
-    # publishes.)
-    assert payload == {"ok": True, "metric_statistic": "mean"}
+    # publishes.) The exact system graph also says its window bounds were read
+    # at microsecond precision.
+    expected = {"ok": True, "metric_statistic": "mean"}
+    if namespace == "observe-system-graph":
+        expected[graph_dispatch.EXACT_WINDOW_BOUNDS_FIELD] = (
+            graph_dispatch.EXACT_WINDOW_BOUNDS_MICROSECOND
+        )
+    assert payload == expected
     (call,) = received
     assert "payload_version" not in call
     assert call["metric_id"] == "latency"
@@ -268,7 +274,12 @@ _STALE_MARKERS = [
 
 
 def _cached_payload(metric_id, **extra):
+    # A current worker also marks microsecond window bounds; the statistic
+    # guard is what these tests exercise.
     return {
+        graph_dispatch.EXACT_WINDOW_BOUNDS_FIELD: (
+            graph_dispatch.EXACT_WINDOW_BOUNDS_MICROSECOND
+        ),
         "metric_name": metric_id,
         "data": [
             {

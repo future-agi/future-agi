@@ -91,7 +91,8 @@ AGENT_GRAPH_PAYLOAD_VERSION = 7
 # (graph_metric_statistic.snapshot_names_its_statistic), which covers an
 # older worker taking a current-version job mid-deploy. 4: retires snapshots
 # whose fractional-second window bounds were read truncated to the second (a
-# default "now" window counted the wrong second at each edge).
+# default "now" window counted the wrong second at each edge). An older worker
+# that takes a current-version job is covered by EXACT_WINDOW_BOUNDS_FIELD.
 OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION = 4
 # A short-window selector may prove as many as 4,096 trace matches. Decoration
 # fans each trace set into child-span reads, so keep the same finite 40-trace
@@ -919,6 +920,51 @@ def graph_payload_is_publishable(
 _EXACT_REFRESH_TRANSPORT_ERRORS = (ConnectionInterrupted, RedisError, OSError)
 
 
+# Payload field a refresh worker writes into the snapshots it computes through
+# the exact graph builders, which read a fractional-second request window at
+# microsecond precision (exact_datetime_bound_sql). During a rolling deploy an
+# older worker can take a refresh job keyed by the current identity (it ignores
+# payload_version) and read such a window truncated to the second. It writes
+# no field, so its snapshot is a miss for these namespaces and a current worker
+# recomputes it. The field is internal: it is removed before a hit is served.
+EXACT_WINDOW_BOUNDS_FIELD = "window_bound_precision"
+EXACT_WINDOW_BOUNDS_MICROSECOND = "microsecond"
+_EXACT_WINDOW_BOUNDS_NAMESPACES = frozenset(
+    {"observe-system-graph", "observe-all-system-graphs", "observe-agent-graph"}
+)
+
+
+def stamp_exact_window_bounds(namespace: str, payload: Any) -> Any:
+    """Mark a payload a current worker computed, before it is cached."""
+
+    if namespace not in _EXACT_WINDOW_BOUNDS_NAMESPACES or not isinstance(
+        payload, dict
+    ):
+        return payload
+    return {**payload, EXACT_WINDOW_BOUNDS_FIELD: EXACT_WINDOW_BOUNDS_MICROSECOND}
+
+
+def _snapshot_reads_exact_window_bounds(namespace: str, payload: Any) -> bool:
+    """Whether a cached snapshot was computed with microsecond window bounds."""
+
+    if namespace not in _EXACT_WINDOW_BOUNDS_NAMESPACES:
+        return True
+    return (
+        isinstance(payload, dict)
+        and payload.get(EXACT_WINDOW_BOUNDS_FIELD) == EXACT_WINDOW_BOUNDS_MICROSECOND
+    )
+
+
+def _without_exact_window_bounds(payload: Any) -> Any:
+    if isinstance(payload, dict) and EXACT_WINDOW_BOUNDS_FIELD in payload:
+        return {
+            key: value
+            for key, value in payload.items()
+            if key != EXACT_WINDOW_BOUNDS_FIELD
+        }
+    return payload
+
+
 def _snapshot_has_monetary_coverage(
     namespace: str, metric_id: str | None, payload: Any
 ) -> bool:
@@ -970,7 +1016,7 @@ def _read_or_refresh_exact_graph(
     if workspace_id is not None:
         identity["workspace_id"] = str(workspace_id)
     metric_id = identity.get("metric_id")
-    return read_or_schedule_exact_snapshot(
+    served = read_or_schedule_exact_snapshot(
         namespace,
         identity,
         refresh=refresh,
@@ -981,8 +1027,10 @@ def _read_or_refresh_exact_graph(
         accept_snapshot=lambda payload: (
             snapshot_names_its_statistic(namespace, metric_id, payload)
             and _snapshot_has_monetary_coverage(namespace, metric_id, payload)
+            and _snapshot_reads_exact_window_bounds(namespace, payload)
         ),
     )
+    return _without_exact_window_bounds(served)
 
 
 def _pending_graph_payload(metric_id: str, **extra: Any) -> dict[str, Any]:

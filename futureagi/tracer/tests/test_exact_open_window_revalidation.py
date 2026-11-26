@@ -91,6 +91,10 @@ def _identity(*, end_offset: timedelta = OPEN, metric_id: str = "latency") -> di
 
 def _payload(metric_id: str = "latency", **extra) -> dict:
     return {
+        # What a current worker writes; the system graph requires it.
+        graph_dispatch.EXACT_WINDOW_BOUNDS_FIELD: (
+            graph_dispatch.EXACT_WINDOW_BOUNDS_MICROSECOND
+        ),
         "metric_name": metric_id,
         "data": [{"timestamp": "2026-06-01T00:00:00Z", "value": _VALUE}],
         "query_complete": True,
@@ -859,6 +863,9 @@ def _agent_body() -> dict:
         "query_complete": True,
         "query_status": "complete",
         "query_sampled": False,
+        graph_dispatch.EXACT_WINDOW_BOUNDS_FIELD: (
+            graph_dispatch.EXACT_WINDOW_BOUNDS_MICROSECOND
+        ),
     }
 
 
