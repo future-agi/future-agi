@@ -1796,7 +1796,6 @@ def test_an_agent_with_no_tools_of_its_own_is_not_adapted(
     ).exists()
 
 
-
 # --- a coarse agent tool: one tool standing in for two of Banking's -----------------------------
 
 BANKING = [
@@ -1895,7 +1894,10 @@ class TestCoarseAgentTool:
                 "pairs": [
                     {"agent": "confirm_caller", "world": "verify_identity"},
                     {"agent": "report_lost_card_and_dispute", "world": "lock_card"},
-                    {"agent": "report_lost_card_and_dispute", "world": "create_dispute"},
+                    {
+                        "agent": "report_lost_card_and_dispute",
+                        "world": "create_dispute",
+                    },
                 ]
             },
         )
@@ -1903,8 +1905,10 @@ class TestCoarseAgentTool:
         fit = release_fit(banking, cardguard)
 
         rows = {row["world"]: row["agent"] for row in fit["rows"]}
-        assert rows["lock_card"] == rows["create_dispute"] == (
-            "report_lost_card_and_dispute"
+        assert (
+            rows["lock_card"]
+            == rows["create_dispute"]
+            == ("report_lost_card_and_dispute")
         )
         assert [case["key"] for case in fit["unmeasured"]] == ["statement-question"]
 
