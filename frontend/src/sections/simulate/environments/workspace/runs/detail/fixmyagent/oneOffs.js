@@ -1,5 +1,7 @@
-const sentence = (text) =>
+export const sentence = (text) =>
   text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
+
+export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
  * Group one-off issues by their name. Each group's count is its unique calls,

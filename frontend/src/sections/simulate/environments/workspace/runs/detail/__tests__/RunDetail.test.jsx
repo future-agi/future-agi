@@ -1403,7 +1403,7 @@ describe("RunDetail", () => {
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    await user.click(screen.getByRole("button", { name: "View 3 calls" }));
+    await user.click(screen.getByRole("button", { name: "View calls" }));
 
     expect(
       screen.getByText('run-trace-table:{"callExecutionId":["c1","c2","c3"]}'),

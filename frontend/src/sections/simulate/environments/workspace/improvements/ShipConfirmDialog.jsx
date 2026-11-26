@@ -83,6 +83,13 @@ function ChangeSummary({ fix, winner }) {
     );
   }
   const files = parseDiff(data);
+  if (!files.length) {
+    return (
+      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        No file changes.
+      </Typography>
+    );
+  }
   return (
     <Box
       sx={{
@@ -231,7 +238,7 @@ export default function ShipConfirmDialog({
             <Stack direction="row" spacing={0.75} alignItems="flex-start">
               <Iconify
                 icon="solar:danger-triangle-linear"
-                width={15}
+                width={14}
                 sx={{ color: "status.warning.fg", flexShrink: 0, mt: "2px" }}
               />
               <Typography sx={{ typography: "s2", color: "status.warning.fg" }}>

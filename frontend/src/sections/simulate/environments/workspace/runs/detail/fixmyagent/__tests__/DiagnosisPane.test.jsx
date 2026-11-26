@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen, within, userEvent } from "src/utils/test-utils";
 
 import DiagnosisPane from "../DiagnosisPane";
 import { groupOneOffs } from "../oneOffs";
@@ -23,10 +22,16 @@ const FARE = [
   way("f-6", "omits the fare", ["c7"]),
   way("f-7", "omits the fare", ["c8"]),
 ];
-// Two ways on one call: more ways than calls, so it sorts below the fare.
+// Three findings, all on one call: more findings than calls.
 const TONE = [
   way("t-1", "rude tone", ["c9"]),
   way("t-2", "rude tone", ["c9"], "Second finding on c9"),
+  way("t-3", "rude tone", ["c9"], "Third finding on c9"),
+];
+// Two findings over two calls: fewer findings than TONE, more calls.
+const SLOW = [
+  way("s-1", "slow reply", ["c1"]),
+  way("s-2", "slow reply", ["c2"]),
 ];
 
 const analysis = (oneOffs) => ({
@@ -65,6 +70,16 @@ describe("groupOneOffs", () => {
     expect(groups.map((g) => [g.phrase, g.callIds.length])).toEqual([
       ["Omits the fare", 8],
       ["Rude tone", 1],
+    ]);
+  });
+
+  it("sorts by unique calls, not by number of findings", () => {
+    const groups = groupOneOffs([...TONE, ...SLOW]);
+    expect(
+      groups.map((g) => [g.phrase, g.ways.length, g.callIds.length]),
+    ).toEqual([
+      ["Slow reply", 2, 2],
+      ["Rude tone", 3, 1],
     ]);
   });
 });
@@ -108,5 +123,21 @@ describe("DiagnosisPane one-offs", () => {
     const detail = screen.getByText("Second finding on c4").parentElement;
     await user.click(within(detail).getByRole("button", { name: "View" }));
     expect(onViewCalls).toHaveBeenLastCalledWith(["c4"]);
+  });
+
+  it("counts the summary's one-offs by row, not by finding", () => {
+    renderPane([...TONE, ...FARE]);
+    expect(screen.getByText(/plus 2 one-off issues/)).toBeInTheDocument();
+  });
+
+  it("shows a name equal to its title in full, with nothing to expand", () => {
+    renderPane([way("o-1", "omits the fare", ["c1", "c2"], "Omits The Fare")]);
+    expect(screen.getByText("Omits the fare")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Omits the fare" }),
+    ).toBeDisabled();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+    expect(screen.queryByText("Omits The Fare")).toBeNull();
   });
 });

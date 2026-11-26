@@ -12,7 +12,7 @@ import {
 import Iconify from "src/components/iconify";
 import EmptyState from "../../../../components/EmptyState";
 import GoalCard, { OneOffGroup } from "./GoalCard";
-import { groupOneOffs } from "./oneOffs";
+import { groupOneOffs, plural } from "./oneOffs";
 
 // One bordered list, a hairline between rows.
 const listFrame = {
@@ -24,7 +24,7 @@ const listFrame = {
 
 /**
  * The run's diagnosis: which goals the evals say broke, what the broken calls
- * have in common (Omega, one call at a time), and agent issues seen only once.
+ * have in common (Omega, one call at a time), and agent issues no broken goal covers, grouped by name.
  */
 
 // Shown while the investigation runs; the report arrives in one piece.
@@ -90,11 +90,9 @@ function ThinkingLoader() {
   );
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-function summaryOf({ summary }, visibleGoalCount) {
+function summaryOf({ summary }, visibleGoalCount, oneOffs) {
   if (!summary) return "No results for this run yet.";
-  const { brokenGoals, brokenCalls, measuredCalls, oneOffs } = summary;
+  const { brokenGoals, brokenCalls, measuredCalls } = summary;
   const also = oneOffs ? `, plus ${plural(oneOffs, "one-off issue")}` : "";
   if (visibleGoalCount < brokenGoals) {
     const diagnosis = visibleGoalCount
@@ -170,7 +168,11 @@ export default function DiagnosisPane({
           />
           <Box>
             <Typography sx={{ typography: "s2" }}>
-              {summaryOf(analysis, goalsWithFindings.length)}
+              {summaryOf(
+                analysis,
+                goalsWithFindings.length,
+                oneOffGroups.length,
+              )}
             </Typography>
             {analysis.groupingPending && (
               <Typography
@@ -193,7 +195,7 @@ export default function DiagnosisPane({
 
       {oneOffGroups.length > 0 && (
         <Box sx={{ mt: 2.5 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 600, mb: 1 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500, mb: 1 }}>
             Also seen
           </Typography>
           <Box sx={{ ...listFrame, py: 0.5 }}>

@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Box, Stack, Typography, Button, ButtonBase } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import { sentence } from "./oneOffs";
 
 /**
  * One goal the run's evals say broke: how often, what the eval expected, and
@@ -13,11 +14,6 @@ import Iconify from "src/components/iconify";
 const VISIBLE_WAYS = 3;
 // An opened one-off group lists this many explanations before "Show all".
 const VISIBLE_DETAILS = 5;
-
-const sentence = (text) =>
-  text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 const num = { fontVariantNumeric: "tabular-nums" };
 
@@ -132,7 +128,7 @@ export default function GoalCard({ goal, onViewCalls }) {
           startIcon={<Iconify icon="solar:eye-linear" width={14} />}
           sx={{ flexShrink: 0 }}
         >
-          View {plural(broken, "call")}
+          View calls
         </Button>
       </Stack>
 
@@ -245,8 +241,8 @@ export function OneOffGroup({ phrase, ways, callIds, onViewCalls }) {
           }}
         >
           <Typography
-            sx={{ typography: "s2", minWidth: 0 }}
-            noWrap
+            sx={{ typography: "s2", minWidth: 0, wordBreak: "break-word" }}
+            noWrap={details.length > 0}
             title={phrase}
           >
             {phrase}
