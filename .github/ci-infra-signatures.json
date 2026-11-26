@@ -1,0 +1,22 @@
+[
+  {
+    "name": "registry rate limit",
+    "class": "rate_limit",
+    "regex": "too many requests|toomanyrequests|(unexpected status.*|status code[:= ]*|HTTP(/[0-9.]+)?[[:space:]]+)429([^0-9]|$)"
+  },
+  {
+    "name": "registry 5xx",
+    "class": "transient",
+    "regex": "(unexpected status.*|status code[:= ]*|HTTP(/[0-9.]+)?[[:space:]]+)5[0-9]{2}([^0-9]|$)|500 Internal Server Error|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout"
+  },
+  {
+    "name": "network timeout or reset",
+    "class": "transient",
+    "regex": "i/o timeout|TLS handshake timeout|connection reset by peer|dial tcp.*connection refused|(: |unexpected )EOF([[:space:]]|$)|temporary failure in name resolution|Client.Timeout exceeded"
+  },
+  {
+    "name": "auth, tag or configuration error",
+    "class": "permanent",
+    "regex": "unauthorized|authentication required|denied|manifest unknown|name unknown|no matching manifest|not found|certificate|invalid reference|no such service|no space left|(unexpected status.*|status code[:= ]*|HTTP(/[0-9.]+)?[[:space:]]+)4[0-9]{2}([^0-9]|$)"
+  }
+]
