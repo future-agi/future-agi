@@ -78,6 +78,7 @@ test(
         'from the confirm click on, the only mutating /simulate/ request is one POST to the versions/lock route, naming the default environment and suite version ids, answered 200 with one locked version',
         'simulate_harness_locked_version has one row for the environment, unlocked_at NULL, with the default environment and suite version ids and a YYYY.M.N label',
         'simulate_harness_task_split has one row per seeded scenario, each first given by that locked version, and the test rows number what target_test_size gives (4 of 12)',
+        'simulate_harness_locked_version_member holds that locked version\'s roster: one row per seeded scenario, each with the split simulate_harness_task_split gave it',
         'the versions read lists that locked version with the same label and the 8 train and 4 test counts, and the versions/lock-preview read refuses with version_already_locked',
         'deleting the environment answers 409 version_locked, "Lock <label> covers this version. A workspace admin or owner must unlock it first.", and the environment is still readable',
       ],
@@ -182,6 +183,15 @@ test(
     expect(new Set(splits.map((one) => one.first_locked_version_id))).toEqual(new Set([lockedVersion.id]));
     expect(splits.filter((one) => one.split === 'test')).toHaveLength(TEST_TASKS);
     expect(splits.filter((one) => one.split === 'train')).toHaveLength(TRAIN_TASKS);
+    // The lock's roster records the same members and splits.
+    const roster = await probe.pg<{ scenario_key: string; split: string }>(
+      `SELECT h.scenario_key, m.split
+         FROM simulate_harness_locked_version_member m
+         JOIN simulate_hosted_harness_scenario h ON h.id = m.scenario_id
+        WHERE m.locked_version_id = $1`, [lockedVersion.id]);
+    const byKey = (rows: { scenario_key: string; split: string }[]) =>
+      Object.fromEntries(rows.map((one) => [one.scenario_key, one.split]));
+    expect(byKey(roster)).toEqual(byKey(splits));
 
     // Check 5: the read the card draws from.
     const after = await actor.api.get<Versions>(versions(env));
