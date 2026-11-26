@@ -75,7 +75,10 @@ class TemporalCliScriptTest(unittest.TestCase):
 
     def test_cache_key_identifies_the_versioned_archive_and_digest(self):
         result = subprocess.run(
-            ["bash", str(SCRIPT), "cache-key"], capture_output=True, text=True, check=True
+            ["bash", str(SCRIPT), "cache-key"],
+            capture_output=True,
+            text=True,
+            check=True,
         )
         self.assertEqual(result.stdout.strip(), f"{NAME}-sha256-{PIN}")
 

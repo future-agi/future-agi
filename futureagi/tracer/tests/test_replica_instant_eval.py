@@ -485,7 +485,7 @@ def test_retry_forgets_a_failure_committed_just_before_its_update(
     def before_update(execute, sql, params, many, context):
         # After any preliminary SELECT of ids, but before the statement that
         # decides which entries actually become pending. Both answers exist.
-        if sql.replace('"', '').startswith("UPDATE tracer_eval_logger SET"):
+        if sql.replace('"', "").startswith("UPDATE tracer_eval_logger SET"):
             with ThreadPoolExecutor(max_workers=1) as pool:
                 pool.submit(finish_late).result(timeout=10)
             assert _answers(task) == 2
