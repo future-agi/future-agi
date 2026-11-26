@@ -84,8 +84,8 @@ def _stock_fails_on(tree):
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("accepted_media_type", "indent"),
-    [(INDENT, None), ("application/json", 2), ("application/json; indent=0", None)],
-    ids=["accept-indent", "context-indent", "accept-indent-0"],
+    [(INDENT, None), ("application/json", 2), ("application/json", 0)],
+    ids=["accept-indent", "context-indent", "context-indent-0"],
 )
 def test_indented_render_of_too_deep_tree_becomes_a_406(accepted_media_type, indent):
     data = _envelope([_entry(1, [])])
@@ -112,14 +112,21 @@ def test_indented_render_of_too_deep_tree_becomes_a_406(accepted_media_type, ind
 
 
 @pytest.mark.unit
-def test_compact_render_of_too_deep_tree_keeps_the_fallback_and_status():
+@pytest.mark.parametrize(
+    "accepted_media_type",
+    ["application/json", "application/json; indent=0"],
+    ids=["compact", "accept-indent-0-coerced-compact"],
+)
+def test_compact_render_of_too_deep_tree_keeps_the_fallback_and_status(
+    accepted_media_type,
+):
     data = _envelope([_entry(1, [_entry(2, [])])])
-    expected = JSONRenderer().render(data)
+    expected = JSONRenderer().render(data, accepted_media_type)
     response = SimpleNamespace(status_code=status.HTTP_200_OK)
 
     with _stock_fails_on(data):
         body = TraceDetailJSONRenderer().render(
-            data, "application/json", {"response": response}
+            data, accepted_media_type, {"response": response}
         )
 
     assert body == expected
