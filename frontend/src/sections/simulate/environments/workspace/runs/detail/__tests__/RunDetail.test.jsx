@@ -223,6 +223,8 @@ function RunTraceTableStub({
   rerunDisabledReason,
   onRerunScenarios,
   onRerunInRun,
+  onAskCalls,
+  askDisabledReason,
 }) {
   useEffect(() => {
     onQueryChange?.(TABLE_QUERY);
@@ -255,6 +257,12 @@ function RunTraceTableStub({
         </button>
       )}
       {onRerunInRun && <span>rerun-in-run</span>}
+      {onAskCalls && (
+        <button type="button" onClick={() => onAskCalls(["c1", "c2"])}>
+          ask ticked
+        </button>
+      )}
+      <span>{`ask-off:${askDisabledReason ?? "-"}`}</span>
       <button
         type="button"
         onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
@@ -275,8 +283,51 @@ RunTraceTableStub.propTypes = {
   rerunDisabledReason: PropTypes.string,
   onRerunScenarios: PropTypes.func,
   onRerunInRun: PropTypes.func,
+  onAskCalls: PropTypes.func,
+  askDisabledReason: PropTypes.string,
 };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
+
+// The question dialog and the Questions tab have their own tests; here only
+// the page's wiring matters: what is asked about, and where a launch lands.
+function AskQuestionDialogStub({ open, selection, onLaunched }) {
+  if (!open) return null;
+  return (
+    <div>
+      {`ask-dialog:${selection.kind}:${(selection.callIds ?? []).join(",")}`}
+      <button type="button" onClick={() => onLaunched("ask-9")}>
+        launch ask
+      </button>
+    </div>
+  );
+}
+AskQuestionDialogStub.propTypes = {
+  open: PropTypes.bool,
+  selection: PropTypes.object,
+  onLaunched: PropTypes.func,
+};
+vi.mock("../asks/AskQuestionDialog", () => ({
+  default: AskQuestionDialogStub,
+}));
+function RunAsksPanelStub({ openAskId, onOpenCall, onAsk }) {
+  return (
+    <div>
+      {`asks-panel:${openAskId ?? "-"}`}
+      <button type="button" onClick={() => onOpenCall("c7")}>
+        open asked call
+      </button>
+      <button type="button" onClick={onAsk}>
+        ask every call
+      </button>
+    </div>
+  );
+}
+RunAsksPanelStub.propTypes = {
+  openAskId: PropTypes.string,
+  onOpenCall: PropTypes.func,
+  onAsk: PropTypes.func,
+};
+vi.mock("../asks/RunAsksPanel", () => ({ default: RunAsksPanelStub }));
 vi.mock("../CallDrawer", () => ({
   default: ({ task }) => (task ? <div>{`call-drawer:${task.id}`}</div> : null),
 }));
@@ -1974,5 +2025,69 @@ describe("RunDetail build notice", () => {
     });
     renderDetail();
     expect(screen.queryByTestId("run-build-notice")).toBeNull();
+  });
+});
+
+describe("RunDetail asking questions about calls", () => {
+  it("asks about the ticked calls and lands on the new ask", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "ask ticked" }));
+    expect(screen.getByText("ask-dialog:calls:c1,c2")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "launch ask" }));
+    expect(screen.getByRole("tab", { name: "Questions" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("asks-panel:ask-9")).toBeInTheDocument();
+    expect(screen.queryByText(/ask-dialog:/)).not.toBeInTheDocument();
+  });
+
+  it("asks about every call from the Questions tab", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("tab", { name: "Questions" }));
+    await user.click(screen.getByRole("button", { name: "ask every call" }));
+
+    expect(screen.getByText("ask-dialog:runs:")).toBeInTheDocument();
+  });
+
+  it("opens an asked-about call the way a link does", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("tab", { name: "Questions" }));
+    await user.click(screen.getByRole("button", { name: "open asked call" }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("?rowId=c7");
+  });
+
+  it("holds questions back while the run is live", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "running" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(
+      screen.getByText(
+        "ask-off:Wait for this run to finish before asking about its calls",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("offers no questions on an environment with no backend", () => {
+    renderDetail({ backed: false });
+
+    expect(
+      screen.queryByRole("button", { name: "ask ticked" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Questions" }),
+    ).not.toBeInTheDocument();
   });
 });
