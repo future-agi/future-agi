@@ -8,6 +8,7 @@ import ast
 from collections import Counter
 from contextlib import contextmanager, redirect_stdout
 import copy
+from datetime import datetime, timedelta, timezone
 import io
 import json
 from pathlib import Path
@@ -30,8 +31,21 @@ ARGS = dict(namespace='reference-source', email='reference-source@example.test',
     organization_id=str(uuid.UUID(int=1)), workspace_id=str(uuid.UUID(int=2)))
 CONTEXT = dict(user_id=str(uuid.UUID(int=3)), project_id=str(uuid.UUID(int=4)),
     historical_at='2026-01-01T00:00:00+00:00')
-PROGRAMS = (s.DJANGO_PREFIX+m.PREPARE, s.DJANGO_PREFIX+m.CHUNK, s.DJANGO_PREFIX+m.VERIFY)
+PROGRAMS = (s.DJANGO_PREFIX+m.PREPARE, s.DJANGO_PREFIX+m.CHUNK, s.DJANGO_PREFIX+m.VERIFY_SLICE,
+    s.DJANGO_PREFIX+m.COHORTS)
+TARGET_PROGRAMS = (s.DJANGO_PREFIX+m.TARGET_SLICE, s.DJANGO_PREFIX+m.TARGET_COHORTS)
+# One full bounded source verification at scale one: payload slices, then buckets.
+VERIFY_CALLS = 100000 // m.VERIFY_JOBS + 1
 KINDS = ('Group', 'Job', 'Attempt', 'Report', 'Finding', 'Member')
+# Documented per-block geometry (module docstring, DEVELOPER_GUIDE and PR body).
+SCALE_ONE_COUNTS = {'tracer_trace_investigation_finding': 101000, 'tracer_trace_investigation_job': 100000,
+    'tracer_trace_investigation_report': 101000}
+SCALE_ONE_COHORTS = dict(groups=1000, attempts=100000, legacy_reports=1000, no_root_end_jobs=25000,
+    memberships=96000, backfill_memberships=70000, deleted_backfill_memberships=1000,
+    no_root_end_memberships=25000, legacy_memberships=1000, chain_consistent_memberships=96000,
+    findings_without_membership=5000)
+SCALE_ONE_TARGET = dict(memberships=96000, filled_memberships=70000, filled_deleted_memberships=1000,
+    null_memberships=26000, null_no_root_end_memberships=25000, null_legacy_memberships=1000)
 OMEGA_REQUIRED = ('job_id', 'attempt_id', 'idempotency_key', 'result_digest', 'contract_version', 'evidence_digest',
     'outcome', 'coverage_scope', 'read_complete', 'model_calls', 'input_tokens', 'output_tokens', 'cost_status',
     'trace_id', 'observed_span_count', 'future_arrivals_known')
@@ -53,10 +67,11 @@ class FakeApp:
         self.scale = scale
         self.plan = m.investigation_reference_plan(scale)
         self.baseline = dict(zip(TABLES, (5, 7, 11)))
-        self.committed = set()
+        self.committed, self.verified = set(), set()
         self.calls, self.skipped = [], []
         self.fail_at = None
-        self.alter_verified = self.alter_prepared = lambda value: value
+        self.alter_verified = self.alter_prepared = self.alter_slice = lambda value: value
+        self.alter_target_slice = self.alter_target = lambda value: value
 
     def partial_counts(self):
         # Abstract committed-boundary accounting, NOT simulated physical data.
@@ -81,17 +96,36 @@ class FakeApp:
             if skipped: self.skipped.append(args['start'])
             self.committed.add(args['start'])
             return {'skipped':skipped}
-        if program == s.DJANGO_PREFIX+m.VERIFY:
-            assert args['scale'] == self.scale
+        one = m.investigation_reference_plan(1)
+        if program == s.DJANGO_PREFIX+m.VERIFY_SLICE:
+            assert args['scale'] == self.scale and args['context'] == CONTEXT
+            assert args['stop'] == args['start']+m.VERIFY_JOBS and args['start'] % m.VERIFY_JOBS == 0
             assert self.committed == set(range(0, 100000*self.scale, m.CHUNK_JOBS)), 'premature verify'
+            if args['start'] == 0: self.verified = set()
+            self.verified.add(args['start'])
+            return self.alter_slice({'verified':m.VERIFY_JOBS})
+        if program == s.DJANGO_PREFIX+m.COHORTS:
+            assert args['scale'] == self.scale and args['buckets'] == self.scale and 0 <= args['bucket'] < self.scale
+            assert self.verified == set(range(0, 100000*self.scale, m.VERIFY_JOBS)), 'cohorts before payload slices'
+            # Each UUID bucket holds about one block; abstract equal shares here.
             return self.alter_verified(dict(counts={table:self.baseline[table]+count
-                for table,count in self.plan['counts'].items()}, seeded_counts=copy.deepcopy(self.plan['counts']),
-                cohorts=copy.deepcopy(self.plan['cohorts'])))
+                for table,count in self.plan['counts'].items()} if args['bucket'] == 0 else None,
+                seeded_counts=copy.deepcopy(one['counts']), cohorts=copy.deepcopy(one['cohorts'])))
+        if program == s.DJANGO_PREFIX+m.TARGET_SLICE:
+            assert args['scale'] == self.scale and args['context'] == CONTEXT
+            assert args['stop'] == args['start']+m.VERIFY_JOBS and args['start'] % m.VERIFY_JOBS == 0
+            cohort = payload_env()['cohort']
+            checked = sum(cohort(o) != 'no_membership' for o in range(args['start'], args['stop'])) \
+                + m.VERIFY_JOBS // m.LEGACY_EVERY
+            return self.alter_target_slice(dict(checked=checked, mismatched=0))
+        if program == s.DJANGO_PREFIX+m.TARGET_COHORTS:
+            assert args['scale'] == self.scale and args['buckets'] == self.scale and 0 <= args['bucket'] < self.scale
+            return self.alter_target(m.investigation_target_plan(1))
         raise AssertionError('unexpected source operation')
 
 
-def payload_env():
-    env = {'a':copy.deepcopy(ARGS)}
+def payload_env(**arguments):
+    env = {'a':dict(copy.deepcopy(ARGS), **arguments)}
     exec(m.ROWS, env)
     return env
 
@@ -108,7 +142,15 @@ def execute(env, source):
 
 def orm_env():
     """Executes the actual COMMON functions and CHUNK body against PK-indexed doubles."""
-    from deploy.tests.test_update_trace_reference import Query
+    from deploy.tests.test_update_trace_reference import Query as TraceQuery
+
+    class Query(TraceQuery):
+        def bulk_update(self, objects, fields, batch_size):
+            # Only the job -> current report link is set after insert.
+            assert batch_size == 500 and fields == ['current_report_id']
+            for obj in objects:
+                assert obj.pk in self.model.records, 'bulk_update of a missing row'
+                self.model.records[obj.pk] = dict(self.model.records[obj.pk], current_report_id=obj.current_report_id)
     env = payload_env()
     context = fixture_context(env)
     sample = env['payloads'](context, 0, m.CHUNK_JOBS)
@@ -223,22 +265,30 @@ class InvestigationReferenceTests(unittest.TestCase):
         expected = {('tracer', name) for name in ('TraceInvestigationJob', 'TraceInvestigationAttempt',
             'TraceInvestigationReport', 'TraceInvestigationFinding', 'TraceErrorGroup', 'ErrorClusterTraces',
             'Project')} | {('accounts', 'User'), ('accounts', 'Workspace')}
-        for program in (m.PREPARE, m.CHUNK, m.VERIFY):
+        programs = {m.PREPARE: expected, m.CHUNK: expected, m.VERIFY_SLICE: expected, m.COHORTS: expected,
+            # Target reads follow 0118's own relation path from the membership model.
+            m.TARGET_SLICE: {('tracer', 'ErrorClusterTraces')}, m.TARGET_COHORTS: {('tracer', 'ErrorClusterTraces')}}
+        for program, models in programs.items():
             compile(s.DJANGO_PREFIX+program, '<fixed-source-operation>', 'exec')
             tree = ast.parse(program)
             calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
             names = [(ast.literal_eval(node.args[0]), ast.literal_eval(node.args[1])) for node in calls
                 if isinstance(node.func, ast.Attribute) and node.func.attr == 'get_model']
-            self.assertEqual(set(names), expected)
+            self.assertEqual(set(names), models)
             self.assertFalse(any(isinstance(node, ast.keyword) and node.arg == 'ignore_conflicts' for node in ast.walk(tree)))
             self.assertFalse(any(isinstance(node, ast.Attribute) and node.attr in ('delete', 'schema_editor', 'migrate', 'raw', 'extra')
                 for node in ast.walk(tree)))
             for text in ('ANALYZE', 'pg_stat', 'TRIGGER', 'session_replication_role', 'INSERT', 'UPDATE '):
                 self.assertNotIn(text, program)
         mutations = {'create', 'bulk_create', 'bulk_update', 'update', 'delete', 'save', 'get_or_create', 'update_or_create'}
-        verify_calls = {node.func.attr for node in ast.walk(ast.parse(m.VERIFY))
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
-        self.assertFalse(verify_calls & mutations)
+        for program in (m.VERIFY_SLICE, m.COHORTS, m.TARGET_SLICE, m.TARGET_COHORTS):
+            verify_calls = {node.func.attr for node in ast.walk(ast.parse(program))
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
+            self.assertFalse(verify_calls & mutations)
+            # Target programs never reuse the source inventory or context checks.
+            if program in (m.TARGET_SLICE, m.TARGET_COHORTS):
+                self.assertNotIn('matching(', program)
+                self.assertNotIn('check_context(', program)
 
     def test_missing_source_model_fails_before_any_write(self):
         apps = mock.Mock()
@@ -277,6 +327,7 @@ class InvestigationReferenceTests(unittest.TestCase):
         context = fixture_context(env)
         plan = m.investigation_reference_plan(1)
         counts, tally = Counter(), Counter()
+        recounted = 0
         seen = {name: set() for name in KINDS}
         traces, keys, records, codes, ended = set(), set(), set(), set(), set()
         for start in range(0, 100000, m.CHUNK_JOBS):
@@ -299,6 +350,10 @@ class InvestigationReferenceTests(unittest.TestCase):
                     ('scanner', 'error_feed', None, 'escalating', False))
             for row in jobs.values():
                 self.assertEqual((row['workload_type'], row['test_execution_id'], row['call_execution_id']), ('trace', None, None))
+                # Each job points at its own current Omega report.
+                current = reports[row['current_report_id']]
+                self.assertEqual((current['job_id'], current['is_current'], current['source'], current['deleted']),
+                    (row['id'], True, 'omega', row['deleted']))
                 self.assertNotIn(row['trace_id'], traces)
                 traces.add(row['trace_id'])
                 if row['root_end_time'] is None:
@@ -354,8 +409,34 @@ class InvestigationReferenceTests(unittest.TestCase):
                     tally['backfill_memberships'] += 1
                     tally['deleted_backfill_memberships'] += row['deleted']
                     self.assertEqual((finding['deleted'], report['deleted'], job['deleted']), (row['deleted'],) * 3)
+            # Issue counters follow the released grouping _recount, recomputed
+            # here from the generated rows with its own predicate.
+            for group in groups.values():
+                live = [row for row in rows['Member'] if row['cluster_id'] == group['id'] and not row['deleted']
+                    and row['span_id'] is None and row['trace_session_id'] is None and row['finding_id'] is not None
+                    and not findings[row['finding_id']]['deleted'] and findings[row['finding_id']]['cluster_id'] == group['id']
+                    and not reports[findings[row['finding_id']]['report_id']]['deleted']
+                    and reports[findings[row['finding_id']]['report_id']]['is_current']
+                    and reports[findings[row['finding_id']]['report_id']]['source'] == 'omega'
+                    and reports[findings[row['finding_id']]['report_id']]['execution_status'] == 'completed'
+                    and reports[findings[row['finding_id']]['report_id']]['workload_type'] == 'trace'
+                    and row['trace_id'] == reports[findings[row['finding_id']]['report_id']]['trace_id']]
+                recorded = [reports[findings[row['finding_id']]['report_id']]['recorded_at'] for row in live]
+                distinct = len({row['finding_id'] for row in live})
+                self.assertEqual((group['error_count'], group['total_events'], group['unique_traces'],
+                    group['first_seen'], group['last_seen'], group['error_ids']),
+                    (distinct, distinct, len({row['trace_id'] for row in live}),
+                     min(recorded) if recorded else None, max(recorded) if recorded else None, []))
+                recounted += bool(live)
         self.assertEqual(dict(counts), plan['counts'])
         self.assertEqual(dict(tally), plan['cohorts'])
+        # 10 issues per block hold only soft-deleted chains and 50 only findings
+        # without a membership, so they recount to zero with no seen times.
+        self.assertEqual(recounted, 940)
+        # The documented scale-one geometry, pinned literally.
+        self.assertEqual(plan['counts'], SCALE_ONE_COUNTS)
+        self.assertEqual(plan['cohorts'], SCALE_ONE_COHORTS)
+        self.assertEqual(m.investigation_target_plan(1), SCALE_ONE_TARGET)
         second = Counter(env['cohort'](ordinal) for ordinal in range(100000, 200000))
         self.assertEqual(dict(second), m.COHORTS)
         doubled = m.investigation_reference_plan(2)
@@ -373,7 +454,16 @@ class InvestigationReferenceTests(unittest.TestCase):
         expected = predicate(migration.read_text())
         # The source schema has no occurred_at: every source membership is pending.
         self.assertIs(expected.pop('occurred_at__isnull'), True)
-        self.assertEqual(predicate(m.VERIFY_BODY), expected)
+        self.assertEqual(predicate(m.COHORTS_BODY), expected)
+        # On the target, filled rows carry 0118's subquery value and source.
+        source = ast.parse(migration.read_text())
+        update = next(node for node in ast.walk(source) if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute) and node.func.attr == 'update')
+        self.assertEqual({keyword.arg for keyword in update.keywords}, set(m.TARGET_ONLY_MEMBER_COLUMNS))
+        self.assertEqual(next(ast.literal_eval(keyword.value) for keyword in update.keywords
+            if keyword.arg == 'occurrence_time_source'), 'omega_root_end')
+        self.assertIn("occurrence_time_source='omega_root_end'", m.TARGET_COHORTS_BODY)
+        self.assertIn("F('finding__report__job__root_end_time')", m.TARGET_COHORTS_BODY)
 
     def test_actual_chunk_insert_replay_conflict_and_rollback(self):
         env, context = orm_env()
@@ -382,6 +472,10 @@ class InvestigationReferenceTests(unittest.TestCase):
         self.assertEqual(execute(env, m.CHUNK_BODY), {'skipped':False})
         self.assertEqual({name: len(env[name].records) for name in KINDS},
             dict(Group=25, Job=2500, Attempt=2500, Report=2525, Finding=2525, Member=2525))
+        # Set in the same chunk: every job points at its own current report.
+        for job in env['Job'].records.values():
+            report = env['Report'].records[job['current_report_id']]
+            self.assertEqual((report['job_id'], report['is_current']), (job['id'], True))
         original = {name: copy.deepcopy(env[name].records) for name in KINDS}
         self.assertEqual(execute(env, m.CHUNK_BODY), {'skipped':True})
         self.assertEqual(original, {name: env[name].records for name in KINDS})
@@ -390,6 +484,11 @@ class InvestigationReferenceTests(unittest.TestCase):
         member = next(iter(env['Member'].records))
         env['Member'].records[member]['finding_id'] = None
         with self.assertRaisesRegex(AssertionError, 'incompatible existing Member'):
+            execute(env, m.CHUNK_BODY)
+        env['Member'].records = copy.deepcopy(original['Member'])
+        # A replay also refuses a job whose current report link was lost.
+        env['Job'].records[next(iter(env['Job'].records))]['current_report_id'] = None
+        with self.assertRaisesRegex(AssertionError, 'incompatible existing Job'):
             execute(env, m.CHUNK_BODY)
         env, context = orm_env()
         env['a'].update(context=context, start=0, stop=m.CHUNK_JOBS, scale=1)
@@ -434,19 +533,23 @@ class InvestigationReferenceTests(unittest.TestCase):
                 self.assertEqual(len(fake.committed), 40)
                 self.assertTrue(hasattr(driver, '_investigation_reference'))
                 self.assertFalse(hasattr(driver, '_investigation_reference_pending'))
-                self.assertEqual(fake.calls[-1][0], s.DJANGO_PREFIX+m.VERIFY)
+                self.assertEqual(fake.calls[-1][0], s.DJANGO_PREFIX+m.COHORTS)
                 measured.append(entry['table'])
                 return dict(engine='postgres', table='public.'+entry['table'], rows=222222, bytes=7654321)
             result = p.seed_reference_tables(entries, driver.seed_reference_table, measure)
             self.assertEqual([row['rows'] for row in result], [222222]*len(entries))
             self.assertEqual(measured, [entry['table'] for entry in entries])
             programs = Counter(program for program, args in fake.calls)
-            self.assertEqual(programs, Counter({PROGRAMS[0]:1, PROGRAMS[1]:40, PROGRAMS[2]:len(entries)}))
+            # Each table callback runs the same full bounded verification.
+            self.assertEqual(programs, Counter({PROGRAMS[0]:1, PROGRAMS[1]:40,
+                PROGRAMS[2]:(VERIFY_CALLS-1)*len(entries), PROGRAMS[3]:len(entries)}))
             self.assertEqual(fake.calls[0][1], ARGS)
             self.assertEqual(len(driver.corpus['reference_seed_operations']), 1)
             operation = driver.corpus['reference_seed_operations'][0]
-            self.assertEqual((operation['table'], operation['operation'], operation['chunks'], operation['cohorts']),
-                ('tracer_trace_investigation_family', 'investigation_reference_fixture', 40, fake.plan['cohorts']))
+            self.assertEqual((operation['table'], operation['operation'], operation['chunks'], operation['cohorts'],
+                operation['verify_calls'], len(operation['verify_seconds'])),
+                ('tracer_trace_investigation_family', 'investigation_reference_fixture', 40, fake.plan['cohorts'],
+                 VERIFY_CALLS, VERIFY_CALLS))
             for secret in ('Authorization', 'SECRET', 'password', 'DO-NOT-FORWARD'):
                 self.assertNotIn(secret, json.dumps([args for program, args in fake.calls]))
 
@@ -473,8 +576,9 @@ class InvestigationReferenceTests(unittest.TestCase):
             calls = len(fake.calls)
             fake.alter_verified = lambda value: dict(value, counts={k: v+111 for k, v in value['counts'].items()})
             driver.seed_investigation_reference_family(100000)
-            self.assertEqual(len(fake.calls), calls+1)
-            self.assertEqual(fake.calls[-1][0], s.DJANGO_PREFIX+m.VERIFY)
+            # A repeat call is one full bounded verification and no writes.
+            self.assertEqual([program for program, args in fake.calls[calls:]],
+                [PROGRAMS[2]]*(VERIFY_CALLS-1) + [PROGRAMS[3]])
             self.assertEqual(len(driver.corpus['reference_seed_operations']), 1)
 
     def test_bad_counts_and_unknown_cohorts_never_complete(self):
@@ -484,17 +588,24 @@ class InvestigationReferenceTests(unittest.TestCase):
             lambda value: dict(value, cohorts=dict(value['cohorts'], unexpected=1)),
             lambda value: dict(value, seeded_counts={k: float(v) for k, v in value['seeded_counts'].items()}),
             lambda value: dict(value, counts=m.investigation_reference_plan(1)['counts']),
-            lambda value: dict(value, counts=dict(value['counts'], tracer_trace_investigation_job=99999))]
-        for change in mutations:
+            lambda value: dict(value, counts=dict(value['counts'], tracer_trace_investigation_job=99999)),
+            lambda value: dict(value, counts=None), lambda value: dict(value, extra=1)]
+        slices = [lambda value: None, lambda value: {}, lambda value: {'verified':m.VERIFY_JOBS-1},
+            lambda value: {'verified':True}, lambda value: dict(value, extra=1)]
+        for hook, change in [('alter_verified', change) for change in mutations] + [('alter_slice', change) for change in slices]:
             fake = FakeApp()
-            fake.alter_verified = change
+            setattr(fake, hook, change)
             driver = driver_for(fake)
             with self.assertRaises(p.ManualRelease): driver.seed_investigation_reference_family(100000)
             self.assertFalse(hasattr(driver, '_investigation_reference'))
             self.assertNotIn('reference_seed_operations', driver.corpus)
-            fake.alter_verified = lambda value: value
+            setattr(fake, hook, lambda value: value)
             driver.seed_investigation_reference_family(100000)
             self.assertEqual(fake.skipped, list(range(0, 100000, 2500)))
+        # Above scale one, only bucket 0 carries the whole-table counts.
+        fake = FakeApp(scale=2)
+        fake.alter_verified = lambda value: dict(value, counts=value['counts'] or {k: 10**9 for k in TABLES})
+        with self.assertRaises(p.ManualRelease): driver_for(fake).seed_investigation_reference_family(200000)
 
     def test_invalid_prepare_rows_and_context_fail_closed(self):
         for change in (lambda value: None, lambda value: dict(value, counts={}),
@@ -523,6 +634,13 @@ class InvestigationReferenceTests(unittest.TestCase):
         driver.seed_investigation_reference_family(100001)
         self.assertEqual(len(fake.committed), 80)
         self.assertEqual(driver._investigation_reference['cohorts']['groups'], 2000)
+        # Read-only work per call is fixed: twice the payload slices and one
+        # UUID bucket per scale block, never one call over the whole fixture.
+        programs = Counter(program for program, args in fake.calls)
+        self.assertEqual((programs[PROGRAMS[2]], programs[PROGRAMS[3]]), (2*(VERIFY_CALLS-1), 2))
+        self.assertEqual(sorted(args['bucket'] for program, args in fake.calls if program == PROGRAMS[3]), [0, 1])
+        self.assertTrue(all(args['stop']-args['start'] == m.VERIFY_JOBS for program, args in fake.calls
+            if program == PROGRAMS[2]))
         calls = len(fake.calls)
         for rows in (100000, 200000):
             with self.assertRaises(p.ManualRelease): driver.seed_investigation_reference_family(rows)
@@ -602,6 +720,260 @@ class InvestigationReferenceTests(unittest.TestCase):
         namespace = payload_env()['NAMESPACE']
         for prefix in ('futureagi-qualification-reference:', 'futureagi-qualification-trace-reference:'):
             self.assertNotEqual(uuid.uuid5(uuid.NAMESPACE_URL, prefix+ARGS['namespace']), namespace)
+
+    def test_source_namespaces_give_disjoint_ids_and_regeneration_is_stable(self):
+        first, again, other = payload_env(), payload_env(), payload_env(namespace='reference-other-source')
+        self.assertNotEqual(first['NAMESPACE'], other['NAMESPACE'])
+        generated = [env['payloads'](fixture_context(env), start, start + m.CHUNK_JOBS)
+            for env in (first, again, other) for start in (0, 97500)]
+        # The same namespace regenerates byte-identical payloads, so replay and
+        # every later verify compare against exactly what was written.
+        self.assertEqual(generated[:2], generated[2:4])
+        self.assertEqual(first['project_payload'](fixture_context(first)), again['project_payload'](fixture_context(again)))
+        ids = lambda batches: {row['id'] for rows in batches for name in KINDS for row in rows[name]}
+        self.assertEqual(len(ids(generated[:2])), sum(len(rows[name]) for rows in generated[:2] for name in KINDS))
+        self.assertFalse(ids(generated[:2]) & ids(generated[4:]))
+        # Issue codes repeat across namespaces, but they are unique per project
+        # and each namespace has its own project.
+        self.assertNotEqual(first['identity']('project', 0), other['identity']('project', 0))
+        self.assertEqual({row['project_id'] for rows in generated[4:] for row in rows['Group']},
+            {other['identity']('project', 0)})
+
+    def test_attempt_uniqueness_must_be_physical_unconditional_and_single_column(self):
+        function = next(node for node in ast.parse(m.SCHEMA_CHECK).body
+            if isinstance(node, ast.FunctionDef) and node.name == 'single_column_unique')
+
+        def decide(rows):
+            cursor = mock.MagicMock()
+            cursor.fetchall.return_value = rows
+            connection = mock.MagicMock()
+            connection.cursor.return_value.__enter__.return_value = cursor
+            env = {'connection': connection}
+            exec(compile(ast.Module(body=[function], type_ignores=[]), '<schema-unique>', 'exec'), env)
+            return env['single_column_unique']('tracer_trace_investigation_report', 'attempt_id'), cursor
+        primary = (True, True, None, None, ['id'])
+        # Regression: only the FK (and its plain index) remains, while Django
+        # metadata still says one_to_one. That must refuse before any write.
+        only_fk = [primary, (False, True, None, None, ['attempt_id'])]
+        for name, rows in (('only_fk', only_fk), ('no_index', [primary]), ('nothing', []),
+                ('partial', [primary, (True, True, '(deleted = false)', None, ['attempt_id'])]),
+                ('expression', [primary, (True, True, None, 'lower((attempt_id)::text)', [])]),
+                ('composite', [primary, (True, True, None, None, ['attempt_id', 'job_id'])]),
+                ('invalid', [primary, (True, False, None, None, ['attempt_id'])]),
+                ('other_column', [primary, (True, True, None, None, ['job_id'])])):
+            with self.subTest(case=name):
+                self.assertIs(decide(rows)[0], False)
+        accepted, cursor = decide([primary, (False, True, None, None, ['attempt_id']),
+            (True, True, None, None, ['attempt_id'])])
+        self.assertIs(accepted, True)
+        sql, params = cursor.execute.call_args.args
+        self.assertEqual(params, ['tracer_trace_investigation_report'])
+        for text in ('pg_index', 'indpred', 'indexprs', 'indisvalid', 'indnkeyatts', 'to_regclass(%s)'):
+            self.assertIn(text, sql)
+        # The source check requires it for Report.attempt before any write.
+        required = [node for node in ast.walk(ast.parse(m.SCHEMA_CHECK)) if isinstance(node, ast.Assert)
+            and isinstance(node.test, ast.Call) and getattr(node.test.func, 'id', None) == 'single_column_unique']
+        self.assertEqual(len(required), 1)
+        self.assertIn("Report._meta.get_field('attempt').column", ast.unparse(required[0].test))
+        self.assertLess(m.PREPARE.index('attempt uniqueness drift'), m.PREPARE.index('transaction.atomic()'))
+
+    def test_source_membership_table_must_not_have_target_only_columns(self):
+        raw = (ROOT/'futureagi/tracer/migrations/0117_feed_escalation_policy.py').read_text()
+        added = {ast.literal_eval(keyword.value) for node in ast.walk(ast.parse(raw)) if isinstance(node, ast.Call)
+            and getattr(node.func, 'attr', None) == 'AddField'
+            and any(k.arg == 'model_name' and ast.literal_eval(k.value) == 'errorclustertraces' for k in node.keywords)
+            for keyword in node.keywords if keyword.arg == 'name'}
+        self.assertEqual(added, set(m.TARGET_ONLY_MEMBER_COLUMNS))
+        self.assertFalse(added & set(m.SOURCE_FIELDS['Member'].split()))
+        self.assertIn("name!='Member' or not columns&set(TARGET_ONLY_MEMBER_COLUMNS)", m.SCHEMA_CHECK)
+        self.assertLess(m.PREPARE.index('target-only physical column'), m.PREPARE.index('transaction.atomic()'))
+
+    def test_buckets_partition_the_uuid_space_and_refuse_bad_indices(self):
+        class Recorded:
+            def __init__(self, filters=()): self.filters = filters
+            def filter(self, **kwargs): return Recorded(self.filters + tuple(kwargs.items()))
+        env = {'a': {}, 'uuid': uuid}
+        exec(m.BUCKET, env)
+        for scale in (1, 2, 3, 1000):
+            bounds = []
+            for index in range(scale):
+                env['a'] = dict(scale=scale, buckets=scale, bucket=index)
+                bounds.append(dict(env['bucket'](Recorded()).filters))
+            self.assertEqual(bounds[0]['pk__gte'], uuid.UUID(int=0))
+            self.assertNotIn('pk__lt', bounds[-1])
+            for left, right in zip(bounds, bounds[1:]):
+                self.assertEqual(left['pk__lt'], right['pk__gte'])
+                self.assertLess(left['pk__gte'], left['pk__lt'])
+        for bad in (dict(scale=2, buckets=1, bucket=0), dict(scale=2, buckets=2, bucket=2),
+                dict(scale=1, buckets=1, bucket=True), dict(scale=1, buckets=1, bucket=-1)):
+            env['a'] = bad
+            with self.subTest(arguments=bad), self.assertRaisesRegex(AssertionError, 'invalid bucket'):
+                env['bucket'](Recorded())
+        for start, stop, scale in ((5000, 15000, 1), (0, 20000, 1), (100000, 110000, 1), (0, 10000, 0), (True, 10001, 1)):
+            env['a'] = dict(scale=scale)
+            with self.subTest(start=start, stop=stop, scale=scale), self.assertRaises(AssertionError):
+                env['verify_slice'](start, stop)
+        env['a'] = dict(scale=2)
+        self.assertEqual(list(env['verify_slice'](190000, 200000)), list(range(190000, 200000, 2500)))
+
+    def test_occurrence_oracle_matches_the_target_plan(self):
+        env = payload_env()
+        context = fixture_context(env)
+        states = Counter()
+        for start in range(0, 100000, m.CHUNK_JOBS):
+            rows = env['payloads'](context, start, start + m.CHUNK_JOBS)
+            expected = env['occurrences'](rows)
+            self.assertEqual(set(expected), {row['id'] for row in rows['Member']})
+            deleted = {row['id'] for row in rows['Member'] if row['deleted']}
+            for key, (occurred, source, ended) in expected.items():
+                if source:
+                    self.assertEqual((source, occurred), ('omega_root_end', ended))
+                    self.assertIsNotNone(ended)
+                    states['filled_memberships'] += 1
+                    states['filled_deleted_memberships'] += key in deleted
+                else:
+                    self.assertEqual((occurred, ended), (None, None))
+                    states['null_memberships'] += 1
+        self.assertEqual(states['filled_memberships'] + states['null_memberships'], SCALE_ONE_TARGET['memberships'])
+        self.assertEqual({key: states[key] for key in ('filled_memberships', 'filled_deleted_memberships',
+            'null_memberships')}, {key: SCALE_ONE_TARGET[key] for key in ('filled_memberships',
+            'filled_deleted_memberships', 'null_memberships')})
+
+    def test_actual_target_slice_counts_every_wrong_or_missing_membership(self):
+        class Members:
+            def __init__(self, store): self.store, self.pks = store, None
+            def filter(self, pk__in): self.pks = pk__in; return self
+            def values_list(self, *fields):
+                assert fields == ('id', 'occurred_at', 'occurrence_time_source', 'finding__report__job__root_end_time')
+                return [(pk,) + self.store[pk] for pk in self.pks if pk in self.store]
+
+        def run(start, change=None):
+            env = payload_env()
+            context = fixture_context(env)
+            exec(m.BUCKET, env)
+            store = {}
+            for begin in range(start, start + m.VERIFY_JOBS, m.CHUNK_JOBS):
+                rows = env['payloads'](context, begin, begin + m.CHUNK_JOBS)
+                deleted = {row['id'] for row in rows['Member'] if row['deleted']}
+                store.update({key: (value, key in deleted) for key, value in env['occurrences'](rows).items()})
+            if change: store = change(store)
+            env.update(context=context, json=json, Member=SimpleNamespace(all_objects=Members(
+                {key: value for key, (value, deleted) in store.items()})))
+            env['a'].update(context=context, scale=1, start=start, stop=start + m.VERIFY_JOBS)
+            return execute(env, m.TARGET_SLICE_BODY), store
+        # 60,000-70,000: live and soft-deleted eligible chains plus legacy rows.
+        # 90,000-100,000: no root end time, findings without membership, legacy.
+        for start in (60000, 90000):
+            result, store = run(start)
+            self.assertEqual(result, dict(checked=len(store), mismatched=0))
+        self.assertEqual((len(run(60000)[1]), len(run(90000)[1])), (10000 + 100, 5000 + 100))
+        # 0118 did nothing: all 10,000 eligible rows in the slice stay NULL.
+        nothing = lambda store: {key: (((None, '', value[2]) if value[1] else value), deleted)
+            for key, (value, deleted) in store.items()}
+        self.assertEqual(run(60000, nothing)[0]['mismatched'], 10000)
+        # Runtime repair alone (live rows only) still leaves the deleted cohort.
+        live_only = lambda store: {key: (((None, '', value[2]) if value[1] and deleted else value), deleted)
+            for key, (value, deleted) in store.items()}
+        self.assertEqual(run(60000, live_only)[0]['mismatched'], 1000)
+        later = lambda store: {key: (((value[0] + timedelta(seconds=1), value[1], value[2]) if value[1] else value),
+            deleted) for key, (value, deleted) in store.items()}
+        self.assertEqual(run(60000, later)[0]['mismatched'], 10000)
+        # Negative controls (no root end time, legacy) must stay NULL.
+        negative = lambda store: {key: (((datetime(2026, 1, 1, tzinfo=timezone.utc), 'trace_end', value[2])
+            if not value[1] else value), deleted) for key, (value, deleted) in store.items()}
+        self.assertEqual(run(90000, negative)[0]['mismatched'], 5000 + 100)
+        missing = lambda store: dict(list(store.items())[1:])
+        result, store = run(90000, missing)
+        self.assertEqual(result, dict(checked=len(store) + 1, mismatched=1))
+
+    def test_target_check_runs_bounded_reads_and_fails_when_the_backfill_is_wrong(self):
+        fake = FakeApp()
+        driver = driver_for(fake, cls=q.QualificationRehearsal)
+        driver.reference_registry = copy.deepcopy(list(ENTRIES))
+        driver.seed_investigation_reference_family(100000)
+        calls = len(fake.calls)
+        m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+        self.assertEqual([program for program, args in fake.calls[calls:]],
+            [TARGET_PROGRAMS[0]]*(VERIFY_CALLS-1) + [TARGET_PROGRAMS[1]])
+        self.assertEqual([args['start'] for program, args in fake.calls[calls:-1]], list(range(0, 100000, m.VERIFY_JOBS)))
+        record = driver.corpus['investigation_reference_target_check']
+        self.assertEqual({key: record[key] for key in ('scale', 'slices', 'buckets', 'checked', 'mismatched', 'cohorts')},
+            dict(scale=1, slices=VERIFY_CALLS-1, buckets=1, checked=96000, mismatched=0, cohorts=SCALE_ONE_TARGET))
+        for secret in ('Authorization', 'SECRET', 'password', 'DO-NOT-FORWARD'):
+            self.assertNotIn(secret, json.dumps([args for program, args in fake.calls]))
+        # A wrong migrated value is a failed assertion, not an unavailable seeder.
+        wrong = [('alter_target_slice', lambda value: dict(value, mismatched=1)),
+            ('alter_target', lambda value: dict(value, filled_memberships=69000, null_memberships=27000)),
+            ('alter_target', lambda value: dict(value, filled_deleted_memberships=0)),
+            ('alter_target', lambda value: dict(value, memberships=95999))]
+        for hook, change in wrong:
+            setattr(fake, hook, change)
+            with self.subTest(hook=hook), self.assertRaises(p.RehearsalError) as caught:
+                m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+            self.assertNotIsInstance(caught.exception, p.ManualRelease)
+            setattr(fake, hook, lambda value: value)
+        unavailable = [('alter_target_slice', lambda value: None), ('alter_target_slice', lambda value: dict(value, checked=1)),
+            ('alter_target_slice', lambda value: dict(value, mismatched=-1)), ('alter_target', lambda value: None),
+            ('alter_target', lambda value: dict(value, extra=1)), ('alter_target', lambda value: dict(value, memberships=True))]
+        for hook, change in unavailable:
+            setattr(fake, hook, change)
+            with self.subTest(hook=hook), self.assertRaisesRegex(p.ManualRelease, 'high_volume_reference_unavailable'):
+                m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+            setattr(fake, hook, lambda value: value)
+        m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+
+    def test_target_check_requires_the_seeded_family_only_when_it_was_selected(self):
+        driver = driver_for(mock.Mock(), cls=q.QualificationRehearsal)
+        m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+        driver.reference_registry = [row for row in p.load_high_volume_registry() if row['table'] not in TABLES]
+        m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+        driver.app_python.assert_not_called()
+        driver.reference_registry = copy.deepcopy(list(ENTRIES[:1]))
+        with self.assertRaisesRegex(p.ManualRelease, 'high_volume_reference_unavailable'):
+            m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+        driver._investigation_reference_pending = dict(arguments=dict(ARGS), context=dict(CONTEXT))
+        driver._investigation_reference = dict(arguments=dict(ARGS), context=dict(CONTEXT))
+        with self.assertRaisesRegex(p.ManualRelease, 'high_volume_reference_unavailable'):
+            m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+        driver.app_python.assert_not_called()
+        # Scale follows the seeded rows: two blocks read twice the slices and buckets.
+        fake = FakeApp(scale=2)
+        driver = driver_for(fake)
+        driver.seed_investigation_reference_family(200000)
+        calls = len(fake.calls)
+        m.verify_investigation_backfill(driver, prefix=s.DJANGO_PREFIX, producer=p)
+        programs = Counter(program for program, args in fake.calls[calls:])
+        self.assertEqual(programs, Counter({TARGET_PROGRAMS[0]: 2*(VERIFY_CALLS-1), TARGET_PROGRAMS[1]: 2}))
+        self.assertEqual(driver.corpus['investigation_reference_target_check']['cohorts'],
+            {key: 2*value for key, value in SCALE_ONE_TARGET.items()})
+
+    def test_qualification_runs_the_target_check_inside_large_volume_migrations(self):
+        from deploy.tests.test_update_qualification_assertions import migration_driver
+        for wrong in (False, True):
+            driver, cases = migration_driver()
+            fake = FakeApp()
+            driver.app_python = fake
+            driver.reference_registry = copy.deepcopy(list(ENTRIES))
+            driver._investigation_reference = dict(arguments=dict(ARGS), context=dict(CONTEXT))
+            if wrong:
+                fake.alter_target = lambda value: dict(value, filled_deleted_memberships=0)
+                with self.assertRaisesRegex(p.RehearsalError, 'investigation backfill cohorts differ on target'):
+                    driver.migration_suite()
+                self.assertEqual(cases.failed, ('migration_forward', 'large_volume_migrations'))
+                driver.witnesses.create.assert_not_called()
+            else:
+                driver.migration_suite()
+                self.assertIsNone(cases.failed)
+                self.assertIn('large_volume_migrations', cases.cases['migration_forward'])
+                self.assertEqual(Counter(program for program, args in fake.calls),
+                    Counter({TARGET_PROGRAMS[0]: VERIFY_CALLS-1, TARGET_PROGRAMS[1]: 1}))
+        # The reference inventory is still asserted first.
+        driver = object.__new__(q.QualificationRehearsal)
+        order = []
+        driver.assert_reference_inventory = lambda: order.append('reference')
+        with mock.patch.object(q, 'verify_investigation_backfill', side_effect=lambda d, **kw: order.append((d, kw))):
+            self.assertIsNone(driver.assert_large_volume_migrations())
+        self.assertEqual(order, ['reference', (driver, dict(prefix=s.DJANGO_PREFIX, producer=p))])
 
 
 if __name__ == '__main__':
