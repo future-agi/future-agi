@@ -687,146 +687,161 @@ export default function RunTraceTable({
 
   return (
     <>
-      <SectionCard
-        title={title}
-        action={action}
-        wrap
-        sx={{ containerType: "inline-size" }}
-      >
-        {banner && (
-          <Stack
-            direction="row"
-            alignItems="center"
-            justifyContent="center"
-            flexWrap="wrap"
-            gap={1}
-            sx={{
-              px: 2,
-              py: 0.75,
-              typography: "s3",
-              color: "text.subtitle",
-              bgcolor: "background.neutral",
-              borderTop: "1px solid",
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            {banner}
-          </Stack>
-        )}
-        {/* A fixed-height box, like the Scenarios tab: the card keeps its size
-            whatever the row count, and the pager below never moves. The table
-            scrolls inside it, in its own box. */}
-        <Box
-          ref={scrollRef}
-          sx={{
-            // Without a pager, the box takes the pager's room too.
-            height:
-              boxHeight == null
-                ? "calc(100dvh - 400px)"
-                : boxHeight + (showPager ? 0 : PAGER_ROW_PX),
-            overflowY: "auto",
-          }}
+      {/* The toolbar sits above the table card, as on the other list pages;
+          the card holds only the table and its pager. The wrapper is the
+          container the toolbar's compact layout measures. */}
+      <Box sx={{ containerType: "inline-size" }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          flexWrap="wrap"
+          columnGap={2}
+          rowGap={1.25}
+          sx={{ mb: 1.5 }}
         >
-          {isLoading ? (
-            <EmptyState icon="solar:hourglass-linear" title="Loading calls…" />
-          ) : error ? (
-            <EmptyState
-              icon="solar:danger-triangle-linear"
-              title="Couldn't load calls"
-              body="Something went wrong loading this run's calls. Try again."
-            />
-          ) : tasks.length === 0 ? (
-            <EmptyState
-              icon="solar:filter-linear"
-              title="No calls match that filter"
-            />
-          ) : (
-            <TraceTable
-              key={groupBy}
-              columns={shownColumns}
-              groups={groups}
-              rows={groupBy ? null : tasks}
-              evals={shownEvals}
-              subGoalEvals={subGoalEvals}
-              groupView={groupView}
-              onGroupViewChange={setGroupView}
-              expandedForRef={expandedForRef}
-              firstColumnLabel={
-                groupBy
-                  ? GROUPINGS.find((g) => g.id === groupBy)?.label
-                  : undefined
-              }
-              onOpen={onOpenCall}
-              activeCallId={activeCallId}
-              scrollRef={tableScrollRef}
-              runActive={runActive}
-              renderEvalHeaderAction={
-                evalActions
-                  ? (e) => (
-                      <IconButton
-                        size="small"
-                        aria-label={`Actions for ${e.name}`}
-                        onClick={(event) =>
-                          setEvalMenuFor({
-                            evalId: e.id,
-                            name: e.name,
-                            anchorEl: event.currentTarget,
-                          })
-                        }
-                      >
-                        <Iconify
-                          icon="solar:menu-dots-vertical-linear"
-                          width={16}
-                          sx={{ color: "text.subtitle" }}
-                        />
-                      </IconButton>
-                    )
-                  : null
-              }
-              selection={tableSelection}
-            />
-          )}
-        </Box>
-        {showPager && (
-          <Stack
-            direction="row"
-            alignItems="center"
-            justifyContent="space-between"
-            flexWrap="wrap"
-            gap={1}
-            sx={{
-              px: 2,
-              py: 1.5,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Typography
+          {title}
+          {action}
+        </Stack>
+        <SectionCard>
+          {banner && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="center"
+              flexWrap="wrap"
+              gap={1}
               sx={{
+                px: 2,
+                py: 0.75,
                 typography: "s3",
                 color: "text.subtitle",
-                fontVariantNumeric: "tabular-nums",
+                bgcolor: "background.neutral",
+                borderTop: "1px solid",
+                borderBottom: "1px solid",
+                borderColor: "divider",
               }}
             >
-              Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}{" "}
-              of {count.toLocaleString()}
-            </Typography>
-            <Pagination
-              size="small"
-              shape="rounded"
-              count={totalPages}
-              page={page}
-              onChange={(_, value) => {
-                setPage(value);
-                tableScrollRef.current?.scrollTo?.({ top: 0 });
+              {banner}
+            </Stack>
+          )}
+          {/* A fixed-height box, like the Scenarios tab: the card keeps its size
+            whatever the row count, and the pager below never moves. The table
+            scrolls inside it, in its own box. */}
+          <Box
+            ref={scrollRef}
+            sx={{
+              // Without a pager, the box takes the pager's room too.
+              height:
+                boxHeight == null
+                  ? "calc(100dvh - 400px)"
+                  : boxHeight + (showPager ? 0 : PAGER_ROW_PX),
+              overflowY: "auto",
+            }}
+          >
+            {isLoading ? (
+              <EmptyState
+                icon="solar:hourglass-linear"
+                title="Loading calls…"
+              />
+            ) : error ? (
+              <EmptyState
+                icon="solar:danger-triangle-linear"
+                title="Couldn't load calls"
+                body="Something went wrong loading this run's calls. Try again."
+              />
+            ) : tasks.length === 0 ? (
+              <EmptyState
+                icon="solar:filter-linear"
+                title="No calls match that filter"
+              />
+            ) : (
+              <TraceTable
+                key={groupBy}
+                columns={shownColumns}
+                groups={groups}
+                rows={groupBy ? null : tasks}
+                evals={shownEvals}
+                subGoalEvals={subGoalEvals}
+                groupView={groupView}
+                onGroupViewChange={setGroupView}
+                expandedForRef={expandedForRef}
+                firstColumnLabel={
+                  groupBy
+                    ? GROUPINGS.find((g) => g.id === groupBy)?.label
+                    : undefined
+                }
+                onOpen={onOpenCall}
+                activeCallId={activeCallId}
+                scrollRef={tableScrollRef}
+                runActive={runActive}
+                renderEvalHeaderAction={
+                  evalActions
+                    ? (e) => (
+                        <IconButton
+                          size="small"
+                          aria-label={`Actions for ${e.name}`}
+                          onClick={(event) =>
+                            setEvalMenuFor({
+                              evalId: e.id,
+                              name: e.name,
+                              anchorEl: event.currentTarget,
+                            })
+                          }
+                        >
+                          <Iconify
+                            icon="solar:menu-dots-vertical-linear"
+                            width={16}
+                            sx={{ color: "text.subtitle" }}
+                          />
+                        </IconButton>
+                      )
+                    : null
+                }
+                selection={tableSelection}
+              />
+            )}
+          </Box>
+          {showPager && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              flexWrap="wrap"
+              gap={1}
+              sx={{
+                px: 2,
+                py: 1.5,
+                borderTop: "1px solid",
+                borderColor: "divider",
               }}
-              siblingCount={1}
-              boundaryCount={1}
-            />
-          </Stack>
-        )}
-      </SectionCard>
+            >
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.subtitle",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                Showing {rangeStart.toLocaleString()}–
+                {rangeEnd.toLocaleString()} of {count.toLocaleString()}
+              </Typography>
+              <Pagination
+                size="small"
+                shape="rounded"
+                count={totalPages}
+                page={page}
+                onChange={(_, value) => {
+                  setPage(value);
+                  tableScrollRef.current?.scrollTo?.({ top: 0 });
+                }}
+                siblingCount={1}
+                boundaryCount={1}
+              />
+            </Stack>
+          )}
+        </SectionCard>
+      </Box>
 
       <FilterPanel
         anchorEl={filterAnchor}

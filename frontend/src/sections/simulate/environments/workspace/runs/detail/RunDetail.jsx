@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { alpha } from "@mui/material/styles";
 import {
   Alert,
   Box,
@@ -203,16 +204,20 @@ export default function RunDetail({
   // The agent version this run was pinned to, else the one it was recorded with.
   const agentLabel =
     identity?.pinnedAgentVersion?.label ?? identity?.agentVersion ?? "-";
-  // The environment and scenario versions this run was pinned to, if any.
-  const pinnedLabels = [
-    identity?.environmentVersion?.label &&
-      `env ${identity.environmentVersion.label}`,
+  const envLabel = identity?.environmentVersion?.label
+    ? `env ${identity.environmentVersion.label}`
+    : null;
+  // The sub-line keeps agent, env and when; the rest of what the run was
+  // pinned to is in its hover card.
+  const runDetails = [
+    env.name,
+    `${stats.total} tasks`,
     identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
     identity?.seed != null && `seed ${identity.seed}`,
+    startedLabel && `started ${startedLabel}`,
   ]
     .filter(Boolean)
-    .map((label) => ` · ${label}`)
-    .join("");
+    .join(" · ");
   // An interrupted run says how far it got and can resume the calls it left.
   const resumeState = identity?.resume;
   const resume = useResumeRun(executionId);
@@ -263,7 +268,7 @@ export default function RunDetail({
         spacing={2}
         sx={{
           px: 3,
-          py: 2,
+          py: 1.25,
           borderBottom: "1px solid",
           borderColor: "divider",
           flexShrink: 0,
@@ -291,13 +296,24 @@ export default function RunDetail({
                   typography: "s3",
                   fontWeight: 600,
                   color: identity.color,
-                  bgcolor: "action.selected",
+                  // A tint of the run's own colour, which is a palette path
+                  // ("data.0") or a hex.
+                  bgcolor: (theme) => {
+                    const c = identity.color.startsWith("#")
+                      ? identity.color
+                      : identity.color
+                          .split(".")
+                          .reduce((node, key) => node?.[key], theme.palette);
+                    return typeof c === "string"
+                      ? alpha(c, 0.12)
+                      : theme.palette.action.selected;
+                  },
                 }}
               >
                 {identity.letter}
               </Box>
             )}
-            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 600 }}>
+            <Typography noWrap sx={{ typography: "m2", fontWeight: 600 }}>
               {fixRun ? (
                 <>
                   {`Check run ${fixRun.label} for `}
@@ -312,10 +328,9 @@ export default function RunDetail({
                   >
                     this fix
                   </Link>
-                  {` · agent ${agentLabel}${pinnedLabels}`}
                 </>
               ) : identity ? (
-                `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
+                `Run ${identity.ordinal}`
               ) : (
                 "Run complete"
               )}
@@ -337,15 +352,26 @@ export default function RunDetail({
               />
             )}
           </Stack>
-          <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
-            {env.name} · {stats.total} tasks
-            {/* Before "started", so a narrow header cuts the date, not this. */}
-            {resumeState?.resumable
-              ? ` · ${resumeState.unfinished} not finished`
-              : ""}
-            {startedLabel ? ` · started ${startedLabel}` : ""}
-            {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
-          </Typography>
+          <Tooltip arrow placement="bottom-start" title={runDetails}>
+            <Typography
+              noWrap
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                width: "fit-content",
+                maxWidth: "100%",
+              }}
+            >
+              {`agent ${agentLabel}`}
+              {envLabel ? ` · ${envLabel}` : ""}
+              {/* Before the time, so a narrow header cuts the time, not this. */}
+              {resumeState?.resumable
+                ? ` · ${resumeState.unfinished} not finished`
+                : ""}
+              {startedLabel ? ` · ${startedLabel}` : ""}
+              {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
+            </Typography>
+          </Tooltip>
           {identity?.buildNotice && (
             <Alert
               severity="warning"
@@ -461,9 +487,7 @@ export default function RunDetail({
                 onClick={() => {
                   setFixTargets({
                     keys: importedCount ? epoch.keys : undefined,
-                    note: importedCount
-                      ? epochTargetsNote(epoch)
-                      : undefined,
+                    note: importedCount ? epochTargetsNote(epoch) : undefined,
                   });
                   setFixLaunching(true);
                 }}
@@ -542,7 +566,9 @@ export default function RunDetail({
       )}
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-        <Box sx={{ p: 2 }}>
+        {/* The tabs sit close under the header's divider; 16px above them
+            read as an empty band. */}
+        <Box sx={{ px: 2, pb: 2, pt: 0.5 }}>
           <CustomTabs
             value={tab}
             onChange={(_, v) => setTab(v)}
@@ -753,7 +779,9 @@ export default function RunDetail({
           initialTargets={fixTargets?.keys}
           initialNote={fixTargets?.note}
           diagnosisUnavailable={
-            headerLaunchOpen && !diagnosis.isLoading && !diagnosis.loadError &&
+            headerLaunchOpen &&
+            !diagnosis.isLoading &&
+            !diagnosis.loadError &&
             diagnosis.analysis.status !== "completed"
           }
         />

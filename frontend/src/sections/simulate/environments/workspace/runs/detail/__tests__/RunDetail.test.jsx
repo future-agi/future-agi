@@ -552,7 +552,7 @@ describe("RunDetail resume", () => {
     const user = userEvent.setup();
     renderDetail();
 
-    expect(screen.getByText(/12 tasks · 5 not finished/)).toBeInTheDocument();
+    expect(screen.getByText(/agent v2 · 5 not finished/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Resume" }));
     expect(resumeMutate).toHaveBeenCalledTimes(1);
   });
@@ -605,7 +605,7 @@ describe("RunDetail", () => {
     );
   });
 
-  it("renders the identity header with the real ordinal, agent, status and task count", () => {
+  it("renders the identity header with the real ordinal, agent, status and task count", async () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
       stats: STATS,
@@ -613,10 +613,15 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText(/Run 3 · agent v2/)).toBeInTheDocument();
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
     // The lifecycle remains Completed even when some calls fail.
     expect(screen.getByText("Completed")).toBeInTheDocument();
-    expect(screen.getByText(/Refund Copilot · 12 tasks/)).toBeInTheDocument();
+    // The sub-line keeps the agent; the env name and task count are in its
+    // hover card.
+    await userEvent.setup().hover(screen.getByText(/^agent v2/));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /Refund Copilot · 12 tasks/,
+    );
     expect(
       screen.getByRole("tab", { name: /Test runs \(12\)/ }),
     ).toBeInTheDocument();
@@ -706,8 +711,9 @@ describe("RunDetail", () => {
     renderDetail();
 
     expect(screen.getByText(/^Check run c2-target for/)).toHaveTextContent(
-      "Check run c2-target for this fix · agent v2",
+      "Check run c2-target for this fix",
     );
+    expect(screen.getByText(/^agent v2/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "this fix" })).toHaveAttribute(
       "href",
       "/dashboard/simulate/environments/env-1/improvements/fix-1",
@@ -921,16 +927,24 @@ describe("RunDetail", () => {
       "reports diagnosis availability without requesting analysis: %s, import %s",
       async (status, evidence) => {
         const request = vi.fn();
-        useDebugAnalysis.mockReturnValue(debugHook({ ...ANALYSIS, status }, { request }));
+        useDebugAnalysis.mockReturnValue(
+          debugHook({ ...ANALYSIS, status }, { request }),
+        );
         fixLaunchOptions.mockReturnValue({
           options: { scenarios: [scenario("case", evidence, true)] },
         });
         renderDetail();
-        await userEvent.setup().click(screen.getByRole("button", { name: "Run Epoch" }));
+        await userEvent
+          .setup()
+          .click(screen.getByRole("button", { name: "Run Epoch" }));
         expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
         expect(useDebugAnalysis).toHaveBeenCalledWith("ex1");
-        expect(launchFix.props.diagnosisUnavailable).toBe(status !== "completed");
-        expect(launchFix.props.initialTargets).toEqual(evidence ? ["case"] : undefined);
+        expect(launchFix.props.diagnosisUnavailable).toBe(
+          status !== "completed",
+        );
+        expect(launchFix.props.initialTargets).toEqual(
+          evidence ? ["case"] : undefined,
+        );
         expect(request).not.toHaveBeenCalled();
       },
     );
@@ -938,12 +952,20 @@ describe("RunDetail", () => {
     it.each([
       { status: "running" },
       { fixRun: { id: "check", label: "check" } },
-    ])("does not offer Epoch for live or check runs with cached options", (identity) => {
-      useRunDetail.mockReturnValue({ identity: { ...IDENTITY, ...identity }, stats: STATS });
-      fixLaunchOptions.mockReturnValue({ options: { scenarios: [scenario("ordinary", null, true)] } });
-      renderDetail();
-      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
-    });
+    ])(
+      "does not offer Epoch for live or check runs with cached options",
+      (identity) => {
+        useRunDetail.mockReturnValue({
+          identity: { ...IDENTITY, ...identity },
+          stats: STATS,
+        });
+        fixLaunchOptions.mockReturnValue({
+          options: { scenarios: [scenario("ordinary", null, true)] },
+        });
+        renderDetail();
+        expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+      },
+    );
 
     it("is not offered when all cases passed", () => {
       finished();
@@ -1316,9 +1338,8 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(
-      screen.getByText("Run 3 · agent v4 · env v2 · scenarios v3"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
+    expect(screen.getByText(/^agent v4 · env v2/)).toBeInTheDocument();
     expect(screen.getByText("A4 differs from E2")).toBeInTheDocument();
   });
 
@@ -1335,7 +1356,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText("Run 3 · agent v2 · env v2")).toBeInTheDocument();
+    expect(screen.getByText(/^agent v2 · env v2/)).toBeInTheDocument();
     expect(
       screen.getByText("Agent differs from its environment version"),
     ).toBeInTheDocument();
@@ -1349,7 +1370,8 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(screen.getByText("Run 3 · agent v2")).toBeInTheDocument();
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
+    expect(screen.getByText(/^agent v2/)).toBeInTheDocument();
     expect(screen.queryByText(/differs from/)).toBeNull();
   });
 
