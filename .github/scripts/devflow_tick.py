@@ -304,15 +304,27 @@ def review_engine(reviews: list[dict]) -> str | None:
         key=lambda r: r.get("submittedAt") or "",
     )
     for r in reversed(trusted):
-        match = JSON_BLOCK.search(r["body"])
-        try:
-            verdict = json.loads(match.group(1)) if match else None
-        except ValueError:
-            continue
-        if isinstance(verdict, dict) and verdict.get("schema") == "devflow-review/v1":
+        verdict = review_verdict(r["body"])
+        if verdict:
             engine = verdict.get("engine")
             return engine if isinstance(engine, str) and engine else "unknown"
     return None
+
+
+def review_verdict(body: str) -> dict | None:
+    """The devflow-review/v1 verdict of a review body, or None. Exactly one
+    ```json fence, after the marker (parsing v2.1): a finding's text could
+    carry a fenced fake verdict, so any other count is no verdict."""
+    if body.count("```json") != 1:
+        return None
+    match = JSON_BLOCK.search(body)
+    if not match or match.start() < body.find(REVIEW_MARKER):
+        return None
+    try:
+        verdict = json.loads(match.group(1))
+    except ValueError:
+        return None
+    return verdict if isinstance(verdict, dict) and verdict.get("schema") == "devflow-review/v1" else None
 
 
 def escape_rate(commits: list[dict], details: dict[int, dict] | None = None) -> dict:
@@ -440,12 +452,8 @@ def review_quality(reviews: list[dict], comments: list[dict], author: str) -> di
     for r in reviews:
         if REVIEW_MARKER not in (r.get("body") or "") or r.get("authorAssociation") not in TRUSTED:
             continue
-        match = JSON_BLOCK.search(r["body"])
-        try:
-            verdict = json.loads(match.group(1)) if match else None
-        except ValueError:
-            continue
-        if not isinstance(verdict, dict) or verdict.get("schema") != "devflow-review/v1":
+        verdict = review_verdict(r["body"])
+        if not verdict:
             continue
         engine = verdict.get("engine") if isinstance(verdict.get("engine"), str) and verdict.get("engine") else "unknown"
         tally = out.setdefault(engine, {"findings": 0, "fixed": 0, "answered": 0})
@@ -609,7 +617,10 @@ def list_runs(api: Api, workflow: str, since: datetime, until: datetime, event: 
     every event). A filtered listing stops at LISTING_CAP results, so a fuller
     window is split in two."""
     created = urllib.parse.quote(f"{iso(since)}..{iso(until)}")
-    path = f"/actions/workflows/{workflow}/runs?{f'event={event}&' if event else ''}per_page=100&created={created}"
+    # Every event's runs make large pages, which GitHub answered with 502s
+    # (26 Nov, read-only run): smaller pages for that listing.
+    size = 100 if event else 30
+    path = f"/actions/workflows/{workflow}/runs?{f'event={event}&' if event else ''}per_page={size}&created={created}"
     first = api.get(path)
     if first.get("total_count", 0) >= LISTING_CAP and until - since > timedelta(minutes=2):
         mid = since + (until - since) / 2

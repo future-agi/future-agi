@@ -42,6 +42,7 @@ import urllib.parse
 REVIEW_MARKER = "<!-- devflow-review:v1 -->"
 ASSIGN_MARKER = re.compile(r"<!--\s*devflow-assigned:v1\b([^>]*)-->")
 JSON_BLOCK = re.compile(r"```json\s*\n(.*?)\n\s*```", re.S)
+JSON_FENCE = "```json"
 # reviewer-assigner writes the assignment marker with GITHUB_TOKEN. Anyone can
 # post the marker text on a public repo, so only the bot's comment counts.
 BOT = re.compile(r"^github-actions\[bot\]$")  # the REST login of GITHUB_TOKEN writes
@@ -98,11 +99,21 @@ def lower(value) -> str:
     return str(value or "").lower()
 
 
+class NoVerdict(ValueError):
+    """The body does not hold exactly one ```json block after the marker."""
+
+
 def parse_review(body: str) -> dict:
-    """Return the verdict JSON of one review body. Raise ValueError if it is malformed."""
+    """Return the verdict JSON of one review body. Raise NoVerdict unless the
+    body holds exactly one ```json fence, after the marker (parsing v2.1: a
+    finding's text could carry a fenced fake verdict), and ValueError if the
+    verdict is malformed."""
+    fences = body.count(JSON_FENCE)
+    if fences != 1:
+        raise NoVerdict(f"{fences} ```json blocks, not exactly 1")
     match = JSON_BLOCK.search(body)
-    if not match:
-        raise ValueError("no ```json block after the marker")
+    if not match or match.start() < body.find(REVIEW_MARKER):
+        raise NoVerdict("the ```json block is not a closed block after the marker")
     verdict = json.loads(match.group(1))
     if not isinstance(verdict, dict) or verdict.get("schema") != "devflow-review/v1":
         raise ValueError("schema is not devflow-review/v1")
@@ -336,6 +347,12 @@ def decide(
         )
     try:
         verdict = parse_review(review.get("body") or "")
+    except NoVerdict as err:
+        # A missing verdict is high (parsing v2.1): never approve, ask a person.
+        return {
+            **out("needs-human", f"review {review.get('id')} carries no verdict ({err}), so it counts as high"),
+            "tier": "high",
+        }
     except ValueError as err:  # json.JSONDecodeError is a ValueError
         return out("wait", f"review {review.get('id')} is malformed: {err}")
     if verdict.get("head") != head:
