@@ -6,7 +6,6 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import { fetchCandidatePatch } from "src/api/simulate-environments/fixRuns";
 
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { provenOnTargetsOnly, strengthLabel } from "./fixRunView";
 import { parseDiff } from "./parseDiff";
 
@@ -45,11 +44,8 @@ function Row({ label, icon, value }) {
         />
         <Typography
           noWrap
-          sx={{
-            typography: "s2",
-            color: "text.primary",
-            fontFamily: "monospace",
-          }}
+          title={value}
+          sx={{ typography: "code_sm", color: "text.primary" }}
         >
           {value}
         </Typography>
@@ -122,9 +118,8 @@ function ChangeSummary({ fix, winner }) {
               noWrap
               title={f.file}
               sx={{
-                typography: "s2",
+                typography: "code_md",
                 color: "text.primary",
-                fontFamily: "monospace",
                 flex: 1,
                 minWidth: 0,
               }}
@@ -148,7 +143,7 @@ function ChangeSummary({ fix, winner }) {
               sx={{
                 typography: "s3",
                 fontWeight: 500,
-                color: removed ? "status.danger.fg" : "text.disabled",
+                color: removed ? "status.danger.fg" : "text.tertiary",
                 width: 28,
                 textAlign: "right",
                 flexShrink: 0,
@@ -195,7 +190,7 @@ export default function ShipConfirmDialog({
           ? `Open a pull request for Candidate ${winner.attempt}?`
           : `Make Candidate ${winner.attempt}'s version the default?`
       }
-      PaperProps={{ sx: { maxWidth: 480 } }}
+      PaperProps={{ sx: { maxWidth: 560 } }}
       content={
         <Stack spacing={2} sx={{ mt: 0.5 }}>
           <Stack spacing={1}>
@@ -204,7 +199,7 @@ export default function ShipConfirmDialog({
                 {fix.agent?.repository && (
                   <Row
                     label="Repo"
-                    icon="mdi:github"
+                    icon="simple-icons:github"
                     value={fix.agent.repository}
                   />
                 )}
@@ -237,9 +232,9 @@ export default function ShipConfirmDialog({
               <Iconify
                 icon="solar:danger-triangle-linear"
                 width={15}
-                sx={{ color: BUILD_TONES.amber, flexShrink: 0, mt: "2px" }}
+                sx={{ color: "status.warning.fg", flexShrink: 0, mt: "2px" }}
               />
-              <Typography sx={{ typography: "s2", color: BUILD_TONES.amber }}>
+              <Typography sx={{ typography: "s2", color: "status.warning.fg" }}>
                 {strengthNote}
               </Typography>
             </Stack>

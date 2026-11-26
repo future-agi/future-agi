@@ -11,10 +11,10 @@ import {
 
 import Iconify from "src/components/iconify";
 import EmptyState from "../../../../components/EmptyState";
-import GoalCard, { OneOffGroup, groupOneOffs } from "./GoalCard";
+import GoalCard, { OneOffGroup } from "./GoalCard";
+import { groupOneOffs } from "./oneOffs";
 
-// Goals and one-offs each sit in one bordered list, divided per row, instead of
-// a card per item.
+// One bordered list, a hairline between rows.
 const listFrame = {
   border: "1px solid",
   borderColor: "divider",
@@ -194,7 +194,7 @@ export default function DiagnosisPane({
       {oneOffGroups.length > 0 && (
         <Box sx={{ mt: 2.5 }}>
           <Typography sx={{ typography: "s2", fontWeight: 600, mb: 1 }}>
-            Also seen, 1 call each
+            Also seen
           </Typography>
           <Box sx={{ ...listFrame, py: 0.5 }}>
             {oneOffGroups.map((group) => (
@@ -202,6 +202,7 @@ export default function DiagnosisPane({
                 key={group.phrase}
                 phrase={group.phrase}
                 ways={group.ways}
+                callIds={group.callIds}
                 onViewCalls={onViewCalls}
               />
             ))}

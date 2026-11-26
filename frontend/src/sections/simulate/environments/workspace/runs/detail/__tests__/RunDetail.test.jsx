@@ -1319,7 +1319,7 @@ describe("RunDetail", () => {
     expect(screen.getByText("Omits the word book")).toBeInTheDocument();
     // One-offs are grouped by name; opening a group shows Omega's prose, with
     // its call ids read as the call's label.
-    expect(screen.getByText("Also seen, 1 call each")).toBeInTheDocument();
+    expect(screen.getByText("Also seen")).toBeInTheDocument();
     await user.click(screen.getByText("Omitted price information"));
     expect(
       screen.getByText(

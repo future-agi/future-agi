@@ -197,12 +197,11 @@ GoalCard.propTypes = {
 
 /**
  * One-off agent issues that share a name, as one row: how many calls, the
- * name, and the calls. Each call's own explanation opens under it.
+ * name, and those calls. Each call's own explanation opens under it.
  */
-export function OneOffGroup({ phrase, ways, onViewCalls }) {
+export function OneOffGroup({ phrase, ways, callIds, onViewCalls }) {
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const callIds = [...new Set(ways.flatMap((way) => way.callIds))];
   const details = ways.filter(
     (way) => way.title && way.title.toLowerCase() !== phrase.toLowerCase(),
   );
@@ -225,7 +224,7 @@ export function OneOffGroup({ phrase, ways, onViewCalls }) {
             ...num,
           }}
         >
-          {ways.length}
+          {callIds.length}
         </Typography>
         <ButtonBase
           disabled={!details.length}
@@ -238,9 +237,18 @@ export function OneOffGroup({ phrase, ways, onViewCalls }) {
             gap: 0.5,
             borderRadius: "4px",
             textAlign: "left",
+            "&:hover": { bgcolor: "action.hover" },
+            "&.Mui-focusVisible": {
+              outline: "2px solid",
+              outlineColor: "border.focus",
+            },
           }}
         >
-          <Typography sx={{ typography: "s2", minWidth: 0 }} noWrap>
+          <Typography
+            sx={{ typography: "s2", minWidth: 0 }}
+            noWrap
+            title={phrase}
+          >
             {phrase}
           </Typography>
           {details.length > 0 && (
@@ -256,12 +264,7 @@ export function OneOffGroup({ phrase, ways, onViewCalls }) {
             />
           )}
         </ButtonBase>
-        <ViewAction
-          label={
-            callIds.length === 1 ? "View call" : `View ${callIds.length} calls`
-          }
-          onClick={() => onViewCalls?.(callIds)}
-        />
+        <ViewAction label="View" onClick={() => onViewCalls?.(callIds)} />
       </Stack>
       {open && (
         <Box sx={{ pl: 5.75, pr: 2, pb: 1 }}>
@@ -303,7 +306,7 @@ export function OneOffGroup({ phrase, ways, onViewCalls }) {
               onClick={() => setShowAll(true)}
               sx={{ mt: 0.25, ml: -0.75, minWidth: 0 }}
             >
-              Show all {details.length}
+              Show all
             </Button>
           )}
         </Box>
@@ -314,17 +317,6 @@ export function OneOffGroup({ phrase, ways, onViewCalls }) {
 OneOffGroup.propTypes = {
   phrase: PropTypes.string.isRequired,
   ways: PropTypes.arrayOf(wayShape).isRequired,
+  callIds: PropTypes.arrayOf(PropTypes.string).isRequired,
   onViewCalls: PropTypes.func,
 };
-
-/** Group one-off issues by their name, most frequent first. */
-export function groupOneOffs(oneOffs) {
-  const groups = new Map();
-  oneOffs.forEach((way) => {
-    const phrase = sentence(way.phrase || way.title || "Other");
-    const key = phrase.toLowerCase();
-    if (!groups.has(key)) groups.set(key, { phrase, ways: [] });
-    groups.get(key).ways.push(way);
-  });
-  return [...groups.values()].sort((a, b) => b.ways.length - a.ways.length);
-}
