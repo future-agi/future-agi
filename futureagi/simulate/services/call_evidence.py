@@ -1323,11 +1323,11 @@ def _once(memo: dict[Any, Any], key: tuple[Any, ...], load: Any) -> Any:
     if key not in memo:
         try:
             memo[key] = (load(), None)
-        except _store_errors() as error:
-            memo[key] = (None, error)
-    value, error = memo[key]
-    if error is not None:
-        raise error
+        except _store_errors() as failed:
+            memo[key] = (None, failed)
+    value, kept_error = memo[key]
+    if kept_error is not None:
+        raise kept_error
     return value
 
 
