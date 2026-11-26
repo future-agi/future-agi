@@ -135,7 +135,9 @@ def build_diagnosis(
             ]
         return result
 
-    catalogue = sub_goal_catalogue(execution.run_test_id)
+    catalogue = sub_goal_catalogue(
+        execution.run_test_id, test_execution_id=execution.id
+    )
     goals = []
     for name, call_ids in broken.items():
         goal_ways = ways(by_goal.get(name, []))

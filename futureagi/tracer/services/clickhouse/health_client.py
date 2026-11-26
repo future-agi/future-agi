@@ -76,16 +76,16 @@ class HealthCheckClient(ClickHouseClient):
         query_settings,
         started_at,
         timeout_ms,
-        retained_until=None,
+        retained_until: float | None = None,
     ):
-        # A retained lookup's expiry belongs to the optional picker reads; a
-        # health read keeps its own budget and never makes one.
-        if retained_until is not None:
-            raise ValueError("ClickHouse health reads do not take a retained lookup")
         # Unlike application reads, a diagnostic must always have a wall budget.
         if timeout_ms is None:
             raise ValueError("ClickHouse health reads require a timeout")
         deadline = started_at + timeout_ms / 1000.0
+        # Same contract as the application read: an optional retained-metadata
+        # lookup may only shorten the budget, never extend it.
+        if retained_until is not None:
+            deadline = min(deadline, retained_until)
         connection = client.connection
 
         def remaining():
