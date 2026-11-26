@@ -80,6 +80,9 @@ WRITE = {"admin", "write"}
 TIERS = ("low", "medium", "high")
 ACTIONS_LOGIN = "github-actions"
 POLICY_FILE = ".github/pr-autopilot.yml"
+# A path with a code owner needs that owner's review, which the bot's
+# approval never gives: the pull request goes alone.
+CODEOWNERS_FILE = ".github/CODEOWNERS"
 # Always goes alone: a change to CI would change the batch's own checks.
 FLOOR_GLOBS = (".github/**",)
 # Failures a retry can fix, shared with registry-retry.sh. Every failed job
@@ -122,6 +125,7 @@ class Config:
         )
         self.high_globs = tuple(FLOOR_GLOBS) + tuple(high_globs or ())
         self.signatures: list = []
+        self.codeowners = ""  # CODEOWNERS text on dev
         for key, value in overrides.items():
             setattr(self, key, value)
 
@@ -164,6 +168,48 @@ def high_path(files: list, globs: tuple) -> str | None:
         for glob, rx in compiled:
             if rx.match(path):
                 return f"{path} matches {glob}"
+    return None
+
+
+# The same matcher as ci_scope.codeowners_regex (the light plan's code-owned
+# rule), so the train and CI agree on which pull requests go alone; a test
+# compares the two.
+def codeowners_regex(pattern: str) -> re.Pattern:
+    """GitHub's CODEOWNERS matching (gitignore rules without ! and [ ]).
+    Case-sensitive, like GitHub."""
+    anchored = "/" in pattern.rstrip("/")
+    directory = pattern.endswith("/")
+    body, out, i = pattern.strip("/"), [], 0
+    while i < len(body):
+        if body.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif body[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append(re.escape(body[i]))
+            i += 1
+    tail = "/.*" if directory else "(?:/.*)?"
+    return re.compile(
+        ("" if anchored else "(?:.*/)?") + "".join(out) + tail, re.DOTALL
+    )
+
+
+def code_owned(files: list, text: str) -> str | None:
+    """The first path whose last matching CODEOWNERS line names owners."""
+    rules = []
+    for line in text.splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            pattern, *who = line.split()
+            rules.append((codeowners_regex(pattern), who))
+    for path in files:
+        found = []
+        for rx, who in rules:
+            if rx.fullmatch(path):
+                found = who
+        if found:
+            return path
     return None
 
 
@@ -397,6 +443,9 @@ def exclusion(m: dict, cfg: Config, reserved: dict) -> str | None:
     hit = high_path(m["files"], cfg.high_globs)
     if hit:
         return f"high-risk path ({hit}): goes alone"
+    owned = code_owned(m["files"], cfg.codeowners)
+    if owned:
+        return f"code-owned path, goes alone ({owned})"
     if m["review_decision"] != "APPROVED" or not m["approved_on_head"]:
         return "not approved on this head"
     tier = member_tier(m, cfg)
@@ -1352,6 +1401,7 @@ def main(argv=None) -> int:
     cfg = Config(
         high_globs=parse_high_globs(reader.file_text(POLICY_FILE)),
         signatures=parse_signatures(reader.file_text(SIGNATURES_FILE)),
+        codeowners=reader.file_text(CODEOWNERS_FILE) or "",
     )
     required = reader.required_checks()
     live = (

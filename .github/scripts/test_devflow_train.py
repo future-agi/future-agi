@@ -373,6 +373,69 @@ class Verdicts(unittest.TestCase):
         self.assertIsNone(train.assigned_reviewer({"comments": {"nodes": []}}))
 
 
+class CodeOwners(unittest.TestCase):
+    TEXT = """# comment
+/futureagi/accounts/ @team
+*billing* @team
+/futureagi/accounts/public/
+  # indented comment
+/.github/CODEOWNERS @lint
+"""
+    VECTORS = [
+        ("/.github/", ".github/workflows/a.yml", True),
+        ("/.github/", "x/.github/a.yml", False),
+        ("/futureagi/accounts/", "futureagi/accounts_v2/a.py", False),
+        ("*billing*", "a/billing/b.py", True),
+        ("*billing*", "a/Billing.jsx", False),
+        ("/futureagi/**/*api_key*", "futureagi/a/b/api_key.py", True),
+        ("/futureagi/tfc/ee_gating.py", "futureagi/tfc/ee_gatingXpy", False),
+        ("*billing*", "a\nbilling", True),
+        ("apps/", "x/apps/a.md", True),  # a trailing slash alone does not anchor
+        ("apps/", "x/apps", False),
+    ]
+
+    def test_matcher_vectors(self):
+        for pattern, path, expected in self.VECTORS:
+            with self.subTest(pattern=pattern, path=path):
+                self.assertEqual(bool(train.codeowners_regex(pattern).fullmatch(path)), expected)
+
+    def test_same_matcher_as_ci_scope(self):
+        try:
+            import ci_scope
+        except ImportError:
+            self.skipTest("no ci_scope.py next to the train")
+        if not hasattr(ci_scope, "codeowners_regex"):
+            self.skipTest("ci_scope has no CODEOWNERS matcher yet")
+        for pattern, path, _ in self.VECTORS:
+            with self.subTest(pattern=pattern, path=path):
+                self.assertEqual(
+                    bool(train.codeowners_regex(pattern).fullmatch(path)),
+                    bool(ci_scope.codeowners_regex(pattern).fullmatch(path)),
+                )
+
+    def test_last_match_wins_and_needs_owners(self):
+        self.assertEqual(train.code_owned(["futureagi/accounts/a.py"], self.TEXT), "futureagi/accounts/a.py")
+        self.assertIsNone(train.code_owned(["futureagi/accounts/public/a.py"], self.TEXT), "a later line with no owners")
+        self.assertIsNone(train.code_owned(["futureagi/x.py"], self.TEXT))
+        self.assertIsNone(train.code_owned(["futureagi/accounts/a.py"], ""), "no CODEOWNERS on dev")
+
+    def test_code_owned_member_goes_alone(self):
+        node = pr_node(1, files=("futureagi/x.py", "frontend/src/BillingPage.jsx", "a/billing.py"))
+        self.assertEqual(
+            train.exclusion(view(node), cfg(codeowners=self.TEXT), {}),
+            "code-owned path, goes alone (a/billing.py)",
+        )
+        self.assertIsNone(train.exclusion(view(pr_node(1)), cfg(codeowners=self.TEXT), {}))
+
+    def test_real_codeowners_on_this_tree(self):
+        path = SCRIPTS.parent / "CODEOWNERS"
+        if not path.exists():
+            self.skipTest("no CODEOWNERS")
+        text = path.read_text()
+        self.assertIsNotNone(train.code_owned([".github/CODEOWNERS"], text))
+        self.assertIsNone(train.code_owned(["futureagi/tracer/views/span.py"], text))
+
+
 class Exclusions(unittest.TestCase):
     def reason(self, node, c=None, reserved=None):
         return train.exclusion(view(node), c or cfg(), reserved or {})
