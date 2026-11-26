@@ -120679,6 +120679,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        source_citations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioSourceCitation",
+          },
+        },
         id: {
           title: "Id",
           type: "string",
@@ -120798,12 +120804,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         lifecycle: {
           $ref: "#/definitions/HarnessScenarioLifecycle",
-        },
-        source_citations: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/HarnessScenarioSourceCitation",
-          },
         },
       },
     },
