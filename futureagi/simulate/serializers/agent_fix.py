@@ -33,6 +33,12 @@ from simulate.selectors.agent_fix import (
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
 from simulate.selectors.agent_fix_outside import counts_as_attempt, hidden_epoch
+from simulate.selectors.agent_fix_wording import (
+    FixNames,
+    candidate_wording,
+    flaky_protected,
+    stored_files,
+)
 from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
 
@@ -350,6 +356,42 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
         ]
 
 
+class AgentFixCandidateWordingSerializer(serializers.Serializer):
+    """What the epoch page says about a candidate, word for word as its pull request."""
+
+    # Its pass rate and whether a must-pass scenario broke; blank before it has a rate.
+    headline = serializers.CharField(allow_blank=True)
+    # The must-pass check's result; blank before the check ran.
+    must_pass = serializers.CharField(allow_blank=True)
+    # The must-pass scenarios it broke, each counted once.
+    must_pass_broken = serializers.IntegerField(min_value=0)
+    # The files and lines its patch changes; null when they were not counted.
+    changes = serializers.CharField(allow_null=True)
+    # What a reviewer must know before trusting it.
+    caveats = serializers.ListField(child=serializers.CharField())
+
+
+class AgentFixCandidateDetailSerializer(AgentFixCandidateSerializer):
+    """A candidate in one epoch's read, with its words. They read the fix's eval review
+    and its scenarios' names, so a list leaves them out."""
+
+    wording = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(serializer_or_field=AgentFixCandidateWordingSerializer)
+    def get_wording(self, candidate: AgentFixCandidate) -> dict:
+        wording = candidate_wording(
+            candidate,
+            verdict_tiers(candidate),
+            review=self.context.get("eval_review"),
+            files=stored_files(candidate),
+            names=self.context["fix_names"],
+        )
+        return AgentFixCandidateWordingSerializer(wording.model_dump()).data
+
+    class Meta(AgentFixCandidateSerializer.Meta):
+        fields = [*AgentFixCandidateSerializer.Meta.fields, "wording"]
+
+
 class AgentFixEpochIssueSerializer(serializers.Serializer):
     """The Error Feed issue an epoch was run from, as the feed shows it now."""
 
@@ -546,9 +588,21 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
 
     eval_warnings = serializers.SerializerMethodField()
     eval_grading = serializers.SerializerMethodField()
+    candidates = AgentFixCandidateDetailSerializer(many=True)
+    # The protected scenarios the fix could not be held to, word for word as its pull
+    # request says them.
+    flaky_protected_text = serializers.SerializerMethodField()
+    # Each scenario's stored name by its key, the name the words above use; a scenario
+    # with no name is left out, so its key is never shown.
+    # The map names held-back scenarios too.
+    scenario_names = serializers.SerializerMethodField()
 
     def to_representation(self, instance: AgentFixRun) -> dict:
         self._review = eval_review(instance)
+        # Its candidates' caveats say when the winner's evals did not finish. They name
+        # scenarios and checks from one lookup for all candidates.
+        self.context["eval_review"] = self._review
+        self.context["fix_names"] = FixNames(instance)
         return super().to_representation(instance)
 
     @swagger_serializer_method(
@@ -559,6 +613,18 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
         return AgentFixEvalWarningSerializer(warnings, many=True).data
 
     @swagger_serializer_method(
+        serializer_or_field=serializers.ListField(child=serializers.CharField())
+    )
+    def get_flaky_protected_text(self, fix_run: AgentFixRun) -> list[str]:
+        return flaky_protected(fix_run.report or {}, self.context["fix_names"])
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.DictField(child=serializers.CharField())
+    )
+    def get_scenario_names(self, fix_run: AgentFixRun) -> dict[str, str]:
+        return self.context["fix_names"].scenarios
+
+    @swagger_serializer_method(
         serializer_or_field=serializers.ChoiceField(
             choices=[one.value for one in EvalGrading]
         )
@@ -567,7 +633,13 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
         return self._review.grading.value
 
     class Meta(AgentFixRunSerializer.Meta):
-        fields = [*AgentFixRunSerializer.Meta.fields, "eval_warnings", "eval_grading"]
+        fields = [
+            *AgentFixRunSerializer.Meta.fields,
+            "eval_warnings",
+            "eval_grading",
+            "flaky_protected_text",
+            "scenario_names",
+        ]
 
 
 class AgentFixRunListSerializer(serializers.Serializer):

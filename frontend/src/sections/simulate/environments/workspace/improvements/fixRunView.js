@@ -107,12 +107,10 @@ export function formatMinutes(total) {
 }
 
 // A fix's winner is graded by the platform's evals after the fix ends, and ships only
-// once they finish. The PR body says the same when they could not.
+// once they finish. When they could not, the verdict's caveats say so, as the PR does.
 export function gradingNote(fix) {
   if (fix.eval_grading === "pending")
     return "Platform evals are still scoring this candidate. You can ship it once they finish.";
-  if (fix.eval_grading === "incomplete")
-    return "Platform evals did not finish on this candidate, so their results are missing. You can still ship it.";
   return null;
 }
 
@@ -162,16 +160,6 @@ export const isShipped = (fix, candidate) =>
   !!candidate &&
   candidate.agent_version_id === fix.environment?.default_agent_version_id;
 
-// The must-pass scenarios a verdict counted as broken: it names each one once
-// per check, so the count is of scenarios, not checks.
-const brokeCount = (verdict) =>
-  mustPassScenarioKeys(verdict?.must_pass_regressions).size;
-
-const brokeText = (n) =>
-  n
-    ? `${n} must-pass ${n === 1 ? "scenario" : "scenarios"} broke.`
-    : "No must-pass scenario broke.";
-
 const triedText = (fix) => {
   const n = (fix.candidates || []).length;
   return `${n} ${n === 1 ? "candidate" : "candidates"}`;
@@ -191,6 +179,7 @@ export const OUR_FAILURES = new Set([
   "fix_workflow_lost",
   "fix_dispatch_failed",
   "fix_variations_failed",
+  "fix_variations_timeout",
   "scheduler_unavailable",
 ]);
 
@@ -267,12 +256,8 @@ export function headline(fix) {
     );
   }
   if (fix.state !== "ready" || !winner || !fix.plan) return endingText(fix);
-  const { verdict } = winner;
-  const broke = brokeText(brokeCount(verdict));
-  if (verdict.held_back_pass_rate) {
-    return `Held-back pass rate ${rateChange(verdict.held_back_pass_rate)}. ${broke}`;
-  }
-  return `Target pass rate ${rateChange(verdict.target_pass_rate)}. ${broke}`;
+  // The server's words, as the pull request says them.
+  return winner.wording?.headline || null;
 }
 
 const rateCard = (id, label, rate, note) => ({
@@ -509,8 +494,8 @@ const rateLine = (rate, gain, tail = "") =>
       : `Not a clear gain${tail}.`;
 
 // One tier's result in plain words, from the verdict's own numbers. The engine's detail
-// (its statistics) is never shown.
-function tierLine(tier, verdict, plan, request) {
+// (its statistics) is never shown. The must-pass line is the server's (`wording`).
+function tierLine(tier, verdict, wording, request) {
   const passed = tier.status === "passed";
   if (tier.status === "pending")
     return "Runs only if this candidate is picked.";
@@ -529,17 +514,8 @@ function tierLine(tier, verdict, plan, request) {
           ? " on scenarios your coding agent wasn't given"
           : " on scenarios the epoch never saw",
       );
-    case "must-pass": {
-      const broke = brokeCount(verdict);
-      if (!passed)
-        return broke ? brokeText(broke) : "A must-pass scenario broke.";
-      const kept = plan?.protected
-        ? `, including the ${plan.protected} you protected`
-        : "";
-      return plan?.must_pass
-        ? `None of the ${plan.must_pass} must-pass scenarios broke${kept}.`
-        : "No must-pass scenario broke.";
-    }
+    case "must-pass":
+      return wording?.must_pass || "";
     case "repeats":
       return passed
         ? "Held up over the repeat runs."
@@ -576,7 +552,7 @@ export function describeChecks(
   tiers = [],
   request = null,
   verdict = null,
-  plan = null,
+  wording = null,
 ) {
   const failed = tiers.findIndex((t) => t.status === "failed");
   return tiers.map((t, i) => {
@@ -592,7 +568,7 @@ export function describeChecks(
     return {
       ...t,
       label: checkLabel(t.name, request),
-      detail: notRun ? "" : tierLine(t, verdict, plan, request),
+      detail: notRun ? "" : tierLine(t, verdict, wording, request),
       ...(t.status === "skipped" && !notRun && { unknown: "Unknown" }),
       notRun,
       ...(notRun && {
@@ -616,9 +592,9 @@ export function rejectionChecks(
   tiers = [],
   request = null,
   verdict = null,
-  plan = null,
+  wording = null,
 ) {
-  const described = describeChecks(tiers, request, verdict, plan);
+  const described = describeChecks(tiers, request, verdict, wording);
   const rejecting = described.findIndex((t) => t.status === "failed");
   if (rejecting < 0) return described;
   return [described[rejecting], ...described.filter((_, i) => i !== rejecting)];
@@ -690,20 +666,6 @@ export function noSafeHeadline(fix) {
   return `No safe improvement: no candidate passed every check (${each}).`;
 }
 
-// The protected cases the fix could not be held to, in words: each scenario once, by its
-// name, or by its key when the engine sent none. Null for a report without them.
-export function flakyProtectedText(fix) {
-  const rows = fix.report?.flaky_protected || [];
-  const names = [
-    ...new Map(rows.map((r) => [r.key, r.name || r.key])).values(),
-  ];
-  if (!names.length) return null;
-  const quoted = names.map((n) => `“${n}”`).join(", ");
-  return names.length === 1
-    ? `1 protected case is flaky on the current version, so this epoch wasn't held to it: ${quoted}.`
-    : `${names.length} protected cases are flaky on the current version, so this epoch wasn't held to them: ${quoted}.`;
-}
-
 // The numbers behind the no-safe headline: each trial's rejecting check in plain words,
 // from its verdict's own numbers.
 export function noSafeNumbers(fix) {
@@ -713,7 +675,12 @@ export function noSafeNumbers(fix) {
       return {
         attempt: t.attempt,
         label: checkLabel(t.check.name, fix.request),
-        detail: tierLine(t.check, candidate?.verdict, fix.plan, fix.request),
+        detail: tierLine(
+          t.check,
+          candidate?.verdict,
+          candidate?.wording,
+          fix.request,
+        ),
       };
     }),
   };
@@ -791,17 +758,11 @@ function candidateResult(c, group, fix, live) {
     return { result: outcomeLabel(c.outcome, live), broke: false };
   if (group === "rejected")
     return { result: oldVerdictLine(c.verdict), broke: false };
-  if (group === "must-pass") {
-    const n = brokeCount(c.verdict);
-    return {
-      result: n
-        ? `Broke ${n} must-pass ${n === 1 ? "scenario" : "scenarios"}`
-        : "Broke a must-pass scenario",
-      broke: true,
-    };
-  }
+  // The server's words for what it broke, as the pull request says them.
+  if (group === "must-pass")
+    return { result: c.wording?.must_pass || "", broke: true };
   return {
-    result: tierLine(failedTierOf(c), c.verdict, fix.plan, fix.request),
+    result: tierLine(failedTierOf(c), c.verdict, c.wording, fix.request),
     broke: false,
   };
 }
@@ -819,7 +780,10 @@ export function candidateGroups(fix) {
       {
         id: c.id,
         attempt: c.attempt,
-        tried: c.summary || "",
+        // What its patch changes, from the server; the engine's note on its last
+        // round is not the whole change.
+        changes: c.wording?.changes || "",
+        notes: c.summary || "",
         // The candidate's own check run, for its Open run.
         run: c.check_runs?.[0] || null,
         target: Array.isArray(target)
@@ -1127,6 +1091,12 @@ export function listResult(fix) {
   if (!result || !strength) return result;
   return { ...result, note: `${strength} · ${result.note}` };
 }
+
+// The must-pass scenarios a verdict counted as broken: it names each one once
+// per check, so the count is of scenarios, not checks. Only the list counts
+// here: its read carries no server wording.
+const brokeCount = (verdict) =>
+  mustPassScenarioKeys(verdict?.must_pass_regressions).size;
 
 function verdictResult(fix) {
   const winner = winnerOf(fix);

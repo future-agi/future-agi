@@ -35,6 +35,7 @@ from simulate.selectors.agent_fix import (
     LOST_MODELS_SKIPPED_FOR,
     default_max_minutes,
     engine_brief,
+    inventory,
 )
 from simulate.serializers.agent_fix import (
     AgentFixLaunchSerializer,
@@ -57,6 +58,7 @@ from simulate.services.run_results_v3_queries import (
     run_calls_queryset,
 )
 from simulate.services.run_traces_v3 import CallUsage
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_agent_fix_services import (
     BASE_AGENT,
     KEYS,
@@ -1483,8 +1485,13 @@ class TestUserApi:
                 f"{BASE}/", {"environment_id": str(environment.id)}
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+            # What only one fix's read carries: its evals, and the words it reads.
             read.pop("eval_warnings")
             read.pop("eval_grading")
+            read.pop("flaky_protected_text")
+            read.pop("scenario_names")
+            for candidate in read["candidates"]:
+                candidate.pop("wording")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
@@ -1750,8 +1757,9 @@ class TestUserApi:
 
         assert (response.status_code, response.json()) == (
             200,
-            {"outcome": "activated"},
+            {"outcome": "validating"},
         )
+        settle_validations(environment)
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
 
@@ -1990,7 +1998,7 @@ class TestUserApi:
             " epoch to verify it; it takes 4 or more."
         )
         assert (
-            "Checked by Epoch: target pass rate 0% → 63%, broke none\n"
+            "Target pass rate 0% → 63%. No must-pass scenario broke.\n"
             in (sent["json"]["body"])
         )
         assert "### Verdict: Proven on the targets only" in sent["json"]["body"]
@@ -2027,8 +2035,8 @@ class TestUserApi:
             assert label not in sent["json"]["title"].lower()
             assert label not in sent["json"]["body"].lower()
         assert (
-            "Checked by Epoch: held-back pass rate 0% → 61%, target pass rate"
-            " 0% → 63%, broke none\n" in sent["json"]["body"]
+            "Held-back pass rate 0% → 61%. No must-pass scenario broke.\n"
+            in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
         assert sent["json"]["title"] == "Epoch: change agent.py"
@@ -2399,8 +2407,11 @@ class TestUserApi:
         assert pull["draft"] is True
         assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
-        key, check = self.REGRESSED.split(": ")
-        assert f"- Must-pass case “{key}”: its “{check}” check" in pull["body"]
+        # By the scenario's name in the environment, never by its key.
+        key, _ = self.REGRESSED.split(": ")
+        name = next(one.name for one in inventory(fix_run) if one.key == key)
+        assert f"- Must-pass scenario “{name}”" in pull["body"]
+        assert f"“{key}”" not in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
         assert "Verified by" not in pull["body"]
         after = self._override(browser_client, fix_run)
@@ -2708,7 +2719,8 @@ class TestUserApi:
             "fix_override_reason_required",
             before,
         )
-        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "activated"})
+        assert (shipped.status_code, shipped.json()) == (200, {"outcome": "validating"})
+        settle_validations(environment)
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
         override = self._override(browser_client, fix_run)
@@ -2725,6 +2737,8 @@ class TestUserApi:
             {},
             format="json",
         )
+        # Its pairing with the defaults validates before it moves.
+        settle_validations(environment)
 
         response = browser_client.post(
             f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",

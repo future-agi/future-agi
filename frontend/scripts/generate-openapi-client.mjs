@@ -123,6 +123,7 @@ function normalizeHostStatusSchema(schema) {
 // writes x-nullable beside no $ref, so the nullable ones are named here.
 const EPOCH_NULLABLE_REFS = ["issue", "report", "failure", "plan", "diagnosis"];
 const AGENT_FIX_ISSUE_NULLABLE_REFS = {
+  SimulationEvidenceCall: ["goals"],
   AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios"],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
@@ -132,10 +133,13 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixRunDetail: EPOCH_NULLABLE_REFS,
   AgentFixCandidate: ["verdict"],
   AgentFixOverride: ["by"],
+  // A candidate whose patch could not be read has no change line.
+  AgentFixCandidateWording: ["changes"],
 };
 
 function isAgentFixIssueSchema(name) {
   return (
+    name.startsWith("SimulationEvidence") ||
     name.startsWith("AgentFixIssue") ||
     name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
     name === "AgentFixEpochIssue" ||
@@ -168,7 +172,10 @@ function withNullableFields(name, schema) {
         `${name}.${field} is not in the spec; update the nullable list`,
       );
     }
-    properties[field] = { anyOf: [properties[field], { type: "null" }] };
+    // A scalar's own x-nullable may already have made it a null union above.
+    if (!properties[field].anyOf?.some((one) => one.type === "null")) {
+      properties[field] = { anyOf: [properties[field], { type: "null" }] };
+    }
   }
   return { ...(isAgentFixIssueSchema(name) ? definition : schema), properties };
 }
@@ -918,6 +925,8 @@ export type ${jsonAlias} = JsonValueApi;`,
         ["requested_here", "boolean"],
         ["pickable", "boolean"],
         ["discardable", "boolean"],
+        ["name", "string"],
+        ["candidate_state", `${typeName}CandidateState`],
         ...extra,
       ]) {
         schemas = assertReplaceInNamedBlock(
@@ -930,6 +939,19 @@ export type ${jsonAlias} = JsonValueApi;`,
       }
     }
     // A piece without unsaved changes has no draft; a Save names the parent it saw.
+    // Validation and candidates are null until Validate has run.
+    for (const [field, valueType] of [
+      ["validation", "HarnessDraftValidationApi"],
+      ["candidates", "HarnessCandidatesApi"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface HarnessDraftsApi {",
+        `${field}: ${valueType};`,
+        `${field}: ${valueType} | null;`,
+        `HarnessDraftsApi.${field} nullable`,
+      );
+    }
     for (const piece of ["environment", "suite"]) {
       schemas = assertReplaceInNamedBlock(
         schemas,
@@ -1253,6 +1275,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "$1JsonValueApi;",
       "conversation record JSON values → recursive JSON value",
     );
+    for (const field of ["Arguments", "Result", "Ok", "Error", "Refused"]) {
+      const alias = `SimulationEvidenceToolApi${field}`;
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = { [key: string]: unknown } | null;`,
+        `export type ${alias} = JsonValueApi;`,
+        `${alias} → recursive JSON value`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SimulationEvidenceCallApiPersona = {[key: string]: { [key: string]: unknown }} | null;",
+      "export type SimulationEvidenceCallApiPersona = { [key: string]: JsonValueApi } | null;",
+      "simulation persona → nullable JSON record",
+    );
     for (const recordType of [
       "ConversationVariablesApiConfigured",
       "ConversationVariablesApiCollected",
@@ -1428,6 +1465,11 @@ export type ${jsonAlias} = JsonValueApi;`,
           /("discardable": zod\.boolean\(\)(?:\.describe\([^)]*\))?)/g,
           "discardable",
         ],
+        [/("name": zod\.string\(\)\.min\(1\)\.describe\([^)]*\))/g, "name"],
+        [
+          /("candidate_state": zod\.enum\(\[[^\]]*\]\)(?:\.describe\([^)]*\))?)/g,
+          "candidate_state",
+        ],
       ]) {
         zod = assertReplaceRegexInNamedBlock(
           zod,
@@ -1467,6 +1509,13 @@ export type ${jsonAlias} = JsonValueApi;`,
       /("(?:environment|suite)": zod\.object\(\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\))/g,
       "$1.nullable()",
       "SimulateApiHarnessEnvironmentsDraftsResponse.pieces nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      draftsResponse,
+      /("(?:validation|candidates)": zod\.object\(\{(?:[^{}]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*\}\)(?:\.describe\([^)]*\))?)/g,
+      "$1.nullable()",
+      "SimulateApiHarnessEnvironmentsDraftsResponse.validation and candidates nullable",
     );
     zod = assertReplaceInNamedBlock(
       zod,
@@ -1784,6 +1833,13 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
       "jsonValueSchema",
       "conversation evidence JSON values → recursive JSON value",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse = zod.object({",
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "simulation evidence JSON values → recursive JSON value",
     );
     for (const [anchor, label] of [
       [/("end_time": zod\.string\(\)\.datetime\([^)]*\))/, "end_time"],

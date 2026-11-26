@@ -114,6 +114,11 @@ describe("runHarnessEnvironment", () => {
     );
   });
 
+  it("names no scenarios for a run of them all, which the server resolves", async () => {
+    await runHarnessEnvironment("env-6", undefined, 1, "request-1");
+    expect(axios.post.mock.calls[0][1]).toStrictEqual({ trials: 1 });
+  });
+
   it("adds only the version picks that are set", async () => {
     await runHarnessEnvironment("env-6", ["scenario-a"], 1, "request-2", {
       environment: "e1",

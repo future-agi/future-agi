@@ -43,9 +43,10 @@ from simulate.selectors.agent_fix import launch_blocker
 from simulate.services import agent_fix_issue as jobs
 from simulate.services import harness_usage
 from simulate.services.evidence_drafts import _proposal, scenario_key_for
+from simulate.services.evidence_import import create_evidence_import
 from simulate.services.harness_versioning import archives
 from simulate.services.harness_versioning.versions import suite_documents
-from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
 from simulate.services.hosted_harness_conversation import ensure_conversation
 from simulate.tests.test_agent_fix_api import BASE as RUNS
 from simulate.tests.test_agent_fix_api import _out_of_credits
@@ -69,6 +70,7 @@ from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fi
     storage as storage,
 )
 from simulate.tests.test_harness_versioning_record import _authoring
+from simulate.tests.test_hosted_harness_channels import _payload
 from tracer.models.project import Project
 from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
 from tracer.services.clickhouse.v2.span_reader import TraceUnit
@@ -249,6 +251,47 @@ def _in_review(environment, issue, user, *, drafts=1):
     made = _import(environment, issue, [str(uuid.uuid4()) for _ in range(drafts)])
     cases = [_drafted(environment, case) for case in made.cases.order_by("position")]
     return _job(environment, made, created_by=user), cases[0]
+
+
+# Another import's case of ``pick`` that no longer drafts or reviews it.
+
+
+def _in_another_environment(environment, issue, pick, *, user, workspace):
+    other, _ = create_hosted_job(
+        user.organization, _payload(), idempotency_key="other", workspace=workspace
+    )
+    _import(other, None, [pick], project=issue.project)
+
+
+def _in_a_deleted_import(environment, issue, pick, **_):
+    EvidenceImport.objects.filter(
+        id=_import(environment, None, [pick], project=issue.project).id
+    ).update(deleted=True)
+
+
+def _discarded(environment, issue, pick, **_):
+    _import(environment, None, [pick], project=issue.project, status="discarded")
+
+
+def _added_and_gone_from_the_suite(environment, issue, pick, **_):
+    added = _import(environment, None, [pick], project=issue.project, status="added")
+    # The scenario it was added as is no longer in the suite.
+    added.cases.update(scenario_key="removed-since")
+    return added.cases.get()
+
+
+def _a_repeat(environment, issue, pick, **_):
+    # A repeat of an added case of another source, which is not picked.
+    original = _added_and_gone_from_the_suite(environment, issue, str(uuid.uuid4()))
+    _import(environment, None, [pick], project=issue.project, status="duplicate")
+    EvidenceImportCase.objects.filter(source_id=pick).update(duplicate_of=original)
+
+
+def _a_stale_draft(environment, issue, pick, **_):
+    made = _import(environment, None, [pick], project=issue.project)
+    EvidenceImportCase.objects.filter(evidence_import=made).update(
+        status="drafted", environment_hash="older"
+    )
 
 
 class TestSample:
@@ -540,6 +583,84 @@ class TestCreate:
         assert EvidenceImport.objects.count() == before
         assert not AgentFixIssueJob.no_workspace_objects.exists()
         boundaries.drafting.assert_not_called()
+
+    def test_a_pick_in_review_is_named_while_its_history_cannot_be_read(
+        self, environment, issue, user, boundaries
+    ):
+        kept, reviewed = _members(issue, 2)
+        with _roots(_sdk([reviewed])):
+            other, _evidence = create_evidence_import(
+                environment=environment,
+                project=issue.project,
+                source_kind="trace",
+                source_ids=[reviewed],
+                user=user,
+            )
+        waiting = other.cases.get()
+        assert waiting.status == "pending" and waiting.digest
+        before = EvidenceImport.objects.count()
+
+        with (
+            _roots(_sdk([kept, reviewed])),
+            patch(
+                "simulate.services.evidence_import.current_evidence",
+                side_effect=ConnectionError,
+            ),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            jobs.create_issue_job(
+                issue,
+                environment=environment,
+                member_ids=[kept, reviewed],
+                user=user,
+                endpoint_base_url="https://platform.test",
+                environments=_mine(environment),
+            )
+
+        assert refused.value.code == "issue_epoch_picks_in_review"
+        assert refused.value.details == {"member_ids": [reviewed]}
+        assert EvidenceImport.objects.count() == before
+        waiting.refresh_from_db()
+        assert waiting.status == "pending"
+        assert not AgentFixIssueJob.no_workspace_objects.exists()
+        boundaries.drafting.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "unrelated",
+        [
+            pytest.param(_in_another_environment, id="another-environment"),
+            pytest.param(_in_a_deleted_import, id="deleted-import"),
+            pytest.param(_discarded, id="discarded"),
+            pytest.param(_a_repeat, id="duplicate"),
+            pytest.param(_a_stale_draft, id="stale-draft"),
+            pytest.param(_added_and_gone_from_the_suite, id="added-gone-from-suite"),
+        ],
+    )
+    def test_a_pick_no_other_import_still_reviews_is_drafted(
+        self, environment, issue, user, workspace, boundaries, unrelated
+    ):
+        # One pick per case: two picks' texts can redact to one fingerprint, and
+        # the second would be stored as a repeat of the first.
+        (pick,) = _members(issue, 1)
+        unrelated(environment, issue, pick, user=user, workspace=workspace)
+
+        with _roots(_sdk([pick])):
+            job = jobs.create_issue_job(
+                issue,
+                environment=environment,
+                member_ids=[pick],
+                user=user,
+                endpoint_base_url="https://platform.test",
+                environments=_mine(environment),
+            )
+
+        assert list(
+            job.evidence_import.cases.order_by("position").values_list(
+                "source_id", "status"
+            )
+        ) == [(pick, "pending")]
+        (_made, pending), _kwargs = boundaries.drafting.call_args
+        assert pending == [str(job.evidence_import.cases.get().id)]
 
     def test_picks_of_two_kinds_or_outside_the_issue_are_refused(
         self, environment, issue, user

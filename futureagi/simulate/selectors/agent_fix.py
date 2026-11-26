@@ -97,7 +97,11 @@ from simulate.services.hosted_harness import (
     HostedHarnessError,
     run_max_duration_seconds,
 )
-from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
+from simulate.services.hosted_harness_ingestion import (
+    SUB_GOAL_PASSED,
+    graded_call_receipt,
+    sub_goal_result,
+)
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
@@ -327,9 +331,7 @@ def source_failures(
         .order_by("trial_index", "execution_key")
     ):
         key = execution.source_scenario.scenario_key
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if key in found or not isinstance(receipt, Mapping):
             continue
         record = _record(key, execution.trial_index, receipt, "")
@@ -379,9 +381,7 @@ def check_run_status(
     latencies = _reply_latencies(calls) if finished else {}
     records = []
     for execution in executions:
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         records.append(
@@ -458,9 +458,23 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     )
 
 
+# What a trial failed on when no check of its did: a write the world committed twice, or another failure of the agent's.
+REPEATED_WRITE = "committed_a_write_twice"
+FAILED_BEYOND_CHECKS = "failed_beyond_its_checks"
+
+
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
-    Not applicable and inconclusive sub-goals are left out."""
+    Not applicable and inconclusive sub-goals are left out, and a trial that ended on a failure of ours judges none."""
+    failure = (
+        receipt.get("failure") if isinstance(receipt.get("failure"), Mapping) else None
+    )
+    if (
+        receipt.get("status") == "errored"
+        and failure is not None
+        and failure.get("domain") != "agent"
+    ):
+        return {}
     # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
     checks = [
         one
@@ -479,6 +493,19 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     }
     if (receipt.get("failure") or {}).get("domain") == "agent":
         judged = {name: held is True for name, held in judged.items()}
+    # A check never verified for this scenario is undecided: never the agent's pass, never its failure.
+    judged.update(
+        {name: None for name, result in results.items() if result == "unmeasured"}
+    )
+    # A trial graded failed with no check failing failed beyond its checks: the world committed a write twice.
+    found = receipt.get("call")
+    call: Mapping[str, Any] = found if isinstance(found, Mapping) else {}
+    if (
+        call.get("duplicate_commits") or receipt.get("status") == "failed"
+    ) and False not in judged.values():
+        judged[
+            REPEATED_WRITE if call.get("duplicate_commits") else FAILED_BEYOND_CHECKS
+        ] = False
     return {
         name: held if isinstance(held, bool) else None for name, held in judged.items()
     }
@@ -757,9 +784,7 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
                 failing_sub_goals=[],
             ),
         )
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         for name, held in judged_sub_goals(receipt).items():
@@ -863,7 +888,9 @@ def outside_attempt_hold_usd(
     return screen + final + confirm + baseline
 
 
-def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
+def with_spend(
+    runs: QuerySet[AgentFixRun], *, eval_count: int | None = None
+) -> QuerySet[AgentFixRun]:
     """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls,
     every check run's sealed usage and what its evals billed. ``committed_usd`` is what the
     fix's limit is held against: a check run not settled yet (usage not sealed, or evals
@@ -871,7 +898,11 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     winner's grading may read still holds its evals' worst case while the fix goes on.
 
     A retry reads again the runs the failed fix finished, and grades them: their evals count
-    for the retry (``graded_for``), never for the failed fix that paid their simulation."""
+    for the retry (``graded_for``), never for the failed fix that paid their simulation.
+
+    ``eval_count`` replaces the environment's live count of billed evals in the holds: a
+    winner's grading passes 0 to read what is held without them, and prices the evals it
+    queues itself."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
     actual = ExpressionWrapper(
@@ -886,14 +917,18 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         ),
         output_field=money,
     )
-    evals = Coalesce(
-        Subquery(
-            runnable_eval_configs(OuterRef("environment__run_test_id"))
-            .values("run_test_id")
-            .annotate(total=Count("id"))
-            .values("total")
-        ),
-        0,
+    evals: Any = (
+        eval_count
+        if eval_count is not None
+        else Coalesce(
+            Subquery(
+                runnable_eval_configs(OuterRef("environment__run_test_id"))
+                .values("run_test_id")
+                .annotate(total=Count("id"))
+                .values("total")
+            ),
+            0,
+        )
     )
     graded = Q(check_runs__fix_label__regex=_BASELINE_LABEL.pattern) | Q(
         check_runs__fix_label__regex=_FINALIST_LABEL.pattern
@@ -987,12 +1022,15 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
-def committed_usd(fix_run: AgentFixRun) -> Decimal:
+def committed_usd(fix_run: AgentFixRun, *, eval_count: int | None = None) -> Decimal:
     """What the fix's limit is held against: its spend, and a worst case for each check run
-    whose usage is not sealed yet."""
+    whose usage is not sealed yet. ``eval_count`` is ``with_spend``'s."""
     # committed_usd is with_spend's annotation, which the Django plugin cannot see.
     committed: Decimal = (
-        with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))  # type: ignore[misc]
+        with_spend(  # type: ignore[misc]
+            AgentFixRun.no_workspace_objects.filter(id=fix_run.id),
+            eval_count=eval_count,
+        )
         .values_list("committed_usd", flat=True)
         .get()
     )
