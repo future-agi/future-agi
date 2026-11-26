@@ -134,9 +134,11 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixOverride: ["by"],
 };
 // A locked version's locker and unlocker, and a lock preview's refusal, are sent as null.
+// A lock refusal has no nested ref; it is listed so its scalar fields keep their null.
 const HARNESS_LOCKED_VERSION_NULLABLE_REFS = {
   HarnessLockedVersion: ["locked_by", "unlocked_by"],
   HarnessLockPreview: ["refusal"],
+  HarnessLockRefusal: [],
 };
 const NULLABLE_REFS = {
   ...AGENT_FIX_ISSUE_NULLABLE_REFS,

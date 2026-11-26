@@ -21369,11 +21369,7 @@ export interface HarnessLockRefusalApi {
   /** @minLength 1 */
   message: string;
   retryable: boolean;
-  /**
-   * version_conflict: the piece whose default moved.
-   * @minLength 1
-   */
-  piece?: string;
+  piece?: string | null;
   /** lock_too_few_*: the train tasks a lock gives. */
   train?: number;
   /** lock_too_few_*: the test tasks a lock gives. */
