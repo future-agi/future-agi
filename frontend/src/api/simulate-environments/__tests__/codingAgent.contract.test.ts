@@ -13,7 +13,10 @@ import {
 
 const BASE = "/simulate/api/agent-fix-runs";
 
-const check = (url, data) =>
+const check = (
+  url: string,
+  data: unknown,
+): { ok: boolean; skipped?: boolean } =>
   validateContractedResponse({
     status: 200,
     data,
