@@ -4250,3 +4250,24 @@
 - a scenario whose key differs from its stored name reads the stored name
 - a scenario with no stored name reads Unnamed scenario
 - no scenario row shows a scenario key
+
+### SIM-E2E-042 — a coding agent's attempt reads its checks in plain words on its Epoch page, and goes on only through Copy for coding agent
+
+**Goal:** A developer opens the Epoch page of an attempt their own coding agent sent, reads Future AGI's checks on the change in plain words, and copies the run's brief back to the coding agent as the one way on
+
+**Spec:** `flows/simulate/coding-agent-attempt.spec.ts:66`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the Epoch page of the coding agent's attempt
+2. read the attempt's checks
+3. click Copy for coding agent on the ending
+
+**Browser observations:**
+
+- the page marks the Epoch as Attempt 2 from your coding agent, with the agent's own note
+- each check reads in plain words from the attempt's verdict, in order, and the engine's words and the held-back cases never show
+- the ending says what the coding agent does next, and its only button is Copy for coding agent: no Retry, no Run Epoch, no What to try next
+- the click reads the brief for the attempt's run once, puts the setup and the brief's instructions exactly on the clipboard, and says Copied
