@@ -132,9 +132,7 @@ describe("DesignForm", () => {
       screen.queryByRole("button", { name: "Remove returns.pdf" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("progressbar", {
-        name: "Preparing returns.pdf for review",
-      }),
+      screen.getByRole("progressbar", { name: "Reading returns.pdf" }),
     ).toBeVisible();
     await act(async () => saved({ job: { job_id: "scratch-doc" } }));
     expect(mocks.navigate).toHaveBeenCalledWith(

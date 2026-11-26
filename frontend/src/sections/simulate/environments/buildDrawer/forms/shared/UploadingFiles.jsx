@@ -3,6 +3,7 @@ import { TransitionGroup } from "react-transition-group";
 import {
   Box,
   Button,
+  CircularProgress,
   Collapse,
   IconButton,
   LinearProgress,
@@ -79,16 +80,35 @@ function FileRow({ file, accept, onRetry, onRemove, timeout, preparing }) {
           <Typography noWrap sx={{ ...T13, fontWeight: 500 }}>
             {file.name}
           </Typography>
-          <Typography
-            role={status === "failed" ? "alert" : undefined}
-            sx={{
-              ...T12,
-              color: status === "failed" ? "status.danger.fg" : "text.disabled",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {sub}
-          </Typography>
+          {preparing && status === "done" ? (
+            <Stack
+              role="status"
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              sx={{ ...T12, color: "text.secondary" }}
+            >
+              <CircularProgress
+                size={12}
+                disableShrink
+                color="inherit"
+                aria-label={`Reading ${file.name}`}
+              />
+              <span>Reading…</span>
+            </Stack>
+          ) : (
+            <Typography
+              role={status === "failed" ? "alert" : undefined}
+              sx={{
+                ...T12,
+                color:
+                  status === "failed" ? "status.danger.fg" : "text.disabled",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {sub}
+            </Typography>
+          )}
         </Box>
         {status === "failed" &&
           onRetry &&
@@ -113,12 +133,6 @@ function FileRow({ file, accept, onRetry, onRemove, timeout, preparing }) {
           </IconButton>
         )}
       </Stack>
-      {preparing && (
-        <Box role="status" sx={{ mt: 0.5 }}>
-          <Typography variant="caption">Reading {file.name}…</Typography>
-          <LinearProgress aria-label={`Preparing ${file.name} for review`} />
-        </Box>
-      )}
       <Collapse in={status === "uploading"} timeout={timeout} unmountOnExit>
         <LinearProgress
           variant="determinate"
