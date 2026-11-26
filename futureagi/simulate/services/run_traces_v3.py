@@ -21,11 +21,24 @@ from simulate.services.agent_setup import AgentNotFound, launched_agent_summary
 from tracer.services.clickhouse.client import get_clickhouse_client
 from tracer.services.clickhouse.v2.query_builders import columns as cols
 from tracer.services.simulation_project import agent_of_run, simulation_project_of
+from tracer.utils.semantic_conventions import AttributeAliases
 
 RUN_MARK_KEY = "fi.simulation.job_id"
 CALL_MARK_KEY = "fi.simulator.call_execution_id"
 # The sandbox stamps a call some of whose model calls it could not measure.
 UNMEASURED_KEY = "fi.simulation.instrumentation"
+# Where a sender reports what a span cost, as the collector reads them (fi-collector
+# adapter.go). It prices a span from its tokens only when none of them holds a number.
+REPORTED_COST_KEYS = (
+    *AttributeAliases.COST_TOTAL,
+    *AttributeAliases.COST_INPUT,
+    *AttributeAliases.COST_OUTPUT,
+    "gen_ai.usage.total_cost",
+    "gen_ai.usage.input_cost",
+    "gen_ai.usage.output_cost",
+)
+# The collector marks a cost it could not know "unknown", reported keys or not.
+COST_KIND_KEY = "fi.cost.kind"
 READ_TIMEOUT_MS = 2000
 MAX_TRACES = 200
 TRACED_AGENT_KIND = "source"
@@ -179,49 +192,75 @@ def run_traces_params(
     }
 
 
+def _reported_cost_sql() -> str:
+    """Whether a span row's cost is one its sender reported, a zero too: a cost key
+    holds a number, and the collector did not mark the cost unknown."""
+    attrs, numbers = cols.ATTRS_STRING, cols.ATTRS_NUMBER
+    keys = ", ".join(f"'{key}'" for key in REPORTED_COST_KEYS)
+    return (
+        f"({attrs}['{COST_KIND_KEY}'] != 'unknown' AND ("
+        f"hasAny(mapKeys({numbers}), [{keys}]) OR arrayExists((key, value) -> "
+        f"key IN ({keys}) AND toFloat64OrNull(value) IS NOT NULL, "
+        f"mapKeys({attrs}), mapValues({attrs}))))"
+    )
+
+
 def run_usage_sql() -> str:
     """Each call's model calls: the models its LLM spans named, how many there were,
-    what its LLM and embedding spans cost, and how many of those carried no cost. A span
-    counts for the call it names, else for the call its trace names, as in the list."""
-    call_mark = f"{cols.ATTRS_STRING}['{CALL_MARK_KEY}']"
-    has_call_mark = f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')"
-    # The model a Future AGI instrumentor names, which is the one priced; else the
-    # request model, which some runtimes prefix with their own provider id; else the
-    # model column, for an instrumentor that names its model in another convention.
-    model_name = f"{cols.ATTRS_STRING}['llm.model_name']"
-    model = (
-        f"multiIf({model_name} != '', {model_name}, "
-        f"{cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
+    what its LLM and embedding spans cost, and how many of those had no price. A span
+    counts for the call it names, else for the call its trace names, as in the list.
+
+    An agent with two exporters sends one span twice, and the table keeps the copies
+    apart, by service name or by kind. They are read as the one span they are, each
+    fact from whichever copy carries it, so no copy is chosen and none is lost."""
+    attrs = cols.ATTRS_STRING
+    reported = _reported_cost_sql()
+    # The request model a span names, else the model column, for an instrumentor that
+    # names its model in another convention; across its copies, the greatest of each.
+    # So a span reads by a name one of its copies read by alone.
+    request_model = f"max({cols.LLM_REQUEST_MODEL})"
+    spans = (
+        "SELECT trace_id, "
+        f"max(mapContains({attrs}, '{CALL_MARK_KEY}')) AS names_call, "
+        # Copies that name two calls cannot both be right: the greater id, every read.
+        f"max({attrs}['{CALL_MARK_KEY}']) AS span_call, "
+        "min(start_time) AS span_start, "
+        "max(observation_type = 'llm') AS is_llm, "
+        "max(observation_type IN ('llm', 'embedding')) AS is_billed, "
+        f"max({attrs}['{UNMEASURED_KEY}'] = 'partial') AS is_partial, "
+        f"if({request_model} != '', {request_model}, max(model)) AS span_model, "
+        # A cost the sender reported, a zero too, before one the collector estimated.
+        f"max({reported}) AS span_reported, "
+        f"if(span_reported, maxIf(cost, {reported}), max(cost)) AS span_cost, "
+        "span_reported OR span_cost > 0 AS span_priced "
+        "FROM spans FINAL "
+        f"{_job_scope_sql()}"
+        "GROUP BY trace_id, id"
     )
     return (
-        "SELECT call_execution_id, "
+        "SELECT call_execution_id, groupUniqArrayArray(models), sum(llm_spans), "
+        "sum(billed_spans), sum(cost), sum(unpriced), "
+        "groupUniqArrayArray(unpriced_models), sum(partial) "
+        "FROM ("
+        "SELECT if(names_call, span_call, "
+        "argMinIf(span_call, first_start, names_call) "
+        "OVER (PARTITION BY trace_id)) AS call_execution_id, "
+        "models, llm_spans, billed_spans, cost, unpriced, unpriced_models, partial "
+        "FROM ("
+        # Summed by trace and named call first: finding a trace's call sorts its rows,
+        # and these are far fewer than its spans.
+        "SELECT trace_id, names_call, span_call, min(span_start) AS first_start, "
         "groupUniqArrayIf(span_model, is_llm AND span_model != '') AS models, "
         "countIf(is_llm) AS llm_spans, "
         "countIf(is_billed) AS billed_spans, "
         "sumIf(span_cost, is_billed) AS cost, "
-        "countIf(is_billed AND NOT span_cost > 0) AS unpriced, "
-        "groupUniqArrayIf(span_model, is_billed AND NOT span_cost > 0 "
+        "countIf(is_billed AND NOT span_priced) AS unpriced, "
+        "groupUniqArrayIf(span_model, is_billed AND NOT span_priced "
         "AND span_model != '') AS unpriced_models, "
         "countIf(is_partial) AS partial "
-        "FROM ("
-        f"SELECT if({has_call_mark}, {call_mark}, "
-        f"argMinIf({call_mark}, start_time, {has_call_mark}) "
-        "OVER (PARTITION BY trace_id)) AS call_execution_id, "
-        "observation_type = 'llm' AS is_llm, "
-        "observation_type IN ('llm', 'embedding') AS is_billed, "
-        f"{cols.ATTRS_STRING}['{UNMEASURED_KEY}'] = 'partial' AS is_partial, "
-        f"{model} AS span_model, "
-        "cost AS span_cost "
-        "FROM spans FINAL "
-        f"{_job_scope_sql()}"
-        # An agent with two exporters sends one span under two service names, which the
-        # table keeps apart: count it once, by the copy that has a price, then the one
-        # its Future AGI instrumentor named.
-        "ORDER BY trace_id, id, span_cost > 0 DESC, "
-        f"(mapContains({cols.ATTRS_STRING}, 'llm.model_name') "
-        f"OR mapContains({cols.ATTRS_STRING}, 'fi.span.kind')) DESC, service_name "
-        "LIMIT 1 BY trace_id, id"
-        ") "
+        f"FROM ({spans}) "
+        "GROUP BY trace_id, names_call, span_call"
+        ")) "
         "WHERE call_execution_id != '' "
         "GROUP BY call_execution_id"
     )
@@ -230,8 +269,9 @@ def run_usage_sql() -> str:
 def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
     """Each call's model calls in a run, by call id; a call that exported no LLM or
     embedding span, and that the sandbox did not flag partial, is missing. None when the run's agent is not traced, so none of its
-    calls can be seen. A span with no cost leaves its call's cost unknown: it may be an
-    unpriced model, and an unpriced model is not free. A call the sandbox could not wholly
+    calls can be seen. A span with no price leaves its call's cost unknown: it may be an
+    unpriced model, and an unpriced model is not free. A cost its sender reported is a
+    price, a zero too. A call the sandbox could not wholly
     measure (a span stamped partial) reads unknown too: some of its model calls sent no
     span."""
     source = run_traces_source(execution)
