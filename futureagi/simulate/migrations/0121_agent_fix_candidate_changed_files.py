@@ -7,7 +7,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0116_agent_fix_issue_job"),
+        ("simulate", "0120_merge_cancel_confirmation_and_scenario_lifecycle"),
     ]
 
     operations = [
