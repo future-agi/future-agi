@@ -93,8 +93,8 @@ test('SIM-E2E-041: an Epoch page shows each candidate\'s change and each scenari
     await expect(page).toHaveURL(
       exactPath(`/dashboard/simulate/environments/${ENV_ID}/improvements/${ids.epoch}`), { timeout: UI_READY },
     );
-    // The row's second cell is What it changes (CandidatesTable.tsx).
-    const changes = page.getByTestId('candidate-1').getByRole('cell').nth(1);
+    // The row's What it changes cell (data-testid="candidate-changes" in CandidatesTable.tsx).
+    const changes = page.getByTestId('candidate-1').getByTestId('candidate-changes');
     await expect(changes).toHaveText(CHANGES, { timeout: UI_READY });
   }, { timeout: UI_READY });
 
@@ -109,8 +109,8 @@ test('SIM-E2E-041: an Epoch page shows each candidate\'s change and each scenari
   await test.step('ui: check 3, a scenario with no stored name is Unnamed, and no key shows', async () => {
     await expect(nameOf(UNNAMED_KEY)).toHaveText(UNNAMED, { timeout: UI_READY });
     // Exactly these two rows, in the read's order: no other row, no key.
-    await expect(scenarios.locator('tbody tr > td:first-child')).toHaveText([NAMED, UNNAMED]);
-    await expect(scenarios).not.toContainText(NAMED_KEY);
-    await expect(scenarios).not.toContainText(UNNAMED_KEY);
+    await expect(scenarios.locator('tbody tr > td:first-child')).toHaveText([NAMED, UNNAMED], { timeout: UI_READY });
+    await expect(scenarios).not.toContainText(NAMED_KEY, { timeout: UI_READY });
+    await expect(scenarios).not.toContainText(UNNAMED_KEY, { timeout: UI_READY });
   }, { timeout: UI_READY });
 });
