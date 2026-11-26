@@ -5,6 +5,7 @@ import {
   screen,
   fireEvent,
   waitFor,
+  act,
   within,
 } from "src/utils/test-utils";
 import { CLEAN, cast, typedActor } from "./castFixtures";
@@ -132,6 +133,8 @@ const choose = (label, option) => {
 };
 const addActor = () =>
   fireEvent.click(screen.getByRole("button", { name: "Add actor" }));
+// Lets a fold's close transition finish before asserting what is visible.
+const settle = () => act(() => new Promise((done) => setTimeout(done, 500)));
 const saveButton = () => screen.getByRole("button", { name: "Save to draft" });
 const sent = (call = 0) => mutate.mock.calls[call][0];
 
@@ -639,6 +642,21 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("tags the caller with no way of taking part, and wraps a long comes-in tag", () => {
+    const long =
+      "When the agent says refund, cancel, manager, supervisor, chargeback or complaint";
+    actorsData = cast([
+      typedActor({ id: "caller", name: "The caller", side: "caller" }),
+      { ...MANAGER, when_label: long },
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    expect(screen.getAllByText("Acts in the world")).toHaveLength(1);
+    const tag = screen
+      .getAllByText(long)
+      .find((one) => one.closest(".MuiChip-root"));
+    expect(tag).toHaveStyle({ whiteSpace: "normal" });
+  });
+
   it("shows how a speaking actor joins and how loud it is as tags", () => {
     actorsData = cast([
       typedActor({
@@ -916,7 +934,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.queryByText("Checking…")).toBeNull();
   });
 
-  it("shows a server problem under its field and keeps Save off", () => {
+  it("shows a server problem under its field and keeps Save off", async () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
     fireEvent.change(screen.getByLabelText("Name"), {
@@ -936,8 +954,15 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("A wait is 0 seconds or more")).toBeInTheDocument();
     expect(screen.queryByTestId("actor-problems")).toBeNull();
     expect(saveButton()).toBeDisabled();
+    // While the next answer is pending the fold stays open under the cursor.
+    answer = undefined;
+    fireEvent.change(wait, { target: { value: "-6" } });
+    await settle();
+    expect(wait).toBeVisible();
     answer = CLEAN;
     fireEvent.change(wait, { target: { value: "2.5" } });
+    await settle();
+    expect(wait).toBeVisible();
     expect(saveButton()).toBeEnabled();
     fireEvent.click(saveButton());
     expect(sent().changes.timeout_seconds).toBe(2.5);
@@ -1373,6 +1398,21 @@ describe("WorldActorsPanel", () => {
       fallback: "crm.approve_discount",
       fallback_arguments: { set: { status: "declined" } },
     });
+  });
+
+  it("keeps the fold open while the fallback arguments are not valid JSON", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    choose("If they do not answer", "crm.approve_discount is taken for them");
+    const taken = screen.getByLabelText("Taken with (JSON)");
+    fireEvent.change(taken, { target: { value: "{not json" } });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Hide advanced settings" }),
+    );
+    await settle();
+    expect(taken).toBeVisible();
+    expect(saveButton()).toBeDisabled();
   });
 
   it("shows a loading and a failed view inside the row, with a retry", () => {

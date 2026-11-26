@@ -108,13 +108,18 @@ export default function ActorForm({
           models: context.actorModels.length > 0,
           advanced: open,
         });
-  // A problem on a folded field opens the fold, so it shows under its field.
-  const foldOpen =
-    advanced ||
+  // A problem on a folded field opens the fold and keeps it open, so it shows under its field while being fixed.
+  const openShown = screenOf(true);
+  const problemInFold =
+    (Boolean(actor) &&
+      fallbackActs(value("fallback")) &&
+      parsedArguments(value("fallback_arguments")) === null) ||
     problems.some((one) => {
       const name = PROBLEM_FIELDS[one.field];
-      return ADVANCED.includes(name) && screenOf(true).has(name);
+      return ADVANCED.includes(name) && openShown.has(name);
     });
+  if (problemInFold && !advanced) setAdvanced(true);
+  const foldOpen = advanced || problemInFold;
   const shown = screenOf(foldOpen);
   const fieldOf = (one) =>
     shown.has(PROBLEM_FIELDS[one.field]) ? PROBLEM_FIELDS[one.field] : null;

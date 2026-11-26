@@ -31,7 +31,7 @@ function tagsOf(actor, loudChannels) {
   return [
     actor.channel
       ? CHANNEL_LABELS[actor.channel] || actor.channel
-      : C.actsInWorld,
+      : actor.side !== "caller" && C.actsInWorld,
     actor.channel &&
       loudChannels.includes(actor.channel) &&
       (actor.loudness_ratio
@@ -154,13 +154,20 @@ export default function ActorRow({
             {tagsOf(actor, loudChannels).map((tag) => (
               <Chip
                 key={tag}
-                label={tag}
+                // A long comes-in text wraps instead of being cut off.
+                label={
+                  <Box component="span" sx={{ whiteSpace: "normal" }}>
+                    {tag}
+                  </Box>
+                }
                 size="small"
                 sx={{
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   typography: "s3",
                   maxWidth: "100%",
+                  height: "auto",
+                  py: 0.25,
                 }}
               />
             ))}
