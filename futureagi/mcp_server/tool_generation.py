@@ -382,6 +382,23 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             )
 
         parameters = _operation_parameters(path_item, operation, contract)
+        # A path parameter can take another name in the tool when the body has a
+        # field of the same name, such as an environment `{id}` beside an actor `id`.
+        for old, new in (entry.get("path_names") or {}).items():
+            if not isinstance(new, str) or not new.isidentifier():
+                raise ToolGenerationError(f"Invalid path name for {name}: {new!r}")
+            index = next(
+                (
+                    i
+                    for i, parameter in enumerate(parameters)
+                    if parameter.get("in") == "path" and parameter.get("name") == old
+                ),
+                None,
+            )
+            if index is None:
+                raise ToolGenerationError(f"Unknown path parameter for {name}: {old}")
+            parameters[index] = {**parameters[index], "name": new}
+            path = path.replace("{" + old + "}", "{" + new + "}")
         input_schema, request_mapping = _build_input_schema(
             parameters, contract, method=method
         )
