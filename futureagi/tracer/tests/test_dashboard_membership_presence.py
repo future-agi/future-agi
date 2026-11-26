@@ -269,8 +269,11 @@ def assert_eval_scope(sql, params, workspace=True, prefix="s_", index=0):
         WORKSPACE if workspace else ORGANIZATION
     )
     assert params[f"{prefix}eval_id_{index}"] == TEMPLATE
-    assert f"{scan}.created_at >= %(start_date)s" in sql
-    assert f"{scan}.created_at < %(end_date)s" in sql
+    # TH-10545: membership follows each trace's latest recorded result, so
+    # the window bounds subjects, not candidate execution times.
+    assert f"{scan}.created_at >=" not in sql
+    assert f"{scan}.id IN ( SELECT {scan}_candidate.id" in sql
+    assert f"{scan}.created_at <" not in sql
     boundary = f"ORDER BY {scan}._peerdb_version DESC LIMIT 1 BY {scan}.id"
     assert boundary in sql
     replay, live = sql.split(boundary, 1)
@@ -593,6 +596,9 @@ def test_membership_helper_ignores_unrelated_filters_and_preserves_all_inputs(mo
         "probe_ann_org_id_0": ORGANIZATION,
         "probe_eval_id_1": TEMPLATE,
         "probe_scope_id_1": WORKSPACE,
+        # The eval scan is also scoped by organization, the usage sort-key
+        # prefix, ahead of the workspace (TH-10545).
+        "probe_org_scope_id_1": ORGANIZATION,
     }
 
 
@@ -673,15 +679,24 @@ def test_ordinary_eval_comparisons_do_not_project_or_read_config(
     assert {f"{scan}.eval_score", f"{scan}.eval_output_str"} <= projected
     assert f"{scan}.config" not in projected
     assert "*" not in projection  # A wildcard would silently read config too.
-    assert re.search(r"\bconfig\b", sql, flags=re.IGNORECASE) is None
+    # The latest-recorded election (TH-10545) reads only the project stamp and
+    # the target type out of config; the raw column is never projected.
+    config_reads = re.findall(r"[^\s(]*\bconfig\b[^\s,]*", sql, flags=re.IGNORECASE)
+    assert config_reads and set(config_reads) == {f"{scan}.config)"}, config_reads
+    assert sql.count(f"JSONExtractString(JSONExtractString({scan}.config), ") == 2
+    assert f"JSONExtractString({scan}.config), 'project_id')" in sql
+    assert f"JSONExtractString({scan}.config), 'target_type')" in sql
     assert params["s_0_val"] == value
     assert "s_0_val_low" not in params and "s_0_val_high" not in params
     assert params["s_eval_id_0"] == TEMPLATE
     assert params["s_scope_id_0"] == WORKSPACE
     assert f"{scan}.source_id = %(s_eval_id_0)s" in sql
     assert f"{scan}.workspace_id = toUUID(%(s_scope_id_0)s)" in sql
-    assert f"{scan}.created_at >= %(start_date)s" in sql
-    assert f"{scan}.created_at < %(end_date)s" in sql
+    # TH-10545: membership follows each trace's latest recorded result, so
+    # the window bounds subjects, not candidate execution times.
+    assert f"{scan}.created_at >=" not in sql
+    assert f"{scan}.id IN ( SELECT {scan}_candidate.id" in sql
+    assert f"{scan}.created_at <" not in sql
     boundary = f"ORDER BY {scan}._peerdb_version DESC LIMIT 1 BY {scan}.id"
     replay, live = sql.split(boundary, 1)
     for predicate in ("_peerdb_is_deleted = 0", "deleted = 0", "status = 'success'"):

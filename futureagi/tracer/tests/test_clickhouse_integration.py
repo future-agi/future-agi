@@ -36,13 +36,24 @@ import pytest
 _TEST_DATABASE = "test_futureagi"
 _EVAL_TABLE = f"{_TEST_DATABASE}.usage_apicalllog"
 _EVAL_TRACE_TABLE = f"{_TEST_DATABASE}.eval_score_test_traces"
+_EVAL_SPAN_TABLE = f"{_TEST_DATABASE}.eval_score_test_spans"
 
 
 def _rewrite_eval_dashboard_tables(sql: str) -> str:
     """Point an eval dashboard query at this suite's isolated CH fixtures."""
-    return sql.replace("usage_apicalllog", _EVAL_TABLE).replace(
-        "FROM traces AS trace_project_scan",
-        f"FROM {_EVAL_TRACE_TABLE} AS trace_project_scan",
+    return (
+        sql.replace("usage_apicalllog", _EVAL_TABLE)
+        .replace(
+            "FROM traces AS trace_project_scan",
+            f"FROM {_EVAL_TRACE_TABLE} AS trace_project_scan",
+        )
+        .replace("FROM traces AS trace_window_scan", f"FROM {_EVAL_TRACE_TABLE} AS trace_window_scan")
+        .replace("FROM spans AS eval_window_span", f"FROM {_EVAL_SPAN_TABLE} AS eval_window_span")
+        .replace(
+            # Trace eval scores are dated by the trace's root span (TH-10545).
+            "FROM spans AS eval_trace_span",
+            f"FROM {_EVAL_SPAN_TABLE} AS eval_trace_span",
+        )
     )
 
 
@@ -472,6 +483,7 @@ def ch_eval_output_rows(ch_schema):
     """
     from tracer.services.clickhouse.schema import (
         CDC_USAGE_APICALLLOG,
+        SPANS_TABLE,
         _to_single_node_engine,
     )
     from tracer.services.clickhouse.v2.apply_schema_rewriter import split_statements
@@ -516,6 +528,28 @@ def ch_eval_output_rows(ch_schema):
     # Backdated so clock skew against the CH container can't push rows past "now".
     seeded_at = "now64(6) - toIntervalHour(1)"
 
+    # Trace eval scores are plotted at their trace's start (TH-10545), so
+    # every seeded trace gets a root span starting when its results were
+    # recorded, inside the dashboard window.
+    client.command(f"DROP TABLE IF EXISTS {_EVAL_SPAN_TABLE}")
+    client.command(
+        _to_single_node_engine(SPANS_TABLE).replace(
+            "CREATE TABLE IF NOT EXISTS spans",
+            f"CREATE TABLE {_EVAL_SPAN_TABLE}",
+        )
+    )
+    span_values = ", ".join(
+        f"('{uuid.uuid4().hex[:16]}', '{trace_id}', toUUID('{project_id}'), '', "
+        "now64(3) - toIntervalHour(1), now64(3) - toIntervalHour(1), "
+        "now64(3) - toIntervalHour(1), 0, 1)"
+        for trace_id in trace_ids.values()
+    )
+    client.command(
+        f"INSERT INTO {_EVAL_SPAN_TABLE} "
+        "(id, trace_id, project_id, parent_span_id, start_time, created_at, "
+        f"updated_at, _peerdb_is_deleted, _peerdb_version) VALUES {span_values}"
+    )
+
     def _seed(source_id, shapes, first_id):
         for offset, (label, payload, _score, _has_number) in enumerate(shapes):
             # trace_id: eval filters select on eval_trace_id, so it names the row.
@@ -553,6 +587,7 @@ def ch_eval_output_rows(ch_schema):
     try:
         client.command(f"TRUNCATE TABLE {_EVAL_TABLE}")
         client.command(f"DROP TABLE IF EXISTS {_EVAL_TRACE_TABLE}")
+        client.command(f"DROP TABLE IF EXISTS {_EVAL_SPAN_TABLE}")
     except Exception:
         pass
 
