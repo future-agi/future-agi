@@ -1,6 +1,6 @@
 // Stubbed responses for SIM-E2E-041, in the agent-fix-runs and v3 calls contracts'
 // shapes. No imports, so both suites can read it: the flow serves these from the
-// browser, and frontend/src/api/simulate-environments/__tests__/epochNamesStubs.test.js
+// browser, and frontend/src/api/simulate-environments/__tests__/epochNamesStubs.test.ts
 // parses every one with the generated zod (frontend/src/generated/api-contracts/api.zod.ts),
 // so a contract change fails the frontend suite instead of leaving these stale.
 
