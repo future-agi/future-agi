@@ -1,21 +1,46 @@
-import PropTypes from "prop-types";
 import { useLocation } from "react-router-dom";
 import { Box, Link, Stack, Typography } from "@mui/material";
 
 import StatusBadge from "src/components/status-badge";
+import type { AgentFixCheckRunApi } from "src/generated/api-contracts/api.schemas";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
 import SideDrawer from "../../components/SideDrawer";
 
+// One call of a check run, as runCalls.mapCallRow maps it, with the check run
+// it came from (fixRuns.useFixScenarioRows).
+interface CompareCall {
+  id: string;
+  trialIndex: number | null;
+  harnessOutcomeStatus: string | null;
+  outcomeReason: string | null;
+  checkRun?: AgentFixCheckRunApi;
+}
+
+// One scenario's row from scenarioOutcomes: its calls on each side.
+interface CompareRow {
+  name: string;
+  beforeCalls: CompareCall[];
+  afterCalls: CompareCall[];
+}
+
 // A call as the verdict read it: the judge's result, or not measured.
-const callStatus = (call) =>
+const callStatus = (call: CompareCall) =>
   call.harnessOutcomeStatus === "passed" ||
   call.harnessOutcomeStatus === "failed"
     ? call.harnessOutcomeStatus
     : "unmeasured";
 
-function Calls({ title, calls, envId }) {
+function Calls({
+  title,
+  calls,
+  envId,
+}: {
+  title: string;
+  calls: CompareCall[];
+  envId: string;
+}) {
   const location = useLocation();
   const sorted = [...calls].sort(
     (a, b) => (a.trialIndex ?? 0) - (b.trialIndex ?? 0),
@@ -82,11 +107,14 @@ function Calls({ title, calls, envId }) {
     </Box>
   );
 }
-Calls.propTypes = {
-  title: PropTypes.string.isRequired,
-  calls: PropTypes.array.isRequired,
-  envId: PropTypes.string.isRequired,
-};
+
+interface ScenarioCompareProps {
+  row: CompareRow | null;
+  heading?: string;
+  afterTitle: string;
+  envId: string;
+  onClose: () => void;
+}
 
 // The design's before-and-after compare (CallCompare) over the check runs'
 // calls: one scenario's calls on the current version beside the candidate's,
@@ -97,7 +125,7 @@ export default function ScenarioCompare({
   afterTitle,
   envId,
   onClose,
-}) {
+}: ScenarioCompareProps) {
   return (
     <SideDrawer open={!!row} onClose={onClose} width={760}>
       {row && (
@@ -130,11 +158,3 @@ export default function ScenarioCompare({
     </SideDrawer>
   );
 }
-
-ScenarioCompare.propTypes = {
-  row: PropTypes.object,
-  heading: PropTypes.string,
-  afterTitle: PropTypes.string.isRequired,
-  envId: PropTypes.string.isRequired,
-  onClose: PropTypes.func.isRequired,
-};
