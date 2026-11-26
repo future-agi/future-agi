@@ -4,9 +4,9 @@ import userEvent from "@testing-library/user-event";
 
 import type {
   HarnessLockPreviewApi,
-  HarnessReleaseApi,
+  HarnessLockedVersionApi,
 } from "src/generated/api-contracts/api.schemas";
-import type { Release, VersionPair } from "../ReleaseCard";
+import type { LockedVersion, VersionPair } from "../LockedVersionCard";
 
 // A version row as the read sends it, with only the fields the card reads.
 interface PieceRow {
@@ -22,17 +22,20 @@ interface VersionsBody {
   agent: PieceRow[];
   environment: PieceRow[];
   suite: PieceRow[];
-  releases: HarnessReleaseApi[];
+  locked_versions: HarnessLockedVersionApi[];
   lock: HarnessLockPreviewApi;
 }
 
 // What the server answered for the versions read, and what each action got.
 const state: {
   versions: VersionsBody | undefined;
-  canUnlockRelease: boolean;
+  canUnlockVersion: boolean;
   canEdit: boolean;
-} = { versions: undefined, canUnlockRelease: true, canEdit: true };
-const calls: { lock: VersionPair[]; unlock: { releaseId: Release["id"] }[] } = {
+} = { versions: undefined, canUnlockVersion: true, canEdit: true };
+const calls: {
+  lock: VersionPair[];
+  unlock: { lockedVersionId: LockedVersion["id"] }[];
+} = {
   lock: [],
   unlock: [],
 };
@@ -46,13 +49,13 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useEnvironmentVersions: vi.fn(() => ({
       data: state.versions ? actual.toVersions(state.versions) : undefined,
     })),
-    useLockRelease: vi.fn(() => ({
+    useLockVersion: vi.fn(() => ({
       isPending: false,
       mutate: (variables: VersionPair) => calls.lock.push(variables),
     })),
-    useUnlockRelease: vi.fn(() => ({
+    useUnlockVersion: vi.fn(() => ({
       isPending: false,
-      mutate: (variables: { releaseId: string }) =>
+      mutate: (variables: { lockedVersionId: string }) =>
         calls.unlock.push(variables),
     })),
   };
@@ -61,11 +64,11 @@ vi.mock("../../../hooks/useSimulationAccess", () => ({
   default: () => ({
     canEdit: state.canEdit,
     canRun: true,
-    canUnlockRelease: state.canUnlockRelease,
+    canUnlockVersion: state.canUnlockVersion,
   }),
 }));
 
-const { default: ReleaseCard } = await import("../ReleaseCard");
+const { default: LockedVersionCard } = await import("../LockedVersionCard");
 const { versionLine } = await import("../overview.constants");
 
 const piece = (id: string, label: string): PieceRow => ({
@@ -74,7 +77,7 @@ const piece = (id: string, label: string): PieceRow => ({
   status: "active",
   is_default: true,
 });
-const RELEASE: HarnessReleaseApi = {
+const LOCKED_VERSION: HarnessLockedVersionApi = {
   id: "rel-1",
   label: "2026.11.1",
   environment_version_id: "env-3",
@@ -89,10 +92,10 @@ const RELEASE: HarnessReleaseApi = {
   test: 14,
 };
 const answer = ({
-  releases = [],
+  lockedVersions = [],
   lock = {},
 }: {
-  releases?: HarnessReleaseApi[];
+  lockedVersions?: HarnessLockedVersionApi[];
   lock?: Partial<HarnessLockPreviewApi>;
 } = {}): VersionsBody => ({
   agent: [
@@ -107,7 +110,7 @@ const answer = ({
   ],
   environment: [piece("env-3", "v3")],
   suite: [piece("suite-5", "v5")],
-  releases,
+  locked_versions: lockedVersions,
   lock: {
     environment_version_id: "env-3",
     suite_version_id: "suite-5",
@@ -123,15 +126,15 @@ const answer = ({
 
 beforeEach(() => {
   state.versions = answer();
-  state.canUnlockRelease = true;
+  state.canUnlockVersion = true;
   state.canEdit = true;
   calls.lock.length = 0;
   calls.unlock.length = 0;
 });
 
-describe("ReleaseCard", () => {
+describe("LockedVersionCard", () => {
   it("states the version line", () => {
-    render(<ReleaseCard envId="env" />);
+    render(<LockedVersionCard envId="env" />);
 
     expect(
       screen.getByText(
@@ -141,7 +144,7 @@ describe("ReleaseCard", () => {
   });
 
   it("offers the lock with the splits it would get", async () => {
-    render(<ReleaseCard envId="env" />);
+    render(<LockedVersionCard envId="env" />);
 
     expect(screen.getByText("Lock a version")).toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
@@ -172,7 +175,7 @@ describe("ReleaseCard", () => {
   });
 
   it("locks the pair that opened the dialog, even if the default moved since", async () => {
-    const { rerender } = render(<ReleaseCard envId="env" />);
+    const { rerender } = render(<LockedVersionCard envId="env" />);
     await userEvent.click(
       screen.getByRole("button", { name: "Lock this version" }),
     );
@@ -181,7 +184,7 @@ describe("ReleaseCard", () => {
     state.versions = answer({
       lock: { environment_version_id: "env-4", suite_version_id: "suite-6" },
     });
-    rerender(<ReleaseCard envId="env" />);
+    rerender(<LockedVersionCard envId="env" />);
     await userEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
         name: "Lock version",
@@ -198,7 +201,7 @@ describe("ReleaseCard", () => {
       lock: {
         can_lock: false,
         refusal: {
-          code: "release_too_few_test",
+          code: "lock_too_few_test",
           message: "Add scenarios to lock: a test split needs at least 4.",
         },
         train: 7,
@@ -207,7 +210,7 @@ describe("ReleaseCard", () => {
     });
 
     const onGo = vi.fn();
-    render(<ReleaseCard envId="env" onGo={onGo} />);
+    render(<LockedVersionCard envId="env" onGo={onGo} />);
 
     expect(screen.getByText("Can't lock yet")).toBeInTheDocument();
     expect(
@@ -227,14 +230,14 @@ describe("ReleaseCard", () => {
       lock: {
         can_lock: false,
         refusal: {
-          code: "release_not_ready",
+          code: "lock_not_ready",
           message:
             "This environment is building or its last build failed. Lock it once a build finishes.",
         },
       },
     });
 
-    render(<ReleaseCard envId="env" onGo={vi.fn()} />);
+    render(<LockedVersionCard envId="env" onGo={vi.fn()} />);
 
     expect(
       screen.queryByRole("button", { name: "Add scenarios" }),
@@ -244,7 +247,7 @@ describe("ReleaseCard", () => {
   it("keeps the lock from someone who can't edit, and says why", async () => {
     state.canEdit = false;
 
-    render(<ReleaseCard envId="env" />);
+    render(<LockedVersionCard envId="env" />);
 
     expect(
       screen.getByRole("button", { name: "Lock this version" }),
@@ -255,13 +258,13 @@ describe("ReleaseCard", () => {
     );
   });
 
-  it("shows a locked release with its splits, and an admin can unlock it", async () => {
+  it("shows a locked version with its splits, and an admin can unlock it", async () => {
     state.versions = answer({
-      releases: [RELEASE],
+      lockedVersions: [LOCKED_VERSION],
       lock: { can_lock: false, proved: true },
     });
 
-    render(<ReleaseCard envId="env" />);
+    render(<LockedVersionCard envId="env" />);
 
     expect(screen.getByText("Locked version 2026.11.1")).toBeInTheDocument();
     // The title already says Locked: a locked card shows no status badge.
@@ -288,28 +291,31 @@ describe("ReleaseCard", () => {
       within(dialog).getByRole("button", { name: "Unlock version" }),
     );
 
-    expect(calls.unlock).toEqual([{ releaseId: "rel-1" }]);
+    expect(calls.unlock).toEqual([{ lockedVersionId: "rel-1" }]);
   });
 
   it("hides Unlock from a member", () => {
-    state.canUnlockRelease = false;
-    state.versions = answer({ releases: [RELEASE], lock: { can_lock: false } });
+    state.canUnlockVersion = false;
+    state.versions = answer({
+      lockedVersions: [LOCKED_VERSION],
+      lock: { can_lock: false },
+    });
 
-    render(<ReleaseCard envId="env" />);
+    render(<LockedVersionCard envId="env" />);
 
     expect(
       screen.queryByRole("button", { name: "Unlock" }),
     ).not.toBeInTheDocument();
   });
 
-  it("lets an admin unlock an earlier release the default moved past", async () => {
+  it("lets an admin unlock an earlier locked version the default moved past", async () => {
     state.versions = answer({
-      releases: [
-        { ...RELEASE, suite_version_id: "suite-4", suite_label: "v4" },
+      lockedVersions: [
+        { ...LOCKED_VERSION, suite_version_id: "suite-4", suite_label: "v4" },
       ],
     });
 
-    render(<ReleaseCard envId="env" />);
+    render(<LockedVersionCard envId="env" />);
 
     expect(screen.getByText("Ready")).toBeInTheDocument();
     expect(
@@ -326,14 +332,14 @@ describe("ReleaseCard", () => {
       within(dialog).getByRole("button", { name: "Unlock version" }),
     );
 
-    expect(calls.unlock).toEqual([{ releaseId: "rel-1" }]);
+    expect(calls.unlock).toEqual([{ lockedVersionId: "rel-1" }]);
   });
 
-  it("lists earlier releases, unlocked ones included", () => {
+  it("lists earlier locked versions, unlocked ones included", () => {
     state.versions = answer({
-      releases: [
+      lockedVersions: [
         {
-          ...RELEASE,
+          ...LOCKED_VERSION,
           id: "rel-0",
           label: "2026.11.1",
           suite_version_id: "suite-4",
@@ -343,7 +349,7 @@ describe("ReleaseCard", () => {
       ],
     });
 
-    render(<ReleaseCard envId="env" />);
+    render(<LockedVersionCard envId="env" />);
 
     expect(screen.getByText("Lock a version")).toBeInTheDocument();
     expect(
@@ -356,7 +362,7 @@ describe("ReleaseCard", () => {
   it("renders nothing before the server answers", () => {
     state.versions = undefined;
 
-    const { container } = render(<ReleaseCard envId="env" />);
+    const { container } = render(<LockedVersionCard envId="env" />);
 
     expect(container).toBeEmptyDOMElement();
   });

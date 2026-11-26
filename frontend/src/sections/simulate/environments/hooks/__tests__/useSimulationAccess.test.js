@@ -23,7 +23,7 @@ describe("useSimulationAccess", () => {
       expect(accessFor(role)).toEqual({
         canEdit: false,
         canRun: false,
-        canUnlockRelease: false,
+        canUnlockVersion: false,
       });
     },
   );
@@ -39,16 +39,16 @@ describe("useSimulationAccess", () => {
   });
 
   it.each([ROLES.OWNER, ROLES.ADMIN, ROLES.WORKSPACE_ADMIN])(
-    "lets a %s unlock a release",
+    "lets a %s unlock a locked version",
     (role) => {
-      expect(accessFor(role).canUnlockRelease).toBe(true);
+      expect(accessFor(role).canUnlockVersion).toBe(true);
     },
   );
 
   it.each([ROLES.MEMBER, ROLES.WORKSPACE_MEMBER])(
-    "keeps a %s from unlocking a release",
+    "keeps a %s from unlocking a locked version",
     (role) => {
-      expect(accessFor(role).canUnlockRelease).toBe(false);
+      expect(accessFor(role).canUnlockVersion).toBe(false);
     },
   );
 
@@ -56,7 +56,7 @@ describe("useSimulationAccess", () => {
     expect(accessFor(undefined)).toEqual({
       canEdit: false,
       canRun: false,
-      canUnlockRelease: false,
+      canUnlockVersion: false,
     });
   });
 });

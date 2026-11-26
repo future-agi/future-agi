@@ -80,16 +80,16 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRunEvaluationsQueuedSerializer,
     HarnessEnvironmentRunEvaluationsSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
-    HarnessLockReleaseSerializer,
+    HarnessLockRefusalSerializer,
+    HarnessLockVersionSerializer,
     HarnessNudgeAnswerSerializer,
     HarnessNudgeListQuerySerializer,
     HarnessNudgeSerializer,
-    HarnessReleaseRefusalSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
     HarnessSuiteMemberSerializer,
     HarnessUnlockForbiddenSerializer,
-    HarnessUnlockReleaseSerializer,
+    HarnessUnlockVersionSerializer,
     HarnessVerifyCreateResponseSerializer,
     HarnessVerifyCreateSerializer,
     HarnessVerifyResultSerializer,
@@ -405,27 +405,27 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         )
         return Response(version_reads.list_versions(moved))
 
-    @viewer_denied("lock a release")
+    @viewer_denied("lock a version")
     @validated_request(
-        request_serializer=HarnessLockReleaseSerializer,
+        request_serializer=HarnessLockVersionSerializer,
         responses={
             200: HarnessVersionsSerializer,
-            409: HarnessReleaseRefusalSerializer,
-            422: HarnessReleaseRefusalSerializer,
+            409: HarnessLockRefusalSerializer,
+            422: HarnessLockRefusalSerializer,
         },
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="versions/lock")
-    def lock_release(self, request, pk=None):
-        """Lock the default environment and suite versions into a release with train and
-        test splits; returns every version and release."""
-        from simulate.services.harness_versioning.releases import lock_release
+    def lock_version(self, request, pk=None):
+        """Lock the default environment and suite versions with train and test splits;
+        returns every version and locked version."""
+        from simulate.services.harness_versioning.locked_versions import lock_version
 
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        locked = lock_release(
+        locked = lock_version(
             job,
             environment_version_id=request.validated_data["environment_version_id"],
             suite_version_id=request.validated_data["suite_version_id"],
@@ -434,10 +434,10 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         return Response(version_reads.list_versions(locked))
 
     @viewer_denied(
-        "unlock a release", advice="Ask a workspace admin or owner to unlock it."
+        "unlock a version", advice="Ask a workspace admin or owner to unlock it."
     )
     @validated_request(
-        request_serializer=HarnessUnlockReleaseSerializer,
+        request_serializer=HarnessUnlockVersionSerializer,
         responses={
             200: HarnessVersionsSerializer,
             403: HarnessUnlockForbiddenSerializer,
@@ -445,17 +445,17 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="versions/unlock")
-    def unlock_release(self, request, pk=None):
-        """Unlock a release, as a workspace admin or owner. Its versions, splits and
-        scores stay; returns every version and release."""
-        from simulate.services.harness_versioning.releases import unlock_release
+    def unlock_version(self, request, pk=None):
+        """Unlock a locked version, as a workspace admin or owner. Its versions, splits and
+        scores stay; returns every version and locked version."""
+        from simulate.services.harness_versioning.locked_versions import unlock_version
 
-        # Not behind the versioning flag: a locked release blocks deletion either way.
+        # Not behind the versioning flag: a locked version blocks deletion either way.
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        unlocked = unlock_release(
-            job, request.validated_data["release_id"], user=request.user
+        unlocked = unlock_version(
+            job, request.validated_data["locked_version_id"], user=request.user
         )
         return Response(version_reads.list_versions(unlocked))
 
@@ -1426,9 +1426,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         return Response(environment_detail(job))
 
     @viewer_denied("delete an environment")
-    @swagger_auto_schema(
-        responses={204: "Deleted", 409: HarnessReleaseRefusalSerializer}
-    )
+    @swagger_auto_schema(responses={204: "Deleted", 409: HarnessLockRefusalSerializer})
     def destroy(self, request, pk=None):
         """Soft-delete an environment, cancelling its run first if one is live.
 

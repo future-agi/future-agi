@@ -214,13 +214,13 @@ export const CHECKLIST_COPY = {
 export const isHarnessTable = (name = "") => name.startsWith("_") || name.startsWith("harness_");
 export const worldTables = (env) => (env?.seed?.tables || []).filter((t) => !isHarnessTable(t.name));
 
-// The Release card: lock the default versions so scores on them stay comparable.
-export const RELEASE_COPY = {
-  title: (label) => (label ? `Release ${label}` : "Release"),
+// The locked-version card: lock the default versions so scores on them stay comparable.
+export const LOCK_COPY = {
+  title: (label) => (label ? `Locked version ${label}` : "Lock a version"),
   subtitleLocked:
     "Frozen so scores stay comparable. Edits make a new, unlocked version.",
   subtitleOpen: "Lock these versions so scores on them stay comparable.",
-  status: { locked: "Locked", ready: "Ready", blocked: "Can't lock yet" },
+  status: { ready: "Ready", blocked: "Can't lock yet" },
   head: { check: "Check", proves: "What it proves", result: "Result" },
   reference: {
     label: "Reference passes",
@@ -232,21 +232,21 @@ export const RELEASE_COPY = {
     `Locked ${at} · Train ${train} · Test ${test} scenarios · scorer environment ${environmentLabel}`,
   readyLine: (train, test) =>
     `Train ${train} · Test ${test} scenarios once locked. Lock to freeze scenarios, splits and the scorer.`,
-  lock: "Lock this release",
+  lock: "Lock this version",
   addScenarios: "Add scenarios",
-  viewer: "You don't have permission to lock releases.",
+  viewer: "You don't have permission to lock versions.",
   unlock: "Unlock",
-  lockTitle: "Lock this release?",
+  lockTitle: "Lock this version?",
   lockBody:
-    "Its scenarios, train and test splits and scorer freeze, so every score on it stays comparable. Each scenario keeps its split in every later release. Edits make a new, unlocked version.",
-  lockAction: "Lock release",
-  unlockTitle: (label) => `Unlock release ${label}?`,
+    "Its scenarios, train and test splits and scorer freeze, so every score on it stays comparable. Each scenario keeps its split in every later locked version. Edits make a new, unlocked version.",
+  lockAction: "Lock version",
+  unlockTitle: (label) => `Unlock version ${label}?`,
   unlockBody:
     "Its scores stay, but they're no longer a locked comparison. The train/test split of each scenario never changes.",
-  unlockAction: "Unlock release",
-  earlier: "Earlier releases",
-  earlierLine: (release) =>
-    `${release.label} · environment ${release.environmentLabel} · scenarios ${release.suiteLabel} · Train ${release.train} · Test ${release.test} · ${release.unlockedAt ? "unlocked" : "locked"}`,
+  unlockAction: "Unlock version",
+  earlier: "Earlier locked versions",
+  earlierLine: (lockedVersion) =>
+    `${lockedVersion.label} · environment ${lockedVersion.environmentLabel} · scenarios ${lockedVersion.suiteLabel} · Train ${lockedVersion.train} · Test ${lockedVersion.test} · ${lockedVersion.unlockedAt ? "unlocked" : "locked"}`,
 };
 
 // agent vN · repo@ref · commit · environment vN · scenarios vN

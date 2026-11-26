@@ -1,4 +1,4 @@
-"""Locking an environment's versions into a release with train and test splits."""
+"""Locking an environment's versions, with train and test splits."""
 
 import uuid
 from datetime import timedelta
@@ -13,8 +13,8 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import WorkspaceMembership
 from simulate.models import (
     HarnessEnvironmentVersion,
+    HarnessLockedVersion,
     HarnessNudge,
-    HarnessRelease,
     HarnessSuiteMember,
     HarnessSuiteVersion,
     HarnessTaskSplit,
@@ -22,9 +22,9 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.services.harness_versioning.backfill import backfill_environment
-from simulate.services.harness_versioning.releases import (
+from simulate.services.harness_versioning.locked_versions import (
     Task,
-    lock_release,
+    lock_version,
     plan_splits,
     target_test_size,
 )
@@ -403,18 +403,18 @@ class TestLock:
         response = _lock(auth_client, environment)
 
         assert response.status_code == 200, response.json()
-        [release] = response.json()["releases"]
+        [locked_version] = response.json()["locked_versions"]
         now = timezone.now()
-        assert release["label"] == f"{now.year}.{now.month}.1"
-        assert (release["train"], release["test"]) == (29, 13)
-        assert release["environment_version_id"] == str(
+        assert locked_version["label"] == f"{now.year}.{now.month}.1"
+        assert (locked_version["train"], locked_version["test"]) == (29, 13)
+        assert locked_version["environment_version_id"] == str(
             environment.environment_version_id
         )
-        assert release["suite_version_id"] == str(environment.suite_version_id)
-        assert release["locked_by"]["id"] == str(user.id)
-        assert release["unlocked_at"] is None
-        assert release["suite_label"] == "v2"
-        assert response.json()["lock"]["refusal"]["code"] == "release_already_locked"
+        assert locked_version["suite_version_id"] == str(environment.suite_version_id)
+        assert locked_version["locked_by"]["id"] == str(user.id)
+        assert locked_version["unlocked_at"] is None
+        assert locked_version["suite_label"] == "v2"
+        assert response.json()["lock"]["refusal"]["code"] == "version_already_locked"
         assert len(_splits(environment)) == 42
 
     def test_the_read_previews_the_splits_before_a_lock(
@@ -425,7 +425,7 @@ class TestLock:
 
         body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
 
-        assert body["releases"] == []
+        assert body["locked_versions"] == []
         assert body["lock"]["can_lock"] is True
         assert (body["lock"]["train"], body["lock"]["test"]) == (14, 6)
         assert body["lock"]["proved"] is False
@@ -462,8 +462,8 @@ class TestLock:
         response = _lock(auth_client, environment)
 
         assert response.status_code == 200, response.json()
-        [release] = response.json()["releases"]
-        assert release["train"] + release["test"] == 20
+        [locked_version] = response.json()["locked_versions"]
+        assert locked_version["train"] + locked_version["test"] == 20
         assert not any(key.startswith("r") for key in _splits(environment))
 
     def test_a_suite_of_goals_the_environment_does_not_grade_cannot_lock(
@@ -476,10 +476,10 @@ class TestLock:
         response = _lock(auth_client, environment)
 
         assert body["lock"]["can_lock"] is False
-        assert body["lock"]["refusal"]["code"] == "release_too_few_test"
+        assert body["lock"]["refusal"]["code"] == "lock_too_few_test"
         assert (body["lock"]["train"], body["lock"]["test"]) == (0, 0)
         assert response.status_code == 422
-        assert not HarnessRelease.no_workspace_objects.exists()
+        assert not HarnessLockedVersion.no_workspace_objects.exists()
 
     def test_an_environment_without_a_catalogue_runs_every_task(
         self, auth_client, user, workspace, storage
@@ -508,14 +508,14 @@ class TestLock:
         version = environment.environment_version
         version.documents = {**version.documents, "sub_goals": []}
         version.save(update_fields=["documents"])
-        # Members from before sub-goals: the run plays them, so the release counts them.
+        # Members from before sub-goals: the run plays them, so the locked version counts them.
         _suite(environment, [(f"l{index}", "refunds", None) for index in range(20)])
 
         response = _lock(auth_client, environment)
 
         assert response.status_code == 200, response.json()
-        [release] = response.json()["releases"]
-        assert (release["train"], release["test"]) == (14, 6)
+        [locked_version] = response.json()["locked_versions"]
+        assert (locked_version["train"], locked_version["test"]) == (14, 6)
 
     @pytest.mark.parametrize("malformed", ["refunded", 5, {"name": "refunded"}, None])
     def test_sub_goals_that_are_not_a_list_are_left_to_the_run(
@@ -568,8 +568,8 @@ class TestLock:
         response = _lock(auth_client, environment)
 
         assert response.status_code == 422
-        assert response.json()["error"] == "release_too_few_test"
-        assert not HarnessRelease.no_workspace_objects.exists()
+        assert response.json()["error"] == "lock_too_few_test"
+        assert not HarnessLockedVersion.no_workspace_objects.exists()
 
     def test_too_few_test_tasks_is_refused(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
@@ -578,11 +578,11 @@ class TestLock:
         response = _lock(auth_client, environment)
 
         assert response.status_code == 422
-        assert response.json()["error"] == "release_too_few_test"
+        assert response.json()["error"] == "lock_too_few_test"
         assert response.json()["message"] == (
             "Add scenarios to lock: a test split needs at least 4."
         )
-        assert not HarnessRelease.no_workspace_objects.exists()
+        assert not HarnessLockedVersion.no_workspace_objects.exists()
         assert _splits(environment) == {}
 
     def test_a_shrunken_suite_below_four_test_tasks_is_refused(
@@ -601,7 +601,7 @@ class TestLock:
         response = _lock(auth_client, environment)
 
         assert response.status_code == 422
-        assert response.json()["error"] == "release_too_few_test"
+        assert response.json()["error"] == "lock_too_few_test"
 
     def test_locking_twice_is_refused(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
@@ -611,12 +611,12 @@ class TestLock:
         response = _lock(auth_client, environment)
 
         assert response.status_code == 409
-        assert response.json()["error"] == "release_already_locked"
-        label = HarnessRelease.no_workspace_objects.get().label
+        assert response.json()["error"] == "version_already_locked"
+        label = HarnessLockedVersion.no_workspace_objects.get().label
         assert response.json()["message"] == (
             f"These versions are already locked as {label}."
         )
-        assert HarnessRelease.no_workspace_objects.count() == 1
+        assert HarnessLockedVersion.no_workspace_objects.count() == 1
 
     def test_a_default_that_moved_since_the_page_loaded_is_refused(
         self, auth_client, user, workspace, storage
@@ -644,7 +644,7 @@ class TestLock:
         response = _lock(auth_client, environment)
 
         assert response.status_code == 409
-        assert response.json()["error"] == "release_not_ready"
+        assert response.json()["error"] == "lock_not_ready"
 
     def test_the_preview_refuses_while_a_rebuild_runs(
         self, auth_client, user, workspace, storage
@@ -680,24 +680,24 @@ class TestLock:
         assert response.status_code == 200
         after = _splits(environment)
         assert {key: after[key] for key in before} == before
-        newer, older = response.json()["releases"]
+        newer, older = response.json()["locked_versions"]
         assert (older["train"], older["test"]) == (14, 6)
         assert newer["test"] == target_test_size(40)
         assert newer["label"].endswith(".2")
 
 
 class TestUnlockAndDelete:
-    def test_delete_is_refused_while_a_release_is_locked(
+    def test_delete_is_refused_while_a_version_is_locked(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        label = _lock(auth_client, environment).json()["releases"][0]["label"]
+        label = _lock(auth_client, environment).json()["locked_versions"][0]["label"]
 
         response = auth_client.delete(f"{BASE}/{environment.id}/")
 
         assert response.status_code == 409
-        assert response.json()["error"] == "release_locked"
+        assert response.json()["error"] == "version_locked"
         assert response.json()["message"] == (
             f"A workspace admin or owner must unlock version {label} first."
         )
@@ -707,50 +707,50 @@ class TestUnlockAndDelete:
     def test_a_member_may_not_unlock(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        [release] = _lock(auth_client, environment).json()["releases"]
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
         _as_member(user)
 
         response = auth_client.post(
             f"{BASE}/{environment.id}/versions/unlock/",
-            {"release_id": release["id"]},
+            {"locked_version_id": locked_version["id"]},
             format="json",
         )
 
         assert response.status_code == 403
-        assert response.json()["error"] == "release_admin_only"
+        assert response.json()["error"] == "unlock_admin_only"
         assert response.json()["message"] == (
             "Only a workspace admin or owner can unlock a version."
         )
-        assert HarnessRelease.no_workspace_objects.get().unlocked_at is None
+        assert HarnessLockedVersion.no_workspace_objects.get().unlocked_at is None
 
     def test_a_workspace_admin_may_unlock(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        [release] = _lock(auth_client, environment).json()["releases"]
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
         _as_workspace_admin(user)
 
         response = auth_client.post(
             f"{BASE}/{environment.id}/versions/unlock/",
-            {"release_id": release["id"]},
+            {"locked_version_id": locked_version["id"]},
             format="json",
         )
 
         assert response.status_code == 200, response.json()
-        assert HarnessRelease.no_workspace_objects.get().unlocked_at is not None
+        assert HarnessLockedVersion.no_workspace_objects.get().unlocked_at is not None
 
-    def test_an_earlier_locked_release_can_be_unlocked(
+    def test_an_earlier_locked_version_can_be_unlocked(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        [release] = _lock(auth_client, environment).json()["releases"]
-        # An edit moved the default on; the old release is still locked.
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
+        # An edit moved the default on; the old locked version is still locked.
         _suite(environment, _scenarios(25))
         assert auth_client.delete(f"{BASE}/{environment.id}/").status_code == 409
 
         response = auth_client.post(
             f"{BASE}/{environment.id}/versions/unlock/",
-            {"release_id": release["id"]},
+            {"locked_version_id": locked_version["id"]},
             format="json",
         )
 
@@ -762,12 +762,12 @@ class TestUnlockAndDelete:
     ):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        [release] = _lock(auth_client, environment).json()["releases"]
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
         settings.HARNESS_VERSIONING_ENABLED = False
 
         response = auth_client.post(
             f"{BASE}/{environment.id}/versions/unlock/",
-            {"release_id": release["id"]},
+            {"locked_version_id": locked_version["id"]},
             format="json",
         )
 
@@ -784,56 +784,59 @@ class TestUnlockAndDelete:
         response = _lock(auth_client, environment)
 
         assert response.status_code == 200, response.json()
-        [listed] = response.json()["releases"]
-        release = HarnessRelease.no_workspace_objects.get(id=listed["id"])
-        assert (release.environment_version_id, release.suite_version_id) == (
+        [listed] = response.json()["locked_versions"]
+        locked_version = HarnessLockedVersion.no_workspace_objects.get(id=listed["id"])
+        assert (
+            locked_version.environment_version_id,
+            locked_version.suite_version_id,
+        ) == (
             environment.environment_version_id,
             environment.suite_version_id,
         )
-        assert release.locked_by == user
-        assert release.unlocked_at is None
-        assert (release.train_count, release.test_count) == (14, 6)
+        assert locked_version.locked_by == user
+        assert locked_version.unlocked_at is None
+        assert (locked_version.train_count, locked_version.test_count) == (14, 6)
 
-    def test_unlock_keeps_the_release_readable_then_delete_works(
+    def test_unlock_keeps_the_locked_version_readable_then_delete_works(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        [release] = _lock(auth_client, environment).json()["releases"]
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
         splits = _splits(environment)
 
         response = auth_client.post(
             f"{BASE}/{environment.id}/versions/unlock/",
-            {"release_id": release["id"]},
+            {"locked_version_id": locked_version["id"]},
             format="json",
         )
 
         assert response.status_code == 200
-        [unlocked] = response.json()["releases"]
-        assert unlocked["id"] == release["id"]
+        [unlocked] = response.json()["locked_versions"]
+        assert unlocked["id"] == locked_version["id"]
         assert unlocked["unlocked_at"] is not None
         assert unlocked["unlocked_by"]["id"] == str(user.id)
         assert (unlocked["train"], unlocked["test"]) == (14, 6)
         assert _splits(environment) == splits
         assert auth_client.delete(f"{BASE}/{environment.id}/").status_code == 204
 
-    def test_relocking_makes_a_new_release_with_the_same_splits(
+    def test_relocking_makes_a_new_locked_version_with_the_same_splits(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        [first] = _lock(auth_client, environment).json()["releases"]
+        [first] = _lock(auth_client, environment).json()["locked_versions"]
         splits = _splits(environment)
         auth_client.post(
             f"{BASE}/{environment.id}/versions/unlock/",
-            {"release_id": first["id"]},
+            {"locked_version_id": first["id"]},
             format="json",
         )
 
         response = _lock(auth_client, environment)
 
         assert response.status_code == 200
-        second, older = response.json()["releases"]
+        second, older = response.json()["locked_versions"]
         assert older["id"] == first["id"]
         assert second["label"] != first["label"]
         assert second["label"].endswith(".2")
@@ -843,7 +846,7 @@ class TestUnlockAndDelete:
 
 
 class TestReadCost:
-    def test_member_reads_stay_flat_as_releases_grow(
+    def test_member_reads_stay_flat_as_locked_versions_grow(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
@@ -867,20 +870,20 @@ class TestReadCost:
         _suite(environment, _scenarios(30))
         two = member_reads()
 
-        # Only the default suite's preview: a release keeps the counts it locked with.
+        # Only the default suite's preview: a locked version keeps the counts it locked with.
         assert len(one) == len(two) == 1
         # Only the two keys the split reads, never the whole member content.
         assert all(
             '"content" FROM' not in sql and '"content",' not in sql for sql in two
         )
 
-    def test_history_keeps_every_locked_release_and_the_newest_unlocked(
+    def test_history_keeps_every_locked_version_and_the_newest_unlocked(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        [locked] = _lock(auth_client, environment).json()["releases"]
-        first = HarnessRelease.no_workspace_objects.get()
+        [locked] = _lock(auth_client, environment).json()["locked_versions"]
+        first = HarnessLockedVersion.no_workspace_objects.get()
         # 25 newer lock-and-unlock cycles of an earlier pair.
         for number in range(25):
             later = first.locked_at + timedelta(minutes=number + 1)
@@ -892,7 +895,7 @@ class TestReadCost:
 
         body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
 
-        labels = [release["label"] for release in body["releases"]]
+        labels = [locked_version["label"] for locked_version in body["locked_versions"]]
         assert locked["label"] in labels
         assert len(labels) == 21
         assert labels[:20] == [f"cycle.{number}" for number in range(24, 4, -1)]
@@ -909,19 +912,19 @@ class TestLockedVersionsStay:
         with pytest.raises(RestrictedError):
             HarnessSuiteVersion._base_manager.filter(id=suite.id).delete()
 
-    def test_a_new_default_leaves_the_release_as_it_was(
+    def test_a_new_default_leaves_the_locked_version_as_it_was(
         self, auth_client, user, workspace, storage
     ):
         environment = _environment(user, workspace, storage)
         locked_suite = _suite(environment, _scenarios(20))
-        [release] = _lock(auth_client, environment).json()["releases"]
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
 
         # An edit makes a new, unlocked version and moves the default to it.
         _suite(environment, _scenarios(25))
         body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
 
-        [kept] = body["releases"]
-        assert kept == release
+        [kept] = body["locked_versions"]
+        assert kept == locked_version
         locked_suite.refresh_from_db()
         assert locked_suite.status == "active"
         assert body["lock"]["suite_version_id"] == str(environment.suite_version_id)
@@ -937,33 +940,33 @@ class TestLockedVersionsStay:
         HostedHarnessJob._base_manager.filter(environment=environment).delete()
         HostedHarnessJob._base_manager.filter(id=environment.id).delete()
 
-        assert not HarnessRelease._base_manager.exists()
+        assert not HarnessLockedVersion._base_manager.exists()
         assert not HarnessTaskSplit._base_manager.exists()
 
 
-def test_lock_release_records_who_locked(user, workspace, storage):
+def test_lock_version_records_who_locked(user, workspace, storage):
     environment = _environment(user, workspace, storage)
     _suite(environment, _scenarios(20))
 
-    lock_release(
+    lock_version(
         environment,
         environment_version_id=environment.environment_version_id,
         suite_version_id=environment.suite_version_id,
         user=user,
     )
 
-    release = HarnessRelease.no_workspace_objects.get()
-    assert release.locked_by == user
-    assert release.environment == environment
+    locked_version = HarnessLockedVersion.no_workspace_objects.get()
+    assert locked_version.locked_by == user
+    assert locked_version.environment == environment
 
 
-def test_unlock_of_an_unknown_release_is_not_found(user, workspace, storage):
-    from simulate.services.harness_versioning.releases import unlock_release
+def test_unlock_of_an_unknown_locked_version_is_not_found(user, workspace, storage):
+    from simulate.services.harness_versioning.locked_versions import unlock_version
 
     environment = _environment(user, workspace, storage)
 
     with pytest.raises(HostedHarnessError) as refused:
-        unlock_release(environment, "00000000-0000-0000-0000-000000000000", user=user)
+        unlock_version(environment, "00000000-0000-0000-0000-000000000000", user=user)
 
-    assert refused.value.code == "release_not_found"
+    assert refused.value.code == "locked_version_not_found"
     assert refused.value.message == "This locked version doesn't exist."

@@ -13,7 +13,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name="HarnessRelease",
+            name="HarnessLockedVersion",
             fields=[
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
@@ -79,22 +79,22 @@ class Migration(migrations.Migration):
                 ),
             ],
             options={
-                "db_table": "simulate_harness_release",
+                "db_table": "simulate_harness_locked_version",
                 "indexes": [
                     models.Index(
                         fields=["environment", "-locked_at"],
-                        name="idx_hrelease_env_locked",
+                        name="idx_hlockver_env_locked",
                     )
                 ],
                 "constraints": [
                     models.UniqueConstraint(
                         condition=models.Q(("unlocked_at__isnull", True)),
                         fields=("environment_version", "suite_version"),
-                        name="uniq_harness_release_locked_pair",
+                        name="uniq_harness_lockver_pair",
                     ),
                     models.UniqueConstraint(
                         fields=("environment", "label"),
-                        name="uniq_harness_release_label",
+                        name="uniq_harness_lockver_label",
                     ),
                 ],
             },
@@ -122,11 +122,11 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 (
-                    "first_release",
+                    "first_locked_version",
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,
                         related_name="+",
-                        to="simulate.harnessrelease",
+                        to="simulate.harnesslockedversion",
                     ),
                 ),
                 (

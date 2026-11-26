@@ -133,14 +133,14 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixCandidate: ["verdict"],
   AgentFixOverride: ["by"],
 };
-// A release's locker and unlocker, and a lock preview's refusal, are sent as null.
-const HARNESS_RELEASE_NULLABLE_REFS = {
-  HarnessRelease: ["locked_by", "unlocked_by"],
+// A locked version's locker and unlocker, and a lock preview's refusal, are sent as null.
+const HARNESS_LOCKED_VERSION_NULLABLE_REFS = {
+  HarnessLockedVersion: ["locked_by", "unlocked_by"],
   HarnessLockPreview: ["refusal"],
 };
 const NULLABLE_REFS = {
   ...AGENT_FIX_ISSUE_NULLABLE_REFS,
-  ...HARNESS_RELEASE_NULLABLE_REFS,
+  ...HARNESS_LOCKED_VERSION_NULLABLE_REFS,
 };
 
 function hasNullableFields(name) {
@@ -1364,8 +1364,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       "SimulateApiHarnessEnvironmentsVersionsResponse",
       "SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse",
       "SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse",
-      "SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse",
-      "SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse",
+      "SimulateApiHarnessEnvironmentsVersionsLockVersionResponse",
+      "SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse",
       "SimulateApiHarnessEnvironmentsDraftsResponse",
       "SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse",
     ];
@@ -1398,17 +1398,17 @@ export type ${jsonAlias} = JsonValueApi;`,
         );
       }
     }
-    // A release always has a label: undo the version rows' label rewrite on it, in
-    // every versions response that carries releases (the drafts read carries none).
+    // A locked version always has a label: undo the version rows' label rewrite on it, in
+    // every versions response that carries locked versions (the drafts read carries none).
     for (const response of VERSIONS_RESPONSES.filter(
       (name) => name !== "SimulateApiHarnessEnvironmentsDraftsResponse",
     )) {
       zod = assertReplaceRegexInNamedBlock(
         zod,
         `export const ${response} =`,
-        /("releases": zod\.array\(\s*zod\.object\(\{\s*"id": zod\.string\(\)\.uuid\(\),\s*"label": zod\.string\(\)\.min\(1\))\.nullable\(\)/,
+        /("locked_versions": zod\.array\(\s*zod\.object\(\{\s*"id": zod\.string\(\)\.uuid\(\),\s*"label": zod\.string\(\)\.min\(1\))\.nullable\(\)/,
         "$1",
-        `${response}.releases.label required`,
+        `${response}.locked_versions.label required`,
       );
     }
     // Only agent versions are checked, hold credentials or can be picked.

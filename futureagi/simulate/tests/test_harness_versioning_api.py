@@ -76,7 +76,7 @@ class TestVersionsList:
 
         assert response.status_code == 200
         body = response.json()
-        assert set(body) == {"agent", "environment", "suite", "releases", "lock"}
+        assert set(body) == {"agent", "environment", "suite", "locked_versions", "lock"}
         suites = body["suite"]
         assert [one["label"] for one in suites] == ["v2", "v1"]
         assert [one["is_default"] for one in suites] == [True, False]
@@ -162,10 +162,10 @@ class TestVersionsList:
             "environment": [],
             "suite": [],
         }
-        assert body["releases"] == []
+        assert body["locked_versions"] == []
         assert body["lock"]["can_lock"] is False
         assert body["lock"]["refusal"] == {
-            "code": "release_not_ready",
+            "code": "lock_not_ready",
             "message": "Build this environment before you lock a version.",
         }
 
@@ -446,7 +446,7 @@ class TestVersionsList:
             or "simulate_harness_suite_version" in query["sql"]
         ]
         assert version_selects
-        # The release's runnable check reads one key of ONE version: the pinned
+        # The lock preview's runnable check reads one key of ONE version: the pinned
         # environment version's sub-goal catalogue, looked up by id. No read lists
         # documents across versions.
         catalogue = "\"documents\" -> 'sub_goals'"

@@ -12,9 +12,9 @@ vi.mock("../../agents/AgentVersionsPanel", () => ({
     <div data-testid="agent-versions-panel">{env.id}</div>
   ),
 }));
-// The Release card reads the versions query and has its own tests.
-vi.mock("../ReleaseCard", () => ({
-  default: ({ envId }) => <div data-testid="release-card">{envId}</div>,
+// The locked-version card reads the versions query and has its own tests.
+vi.mock("../LockedVersionCard", () => ({
+  default: ({ envId }) => <div data-testid="locked-version-card">{envId}</div>,
 }));
 import { HardRulesCard } from "../OverviewCards";
 
@@ -236,19 +236,21 @@ describe("OverviewPanel", () => {
     const manage = () =>
       screen.queryByRole("button", { name: "Manage versions" });
 
-    it("shows the Release card while versioning is on", () => {
+    it("shows the locked-version card while versioning is on", () => {
       renderPanel({ env: versioned });
 
-      expect(screen.getByTestId("release-card")).toHaveTextContent("env-1");
+      expect(screen.getByTestId("locked-version-card")).toHaveTextContent(
+        "env-1",
+      );
     });
 
-    it("keeps the Release card out while building or without versioning", () => {
+    it("keeps the locked-version card out while building or without versioning", () => {
       const { unmount } = renderPanel({ env: versioned, buildMode: true });
-      expect(screen.queryByTestId("release-card")).toBeNull();
+      expect(screen.queryByTestId("locked-version-card")).toBeNull();
       unmount();
 
       renderPanel();
-      expect(screen.queryByTestId("release-card")).toBeNull();
+      expect(screen.queryByTestId("locked-version-card")).toBeNull();
     });
 
     it("opens the agent versions in a drawer while versioning is on", async () => {

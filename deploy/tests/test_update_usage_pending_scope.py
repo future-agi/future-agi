@@ -84,7 +84,7 @@ LATEST = (
     ('simulate','0114_agent_definition_source_checked_at'),
     ('simulate','0115_merge_agent_definition_synced_and_actors'),
     ('simulate','0116_agent_fix_issue_job'),
-    ('simulate','0117_harness_release'),
+    ('simulate','0117_harness_locked_version'),
     ('mcp_server','0005_enable_epoch_tool_group'),
 )
 # Eight SQL additions shared with the SQL-only candidate. These identities

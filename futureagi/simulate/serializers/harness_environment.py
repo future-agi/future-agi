@@ -1294,7 +1294,7 @@ class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
     agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
 
 
-class HarnessReleaseSerializer(serializers.Serializer):
+class HarnessLockedVersionSerializer(serializers.Serializer):
     """A locked environment and suite version pair, with its split counts."""
 
     id = serializers.UUIDField()
@@ -1337,11 +1337,11 @@ class HarnessVersionsSerializer(serializers.Serializer):
     agent = HarnessVersionSerializer(many=True)
     environment = HarnessVersionSerializer(many=True)
     suite = HarnessVersionSerializer(many=True)
-    releases = HarnessReleaseSerializer(many=True)
+    locked_versions = HarnessLockedVersionSerializer(many=True)
     lock = HarnessLockPreviewSerializer()
 
 
-class HarnessLockReleaseSerializer(serializers.Serializer):
+class HarnessLockVersionSerializer(serializers.Serializer):
     environment_version_id = serializers.UUIDField(
         help_text="The default environment version the caller saw."
     )
@@ -1350,17 +1350,17 @@ class HarnessLockReleaseSerializer(serializers.Serializer):
     )
 
 
-class HarnessUnlockReleaseSerializer(serializers.Serializer):
-    release_id = serializers.UUIDField()
+class HarnessUnlockVersionSerializer(serializers.Serializer):
+    locked_version_id = serializers.UUIDField()
 
 
-class HarnessReleaseRefusalSerializer(serializers.Serializer):
-    """A refused lock, unlock, or delete of an environment with a locked release."""
+class HarnessLockRefusalSerializer(serializers.Serializer):
+    """A refused lock, unlock, or delete of an environment with a locked version."""
 
     error = serializers.CharField(
         help_text=(
-            "release_not_ready, release_already_locked, release_too_few_test,"
-            " release_too_few_train, release_locked, version_conflict or"
+            "lock_not_ready, version_already_locked, lock_too_few_test,"
+            " lock_too_few_train, version_locked, version_conflict or"
             " rebuild_running."
         )
     )
@@ -1372,19 +1372,19 @@ class HarnessReleaseRefusalSerializer(serializers.Serializer):
         help_text="version_conflict: the piece whose default moved.",
     )
     train = serializers.IntegerField(
-        required=False, help_text="release_too_few_*: the train tasks a lock gives."
+        required=False, help_text="lock_too_few_*: the train tasks a lock gives."
     )
     test = serializers.IntegerField(
-        required=False, help_text="release_too_few_*: the test tasks a lock gives."
+        required=False, help_text="lock_too_few_*: the test tasks a lock gives."
     )
-    release_id = serializers.UUIDField(
-        required=False, help_text="release_locked: the release to unlock first."
+    locked_version_id = serializers.UUIDField(
+        required=False, help_text="version_locked: the locked version to unlock first."
     )
 
 
 class HarnessUnlockForbiddenSerializer(ViewerReadOnlyErrorSerializer):
     """A Viewer's refusal (``code``, ``detail``, ``action``), or a Member's
-    release_admin_only refusal (``error``, ``message``, ``retryable``)."""
+    unlock_admin_only refusal (``error``, ``message``, ``retryable``)."""
 
     detail = serializers.CharField(required=False, allow_blank=True)
     error = serializers.CharField(required=False)

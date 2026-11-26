@@ -285,7 +285,7 @@ class TaskSplit(models.TextChoices):
     TEST = "test", "Test"
 
 
-class HarnessRelease(BaseModel):
+class HarnessLockedVersion(BaseModel):
     """An environment's default environment and suite versions, locked so scores on them
     stay comparable. Unlocking keeps the row: the versions and splits never change."""
 
@@ -293,7 +293,7 @@ class HarnessRelease(BaseModel):
     environment = models.ForeignKey(
         "simulate.HostedHarnessJob", on_delete=models.CASCADE, related_name="+"
     )
-    # RESTRICT, not PROTECT, so a cascade from the job removes the release too.
+    # RESTRICT, not PROTECT, so a cascade from the job removes the locked version too.
     environment_version = models.ForeignKey(
         HarnessEnvironmentVersion, on_delete=models.RESTRICT, related_name="+"
     )
@@ -324,20 +324,20 @@ class HarnessRelease(BaseModel):
     test_count = models.PositiveIntegerField()
 
     class Meta:
-        db_table = "simulate_harness_release"
+        db_table = "simulate_harness_locked_version"
         constraints = [
             models.UniqueConstraint(
                 fields=["environment_version", "suite_version"],
                 condition=Q(unlocked_at__isnull=True),
-                name="uniq_harness_release_locked_pair",
+                name="uniq_harness_lockver_pair",
             ),
             models.UniqueConstraint(
-                fields=["environment", "label"], name="uniq_harness_release_label"
+                fields=["environment", "label"], name="uniq_harness_lockver_label"
             ),
         ]
         indexes = [
             models.Index(
-                fields=["environment", "-locked_at"], name="idx_hrelease_env_locked"
+                fields=["environment", "-locked_at"], name="idx_hlockver_env_locked"
             ),
         ]
 
@@ -350,8 +350,8 @@ class HarnessTaskSplit(BaseModel):
         "simulate.HostedHarnessScenario", on_delete=models.CASCADE, related_name="+"
     )
     split = models.CharField(max_length=8, choices=TaskSplit.choices)
-    first_release = models.ForeignKey(
-        HarnessRelease, on_delete=models.CASCADE, related_name="+"
+    first_locked_version = models.ForeignKey(
+        HarnessLockedVersion, on_delete=models.CASCADE, related_name="+"
     )
 
     class Meta:

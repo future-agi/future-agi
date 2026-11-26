@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse,
   SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse,
-  SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse,
+  SimulateApiHarnessEnvironmentsVersionsLockVersionResponse,
   SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse,
   SimulateApiHarnessEnvironmentsVersionsResponse,
-  SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse,
+  SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse,
 } from "src/generated/api-contracts/api.zod";
 
 // Bodies shaped as simulate/services/harness_versioning/read.py::list_versions sends them.
@@ -40,8 +40,8 @@ const version = {
   discardable: null,
 };
 
-// A release whose locker left the workspace, on versions with no number, not unlocked.
-const release = {
+// A locked version whose locker left the workspace, on versions with no number, not unlocked.
+const lockedVersion = {
   id: "0b5d0b1f-8d43-4c55-9d3e-7d4c1a526a10",
   label: "2026.11.1",
   environment_version_id: "1b5d0b1f-8d43-4c55-9d3e-7d4c1a526a10",
@@ -64,7 +64,7 @@ const previews = {
     proved: false,
     can_lock: false,
     refusal: {
-      code: "release_not_ready",
+      code: "lock_not_ready",
       message: "Build this environment before you lock a version.",
     },
     train: null,
@@ -73,12 +73,12 @@ const previews = {
   },
   // Too few test tasks: the counts it would get, and no target.
   blocked: {
-    environment_version_id: release.environment_version_id,
-    suite_version_id: release.suite_version_id,
+    environment_version_id: lockedVersion.environment_version_id,
+    suite_version_id: lockedVersion.suite_version_id,
     proved: false,
     can_lock: false,
     refusal: {
-      code: "release_too_few_test",
+      code: "lock_too_few_test",
       message: "Add scenarios to lock: a test split needs at least 4.",
     },
     train: 7,
@@ -86,8 +86,8 @@ const previews = {
     test_target: null,
   },
   ready: {
-    environment_version_id: release.environment_version_id,
-    suite_version_id: release.suite_version_id,
+    environment_version_id: lockedVersion.environment_version_id,
+    suite_version_id: lockedVersion.suite_version_id,
     proved: true,
     can_lock: true,
     refusal: null,
@@ -99,8 +99,8 @@ const previews = {
 
 describe.each([
   ["versions", SimulateApiHarnessEnvironmentsVersionsResponse],
-  ["lock", SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse],
-  ["unlock", SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse],
+  ["lock", SimulateApiHarnessEnvironmentsVersionsLockVersionResponse],
+  ["unlock", SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse],
   ["move default", SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse],
   [
     "discard agent version",
@@ -108,13 +108,13 @@ describe.each([
   ],
 ])("generated %s response", (_name, schema) => {
   it.each(Object.entries(previews))(
-    "accepts a %s lock preview with its releases and versions",
+    "accepts a %s lock preview with its versions and locked versions",
     (_state, lock) => {
       const body = {
         agent: [version],
         environment: [version],
         suite: [version],
-        releases: [release],
+        locked_versions: [lockedVersion],
         lock,
       };
 
@@ -122,12 +122,12 @@ describe.each([
     },
   );
 
-  it("keeps a release's own label required", () => {
+  it("keeps a locked version's own label required", () => {
     const body = {
       agent: [],
       environment: [],
       suite: [],
-      releases: [{ ...release, label: null }],
+      locked_versions: [{ ...lockedVersion, label: null }],
       lock: previews.ready,
     };
 
@@ -135,7 +135,7 @@ describe.each([
 
     expect(parsed.success).toBe(false);
     expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual([
-      "releases.0.label",
+      "locked_versions.0.label",
     ]);
   });
 });
@@ -145,11 +145,11 @@ describe("generated drafts save response", () => {
     agent: [],
     environment: [],
     suite: [],
-    releases: [release],
+    locked_versions: [lockedVersion],
     lock: previews.ready,
   };
 
-  it("accepts the versions it carries, releases included", () => {
+  it("accepts the versions it carries, locked versions included", () => {
     const body = { saved: {}, versions };
 
     expect(
@@ -157,10 +157,13 @@ describe("generated drafts save response", () => {
     ).toEqual(body);
   });
 
-  it("keeps a release's own label required", () => {
+  it("keeps a locked version's own label required", () => {
     const body = {
       saved: {},
-      versions: { ...versions, releases: [{ ...release, label: null }] },
+      versions: {
+        ...versions,
+        locked_versions: [{ ...lockedVersion, label: null }],
+      },
     };
 
     expect(() =>

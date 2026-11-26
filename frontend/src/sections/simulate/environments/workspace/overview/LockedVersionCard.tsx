@@ -6,24 +6,24 @@ import StatusBadgeJs from "src/components/status-badge";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   useEnvironmentVersions,
-  useLockRelease as useLockReleaseJs,
-  useUnlockRelease as useUnlockReleaseJs,
+  useLockVersion as useLockVersionJs,
+  useUnlockVersion as useUnlockVersionJs,
 } from "src/api/simulate-environments/versions";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import SectionCard from "../../components/SectionCard";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
-import { RELEASE_COPY, versionLine } from "./overview.constants";
+import { LOCK_COPY, versionLine } from "./overview.constants";
 
 /*
-  An environment release, after Vel's ReleasePanel: the default environment and
+  An environment's locked version, after Vel's design: the default environment and
   scenario versions, locked so scores on them stay comparable. A lock freezes a
   pair of versions, not the environment: an edit makes a new, unlocked version.
   Each task keeps the split it got at its first lock.
 */
 
-// A release as useEnvironmentVersions maps it (versions.js::releaseFromApi).
-export interface Release {
+// A locked version as useEnvironmentVersions maps it (versions.js::lockedVersionFromApi).
+export interface LockedVersion {
   id: string;
   label: string;
   environmentVersionId: string;
@@ -54,10 +54,10 @@ interface LockPreview extends VersionPair {
   testTarget: number | null;
 }
 
-// What the open confirmation acts on: the pair it opened with, or a release.
-type Confirm = { lock: VersionPair } | { unlock: Release } | null;
+// What the open confirmation acts on: the pair it opened with, or a locked version.
+type Confirm = { lock: VersionPair } | { unlock: LockedVersion } | null;
 
-interface ReleaseCardProps {
+interface LockedVersionCardProps {
   envId: string;
   // Jumps to a workspace tab, for the refusals the author fixes there.
   onGo?: (tab: string) => void;
@@ -69,19 +69,19 @@ interface UnlockButtonProps {
 }
 
 // The JS modules this card uses, typed here for what it passes them.
-interface ReleaseMutation<Variables> {
+interface LockMutation<Variables> {
   isPending: boolean;
   mutate: (
     variables: Variables,
     options: { onError: (error: unknown) => void },
   ) => void;
 }
-const useLockRelease = useLockReleaseJs as unknown as (
+const useLockVersion = useLockVersionJs as unknown as (
   envId: string,
-) => ReleaseMutation<VersionPair>;
-const useUnlockRelease = useUnlockReleaseJs as unknown as (
+) => LockMutation<VersionPair>;
+const useUnlockVersion = useUnlockVersionJs as unknown as (
   envId: string,
-) => ReleaseMutation<{ releaseId: string }>;
+) => LockMutation<{ lockedVersionId: string }>;
 const Iconify = IconifyJs as unknown as ComponentType<{
   icon: string;
   width: number;
@@ -93,7 +93,7 @@ const StatusBadge = StatusBadgeJs as unknown as ComponentType<{
 }>;
 
 // Refusals the author fixes by adding scenarios.
-const ADD_SCENARIOS_FOR = ["release_too_few_test", "release_too_few_train"];
+const ADD_SCENARIOS_FOR = ["lock_too_few_test", "lock_too_few_train"];
 
 const shortDate = (at: string) =>
   new Date(at).toLocaleDateString(undefined, {
@@ -101,51 +101,60 @@ const shortDate = (at: string) =>
     month: "short",
   });
 
-export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
+export default function LockedVersionCard({
+  envId,
+  onGo,
+}: LockedVersionCardProps) {
   const { data } = useEnvironmentVersions(envId);
-  const { canEdit, canUnlockRelease } = useSimulationAccess();
-  const lockRelease = useLockRelease(envId);
-  const unlockRelease = useUnlockRelease(envId);
+  const { canEdit, canUnlockVersion } = useSimulationAccess();
+  const lockVersion = useLockVersion(envId);
+  const unlockVersion = useUnlockVersion(envId);
   const [confirm, setConfirm] = useState<Confirm>(null);
   if (!data?.lock) return null;
 
   const lock: LockPreview = data.lock;
-  const releases: Release[] = data.releases;
+  const lockedVersions: LockedVersion[] = data.lockedVersions;
   const { defaults } = data;
-  const current = releases.find(
-    (release) =>
-      !release.unlockedAt &&
-      release.environmentVersionId === lock.environmentVersionId &&
-      release.suiteVersionId === lock.suiteVersionId,
+  const current = lockedVersions.find(
+    (lockedVersion) =>
+      !lockedVersion.unlockedAt &&
+      lockedVersion.environmentVersionId === lock.environmentVersionId &&
+      lockedVersion.suiteVersionId === lock.suiteVersionId,
   );
-  const earlier = releases.filter((release) => release !== current);
+  const earlier = lockedVersions.filter(
+    (lockedVersion) => lockedVersion !== current,
+  );
+  // A locked card has no badge: its title already says Locked.
   const status = current
-    ? { label: RELEASE_COPY.status.locked, role: "neutral" }
+    ? null
     : lock.canLock
-      ? { label: RELEASE_COPY.status.ready, role: "success" }
-      : { label: RELEASE_COPY.status.blocked, role: "warning" };
+      ? { label: LOCK_COPY.status.ready, role: "success" }
+      : { label: LOCK_COPY.status.blocked, role: "warning" };
   const line = current
-    ? RELEASE_COPY.lockedLine(
+    ? LOCK_COPY.lockedLine(
         shortDate(current.lockedAt),
         current.train,
         current.test,
         current.environmentLabel,
       )
     : lock.canLock
-      ? RELEASE_COPY.readyLine(lock.train, lock.test)
+      ? LOCK_COPY.readyLine(lock.train, lock.test)
       : lock.refusal?.message;
   const failed = (error: unknown) =>
     enqueueSnackbar(errorMessage(error), { variant: "error" });
   // Locks the pair the dialog was opened on, which a refresh may since have moved.
   const onLock = (pair: VersionPair) => {
     setConfirm(null);
-    lockRelease.mutate(pair, { onError: failed });
+    lockVersion.mutate(pair, { onError: failed });
   };
-  // Any locked release can be unlocked, not only the default pair's: an edit moves
+  // Any locked version can be unlocked, not only the default pair's: an edit moves
   // the default on, and delete still waits for every lock to go.
-  const onUnlock = (release: Release) => {
+  const onUnlock = (lockedVersion: LockedVersion) => {
     setConfirm(null);
-    unlockRelease.mutate({ releaseId: release.id }, { onError: failed });
+    unlockVersion.mutate(
+      { lockedVersionId: lockedVersion.id },
+      { onError: failed },
+    );
   };
   const needsScenarios = ADD_SCENARIOS_FOR.includes(lock.refusal?.code ?? "");
   const confirmLock = confirm && "lock" in confirm ? confirm.lock : null;
@@ -162,16 +171,16 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
 
   return (
     <SectionCard
-      title={RELEASE_COPY.title(current?.label)}
-      subtitle={
-        current ? RELEASE_COPY.subtitleLocked : RELEASE_COPY.subtitleOpen
-      }
+      title={LOCK_COPY.title(current?.label)}
+      subtitle={current ? LOCK_COPY.subtitleLocked : LOCK_COPY.subtitleOpen}
       action={
-        <StatusBadge
-          status={status.label}
-          label={status.label}
-          role={status.role}
-        />
+        status && (
+          <StatusBadge
+            status={status.label}
+            label={status.label}
+            role={status.role}
+          />
+        )
       }
       sx={{ mb: 3 }}
     >
@@ -191,16 +200,16 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
         <Box component="thead">
           <Box component="tr" sx={{ borderBottom: 1, borderColor: "divider" }}>
             <Box component="th" sx={{ ...head, textAlign: "left", width: 180 }}>
-              {RELEASE_COPY.head.check}
+              {LOCK_COPY.head.check}
             </Box>
             <Box component="th" sx={{ ...head, textAlign: "left" }}>
-              {RELEASE_COPY.head.proves}
+              {LOCK_COPY.head.proves}
             </Box>
             <Box
               component="th"
               sx={{ ...head, textAlign: "right", width: 120 }}
             >
-              {RELEASE_COPY.head.result}
+              {LOCK_COPY.head.result}
             </Box>
           </Box>
         </Box>
@@ -210,10 +219,10 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
               component="td"
               sx={{ ...cell, fontWeight: "fontWeightMedium" }}
             >
-              {RELEASE_COPY.reference.label}
+              {LOCK_COPY.reference.label}
             </Box>
             <Box component="td" sx={{ ...cell, color: "text.secondary" }}>
-              {RELEASE_COPY.reference.proves}
+              {LOCK_COPY.reference.proves}
             </Box>
             <Box
               component="td"
@@ -224,8 +233,8 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
               }}
             >
               {lock.proved
-                ? RELEASE_COPY.reference.passed
-                : RELEASE_COPY.reference.unproved}
+                ? LOCK_COPY.reference.passed
+                : LOCK_COPY.reference.unproved}
             </Box>
           </Box>
         </Box>
@@ -248,9 +257,9 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
           {line}
         </Typography>
         {current ? (
-          canUnlockRelease && (
+          canUnlockVersion && (
             <UnlockButton
-              disabled={unlockRelease.isPending}
+              disabled={unlockVersion.isPending}
               onClick={() => setConfirm({ unlock: current })}
             />
           )
@@ -267,10 +276,10 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
                   flexShrink: 0,
                 }}
               >
-                {RELEASE_COPY.addScenarios}
+                {LOCK_COPY.addScenarios}
               </Button>
             )}
-            <ViewerLock locked={!canEdit} title={RELEASE_COPY.viewer}>
+            <ViewerLock locked={!canEdit} title={LOCK_COPY.viewer}>
               <Tooltip
                 arrow
                 title={
@@ -283,7 +292,7 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
                     variant="contained"
                     color="primary"
                     disabled={
-                      !canEdit || !lock.canLock || lockRelease.isPending
+                      !canEdit || !lock.canLock || lockVersion.isPending
                     }
                     onClick={() =>
                       setConfirm({
@@ -298,7 +307,7 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
                     }
                     sx={{ flexShrink: 0 }}
                   >
-                    {RELEASE_COPY.lock}
+                    {LOCK_COPY.lock}
                   </Button>
                 </span>
               </Tooltip>
@@ -312,11 +321,11 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", mb: 0.5 }}
           >
-            {RELEASE_COPY.earlier}
+            {LOCK_COPY.earlier}
           </Typography>
-          {earlier.map((release) => (
+          {earlier.map((lockedVersion) => (
             <Stack
-              key={release.id}
+              key={lockedVersion.id}
               direction="row"
               alignItems="center"
               spacing={1.5}
@@ -325,12 +334,12 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
               <Typography
                 sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
               >
-                {RELEASE_COPY.earlierLine(release)}
+                {LOCK_COPY.earlierLine(lockedVersion)}
               </Typography>
-              {!release.unlockedAt && canUnlockRelease && (
+              {!lockedVersion.unlockedAt && canUnlockVersion && (
                 <UnlockButton
-                  disabled={unlockRelease.isPending}
-                  onClick={() => setConfirm({ unlock: release })}
+                  disabled={unlockVersion.isPending}
+                  onClick={() => setConfirm({ unlock: lockedVersion })}
                 />
               )}
             </Stack>
@@ -343,8 +352,8 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
           open
           onClose={() => setConfirm(null)}
           PaperProps={{ sx: { maxWidth: 480 } }}
-          title={RELEASE_COPY.lockTitle}
-          content={RELEASE_COPY.lockBody}
+          title={LOCK_COPY.lockTitle}
+          content={LOCK_COPY.lockBody}
           action={
             <Button
               size="small"
@@ -352,7 +361,7 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
               color="primary"
               onClick={() => onLock(confirmLock)}
             >
-              {RELEASE_COPY.lockAction}
+              {LOCK_COPY.lockAction}
             </Button>
           }
         />
@@ -362,8 +371,8 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
           open
           onClose={() => setConfirm(null)}
           PaperProps={{ sx: { maxWidth: 480 } }}
-          title={RELEASE_COPY.unlockTitle(confirmUnlock.label)}
-          content={RELEASE_COPY.unlockBody}
+          title={LOCK_COPY.unlockTitle(confirmUnlock.label)}
+          content={LOCK_COPY.unlockBody}
           action={
             <Button
               size="small"
@@ -371,7 +380,7 @@ export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
               color="primary"
               onClick={() => onUnlock(confirmUnlock)}
             >
-              {RELEASE_COPY.unlockAction}
+              {LOCK_COPY.unlockAction}
             </Button>
           }
         />
@@ -392,7 +401,7 @@ function UnlockButton({ disabled, onClick }: UnlockButtonProps) {
       }
       sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
     >
-      {RELEASE_COPY.unlock}
+      {LOCK_COPY.unlock}
     </Button>
   );
 }

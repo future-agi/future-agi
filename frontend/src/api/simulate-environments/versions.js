@@ -35,11 +35,11 @@ const suiteMembersPath = (envId, versionId) =>
     { id: envId, version_id: versionId },
   );
 
-const lockReleasePath = (envId) =>
+const lockVersionPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/versions/lock/", {
     id: envId,
   });
-const unlockReleasePath = (envId) =>
+const unlockVersionPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/versions/unlock/", {
     id: envId,
   });
@@ -150,16 +150,23 @@ export const moveDefault = async (envId, piece, versionId, expectedDefaultId) =>
   ).data;
 
 // The default pair the user saw rides along; a newer one refuses the lock (409).
-export const lockRelease = async (envId, { environmentVersionId, suiteVersionId }) =>
+export const lockVersion = async (
+  envId,
+  { environmentVersionId, suiteVersionId },
+) =>
   (
-    await axios.post(lockReleasePath(envId), {
+    await axios.post(lockVersionPath(envId), {
       environment_version_id: environmentVersionId,
       suite_version_id: suiteVersionId,
     })
   ).data;
 
-export const unlockRelease = async (envId, releaseId) =>
-  (await axios.post(unlockReleasePath(envId), { release_id: releaseId })).data;
+export const unlockVersion = async (envId, lockedVersionId) =>
+  (
+    await axios.post(unlockVersionPath(envId), {
+      locked_version_id: lockedVersionId,
+    })
+  ).data;
 
 export const discardAgentVersion = async (envId, versionId) =>
   (await axios.post(discardAgentPath(envId, versionId), {})).data;
@@ -383,7 +390,7 @@ export const versionFromApi = (item = {}) => ({
   discardable: Boolean(item.discardable),
 });
 
-export const releaseFromApi = (item = {}) => ({
+export const lockedVersionFromApi = (item = {}) => ({
   id: item.id,
   label: item.label,
   environmentVersionId: item.environment_version_id,
@@ -472,10 +479,16 @@ export const toVersions = (data = {}) => {
     ]),
   );
   const empty = VERSION_PIECES.every((piece) => lists[piece].length === 0);
-  const releases = (Array.isArray(data?.releases) ? data.releases : []).map(
-    releaseFromApi,
-  );
-  return { ...lists, defaults, empty, releases, lock: lockFromApi(data?.lock) };
+  const lockedVersions = (
+    Array.isArray(data?.locked_versions) ? data.locked_versions : []
+  ).map(lockedVersionFromApi);
+  return {
+    ...lists,
+    defaults,
+    empty,
+    lockedVersions,
+    lock: lockFromApi(data?.lock),
+  };
 };
 
 export function useEnvironmentVersions(envId, { enabled = true } = {}) {
@@ -584,10 +597,10 @@ export function useMoveDefault(envId) {
   });
 }
 
-// Lock or unlock a release. The answer is every version and release, so it seeds
+// Lock or unlock a version. The answer is every version and locked version, so it seeds
 // the list. A conflict or a refusal means what the user saw is out of date:
 // refresh so the card shows the current state and its reason.
-const useReleaseAction = (envId, action) => {
+const useLockAction = (envId, action) => {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
@@ -605,10 +618,12 @@ const useReleaseAction = (envId, action) => {
   });
 };
 
-export const useLockRelease = (envId) => useReleaseAction(envId, lockRelease);
+export const useLockVersion = (envId) => useLockAction(envId, lockVersion);
 
-export const useUnlockRelease = (envId) =>
-  useReleaseAction(envId, (id, { releaseId }) => unlockRelease(id, releaseId));
+export const useUnlockVersion = (envId) =>
+  useLockAction(envId, (id, { lockedVersionId }) =>
+    unlockVersion(id, lockedVersionId),
+  );
 
 // The agent version actions answer with every version: seed the list with it,
 // then ask again for the queries nested under it.

@@ -1,8 +1,9 @@
-"""Lock an environment's default versions into a release with train and test splits.
+"""Lock an environment's default versions, with train and test splits.
 
-A release names a pair of immutable versions, so locking freezes nothing new: it records
-the pair and gives each scorable scenario its split. A scenario keeps the split it got at
-the first lock that included it, so a growing suite never moves a test task into train.
+A locked version names a pair of immutable versions, so locking freezes nothing new: it
+records the pair and gives each scorable scenario its split. A scenario keeps the split it
+got at the first lock that included it, so a growing suite never moves a test task into
+train.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from django.utils import timezone
 
 from simulate.models.harness_versioning import (
     HarnessEnvironmentVersion,
-    HarnessRelease,
+    HarnessLockedVersion,
     HarnessSuiteMember,
     HarnessSuiteValidation,
     HarnessTaskSplit,
@@ -48,7 +49,7 @@ logger = structlog.get_logger(__name__)
 # A test split this small can't tell a better agent from luck.
 MIN_TEST_TASKS = 4
 
-# How many unlocked releases a versions read lists. Locked ones are always listed.
+# How many unlocked ones a versions read lists. Locked ones are always listed.
 UNLOCKED_HISTORY = 20
 
 
@@ -226,10 +227,10 @@ def _assigned(tasks: list[Task]) -> dict[UUID, str]:
     )
 
 
-def _locked_release(
+def _locked_version(
     environment_version_id: UUID, suite_version_id: UUID
-) -> HarnessRelease | None:
-    return HarnessRelease.no_workspace_objects.filter(
+) -> HarnessLockedVersion | None:
+    return HarnessLockedVersion.no_workspace_objects.filter(
         environment_version_id=environment_version_id,
         suite_version_id=suite_version_id,
         unlocked_at__isnull=True,
@@ -237,46 +238,47 @@ def _locked_release(
 
 
 def _plan_lock(
-    job: HostedHarnessJob, releases: list[ReleaseItem] | None = None
+    job: HostedHarnessJob, locked_versions: list[LockedVersionItem] | None = None
 ) -> SplitPlan:
     """What locking the default pair would give, or the reason it can't be locked.
-    ``releases``, a read's own list, says which pair is locked, so the read's preview
+    ``locked_versions``, a read's own list, says which pair is locked, so the read's preview
     and history agree; without it the database says."""
     from simulate.services.harness_agent_versions import _busy
 
     if job.environment_version_id is None or job.suite_version_id is None:
         raise HostedHarnessError(
-            "release_not_ready",
-            "Build this environment before you lock a release.",
+            "lock_not_ready",
+            "Build this environment before you lock a version.",
             status_code=409,
         )
     if _busy(job):
         raise HostedHarnessError(
-            "release_not_ready",
+            "lock_not_ready",
             "This environment is building or its last build failed. Lock it once a "
             "build finishes.",
             status_code=409,
         )
     # An update's rebuild moves the default when it lands.
     require_no_rebuild(job)
-    if releases is None:
-        current = _locked_release(job.environment_version_id, job.suite_version_id)
+    if locked_versions is None:
+        current = _locked_version(job.environment_version_id, job.suite_version_id)
         current_label = current.label if current is not None else None
     else:
         current_label = next(
             (
-                release["label"]
-                for release in releases
-                if release["unlocked_at"] is None
-                and release["environment_version_id"] == str(job.environment_version_id)
-                and release["suite_version_id"] == str(job.suite_version_id)
+                locked_version["label"]
+                for locked_version in locked_versions
+                if locked_version["unlocked_at"] is None
+                and locked_version["environment_version_id"]
+                == str(job.environment_version_id)
+                and locked_version["suite_version_id"] == str(job.suite_version_id)
             ),
             None,
         )
     if current_label is not None:
         raise HostedHarnessError(
-            "release_already_locked",
-            f"Release {current_label} already locks these versions.",
+            "version_already_locked",
+            f"These versions are already locked as {current_label}.",
             status_code=409,
         )
     tasks = scorable_tasks(
@@ -289,14 +291,14 @@ def _plan_lock(
     )
     if plan.test < MIN_TEST_TASKS:
         raise HostedHarnessError(
-            "release_too_few_test",
+            "lock_too_few_test",
             f"Add scenarios to lock: a test split needs at least {MIN_TEST_TASKS}.",
             status_code=422,
             details={"train": plan.train, "test": plan.test},
         )
     if plan.train == 0:
         raise HostedHarnessError(
-            "release_too_few_train",
+            "lock_too_few_train",
             "Add scenarios to lock: the train split needs at least one.",
             status_code=422,
             details={"train": plan.train, "test": plan.test},
@@ -305,15 +307,15 @@ def _plan_lock(
 
 
 def _next_label(environment: HostedHarnessJob, now) -> str:
-    """The month's next label. Unlocked releases count too, so a label is never reused."""
+    """The month's next label. Unlocked ones count too, so a label is never reused."""
     month = f"{now.year}.{now.month}"
-    count = HarnessRelease._base_manager.filter(
+    count = HarnessLockedVersion._base_manager.filter(
         environment=environment, label__startswith=f"{month}."
     ).count()
     return f"{month}.{count + 1}"
 
 
-def lock_release(
+def lock_version(
     environment: HostedHarnessJob,
     *,
     environment_version_id: UUID,
@@ -331,7 +333,7 @@ def lock_release(
                 raise _conflict(piece, getattr(locked, f"{piece}_version"))
         plan = _plan_lock(locked)
         now = timezone.now()
-        release = HarnessRelease.no_workspace_objects.create(
+        locked_version = HarnessLockedVersion.no_workspace_objects.create(
             environment=locked,
             # The pair the caller saw, which the checks above proved is the default.
             environment_version_id=environment_version_id,
@@ -345,15 +347,17 @@ def lock_release(
         HarnessTaskSplit.no_workspace_objects.bulk_create(
             [
                 HarnessTaskSplit(
-                    scenario_id=scenario_id, split=split, first_release=release
+                    scenario_id=scenario_id,
+                    split=split,
+                    first_locked_version=locked_version,
                 )
                 for scenario_id, split in plan.assign.items()
             ]
         )
     logger.info(
-        "harness_release_locked",
+        "harness_version_locked",
         environment_id=str(locked.id),
-        release=release.label,
+        locked_version=locked_version.label,
         train=plan.train,
         test=plan.test,
         actor=getattr(user, "id", None),
@@ -361,69 +365,73 @@ def lock_release(
     return locked
 
 
-def require_release_admin(environment: HostedHarnessJob, user: User) -> None:
+def require_unlock_admin(environment: HostedHarnessJob, user: User) -> None:
     """Only an owner or an admin of the organization or of the environment's workspace
-    may unlock a release."""
+    may unlock a locked version."""
     level = get_effective_workspace_level(user, environment.workspace_id)
     if level is None or level < Level.WORKSPACE_ADMIN:
         raise HostedHarnessError(
-            "release_admin_only",
-            "Only a workspace admin or owner can unlock a release.",
+            "unlock_admin_only",
+            "Only a workspace admin or owner can unlock a version.",
             status_code=403,
         )
 
 
-def unlock_release(
-    environment: HostedHarnessJob, release_id: UUID, *, user: User
+def unlock_version(
+    environment: HostedHarnessJob, locked_version_id: UUID, *, user: User
 ) -> HostedHarnessJob:
-    """Unlock a release. Its versions, its splits and the scores on it stay as they are."""
-    require_release_admin(environment, user)
+    """Unlock a locked version. Its versions, its splits and the scores on it stay as they are."""
+    require_unlock_admin(environment, user)
     with transaction.atomic():
         locked = _lock_environment(environment)
-        release = (
-            HarnessRelease.no_workspace_objects.select_for_update()
-            .filter(environment=locked, id=release_id)
+        locked_version = (
+            HarnessLockedVersion.no_workspace_objects.select_for_update()
+            .filter(environment=locked, id=locked_version_id)
             .first()
         )
-        if release is None:
+        if locked_version is None:
             raise HostedHarnessError(
-                "release_not_found", "This release doesn't exist.", status_code=404
+                "locked_version_not_found",
+                "This locked version doesn't exist.",
+                status_code=404,
             )
-        if release.unlocked_at is None:
-            release.unlocked_at = timezone.now()
-            release.unlocked_by = user
-            release.save(update_fields=["unlocked_at", "unlocked_by", "updated_at"])
+        if locked_version.unlocked_at is None:
+            locked_version.unlocked_at = timezone.now()
+            locked_version.unlocked_by = user
+            locked_version.save(
+                update_fields=["unlocked_at", "unlocked_by", "updated_at"]
+            )
             logger.info(
-                "harness_release_unlocked",
+                "harness_version_unlocked",
                 environment_id=str(locked.id),
-                release=release.label,
+                locked_version=locked_version.label,
                 actor=getattr(user, "id", None),
             )
     return locked
 
 
-def require_no_locked_release(environment: HostedHarnessJob) -> None:
-    """Refuse to delete an environment while one of its releases is locked."""
-    release = (
-        HarnessRelease.no_workspace_objects.filter(
+def require_no_locked_version(environment: HostedHarnessJob) -> None:
+    """Refuse to delete an environment while one of its versions is locked."""
+    locked_version = (
+        HarnessLockedVersion.no_workspace_objects.filter(
             environment=environment, unlocked_at__isnull=True
         )
         .order_by("-locked_at")
         .first()
     )
-    if release is not None:
+    if locked_version is not None:
         raise HostedHarnessError(
-            "release_locked",
-            f"A workspace admin or owner must unlock release {release.label} first.",
+            "version_locked",
+            f"A workspace admin or owner must unlock version {locked_version.label} first.",
             status_code=409,
-            details={"release_id": str(release.id)},
+            details={"locked_version_id": str(locked_version.id)},
         )
 
 
 # --- reads -------------------------------------------------------------------------
 
 
-class ReleaseItem(TypedDict):
+class LockedVersionItem(TypedDict):
     id: str
     label: str
     environment_version_id: str
@@ -438,13 +446,13 @@ class ReleaseItem(TypedDict):
     test: int
 
 
-def release_items(job: HostedHarnessJob) -> list[ReleaseItem]:
-    """The environment's releases, newest first: every locked one, since only its
+def locked_version_items(job: HostedHarnessJob) -> list[LockedVersionItem]:
+    """The environment's locked versions, newest first: every locked one, since only its
     Unlock clears the delete guard, and the newest unlocked ones."""
     from simulate.services.harness_versioning.read import _label, _person
 
     rows = (
-        HarnessRelease.no_workspace_objects.filter(environment=job)
+        HarnessLockedVersion.no_workspace_objects.filter(environment=job)
         # Labels only: a version row carries large documents the read never needs.
         .select_related("locked_by", "unlocked_by")
         .annotate(
@@ -453,38 +461,38 @@ def release_items(job: HostedHarnessJob) -> list[ReleaseItem]:
         )
         .order_by("-locked_at")
     )
-    releases = sorted(
+    locked_versions = sorted(
         [
             *rows.filter(unlocked_at__isnull=True),
             *rows.filter(unlocked_at__isnull=False)[:UNLOCKED_HISTORY],
         ],
-        key=lambda release: release.locked_at,
+        key=lambda locked_version: locked_version.locked_at,
         reverse=True,
     )
     return [
         {
-            "id": str(release.id),
-            "label": release.label,
-            "environment_version_id": str(release.environment_version_id),
-            "environment_label": _label(release.environment_number),
-            "suite_version_id": str(release.suite_version_id),
-            "suite_label": _label(release.suite_number),
-            "locked_at": release.locked_at,
-            "locked_by": _person(release.locked_by),
-            "unlocked_at": release.unlocked_at,
-            "unlocked_by": _person(release.unlocked_by),
-            "train": release.train_count,
-            "test": release.test_count,
+            "id": str(locked_version.id),
+            "label": locked_version.label,
+            "environment_version_id": str(locked_version.environment_version_id),
+            "environment_label": _label(locked_version.environment_number),
+            "suite_version_id": str(locked_version.suite_version_id),
+            "suite_label": _label(locked_version.suite_number),
+            "locked_at": locked_version.locked_at,
+            "locked_by": _person(locked_version.locked_by),
+            "unlocked_at": locked_version.unlocked_at,
+            "unlocked_by": _person(locked_version.unlocked_by),
+            "train": locked_version.train_count,
+            "test": locked_version.test_count,
         }
-        for release in releases
+        for locked_version in locked_versions
     ]
 
 
 def lock_preview(
-    job: HostedHarnessJob, releases: list[ReleaseItem] | None = None
+    job: HostedHarnessJob, locked_versions: list[LockedVersionItem] | None = None
 ) -> dict[str, Any]:
     """Whether the default pair can be locked now, why not, and the splits it would
-    get. ``releases`` is the same read's history, so both name the same lock."""
+    get. ``locked_versions`` is the same read's history, so both name the same lock."""
     proved = HarnessSuiteValidation.no_workspace_objects.filter(
         suite_version_id=job.suite_version_id,
         environment_version_id=job.environment_version_id,
@@ -501,7 +509,7 @@ def lock_preview(
         "test_target": None,
     }
     try:
-        plan = _plan_lock(job, releases)
+        plan = _plan_lock(job, locked_versions)
     except HostedHarnessError as refusal:
         preview["refusal"] = {"code": refusal.code, "message": refusal.message}
         preview.update(

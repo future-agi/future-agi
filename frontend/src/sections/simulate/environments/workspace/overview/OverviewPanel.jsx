@@ -26,7 +26,7 @@ import AgentSummarySection from "./AgentSummarySection";
 import SourceReadCard from "./SourceReadCard";
 import NextStepsChecklist from "./NextStepsChecklist";
 import StateSummary from "./StateSummary";
-import ReleaseCard from "./ReleaseCard";
+import LockedVersionCard from "./LockedVersionCard";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { DependsOnCard, SeededDataCard } from "./WorldCards";
 
@@ -205,11 +205,12 @@ export default function OverviewPanel({
         onGo={onGo}
       />
 
-      {/* The release: lock the default versions so scores on them stay
-          comparable. Real data only, so only while versioning is on, and not
-          while the environment builds (Vel's placement: after the summary). */}
+      {/* The locked-version card: lock the default versions so scores on
+          them stay comparable. Real data only, so only while versioning is
+          on, and not while the environment builds (Vel's placement: after
+          the summary). */}
       {canManageVersions && !buildMode && (
-        <ReleaseCard envId={env.id} onGo={onGo} />
+        <LockedVersionCard envId={env.id} onGo={onGo} />
       )}
 
       {/* Getting-started checklist for envs that haven't been seeded yet. A
