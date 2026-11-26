@@ -984,9 +984,15 @@ class TestUnlockAndDelete:
             f"Lock {label} covers this version. A workspace admin or owner must "
             "unlock it first."
         )
-        # What an admin's Unlock action in the refusal needs.
+        # What an admin's Unlock action in the refusal needs, and the pair its
+        # confirmation names.
         assert response.json()["locked_version_id"] == locked_version["id"]
         assert response.json()["label"] == label
+        assert (
+            response.json()["environment_label"],
+            response.json()["suite_label"],
+        ) == (locked_version["environment_label"], locked_version["suite_label"])
+        assert response.json()["suite_label"] == "v2"
         environment.refresh_from_db()
         assert environment.deleted is False
 
