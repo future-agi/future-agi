@@ -9,6 +9,7 @@ The hosted gateway independently selects Daytona or E2B through
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
 import uuid
@@ -87,6 +88,9 @@ _SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".rar", ".7z")
 _SOURCE_ARCHIVE_DETAIL = (
     "upload the expanded project folder; archives are not supported"
 )
+_SOURCE_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
+# Multipart framing and one `paths` field per file, on top of the files themselves.
+_SOURCE_UPLOAD_FRAMING_BYTES = 8 * 1024 * 1024
 
 
 def _rejected_archive_upload(files) -> Response | None:
@@ -97,6 +101,21 @@ def _rejected_archive_upload(files) -> Response | None:
         return Response(
             {"detail": _SOURCE_ARCHIVE_DETAIL},
             status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
+
+def _oversized_upload(request) -> Response | None:
+    """Refuse on the declared length, before Django reads the body: the size of the parsed files
+    is known only after the whole request has been buffered (up to `DATA_UPLOAD_MAX_MEMORY_SIZE`)."""
+    try:
+        declared = int(request.META.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        declared = 0
+    if declared > _SOURCE_UPLOAD_MAX_BYTES + _SOURCE_UPLOAD_FRAMING_BYTES:
+        return Response(
+            {"detail": "source may not exceed 200 MiB"},
+            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
         )
     return None
 
@@ -1536,7 +1555,8 @@ def _environment_agent_maker(
     version_bound=False,
 ):
     """Check a creation's credentials now; the returned hook makes its agent and first
-    version inside the job's transaction."""
+    version inside the job's transaction. An adaptation binds a version that exists, and its
+    composition reads the same stored secrets: it is checked, but gets no agent of its own."""
     from simulate.services.harness_agent_versions import (
         CreationCheck,
         check_creation_credentials,
@@ -1562,6 +1582,9 @@ def _environment_agent_maker(
             organization, payload, secret_submitted, analysis
         )
     )
+
+    if (payload.get("metadata") or {}).get("adaptation"):
+        return _secret_ref_minter(secret_values)
 
     def make(job) -> None:
         ensure_environment_agent(
@@ -1644,17 +1667,6 @@ class HostedHarnessProvider:
     name = "hosted"
 
     def create(self, request) -> Response:
-        from simulate.serializers.harness_job import names_agent_version
-        from simulate.services.harness_agent_versions import advisory_xact_lock
-        from simulate.services.harness_versioning.versions import versioning_enabled
-        from simulate.services.hosted_harness import (
-            HostedHarnessError,
-            create_hosted_job,
-            find_replayed_job,
-            idempotency_lock_name,
-        )
-        from simulate.temporal.client import start_hosted_harness_gateway_workflow
-
         organization = request_organization(request)
         if organization is None:
             return Response(
@@ -1667,10 +1679,124 @@ class HostedHarnessProvider:
                 {"detail": "Idempotency-Key header is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        payload = request.validated_data
+        return self._submit(
+            request, organization, request.validated_data, idempotency_key
+        )
+
+    def create_adaptation(self, request) -> Response:
+        """Start adapting an agent to a release suite (contract §7.5): a hosted job like any
+        other, whose payload carries `metadata.adaptation`."""
+        from simulate.services.harness_fit import agent_of, resolved_pairing
+        from simulate.services.harness_releases import (
+            adaptation_payload,
+            check_agent_connection,
+            connected_agent_connection,
+            organization_agent_version,
+            visible_suite,
+        )
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            find_replayed_job,
+        )
+
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                build_error_envelope(
+                    "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        workspace = request_workspace(request)
+        agent = request.data.get("agent")
+        # What the client asked for, not what it resolves to: the suggested pairing may be
+        # another by the time the same request is sent again.
+        request_digest = canonical_digest(
+            json.loads(json.dumps({**data, "agent": agent}, default=str))
+        )
+        try:
+            replayed = find_replayed_job(
+                organization,
+                {},
+                idempotency_key=data["idempotency_key"],
+                workspace=workspace,
+                request_digest=request_digest,
+            )
+            if replayed is not None:
+                return self._dispatch(request, replayed)
+            agent_version = organization_agent_version(
+                organization, workspace, data["agent_version_id"]
+            )
+            suite = visible_suite(organization, data["suite_id"])
+            secret_values: dict[str, str] = {}
+            if agent:
+                # A given connection must reach the selected version's own provider agent:
+                # the adaptation inspects what it reaches, and results are the version's.
+                check_agent_connection(agent_version, agent)
+            else:
+                # Without one, the connected agent's own connection is used.
+                agent, secret_values = connected_agent_connection(
+                    organization, agent_version
+                )
+            read = agent_of(agent_version)
+            if not read["tools"]:
+                # Nothing of the agent's can stand in for a world tool, so a binding would be empty.
+                raise HostedHarnessError(
+                    "agent_has_no_tools",
+                    "this agent has no tools of its own to pair with the world's",
+                    status_code=409,
+                )
+            payload = adaptation_payload(
+                organization,
+                suite=suite,
+                # Re-validated as a hosted job agent; the request serializer only shapes it.
+                agent=agent,
+                agent_version=agent_version,
+                name=data["name"],
+                parallelism=data.get("parallelism"),
+                # Checked and completed here, so the design the person reviewed, the one the
+                # job stores and the one the binding is held to are the same map.
+                pairing=resolved_pairing(
+                    suite, agent_version, data.get("pairing"), agent=read
+                ),
+                mode=data.get("mode", "review"),
+                secret_values=secret_values,
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return self._submit(
+            request,
+            organization,
+            payload,
+            data["idempotency_key"],
+            request_digest=request_digest,
+        )
+
+    def _submit(
+        self,
+        request,
+        organization,
+        payload: dict,
+        idempotency_key: str,
+        *,
+        request_digest: str | None = None,
+    ) -> Response:
+        """Admit one validated hosted job payload and start its gateway workflow.
+        `request_digest` is of the client's request, when the payload resolves more than it."""
+        from simulate.serializers.harness_job import names_agent_version
+        from simulate.services.harness_agent_versions import advisory_xact_lock
+        from simulate.services.harness_versioning.versions import versioning_enabled
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            create_hosted_job,
+            find_replayed_job,
+            idempotency_lock_name,
+        )
+
         # Taken out first: values never reach the checks, the digest or the job.
         secret_values = payload.pop("credential_values", None) or {}
-        client_digest = canonical_digest(payload)
+        client_digest = request_digest or canonical_digest(payload)
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -1839,6 +1965,17 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness scheduler is unavailable"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        return self._dispatch(request, job)
+
+    def _dispatch(self, request, job: HostedHarnessJob) -> Response:
+        """Start a job's gateway workflow, or join the one running, and answer the job."""
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+        base_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
         try:
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
@@ -2038,6 +2175,7 @@ class HostedHarnessProvider:
             HostedHarnessError,
             VersionPicks,
             create_selected_harness_run,
+            fail_unscheduled_run,
         )
         from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
@@ -2170,34 +2308,11 @@ class HostedHarnessProvider:
                 "selected harness Run dispatch failed environment=%s", environment.id
             )
             if "child" in locals():
-                failure = {
-                    "domain": "infrastructure",
-                    "stage": "queued",
-                    "code": "scheduler_unavailable",
-                    "message": "Selected harness Run could not be scheduled",
-                }
-                with transaction.atomic():
-                    marked_failed = HostedHarnessJob.no_workspace_objects.filter(
-                        id=child.id,
-                        state=HostedHarnessJob.State.QUEUED,
-                    ).update(
-                        state=HostedHarnessJob.State.FAILED,
-                        current_stage="failed",
-                        terminal_at=timezone.now(),
-                        failure=failure,
+                if fail_unscheduled_run(child):
+                    return Response(
+                        {"detail": "Hosted harness scheduler is unavailable"},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
                     )
-                    if marked_failed:
-                        TestExecution.no_workspace_objects.filter(
-                            id=child.test_execution_id
-                        ).update(
-                            status=TestExecution.ExecutionStatus.FAILED,
-                            completed_at=timezone.now(),
-                            error_reason=failure["message"],
-                        )
-                        return Response(
-                            {"detail": "Hosted harness scheduler is unavailable"},
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        )
                 child.refresh_from_db()
                 if (
                     child.state == HostedHarnessJob.State.FAILED
@@ -2324,6 +2439,18 @@ class HostedHarnessProvider:
             HostedHarnessJob.State.FAILED,
             HostedHarnessJob.State.CANCELED,
         }
+        if job.state in terminal_states and (
+            (job.payload or {}).get("metadata") or {}
+        ).get("adaptation"):
+            # Only the adaptation process answers its conversation, and it has exited.
+            return Response(
+                build_error_envelope(
+                    "This adaptation has finished; start a new one to change it.",
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="conversation_closed",
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
         if job.state in terminal_states:
             conversation = (
                 HostedHarnessConversation.no_workspace_objects.filter(job=job)
@@ -2333,6 +2460,8 @@ class HostedHarnessProvider:
             metadata = (job.payload or {}).get("metadata") or {}
             has_archive = bool(
                 metadata.get("authoring_object_key")
+                # A composition's workspace is assembled from its releases (contract §7.8).
+                or metadata.get("release_composition")
                 or getattr(conversation, "latest_workspace_object_key", None)
             )
             files_gone = (
@@ -2796,6 +2925,7 @@ class HostedHarnessProvider:
         return response
 
     def _amend_scenarios(self, request, pk) -> Response:
+        from simulate.services.harness_releases import composition_of
         from simulate.services.hosted_harness_gateway import (
             SCENARIO_EDIT_ON_RUN,
             AuthoringArchiveKept,
@@ -2831,6 +2961,17 @@ class HostedHarnessProvider:
             if job is None:
                 return Response(
                     {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            if composition_of(job) is not None:
+                # Its suite is a sealed release: a change is a proved child suite (§7.8).
+                return Response(
+                    build_error_envelope(
+                        "A prebuilt environment's scenarios change through its chat, "
+                        "where each change is proved and saved as a new suite version.",
+                        status_code=status.HTTP_409_CONFLICT,
+                        code="composition_edit_in_chat",
+                    ),
+                    status=status.HTTP_409_CONFLICT,
                 )
             output = (
                 HostedHarnessStageOutput.no_workspace_objects.select_for_update()
@@ -3513,6 +3654,8 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import store_source_archive
 
+        if (oversized := _oversized_upload(request)) is not None:
+            return oversized
         organization = request_organization(request)
         if organization is None:
             return Response(
@@ -3529,13 +3672,9 @@ class HostedHarnessProvider:
         rejected = _rejected_archive_upload(files)
         if rejected is not None:
             return rejected
-        if len(files) > 5_000:
-            return Response(
-                {"detail": "source may contain at most 5000 files"},
-                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
+        # Django refuses more than DATA_UPLOAD_MAX_NUMBER_FILES files before this view runs.
         total = sum(int(getattr(uploaded, "size", 0) or 0) for uploaded in files)
-        if total > 200 * 1024 * 1024:
+        if total > _SOURCE_UPLOAD_MAX_BYTES:
             return Response(
                 {"detail": "source may not exceed 200 MiB"},
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -3865,6 +4004,8 @@ class SandboxHarnessProvider:
             HarnessSandboxUnavailable,
         )
 
+        if (oversized := _oversized_upload(request)) is not None:
+            return oversized
         files = request.FILES.getlist("files")
         paths = request.data.getlist("paths")
         if not files or len(files) != len(paths):

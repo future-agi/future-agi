@@ -455,6 +455,25 @@ describe("ScenariosStep — locked template", () => {
   });
 });
 
+describe("ScenariosStep — adapted environment", () => {
+  it("lets scenarios be selected to run, and leaves changing them to the chat", async () => {
+    renderWithClient(
+      <ScenariosStep
+        env={{ ...TEST_ENV, composition: { suite: { digest: "sha256:ab" } } }}
+        envState={envStateFor()}
+      />,
+    );
+    await screen.findByRole("table");
+    expect(screen.queryAllByRole("checkbox").length).toBeGreaterThan(0);
+    for (const name of [
+      "Add scenarios",
+      "Edit scenario",
+      "Remove from this environment",
+    ])
+      expect(screen.getAllByRole("button", { name })[0]).toBeDisabled();
+  });
+});
+
 describe("ScenariosStep — group-by axis", () => {
   it("names the No grouping choice in the Group by control once it's picked", async () => {
     renderStep();

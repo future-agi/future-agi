@@ -38,6 +38,11 @@ import type {
   AccountsErrorResponseApi,
   AccountsGcpMarketplaceVerifyTokenCreateBody,
   AccountsMessageResponseApi,
+  AccountsNotificationsEmailUnsubscribeCreateParams,
+  AccountsNotificationsEmailUnsubscribeListParams,
+  AccountsNotificationsSnoozeCreateParams,
+  AccountsNotificationsSnoozeListParams,
+  AccountsNotificationsUnsubscribeListParams,
   AccountsOrganizationMembersListParams,
   AccountsPaginatedUserResponseApi,
   AccountsRedisDeleteResponseApi,
@@ -465,6 +470,7 @@ import type {
   DynamicColumnCreateResponseApi,
   DynamicColumnMessageResponseApi,
   EditRunPromptColumnApi,
+  EmailUnsubscribeRequestApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
   EnterpriseHeartbeatResponseApi,
@@ -653,6 +659,8 @@ import type {
   HarnessActorValidationApi,
   HarnessActorViewApi,
   HarnessActorWriteApi,
+  HarnessAdaptationApprovedApi,
+  HarnessAdaptationDesignApi,
   HarnessAgentCredentialsResponseApi,
   HarnessAgentPolicyApi,
   HarnessAgentPolicyResponseApi,
@@ -705,6 +713,8 @@ import type {
   HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
+  HarnessHostedAgentRequestApi,
+  HarnessHostedAgentResponseApi,
   HarnessIngressProxyRequestApi,
   HarnessIngressRequestApi,
   HarnessIngressResponseApi,
@@ -718,11 +728,16 @@ import type {
   HarnessNudgeApi,
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
+  HarnessReleaseAgentRequestApi,
+  HarnessReleaseFitRequestApi,
+  HarnessReleaseFitResponseApi,
+  HarnessReleaseListResponseApi,
   HarnessResultReceiptApi,
   HarnessReviewDecisionsApi,
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
   HarnessRunPlanApi,
+  HarnessRunReportApi,
   HarnessScenarioAmendApi,
   HarnessScenarioAmendResponseApi,
   HarnessScenarioArchiveApi,
@@ -1363,6 +1378,7 @@ import type {
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
   SimulateApiHarnessEnvironmentsRunPlanParams,
+  SimulateApiHarnessEnvironmentsRunsRunReportParams,
   SimulateApiHarnessEnvironmentsScenarioRecordsParams,
   SimulateApiHarnessEnvironmentsUploadFileBody,
   SimulateApiHarnessEnvironmentsValidationStatusParams,
@@ -1414,6 +1430,7 @@ import type {
   SlackChannelsResponseApi,
   SlackInstallApi,
   SlackInstallResponseApi,
+  SnoozeRequestApi,
   SourceBranchesResponseApi,
   SourceRepositoriesResponseApi,
   SpanAttributeDetailResponseApi,
@@ -4534,39 +4551,158 @@ export const accountsMeTimezoneCreate = async (
   );
 };
 
+export type accountsNotificationsEmailUnsubscribeListResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse400 = {
+  data: string;
+  status: 400;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponseSuccess =
+  accountsNotificationsEmailUnsubscribeListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type accountsNotificationsEmailUnsubscribeListResponseError = (
+  | accountsNotificationsEmailUnsubscribeListResponse400
+  | accountsNotificationsEmailUnsubscribeListResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type accountsNotificationsEmailUnsubscribeListResponse =
+  | accountsNotificationsEmailUnsubscribeListResponseSuccess
+  | accountsNotificationsEmailUnsubscribeListResponseError;
+
+export const getAccountsNotificationsEmailUnsubscribeListUrl = (
+  params: AccountsNotificationsEmailUnsubscribeListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/email/unsubscribe/?${stringifiedParams}`
+    : `/accounts/notifications/email/unsubscribe/`;
+};
+
+/**
+ * Per-category unsubscribe for notification emails. Token is signed.
+ */
+export const accountsNotificationsEmailUnsubscribeList = async (
+  params: AccountsNotificationsEmailUnsubscribeListParams,
+  options?: RequestInit,
+): Promise<accountsNotificationsEmailUnsubscribeListResponse> => {
+  return apiMutator<accountsNotificationsEmailUnsubscribeListResponse>(
+    getAccountsNotificationsEmailUnsubscribeListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse400 = {
+  data: string;
+  status: 400;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponseSuccess =
+  accountsNotificationsEmailUnsubscribeCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type accountsNotificationsEmailUnsubscribeCreateResponseError = (
+  | accountsNotificationsEmailUnsubscribeCreateResponse400
+  | accountsNotificationsEmailUnsubscribeCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type accountsNotificationsEmailUnsubscribeCreateResponse =
+  | accountsNotificationsEmailUnsubscribeCreateResponseSuccess
+  | accountsNotificationsEmailUnsubscribeCreateResponseError;
+
+export const getAccountsNotificationsEmailUnsubscribeCreateUrl = (
+  params: AccountsNotificationsEmailUnsubscribeCreateParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/email/unsubscribe/?${stringifiedParams}`
+    : `/accounts/notifications/email/unsubscribe/`;
+};
+
+/**
+ * Per-category unsubscribe for notification emails. Token is signed.
+ */
+export const accountsNotificationsEmailUnsubscribeCreate = async (
+  emailUnsubscribeRequestApi: EmailUnsubscribeRequestApi,
+  params: AccountsNotificationsEmailUnsubscribeCreateParams,
+  options?: RequestInit,
+): Promise<accountsNotificationsEmailUnsubscribeCreateResponse> => {
+  return apiMutator<accountsNotificationsEmailUnsubscribeCreateResponse>(
+    getAccountsNotificationsEmailUnsubscribeCreateUrl(params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emailUnsubscribeRequestApi),
+    },
+  );
+};
+
 export type accountsNotificationsSnoozeListResponse200 = {
   data: string;
   status: 200;
 };
 
 export type accountsNotificationsSnoozeListResponse400 = {
-  data: AccountsErrorResponseApi;
+  data: string;
   status: 400;
-};
-
-export type accountsNotificationsSnoozeListResponse401 = {
-  data: AccountsErrorResponseApi;
-  status: 401;
-};
-
-export type accountsNotificationsSnoozeListResponse403 = {
-  data: AccountsErrorResponseApi;
-  status: 403;
-};
-
-export type accountsNotificationsSnoozeListResponse404 = {
-  data: AccountsErrorResponseApi;
-  status: 404;
-};
-
-export type accountsNotificationsSnoozeListResponse500 = {
-  data: AccountsErrorResponseApi;
-  status: 500;
 };
 
 export type accountsNotificationsSnoozeListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
 };
 
 export type accountsNotificationsSnoozeListResponseSuccess =
@@ -4575,10 +4711,6 @@ export type accountsNotificationsSnoozeListResponseSuccess =
   };
 export type accountsNotificationsSnoozeListResponseError = (
   | accountsNotificationsSnoozeListResponse400
-  | accountsNotificationsSnoozeListResponse401
-  | accountsNotificationsSnoozeListResponse403
-  | accountsNotificationsSnoozeListResponse404
-  | accountsNotificationsSnoozeListResponse500
   | accountsNotificationsSnoozeListResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -4588,21 +4720,113 @@ export type accountsNotificationsSnoozeListResponse =
   | accountsNotificationsSnoozeListResponseSuccess
   | accountsNotificationsSnoozeListResponseError;
 
-export const getAccountsNotificationsSnoozeListUrl = () => {
-  return `/accounts/notifications/snooze/`;
+export const getAccountsNotificationsSnoozeListUrl = (
+  params: AccountsNotificationsSnoozeListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/snooze/?${stringifiedParams}`
+    : `/accounts/notifications/snooze/`;
 };
 
 /**
  * Snooze the realtime track for N days (default 7). Daily still fires.
+GET asks first, because link scanners prefetch URLs; POST snoozes.
  */
 export const accountsNotificationsSnoozeList = async (
+  params: AccountsNotificationsSnoozeListParams,
   options?: RequestInit,
 ): Promise<accountsNotificationsSnoozeListResponse> => {
   return apiMutator<accountsNotificationsSnoozeListResponse>(
-    getAccountsNotificationsSnoozeListUrl(),
+    getAccountsNotificationsSnoozeListUrl(params),
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type accountsNotificationsSnoozeCreateResponse200 = {
+  data: string;
+  status: 200;
+};
+
+export type accountsNotificationsSnoozeCreateResponse400 = {
+  data: string;
+  status: 400;
+};
+
+export type accountsNotificationsSnoozeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
+};
+
+export type accountsNotificationsSnoozeCreateResponseSuccess =
+  accountsNotificationsSnoozeCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type accountsNotificationsSnoozeCreateResponseError = (
+  | accountsNotificationsSnoozeCreateResponse400
+  | accountsNotificationsSnoozeCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type accountsNotificationsSnoozeCreateResponse =
+  | accountsNotificationsSnoozeCreateResponseSuccess
+  | accountsNotificationsSnoozeCreateResponseError;
+
+export const getAccountsNotificationsSnoozeCreateUrl = (
+  params: AccountsNotificationsSnoozeCreateParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/snooze/?${stringifiedParams}`
+    : `/accounts/notifications/snooze/`;
+};
+
+/**
+ * Snooze the realtime track for N days (default 7). Daily still fires.
+GET asks first, because link scanners prefetch URLs; POST snoozes.
+ */
+export const accountsNotificationsSnoozeCreate = async (
+  snoozeRequestApi: SnoozeRequestApi,
+  params: AccountsNotificationsSnoozeCreateParams,
+  options?: RequestInit,
+): Promise<accountsNotificationsSnoozeCreateResponse> => {
+  return apiMutator<accountsNotificationsSnoozeCreateResponse>(
+    getAccountsNotificationsSnoozeCreateUrl(params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(snoozeRequestApi),
     },
   );
 };
@@ -4613,33 +4837,13 @@ export type accountsNotificationsUnsubscribeListResponse200 = {
 };
 
 export type accountsNotificationsUnsubscribeListResponse400 = {
-  data: AccountsErrorResponseApi;
+  data: string;
   status: 400;
-};
-
-export type accountsNotificationsUnsubscribeListResponse401 = {
-  data: AccountsErrorResponseApi;
-  status: 401;
-};
-
-export type accountsNotificationsUnsubscribeListResponse403 = {
-  data: AccountsErrorResponseApi;
-  status: 403;
-};
-
-export type accountsNotificationsUnsubscribeListResponse404 = {
-  data: AccountsErrorResponseApi;
-  status: 404;
-};
-
-export type accountsNotificationsUnsubscribeListResponse500 = {
-  data: AccountsErrorResponseApi;
-  status: 500;
 };
 
 export type accountsNotificationsUnsubscribeListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
 };
 
 export type accountsNotificationsUnsubscribeListResponseSuccess =
@@ -4648,10 +4852,6 @@ export type accountsNotificationsUnsubscribeListResponseSuccess =
   };
 export type accountsNotificationsUnsubscribeListResponseError = (
   | accountsNotificationsUnsubscribeListResponse400
-  | accountsNotificationsUnsubscribeListResponse401
-  | accountsNotificationsUnsubscribeListResponse403
-  | accountsNotificationsUnsubscribeListResponse404
-  | accountsNotificationsUnsubscribeListResponse500
   | accountsNotificationsUnsubscribeListResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -4661,18 +4861,37 @@ export type accountsNotificationsUnsubscribeListResponse =
   | accountsNotificationsUnsubscribeListResponseSuccess
   | accountsNotificationsUnsubscribeListResponseError;
 
-export const getAccountsNotificationsUnsubscribeListUrl = () => {
-  return `/accounts/notifications/unsubscribe/`;
+export const getAccountsNotificationsUnsubscribeListUrl = (
+  params: AccountsNotificationsUnsubscribeListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/accounts/notifications/unsubscribe/?${stringifiedParams}`
+    : `/accounts/notifications/unsubscribe/`;
 };
 
 /**
- * One-click unsubscribe from both digest tracks. Token is HMAC-signed.
+ * Digest unsubscribe link from older emails. Token is HMAC-signed.
  */
 export const accountsNotificationsUnsubscribeList = async (
+  params: AccountsNotificationsUnsubscribeListParams,
   options?: RequestInit,
 ): Promise<accountsNotificationsUnsubscribeListResponse> => {
   return apiMutator<accountsNotificationsUnsubscribeListResponse>(
-    getAccountsNotificationsUnsubscribeListUrl(),
+    getAccountsNotificationsUnsubscribeListUrl(params),
     {
       ...options,
       method: "GET",
@@ -61948,6 +62167,179 @@ export const simulateApiCallExecutionsList = async (
   );
 };
 
+export type simulateApiHarnessAdaptationsCreateResponse202 = {
+  data: HarnessJobReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 403 | 404>;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponseSuccess =
+  simulateApiHarnessAdaptationsCreateResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessAdaptationsCreateResponseError = (
+  | simulateApiHarnessAdaptationsCreateResponse403
+  | simulateApiHarnessAdaptationsCreateResponse404
+  | simulateApiHarnessAdaptationsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponse =
+  | simulateApiHarnessAdaptationsCreateResponseSuccess
+  | simulateApiHarnessAdaptationsCreateResponseError;
+
+export const getSimulateApiHarnessAdaptationsCreateUrl = () => {
+  return `/simulate/api/harness-adaptations/`;
+};
+
+/**
+ * Adapt an agent to a release suite. The job is followed like any harness job.
+ */
+export const simulateApiHarnessAdaptationsCreate = async (
+  harnessReleaseAgentRequestApi: HarnessReleaseAgentRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAdaptationsCreateResponse> => {
+  return apiMutator<simulateApiHarnessAdaptationsCreateResponse>(
+    getSimulateApiHarnessAdaptationsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessReleaseAgentRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse202 = {
+  data: HarnessAdaptationApprovedApi;
+  status: 202;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 403 | 404 | 409>;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponseSuccess =
+  simulateApiHarnessAdaptationsApproveResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessAdaptationsApproveResponseError = (
+  | simulateApiHarnessAdaptationsApproveResponse403
+  | simulateApiHarnessAdaptationsApproveResponse404
+  | simulateApiHarnessAdaptationsApproveResponse409
+  | simulateApiHarnessAdaptationsApproveResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse =
+  | simulateApiHarnessAdaptationsApproveResponseSuccess
+  | simulateApiHarnessAdaptationsApproveResponseError;
+
+export const getSimulateApiHarnessAdaptationsApproveUrl = (id: string) => {
+  return `/simulate/api/harness-adaptations/${id}/approve/`;
+};
+
+/**
+ * Approve and build: the design is taken once the mapping has been checked on every case.
+ */
+export const simulateApiHarnessAdaptationsApprove = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAdaptationsApproveResponse> => {
+  return apiMutator<simulateApiHarnessAdaptationsApproveResponse>(
+    getSimulateApiHarnessAdaptationsApproveUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAdaptationsDesignResponse200 = {
+  data: HarnessAdaptationDesignApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAdaptationsDesignResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessAdaptationsDesignResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateApiHarnessAdaptationsDesignResponseSuccess =
+  simulateApiHarnessAdaptationsDesignResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessAdaptationsDesignResponseError = (
+  | simulateApiHarnessAdaptationsDesignResponse404
+  | simulateApiHarnessAdaptationsDesignResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessAdaptationsDesignResponse =
+  | simulateApiHarnessAdaptationsDesignResponseSuccess
+  | simulateApiHarnessAdaptationsDesignResponseError;
+
+export const getSimulateApiHarnessAdaptationsDesignUrl = (id: string) => {
+  return `/simulate/api/harness-adaptations/${id}/design/`;
+};
+
+/**
+ * Review the design: what the adaptation takes from the ready world, before it's built.
+ */
+export const simulateApiHarnessAdaptationsDesign = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAdaptationsDesignResponse> => {
+  return apiMutator<simulateApiHarnessAdaptationsDesignResponse>(
+    getSimulateApiHarnessAdaptationsDesignUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsListResponse200 = {
   data: HarnessEnvironmentListResponseApi;
   status: 200;
@@ -64460,6 +64852,71 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
     );
   };
 
+export type simulateApiHarnessEnvironmentsRunsRunReportResponse200 = {
+  data: HarnessRunReportApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsRunsRunReportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsRunsRunReportResponseSuccess =
+  simulateApiHarnessEnvironmentsRunsRunReportResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsRunsRunReportResponseError =
+  simulateApiHarnessEnvironmentsRunsRunReportResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsRunReportResponse =
+  | simulateApiHarnessEnvironmentsRunsRunReportResponseSuccess
+  | simulateApiHarnessEnvironmentsRunsRunReportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunsRunReportUrl = (
+  id: string,
+  runId: string,
+  params?: SimulateApiHarnessEnvironmentsRunsRunReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/runs/${runId}/report/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/runs/${runId}/report/`;
+};
+
+/**
+ * The report of one run of a composition, optionally compared with a baseline run.
+ */
+export const simulateApiHarnessEnvironmentsRunsRunReport = async (
+  id: string,
+  runId: string,
+  params?: SimulateApiHarnessEnvironmentsRunsRunReportParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunsRunReportResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunsRunReportResponse>(
+    getSimulateApiHarnessEnvironmentsRunsRunReportUrl(id, runId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsValidationStatusResponse200 = {
   data: HarnessScenarioValidationStatusApi;
   status: 200;
@@ -65505,6 +65962,70 @@ export const simulateApiHarnessEnvironmentsVersionsVersionDiff = async (
   );
 };
 
+export type simulateApiHarnessHostedAgentsCreateResponse201 = {
+  data: HarnessHostedAgentResponseApi;
+  status: 201;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 403 | 404 | 409>;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponseSuccess =
+  simulateApiHarnessHostedAgentsCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessHostedAgentsCreateResponseError = (
+  | simulateApiHarnessHostedAgentsCreateResponse403
+  | simulateApiHarnessHostedAgentsCreateResponse404
+  | simulateApiHarnessHostedAgentsCreateResponse409
+  | simulateApiHarnessHostedAgentsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse =
+  | simulateApiHarnessHostedAgentsCreateResponseSuccess
+  | simulateApiHarnessHostedAgentsCreateResponseError;
+
+export const getSimulateApiHarnessHostedAgentsCreateUrl = () => {
+  return `/simulate/api/harness-hosted-agents/`;
+};
+
+/**
+ * Compose our own agent with a release suite; it answers the composed environment.
+ */
+export const simulateApiHarnessHostedAgentsCreate = async (
+  harnessHostedAgentRequestApi: HarnessHostedAgentRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessHostedAgentsCreateResponse> => {
+  return apiMutator<simulateApiHarnessHostedAgentsCreateResponse>(
+    getSimulateApiHarnessHostedAgentsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessHostedAgentRequestApi),
+    },
+  );
+};
+
 export type simulateApiHarnessJobsListResponse200 = {
   data: HarnessJobReadApi[];
   status: 200;
@@ -66461,6 +66982,98 @@ export const simulateApiHarnessJobsScenariosScenarioCoverage = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessReleasesListResponse200 = {
+  data: HarnessReleaseListResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessReleasesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessReleasesListResponseSuccess =
+  simulateApiHarnessReleasesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessReleasesListResponseError =
+  simulateApiHarnessReleasesListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessReleasesListResponse =
+  | simulateApiHarnessReleasesListResponseSuccess
+  | simulateApiHarnessReleasesListResponseError;
+
+export const getSimulateApiHarnessReleasesListUrl = () => {
+  return `/simulate/api/harness-releases/`;
+};
+
+export const simulateApiHarnessReleasesList = async (
+  options?: RequestInit,
+): Promise<simulateApiHarnessReleasesListResponse> => {
+  return apiMutator<simulateApiHarnessReleasesListResponse>(
+    getSimulateApiHarnessReleasesListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessReleasesFitResponse200 = {
+  data: HarnessReleaseFitResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessReleasesFitResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessReleasesFitResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessReleasesFitResponseSuccess =
+  simulateApiHarnessReleasesFitResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessReleasesFitResponseError = (
+  | simulateApiHarnessReleasesFitResponse403
+  | simulateApiHarnessReleasesFitResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessReleasesFitResponse =
+  | simulateApiHarnessReleasesFitResponseSuccess
+  | simulateApiHarnessReleasesFitResponseError;
+
+export const getSimulateApiHarnessReleasesFitUrl = () => {
+  return `/simulate/api/harness-releases/fit/`;
+};
+
+/**
+ * How a connected agent fits a release suite: its tools paired with the world's and
+the cases that pairing can measure. Nothing is built.
+ */
+export const simulateApiHarnessReleasesFit = async (
+  harnessReleaseFitRequestApi: HarnessReleaseFitRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessReleasesFitResponse> => {
+  return apiMutator<simulateApiHarnessReleasesFitResponse>(
+    getSimulateApiHarnessReleasesFitUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessReleaseFitRequestApi),
     },
   );
 };

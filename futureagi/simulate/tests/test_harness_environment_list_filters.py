@@ -80,7 +80,13 @@ def test_status_filter_matches_the_status_each_row_reports(
         assert {row["status"] for row in body["results"]} == {wanted}
 
     counts = _get(auth_client, workspace, status="failed")["status_counts"]
-    assert counts == {"building": 2, "running": 3, "completed": 1, "failed": 2}
+    assert counts == {
+        "awaiting_approval": 0,
+        "building": 2,
+        "running": 3,
+        "completed": 1,
+        "failed": 2,
+    }
 
 
 @pytest.mark.django_db
@@ -151,6 +157,37 @@ def test_an_environment_for_a_browser_agent_reads_and_filters_as_browser(
         row["id"]: row["agent_type"] for row in _get(auth_client, workspace)["results"]
     }
     assert every[str(from_snapshot.id)] == "browser"
+
+
+@pytest.mark.django_db
+def test_a_browser_agent_whose_contract_names_no_modality_filters_as_browser(
+    auth_client, organization, workspace
+):
+    # A contract need not name a modality: the row reads browser, so the filter must list it.
+    agent = _agent(organization, workspace, "Northwind")
+    from_snapshot = _payload(_environment(agent, 1), agent={"connector": "auto"})
+    _contract(from_snapshot, {"environment_needs": ["browser"]})
+    from_version = _payload(_environment(agent, 2), agent={"connector": "auto"})
+    version = _environment_version(from_version, 1)
+    version.documents = {"contract": {"environment_needs": ["browser"]}}
+    version.save(update_fields=["documents"])
+    from_version = _set(from_version, environment_version=version)
+    plain = _payload(_environment(agent, 3), agent={"connector": "auto"})
+    no_modality = _environment_version(plain, 1)
+    no_modality.documents = {"contract": {"agent": "support"}}
+    no_modality.save(update_fields=["documents"])
+    plain = _set(plain, environment_version=no_modality)
+
+    browser = _get(auth_client, workspace, agent_type="browser")
+    chat = _get(auth_client, workspace, agent_type="chat")
+
+    assert _ids(browser) == {str(from_snapshot.id), str(from_version.id)}
+    assert _ids(chat) == {str(plain.id)}
+    every = {
+        row["id"]: row["agent_type"] for row in _get(auth_client, workspace)["results"]
+    }
+    assert every[str(from_version.id)] == "browser"
+    assert every[str(plain.id)] == "chat"
 
 
 @pytest.mark.django_db

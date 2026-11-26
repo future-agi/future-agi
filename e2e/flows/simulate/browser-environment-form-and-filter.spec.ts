@@ -1,19 +1,25 @@
 import { test, expect } from '../../lib/fixtures';
+import { AGENT_SOURCE_DIR } from '../../lib/agent-source';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { seedHarnessEnvironment } from '../../lib/simulate-seed';
+import { POLL } from '../../lib/state-probe';
 
 // Browser-side waits: one navigation's first paint or one synchronous request, not a stage.
 const UI_READY = 60_000;
 // frontend/src/sections/simulate/environments/buildDrawer/buildDraft.js BUILD_PARAM and buildDrawerCatalog.js
-// (item id "github"): the address the Build environment drawer keeps for its GitHub setup.
-const GITHUB_BUILD = '/dashboard/simulate/environments?build=github';
+// (item id "upload"): the address the Build environment drawer keeps for its folder upload. Its form
+// (ConnectCodeForm.jsx) holds Browser sites once the folder's agent is found. The GitHub way scans the
+// repository first, which needs GitHub; the stack has none.
+const UPLOAD_BUILD = '/dashboard/simulate/environments?build=upload';
+// frontend/src/api/harness/harness.js sourcesPath.
+const SOURCES_PATH = '/simulate/api/harness-jobs/sources/';
+// e2e/stack/mock-daytona/server.mjs: the one agent every scan finds.
+const FOUND_AGENT = 'support_agent';
 const ENVIRONMENTS = '/dashboard/simulate/environments';
 // frontend/src/api/harness/harness.js preflightPath.
 const PREFLIGHT_PATH = '/simulate/api/harness-jobs/preflight/';
 // futureagi/simulate/views/harness_environment.py list; its envelope is HarnessEnvironmentListResponseSerializer.
 const LIST_PATH = '/simulate/api/harness-environments/';
-// A public repository: preflight refuses the sites before it reads the source, so nothing is fetched.
-const PUBLIC_REPO = 'https://github.com/octocat/Hello-World';
 // futureagi/simulate/services/browser_sites.py: the refusal's sentence for one wrong site.
 const ONE_WRONG_SITE = (position: number) => 'Allowed sites must be public host names, such as example.com, '
   + `with no scheme, port, path or address. Check site ${position}.`;
@@ -24,15 +30,15 @@ const CHAT = 'Chat';
 interface Refusal { error: string; message: string; positions: number[] }
 interface ListPage { count: number; results: { id: string; name: string; agent_type: string }[] }
 
-test('SIM-E2E-040: a wrong browser site is refused by its position at preflight, before anything is built', {
+test('SIM-E2E-042: a wrong browser site is refused by its position at preflight, before anything is built', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-040', area: 'simulate',
+    id: 'SIM-E2E-042', area: 'simulate',
     userGoal: 'A user building an environment for a browser agent names the sites its browser may open, and a '
       + 'wrong site is refused by its position, before anything is built',
-    steps: ['open Environments with the Build environment drawer on GitHub', 'choose Paste a repo link and enter a '
-              + 'public repository', 'in Browser sites, type a good host in capitals and a URL after it',
-            'run preflight', 'read the preflight row'],
+    steps: ['open Environments with the Build environment drawer on folder upload', 'choose the agent folder and '
+              + 'find its agent', 'pick the agent found and go on to its form', 'in Browser sites, type a good host '
+              + 'in capitals and a URL after it', 'run preflight', 'read the preflight row'],
     backendChecks: ['the preflight request carries browser.allowed_sites as the two typed entries, trimmed and '
                       + 'lower-cased, in order',
                     'the server answers 400 browser_sites_invalid with positions [2]',
@@ -40,23 +46,34 @@ test('SIM-E2E-040: a wrong browser site is refused by its position at preflight,
     browserChecks: ['the preflight row reads "Preflight couldn\'t run" and the refusal naming site 2'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // 3 x UI_READY (drawer, request, preflight row) = 180 s, plus navigation, passes the 120 s default.
-  test.setTimeout(200_000);
+  test.skip(process.env.E2E_STACK === 'standalone', 'agent reading runs on worker-reading and mock-daytona in the distributed E2E stack');
+  // 4 x UI_READY (upload, form, request, preflight row) = 240 s + POLL.ASYNC_JOB (the scan, 60 s) + navigation.
+  test.setTimeout(330_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const good = `e2e-sites-${suffix}.example.com`;
   const typed = `${good.toUpperCase()}, https://${good}/path`;
   const jobs = async () => Number((await probe.pg<{ count: string }>(
     'SELECT count(*)::text AS count FROM simulate_hosted_harness_job WHERE organization_id = $1',
     [actor.organizationId]))[0].count);
-  const before = await jobs();
-  await testInfo.attach('minted', { contentType: 'application/json',
-    body: JSON.stringify({ good, typed, organizationId: actor.organizationId, jobsBefore: before }) });
 
-  await test.step('ui: fill the repository and the browser sites', async () => {
-    await page.goto(GITHUB_BUILD);
-    await page.getByRole('radio', { name: 'Paste a repo link' }).click({ timeout: UI_READY });
-    await page.getByRole('textbox', { name: 'Repository link' }).fill(PUBLIC_REPO);
-    await page.getByRole('textbox', { name: 'Browser sites' }).fill(typed);
+  await test.step('ui: upload the agent folder and find its agent', async () => {
+    await page.goto(UPLOAD_BUILD, { waitUntil: 'domcontentloaded' });
+    const uploaded = page.waitForResponse(
+      (r) => r.url().endsWith(SOURCES_PATH) && r.request().method() === 'POST', { timeout: UI_READY });
+    await page.locator('input[type="file"][webkitdirectory]').setInputFiles(AGENT_SOURCE_DIR);
+    expect((await uploaded).status()).toBe(201);
+    await page.getByRole('button', { name: 'Find agents' }).click();
+    await page.getByText(FOUND_AGENT, { exact: true }).click({ timeout: UI_READY + POLL.ASYNC_JOB.timeout });
+    await page.getByRole('button', { name: 'Next' }).click();
+  });
+
+  let before = 0;
+  await test.step('ui: type the browser sites', async () => {
+    await page.getByRole('textbox', { name: 'Browser sites' }).fill(typed, { timeout: UI_READY });
+    // Counted here, after the scan, so only preflight could add a row.
+    before = await jobs();
+    await testInfo.attach('minted', { contentType: 'application/json',
+      body: JSON.stringify({ good, typed, organizationId: actor.organizationId, jobsBefore: before }) });
   });
 
   let refusal: Refusal | undefined;
@@ -84,10 +101,10 @@ test('SIM-E2E-040: a wrong browser site is refused by its position at preflight,
   });
 });
 
-test('SIM-E2E-041: environments built for browser agents read Browser and are what the Browser filter lists', {
+test('SIM-E2E-043: environments built for browser agents read Browser and are what the Browser filter lists', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-041', area: 'simulate',
+    id: 'SIM-E2E-043', area: 'simulate',
     userGoal: 'A user finds the environments built for browser agents by their Browser label and the Browser filter',
     steps: ['seed two built environments: one whose agent contract needs a browser, one chat '
               + '(e2e/lib/harness_environment_seed.py)', 'open Environments', 'search each one\'s name and read '

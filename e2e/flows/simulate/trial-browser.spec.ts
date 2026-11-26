@@ -26,10 +26,10 @@ const trialPage = (seed: { environmentId: string; runTestId?: string; testExecut
   callExecutionId?: string }) => `/dashboard/simulate/environments/${seed.environmentId}/runs/${seed.runTestId}`
   + `/${seed.testExecutionId}?rowId=${seed.callExecutionId}`;
 
-test('SIM-E2E-042: A trial of a browser environment shows its browser\'s screenshot and the page it was refused', {
+test('SIM-E2E-044: A trial of a browser environment shows its browser\'s screenshot and the page it was refused', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-042', area: 'simulate',
+    id: 'SIM-E2E-044', area: 'simulate',
     userGoal: 'A developer opens a trial of a browser environment and sees what its browser did: the screenshot '
       + 'it took, with the page\'s address, and the page it was refused; a trial of an environment with no browser '
       + 'has no Browser entry',
