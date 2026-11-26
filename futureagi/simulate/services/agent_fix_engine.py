@@ -647,13 +647,17 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
         return
     winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)
     base, final = graded_check_runs(fix_run, winner)
-    configs = _evals_within_budget(fix_run, configs, [*base, *final])
+    # A baseline an earlier winner graded is read as it was graded, not paid again: it
+    # is neither queued nor priced.
+    runs = [
+        run
+        for run in (*base, *final)
+        if fix_run.id in (run.fix_run_id, run.graded_for_id)
+    ]
+    configs = _evals_within_budget(fix_run, configs, runs)
     if not configs:
         return
-    for run in (*base, *final):
-        # A baseline an earlier winner graded is read as it was graded, not paid again.
-        if fix_run.id not in (run.fix_run_id, run.graded_for_id):
-            continue
+    for run in runs:
         execution = run.test_execution
         if execution is None:
             continue

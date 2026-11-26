@@ -1109,7 +1109,53 @@ class TestLineage:
         baseline.refresh_from_db()
         assert baseline.graded_at is None
 
-    def test_the_hold_holds_each_check_at_its_worst(self, source_run):
+    def test_a_later_winner_prices_only_the_runs_it_grades(
+        self, auth_client, source_run
+    ):
+        """A baseline an earlier winner graded is read, not graded again, so the later
+        winner's evals are priced on its own runs only: its limit, which holds nothing
+        for that baseline, still grades them."""
+        first = _running(
+            AgentFixRun.no_workspace_objects.get(
+                id=_submit(auth_client, source_run).json()["id"]
+            )
+        )
+        won = _add(first)
+        baseline = _check(first, label="baseline-r1")
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed"
+        )
+        AgentFixCandidate.no_workspace_objects.filter(id=won.id).update(
+            outcome="winner"
+        )
+        _grade(first, won.id)
+        close_fix_run(first.id, State.READY)
+        other = {**FIXED, "agent.py": b"PROMPT = 'x'\n"}
+        second = _running(
+            AgentFixRun.no_workspace_objects.get(
+                id=_submit(auth_client, source_run, other).json()["id"]
+            )
+        )
+        winner = _add(second, other)
+        AgentFixCandidate.no_workspace_objects.filter(id=winner.id).update(
+            outcome="winner"
+        )
+        assert _check(second, label="baseline-r1").id == baseline.id
+        final = _check(
+            second, label="c1-finalist-r1", version_id=winner.agent_version_id
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=final.id).update(
+            state="completed"
+        )
+        # Room for one eval on the final check's one conversation ($0.02), not on two.
+        second.refresh_from_db()
+        room = engine.committed_usd(second, eval_count=0) + Decimal("0.03")
+        AgentFixRun.no_workspace_objects.filter(id=second.id).update(
+            request={**second.request, "budget_usd": float(room)}
+        )
+        second.refresh_from_db()
+
+        assert _grade(second, winner.id) == [final.test_execution_id]
         request = FixRequest(
             target_scenario_keys=[f"case-{n}" for n in range(12)],
             held_back_scenario_keys=[f"case-{n}" for n in range(4)],
