@@ -137,25 +137,52 @@ def scorable_tasks(
     blocked: Collection[str] = frozenset(),
 ) -> list[Task]:
     """The suite version's scenarios a run pinned to both versions can score, less the
-    ``blocked`` keys a run can't play. Both versions are immutable, so neither is this.
-    Only the keys read leave the database."""
+    ones a run can't play: ``blocked`` holds their keys as the suite documents give
+    them. Both versions are immutable, so neither is this. Only the keys read leave
+    the database."""
     catalogue = sub_goal_catalogue(
         HarnessEnvironmentVersion._base_manager.filter(id=environment_version_id)
         .values_list("documents__sub_goals", flat=True)
         .first()
     )
-    members = HarnessSuiteMember.no_workspace_objects.filter(
-        suite_version_id=suite_version_id
-    ).values_list(
-        "scenario_id", "scenario_key", "content__use_case", "content__sub_goals"
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=suite_version_id
+        ).values_list(
+            "scenario_id",
+            "scenario_key",
+            "content__name",
+            "content__use_case",
+            "content__sub_goals",
+        )
     )
-    tasks = [
+    excluded = _blocked_members(
+        [(scenario_id, key, name) for scenario_id, key, name, _, _ in members], blocked
+    )
+    return [
         Task(scenario_id, key, _category(use_case))
-        for scenario_id, key, use_case, sub_goals in members
-        if not grades_nothing(sub_goals, catalogue)
-        and registration_key(key) not in blocked
+        for scenario_id, key, _, use_case, sub_goals in members
+        if not grades_nothing(sub_goals, catalogue) and scenario_id not in excluded
     ]
-    return tasks
+
+
+def _blocked_members(
+    members: Iterable[tuple[UUID, str, object]], blocked: Collection[str]
+) -> set[UUID]:
+    """The scenario ids of the members whose document key is ``blocked``. A document
+    keys a scenario by its own key, else by its name, and a backfilled member keeps
+    its row's key, so a member pairs by its key first, then by its name, as the
+    backfill paired them."""
+    members = list(members)
+    keys = {registration_key(key) for _, key, _ in members}
+    excluded: set[UUID] = set()
+    for scenario_id, key, name in members:
+        by_name = registration_key(name)
+        if registration_key(key) in blocked or (
+            by_name and by_name in blocked and by_name not in keys
+        ):
+            excluded.add(scenario_id)
+    return excluded
 
 
 def _seats(
