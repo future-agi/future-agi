@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "src/utils/test-utils";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 const checkAsk = vi.fn();
@@ -133,8 +139,10 @@ describe("AskQuestionDialog", () => {
     await screen.findByTestId("ask-check");
     await user.click(askButton());
 
-    expect(askButton()).toHaveTextContent("Starting…");
-    expect(askButton()).toBeDisabled();
+    // While it starts, the button says so and takes no second press.
+    const starting = screen.getByRole("button", { name: "Starting…" });
+    expect(starting).toBeDisabled();
+    fireEvent.click(starting);
     expect(checkButton()).toBeDisabled();
     expect(launchAsk).toHaveBeenCalledTimes(1);
   });
