@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid5
 
 from django.conf import settings
@@ -912,7 +913,11 @@ def harness_consumption(
     ):
         return None
 
-    consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
+    consumption: dict[str, Any] = {
+        "text_sim_tokens": 0,
+        "voice_sim_minutes": 0,
+        "ai_credits": 0,
+    }
     for attempt_id, report in reports.items():
         attempt = attempts[attempt_id]
         for item in _billable_records(attempt, report):
@@ -922,11 +927,12 @@ def harness_consumption(
                 else "voice_sim_minutes"
             )
             consumption[dimension] += item["amount"]
-    consumption["ai_credits"] = (turn_credits or 0) + sum(
+    authored_credits: float = sum(
         record["credits"]
         for report in authoring_reports.values()
         for record in report["records"]
     )
+    consumption["ai_credits"] = (turn_credits or 0) + authored_credits
     authoring_estimate_unavailable = False
     if authoring_spend and not is_oss():
         try:
