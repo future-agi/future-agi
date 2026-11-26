@@ -621,8 +621,9 @@ class BackendWorkflowTest(unittest.TestCase):
         self.assertIn("actions: read", queue)
         self.assertIn("\n    name: backend\n", queue)
         self.assertIn("VERDICT: ${{ needs.backend.outputs.verdict }}", queue)
+        # .github/scripts/test_queue_full_run_gate.py runs this line's job.
         self.assertIn(
-            'test "$BACKEND_RESULT" = success && test "$VERDICT" = success', queue
+            "[[ $BACKEND_RESULT == success && $VERDICT == success ]] || exit 1", queue
         )
         self.assertIn("value: ${{ jobs.backend-tests.outputs.verdict }}", self.workflow)
         self.assertIn("verdict: ${{ steps.verdict.outcome }}", self.workflow)

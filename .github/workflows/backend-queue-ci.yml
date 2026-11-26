@@ -58,9 +58,11 @@ jobs:
           VERDICT: ${{ needs.backend.outputs.verdict }}
           # Skipped outside light mode.
           PROOF: ${{ needs.full-run-proof.result }}
+        # bash -e does not stop on a failing first command of an && list, so
+        # each line exits on its own (test_queue_full_run_gate.py runs it).
         run: |
-          test "$BACKEND_RESULT" = success && test "$VERDICT" = success
-          test "$PROOF" = success || test "$PROOF" = skipped
+          [[ $BACKEND_RESULT == success && $VERDICT == success ]] || exit 1
+          [[ $PROOF == success || $PROOF == skipped ]] || exit 1
 
   breaker:
     # Base-health breaker after each queue build, so a red base trips it even

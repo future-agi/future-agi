@@ -5,9 +5,12 @@ each with the member head as second parent)."""
 
 import hashlib
 import io
+import itertools
 import json
 import pathlib
+import subprocess
 import sys
+import textwrap
 import unittest
 import zipfile
 
@@ -186,6 +189,27 @@ class GateTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.event.merge_group.base_ref }}", text)
         self.assertNotIn("ref: ${{ github.event.merge_group.base_sha }}", text)
         self.assertIn("BASE_REF: ${{ github.event.merge_group.base_ref }}", text)
+
+    def test_backend_tests_pass_runs_green_only_on_a_green_shard_verdict_and_proof(self):
+        # Executes the job's run script as Actions does with no shell set
+        # (bash -e). A failing first command of an && list does not stop a
+        # bash -e script, so every outcome must reach the exit status.
+        text = (SCRIPTS.parent / "workflows/backend-queue-ci.yml").read_text()
+        job = text.split("\n  backend-tests:\n", 1)[1].split("\n  breaker:\n", 1)[0]
+        self.assertNotIn("shell:", job)
+        script = textwrap.dedent(job.split("        run: |\n", 1)[1])
+        results = ("success", "failure", "cancelled", "skipped", "")
+        for backend, verdict, proof in itertools.product(results, results, results):
+            want = backend == verdict == "success" and proof in ("success", "skipped")
+            with self.subTest(backend=backend, verdict=verdict, proof=proof):
+                run = subprocess.run(
+                    ["bash", "--noprofile", "--norc", "-e", "-c", script],
+                    env={"PATH": "/usr/bin:/bin", "BACKEND_RESULT": backend, "VERDICT": verdict, "PROOF": proof},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(run.returncode == 0, want, run.stdout + run.stderr)
 
     def test_the_walk_starts_at_the_merge_base_not_the_event_base(self):
         # HEADGREEN: the event's base_sha for #4454 is #4131's queue merge
