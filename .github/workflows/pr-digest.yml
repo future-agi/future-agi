@@ -46,8 +46,8 @@ jobs:
         run: node .github/scripts/pr-digest.mjs
 
   tick:
-    # At most one tick an hour: the cache key is the UTC hour, so later pushes
-    # in the same hour find it and stop. See .github/scripts/devflow_tick.py.
+    # Breaker on every push; digest at most once an hour: the cache key is the
+    # UTC hour, so later pushes in the same hour skip it. See .github/scripts/devflow_tick.py.
     if: github.repository == 'future-agi/future-agi' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -57,6 +57,10 @@ jobs:
       pull-requests: read
       issues: write
     steps:
+      - name: Script from the pushed commit
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
       - name: Hour bucket
         id: hour
         run: echo "key=devflow-tick-$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
@@ -68,6 +72,14 @@ jobs:
           path: .tick-marker
           key: ${{ steps.hour.outputs.key }}
           lookup-only: true
+
+      # Every push: the breaker is API-only and cheap. It files a new trip once.
+      - name: Base-health breaker
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python3 -I .github/scripts/devflow_tick.py --breaker-only | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@v4
         if: steps.seen.outputs.cache-hit != 'true'

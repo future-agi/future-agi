@@ -1,7 +1,7 @@
 """Dev-push heartbeat: base-health breaker, escape rate and the merge digest.
 
-Runs from pr-digest.yml on every push to dev (at most once an hour, the
-workflow gates it). It reads the Actions and git history, decides three
+Runs from pr-digest.yml on every push to dev. The breaker (--breaker-only)
+runs on every push; the full digest at most once an hour (the workflow gates it). It reads the Actions and git history, decides three
 things and says them in one Slack message:
 
 - Breaker: the same job failed on merge-queue builds of >= 3 different pull
@@ -40,8 +40,16 @@ BREAKER_MIN_PRS = 3
 ESCAPE_WINDOW = 100
 ESCAPE_THRESHOLD = 0.02
 ESCAPE_HISTORY = 400
-INFRA_JOB_PATTERN = re.compile(
-    r"(runner|provision|setup|set up|checkout|cache|image|build|docker|stack|services?)",
+# A red run is infra when every failed job failed inside a setup or install
+# step, not in the test run. Job names are no signal: apt and DB failures hit
+# ordinary shard jobs. Step names seen in red merge-queue builds: the backend
+# test-packages, environment and database composite actions, compose pull and
+# up ("Start test services"), "Prefetch vendor images", "Install ...",
+# "Set up job" and the terminal inventory qualification (shards disagree).
+INFRA_STEP_PATTERN = re.compile(
+    r"(backend-test-packages|/environment|/database|set up|setup|install|prepare|"
+    r"prefetch|start test services|compose|pull|inventory qualification|"
+    r"download|checkout|cache)",
     re.IGNORECASE,
 )
 BREAKER_LABEL = "base-red"
@@ -71,8 +79,14 @@ def pr_number(run: dict) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def is_infra(job_name: str) -> bool:
-    return bool(INFRA_JOB_PATTERN.search(job_name))
+def failed_steps(job: dict) -> list[str]:
+    return [st["name"] for st in job.get("steps") or [] if st.get("conclusion") == "failure"]
+
+
+def is_infra_job(job: dict) -> bool:
+    """True when the job failed in a setup or install step. No step data means other."""
+    steps = failed_steps(job)
+    return bool(steps) and all(INFRA_STEP_PATTERN.search(n) for n in steps)
 
 
 def detect_breaker(failures: list[dict], now: datetime) -> list[dict]:
@@ -127,8 +141,8 @@ def queue_stats(runs: list[dict], jobs_by_run: dict[int, list[dict]], now: datet
     for r in done:
         if r["conclusion"] != "failure":
             continue
-        failed = [j["name"] for j in jobs_by_run.get(r["id"], []) if j.get("conclusion") == "failure"]
-        red["infra" if failed and all(is_infra(n) for n in failed) else "other"] += 1
+        failed = [j for j in jobs_by_run.get(r["id"], []) if j.get("conclusion") == "failure"]
+        red["infra" if failed and all(is_infra_job(j) for j in failed) else "other"] += 1
     waits = [(parse_ts(r["updated_at"]) - parse_ts(r["created_at"])).total_seconds() for r in done]
     runner_waits = [
         (parse_ts(j["started_at"]) - parse_ts(j["created_at"])).total_seconds()
@@ -162,8 +176,7 @@ def pct(x: float | None) -> str:
 def render_digest(landings: int, stats: dict, esc: dict, dirty: float | None, breaker: list[dict]) -> str:
     lines = ["*dev flow, last hour*"]
     for b in breaker:
-        prs = ", ".join(f"#{n}" for n in b["prs"])
-        lines.append(f":rotating_light: base looks red: `{b['job']}` failed on {len(b['prs'])} PRs in the queue ({prs})")
+        lines.append(breaker_line(b))
     lines.append(f"- landings in the last hour: {landings}")
     lines.append(
         f"- queue red rate (24h, {stats['runs']} runs): {pct(stats['red_rate'])} "
@@ -250,24 +263,35 @@ def open_pr_mergeables(api: Api) -> list[str]:
     return out
 
 
-def signal_breaker(api: Api, breaker: list[dict]) -> None:
-    """Label plus one open tracking issue per failing job; never twice for the same job."""
+def signal_breaker(api: Api, breaker: list[dict]) -> list[dict]:
+    """Label plus one open tracking issue per failing job; never twice for the same job.
+
+    Returns the entries that are new (no open issue yet).
+    """
     try:
         api.call("POST", f"/repos/{api.repo}/labels", {"name": BREAKER_LABEL, "color": "b60205",
                  "description": "Same job failing on several merge-queue PRs"})
     except urllib.error.HTTPError:
         pass  # label exists
     open_titles = {i["title"] for i in api.get(f"/issues?labels={BREAKER_LABEL}&state=open&per_page=100")}
+    new = []
     for b in breaker:
         title = f"Base looks red: {b['job']}"
         if title in open_titles:
             continue
+        new.append(b)
         prs = ", ".join(f"#{n}" for n in b["prs"])
         api.call("POST", f"/repos/{api.repo}/issues", {
             "title": title, "labels": [BREAKER_LABEL],
             "body": f"`{b['job']}` failed on merge-queue builds of {len(b['prs'])} different PRs in the last 2 hours: {prs}.\n"
                     "Likely a base problem, not the PRs. Close this issue when the base is green again.",
         })
+    return new
+
+
+def breaker_line(b: dict) -> str:
+    prs = ", ".join(f"#{n}" for n in b["prs"])
+    return f":rotating_light: base looks red: `{b['job']}` failed on {len(b['prs'])} PRs in the queue ({prs})"
 
 
 def set_variable(api: Api, token: str, value: str) -> None:
@@ -291,6 +315,13 @@ def main(argv: list[str]) -> int:
     api, now = Api(repo, token), datetime.now(timezone.utc)
     runs, failures, jobs_by_run = collect_queue(api, now)
     breaker = detect_breaker(failures, now)
+    if "--breaker-only" in argv:
+        # Every push: signal a new trip once (issue is the dedupe), post only that.
+        new = [] if dry else signal_breaker(api, breaker) if breaker else []
+        print("\n".join(breaker_line(b) for b in breaker) or "base health: no trip")
+        if new and os.environ.get("SLACK_WEBHOOK_URL"):
+            post_slack(os.environ["SLACK_WEBHOOK_URL"], "\n".join(breaker_line(b) for b in new))
+        return 0
     stats = queue_stats(runs, jobs_by_run, now)
     esc = escape_rate(git_first_parent(ESCAPE_HISTORY))
     hour_ago = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -301,7 +332,7 @@ def main(argv: list[str]) -> int:
     if dry:
         return 0
     if breaker:
-        signal_breaker(api, breaker)
+        signal_breaker(api, breaker)  # no-op for trips the per-push run already filed
     vars_token = os.environ.get("DEVFLOW_VARS_TOKEN")
     if vars_token:
         set_variable(api, vars_token, "1" if esc["tight"] else "0")

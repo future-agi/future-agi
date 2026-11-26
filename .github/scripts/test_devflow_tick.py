@@ -80,8 +80,10 @@ class Stats(unittest.TestCase):
 
     def test_red_classes_and_waits(self):
         jobs = {
-            2: [{"name": "Build image", "conclusion": "failure", "created_at": "2026-11-26T11:00:00Z", "started_at": "2026-11-26T11:00:30Z"}],
-            3: [{"name": "backend", "conclusion": "failure", "created_at": "2026-11-26T11:00:00Z", "started_at": "2026-11-26T11:02:00Z"}],
+            2: [{"name": "backend / pytest shard 10", "conclusion": "failure", "created_at": "2026-11-26T11:00:00Z", "started_at": "2026-11-26T11:00:30Z",
+                 "steps": [{"name": "Run ./.github/actions/backend-test-packages", "conclusion": "failure"}]}],
+            3: [{"name": "backend / pytest shard 11", "conclusion": "failure", "created_at": "2026-11-26T11:00:00Z", "started_at": "2026-11-26T11:02:00Z",
+                 "steps": [{"name": "Run tests", "conclusion": "failure"}]}],
         }
         s = t.queue_stats(self.runs(), jobs, NOW)
         self.assertEqual(s["red"], {"infra": 1, "other": 1})
@@ -90,8 +92,24 @@ class Stats(unittest.TestCase):
         self.assertEqual(s["runner_p95_s"], 120)
 
     def test_mixed_failed_jobs_count_as_other(self):
-        jobs = {2: [{"name": "Build image", "conclusion": "failure"}, {"name": "unit tests", "conclusion": "failure"}]}
+        jobs = {2: [
+            {"name": "a", "conclusion": "failure", "steps": [{"name": "Install packages", "conclusion": "failure"}]},
+            {"name": "b", "conclusion": "failure", "steps": [{"name": "Run tests", "conclusion": "failure"}]},
+        ]}
         self.assertEqual(t.queue_stats(self.runs()[:2], jobs, NOW)["red"], {"infra": 0, "other": 1})
+
+    def test_job_name_alone_is_not_infra(self):
+        jobs = {2: [{"name": "Build image setup", "conclusion": "failure"}]}
+        self.assertEqual(t.queue_stats(self.runs()[:2], jobs, NOW)["red"], {"infra": 0, "other": 1})
+
+    def test_known_infra_steps(self):
+        for step in ("Start test services", "Prefetch vendor images", "Run ./.github/actions/backend-test-packages/environment",
+                     "Install uv", "Set up job", "Backend terminal inventory qualification"):
+            job = {"conclusion": "failure", "steps": [{"name": step, "conclusion": "failure"}]}
+            self.assertTrue(t.is_infra_job(job), step)
+        for step in ("Run tests", "Run pytest shard", "Run e2e spec"):
+            job = {"conclusion": "failure", "steps": [{"name": step, "conclusion": "failure"}]}
+            self.assertFalse(t.is_infra_job(job), step)
 
     def test_empty_is_na_not_crash(self):
         s = t.queue_stats([], {}, NOW)
