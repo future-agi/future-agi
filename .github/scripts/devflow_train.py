@@ -727,6 +727,28 @@ def parse_signatures(text: str | None) -> list:
     return out
 
 
+# A job log opens each step with a group that echoes the step's script and
+# env ("##[group]Run <first line>" ... "##[endgroup]"). That is the
+# workflow's source, not what ran: a script that names a signature (e2e-ci's
+# image prefetch lists "toomanyrequests") must not make a real failure look
+# like infra. Other groups (checkout's fetch, a tool's own) are output: kept.
+LOG_LINE_PREFIX = re.compile(r"^\ufeff?(?:\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z )?")
+
+
+def step_output(text: str) -> str:
+    """A job log without the echoed step scripts."""
+    out, echo = [], False
+    for line in text.splitlines():
+        body = LOG_LINE_PREFIX.sub("", line, count=1)
+        if body.startswith("##[group]Run "):
+            echo = True
+        elif echo:
+            echo = not body.startswith("##[endgroup]")
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
 def classify_failure(logs: list, signatures: list) -> str:
     """'infra' only if there are failed jobs and every one is infra: it matches
     rate_limit, or an infra class and no permanent entry (a 429 also matches
@@ -1293,7 +1315,7 @@ class GitHub:
                     "GET", f"repos/{self.repo}/actions/jobs/{job['id']}/logs", raw=True
                 )
                 logs.append(
-                    "\n".join(text.splitlines()[-LOG_TAIL_LINES:])
+                    "\n".join(step_output(text).splitlines()[-LOG_TAIL_LINES:])
                     if status == 200
                     else ""
                 )
