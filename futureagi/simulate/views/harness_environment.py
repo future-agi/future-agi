@@ -84,9 +84,11 @@ from simulate.serializers.harness_environment import (
     HarnessNudgeAnswerSerializer,
     HarnessNudgeListQuerySerializer,
     HarnessNudgeSerializer,
+    HarnessReleaseRefusalSerializer,
     HarnessRunPlanQuerySerializer,
     HarnessRunPlanSerializer,
     HarnessSuiteMemberSerializer,
+    HarnessUnlockForbiddenSerializer,
     HarnessUnlockReleaseSerializer,
     HarnessVerifyCreateResponseSerializer,
     HarnessVerifyCreateSerializer,
@@ -406,7 +408,11 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     @viewer_denied("lock a release")
     @validated_request(
         request_serializer=HarnessLockReleaseSerializer,
-        responses={200: HarnessVersionsSerializer},
+        responses={
+            200: HarnessVersionsSerializer,
+            409: HarnessReleaseRefusalSerializer,
+            422: HarnessReleaseRefusalSerializer,
+        },
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="versions/lock")
@@ -432,7 +438,10 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     )
     @validated_request(
         request_serializer=HarnessUnlockReleaseSerializer,
-        responses={200: HarnessVersionsSerializer},
+        responses={
+            200: HarnessVersionsSerializer,
+            403: HarnessUnlockForbiddenSerializer,
+        },
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="versions/unlock")
@@ -1418,7 +1427,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
 
     @viewer_denied("delete an environment")
     @swagger_auto_schema(
-        responses={204: "Deleted", 409: "A release of this environment is locked"}
+        responses={204: "Deleted", 409: HarnessReleaseRefusalSerializer}
     )
     def destroy(self, request, pk=None):
         """Soft-delete an environment, cancelling its run first if one is live.

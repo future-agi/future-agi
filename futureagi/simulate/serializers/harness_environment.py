@@ -31,7 +31,10 @@ from simulate.serializers.requests.run_test_evals import (
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from simulate.types import WorkerBinding, WorkerEnforcement
-from tfc.utils.api_serializers import StrictInputSerializer
+from tfc.utils.api_serializers import (
+    StrictInputSerializer,
+    ViewerReadOnlyErrorSerializer,
+)
 
 
 class _Labelled(serializers.Serializer):
@@ -1349,6 +1352,44 @@ class HarnessLockReleaseSerializer(serializers.Serializer):
 
 class HarnessUnlockReleaseSerializer(serializers.Serializer):
     release_id = serializers.UUIDField()
+
+
+class HarnessReleaseRefusalSerializer(serializers.Serializer):
+    """A refused lock, unlock, or delete of an environment with a locked release."""
+
+    error = serializers.CharField(
+        help_text=(
+            "release_not_ready, release_already_locked, release_too_few_test,"
+            " release_too_few_train, release_admin_only, release_not_found,"
+            " release_locked, version_conflict, rebuild_running or"
+            " versioning_disabled."
+        )
+    )
+    message = serializers.CharField()
+    retryable = serializers.BooleanField()
+    piece = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_conflict: the piece whose default moved.",
+    )
+    train = serializers.IntegerField(
+        required=False, help_text="release_too_few_*: the train tasks a lock gives."
+    )
+    test = serializers.IntegerField(
+        required=False, help_text="release_too_few_*: the test tasks a lock gives."
+    )
+    release_id = serializers.UUIDField(
+        required=False, help_text="release_locked: the release to unlock first."
+    )
+
+
+class HarnessUnlockForbiddenSerializer(ViewerReadOnlyErrorSerializer):
+    """A Viewer's refusal (``code``, ``detail``, ``action``), or a Member's
+    release_admin_only refusal (``error``, ``message``, ``retryable``)."""
+
+    detail = serializers.CharField(required=False, allow_blank=True)
+    error = serializers.CharField(required=False)
+    retryable = serializers.BooleanField(required=False)
 
 
 class HarnessDraftItemSerializer(HarnessVersionSerializer):

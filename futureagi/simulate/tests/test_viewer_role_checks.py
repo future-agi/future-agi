@@ -167,8 +167,14 @@ def test_every_labelled_simulation_write_declares_the_viewer_refusal():
         f"{method.upper()} {route}"
         for route, method, _view_cls, handler in _simulation_write_handlers()
         if getattr(handler, "_viewer_denied_action", None)
-        and _declared_responses(handler, method).get(403)
-        is not ViewerReadOnlyErrorSerializer
+        # A subclass also describes the route's own 403, as unlock's does.
+        and not (
+            isinstance(_declared_responses(handler, method).get(403), type)
+            and issubclass(
+                _declared_responses(handler, method)[403],
+                ViewerReadOnlyErrorSerializer,
+            )
+        )
     ]
 
     assert undeclared == []
