@@ -593,8 +593,8 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
     # request says them.
     flaky_protected_text = serializers.SerializerMethodField()
     # Each scenario's stored name by its key, the name the words above use; a scenario
-    # with no name is left out, so its key is never shown.
-    # The map names held-back scenarios too.
+    # with no name is left out, so its key is never shown. Only a read that names the
+    # held-back cases (held_back_visible) names them here too.
     scenario_names = serializers.SerializerMethodField()
 
     def to_representation(self, instance: AgentFixRun) -> dict:

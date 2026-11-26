@@ -567,8 +567,21 @@ def hidden_epoch(data: Mapping[str, Any], held_back: set[str]) -> dict[str, Any]
     field kept: the read every caller but a person's signed-in session gets."""
     request = data["request"]
     report = data.get("report")
+    # The detail read's names by key (AgentFixRunDetailSerializer); a list has none.
+    names = (
+        {
+            "scenario_names": {
+                key: name
+                for key, name in data["scenario_names"].items()
+                if key not in held_back
+            }
+        }
+        if "scenario_names" in data
+        else {}
+    )
     return {
         **data,
+        **names,
         "request": {
             **request,
             "target_scenario_keys": [

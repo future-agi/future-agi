@@ -19,10 +19,12 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
+from django.urls import resolve
 from django.utils import timezone
 
 from accounts.models import Organization, OrgApiKey
 from conftest import WorkspaceAwareAPIClient
+from simulate.authentication import CODING_AGENT_ROUTES
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
@@ -42,6 +44,7 @@ from simulate.selectors.agent_fix_outside import (
     HELD_BACK_RULE,
     outside_attempt_request,
 )
+from simulate.selectors.agent_fix_wording import FixNames
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_engine import store_outside_trees
 from simulate.services.agent_fix_runs import (
@@ -224,6 +227,11 @@ def _scenario_name(source_run, key):
         .get(source_scenario__scenario_key=key)
         .source_scenario.name
     )
+
+
+def _read_name(fix_run, key):
+    """The name an Epoch's reads give the scenario (its inventory's), blank for none."""
+    return FixNames(fix_run).scenarios.get(key, "")
 
 
 class TestSettingOff:
@@ -1734,8 +1742,9 @@ class TestNoHeldBackCaseInAnyRead:
         text = json.dumps(response.json())
         assert HELD not in text
         assert HELD_ONLY_SUB_GOAL not in text
-        name = _scenario_name(held_everywhere.source_run, HELD)
-        assert not name or name not in text
+        name = _read_name(held_everywhere, HELD)
+        assert name
+        assert name not in text
         assert response.json()["result"]["is_error"] is False
 
     @pytest.mark.parametrize(
@@ -1746,19 +1755,47 @@ class TestNoHeldBackCaseInAnyRead:
     ):
         reads = self._reads(request.getfixturevalue(client), held_everywhere)
 
-        name = _scenario_name(held_everywhere.source_run, HELD)
+        # The name the reads would give it; a blank one would prove nothing below.
+        name = _read_name(held_everywhere, HELD)
+        assert name
         for read, response in reads.items():
             assert response.status_code == 200, (read, response.content)
             text = json.dumps(response.json())
             assert HELD not in text, read
             assert f"trace-of-{HELD}" not in text, read
             assert HELD_ONLY_SUB_GOAL not in text, read
-            assert not name or name not in text, read
-        # The reads still carry the case the coding agent was given.
-        assert SEEN in json.dumps(reads["detail"].json())
+            assert name not in text, read
+        # The reads still carry the case the coding agent was given, by key and name.
+        detail = reads["detail"].json()
+        assert SEEN in json.dumps(detail)
+        assert detail["scenario_names"] == {SEEN: _read_name(held_everywhere, SEEN)}
         options = reads["launch-options"].json()
         assert [one["key"] for one in options["scenarios"]] == [SEEN]
         assert options["suggested"]["target_scenario_keys"] == [SEEN]
+
+    def test_a_coding_agent_key_is_refused_the_epoch_read(
+        self, api_client, user, held_everywhere
+    ):
+        """The Epoch read is off CODING_AGENT_ROUTES, so the key that runs beside the
+        agent being fixed never reads it, held back or not."""
+        key = OrgApiKey.no_workspace_objects.create(
+            name="coding agent",
+            organization=held_everywhere.organization,
+            workspace=held_everywhere.workspace,
+            type="coding_agent",
+            minted_by=user,
+            simulation_environment_id=held_everywhere.environment_id,
+        )
+        path = f"{EPOCHS}/{held_everywhere.id}/"
+
+        response = api_client.get(
+            path, HTTP_X_API_KEY=key.api_key, HTTP_X_SECRET_KEY=key.secret_key
+        )
+
+        assert (resolve(path).view_name, "GET") not in CODING_AGENT_ROUTES
+        assert response.status_code == 403, response.content
+        assert response.json()["code"] == "coding_agent_route_refused"
+        assert HELD not in json.dumps(response.json())
 
     def test_a_signed_in_session_still_sees_them(self, browser_client, held_everywhere):
         detail = browser_client.get(f"{EPOCHS}/{held_everywhere.id}/").json()
@@ -1769,6 +1806,7 @@ class TestNoHeldBackCaseInAnyRead:
 
         assert detail["request"]["held_back_scenario_keys"] == [HELD]
         assert HELD_ONLY_SUB_GOAL in detail["request"]["failing_sub_goals"]
+        assert detail["scenario_names"][HELD] == _read_name(held_everywhere, HELD)
         assert {one["key"] for one in options["scenarios"]} == set(KEYS)
         assert set(options["suggested"]["target_scenario_keys"]) == set(KEYS)
 
