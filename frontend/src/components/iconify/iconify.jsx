@@ -30,17 +30,34 @@ addIcon("solar:square-linear", {
  * A wrapper component for displaying Iconify icons with customizable width and styling
  * Get Iconify icons from https://iconify.design/
  */
+/**
+ * @typedef {object} IconifyOwnProps
+ * @property {import("@iconify/react").IconProps["icon"]} icon
+ * @property {string | number} [width]
+ * @property {import("@mui/system").SystemStyleObject<import("@mui/material/styles").Theme>} [sx]
+ */
+/**
+ * The rest goes to @iconify/react's Icon, an svg.
+ * @typedef {IconifyOwnProps & Omit<import("@iconify/react").IconProps, keyof IconifyOwnProps | "ref">} IconifyProps
+ */
+
 // Design system: icons default to 16px; pass width for anything larger.
-const Iconify = forwardRef(({ icon, width = 16, sx, ...other }, ref) => (
-  <Box
-    ref={ref}
-    component={Icon}
-    className="component-iconify"
-    icon={icon}
-    sx={{ width, height: width, ...sx }}
-    {...other}
-  />
-));
+const Iconify = forwardRef(
+  /**
+   * @param {IconifyProps} props
+   * @param {import("react").ForwardedRef<SVGSVGElement>} ref
+   */
+  ({ icon, width = 16, sx, ...other }, ref) => (
+    <Box
+      ref={ref}
+      component={Icon}
+      className="component-iconify"
+      icon={icon}
+      sx={{ width, height: width, ...sx }}
+      {...other}
+    />
+  ),
+);
 
 Iconify.displayName = "Iconify";
 

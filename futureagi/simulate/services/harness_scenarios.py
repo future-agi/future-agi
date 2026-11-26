@@ -750,9 +750,12 @@ def index_scenarios(
     docs: list[dict[str, Any]],
     prune: bool = False,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> int:
     """Persist the authored suite so it can be queried, and return how many rows it holds."""
-    return len(pair_scenarios(job, docs, prune=prune, exact=exact))
+    return len(
+        pair_scenarios(job, docs, prune=prune, exact=exact, strict_keys=strict_keys)
+    )
 
 
 @dataclass(frozen=True)
@@ -806,8 +809,13 @@ def plan_pairs(
     docs: list[dict[str, Any]],
     *,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> list[PlannedPair]:
     """The identity row, key and number each document is written to; writes nothing.
+
+    With ``strict_keys`` a document takes the row with exactly its scenario key, dropped
+    ones included, and nothing else: a sealed suite names its scenarios by key, so another
+    spelling or the same name is another scenario.
 
     With ``exact`` (the default for an environment head that has versions) a document
     that carries a scenario key matches the row the default suite links to the document
@@ -822,7 +830,9 @@ def plan_pairs(
         return []
     from simulate.services.hosted_harness_gateway import _scenario_token
 
-    if exact is None:
+    if strict_keys:
+        exact = False
+    elif exact is None:
         exact = (
             getattr(job, "environment_id", None) is None
             and getattr(job, "environment_version_id", None) is not None
@@ -848,7 +858,13 @@ def plan_pairs(
     taken = max(
         (row.number for row in existing.values() if row.number is not None), default=0
     )
-    held_rows = [None] * len(docs) if exact else _rows_held(rows, docs)
+    held_rows = (
+        [existing.get(doc["scenario_key"]) for doc in docs]
+        if strict_keys
+        else [None] * len(docs)
+        if exact
+        else _rows_held(rows, docs)
+    )
     keys = {row.scenario_key for row in rows}
     # Every key given out, by a row or by this suite, so a repeat gets one nobody holds.
     given = keys | {str(doc.get("scenario_key") or "").strip() for doc in docs}
@@ -931,6 +947,7 @@ def pair_scenarios(
     docs: list[dict[str, Any]],
     prune: bool = False,
     exact: bool | None = None,
+    strict_keys: bool = False,
 ) -> list[tuple[HostedHarnessScenario, dict[str, Any]]]:
     """Persist the authored suite and return the identity row each document was written to.
 
@@ -940,7 +957,7 @@ def pair_scenarios(
     seen: set[str] = set()
     # A scenario listed twice is planned twice under one key: both write one row.
     written: dict[str, HostedHarnessScenario] = {}
-    for planned in plan_pairs(job, docs, exact=exact):
+    for planned in plan_pairs(job, docs, exact=exact, strict_keys=strict_keys):
         seen.add(planned.key)
         fields = {
             "number": planned.number,
