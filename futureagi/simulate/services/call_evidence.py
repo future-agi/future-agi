@@ -24,6 +24,7 @@ Its rules:
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import uuid
@@ -33,7 +34,6 @@ from enum import StrEnum
 from typing import Any
 
 import structlog
-from django.db import DatabaseError
 
 from accounts.models.workspace import Workspace
 from simulate.models.agent_setup import AgentVersionSetup
@@ -248,13 +248,19 @@ def read_call_evidence(
     many calls. ``states_only`` answers each kind's state without fetching what is
     kept elsewhere: an end-of-trial world file is present when its row is, and agent
     traces when the run has a trace source. Such an answer carries no content, and a
-    stored world file that cannot be parsed is found out only when it is read."""
+    stored world file that cannot be parsed is found out only when it is read.
+    A store that fails is remembered in ``shared`` too, so it is asked once."""
     run = call.test_execution
-    if not in_workspace(run.run_test, organization_id, workspace_id):
-        raise CallNotInWorkspace(str(call.id))
-    if call.deleted or run.deleted or run.run_test.deleted:
-        raise CallDeleted(str(call.id))
     shared = shared if shared is not None else {}
+    run_test = run.run_test
+    if not _once(
+        shared,
+        ("in_workspace", run_test.id, str(organization_id), str(workspace_id)),
+        lambda: in_workspace(run_test, organization_id, workspace_id),
+    ):
+        raise CallNotInWorkspace(str(call.id))
+    if call.deleted or run.deleted or run_test.deleted:
+        raise CallDeleted(str(call.id))
     trial = hosted_trial(call, shared=shared)
     read = _Read(
         call=call,
@@ -271,18 +277,40 @@ def read_call_evidence(
 
 def _read_one(read: _Read, kind: Kind) -> Evidence:
     """One kind; a store that fails just then makes this kind ``unreadable``, not the
-    whole read. A database error still raises: the transaction is no longer usable."""
+    whole read. Anything else raises: a database error (the transaction is no longer
+    usable), a cancellation, or a fault in the reader itself."""
     try:
         return _READERS[kind](read)
-    except DatabaseError:
-        raise
-    except Exception:
+    except _store_errors():
         logger.exception(
             "call_evidence_kind_unreadable",
             call_execution_id=str(read.call.id),
             kind=kind.value,
         )
         return _missing(kind, Cause.UNREADABLE, note="It could not be read just now.")
+
+
+@functools.cache
+def _store_errors() -> tuple[type[Exception], ...]:
+    """What the object store, the trace store and their connections raise when they
+    fail: the errors ``_read_one`` turns into ``unreadable``."""
+    from minio.error import MinioException
+    from urllib3.exceptions import HTTPError
+
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    errors: tuple[type[Exception], ...] = (
+        MinioException,
+        HTTPError,
+        HostedHarnessError,
+        OSError,
+        EOFError,
+    )
+    try:
+        from clickhouse_driver.errors import Error as ClickHouseError
+    except ImportError:  # the trace store's client is optional (tracer/.../client.py)
+        return errors
+    return (*errors, ClickHouseError)
 
 
 def in_workspace(run_test: Any, organization_id: Any, workspace_id: Any) -> bool:
@@ -367,7 +395,7 @@ def manifest_lists(
     return False
 
 
-def environment_files(environment_version_id: Any) -> dict[str, bytes] | None:
+def _environment_files(environment_version_id: Any) -> dict[str, bytes] | None:
     """The seed's store file of a saved environment version, streamed alone from its
     archive; ``None`` when the archive is gone. A store over the size cap, or an
     archive that is cut short or malformed, gives no file. A store that can't be
@@ -570,7 +598,7 @@ def _world_state_start(read: _Read) -> Evidence:
     if start.get("state") != "seeded" or start.get("against") != "sealed_seed":
         return _missing(kind, Cause.START_NOT_SEALED)
     version_id = read.trial.environment_version_id
-    files = read.once(("seed", version_id), lambda: environment_files(version_id))
+    files = read.once(("seed", version_id), lambda: _environment_files(version_id))
     if files is None:
         return _missing(kind, Cause.NO_LONGER_KEPT)
     store = _json(files.get(_SEED_STORE))
@@ -757,9 +785,12 @@ def _whole_instructions(read: _Read) -> tuple[str, str] | None:
         return None
     # Its prompt may be the reading's excerpt, and nothing stored tells that apart
     # from one a person set.
-    if AgentVersionSetup.no_workspace_objects.filter(
-        agent_version_id=version.id, agent_kind="source"
-    ).exists():
+    if read.once(
+        ("source_agent", version.id),
+        lambda: AgentVersionSetup.no_workspace_objects.filter(
+            agent_version_id=version.id, agent_kind="source"
+        ).exists(),
+    ):
         return None
     text = _mapping(version.configuration_snapshot).get("description")
     if isinstance(text, str) and text.strip():
@@ -953,7 +984,9 @@ def _cut_list(
     items: list[Any], max_chars: int | None
 ) -> tuple[list[Any], dict[str, int] | None, tuple[str, ...]]:
     """The entries masked, then cut at the first that does not fit in ``max_chars``.
-    Entries past the cut are not masked, and are counted at their stored size."""
+    An entry whose stored size does not fit is cut before it is masked, even where
+    masking would have made it fit. Entries past the cut are not masked, and are
+    counted at their stored size."""
     if max_chars is None:
         whole, whole_marks = _masked(items)
         return whole, None, whole_marks
@@ -965,6 +998,11 @@ def _cut_list(
     for item in items:
         if not full:
             total += len(json.dumps(item, default=str))
+            continue
+        stored = len(json.dumps(item, default=str))
+        if used + stored > max_chars:
+            total += stored
+            full = False
             continue
         masked_item, item_marks = _masked(item)
         size = len(json.dumps(masked_item, default=str))
@@ -1012,8 +1050,8 @@ def _sized(
 
 _MASK = "[REDACTED]"
 # Text kept under a key holding one of these is masked wherever it sits below that
-# key; numbers and true/false are kept (a count is not a secret). Every header is
-# masked.
+# key. A number is masked only under its own key's name (``_NUMBER_SECRET_WORDS``),
+# and true/false never: a count is not a secret. Every header is masked.
 _SECRET_KEY_MARKERS = (
     "secret",
     "token",
@@ -1027,46 +1065,71 @@ _SECRET_KEY_MARKERS = (
     "cookie",
     "private_key",
 )
-# In text, a secret's name then its value. The name may be quoted, and its quotes
-# escaped as in JSON text inside JSON text. A quoted value runs to its closing quote,
-# an escaped one to the next backslash or quote, and a bare one to the end of the line
-# (or a comma, semicolon or brace); ``_bare_secret`` says whether a bare one is a
-# secret or a rule written after the name.
-_SECRET_ASSIGNMENT = re.compile(
+# The words of a key's name (split at symbols and at a capital after a small letter)
+# that make a number under it a secret, and those that make it a count or a limit.
+_NUMBER_SECRET_WORDS = frozenset(
+    {"password", "passphrase", "passcode", "passwd", "secret", "otp", "pin", "token"}
+)
+_NUMBER_COUNT_WORDS = frozenset({"count", "max", "min", "limit", "length", "size"})
+_KEY_WORD_BREAK = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|[^A-Za-z0-9]+")
+# In text, a secret's name, then ``:`` or ``=``, with padding and at most one line
+# break on each side. The name may be quoted, and its quotes escaped as in JSON text
+# inside JSON text. Every part is bounded, so each start is read in constant time.
+_SECRET_NAME = re.compile(
     r"""(?ix)
-    (?P<name>(?:\\{0,15}["'])?
-      (?P<word>authorization|api[_-]?key|secret|token|password|passphrase)
-      (?:\\{0,15}["'])?[ \t]{0,16}[:=][ \t]{0,16})
-    (?:
-        (?P<escaped>\\{1,15}")[^"\\\n]*
-      | "[^"\n]*" | '[^'\n]*'
-      | (?!\[REDACTED\])(?P<bare>[^\n,;}"'\\]+)
-    )
+    (?P<open>\\{0,15}["'])?
+    (?P<word>authorization|api[_-]?key|secret|token|password|passphrase)
+    (?P<close>\\{0,15}["'])?
+    [ \t]{0,64}(?:\r?\n[ \t]{0,64})?
+    (?P<sep>[:=])
+    [ \t]{0,64}(?:\r?\n[ \t]{0,64})?
     """
 )
-_PASSWORD_WORDS = frozenset({"password", "passphrase"})
+# What may stand before a name at the start of its line: indent, a list or heading
+# mark, and the rest of the key's own name (``GITHUB_``, ``X-Api-``).
+_LINE_HEAD = re.compile(r"(?:\n|\A)[ \t]{0,16}(?:[-*#>]{1,4}[ \t]{1,4})?[\w.-]{0,48}\Z")
+_LINE_HEAD_REACH = 80
+_ESCAPED_QUOTE = re.compile(r'\\{1,15}"')
+_ESCAPED_VALUE_END = re.compile(r'["\\\n]')
+# A bare value runs to the end of its line, or to a comma, semicolon, brace or quote.
+_BARE_VALUE_END = re.compile(r"""[\n,;}"'\\]""")
+# The look at a bare value after a name inside a sentence: a few short words.
+_LOOK_WORD = re.compile(r"""[ \t]{0,64}([^\s,;}"'\\]{1,64})""")
+_LOOK_WORDS = 8
+_LOOK_REACH = 1024
+_KEY_SHAPED_LENGTH = 16
+_WORD_PUNCTUATION = ".,!?:;()[]"
+# Words that make the words after a secret's name a sentence, not a value.
+_SENTENCE_WORDS = frozenset(
+    """
+    a an the is are was be been it its to of for from and or but not no never do
+    does don't must should can will would only if when then than by on in at with
+    as about after before this that these those there here you your we our they
+    them their he she his her i me my say ask tell please e.g i.e etc what which
+    who how why so also any all each every just
+    """.split()
+)
 _AUTH_SCHEMES = frozenset({"basic", "bearer", "token", "digest", "apikey", "negotiate"})
-# A bare password of a few words is masked whole; a longer tail is a sentence.
-_PASSWORD_MAX_WORDS = 4
-_PROSE_PUNCTUATION = ".,!?:;"
-_KEYISH = re.compile(r"\d|[a-z][A-Z]|[^A-Za-z'\-]")
 # scheme://user:password@. The lookbehind means a start inside a run of scheme
 # characters is never tried, which keeps the scan linear on a long id or hex run.
 _URL_USERINFO = re.compile(
     r"(?<![A-Za-z0-9+.\-])(?P<head>[A-Za-z][A-Za-z0-9+.\-]*://[^:/?#@\s]*):[^/?#\s]*@"
 )
 _URL_QUERY_PASSWORD = re.compile(r"(?P<head>[?&]password=)[^&#\s]*")
-_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY-----")
-_PEM_END = re.compile(r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY-----")
+_PEM_BEGIN = re.compile(r"-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----")
+_PEM_END = re.compile(r"-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----")
 # (pattern, replacement): secrets by their shape, wherever they sit in text. Each is
-# bounded, so a long run of near-misses is read once.
+# bounded, and none can start inside a run of its own characters, so a long run of
+# near-misses is read once.
 _SECRET_SHAPES = (
     (re.compile(r"(?i)(\bbearer\s{1,16})[A-Za-z0-9._~+/=-]{8,}"), rf"\1{_MASK}"),
     (re.compile(r"(?i)([?&](?:access_)?token=)[^&\s]+"), rf"\1{_MASK}"),
     (re.compile(r"\b(?:sk|pk|rk)-(?=[A-Za-z_-]{0,64}\d)[A-Za-z0-9_-]{16,}"), _MASK),
     (re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}"), _MASK),
     (
-        re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"),
+        re.compile(
+            r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}"
+        ),
         _MASK,
     ),
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), _MASK),
@@ -1101,9 +1164,23 @@ def _mask_under(key: Any, value: Any, under_secret: bool) -> Any:
     name = str(key).lower()
     if name == "headers" and isinstance(value, Mapping):
         return dict.fromkeys(value, _MASK)
+    if _numbers_a_secret(key, value):
+        return _MASK
     return _mask(
         value, under_secret or any(marker in name for marker in _SECRET_KEY_MARKERS)
     )
+
+
+def _numbers_a_secret(key: Any, value: Any) -> bool:
+    """Whether ``value`` is a number its own key names as a secret: a PIN, a one-time
+    code, a numeric password. Only the key's own name counts, so an id below a
+    ``password_resets`` key is kept."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return False
+    words = {word.lower() for word in _KEY_WORD_BREAK.split(str(key)) if word}
+    if words & _NUMBER_COUNT_WORDS:
+        return False
+    return bool(words & _NUMBER_SECRET_WORDS) or {"api", "key"} <= words
 
 
 def _mask_text(text: str) -> str:
@@ -1111,7 +1188,7 @@ def _mask_text(text: str) -> str:
     text = _mask_private_keys(text)
     for pattern, replacement in _SECRET_SHAPES:
         text = pattern.sub(replacement, text)
-    return _SECRET_ASSIGNMENT.sub(_mask_assignment, text)
+    return _mask_named_values(text)
 
 
 def _mask_url_passwords(text: str) -> str:
@@ -1131,30 +1208,89 @@ def _mask_private_keys(text: str) -> str:
     return "".join([*parts, text[at:]])
 
 
-def _mask_assignment(match: re.Match[str]) -> str:
-    name = match.group("name")
-    if match.group("escaped") is not None:
-        return name + match.group("escaped") + _MASK
-    bare = match.group("bare")
-    if bare is not None and not _bare_secret(match.group("word").lower(), bare):
-        return match.group(0)
-    return name + _MASK
+def _mask_named_values(text: str) -> str:
+    """Each value after a secret's name masked, in one forward pass.
+
+    A quoted or escaped value is masked to its closing quote. A bare value is masked
+    to the end of its line (or a comma, semicolon, brace or quote), unless the name
+    sits inside a sentence and the words after it read as one (``_reads_as_a_rule``).
+    Then only the name is passed over, and the scan goes on from it, so a secret
+    later on the same line is still found."""
+    parts: list[str] = []
+    at = 0
+    scan = 0
+    while name := _SECRET_NAME.search(text, scan):
+        found = _named_value(text, name)
+        if found is None:
+            scan = name.end()
+            continue
+        start, end = found
+        parts += [text[at:start], _MASK]
+        at = scan = max(end, name.end())
+    return "".join([*parts, text[at:]])
 
 
-def _bare_secret(word: str, value: str) -> bool:
-    """Whether an unquoted value after a secret's name is a secret, not a rule: it
-    starts with something shaped like a key (a digit, a capital after a small letter,
-    a symbol, or 16 characters), is an auth scheme and its credential, or is a short
-    phrase after a password's name."""
-    words = value.split()
-    if not words:
+def _named_value(text: str, name: re.Match[str]) -> tuple[int, int] | None:
+    """Where the value after ``name`` starts and ends, when it is to be masked."""
+    start = name.end()
+    if text.startswith(_MASK, start):
+        return None
+    if escaped := _ESCAPED_QUOTE.match(text, start):
+        end = _ESCAPED_VALUE_END.search(text, escaped.end())
+        stop = end.start() if end else len(text)
+        return (escaped.end(), stop) if stop > escaped.end() else None
+    if start < len(text) and text[start] in "\"'":
+        close = text.find(text[start], start + 1)
+        if close != -1 and "\n" not in text[start + 1 : close]:
+            return (start, close + 1) if close > start + 1 else None
+        start += 1
+    # The look is bounded; the value's own end is searched only when it is masked,
+    # so a long line of names inside sentences is read once.
+    look_end = min(len(text), start + _LOOK_REACH)
+    near = _BARE_VALUE_END.search(text, start, look_end)
+    if start >= len(text) or (near is not None and near.start() == start):
+        return None
+    if not _is_a_field(text, name) and _reads_as_a_rule(
+        text, start, near.start() if near else look_end, name.group("word").lower()
+    ):
+        return None
+    end = near or _BARE_VALUE_END.search(text, start)
+    return start, end.start() if end else len(text)
+
+
+def _is_a_field(text: str, name: re.Match[str]) -> bool:
+    """A name that is quoted, set with ``=``, or starts its line names a value."""
+    if name.group("open") or name.group("close") or name.group("sep") == "=":
+        return True
+    reach = max(0, name.start() - _LINE_HEAD_REACH)
+    head = _LINE_HEAD.search(text, reach, name.start())
+    return head is not None and (head.group(0).startswith("\n") or reach == 0)
+
+
+def _reads_as_a_rule(text: str, start: int, stop: int, word: str) -> bool:
+    """Whether the bare value after a name inside a sentence is a rule, not a secret:
+    several words, the first (and a scheme's credential) not shaped like a key, with
+    a plain sentence word among the first few. A look cut short is a secret."""
+    words: list[str] = []
+    at = start
+    while len(words) < _LOOK_WORDS and (found := _LOOK_WORD.match(text, at, stop)):
+        words.append(found.group(1))
+        at = found.end()
+    if len(words) < 2:
         return False
-    first = words[0].rstrip(_PROSE_PUNCTUATION)
-    if word == "authorization" and first.lower() in _AUTH_SCHEMES and len(words) > 1:
-        return True
-    if len(first) >= 16 or _KEYISH.search(first):
-        return True
-    return word in _PASSWORD_WORDS and len(words) <= _PASSWORD_MAX_WORDS
+    lead = 2 if word == "authorization" and _plain(words[0]) in _AUTH_SCHEMES else 1
+    if any(_key_shaped(each) for each in words[:lead]):
+        return False
+    return any(_plain(each) in _SENTENCE_WORDS for each in words)
+
+
+def _plain(word: str) -> str:
+    return word.strip(_WORD_PUNCTUATION).lower()
+
+
+def _key_shaped(word: str) -> bool:
+    plain = word.strip(_WORD_PUNCTUATION)
+    return len(plain) >= _KEY_SHAPED_LENGTH or any(c.isdigit() for c in plain)
 
 
 def _present(
@@ -1182,9 +1318,17 @@ def _present_unread(kind: Kind, source: str) -> Evidence:
 
 
 def _once(memo: dict[Any, Any], key: tuple[Any, ...], load: Any) -> Any:
+    """``load()`` once per key. A store error is kept and raised again, so a store
+    that is down is asked once for every call that shares ``memo``."""
     if key not in memo:
-        memo[key] = load()
-    return memo[key]
+        try:
+            memo[key] = (load(), None)
+        except _store_errors() as failed:
+            memo[key] = (None, failed)
+    value, kept_error = memo[key]
+    if kept_error is not None:
+        raise kept_error
+    return value
 
 
 def _missing(kind: Kind, cause: Cause, *, note: str | None = None) -> Evidence:

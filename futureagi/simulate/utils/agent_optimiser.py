@@ -610,9 +610,12 @@ def get_or_create_optimiser_for_test_execution(
 # own limit is 1800 s). A run still pending or running past it, with room for
 # a wait in the queue, was killed with its job and is not waited for.
 OPTIMISER_RUN_TIME_LIMIT_SECONDS = 3600 + 1800
+# How long the job may wait in the queue. One that would start later never
+# starts, so the run is read as lost only once no job can still be working.
+OPTIMISER_RUN_QUEUE_WAIT_SECONDS = 1200
 _OPTIMISER_RUN_GIVE_UP = timedelta(
-    seconds=OPTIMISER_RUN_TIME_LIMIT_SECONDS
-) + timedelta(minutes=30)
+    seconds=OPTIMISER_RUN_QUEUE_WAIT_SECONDS + OPTIMISER_RUN_TIME_LIMIT_SECONDS
+) + timedelta(minutes=10)
 
 
 def analysis_on_its_way(optimiser: AgentOptimiser | None) -> AgentOptimiserRun | None:

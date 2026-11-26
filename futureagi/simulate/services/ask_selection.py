@@ -132,6 +132,12 @@ def freeze_selection(
         )
     if kind == SelectionKind.CALLS:
         _refuse_too_many(len(call_ids))
+    if len(scenarios := dict.fromkeys(str(one) for one in scenario_ids)) > MAX_CALLS:
+        raise SelectionRefused(
+            "too_many_scenarios",
+            f"An ask can take calls of at most {MAX_CALLS} scenarios.",
+            count=len(scenarios),
+        )
     runs = _runs(run_ids, organization_id, workspace_id)
     description: dict[str, Any] = {
         "kind": kind.value,
@@ -272,7 +278,10 @@ def _filtered_calls(
     ids: list[Any] = []
     for run in runs:
         matched = apply_run_call_query(run_calls_queryset(run), query.validated_data)
-        ids.extend(matched.values_list("id", flat=True))
+        # One past what an ask can take is enough to refuse; the rest is not read.
+        ids.extend(matched.values_list("id", flat=True)[: MAX_CALLS + 1 - len(ids)])
+        if len(ids) > MAX_CALLS:
+            break
     _refuse_too_many(len(ids))
     found = {call.id: call for call in _calls_of(runs, Q(id__in=ids))}
     return query.validated_data.get("filters") or {}, [
@@ -307,7 +316,11 @@ def check_before_launch(
     by kind and cause, and the credits the ready ones would cost.
 
     Each kind's state is read without fetching what is kept elsewhere (world files,
-    agent traces), and what every call of a run shares is read once."""
+    agent traces), and what every call of a run shares is read once. So "ready"
+    means present when checked: the ask's own read may still find an end-of-trial
+    world file gone from storage, not JSON, of another schema or over the cap, or
+    no traces for the call. Such a call ends unmeasured with that cause, and is not
+    charged."""
     questions = _checked_questions(questions)
     if (str(organization.id), None if workspace_id is None else str(workspace_id)) != (
         selection.organization_id,
@@ -327,7 +340,10 @@ def check_before_launch(
             test_execution__deleted=False,
             test_execution__run_test__deleted=False,
         ).select_related(
-            "test_execution__run_test", "test_execution__agent_version", "scenario"
+            "test_execution__run_test",
+            "test_execution__agent_version",
+            "agent_version",
+            "scenario",
         )
     }
     if gone := len(selection.call_ids) - len(calls):

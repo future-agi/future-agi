@@ -712,7 +712,7 @@ def test_each_saved_contract_and_seed_is_read_once_for_the_whole_check(
         patch.object(call_evidence, "hosted_trial", return_value=trial),
         patch.object(
             call_evidence,
-            "environment_files",
+            "_environment_files",
             return_value={"store.json": b'{"rows": {"orders": []}}'},
         ) as seed,
     ):
@@ -1109,7 +1109,7 @@ def test_evidence_that_cannot_be_read_just_now_refuses_the_check_with_a_retry(
 
     with (
         patch.object(call_evidence, "hosted_trial", return_value=trial),
-        patch.object(call_evidence, "environment_files", side_effect=down),
+        patch.object(call_evidence, "_environment_files", side_effect=down),
         patch.dict(call_evidence._READERS, {Kind.TRANSCRIPT: down}),
         pytest.raises(LaunchRefused) as refused,
     ):
@@ -1436,3 +1436,132 @@ def test_the_open_service_imports_nothing_from_ee():
     import inspect
 
     assert "from ee" not in inspect.getsource(selection)
+
+
+# --- round 2 review --------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_a_seed_that_cannot_be_read_is_fetched_once_for_the_whole_check(
+    organization, workspace, run, scenario
+):
+    from simulate.services import call_evidence
+
+    for call in _calls(run, scenario, 5):
+        call.call_metadata = {
+            "harness_trial_state": {
+                "recorded": True,
+                "start": {"state": "seeded", "against": "sealed_seed"},
+            }
+        }
+        call.save(update_fields=["call_metadata"])
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    trial = call_evidence.HostedTrial(
+        job_id=uuid.uuid4(),
+        connector="phone",
+        artifact_level="traces",
+        attempts=1,
+        trials=1,
+        environment_version_id=uuid.uuid4(),
+    )
+
+    with (
+        patch.object(call_evidence, "hosted_trial", return_value=trial),
+        patch.object(
+            call_evidence,
+            "_environment_files",
+            side_effect=ConnectionError("storage is down"),
+        ) as seed,
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        check_before_launch(
+            frozen,
+            [Question(name="q", kinds=(Kind.WORLD_STATE_START,), decision_model="m")],
+            organization=organization,
+            workspace_id=workspace.id,
+        )
+
+    assert refused.value.code == "evidence_unavailable"
+    assert refused.value.details == {"calls": 5}
+    assert seed.call_count == 1
+
+
+@pytest.mark.django_db
+def test_more_scenarios_than_an_ask_can_take_are_refused_before_any_is_read(
+    organization, workspace, run
+):
+    with (
+        patch.object(selection, "MAX_CALLS", 2),
+        patch.object(selection, "_runs", side_effect=AssertionError("read")),
+        pytest.raises(SelectionRefused) as refused,
+    ):
+        freeze_selection(
+            kind=SelectionKind.SCENARIOS,
+            organization_id=organization.id,
+            workspace_id=workspace.id,
+            run_ids=[str(run.id)],
+            scenario_ids=[str(uuid.uuid4()) for _ in range(3)],
+        )
+
+    assert refused.value.code == "too_many_scenarios"
+    assert refused.value.details == {"count": 3}
+
+
+@pytest.mark.django_db
+def test_a_filter_stops_collecting_calls_once_past_what_an_ask_can_take(
+    organization, workspace, agent_definition, simulator_agent, scenario
+):
+    runs = [_run(agent_definition, simulator_agent, scenario) for _ in range(2)]
+    for each in runs:
+        _calls(each, scenario, 3)
+
+    with (
+        patch.object(selection, "MAX_CALLS", 2),
+        pytest.raises(SelectionRefused) as refused,
+    ):
+        _freeze(organization, workspace, SelectionKind.FILTER, runs, filters={})
+
+    assert refused.value.code == "too_many_calls"
+    assert refused.value.details == {"count": 3}
+
+
+def _plain_queries_for(organization, workspace, run, scenario, version, count):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    _calls(run, scenario, count, agent_version=version)
+    frozen = _freeze(organization, workspace, SelectionKind.RUNS, [run])
+    with CaptureQueriesContext(connection) as queries:
+        check_before_launch(
+            frozen, [EVERY_KIND], organization=organization, workspace_id=workspace.id
+        )
+    return len(queries)
+
+
+# A plain run's further call reads its own rows only: its hosted trial (none) and
+# its transcript. The agent version, its stored setup and the run's workspace are
+# read once for the run. It was 4 to 5 before they were.
+PLAIN_QUERIES_PER_CALL = 2
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("kept", ["in_its_workspace", "with_no_workspace"])
+def test_a_plain_runs_check_reads_the_version_and_the_workspace_once(
+    organization, workspace, agent_definition, simulator_agent, scenario, kept
+):
+    version = agent_definition.create_version(
+        description="You are a refunds agent.", commit_message="v1"
+    )
+    first = _run(agent_definition, simulator_agent, scenario)
+    second = _run(agent_definition, simulator_agent, scenario)
+    if kept == "with_no_workspace":
+        RunTest.objects.filter(id__in=[first.run_test_id, second.run_test_id]).update(
+            workspace=None
+        )
+        first.refresh_from_db()
+        second.refresh_from_db()
+
+    few = _plain_queries_for(organization, workspace, first, scenario, version, 2)
+    many = _plain_queries_for(organization, workspace, second, scenario, version, 8)
+
+    assert (many - few) / 6 <= PLAIN_QUERIES_PER_CALL, (few, many)
