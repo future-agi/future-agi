@@ -241,7 +241,7 @@ export const LOCK_COPY = {
     `Lock ${label} · ${at} · Train ${train} · Test ${test} scenarios · scorer frozen`,
   readyLine: (train, test) =>
     `Train ${train} · Test ${test} scenarios once locked.`,
-  lock: "Lock this version",
+  lock: "Lock versions",
   addScenarios: "Add scenarios",
   viewer: "You don't have permission to lock versions.",
   unlock: "Unlock",
