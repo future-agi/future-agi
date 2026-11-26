@@ -302,8 +302,16 @@ def test_raw_span_lane_prewhere_keeps_the_fractional_upper_bound():
     assert params["end_date_exact_us"] == _unix_microseconds(end)
 
 
+EXACT_WITNESS_START = (
+    "fromUnixTimestamp64Micro(%(graph_witness_start_date_exact_us)s, 'UTC')"
+)
+EXACT_WITNESS_END = (
+    "fromUnixTimestamp64Micro(%(graph_witness_end_date_exact_us)s, 'UTC')"
+)
+
+
 @pytest.mark.unit
-def test_raw_trace_lane_keeps_witness_band_and_exact_output_window():
+def test_raw_trace_lane_binds_witness_band_and_output_window_exactly():
     start = datetime(2026, 10, 25, 8, 56, 54, 250000)
     end = datetime(2026, 10, 25, 8, 56, 55, 750000)
 
@@ -315,16 +323,26 @@ def test_raw_trace_lane_keeps_witness_band_and_exact_output_window():
         resolve_span_versions=False,
     ).build()
 
-    assert "AND start_time >= %(graph_witness_start_date)s" in query
-    assert "AND start_time < %(graph_witness_end_date)s" in query
+    # The +/-1 day witness band decides trace membership; it is read at
+    # microsecond precision like the output window.
+    assert f"AND start_time >= {EXACT_WITNESS_START}" in query
+    assert f"AND start_time < {EXACT_WITNESS_END}" in query
+    assert "%(graph_witness_start_date)s" not in query
+    assert "%(graph_witness_end_date)s" not in query
     assert params["graph_witness_start_date"] == start - timedelta(days=1)
     assert params["graph_witness_end_date"] == end + timedelta(days=1)
+    assert params["graph_witness_start_date_exact_us"] == _unix_microseconds(
+        start - timedelta(days=1)
+    )
+    assert params["graph_witness_end_date_exact_us"] == _unix_microseconds(
+        end + timedelta(days=1)
+    )
     assert f"start_time >= {EXACT_START} AND start_time < {EXACT_END}" in query
     assert DEV_OUTPUT_WINDOW not in query
 
 
 @pytest.mark.unit
-def test_raw_trace_lane_candidate_seed_keeps_witness_placeholders():
+def test_raw_trace_lane_candidate_seed_uses_the_exact_witness_band():
     start = datetime(2026, 10, 25, 8, 56, 54, 250000)
     end = datetime(2026, 10, 25, 8, 56, 55, 750000)
     builder = TimeSeriesQueryBuilder(
@@ -343,9 +361,10 @@ def test_raw_trace_lane_candidate_seed_keeps_witness_placeholders():
     query, _ = builder.build()
 
     seed = query.split("AS graph_seed_spans", 1)[1].split("GROUP BY trace_id", 1)[0]
-    assert "start_time >= %(graph_witness_start_date)s" in seed
-    assert "start_time < %(graph_witness_end_date)s" in seed
-    assert "_exact_us" not in seed
+    assert f"start_time >= {EXACT_WITNESS_START}" in seed
+    assert f"start_time < {EXACT_WITNESS_END}" in seed
+    assert "%(graph_witness_start_date)s" not in seed
+    assert "%(graph_witness_end_date)s" not in seed
 
 
 @pytest.mark.unit
