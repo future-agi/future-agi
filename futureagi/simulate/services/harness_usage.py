@@ -924,11 +924,11 @@ def harness_consumption(
             consumption[dimension] += item["amount"]
     consumption["ai_credits"] = sum(
         (
-            record["credits"]
+            float(record["credits"])
             for report in authoring_reports.values()
             for record in report["records"]
         ),
-        start=turn_credits or 0,
+        start=turn_credits or 0.0,
     )
     authoring_estimate_unavailable = False
     if authoring_spend and not is_oss():
