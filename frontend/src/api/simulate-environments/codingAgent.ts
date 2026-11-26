@@ -121,4 +121,12 @@ export const usedTheRunsLastAttempt = (
 ): boolean =>
   counted === true && number != null && number >= OUTSIDE_ATTEMPTS_MAX;
 
+// The most credits an attempt's budget takes: the API's cap on budget_credits
+// (BUDGET_CREDITS_MAX); codingAgent.contract.test.ts holds the two equal.
+export const BUDGET_CREDITS_MAX = 50_000;
+
+// What to do once an attempt is at that cap: a larger budget is refused.
+export const RUN_FEWER_SCENARIOS =
+  "Run the environment on fewer scenarios, then fix the new run.";
+
 export const RUN_AGAIN = `This run has had its ${OUTSIDE_ATTEMPTS_MAX} attempts. Run the environment again, then fix the new run.`;

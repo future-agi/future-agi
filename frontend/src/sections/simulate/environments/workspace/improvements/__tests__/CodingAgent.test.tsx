@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
+import { BUDGET_CREDITS_MAX } from "src/api/simulate-environments/codingAgent";
 
 import {
   ATTEMPT_ID,
@@ -576,6 +577,25 @@ describe("An attempt's running stages and ending", () => {
     expect(
       headline({ ...last, state: "out_of_budget", counted: false }),
     ).toContain("fagi epoch submit");
+  });
+
+  it("tells an attempt that ran out at the budget cap to run fewer scenarios, not to raise a budget the API refuses", () => {
+    const base = attemptFix();
+    const ran = (budget_credits: number) =>
+      headline({
+        ...base,
+        state: "out_of_budget",
+        counted: false,
+        request: { ...base.request, budget_credits },
+      });
+    const fewer =
+      "Run the environment on fewer scenarios, then fix the new run.";
+    expect(ran(BUDGET_CREDITS_MAX)).toContain(fewer);
+    expect(ran(BUDGET_CREDITS_MAX)).not.toContain("larger budget");
+    expect(ran(BUDGET_CREDITS_MAX - 1)).toContain(
+      "Submit it again with a larger budget: fagi epoch submit --budget-credits.",
+    );
+    expect(ran(BUDGET_CREDITS_MAX - 1)).not.toContain(fewer);
   });
 
   it.each([

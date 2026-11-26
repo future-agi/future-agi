@@ -1,6 +1,8 @@
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import {
+  BUDGET_CREDITS_MAX,
   RUN_AGAIN,
+  RUN_FEWER_SCENARIOS,
   isOutsideAttempt,
   usedTheRunsLastAttempt,
 } from "src/api/simulate-environments/codingAgent";
@@ -221,7 +223,14 @@ function attemptEndingText(fix) {
     case "not_reproduced":
       return "The run's failing cases did not fail often enough on the current version to check a fix. Nothing changed.";
     case "out_of_budget":
-      return `This attempt reached its budget. Nothing changed. ${last ? RUN_AGAIN : "Submit it again with a larger budget: fagi epoch submit --budget-credits."}`;
+      // At the cap a larger budget is refused: the run is what has to shrink.
+      return `This attempt reached its budget. Nothing changed. ${
+        last
+          ? RUN_AGAIN
+          : fix.request?.budget_credits >= BUDGET_CREDITS_MAX
+            ? RUN_FEWER_SCENARIOS
+            : "Submit it again with a larger budget: fagi epoch submit --budget-credits."
+      }`;
     case "stopped":
       return "You stopped this attempt. Nothing changed.";
     case "failed":

@@ -6,9 +6,13 @@ import { simulateApiAgentFixRunsSubmitAttempt } from "src/generated/api-contract
 import generatedClient from "src/generated/api-contracts/api.ts?raw";
 import {
   SimulateApiAgentFixRunsReadResponse,
+  simulateApiAgentFixRunsCreateBodyBudgetCreditsMax,
   simulateApiAgentFixRunsReadResponseRequestOutsideCandidateOneNumberMax,
 } from "src/generated/api-contracts/api.zod";
-import { OUTSIDE_ATTEMPTS_MAX } from "src/api/simulate-environments/codingAgent";
+import {
+  BUDGET_CREDITS_MAX,
+  OUTSIDE_ATTEMPTS_MAX,
+} from "src/api/simulate-environments/codingAgent";
 import { fixtureFixRun } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
 
 const sent = vi.hoisted(() => ({
@@ -74,6 +78,12 @@ describe("coding-agent fixtures against the OpenAPI contract", () => {
   it("caps a run's attempts where the API caps an attempt's number", () => {
     expect(OUTSIDE_ATTEMPTS_MAX).toBe(
       simulateApiAgentFixRunsReadResponseRequestOutsideCandidateOneNumberMax,
+    );
+  });
+
+  it("caps an attempt's budget where the API caps budget_credits", () => {
+    expect(BUDGET_CREDITS_MAX).toBe(
+      simulateApiAgentFixRunsCreateBodyBudgetCreditsMax,
     );
   });
 
