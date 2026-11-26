@@ -166,8 +166,6 @@ export default function DescribeFlowCard({
           </Box>
         </Box>
 
-        {filesFooter && <Box sx={{ mt: 1 }}>{filesFooter}</Box>}
-
         {chips?.length > 0 && (
           <Stack
             direction="row"
@@ -203,6 +201,8 @@ export default function DescribeFlowCard({
             ))}
           </Stack>
         )}
+
+        {filesFooter && <Box sx={{ mt: 1.5 }}>{filesFooter}</Box>}
 
         <input
           ref={inputRef}

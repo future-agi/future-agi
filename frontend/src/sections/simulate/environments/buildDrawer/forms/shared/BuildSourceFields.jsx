@@ -59,17 +59,24 @@ export default function BuildSourceFields({
           </Typography>
         </Stack>
       )}
-      {sources.knowledge.map(({ label, selection }) => (
-        <Chip
-          key={selection.kb_id}
-          label={label}
-          onDelete={
-            disabled
-              ? undefined
-              : () => sources.removeKnowledge(selection.kb_id)
-          }
-        />
-      ))}
+      {sources.knowledge.length > 0 && (
+        <Stack direction="row" flexWrap="wrap" gap={1}>
+          {sources.knowledge.map(({ label, selection }) => (
+            <Chip
+              key={selection.kb_id}
+              size="small"
+              variant="outlined"
+              label={label}
+              sx={{ "& .MuiChip-deleteIcon": { mx: 0.5 } }}
+              onDelete={
+                disabled
+                  ? undefined
+                  : () => sources.removeKnowledge(selection.kb_id)
+              }
+            />
+          ))}
+        </Stack>
+      )}
       <Button
         sx={{ alignSelf: "start" }}
         size="small"
