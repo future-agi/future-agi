@@ -6,7 +6,7 @@ import _ from "lodash";
 import axios from "src/utils/axios";
 import { endpoints } from "src/utils/axios";
 import ScenarioCellRenderer from "./CellRenderers/ScenarioCellRenderer";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { canonicalKeys } from "src/utils/utils";
 import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { getAnnotationMetricFilterDefinition } from "src/utils/prototypeObserveUtils";
@@ -953,10 +953,11 @@ export const getCompareBaselineTooltipTitle = (status) => {
  * failures judges a finished run by its final connected count, not by a
  * snapshot taken while the run was still making calls.
  *
- * A KPI read still in flight may have been sampled before the run finished,
- * and React Query would hand a new read that answer, so it is cancelled first.
- * The promise resolves when the new read succeeds, and rejects when it fails
- * or a later call cancels it.
+ * It records how many KPI reads had landed at the finish: any read that lands
+ * later, this one or a refetch, holds the final count. A KPI read still in
+ * flight may have been sampled before the run finished, and React Query would
+ * hand a new read that answer, so it is cancelled first. The new read retries
+ * once; the promise rejects when it still fails or something cancels it.
  *
  * The `["test-execution-detail", executionId]` prefix invalidation is the
  * refresh the grid made before Debug failures read KPIs, kept as it was. It
@@ -966,31 +967,34 @@ export const getCompareBaselineTooltipTitle = (status) => {
  */
 export const readFinalRunKpis = async (queryClient, executionId) => {
   const kpis = kpisQueryOptions(executionId);
+  useTestExecutionStore
+    .getState()
+    .setKpisUpdateCountAtFinish(
+      executionId,
+      queryClient.getQueryState(kpis.queryKey)?.dataUpdateCount ?? 0,
+    );
   queryClient.invalidateQueries({
     queryKey: ["test-execution-detail", executionId],
   });
   await queryClient.cancelQueries({ queryKey: kpis.queryKey });
-  await queryClient.fetchQuery({ ...kpis, staleTime: 0 });
+  await queryClient.fetchQuery({ ...kpis, staleTime: 0, retry: 1 });
 };
 
-export const useFixMyAgentBlocked = (executionId) => {
-  const { data: kpis, isPending } = useKpis(executionId);
-  const { status, statusExecutionId, finalKpisExecutionId } =
-    useTestExecutionStore();
+const CHECKING = { disabled: true, reason: "" };
 
-  // Checking: the grid has not read this execution's status yet, or the run
-  // has finished and its final KPI read has not succeeded yet.
-  if (
-    isPending ||
-    status === null ||
-    statusExecutionId !== executionId ||
-    (FINISHED_RUN_STATUSES.includes(status) &&
-      finalKpisExecutionId !== executionId)
-  ) {
-    return {
-      disabled: true,
-      reason: "",
-    };
+export const useFixMyAgentBlocked = (executionId) => {
+  const queryClient = useQueryClient();
+  const { data: kpis, isPending } = useKpis(executionId);
+  const {
+    status,
+    statusExecutionId,
+    kpisUpdateCountAtFinish,
+    finalKpisFailed,
+  } = useTestExecutionStore();
+
+  // Checking until the grid has read this execution's status.
+  if (isPending || status === null || statusExecutionId !== executionId) {
+    return CHECKING;
   }
 
   // the test run is still running and we should ke the fix my agent blocked
@@ -1001,6 +1005,22 @@ export const useFixMyAgentBlocked = (executionId) => {
         "The test run is still running. You can debug its failures once it finishes.",
     };
   } else if (FINISHED_RUN_STATUSES.includes(status)) {
+    // Only a KPI read that landed after the grid saw the run finish holds its
+    // final count.
+    const kpisUpdateCount =
+      queryClient.getQueryState(kpisQueryOptions(executionId).queryKey)
+        ?.dataUpdateCount ?? 0;
+    if (
+      kpisUpdateCountAtFinish === null ||
+      kpisUpdateCount <= kpisUpdateCountAtFinish
+    ) {
+      return finalKpisFailed
+        ? {
+            disabled: true,
+            reason: "Couldn't load the call count. Refresh to try again.",
+          }
+        : CHECKING;
+    }
     // An older backend sends no count: undefined < 15 is false, so it stays open.
     if (kpis?.connected_calls < 15) {
       return {

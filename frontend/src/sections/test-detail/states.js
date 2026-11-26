@@ -115,20 +115,34 @@ export const useTestDetailSearchStoreShallow = (fun) =>
   useTestDetailStore(useShallow(fun));
 
 // The run status the call grid last read, and the execution it read it for.
-// `finalKpisExecutionId` is the execution whose KPIs were read after the grid
-// saw it finish; until then Debug failures has no final count to judge.
+// `kpisUpdateCountAtFinish` is how many KPI reads had landed when the grid saw
+// the run finish: only a later read holds the final count Debug failures
+// judges. `finalKpisFailed` says the final read failed and none landed since.
 const EMPTY_EXECUTION_STATE = {
   status: null,
   statusExecutionId: null,
-  finalKpisExecutionId: null,
+  kpisUpdateCountAtFinish: null,
+  finalKpisFailed: false,
 };
+
+// Applies `update` only while `executionId` is the execution on screen.
+const forExecution = (executionId, update) => (state) =>
+  state.statusExecutionId === executionId ? update : {};
 
 export const useTestExecutionStore = create((set) => ({
   ...EMPTY_EXECUTION_STATE,
   setStatus: (executionId, status) =>
     set({ status, statusExecutionId: executionId }),
-  setFinalKpisExecutionId: (executionId) =>
-    set({ finalKpisExecutionId: executionId }),
+  // `null` when the run is making calls again.
+  setKpisUpdateCountAtFinish: (executionId, count) =>
+    set(
+      forExecution(executionId, {
+        kpisUpdateCountAtFinish: count,
+        finalKpisFailed: false,
+      }),
+    ),
+  markFinalKpisFailed: (executionId) =>
+    set(forExecution(executionId, { finalKpisFailed: true })),
   // A newly opened execution has no status and no final count yet.
   openExecution: (executionId) =>
     set({ ...EMPTY_EXECUTION_STATE, statusExecutionId: executionId }),

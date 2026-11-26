@@ -205,8 +205,8 @@ const TestRunDetailGrid = () => {
       if (TestRunLoadingStatus.includes(runStatus)) {
         isRefreshingRef.current = true;
         settledRunRef.current = null;
-        if (executionStore.finalKpisExecutionId !== null) {
-          executionStore.setFinalKpisExecutionId(null);
+        if (executionStore.kpisUpdateCountAtFinish !== null) {
+          executionStore.setKpisUpdateCountAtFinish(executionId, null);
         }
       } else if (
         FINISHED_RUN_STATUSES.includes(runStatus) &&
@@ -214,20 +214,16 @@ const TestRunDetailGrid = () => {
       ) {
         const settle = {};
         settledRunRef.current = settle;
-        readFinalRunKpis(queryClient, executionId)
-          .then(() => {
-            if (settledRunRef.current === settle && isCurrentExecution()) {
-              useTestExecutionStore
-                .getState()
-                .setFinalKpisExecutionId(executionId);
-            }
-          })
-          .catch((error) => {
-            logger.warn("Failed to read the final KPIs of the run", { error });
-          });
+        // The read lands in the KPI cache even if the user leaves the tab.
+        readFinalRunKpis(queryClient, executionId).catch((error) => {
+          logger.warn("Failed to read the final KPIs of the run", { error });
+          if (settledRunRef.current === settle) {
+            useTestExecutionStore.getState().markFinalKpisFailed(executionId);
+          }
+        });
       }
     },
-    [executionId, queryClient, isCurrentExecution],
+    [executionId, queryClient],
   );
 
   const dataSource = useMemo(

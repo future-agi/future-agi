@@ -136,6 +136,10 @@ const BLOCKED: Decision = {
   disabled: true,
   reason: "You need at least 15 connected calls to debug failures.",
 };
+const COUNT_NOT_LOADED: Decision = {
+  disabled: true,
+  reason: "Couldn't load the call count. Refresh to try again.",
+};
 const STILL_RUNNING: Decision = {
   disabled: true,
   reason:
@@ -184,9 +188,11 @@ const openRunPage = ({
     decision.current = useFixMyAgentBlocked(route.executionId);
     return null;
   };
-  const page = () => (
+  // The grid mounts only on the Call Details tab; Debug failures sits in the
+  // tab bar, above every tab.
+  const page = (onCallDetails = true) => (
     <QueryClientProvider client={queryClient}>
-      <TestRunDetailGrid />
+      {onCallDetails && <TestRunDetailGrid />}
       <DebugFailures />
     </QueryClientProvider>
   );
@@ -197,7 +203,12 @@ const openRunPage = ({
       route.executionId = executionId;
       rerender(page());
     });
-  return { decision, queryClient, openExecution };
+  // The user opens another tab of the run, such as Analytics.
+  const leaveCallDetails = () =>
+    act(async () => {
+      rerender(page(false));
+    });
+  return { decision, queryClient, openExecution, leaveCallDetails };
 };
 
 // AG Grid re-reads its cached blocks, as after a rerun. Production's refresh
@@ -315,8 +326,8 @@ describe("Debug failures on a return visit to a finished run", () => {
   });
 });
 
-// Review H1: the grid's first status is already "completed", and the page's
-// first KPI read is still in flight. That read may have been sampled before
+// The grid's first status is already "completed", and the page's first KPI
+// read is still in flight. That read may have been sampled before
 // the run finished, so its 14 must not decide a run that finished at 15.
 describe("Debug failures when the first status read is already finished", () => {
   it("opens on a fresh first read of 15 (control)", async () => {
@@ -341,7 +352,7 @@ describe("Debug failures when the first status read is already finished", () => 
     );
 
     await act(async () => firstRead.resolve(kpis(14)));
-    // Three poll intervals, as in the review.
+    // Three poll intervals change nothing.
     await poll();
     await poll();
     await poll();
@@ -366,6 +377,61 @@ describe("Debug failures when the first status read is already finished", () => 
 
     await act(async () => finalRead.resolve(kpis(14)));
     await vi.waitFor(() => expect(decision.current).toEqual(BLOCKED));
+  });
+});
+
+describe("Debug failures when the user leaves Call Details", () => {
+  it("decides once the final read lands, though the grid is gone", async () => {
+    const finalRead = deferred<Kpis>();
+    server.runPage.mockResolvedValue(runPage("completed"));
+    server.kpis.mockReturnValue(finalRead.promise);
+    const { decision, leaveCallDetails } = openRunPage({
+      cachedConnectedCalls: 14,
+    });
+    await vi.waitFor(() => expect(server.kpis).toHaveBeenCalledTimes(1));
+
+    await leaveCallDetails();
+    await act(async () => finalRead.resolve(kpis(15)));
+    await vi.waitFor(() => expect(decision.current).toEqual(ENABLED));
+  });
+});
+
+describe("Debug failures when the final KPI read fails", () => {
+  // React Query waits a second before its one retry.
+  const RETRY_WAIT = { timeout: 3000 };
+
+  it("decides on the retry when the first try fails", async () => {
+    server.runPage.mockResolvedValue(runPage("completed"));
+    server.kpis.mockRejectedValueOnce(new Error("network"));
+    server.kpis.mockResolvedValue(kpis(15));
+    const { decision } = openRunPage({ cachedConnectedCalls: 14 });
+
+    await vi.waitFor(
+      () => expect(decision.current).toEqual(ENABLED),
+      RETRY_WAIT,
+    );
+    expect(server.kpis).toHaveBeenCalledTimes(2);
+  });
+
+  it("says why when the retry fails too, and decides on a later read", async () => {
+    server.runPage.mockResolvedValue(runPage("completed"));
+    server.kpis.mockRejectedValue(new Error("network"));
+    const { decision, queryClient } = openRunPage({ cachedConnectedCalls: 14 });
+
+    await vi.waitFor(
+      () => expect(decision.current).toEqual(COUNT_NOT_LOADED),
+      RETRY_WAIT,
+    );
+    expect(server.kpis).toHaveBeenCalledTimes(2);
+
+    // Any later read, such as a refetch when the window regains focus.
+    server.kpis.mockResolvedValue(kpis(15));
+    await act(async () => {
+      await queryClient.refetchQueries({
+        queryKey: kpisQueryOptions(EXECUTION_ID).queryKey,
+      });
+    });
+    await vi.waitFor(() => expect(decision.current).toEqual(ENABLED));
   });
 });
 
@@ -450,8 +516,7 @@ describe("Debug failures on a run with no calls yet", () => {
   });
 });
 
-// Review H5: the user opens execution B while a page of execution A is still
-// being read. B starts polling; then A's page answers "completed".
+// The user opens execution B while a page of execution A is still being read. B starts polling; then A's page answers "completed".
 describe("Debug failures after the user opens another execution", () => {
   it("ignores a late page of the earlier execution", async () => {
     const lateAPage = deferred<RunPage>();
@@ -479,7 +544,7 @@ describe("Debug failures after the user opens another execution", () => {
 
     await act(async () => lateAPage.resolve(runPage("completed")));
     await settle();
-    // Two more poll opportunities, as in the review.
+    // B keeps polling.
     await poll();
     await vi.waitFor(() => expect(reads.b).toBe(3));
     await poll();
@@ -495,7 +560,7 @@ describe("Debug failures after the user opens another execution", () => {
   });
 });
 
-// Review C24: a run of 31 calls fills two grid blocks. A poll reads block 1
+// A run of 31 calls fills two grid blocks. A poll reads block 1
 // while the run is still running, then block 2 just after it finished.
 describe("Call rows after a poll that sees the run finish", () => {
   const callRows = (from: number, to: number, status: string): CallRow[] =>
