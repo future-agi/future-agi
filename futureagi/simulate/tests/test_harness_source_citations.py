@@ -9,7 +9,11 @@ from simulate.services import harness_source_reviews
 
 def test_only_accepted_reviewer_visible_names_are_displayed(monkeypatch):
     sources = [
-        {"pin": {"source_id": "file"}, "filename": "Northstar.pdf"},
+        {
+            "pin": {"source_id": "file"},
+            "filename": "Northstar.pdf",
+            "visibility": "agent_visible",
+        },
         {
             "pin": {"source_id": "hidden"},
             "filename": "Private.txt",

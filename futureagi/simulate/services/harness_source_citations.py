@@ -77,7 +77,7 @@ def visible_citations(request, job, page):
         source["pin"]["source_id"]: source["filename"]
         for review in reviews
         for source in review.preview.get("sources", [])
-        if source.get("filename") and source.get("visibility") != "evaluator_only"
+        if source.get("filename") and source.get("visibility") == "agent_visible"
     }
     return {
         key: [
