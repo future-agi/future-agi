@@ -539,12 +539,12 @@ describe("LaunchFixDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("says the launch picks the held-back cases once the cases to fix change", async () => {
+  it("says the launch picks the held-back cases when the cases to fix aren't the suggested ones", async () => {
     const { first, options } = heldBackOptions();
     pinOptions(options);
     renderDialog({ initialTargets: [first.key] });
     expect(await screen.findByTestId("epoch-held-back")).toHaveTextContent(
-      "You changed the cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
+      "These aren't the suggested cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
     );
   });
 

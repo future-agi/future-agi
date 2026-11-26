@@ -117,7 +117,7 @@ export const HELD_BACK_PENDING = {
   variations:
     "The cases held back to prove the fix are chosen after the variations are written.",
   edited:
-    "You changed the cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
+    "These aren't the suggested cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
 } as const;
 
 export type HeldBack =

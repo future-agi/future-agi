@@ -38717,8 +38717,8 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           name: zod.string().min(1),
           kind: zod.string().min(1),
           version_id: zod.string().uuid(),
-          version_number: zod.number(),
-          ref: zod.string().min(1),
+          version_number: zod.union([zod.number(), zod.null()]),
+          ref: zod.union([zod.string().min(1), zod.null()]),
         })
         .optional(),
       state: zod
@@ -39154,22 +39154,22 @@ export const SimulateApiAgentFixRunsLaunchOptionsQueryParams = zod.object({
 export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
   source_run: zod.object({
     id: zod.string().uuid(),
-    number: zod.number(),
+    number: zod.union([zod.number(), zod.null()]),
     state: zod.string().min(1),
-    finished_at: zod.string().min(1),
+    finished_at: zod.union([zod.string().min(1), zod.null()]),
   }),
   environment: zod.object({
     id: zod.string().uuid(),
     name: zod.string().min(1),
-    version: zod.number(),
+    version: zod.union([zod.number(), zod.null()]),
   }),
   agent: zod.union([
     zod.object({
       name: zod.string().min(1),
       kind: zod.string().min(1),
       version_id: zod.string().uuid(),
-      version_number: zod.number(),
-      ref: zod.string().min(1),
+      version_number: zod.union([zod.number(), zod.null()]),
+      ref: zod.union([zod.string().min(1), zod.null()]),
     }),
     zod.null(),
   ]),
@@ -39177,14 +39177,17 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     zod.object({
       key: zod.string().min(1),
       name: zod.string().min(1),
-      passed: zod.boolean(),
+      passed: zod.union([zod.boolean(), zod.null()]),
       failing_sub_goals: zod.array(zod.string().min(1)),
-      evidence_import_id: zod
-        .string()
-        .uuid()
-        .describe(
-          "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
-        ),
+      evidence_import_id: zod.union([
+        zod
+          .string()
+          .uuid()
+          .describe(
+            "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
+          ),
+        zod.null(),
+      ]),
     }),
   ),
   suggested: zod.object({
@@ -39353,8 +39356,8 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       name: zod.string().min(1),
       kind: zod.string().min(1),
       version_id: zod.string().uuid(),
-      version_number: zod.number(),
-      ref: zod.string().min(1),
+      version_number: zod.union([zod.number(), zod.null()]),
+      ref: zod.union([zod.string().min(1), zod.null()]),
     })
     .optional(),
   state: zod
@@ -39823,8 +39826,8 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       name: zod.string().min(1),
       kind: zod.string().min(1),
       version_id: zod.string().uuid(),
-      version_number: zod.number(),
-      ref: zod.string().min(1),
+      version_number: zod.union([zod.number(), zod.null()]),
+      ref: zod.union([zod.string().min(1), zod.null()]),
     })
     .optional(),
   state: zod

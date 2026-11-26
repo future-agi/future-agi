@@ -19497,9 +19497,8 @@ export interface AgentFixAgentApi {
   /** @minLength 1 */
   kind: string;
   version_id: string;
-  version_number: number;
-  /** @minLength 1 */
-  ref: string;
+  version_number: number | null;
+  ref: string | null;
 }
 
 export type AgentFixRunApiState =
@@ -19702,18 +19701,17 @@ export interface AgentFixLaunchApi {
 
 export interface AgentFixLaunchSourceRunApi {
   id: string;
-  number: number;
+  number: number | null;
   /** @minLength 1 */
   state: string;
-  /** @minLength 1 */
-  finished_at: string;
+  finished_at: string | null;
 }
 
 export interface AgentFixLaunchEnvironmentApi {
   id: string;
   /** @minLength 1 */
   name: string;
-  version: number;
+  version: number | null;
 }
 
 export interface AgentFixLaunchScenarioApi {
@@ -19721,10 +19719,9 @@ export interface AgentFixLaunchScenarioApi {
   key: string;
   /** @minLength 1 */
   name: string;
-  passed: boolean;
+  passed: boolean | null;
   failing_sub_goals: string[];
-  /** The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence. */
-  evidence_import_id: string;
+  evidence_import_id: string | null;
 }
 
 export interface AgentFixLaunchSuggestedApi {

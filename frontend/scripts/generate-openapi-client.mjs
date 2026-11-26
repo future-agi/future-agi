@@ -131,8 +131,6 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   // A launch nothing refuses has neither refusal; a run whose environment has no
   // agent version has no agent, and an agent Epoch can't change ships nothing.
   AgentFixLaunchOptions: ["blocked", "variations_blocked", "agent", "ship"],
-  // Only issue_epoch_measuring names an issue; every other refusal sends null.
-  AgentFixLaunchBlocked: [],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
   // The epoch an issue's page opens: before it ends it has no report, and only a
@@ -150,7 +148,16 @@ function isAgentFixIssueSchema(name) {
     name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
     name === "AgentFixEpochIssue" ||
     // The launch form's parts of an agent: a part it may change has no reason.
-    name === "AgentFixLaunchSurface"
+    name === "AgentFixLaunchSurface" ||
+    // Only issue_epoch_measuring names an issue; every other refusal sends null.
+    name === "AgentFixLaunchBlocked" ||
+    // An unnumbered or unfinished run, an unversioned environment, a scenario
+    // with no verdict or no evidence import.
+    name === "AgentFixLaunchSourceRun" ||
+    name === "AgentFixLaunchEnvironment" ||
+    name === "AgentFixLaunchScenario" ||
+    // An unnumbered version; an uploaded agent has no ref.
+    name === "AgentFixAgent"
   );
 }
 
