@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse,
+  SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse,
   SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse,
+  SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse,
   SimulateApiHarnessEnvironmentsVersionsResponse,
   SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse,
 } from "src/generated/api-contracts/api.zod";
@@ -98,6 +101,11 @@ describe.each([
   ["versions", SimulateApiHarnessEnvironmentsVersionsResponse],
   ["lock", SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse],
   ["unlock", SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse],
+  ["move default", SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse],
+  [
+    "discard agent version",
+    SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse,
+  ],
 ])("generated %s response", (_name, schema) => {
   it.each(Object.entries(previews))(
     "accepts a %s lock preview with its releases and versions",
@@ -129,5 +137,34 @@ describe.each([
     expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual([
       "releases.0.label",
     ]);
+  });
+});
+
+describe("generated drafts save response", () => {
+  const versions = {
+    agent: [],
+    environment: [],
+    suite: [],
+    releases: [release],
+    lock: previews.ready,
+  };
+
+  it("accepts the versions it carries, releases included", () => {
+    const body = { saved: {}, versions };
+
+    expect(
+      SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse.parse(body),
+    ).toEqual(body);
+  });
+
+  it("keeps a release's own label required", () => {
+    const body = {
+      saved: {},
+      versions: { ...versions, releases: [{ ...release, label: null }] },
+    };
+
+    expect(() =>
+      SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse.parse(body),
+    ).toThrow();
   });
 });
