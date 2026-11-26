@@ -39,16 +39,13 @@ and the unconditional unique index on Report.attempt_id are checked before any
 write. Plans are expectations, never measurements: the shipping driver's
 independent count(*) / pg_total_relation_size measurement remains authoritative.
 
-Every app_python call has a fixed 180s limit, so the payload and cohort reads
-are bounded per call at any accepted scale. Writes go in 2,500-job chunks.
-Payload verification reads 10,000 jobs per call. Exact cohort counts are summed
-over one UUID-range bucket per scale block, so the buckets read each row exactly
-once and also catch unexpected extra rows. Two kinds of count are not
-bucketed, and both grow with the table:
-- PREPARE's whole-table and fixture counts; on a fresh source the fixture
-  count is zero, and it is non-trivial only on resume;
-- the cohort call for bucket 0, which also runs the same whole-table count(*)
-  that the driver's independent measurement runs.
+Every app_python call has a fixed 180s limit, so the payload, baseline and
+cohort reads are bounded per call at any accepted scale. Writes go in 2,500-job chunks.
+Payload verification reads 10,000 jobs per call. PREPARE checks the project;
+separate calls count physical and fixture rows before the first chunk, including
+on resume. These counts and the final physical, fixture and cohort counts use
+one UUID-range bucket per scale block. The host sums the disjoint ranges, so
+extra rows are counted too. At scale one the single bucket covers the table.
 
 After the target migrates, qualification's large_volume_migrations assertion
 runs the same bounded slices and buckets on the target. It checks that every
@@ -315,13 +312,6 @@ Workspace=apps.get_model('accounts','Workspace')
 def models_in_order():
     # Insertion order follows the foreign keys.
     return (('Group',Group),('Job',Job),('Attempt',Attempt),('Report',Report),('Finding',Finding),('Member',Member))
-def physical_counts():
-    counts={}
-    with connection.cursor() as cursor:
-        for model in (Finding,Job,Report):
-            cursor.execute('SELECT count(*) FROM '+connection.ops.quote_name(model._meta.db_table))
-            counts[model._meta.db_table]=cursor.fetchone()[0]
-    return counts
 def subsets():
     # The dedicated project is written only by this fixture.
     project=identity('project',0)
@@ -329,10 +319,6 @@ def subsets():
         jobs=Job.all_objects.filter(project_id=project),attempts=Attempt.all_objects.filter(job__project_id=project),
         reports=Report.all_objects.filter(project_id=project),findings=Finding.all_objects.filter(report__project_id=project),
         members=Member.all_objects.filter(cluster__project_id=project))
-def seeded_counts():
-    scoped=subsets()
-    return {Finding._meta.db_table:scoped['findings'].count(),Job._meta.db_table:scoped['jobs'].count(),
-        Report._meta.db_table:scoped['reports'].count()}
 def matching(model,rows):
     # Every concrete source column, including FKs and soft-delete state. Never
     # accept a replay with edited payloads or substituted relations.
@@ -458,7 +444,7 @@ with transaction.atomic():
         Project.all_objects.bulk_create([Project(**row)],batch_size=100)
         Project.all_objects.filter(pk=row['id']).update(created_at=row['created_at'],updated_at=row['updated_at'])
     check_context(context)
-print(json.dumps(dict(context=context,counts=physical_counts(),seeded_counts=seeded_counts())))
+print(json.dumps(dict(context=context)))
 """
 
 CHUNK_BODY = """
@@ -502,10 +488,17 @@ for start in verify_slice(a['start'],a['stop']):
 print(json.dumps(dict(verified=a['stop']-a['start'])))
 """
 
-COHORTS_BODY = """
-context=a['context']
-check_context(context)
+# The same PK range is used on both sides of the baseline subtraction,
+# including when part of the fixture already exists after an interruption.
+SOURCE_BUCKET = COMMON + BUCKET + """
+check_context(a['context'])
 scoped={key:bucket(queryset) for key,queryset in subsets().items()}
+tables=((Finding,'findings'),(Job,'jobs'),(Report,'reports'))
+counts={model._meta.db_table:bucket(model.all_objects).count() for model,key in tables}
+seeded={model._meta.db_table:scoped[key].count() for model,key in tables}
+"""
+
+COHORTS_BODY = """
 members=scoped['members']
 # 0118's join predicate, scoped to the fixture. occurred_at does not exist on the
 # source schema, so every membership matching it is pending for the backfill.
@@ -521,10 +514,7 @@ cohorts=dict(groups=scoped['groups'].count(),attempts=scoped['attempts'].count()
     chain_consistent_memberships=members.filter(trace_id=F('finding__report__trace_id')).count(),
     findings_without_membership=scoped['findings'].filter(
         ~Exists(Member.all_objects.filter(finding_id=OuterRef('pk')))).count())
-seeded={Finding._meta.db_table:scoped['findings'].count(),Job._meta.db_table:scoped['jobs'].count(),
-    Report._meta.db_table:scoped['reports'].count()}
-# Whole-table count(*), as in the driver's own independent measurement, once.
-print(json.dumps(dict(counts=physical_counts() if a['bucket']==0 else None,seeded_counts=seeded,cohorts=cohorts)))
+print(json.dumps(dict(counts=counts,seeded_counts=seeded,cohorts=cohorts)))
 """
 
 # Target programs read the migrated schema, whose models gain columns, so they
@@ -548,7 +538,8 @@ TARGET_SLICE_BODY = """
 checked=mismatched=0
 for start in verify_slice(a['start'],a['stop']):
     expected=occurrences(payloads(context,start,start+2500))
-    actual={row[0]:row[1:] for row in Member.all_objects.filter(pk__in=list(expected)).values_list(
+    actual={row[0]:row[1:] for row in Member.all_objects.filter(
+        cluster__project_id=identity('project',0),pk__in=list(expected)).values_list(
         'id','occurred_at','occurrence_time_source','finding__report__job__root_end_time')}
     checked+=len(expected)
     # A missing membership, a wrong time or source, or a changed job all count.
@@ -561,17 +552,19 @@ members=bucket(Member.all_objects.filter(cluster__project_id=identity('project',
 filled=members.filter(occurrence_time_source='omega_root_end',occurred_at__isnull=False,
     occurred_at=F('finding__report__job__root_end_time'))
 empty=members.filter(occurred_at__isnull=True,occurrence_time_source='')
-print(json.dumps(dict(memberships=members.count(),filled_memberships=filled.count(),
+cohorts=dict(memberships=members.count(),filled_memberships=filled.count(),
     filled_deleted_memberships=filled.filter(deleted=True).count(),null_memberships=empty.count(),
     null_no_root_end_memberships=empty.filter(finding__report__job__isnull=False,
         finding__report__job__root_end_time__isnull=True).count(),
-    null_legacy_memberships=empty.filter(finding__isnull=False,finding__report__job__isnull=True).count())))
+    null_legacy_memberships=empty.filter(finding__isnull=False,finding__report__job__isnull=True).count())
+print(json.dumps(dict(cohorts=cohorts)))
 """
 
 PREPARE = COMMON + SCHEMA_CHECK + PREPARE_BODY
 CHUNK = COMMON + CHUNK_BODY
 VERIFY_SLICE = COMMON + BUCKET + VERIFY_SLICE_BODY
-COHORTS = COMMON + BUCKET + COHORTS_BODY
+BASELINE_PROGRAM = SOURCE_BUCKET + 'print(json.dumps(dict(counts=counts,seeded_counts=seeded)))\n'
+COHORTS_PROGRAM = SOURCE_BUCKET + COHORTS_BODY
 TARGET_SLICE = TARGET_COMMON + TARGET_SLICE_BODY
 TARGET_COHORTS = TARGET_COMMON + TARGET_COHORTS_BODY
 
@@ -591,27 +584,19 @@ def _timed(driver, seconds, program, arguments):
         seconds.append(time.monotonic() - began)
 
 
-def _bucket_totals(driver, seconds, program, arguments, keys, flatten, require):
-    """Sum exact per-bucket counts over all scale buckets; returns (totals, first result)."""
-    totals, first = dict.fromkeys(keys, 0), None
+def _bucket_totals(driver, seconds, program, arguments, groups, require):
+    """Sum each named count across the disjoint UUID ranges on the host."""
+    totals = {name: dict.fromkeys(keys, 0) for name, keys in groups.items()}
     for index in range(arguments['scale']):
         result = _timed(driver, seconds, program, dict(arguments, bucket=index, buckets=arguments['scale']))
-        part = flatten(result, index)
-        require(isinstance(part, dict) and set(part) == set(totals)
-            and all(type(part[key]) is int and part[key] >= 0 for key in totals))
-        for key in totals:
-            totals[key] += part[key]
-        first = result if index == 0 else first
-    return totals, first
-
-
-def _source_bucket(result, index):
-    # Bucket 0 alone carries the whole-table count(*); the others carry None.
-    if not (isinstance(result, dict) and set(result) == {'counts', 'seeded_counts', 'cohorts'}
-            and (result['counts'] is None) == (index > 0)
-            and isinstance(result['seeded_counts'], dict) and isinstance(result['cohorts'], dict)):
-        return None
-    return dict(result['cohorts'], **{'seeded:' + key: value for key, value in result['seeded_counts'].items()})
+        require(isinstance(result, dict) and set(result) == set(groups))
+        for name, counts in totals.items():
+            part = result[name]
+            require(isinstance(part, dict) and set(part) == set(counts))
+            for key, value in part.items():
+                require(type(value) is int and value >= 0)
+                counts[key] += value
+    return totals
 
 
 def _verify_source(driver, state, plan, scale, *, prefix, require):
@@ -622,19 +607,17 @@ def _verify_source(driver, state, plan, scale, *, prefix, require):
         result = _timed(driver, seconds, prefix + VERIFY_SLICE, dict(arguments, start=start, stop=start + VERIFY_JOBS))
         require(isinstance(result, dict) and set(result) == {'verified'} and type(result['verified']) is int
             and result['verified'] == VERIFY_JOBS)
-    keys = list(plan['cohorts']) + ['seeded:' + table for table in plan['counts']]
-    totals, first = _bucket_totals(driver, seconds, prefix + COHORTS, arguments, keys, _source_bucket, require)
-    counts = first['counts']
-    seeded = {table: totals.pop('seeded:' + table) for table in plan['counts']}
-    require(seeded == plan['counts'] and totals == plan['cohorts'])
-    require(isinstance(counts, dict) and set(counts) == set(plan['counts']))
+    totals = _bucket_totals(driver, seconds, prefix + COHORTS_PROGRAM, arguments,
+        dict(plan, seeded_counts=plan['counts']), require)
+    counts = totals['counts']
+    require(totals['seeded_counts'] == plan['counts'] and totals['cohorts'] == plan['cohorts'])
     # Fixture-scoped counts above are exact. Physical totals only need to include
     # the baseline plus the whole fixture; each table's reference is its
     # independent measurement, not this self-report.
     for table, added in plan['counts'].items():
         require(type(counts[table]) is int and counts[table] >= state['arguments']['rows']
             and counts[table] >= state['baseline'][table] + added)
-    return counts, totals, seconds
+    return counts, totals['cohorts'], seconds
 
 
 def verify_investigation_backfill(driver, *, prefix, producer):
@@ -667,8 +650,7 @@ def verify_investigation_backfill(driver, *, prefix, producer):
         checked += result['checked']
         mismatched += result['mismatched']
     require(checked == plan['memberships'])
-    totals, _ = _bucket_totals(driver, seconds, prefix + TARGET_COHORTS, arguments, list(plan),
-        lambda result, index: result, require)
+    totals = _bucket_totals(driver, seconds, prefix + TARGET_COHORTS, arguments, dict(cohorts=plan), require)['cohorts']
     if getattr(driver, 'corpus', None) is not None:
         driver.corpus['investigation_reference_target_check'] = dict(scale=scale, slices=100000 * scale // VERIFY_JOBS,
             buckets=scale, checked=checked, mismatched=mismatched, cohorts=dict(totals), seconds=seconds)
@@ -700,12 +682,12 @@ def seed_investigation_reference_family(driver, rows, *, prefix, producer):
     else:
         prepared = driver.app_python(prefix + PREPARE, arguments)
         require(isinstance(prepared, dict) and isinstance(prepared.get('context'), dict))
-        before, seeded = prepared.get('counts'), prepared.get('seeded_counts')
-        require(isinstance(before, dict) and isinstance(seeded, dict))
-        require(set(before) == set(plan['counts']) and set(seeded) == set(plan['counts']))
+        initial = _bucket_totals(driver, [], prefix + BASELINE_PROGRAM,
+            dict(arguments, context=prepared['context'], scale=scale),
+            dict(counts=plan['counts'], seeded_counts=plan['counts']), require)
+        before, seeded = initial['counts'], initial['seeded_counts']
         for table, expected in plan['counts'].items():
-            require(type(before[table]) is int and type(seeded[table]) is int
-                and 0 <= seeded[table] <= expected and before[table] >= seeded[table])
+            require(seeded[table] <= expected and before[table] >= seeded[table])
         state = dict(arguments=arguments, context=prepared['context'],
             baseline={table: before[table] - seeded[table] for table in plan['counts']})
         driver._investigation_reference_pending = state

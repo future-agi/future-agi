@@ -31,8 +31,8 @@ ARGS = dict(namespace='reference-source', email='reference-source@example.test',
     organization_id=str(uuid.UUID(int=1)), workspace_id=str(uuid.UUID(int=2)))
 CONTEXT = dict(user_id=str(uuid.UUID(int=3)), project_id=str(uuid.UUID(int=4)),
     historical_at='2026-01-01T00:00:00+00:00')
-PROGRAMS = (s.DJANGO_PREFIX+m.PREPARE, s.DJANGO_PREFIX+m.CHUNK, s.DJANGO_PREFIX+m.VERIFY_SLICE,
-    s.DJANGO_PREFIX+m.COHORTS)
+PROGRAMS = (s.DJANGO_PREFIX+m.PREPARE, s.DJANGO_PREFIX+m.BASELINE_PROGRAM, s.DJANGO_PREFIX+m.CHUNK,
+    s.DJANGO_PREFIX+m.VERIFY_SLICE, s.DJANGO_PREFIX+m.COHORTS_PROGRAM)
 TARGET_PROGRAMS = (s.DJANGO_PREFIX+m.TARGET_SLICE, s.DJANGO_PREFIX+m.TARGET_COHORTS)
 # One full bounded source verification at scale one: payload slices, then buckets.
 VERIFY_CALLS = 100000 // m.VERIFY_JOBS + 1
@@ -70,21 +70,24 @@ class FakeApp:
         self.committed, self.verified = set(), set()
         self.calls, self.skipped = [], []
         self.fail_at = None
-        self.alter_verified = self.alter_prepared = self.alter_slice = lambda value: value
+        self.alter_verified = self.alter_prepared = self.alter_baseline = self.alter_slice = lambda value: value
         self.alter_target_slice = self.alter_target = lambda value: value
 
-    def partial_counts(self):
-        # Abstract committed-boundary accounting, NOT simulated physical data.
-        chunks = 100000 // m.CHUNK_JOBS
-        per_chunk = {table: count // chunks for table, count in m.investigation_reference_plan(1)['counts'].items()}
-        return {table: len(self.committed) * per_chunk[table] for table in TABLES}
+    def bucket_counts(self, args):
+        # Abstract the UUID partition as even shares, with any remainder in the first buckets.
+        index = args['bucket']
+        assert args['buckets'] == self.scale == args['scale'] and 0 <= index < self.scale
+        def share(count): return count // self.scale + (index < count % self.scale)
+        chunks = self.scale * 100000 // m.CHUNK_JOBS
+        seeded = {table: share(len(self.committed) * (count // chunks)) for table, count in self.plan['counts'].items()}
+        return dict(counts={table: share(self.baseline[table]) + seeded[table] for table in TABLES}, seeded_counts=seeded)
 
     def __call__(self, program, args):
         self.calls.append((program, copy.deepcopy(args)))
         if program == s.DJANGO_PREFIX+m.PREPARE:
-            seeded = self.partial_counts()
-            return self.alter_prepared(dict(context=copy.deepcopy(CONTEXT), seeded_counts=seeded,
-                counts={table:self.baseline[table]+seeded[table] for table in TABLES}))
+            return self.alter_prepared(dict(context=copy.deepcopy(CONTEXT)))
+        if program == s.DJANGO_PREFIX+m.BASELINE_PROGRAM:
+            return self.alter_baseline(self.bucket_counts(args))
         if program == s.DJANGO_PREFIX+m.CHUNK:
             assert args['scale'] == self.scale
             assert args['stop'] == args['start']+m.CHUNK_JOBS
@@ -104,13 +107,9 @@ class FakeApp:
             if args['start'] == 0: self.verified = set()
             self.verified.add(args['start'])
             return self.alter_slice({'verified':m.VERIFY_JOBS})
-        if program == s.DJANGO_PREFIX+m.COHORTS:
-            assert args['scale'] == self.scale and args['buckets'] == self.scale and 0 <= args['bucket'] < self.scale
+        if program == s.DJANGO_PREFIX+m.COHORTS_PROGRAM:
             assert self.verified == set(range(0, 100000*self.scale, m.VERIFY_JOBS)), 'cohorts before payload slices'
-            # Each UUID bucket holds about one block; abstract equal shares here.
-            return self.alter_verified(dict(counts={table:self.baseline[table]+count
-                for table,count in self.plan['counts'].items()} if args['bucket'] == 0 else None,
-                seeded_counts=copy.deepcopy(one['counts']), cohorts=copy.deepcopy(one['cohorts'])))
+            return self.alter_verified(dict(self.bucket_counts(args), cohorts=one['cohorts']))
         if program == s.DJANGO_PREFIX+m.TARGET_SLICE:
             assert args['scale'] == self.scale and args['context'] == CONTEXT
             assert args['stop'] == args['start']+m.VERIFY_JOBS and args['start'] % m.VERIFY_JOBS == 0
@@ -120,7 +119,7 @@ class FakeApp:
             return self.alter_target_slice(dict(checked=checked, mismatched=0))
         if program == s.DJANGO_PREFIX+m.TARGET_COHORTS:
             assert args['scale'] == self.scale and args['buckets'] == self.scale and 0 <= args['bucket'] < self.scale
-            return self.alter_target(m.investigation_target_plan(1))
+            return dict(cohorts=self.alter_target(m.investigation_target_plan(1)))
         raise AssertionError('unexpected source operation')
 
 
@@ -212,6 +211,11 @@ class InvestigationReferenceTests(unittest.TestCase):
         self.assertEqual(set(plan['counts']), set(TABLES))
         self.assertTrue(all(count >= p.REFERENCE_ROWS for count in plan['counts'].values()))
 
+    def test_plan_returns_documented_scale_one_counts(self):
+        plan = m.investigation_reference_plan(1)
+        self.assertEqual(plan['counts'], SCALE_ONE_COUNTS)
+        self.assertEqual(plan['cohorts'], SCALE_ONE_COHORTS)
+
     def test_dispatch_exact_table_model_engine_and_inheritance(self):
         for cls in (s.ShippingRehearsal, q.QualificationRehearsal):
             for entry in ENTRIES:
@@ -265,7 +269,8 @@ class InvestigationReferenceTests(unittest.TestCase):
         expected = {('tracer', name) for name in ('TraceInvestigationJob', 'TraceInvestigationAttempt',
             'TraceInvestigationReport', 'TraceInvestigationFinding', 'TraceErrorGroup', 'ErrorClusterTraces',
             'Project')} | {('accounts', 'User'), ('accounts', 'Workspace')}
-        programs = {m.PREPARE: expected, m.CHUNK: expected, m.VERIFY_SLICE: expected, m.COHORTS: expected,
+        programs = {m.PREPARE: expected, m.CHUNK: expected, m.BASELINE_PROGRAM: expected,
+            m.VERIFY_SLICE: expected, m.COHORTS_PROGRAM: expected,
             # Target reads follow 0118's own relation path from the membership model.
             m.TARGET_SLICE: {('tracer', 'ErrorClusterTraces')}, m.TARGET_COHORTS: {('tracer', 'ErrorClusterTraces')}}
         for program, models in programs.items():
@@ -281,7 +286,7 @@ class InvestigationReferenceTests(unittest.TestCase):
             for text in ('ANALYZE', 'pg_stat', 'TRIGGER', 'session_replication_role', 'INSERT', 'UPDATE '):
                 self.assertNotIn(text, program)
         mutations = {'create', 'bulk_create', 'bulk_update', 'update', 'delete', 'save', 'get_or_create', 'update_or_create'}
-        for program in (m.VERIFY_SLICE, m.COHORTS, m.TARGET_SLICE, m.TARGET_COHORTS):
+        for program in (m.BASELINE_PROGRAM, m.VERIFY_SLICE, m.COHORTS_PROGRAM, m.TARGET_SLICE, m.TARGET_COHORTS):
             verify_calls = {node.func.attr for node in ast.walk(ast.parse(program))
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)}
             self.assertFalse(verify_calls & mutations)
@@ -533,7 +538,7 @@ class InvestigationReferenceTests(unittest.TestCase):
                 self.assertEqual(len(fake.committed), 40)
                 self.assertTrue(hasattr(driver, '_investigation_reference'))
                 self.assertFalse(hasattr(driver, '_investigation_reference_pending'))
-                self.assertEqual(fake.calls[-1][0], s.DJANGO_PREFIX+m.COHORTS)
+                self.assertEqual(fake.calls[-1][0], s.DJANGO_PREFIX+m.COHORTS_PROGRAM)
                 measured.append(entry['table'])
                 return dict(engine='postgres', table='public.'+entry['table'], rows=222222, bytes=7654321)
             result = p.seed_reference_tables(entries, driver.seed_reference_table, measure)
@@ -541,8 +546,8 @@ class InvestigationReferenceTests(unittest.TestCase):
             self.assertEqual(measured, [entry['table'] for entry in entries])
             programs = Counter(program for program, args in fake.calls)
             # Each table callback runs the same full bounded verification.
-            self.assertEqual(programs, Counter({PROGRAMS[0]:1, PROGRAMS[1]:40,
-                PROGRAMS[2]:(VERIFY_CALLS-1)*len(entries), PROGRAMS[3]:len(entries)}))
+            self.assertEqual(programs, Counter({PROGRAMS[0]:1, PROGRAMS[1]:1, PROGRAMS[2]:40,
+                PROGRAMS[3]:(VERIFY_CALLS-1)*len(entries), PROGRAMS[4]:len(entries)}))
             self.assertEqual(fake.calls[0][1], ARGS)
             self.assertEqual(len(driver.corpus['reference_seed_operations']), 1)
             operation = driver.corpus['reference_seed_operations'][0]
@@ -578,7 +583,7 @@ class InvestigationReferenceTests(unittest.TestCase):
             driver.seed_investigation_reference_family(100000)
             # A repeat call is one full bounded verification and no writes.
             self.assertEqual([program for program, args in fake.calls[calls:]],
-                [PROGRAMS[2]]*(VERIFY_CALLS-1) + [PROGRAMS[3]])
+                [PROGRAMS[3]]*(VERIFY_CALLS-1) + [PROGRAMS[4]])
             self.assertEqual(len(driver.corpus['reference_seed_operations']), 1)
 
     def test_bad_counts_and_unknown_cohorts_never_complete(self):
@@ -602,21 +607,29 @@ class InvestigationReferenceTests(unittest.TestCase):
             setattr(fake, hook, lambda value: value)
             driver.seed_investigation_reference_family(100000)
             self.assertEqual(fake.skipped, list(range(0, 100000, 2500)))
-        # Above scale one, only bucket 0 carries the whole-table counts.
         fake = FakeApp(scale=2)
-        fake.alter_verified = lambda value: dict(value, counts=value['counts'] or {k: 10**9 for k in TABLES})
+        fake.alter_verified = lambda value: dict(value, seeded_counts=dict(value['seeded_counts'],
+            tracer_trace_investigation_job=0))
         with self.assertRaises(p.ManualRelease): driver_for(fake).seed_investigation_reference_family(200000)
 
     def test_invalid_prepare_rows_and_context_fail_closed(self):
-        for change in (lambda value: None, lambda value: dict(value, counts={}),
-                lambda value: dict(value, context=None),
-                lambda value: dict(value, seeded_counts={k: False for k in TABLES}),
-                lambda value: dict(value, seeded_counts={k: 1000000 for k in TABLES})):
+        for change in (lambda value: None, lambda value: dict(value, context=None),
+                lambda value: dict(value, context=1)):
             fake = FakeApp()
             fake.alter_prepared = change
             driver = driver_for(fake)
             with self.assertRaises(p.ManualRelease): driver.seed_investigation_reference_family(100000)
             self.assertEqual(len(fake.calls), 1)
+            self.assertFalse(hasattr(driver, '_investigation_reference_pending'))
+        for change in (lambda value: None, lambda value: dict(value, counts={}),
+                lambda value: dict(value, seeded_counts={}),
+                lambda value: dict(value, counts=dict(value['counts'], tracer_trace_investigation_job=True)),
+                lambda value: dict(value, seeded_counts=dict(value['seeded_counts'], tracer_trace_investigation_job=1000000))):
+            fake = FakeApp()
+            fake.alter_baseline = change
+            driver = driver_for(fake)
+            with self.assertRaises(p.ManualRelease): driver.seed_investigation_reference_family(100000)
+            self.assertEqual(len(fake.calls), 2)
             self.assertFalse(hasattr(driver, '_investigation_reference_pending'))
         for rows in (True, 99999, 0, 100000001, 100000.0, '100000'):
             driver = driver_for(mock.Mock())
@@ -634,13 +647,13 @@ class InvestigationReferenceTests(unittest.TestCase):
         driver.seed_investigation_reference_family(100001)
         self.assertEqual(len(fake.committed), 80)
         self.assertEqual(driver._investigation_reference['cohorts']['groups'], 2000)
-        # Read-only work per call is fixed: twice the payload slices and one
-        # UUID bucket per scale block, never one call over the whole fixture.
+        # Read-only work per call is fixed: baseline and cohort reads use one
+        # UUID bucket per scale block, while payload slices stay 10,000 jobs.
         programs = Counter(program for program, args in fake.calls)
-        self.assertEqual((programs[PROGRAMS[2]], programs[PROGRAMS[3]]), (2*(VERIFY_CALLS-1), 2))
-        self.assertEqual(sorted(args['bucket'] for program, args in fake.calls if program == PROGRAMS[3]), [0, 1])
+        self.assertEqual((programs[PROGRAMS[3]], programs[PROGRAMS[4]]), (2*(VERIFY_CALLS-1), 2))
+        self.assertEqual(sorted(args['bucket'] for program, args in fake.calls if program == PROGRAMS[4]), [0, 1])
         self.assertTrue(all(args['stop']-args['start'] == m.VERIFY_JOBS for program, args in fake.calls
-            if program == PROGRAMS[2]))
+            if program == PROGRAMS[3]))
         calls = len(fake.calls)
         for rows in (100000, 200000):
             with self.assertRaises(p.ManualRelease): driver.seed_investigation_reference_family(rows)
@@ -676,11 +689,11 @@ class InvestigationReferenceTests(unittest.TestCase):
         p.seed_reference_tables(selected, driver.seed_reference_table, measure)
         self.assertEqual([table for table, count in measured], order)
         first = min(count for table, count in measured if table in shared)
-        writes = [index for index, program in enumerate(calls) if program in PROGRAMS[:2]]
+        writes = [index for index, program in enumerate(calls) if program in (PROGRAMS[0], PROGRAMS[2])]
         self.assertTrue(writes)
         self.assertLess(max(writes), first)
         self.assertEqual(sum(program == PROGRAMS[0] for program in calls), 1)
-        self.assertEqual(sum(program == PROGRAMS[1] for program in calls), 40)
+        self.assertEqual(sum(program == PROGRAMS[2] for program in calls), 40)
         self.assertEqual(len(error.committed), 20)
         self.assertEqual([row['table'] for row in driver.corpus['reference_seed_operations']],
             ['tracer_trace_investigation_family', 'tracer_error_feed_family'])
@@ -842,7 +855,12 @@ class InvestigationReferenceTests(unittest.TestCase):
     def test_actual_target_slice_counts_every_wrong_or_missing_membership(self):
         class Members:
             def __init__(self, store): self.store, self.pks = store, None
-            def filter(self, pk__in): self.pks = pk__in; return self
+            def filter(self, pk__in, **filters):
+                self.assert_project(filters)
+                self.pks = pk__in; return self
+            def assert_project(self, filters):
+                assert set(filters) == {'cluster__project_id'}
+                self.expected_project = filters['cluster__project_id']
             def values_list(self, *fields):
                 assert fields == ('id', 'occurred_at', 'occurrence_time_source', 'finding__report__job__root_end_time')
                 return [(pk,) + self.store[pk] for pk in self.pks if pk in self.store]
@@ -860,7 +878,9 @@ class InvestigationReferenceTests(unittest.TestCase):
             env.update(context=context, json=json, Member=SimpleNamespace(all_objects=Members(
                 {key: value for key, (value, deleted) in store.items()})))
             env['a'].update(context=context, scale=1, start=start, stop=start + m.VERIFY_JOBS)
-            return execute(env, m.TARGET_SLICE_BODY), store
+            result = execute(env, m.TARGET_SLICE_BODY)
+            self.assertEqual(env['Member'].all_objects.expected_project, env['identity']('project',0))
+            return result, store
         # 60,000-70,000: live and soft-deleted eligible chains plus legacy rows.
         # 90,000-100,000: no root end time, findings without membership, legacy.
         for start in (60000, 90000):
