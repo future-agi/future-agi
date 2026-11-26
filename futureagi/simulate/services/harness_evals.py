@@ -155,6 +155,12 @@ def _sources_for(modality: str) -> dict[str, str]:
     return _SOURCE_BY_KEY_VOICE if modality == "voice" else _SOURCE_BY_KEY_TEXT
 
 
+def source_for_key(key: str, modality: str) -> str | None:
+    """The stored piece of a call that fills ``key`` on a run of this modality,
+    or None where nothing does. The reader's kinds are built on this table."""
+    return _sources_for(modality).get(key)
+
+
 def _required_keys(template: EvalTemplate) -> list[str]:
     config = template.config or {}
     keys = config.get("required_keys")
