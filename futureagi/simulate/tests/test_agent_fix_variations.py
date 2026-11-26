@@ -359,11 +359,11 @@ class TestThePrivateSuite:
                 environment, numbers=(), extra=[f"{key}-var1" for key in keys]
             )
         )
-        env_files = drafts._piece_files(
+        env_files = drafts.piece_files(
             environment, "environment", fix_run.source_run.environment_version
         )
         with (
-            patch.object(drafts, "_piece_files", side_effect=[pinned, env_files]),
+            patch.object(drafts, "piece_files", side_effect=[pinned, env_files]),
             patch.object(variations, "failing_targets", return_value=goals),
         ):
             if collide:

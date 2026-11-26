@@ -94,7 +94,9 @@ def test_a_check_the_scenario_s_proof_never_verified_is_neither_broken_nor_teste
         ),
     ):
         calls.return_value.order_by.return_value = calls_run
-        result = build_diagnosis(SimpleNamespace(run_test_id="run-1"), [], {}, {})
+        result = build_diagnosis(
+            SimpleNamespace(run_test_id="run-1", id="execution-1"), [], {}, {}
+        )
 
     [goal] = result["goals"]
     assert (goal["broken_call_ids"], goal["tested_call_count"]) == (["broke"], 1)
