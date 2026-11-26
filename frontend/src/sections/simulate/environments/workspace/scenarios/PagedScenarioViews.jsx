@@ -43,6 +43,7 @@ export default function PagedScenarioViews({
   locked,
   lockTooltip,
   rowHeight,
+  isValidating,
   readout,
   onOpen,
 }) {
@@ -142,6 +143,7 @@ export default function PagedScenarioViews({
             locked={locked}
             lockTooltip={lockTooltip}
             rowHeight={rowHeight}
+            isValidating={isValidating}
           />
         ) : (
           <GroupedScenarioList
@@ -153,6 +155,7 @@ export default function PagedScenarioViews({
             selection={selection}
             locked={locked}
             lockTooltip={lockTooltip}
+            isValidating={isValidating}
           />
         )}
       </Box>
@@ -299,6 +302,8 @@ PagedScenarioViews.propTypes = {
   locked: PropTypes.bool,
   lockTooltip: PropTypes.string,
   rowHeight: PropTypes.string,
+  // (row) => whether a running validation is proving it.
+  isValidating: PropTypes.func,
   onOpen: PropTypes.func,
   // Set while a search, filter or hidden group narrows the list.
   readout: PropTypes.shape({
