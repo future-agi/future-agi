@@ -1096,6 +1096,11 @@ def _as_launched(template, question: Mapping[str, Any], organization_id) -> bool
     return (
         # A system template, or the ask's own organisation's.
         template.organization_id in (None, organization_id)
+        # The criteria may be held by the current version, outside the digest.
+        and _own_criteria(template)[0]
+        == question.get("own_criteria", question["criteria"])
+        and template.model == question["model"]
+        and list(_labels_of(template)) == list(question["labels"])
         and template_digest(template) == question.get("template_digest")
         and (None if current is None else current.version_number)
         == question["template_version"]

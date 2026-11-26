@@ -121,10 +121,14 @@ class FakeAgentModel:
     def __init__(self, answer="No"):
         self.requests = []
         self.answer = answer
+        # Raised once the request is recorded: the worker dying mid-call.
+        self.error: BaseException | None = None
 
     # Set on the class as a plain callable, so it is not bound: no client argument.
     async def __call__(self, messages, tools=None):
         self.requests.append(json.loads(json.dumps(messages, default=str)))
+        if self.error is not None:
+            raise self.error
         content = json.dumps(
             {"result": self.answer, "explanation": "It refunded 250, over its limit."}
         )
@@ -426,6 +430,93 @@ def test_a_configured_eval_edited_after_launch_is_not_graded(
     row = _rows(ask)[0]
     assert (row.state, row.cause) == (STATE.GRADING_ERROR, "question_changed")
     assert agent_model.requests == []
+
+
+@pytest.mark.django_db
+def test_a_versions_own_criteria_edited_in_place_after_launch_is_not_graded(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    agent_model,
+):
+    """The version holds the criteria, so the template's own fields don't change
+    and its version number stays: only the criteria the evaluator reads do."""
+    held = "Did the agent keep to {{agent_prompt}}? Answer Yes or No."
+    template = _agent_template(
+        organization,
+        workspace,
+        user,
+        criteria=held,
+        prompt_messages=[{"role": "user", "name": "eval_prompt", "content": held}],
+    )
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        configured_eval("c1", template, modality="voice"),
+    )
+    version = EvalTemplateVersion.objects.get_default(template)
+    version.prompt_messages = [
+        {
+            "role": "user",
+            "name": "eval_prompt",
+            "content": "Was {{agent_prompt}} polite?",
+        }
+    ]
+    version.save(update_fields=["prompt_messages"])
+
+    grade_row(str(_rows(ask)[0].id))
+
+    row = _rows(ask)[0]
+    assert (row.state, row.cause) == (STATE.GRADING_ERROR, "question_changed")
+    assert agent_model.requests == []
+
+
+@pytest.mark.django_db
+def test_a_dead_workers_configured_row_names_the_evaluators_log_row(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    agent_model,
+):
+    """The worker died inside the agent evaluator's call: the row is closed as a
+    dead worker's and names the log row that call was charged on."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from ee.usage.models.usage import APICallLog
+    from simulate.services import ask_engine as engine
+
+    template = _agent_template(organization, workspace, user)
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        configured_eval("c1", template, modality="voice"),
+    )
+    row = _rows(ask)[0]
+    agent_model.error = typed._WorkerKilled()
+    with pytest.raises(typed._WorkerKilled):
+        grade_row(str(row.id))
+    SimulateEvalResult.objects.filter(id=row.id).update(
+        claimed_at=timezone.now() - engine.GRADING_GIVE_UP - timedelta(seconds=1)
+    )
+
+    engine.settle_ask(ask.id)
+
+    row.refresh_from_db()
+    assert (row.state, row.cause) == (STATE.INFRASTRUCTURE_ERROR, "worker_died")
+    (log,) = APICallLog.objects.filter(organization=organization)
+    assert row.evaluator_log_id == log.log_id
 
 
 @pytest.mark.django_db
