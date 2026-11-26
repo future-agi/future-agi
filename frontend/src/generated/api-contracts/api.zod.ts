@@ -47795,39 +47795,51 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
           id: zod.string().uuid(),
           label: zod.string().min(1).nullable(),
           environment_version_id: zod.string().uuid(),
-          environment_label: zod.string().min(1),
+          environment_label: zod.union([zod.string().min(1), zod.null()]),
           suite_version_id: zod.string().uuid(),
-          suite_label: zod.string().min(1),
+          suite_label: zod.union([zod.string().min(1), zod.null()]),
           locked_at: zod.string().datetime({ offset: true }),
-          locked_by: zod.object({
-            id: zod.string().min(1),
-            name: zod.string(),
-          }),
-          unlocked_at: zod.string().datetime({ offset: true }),
-          unlocked_by: zod.object({
-            id: zod.string().min(1),
-            name: zod.string(),
-          }),
+          locked_by: zod.union([
+            zod.object({
+              id: zod.string().min(1),
+              name: zod.string(),
+            }),
+            zod.null(),
+          ]),
+          unlocked_at: zod.union([
+            zod.string().datetime({ offset: true }),
+            zod.null(),
+          ]),
+          unlocked_by: zod.union([
+            zod.object({
+              id: zod.string().min(1),
+              name: zod.string(),
+            }),
+            zod.null(),
+          ]),
           train: zod.number(),
           test: zod.number(),
         }),
       ),
       lock: zod.object({
-        environment_version_id: zod.string().uuid(),
-        suite_version_id: zod.string().uuid(),
+        environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
+        suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
         proved: zod
           .boolean()
           .describe(
             "The suite version passed its proofs against this environment version.",
           ),
         can_lock: zod.boolean(),
-        refusal: zod.object({
-          code: zod.string().min(1),
-          message: zod.string().min(1),
-        }),
-        train: zod.number(),
-        test: zod.number(),
-        test_target: zod.number(),
+        refusal: zod.union([
+          zod.object({
+            code: zod.string().min(1),
+            message: zod.string().min(1),
+          }),
+          zod.null(),
+        ]),
+        train: zod.union([zod.number(), zod.null()]),
+        test: zod.union([zod.number(), zod.null()]),
+        test_target: zod.union([zod.number(), zod.null()]),
       }),
     }),
   });
@@ -51374,41 +51386,53 @@ export const SimulateApiHarnessEnvironmentsVersionsResponse = zod.object({
   releases: zod.array(
     zod.object({
       id: zod.string().uuid(),
-      label: zod.string().min(1).nullable(),
+      label: zod.string().min(1),
       environment_version_id: zod.string().uuid(),
-      environment_label: zod.string().min(1),
+      environment_label: zod.union([zod.string().min(1), zod.null()]),
       suite_version_id: zod.string().uuid(),
-      suite_label: zod.string().min(1),
+      suite_label: zod.union([zod.string().min(1), zod.null()]),
       locked_at: zod.string().datetime({ offset: true }),
-      locked_by: zod.object({
-        id: zod.string().min(1),
-        name: zod.string(),
-      }),
-      unlocked_at: zod.string().datetime({ offset: true }),
-      unlocked_by: zod.object({
-        id: zod.string().min(1),
-        name: zod.string(),
-      }),
+      locked_by: zod.union([
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string(),
+        }),
+        zod.null(),
+      ]),
+      unlocked_at: zod.union([
+        zod.string().datetime({ offset: true }),
+        zod.null(),
+      ]),
+      unlocked_by: zod.union([
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string(),
+        }),
+        zod.null(),
+      ]),
       train: zod.number(),
       test: zod.number(),
     }),
   ),
   lock: zod.object({
-    environment_version_id: zod.string().uuid(),
-    suite_version_id: zod.string().uuid(),
+    environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
+    suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
     proved: zod
       .boolean()
       .describe(
         "The suite version passed its proofs against this environment version.",
       ),
     can_lock: zod.boolean(),
-    refusal: zod.object({
-      code: zod.string().min(1),
-      message: zod.string().min(1),
-    }),
-    train: zod.number(),
-    test: zod.number(),
-    test_target: zod.number(),
+    refusal: zod.union([
+      zod.object({
+        code: zod.string().min(1),
+        message: zod.string().min(1),
+      }),
+      zod.null(),
+    ]),
+    train: zod.union([zod.number(), zod.null()]),
+    test: zod.union([zod.number(), zod.null()]),
+    test_target: zod.union([zod.number(), zod.null()]),
   }),
 });
 
@@ -51727,39 +51751,51 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
         environment_version_id: zod.string().uuid(),
-        environment_label: zod.string().min(1),
+        environment_label: zod.union([zod.string().min(1), zod.null()]),
         suite_version_id: zod.string().uuid(),
-        suite_label: zod.string().min(1),
+        suite_label: zod.union([zod.string().min(1), zod.null()]),
         locked_at: zod.string().datetime({ offset: true }),
-        locked_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        unlocked_at: zod.string().datetime({ offset: true }),
-        unlocked_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
+        locked_by: zod.union([
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+        unlocked_at: zod.union([
+          zod.string().datetime({ offset: true }),
+          zod.null(),
+        ]),
+        unlocked_by: zod.union([
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
         train: zod.number(),
         test: zod.number(),
       }),
     ),
     lock: zod.object({
-      environment_version_id: zod.string().uuid(),
-      suite_version_id: zod.string().uuid(),
+      environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
+      suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
       proved: zod
         .boolean()
         .describe(
           "The suite version passed its proofs against this environment version.",
         ),
       can_lock: zod.boolean(),
-      refusal: zod.object({
-        code: zod.string().min(1),
-        message: zod.string().min(1),
-      }),
-      train: zod.number(),
-      test: zod.number(),
-      test_target: zod.number(),
+      refusal: zod.union([
+        zod.object({
+          code: zod.string().min(1),
+          message: zod.string().min(1),
+        }),
+        zod.null(),
+      ]),
+      train: zod.union([zod.number(), zod.null()]),
+      test: zod.union([zod.number(), zod.null()]),
+      test_target: zod.union([zod.number(), zod.null()]),
     }),
   });
 
@@ -51802,202 +51838,238 @@ export const SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse =
     agent: zod.array(
       zod.object({
         id: zod.string().uuid(),
-        label: zod.string().min(1),
+        label: zod.string().min(1).nullable(),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
-        created_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        origin: zod.string().min(1),
+        created_by: zod
+          .object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          })
+          .nullable(),
+        origin: zod.string().min(1).nullable(),
         summary: zod.string(),
-        hash: zod.string().min(1),
-        parent_id: zod.string().uuid(),
-        derived_from_agent_version_id: zod.string().uuid(),
-        scenario_count: zod.number(),
+        hash: zod.string().min(1).nullable(),
+        parent_id: zod.string().uuid().nullable(),
+        derived_from_agent_version_id: zod.string().uuid().nullable(),
+        scenario_count: zod.number().nullable(),
         source: zod
           .object({})
           .passthrough()
-          .describe("An agent version's non-secret source facts."),
+          .describe("An agent version's non-secret source facts.")
+          .nullable(),
         prompt: zod
           .string()
           .describe(
             "The default agent version's prompt; null on every other item.",
-          ),
-        preflight_status: zod.string().min(1),
+          )
+          .nullable(),
+        preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
           .object({})
           .passthrough()
           .describe(
             "An agent version's last check: check statuses and names only.",
-          ),
-        preflighted_at: zod.string().datetime({ offset: true }),
+          )
+          .nullable(),
+        preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
           .string()
           .datetime({ offset: true })
-          .describe("When an agent version's latest check was asked for."),
+          .describe("When an agent version's latest check was asked for.")
+          .nullable(),
         credential_names: zod
           .array(zod.string().min(1))
           .describe(
             "An agent version's credential names, provider keys included.",
-          ),
+          )
+          .nullable(),
         required_variable_names: zod
           .array(zod.string().min(1))
           .describe(
             "The variables an agent version's source reads, when known.",
-          ),
+          )
+          .nullable(),
         activation_outcome: zod
           .string()
           .min(1)
           .describe(
             "Why a passed agent version is or isn't this environment's default, as last recorded.",
-          ),
+          )
+          .nullable(),
         requested_here: zod
           .boolean()
-          .describe("Whether this environment asked for an agent version."),
+          .describe("Whether this environment asked for an agent version.")
+          .nullable(),
         pickable: zod
           .boolean()
           .describe(
             "Whether an agent version can be picked for a run of this environment or made its default.",
-          ),
+          )
+          .nullable(),
         discardable: zod
           .boolean()
-          .describe("Whether this environment can discard an agent version."),
+          .describe("Whether this environment can discard an agent version.")
+          .nullable(),
       }),
     ),
     environment: zod.array(
       zod.object({
         id: zod.string().uuid(),
-        label: zod.string().min(1),
+        label: zod.string().min(1).nullable(),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
-        created_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        origin: zod.string().min(1),
+        created_by: zod
+          .object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          })
+          .nullable(),
+        origin: zod.string().min(1).nullable(),
         summary: zod.string(),
-        hash: zod.string().min(1),
-        parent_id: zod.string().uuid(),
-        derived_from_agent_version_id: zod.string().uuid(),
-        scenario_count: zod.number(),
+        hash: zod.string().min(1).nullable(),
+        parent_id: zod.string().uuid().nullable(),
+        derived_from_agent_version_id: zod.string().uuid().nullable(),
+        scenario_count: zod.number().nullable(),
         source: zod
           .object({})
           .passthrough()
-          .describe("An agent version's non-secret source facts."),
+          .describe("An agent version's non-secret source facts.")
+          .nullable(),
         prompt: zod
           .string()
           .describe(
             "The default agent version's prompt; null on every other item.",
-          ),
-        preflight_status: zod.string().min(1),
+          )
+          .nullable(),
+        preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
           .object({})
           .passthrough()
           .describe(
             "An agent version's last check: check statuses and names only.",
-          ),
-        preflighted_at: zod.string().datetime({ offset: true }),
+          )
+          .nullable(),
+        preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
           .string()
           .datetime({ offset: true })
-          .describe("When an agent version's latest check was asked for."),
+          .describe("When an agent version's latest check was asked for.")
+          .nullable(),
         credential_names: zod
           .array(zod.string().min(1))
           .describe(
             "An agent version's credential names, provider keys included.",
-          ),
+          )
+          .nullable(),
         required_variable_names: zod
           .array(zod.string().min(1))
           .describe(
             "The variables an agent version's source reads, when known.",
-          ),
+          )
+          .nullable(),
         activation_outcome: zod
           .string()
           .min(1)
           .describe(
             "Why a passed agent version is or isn't this environment's default, as last recorded.",
-          ),
+          )
+          .nullable(),
         requested_here: zod
           .boolean()
-          .describe("Whether this environment asked for an agent version."),
+          .describe("Whether this environment asked for an agent version.")
+          .nullable(),
         pickable: zod
           .boolean()
           .describe(
             "Whether an agent version can be picked for a run of this environment or made its default.",
-          ),
+          )
+          .nullable(),
         discardable: zod
           .boolean()
-          .describe("Whether this environment can discard an agent version."),
+          .describe("Whether this environment can discard an agent version.")
+          .nullable(),
       }),
     ),
     suite: zod.array(
       zod.object({
         id: zod.string().uuid(),
-        label: zod.string().min(1),
+        label: zod.string().min(1).nullable(),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
-        created_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        origin: zod.string().min(1),
+        created_by: zod
+          .object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          })
+          .nullable(),
+        origin: zod.string().min(1).nullable(),
         summary: zod.string(),
-        hash: zod.string().min(1),
-        parent_id: zod.string().uuid(),
-        derived_from_agent_version_id: zod.string().uuid(),
-        scenario_count: zod.number(),
+        hash: zod.string().min(1).nullable(),
+        parent_id: zod.string().uuid().nullable(),
+        derived_from_agent_version_id: zod.string().uuid().nullable(),
+        scenario_count: zod.number().nullable(),
         source: zod
           .object({})
           .passthrough()
-          .describe("An agent version's non-secret source facts."),
+          .describe("An agent version's non-secret source facts.")
+          .nullable(),
         prompt: zod
           .string()
           .describe(
             "The default agent version's prompt; null on every other item.",
-          ),
-        preflight_status: zod.string().min(1),
+          )
+          .nullable(),
+        preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
           .object({})
           .passthrough()
           .describe(
             "An agent version's last check: check statuses and names only.",
-          ),
-        preflighted_at: zod.string().datetime({ offset: true }),
+          )
+          .nullable(),
+        preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
           .string()
           .datetime({ offset: true })
-          .describe("When an agent version's latest check was asked for."),
+          .describe("When an agent version's latest check was asked for.")
+          .nullable(),
         credential_names: zod
           .array(zod.string().min(1))
           .describe(
             "An agent version's credential names, provider keys included.",
-          ),
+          )
+          .nullable(),
         required_variable_names: zod
           .array(zod.string().min(1))
           .describe(
             "The variables an agent version's source reads, when known.",
-          ),
+          )
+          .nullable(),
         activation_outcome: zod
           .string()
           .min(1)
           .describe(
             "Why a passed agent version is or isn't this environment's default, as last recorded.",
-          ),
+          )
+          .nullable(),
         requested_here: zod
           .boolean()
-          .describe("Whether this environment asked for an agent version."),
+          .describe("Whether this environment asked for an agent version.")
+          .nullable(),
         pickable: zod
           .boolean()
           .describe(
             "Whether an agent version can be picked for a run of this environment or made its default.",
-          ),
+          )
+          .nullable(),
         discardable: zod
           .boolean()
-          .describe("Whether this environment can discard an agent version."),
+          .describe("Whether this environment can discard an agent version.")
+          .nullable(),
       }),
     ),
     releases: zod.array(
@@ -52005,39 +52077,51 @@ export const SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse =
         id: zod.string().uuid(),
         label: zod.string().min(1),
         environment_version_id: zod.string().uuid(),
-        environment_label: zod.string().min(1),
+        environment_label: zod.union([zod.string().min(1), zod.null()]),
         suite_version_id: zod.string().uuid(),
-        suite_label: zod.string().min(1),
+        suite_label: zod.union([zod.string().min(1), zod.null()]),
         locked_at: zod.string().datetime({ offset: true }),
-        locked_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        unlocked_at: zod.string().datetime({ offset: true }),
-        unlocked_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
+        locked_by: zod.union([
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+        unlocked_at: zod.union([
+          zod.string().datetime({ offset: true }),
+          zod.null(),
+        ]),
+        unlocked_by: zod.union([
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
         train: zod.number(),
         test: zod.number(),
       }),
     ),
     lock: zod.object({
-      environment_version_id: zod.string().uuid(),
-      suite_version_id: zod.string().uuid(),
+      environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
+      suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
       proved: zod
         .boolean()
         .describe(
           "The suite version passed its proofs against this environment version.",
         ),
       can_lock: zod.boolean(),
-      refusal: zod.object({
-        code: zod.string().min(1),
-        message: zod.string().min(1),
-      }),
-      train: zod.number(),
-      test: zod.number(),
-      test_target: zod.number(),
+      refusal: zod.union([
+        zod.object({
+          code: zod.string().min(1),
+          message: zod.string().min(1),
+        }),
+        zod.null(),
+      ]),
+      train: zod.union([zod.number(), zod.null()]),
+      test: zod.union([zod.number(), zod.null()]),
+      test_target: zod.union([zod.number(), zod.null()]),
     }),
   });
 
@@ -52085,202 +52169,238 @@ export const SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse =
     agent: zod.array(
       zod.object({
         id: zod.string().uuid(),
-        label: zod.string().min(1),
+        label: zod.string().min(1).nullable(),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
-        created_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        origin: zod.string().min(1),
+        created_by: zod
+          .object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          })
+          .nullable(),
+        origin: zod.string().min(1).nullable(),
         summary: zod.string(),
-        hash: zod.string().min(1),
-        parent_id: zod.string().uuid(),
-        derived_from_agent_version_id: zod.string().uuid(),
-        scenario_count: zod.number(),
+        hash: zod.string().min(1).nullable(),
+        parent_id: zod.string().uuid().nullable(),
+        derived_from_agent_version_id: zod.string().uuid().nullable(),
+        scenario_count: zod.number().nullable(),
         source: zod
           .object({})
           .passthrough()
-          .describe("An agent version's non-secret source facts."),
+          .describe("An agent version's non-secret source facts.")
+          .nullable(),
         prompt: zod
           .string()
           .describe(
             "The default agent version's prompt; null on every other item.",
-          ),
-        preflight_status: zod.string().min(1),
+          )
+          .nullable(),
+        preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
           .object({})
           .passthrough()
           .describe(
             "An agent version's last check: check statuses and names only.",
-          ),
-        preflighted_at: zod.string().datetime({ offset: true }),
+          )
+          .nullable(),
+        preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
           .string()
           .datetime({ offset: true })
-          .describe("When an agent version's latest check was asked for."),
+          .describe("When an agent version's latest check was asked for.")
+          .nullable(),
         credential_names: zod
           .array(zod.string().min(1))
           .describe(
             "An agent version's credential names, provider keys included.",
-          ),
+          )
+          .nullable(),
         required_variable_names: zod
           .array(zod.string().min(1))
           .describe(
             "The variables an agent version's source reads, when known.",
-          ),
+          )
+          .nullable(),
         activation_outcome: zod
           .string()
           .min(1)
           .describe(
             "Why a passed agent version is or isn't this environment's default, as last recorded.",
-          ),
+          )
+          .nullable(),
         requested_here: zod
           .boolean()
-          .describe("Whether this environment asked for an agent version."),
+          .describe("Whether this environment asked for an agent version.")
+          .nullable(),
         pickable: zod
           .boolean()
           .describe(
             "Whether an agent version can be picked for a run of this environment or made its default.",
-          ),
+          )
+          .nullable(),
         discardable: zod
           .boolean()
-          .describe("Whether this environment can discard an agent version."),
+          .describe("Whether this environment can discard an agent version.")
+          .nullable(),
       }),
     ),
     environment: zod.array(
       zod.object({
         id: zod.string().uuid(),
-        label: zod.string().min(1),
+        label: zod.string().min(1).nullable(),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
-        created_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        origin: zod.string().min(1),
+        created_by: zod
+          .object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          })
+          .nullable(),
+        origin: zod.string().min(1).nullable(),
         summary: zod.string(),
-        hash: zod.string().min(1),
-        parent_id: zod.string().uuid(),
-        derived_from_agent_version_id: zod.string().uuid(),
-        scenario_count: zod.number(),
+        hash: zod.string().min(1).nullable(),
+        parent_id: zod.string().uuid().nullable(),
+        derived_from_agent_version_id: zod.string().uuid().nullable(),
+        scenario_count: zod.number().nullable(),
         source: zod
           .object({})
           .passthrough()
-          .describe("An agent version's non-secret source facts."),
+          .describe("An agent version's non-secret source facts.")
+          .nullable(),
         prompt: zod
           .string()
           .describe(
             "The default agent version's prompt; null on every other item.",
-          ),
-        preflight_status: zod.string().min(1),
+          )
+          .nullable(),
+        preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
           .object({})
           .passthrough()
           .describe(
             "An agent version's last check: check statuses and names only.",
-          ),
-        preflighted_at: zod.string().datetime({ offset: true }),
+          )
+          .nullable(),
+        preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
           .string()
           .datetime({ offset: true })
-          .describe("When an agent version's latest check was asked for."),
+          .describe("When an agent version's latest check was asked for.")
+          .nullable(),
         credential_names: zod
           .array(zod.string().min(1))
           .describe(
             "An agent version's credential names, provider keys included.",
-          ),
+          )
+          .nullable(),
         required_variable_names: zod
           .array(zod.string().min(1))
           .describe(
             "The variables an agent version's source reads, when known.",
-          ),
+          )
+          .nullable(),
         activation_outcome: zod
           .string()
           .min(1)
           .describe(
             "Why a passed agent version is or isn't this environment's default, as last recorded.",
-          ),
+          )
+          .nullable(),
         requested_here: zod
           .boolean()
-          .describe("Whether this environment asked for an agent version."),
+          .describe("Whether this environment asked for an agent version.")
+          .nullable(),
         pickable: zod
           .boolean()
           .describe(
             "Whether an agent version can be picked for a run of this environment or made its default.",
-          ),
+          )
+          .nullable(),
         discardable: zod
           .boolean()
-          .describe("Whether this environment can discard an agent version."),
+          .describe("Whether this environment can discard an agent version.")
+          .nullable(),
       }),
     ),
     suite: zod.array(
       zod.object({
         id: zod.string().uuid(),
-        label: zod.string().min(1),
+        label: zod.string().min(1).nullable(),
         status: zod.enum(["draft", "active", "discarded"]),
         is_default: zod.boolean(),
         created_at: zod.string().datetime({ offset: true }),
-        created_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        origin: zod.string().min(1),
+        created_by: zod
+          .object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          })
+          .nullable(),
+        origin: zod.string().min(1).nullable(),
         summary: zod.string(),
-        hash: zod.string().min(1),
-        parent_id: zod.string().uuid(),
-        derived_from_agent_version_id: zod.string().uuid(),
-        scenario_count: zod.number(),
+        hash: zod.string().min(1).nullable(),
+        parent_id: zod.string().uuid().nullable(),
+        derived_from_agent_version_id: zod.string().uuid().nullable(),
+        scenario_count: zod.number().nullable(),
         source: zod
           .object({})
           .passthrough()
-          .describe("An agent version's non-secret source facts."),
+          .describe("An agent version's non-secret source facts.")
+          .nullable(),
         prompt: zod
           .string()
           .describe(
             "The default agent version's prompt; null on every other item.",
-          ),
-        preflight_status: zod.string().min(1),
+          )
+          .nullable(),
+        preflight_status: zod.string().min(1).nullable(),
         preflight_report: zod
           .object({})
           .passthrough()
           .describe(
             "An agent version's last check: check statuses and names only.",
-          ),
-        preflighted_at: zod.string().datetime({ offset: true }),
+          )
+          .nullable(),
+        preflighted_at: zod.string().datetime({ offset: true }).nullable(),
         check_started_at: zod
           .string()
           .datetime({ offset: true })
-          .describe("When an agent version's latest check was asked for."),
+          .describe("When an agent version's latest check was asked for.")
+          .nullable(),
         credential_names: zod
           .array(zod.string().min(1))
           .describe(
             "An agent version's credential names, provider keys included.",
-          ),
+          )
+          .nullable(),
         required_variable_names: zod
           .array(zod.string().min(1))
           .describe(
             "The variables an agent version's source reads, when known.",
-          ),
+          )
+          .nullable(),
         activation_outcome: zod
           .string()
           .min(1)
           .describe(
             "Why a passed agent version is or isn't this environment's default, as last recorded.",
-          ),
+          )
+          .nullable(),
         requested_here: zod
           .boolean()
-          .describe("Whether this environment asked for an agent version."),
+          .describe("Whether this environment asked for an agent version.")
+          .nullable(),
         pickable: zod
           .boolean()
           .describe(
             "Whether an agent version can be picked for a run of this environment or made its default.",
-          ),
+          )
+          .nullable(),
         discardable: zod
           .boolean()
-          .describe("Whether this environment can discard an agent version."),
+          .describe("Whether this environment can discard an agent version.")
+          .nullable(),
       }),
     ),
     releases: zod.array(
@@ -52288,39 +52408,51 @@ export const SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse =
         id: zod.string().uuid(),
         label: zod.string().min(1),
         environment_version_id: zod.string().uuid(),
-        environment_label: zod.string().min(1),
+        environment_label: zod.union([zod.string().min(1), zod.null()]),
         suite_version_id: zod.string().uuid(),
-        suite_label: zod.string().min(1),
+        suite_label: zod.union([zod.string().min(1), zod.null()]),
         locked_at: zod.string().datetime({ offset: true }),
-        locked_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        unlocked_at: zod.string().datetime({ offset: true }),
-        unlocked_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
+        locked_by: zod.union([
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+        unlocked_at: zod.union([
+          zod.string().datetime({ offset: true }),
+          zod.null(),
+        ]),
+        unlocked_by: zod.union([
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
         train: zod.number(),
         test: zod.number(),
       }),
     ),
     lock: zod.object({
-      environment_version_id: zod.string().uuid(),
-      suite_version_id: zod.string().uuid(),
+      environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
+      suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
       proved: zod
         .boolean()
         .describe(
           "The suite version passed its proofs against this environment version.",
         ),
       can_lock: zod.boolean(),
-      refusal: zod.object({
-        code: zod.string().min(1),
-        message: zod.string().min(1),
-      }),
-      train: zod.number(),
-      test: zod.number(),
-      test_target: zod.number(),
+      refusal: zod.union([
+        zod.object({
+          code: zod.string().min(1),
+          message: zod.string().min(1),
+        }),
+        zod.null(),
+      ]),
+      train: zod.union([zod.number(), zod.null()]),
+      test: zod.union([zod.number(), zod.null()]),
+      test_target: zod.union([zod.number(), zod.null()]),
     }),
   });
 
@@ -52591,39 +52723,51 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
         id: zod.string().uuid(),
         label: zod.string().min(1).nullable(),
         environment_version_id: zod.string().uuid(),
-        environment_label: zod.string().min(1),
+        environment_label: zod.union([zod.string().min(1), zod.null()]),
         suite_version_id: zod.string().uuid(),
-        suite_label: zod.string().min(1),
+        suite_label: zod.union([zod.string().min(1), zod.null()]),
         locked_at: zod.string().datetime({ offset: true }),
-        locked_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
-        unlocked_at: zod.string().datetime({ offset: true }),
-        unlocked_by: zod.object({
-          id: zod.string().min(1),
-          name: zod.string(),
-        }),
+        locked_by: zod.union([
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
+        unlocked_at: zod.union([
+          zod.string().datetime({ offset: true }),
+          zod.null(),
+        ]),
+        unlocked_by: zod.union([
+          zod.object({
+            id: zod.string().min(1),
+            name: zod.string(),
+          }),
+          zod.null(),
+        ]),
         train: zod.number(),
         test: zod.number(),
       }),
     ),
     lock: zod.object({
-      environment_version_id: zod.string().uuid(),
-      suite_version_id: zod.string().uuid(),
+      environment_version_id: zod.union([zod.string().uuid(), zod.null()]),
+      suite_version_id: zod.union([zod.string().uuid(), zod.null()]),
       proved: zod
         .boolean()
         .describe(
           "The suite version passed its proofs against this environment version.",
         ),
       can_lock: zod.boolean(),
-      refusal: zod.object({
-        code: zod.string().min(1),
-        message: zod.string().min(1),
-      }),
-      train: zod.number(),
-      test: zod.number(),
-      test_target: zod.number(),
+      refusal: zod.union([
+        zod.object({
+          code: zod.string().min(1),
+          message: zod.string().min(1),
+        }),
+        zod.null(),
+      ]),
+      train: zod.union([zod.number(), zod.null()]),
+      test: zod.union([zod.number(), zod.null()]),
+      test_target: zod.union([zod.number(), zod.null()]),
     }),
   });
 

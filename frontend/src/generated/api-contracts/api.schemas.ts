@@ -22350,15 +22350,13 @@ export interface HarnessReleaseApi {
   /** @minLength 1 */
   label: string;
   environment_version_id: string;
-  /** @minLength 1 */
-  environment_label: string;
+  environment_label: string | null;
   suite_version_id: string;
-  /** @minLength 1 */
-  suite_label: string;
+  suite_label: string | null;
   locked_at: string;
-  locked_by: HarnessVersionPersonApi;
-  unlocked_at: string;
-  unlocked_by: HarnessVersionPersonApi;
+  locked_by: HarnessVersionPersonApi | null;
+  unlocked_at: string | null;
+  unlocked_by: HarnessVersionPersonApi | null;
   train: number;
   test: number;
 }
@@ -22371,15 +22369,15 @@ export interface HarnessRefusalApi {
 }
 
 export interface HarnessLockPreviewApi {
-  environment_version_id: string;
-  suite_version_id: string;
+  environment_version_id: string | null;
+  suite_version_id: string | null;
   /** The suite version passed its proofs against this environment version. */
   proved: boolean;
   can_lock: boolean;
-  refusal: HarnessRefusalApi;
-  train: number;
-  test: number;
-  test_target: number;
+  refusal: HarnessRefusalApi | null;
+  train: number | null;
+  test: number | null;
+  test_target: number | null;
 }
 
 export interface HarnessVersionsApi {

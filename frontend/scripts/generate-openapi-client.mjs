@@ -133,11 +133,20 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixCandidate: ["verdict"],
   AgentFixOverride: ["by"],
 };
+// A release's locker and unlocker, and a lock preview's refusal, are sent as null.
+const HARNESS_RELEASE_NULLABLE_REFS = {
+  HarnessRelease: ["locked_by", "unlocked_by"],
+  HarnessLockPreview: ["refusal"],
+};
+const NULLABLE_REFS = {
+  ...AGENT_FIX_ISSUE_NULLABLE_REFS,
+  ...HARNESS_RELEASE_NULLABLE_REFS,
+};
 
 function isAgentFixIssueSchema(name) {
   return (
     name.startsWith("AgentFixIssue") ||
-    name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
+    name in NULLABLE_REFS ||
     name === "AgentFixEpochIssue" ||
     // The launch form's parts of an agent: a part it may change has no reason.
     name === "AgentFixLaunchSurface"
@@ -146,9 +155,9 @@ function isAgentFixIssueSchema(name) {
 
 // A scalar field's x-nullable becomes a null union. A definition's own x-nullable
 // only says how drf-yasg first met it, so it is dropped: the nested objects that are
-// sent as null are the ones AGENT_FIX_ISSUE_NULLABLE_REFS names.
+// sent as null are the ones NULLABLE_REFS names.
 function withNullableFields(name, schema) {
-  const fields = AGENT_FIX_ISSUE_NULLABLE_REFS[name] || [];
+  const fields = NULLABLE_REFS[name] || [];
   if (!isAgentFixIssueSchema(name) && !fields.length) return schema;
   const { "x-nullable": _definitionNullable, ...definition } = schema;
   const properties = isAgentFixIssueSchema(name)
@@ -1355,6 +1364,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       "SimulateApiHarnessEnvironmentsVersionsResponse",
       "SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse",
       "SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse",
+      "SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse",
+      "SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse",
       "SimulateApiHarnessEnvironmentsDraftsResponse",
       "SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse",
     ];
@@ -1386,6 +1397,20 @@ export type ${jsonAlias} = JsonValueApi;`,
           `${response}.${label} nullable`,
         );
       }
+    }
+    // A release always has a label: undo the version rows' label rewrite on it.
+    for (const response of [
+      "SimulateApiHarnessEnvironmentsVersionsResponse",
+      "SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse",
+      "SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        /("releases": zod\.array\(\s*zod\.object\(\{\s*"id": zod\.string\(\)\.uuid\(\),\s*"label": zod\.string\(\)\.min\(1\))\.nullable\(\)/,
+        "$1",
+        `${response}.releases.label required`,
+      );
     }
     // Only agent versions are checked, hold credentials or can be picked.
     for (const response of VERSIONS_RESPONSES) {
