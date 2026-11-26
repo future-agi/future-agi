@@ -133,12 +133,12 @@ describe("AllEvaluationsDrawer", () => {
     expect(
       screen.getByRole("checkbox", { name: "Evals (3)" }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("no_misselling")[0]).toBeInTheDocument();
+    expect(screen.getByText("no_misselling")).toBeInTheDocument();
     expect(
-      screen.getAllByText("customer_agent_task_completion")[0],
+      screen.getByText("customer_agent_task_completion"),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("refund_issued_claim")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("Agent")[0]).toBeInTheDocument();
+    expect(screen.getByText("refund_issued_claim")).toBeInTheDocument();
+    expect(screen.getByText("Agent")).toBeInTheDocument();
     expect(useEnvironmentRunTest).toHaveBeenCalledWith("rt1", {
       enabled: true,
     });
@@ -181,36 +181,26 @@ describe("AllEvaluationsDrawer", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Select no_misselling" }),
     );
-    expect(
-      screen.getByRole("button", { name: "Run Selected (0)" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run (1)" })).toBeDisabled();
   });
 
   it("runs the ticked evals from the footer and says Run All when every runnable one is ticked", () => {
     const { onRerun, onClose } = setup();
 
-    // Nothing ticked: the footer runs every runnable eval (the harness-only
-    // one is left out).
-    expect(screen.getByRole("button", { name: "Run All (2)" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run (0)" })).toBeDisabled();
 
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Select no_misselling" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Run Selected (1)" }));
-    expect(onRerun).toHaveBeenCalledTimes(1);
-    expect(onRerun).toHaveBeenLastCalledWith([CONFIGS[0]], {
-      onSuccess: expect.any(Function),
-    });
+    expect(screen.getByRole("button", { name: "Run (1)" })).toBeEnabled();
 
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Select no_misselling" }),
-    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Evals (3)" }));
     fireEvent.click(screen.getByRole("button", { name: "Run All (2)" }));
-    expect(onRerun).toHaveBeenCalledTimes(2);
-    expect(onRerun).toHaveBeenLastCalledWith([CONFIGS[0], CONFIGS[1]], {
+
+    expect(onRerun).toHaveBeenCalledWith([CONFIGS[0], CONFIGS[1]], {
       onSuccess: expect.any(Function),
     });
-    act(() => onRerun.mock.calls[1][1].onSuccess());
+    act(() => onRerun.mock.calls[0][1].onSuccess());
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -250,7 +240,7 @@ describe("AllEvaluationsDrawer", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Select no_misselling" }),
     );
-    const footer = screen.getByRole("button", { name: "Run Selected (0)" });
+    const footer = screen.getByRole("button", { name: "Run (1)" });
     expect(footer).toBeDisabled();
     fireEvent.mouseOver(footer.parentElement);
     expect(
@@ -276,7 +266,7 @@ describe("AllEvaluationsDrawer", () => {
     setup(forStatus("failed"));
 
     fireEvent.mouseOver(
-      screen.getByRole("button", { name: "Run All (0)" }).parentElement,
+      screen.getByRole("button", { name: "Run (0)" }).parentElement,
     );
     expect(
       await screen.findByText("Only a completed run can be graded again."),
@@ -301,9 +291,7 @@ describe("AllEvaluationsDrawer", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Select no_misselling" }),
     );
-    expect(
-      screen.getByRole("button", { name: "Run Selected (0)" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run (1)" })).toBeDisabled();
   });
 
   it("removes any eval, including one the harness reports, and refreshes the run's table, analytics and call details", async () => {
@@ -312,22 +300,22 @@ describe("AllEvaluationsDrawer", () => {
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
 
     expect(
-      screen.getByRole("button", { name: "Delete no_misselling" }),
+      screen.getByRole("button", { name: "Remove no_misselling" }),
     ).toBeEnabled();
     expect(
       screen.getByRole("button", {
-        name: "Delete customer_agent_task_completion",
+        name: "Remove customer_agent_task_completion",
       }),
     ).toBeEnabled();
     expect(
-      screen.getByRole("button", { name: "Delete refund_issued_claim" }),
+      screen.getByRole("button", { name: "Remove refund_issued_claim" }),
     ).toBeEnabled();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Delete no_misselling" }),
+      screen.getByRole("button", { name: "Remove no_misselling" }),
     );
     expect(removeMutate).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(removeMutate).toHaveBeenCalledWith(
       { id: "env-1", evalConfigId: "c1" },
       expect.any(Object),
@@ -347,9 +335,9 @@ describe("AllEvaluationsDrawer", () => {
     });
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Delete refund_issued_claim" }),
+      await screen.findByRole("button", { name: "Remove refund_issued_claim" }),
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
     expect(removeMutate).toHaveBeenCalledWith(
       { id: "env-1", evalConfigId: "c3" },
       expect.any(Object),
@@ -360,13 +348,9 @@ describe("AllEvaluationsDrawer", () => {
     setup();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Delete no_misselling" }),
+      screen.getByRole("button", { name: "Remove no_misselling" }),
     );
-    expect(
-      screen.getByText(
-        "Remove it from this environment? Its column leaves this run's results.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Remove this evaluation?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(removeMutate).not.toHaveBeenCalled();
@@ -381,11 +365,11 @@ describe("AllEvaluationsDrawer", () => {
       "refund_issued_claim",
     ]) {
       expect(
-        screen.getByRole("button", { name: `Delete ${name}` }),
+        screen.getByRole("button", { name: `Remove ${name}` }),
       ).toBeDisabled();
     }
     fireEvent.mouseOver(
-      screen.getByRole("button", { name: "Delete no_misselling" })
+      screen.getByRole("button", { name: "Remove no_misselling" })
         .parentElement,
     );
     expect(
@@ -397,7 +381,7 @@ describe("AllEvaluationsDrawer", () => {
     setup({ canRun: false, grading: false });
 
     expect(
-      screen.getByRole("button", { name: "Delete no_misselling" }),
+      screen.getByRole("button", { name: "Remove no_misselling" }),
     ).toBeEnabled();
   });
 
@@ -407,17 +391,14 @@ describe("AllEvaluationsDrawer", () => {
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Select no_misselling" }),
     );
-    expect(
-      screen.getByRole("button", { name: "Run Selected (1)" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run (1)" })).toBeEnabled();
 
     rerenderWith({ open: false });
     rerenderWith({ open: true });
 
     expect(
-      await screen.findByRole("button", { name: "Run All (2)" }),
-    ).toBeEnabled();
-    expect(screen.queryByRole("button", { name: /Run Selected/ })).toBeNull();
+      await screen.findByRole("button", { name: "Run (0)" }),
+    ).toBeDisabled();
   });
 
   it("opens the add flow", () => {

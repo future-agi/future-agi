@@ -43,6 +43,7 @@ import ViewerLock from "../../../components/ViewerLock";
 import useSimulationAccess from "../../../hooks/useSimulationAccess";
 import { WORKSPACE_COPY } from "../../workspace.constants";
 import StatusChip from "../StatusChip";
+import { runColorValue } from "../runs.constants";
 import { stopLiveLineOf, stopNoteOf, stopTipOf } from "../runStop";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
@@ -296,18 +297,8 @@ export default function RunDetail({
                   typography: "s3",
                   fontWeight: 600,
                   color: identity.color,
-                  // A tint of the run's own colour, which is a palette path
-                  // ("data.0") or a hex.
-                  bgcolor: (theme) => {
-                    const c = identity.color.startsWith("#")
-                      ? identity.color
-                      : identity.color
-                          .split(".")
-                          .reduce((node, key) => node?.[key], theme.palette);
-                    return typeof c === "string"
-                      ? alpha(c, 0.12)
-                      : theme.palette.action.selected;
-                  },
+                  bgcolor: (theme) =>
+                    alpha(runColorValue(theme, identity.ordinal), 0.12),
                 }}
               >
                 {identity.letter}
@@ -360,7 +351,14 @@ export default function RunDetail({
                 color: "text.subtitle",
                 width: "fit-content",
                 maxWidth: "100%",
+                borderRadius: 0.5,
+                "&:focus-visible": {
+                  outline: "2px solid",
+                  outlineColor: "border.focus",
+                  outlineOffset: 2,
+                },
               }}
+              tabIndex={0}
             >
               {`agent ${agentLabel}`}
               {envLabel ? ` · ${envLabel}` : ""}

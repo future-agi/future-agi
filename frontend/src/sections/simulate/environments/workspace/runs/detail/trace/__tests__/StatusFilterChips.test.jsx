@@ -13,12 +13,21 @@ describe("StatusFilterChips", () => {
     expect(screen.getByRole("button", { name: "Queued" })).toBeInTheDocument();
   });
 
-  it("keeps the last counts while the table reloads, so the bar doesn't flash", () => {
-    const { rerender } = render(chips({ counts: { passed: 2, failed: 7 } }));
+  it("keeps the bar as it was while the table reloads with the previous counts", () => {
+    const { rerender } = render(
+      chips({ counts: { all: 9, passed: 2, failed: 7 } }),
+    );
     expect(screen.queryByRole("button", { name: "Queued" })).toBeNull();
 
-    // Picking a status reloads the table; its counts are empty meanwhile.
-    rerender(chips({ value: "failed", counts: {}, loading: true }));
+    // Picking a status reloads the table; keepPreviousData hands back the
+    // previous counts while loading is true.
+    rerender(
+      chips({
+        value: "failed",
+        counts: { all: 9, passed: 2, failed: 7 },
+        loading: true,
+      }),
+    );
     expect(screen.queryByRole("button", { name: "Queued" })).toBeNull();
     expect(screen.getByRole("button", { name: "Failed" })).toHaveTextContent(
       "7",

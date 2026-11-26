@@ -9,6 +9,7 @@ import {
   waitForElementToBeRemoved,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
 import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
 import {
   MemoryRouter,
@@ -452,6 +453,11 @@ const OPT_RUN = {
 // exercises the real (backed) run-detail route, which is what this whole
 // suite predates and assumes. `client` lets a test share a spy-wrapped client,
 // and any remaining props (e.g. `onStartRun`) pass straight through to RunDetail.
+// The product theme carries the run colours the header badge tints from.
+const theme = createTheme({
+  palette: { data: Array.from({ length: 8 }, () => "#7857fc") },
+});
+
 const renderDetail = ({
   backed = true,
   envState = { evals: [] },
@@ -463,19 +469,21 @@ const renderDetail = ({
     passedClient ??
     new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={initialEntries}>
-        <LocationProbe />
-        <RunDetail
-          env={ENV}
-          envState={envState}
-          backed={backed}
-          testId="rt1"
-          executionId="ex1"
-          {...props}
-        />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <ThemeProvider theme={theme}>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={initialEntries}>
+          <LocationProbe />
+          <RunDetail
+            env={ENV}
+            envState={envState}
+            backed={backed}
+            testId="rt1"
+            executionId="ex1"
+            {...props}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 };
 
@@ -1136,17 +1144,19 @@ describe("RunDetail", () => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
     // Build a fresh element each call so RunDetail re-renders.
     const tree = () => (
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <RunDetail
-            env={ENV}
-            envState={{ evals: [] }}
-            backed
-            testId="rt1"
-            executionId="ex1"
-          />
-        </MemoryRouter>
-      </QueryClientProvider>
+      <ThemeProvider theme={theme}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <RunDetail
+              env={ENV}
+              envState={{ evals: [] }}
+              backed
+              testId="rt1"
+              executionId="ex1"
+            />
+          </MemoryRouter>
+        </QueryClientProvider>
+      </ThemeProvider>
     );
 
     useRunDetail.mockReturnValue({
@@ -1883,18 +1893,20 @@ describe("RunDetail ?rowId=", () => {
 
     pageLoading = false;
     rerender(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={["/?rowId=x1"]}>
-          <LocationProbe />
-          <RunDetail
-            env={ENV}
-            envState={{ evals: [] }}
-            backed
-            testId="rt1"
-            executionId="ex1"
-          />
-        </MemoryRouter>
-      </QueryClientProvider>,
+      <ThemeProvider theme={theme}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={["/?rowId=x1"]}>
+            <LocationProbe />
+            <RunDetail
+              env={ENV}
+              envState={{ evals: [] }}
+              backed
+              testId="rt1"
+              executionId="ex1"
+            />
+          </MemoryRouter>
+        </QueryClientProvider>
+      </ThemeProvider>,
     );
 
     expect(await screen.findByText("drawer:x1")).toBeInTheDocument();

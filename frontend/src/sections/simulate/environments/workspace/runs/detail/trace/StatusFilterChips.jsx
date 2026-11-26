@@ -1,5 +1,4 @@
 import PropTypes from "prop-types";
-import { useRef } from "react";
 import { Box, Stack, Typography } from "@mui/material";
 
 import CustomTooltip from "src/components/tooltip";
@@ -12,8 +11,8 @@ import { STATUS_CHIPS } from "./traceTable.constants";
 // Once counts load, a bucket with no calls has no segment. All and the
 // selected segment always stay, so the current filter is never lost. Before
 // the first counts arrive every segment shows greyed, so the bar doesn't jump
-// on first paint. A reload after that (picking a status, paging) keeps the
-// last counts, so the bar doesn't flash back to every status.
+// on first paint. A reload after that (picking a status, paging) arrives with
+// the previous counts still in `counts`, so the bar stays as it was.
 export default function StatusFilterChips({
   value,
   counts,
@@ -21,10 +20,8 @@ export default function StatusFilterChips({
   blocked = [],
   loading = false,
 }) {
-  const lastCounts = useRef(null);
-  if (!loading && Object.keys(counts).length > 0) lastCounts.current = counts;
-  const shown = loading && lastCounts.current ? lastCounts.current : counts;
-  const firstLoad = loading && !lastCounts.current;
+  // RunTraceTable always adds an All total, so no calls yet means all is 0.
+  const firstLoad = loading && !counts.all;
 
   return (
     <Stack
@@ -35,7 +32,7 @@ export default function StatusFilterChips({
       sx={{
         display: "inline-flex",
         alignSelf: "flex-start",
-        flexWrap: "wrap",
+        flexWrap: "nowrap",
         border: "1px solid",
         borderColor: "divider",
         borderRadius: 1,
@@ -47,10 +44,10 @@ export default function StatusFilterChips({
           firstLoad ||
           chip.id === "all" ||
           chip.id === value ||
-          (shown[chip.id] ?? 0) > 0,
+          (counts[chip.id] ?? 0) > 0,
       ).map((chip) => {
         const active = value === chip.id;
-        const count = shown[chip.id] ?? 0;
+        const count = counts[chip.id] ?? 0;
         const blockedByGrouping = blocked.includes(chip.id);
         const disabled =
           (chip.id !== "all" && count === 0) || blockedByGrouping;
@@ -117,7 +114,7 @@ export default function StatusFilterChips({
                   typography: "s3",
                   fontWeight: 500,
                   fontVariantNumeric: "tabular-nums",
-                  color: "text.disabled",
+                  color: "text.secondary",
                 }}
               >
                 {count}
