@@ -134,18 +134,29 @@ def compare_documents(
         "services_added": new_services,
         "rules_added": new_rules,
         "prompt_changed": _instructions(previous) != _instructions(current),
-        "model_changed": _model(previous) != _model(current),
+        "model_changed": _model_changed(previous, current),
     }
 
 
-def _model(document: Mapping[str, Any]) -> tuple[Any, Any]:
-    """The model as the document states it, and the setting the code reads it
-    from: a model read from another setting is a change, even when the default
-    written beside it is the same."""
+def _model_changed(previous: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    """The model the documents state differs, or the code reads it from another
+    setting, even with the same default written beside it.
+
+    The setting is compared only when both readings record one: a reading
+    from before the setting was recorded stored the same model with none, so
+    gaining it alone is not a change.
+    """
+    if (previous.get("model") or None) != (current.get("model") or None):
+        return True
+    before, after = _model_setting(previous), _model_setting(current)
+    return before is not None and after is not None and before != after
+
+
+def _model_setting(document: Mapping[str, Any]) -> Any:
     extension = document.get("extension")
     source = extension.get("model_source") if isinstance(extension, Mapping) else None
     setting = source.get("setting") if isinstance(source, Mapping) else None
-    return document.get("model") or None, setting or None
+    return setting or None
 
 
 def _instructions(document: Mapping[str, Any]) -> list[str]:
