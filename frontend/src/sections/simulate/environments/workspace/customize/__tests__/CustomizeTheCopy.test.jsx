@@ -38,13 +38,13 @@ const jobOf = (state, extra = {}) => ({
   },
 });
 
-const render = (job) => {
+const render = (job, chat = CHAT) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   baseRender(
     <QueryClientProvider client={client}>
-      <CustomizeTheCopy jobId="copy-job" job={job} chat={CHAT} />
+      <CustomizeTheCopy jobId="copy-job" job={job} chat={chat} />
     </QueryClientProvider>,
   );
 };
@@ -67,6 +67,16 @@ describe("The copy's design", () => {
       screen.getByText("The ready world and your change"),
     ).toBeInTheDocument();
     expect(screen.getByText("Builder chat")).toBeInTheDocument();
+  });
+
+  it("says what the builder is doing while the job is still provisioning", () => {
+    render(jobOf("provisioning"), { ...CHAT, waiting: true });
+    expect(screen.getByText("Needs input")).toBeInTheDocument();
+  });
+
+  it("shows the job's own ending once it has one", () => {
+    render(jobOf("failed"), { ...CHAT, waiting: true });
+    expect(screen.queryByText("Needs input")).toBeNull();
   });
 
   it("opens the finished copy to use with an agent", () => {

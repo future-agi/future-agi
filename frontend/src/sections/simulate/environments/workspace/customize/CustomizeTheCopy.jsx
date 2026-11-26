@@ -72,6 +72,15 @@ export default function CustomizeTheCopy({ jobId, job, chat }) {
   const result = metadata.customization_result || null;
   const state = info.state || "queued";
   const finished = terminalStages.has(state);
+  // The job stays "provisioning" while the builder designs, which reads as nothing
+  // happening: show the conversation's state until the job ends.
+  const shownState = finished
+    ? state
+    : chat?.waiting
+      ? "needs_input"
+      : chat?.running || chat?.inFlight
+        ? "in_progress"
+        : state;
   const sourceTitle = titleOf(source.environment_name);
   const cancel = useMutation({
     mutationFn: () => cancelHarnessJob(jobId),
@@ -109,7 +118,7 @@ export default function CustomizeTheCopy({ jobId, job, chat }) {
         <Typography noWrap sx={{ typography: "m1", minWidth: 0 }}>
           {`${sourceTitle || "Ready environment"} · copy`}
         </Typography>
-        <StatusBadge status={state} />
+        <StatusBadge status={shownState} />
         <Box flex={1} />
         <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.cancel}>
           <Button
