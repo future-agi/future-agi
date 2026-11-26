@@ -271,7 +271,7 @@ def test_the_refusal_reaches_both_writers_through_the_real_evaluator(
                 eval_config, call_execution, dict(TRANSCRIPT_DATA)
             )
 
-    # The callers log "skipped", not "Successfully ran", on this answer.
+    # The callers log a graded eval only; the skip is logged by the grader.
     assert graded is False
     engine.run.assert_not_called()
     call_execution.refresh_from_db()

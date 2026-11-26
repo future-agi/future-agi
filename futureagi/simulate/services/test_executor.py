@@ -4499,11 +4499,13 @@ class TestExecutor:
                         graded = self._run_single_simulate_evaluation(
                             eval_config, call_execution, transcript_data, **extra
                         )
-                        logger.info(
-                            f"{'Successfully ran' if graded else 'Skipped (input missing)'} "
-                            f"evaluation {eval_config.name} ({eval_config.id}) "
-                            f"on call execution {call_execution.id}"
-                        )
+                        # A skip was logged by the grader as simulate_eval_input_missing.
+                        if graded:
+                            logger.info(
+                                "simulate_evaluation_ran",
+                                eval_config_id=str(eval_config.id),
+                                call_execution_id=str(call_execution.id),
+                            )
                 except EvaluationDenied as denial:
                     logger.warning("simulation_evaluation_denied", code=denial.code)
                 except Exception as e:
