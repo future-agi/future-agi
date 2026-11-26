@@ -12,6 +12,7 @@ describe("workspace tab constants", () => {
       "overview",
       "contract",
       "actors",
+      "composition",
       "scenarios",
       "evals",
       "runs",
