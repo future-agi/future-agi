@@ -27,11 +27,14 @@ One tick reads GitHub, plans, and (live mode only) acts:
    batch: together they would leave two migration leaves.
 
 Dark mode (the default) only prints the plan. Live mode needs the train App
-token (APP_TOKEN: branch, merges, pull request, auto-merge, dequeue, close)
-and GITHUB_TOKEN (GH_TOKEN: approve as github-actions[bot], labels,
-comments, re-runs). No pull request code runs here: there is no checkout.
+(TRAIN_APP_ID, TRAIN_APP_PRIVATE_KEY: branch, merges, pull request,
+auto-merge, dequeue, close) and GITHUB_TOKEN (GH_TOKEN: approve as
+github-actions[bot], labels, comments, re-runs). The script mints the App's
+installation token itself and again before it expires, so one live run can
+keep ticking for hours while rollups are in flight. No pull request code
+runs here: there is no checkout.
 
-    python3 -I .github/scripts/devflow_train.py tick [--mode dark|live] [--loop-minutes N]
+    python3 -I .github/scripts/devflow_train.py tick [--mode dark|live] [--loop-minutes N] [--idle-minutes N]
     python3 -I .github/scripts/devflow_train.py parity --candidate SHA --landed SHA
 
 State lives only in GitHub (labels, the rollup body manifest, marker
@@ -42,11 +45,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import calendar
 import json
 import math
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -206,9 +212,7 @@ def codeowners_regex(pattern: str) -> re.Pattern:
             out.append(re.escape(body[i]))
             i += 1
     tail = "/.*" if directory else "(?:/.*)?"
-    return re.compile(
-        ("" if anchored else "(?:.*/)?") + "".join(out) + tail, re.DOTALL
-    )
+    return re.compile(("" if anchored else "(?:.*/)?") + "".join(out) + tail, re.DOTALL)
 
 
 def code_owned(files: list, text: str) -> str | None:
@@ -837,9 +841,7 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
 
     actions, reserved, evicted = [], {}, {}
     for rollup in rollups:
-        act = rollup_action(
-            rollup, live, failures.get(rollup["number"]), bool(paused)
-        )
+        act = rollup_action(rollup, live, failures.get(rollup["number"]), bool(paused))
         act["rollup"] = rollup["number"]
         actions.append(act)
         if act["action"] in ("wait", "ensure", "retry", "split"):
@@ -889,9 +891,7 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
         "batches": [[m["number"] for m in b] for b in batches],
         # A paused train with work waiting stays awake: closing the issue
         # is not a push to dev, so nothing else would wake it.
-        "busy": bool(
-            still_open or new_from_splits or batches or (paused and ordered)
-        ),
+        "busy": bool(still_open or new_from_splits or batches or (paused and ordered)),
         "_members": live,
         "_rollups": {r["number"]: r for r in rollups},
     }
@@ -1124,7 +1124,8 @@ class GitHub:
             m = member_view(node, required)
             if m["human_approvers"] and member_tier(m, cfg) == "medium":
                 node["_permissions"] = {
-                    login: self.permission(login) for login in sorted(m["human_approvers"])
+                    login: self.permission(login)
+                    for login in sorted(m["human_approvers"])
                 }
 
     def member_check_runs(self, sha: str, required: list, now=time.monotonic) -> list:
@@ -1154,7 +1155,9 @@ class GitHub:
         for node in repo["admitted"]["nodes"]:
             heads.add(node["headRefOid"])
             if needs_checks(node, required, cfg):
-                node["_check_runs"] = self.member_check_runs(node["headRefOid"], required)
+                node["_check_runs"] = self.member_check_runs(
+                    node["headRefOid"], required
+                )
         for sha in set(self.check_cache) - heads:
             del self.check_cache[sha]
 
@@ -1533,6 +1536,99 @@ def tick(reader: GitHub, required: list, cfg: Config, live: Live | None) -> dict
     return result
 
 
+# --- The App token --------------------------------------------------------------
+
+# Mint a new installation token when the current one has less than this left.
+TOKEN_MARGIN_SECONDS = 600
+
+
+def b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def openssl_sign(data: bytes, key: str) -> bytes:
+    """RS256 over data (the stdlib has no RSA). The key sits in a 0600 file
+    only for the call."""
+    fd, path = tempfile.mkstemp(dir=os.environ.get("RUNNER_TEMP"))
+    try:
+        with os.fdopen(fd, "w") as out:
+            out.write(key)
+        done = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", path],
+            input=data,
+            check=False,
+            capture_output=True,
+        )
+    finally:
+        os.unlink(path)
+    if done.returncode:
+        raise RuntimeError(
+            f"openssl could not sign the App JWT (exit {done.returncode})"
+        )
+    return done.stdout
+
+
+class AppToken:
+    """The train App's installation token for this repository only."""
+
+    def __init__(
+        self,
+        app_id: str,
+        key: str,
+        repo: str,
+        sign=openssl_sign,
+        client=None,
+        now=time.time,
+    ):
+        self.app_id, self.key, self.repo = app_id, key, repo
+        self.sign, self.now = sign, now
+        self.client = client or GitHub
+        self.token, self.expires = None, 0.0
+        self.minted = 0
+
+    def jwt(self) -> str:
+        now = int(self.now())
+        head = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+        # iat 60 s back for clock drift; GitHub caps exp at 10 minutes.
+        body = b64url(
+            json.dumps(
+                {"iat": now - 60, "exp": now + 540, "iss": str(self.app_id)}
+            ).encode()
+        )
+        return f"{head}.{body}.{b64url(self.sign(f'{head}.{body}'.encode(), self.key))}"
+
+    def get(self) -> str:
+        if self.token and self.expires - self.now() > TOKEN_MARGIN_SECONDS:
+            return self.token
+        app = self.client(self.jwt(), self.repo)
+        install = app.call("GET", f"repos/{self.repo}/installation")
+        out = app.call(
+            "POST",
+            f"app/installations/{install['id']}/access_tokens",
+            {"repositories": [self.repo.split("/")[1]]},
+        )
+        print(f"::add-mask::{out['token']}", flush=True)
+        self.token = out["token"]
+        self.expires = calendar.timegm(
+            time.strptime(out["expires_at"], "%Y-%m-%dT%H:%M:%SZ")
+        )
+        self.minted += 1
+        return self.token
+
+    def revoke(self):
+        if self.token:
+            self.client(self.token, self.repo).request("DELETE", "installation/token")
+            self.token = None
+
+
+def keep_looping(
+    now: float, deadline: float, last_busy: float, idle_s: float, interval: float
+) -> bool:
+    """Tick again unless the next tick passes the deadline or nothing has
+    been in flight for idle_s."""
+    return now + interval <= deadline and now - last_busy < idle_s
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1542,7 +1638,13 @@ def main(argv=None) -> int:
         "--loop-minutes",
         type=float,
         default=0,
-        help="keep ticking while work is in flight",
+        help="keep ticking up to this long while work is in flight (0: one tick)",
+    )
+    tick_cmd.add_argument(
+        "--idle-minutes",
+        type=float,
+        default=10,
+        help="stop after this long with nothing in flight",
     )
     tick_cmd.add_argument("--interval", type=float, default=90)
     parity = sub.add_parser("parity")
@@ -1570,26 +1672,47 @@ def main(argv=None) -> int:
         codeowners=reader.file_text(CODEOWNERS_FILE) or "",
     )
     required = reader.required_checks()
-    live = (
-        Live(repo, GitHub(os.environ["APP_TOKEN"], repo), reader)
-        if args.mode == "live"
-        else None
-    )
-    deadline = time.monotonic() + args.loop_minutes * 60
-    while True:
-        result = tick(reader, required, cfg, live)
-        result["mode"] = args.mode
-        public = {k: v for k, v in result.items() if not k.startswith("_")}
-        print(json.dumps(public, indent=2, sort_keys=True), flush=True)
-        if os.environ.get("GITHUB_STEP_SUMMARY"):
-            with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
-                out.write(summary(result))
-        if not result["busy"] or time.monotonic() + args.interval > deadline:
-            return 0
-        wait = backoff_seconds(reader.limits, time.time(), RATE_FLOOR)
-        if wait:
-            print(f"rate limit below {RATE_FLOOR}: waiting {wait:.0f} s", flush=True)
-        time.sleep(min(max(args.interval, wait), max(0.0, deadline - time.monotonic())))
+    minter = live = None
+    if args.mode == "live":
+        minter = AppToken(
+            os.environ["TRAIN_APP_ID"], os.environ["TRAIN_APP_PRIVATE_KEY"], repo
+        )
+        live = Live(repo, GitHub(minter.get(), repo), reader)
+    start = last_busy = time.monotonic()
+    deadline = start + args.loop_minutes * 60
+    try:
+        while True:
+            if minter:
+                live.app.token = minter.get()
+            result = tick(reader, required, cfg, live)
+            result["mode"] = args.mode
+            result["loop"] = {
+                "minutes": round((time.monotonic() - start) / 60, 1),
+                "app_tokens_minted": minter.minted if minter else 0,
+            }
+            public = {k: v for k, v in result.items() if not k.startswith("_")}
+            print(json.dumps(public, indent=2, sort_keys=True), flush=True)
+            if os.environ.get("GITHUB_STEP_SUMMARY"):
+                with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+                    out.write(summary(result))
+            now = time.monotonic()
+            if result["busy"]:
+                last_busy = now
+            if not keep_looping(
+                now, deadline, last_busy, args.idle_minutes * 60, args.interval
+            ):
+                return 0
+            wait = backoff_seconds(reader.limits, time.time(), RATE_FLOOR)
+            if wait:
+                print(
+                    f"rate limit below {RATE_FLOOR}: waiting {wait:.0f} s", flush=True
+                )
+            time.sleep(
+                min(max(args.interval, wait), max(0.0, deadline - time.monotonic()))
+            )
+    finally:
+        if minter:
+            minter.revoke()
 
 
 if __name__ == "__main__":

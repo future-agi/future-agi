@@ -10,13 +10,20 @@ name: Batch train
 # its secrets TRAIN_APP_ID and TRAIN_APP_PRIVATE_KEY, the train App installed,
 # and then the repository variable DEVFLOW_TRAIN_MODE=live.
 #
-# Every trigger runs dev's copy of this file. A push to dev is the heartbeat;
-# a live run keeps ticking while rollups are in flight. A label or a queue
-# removal on a pull request runs a plan only: a pull request run never gets
-# the environment, so never the App key. workflow_dispatch, schedule,
-# workflow_run and pull_request_target would run main's copy, which lags dev.
-# When dev is idle and no live run is ticking, a newly labelled pull request
-# waits for the next push to dev.
+# Every trigger runs dev's copy of this file. A push to dev is the heartbeat.
+# A live run keeps ticking while anything is in flight, up to
+# DEVFLOW_TRAIN_LOOP_MINUTES (default 330, under the 360-minute job limit),
+# and stops after 10 minutes with nothing in flight. A rollup takes longer
+# than the App token's hour, so the script mints a new token before the old
+# one expires. While a run ticks, a newer push waits in the concurrency group
+# and starts when the loop ends. The cost is one runner held while the train
+# is busy.
+# A label or a queue removal on a pull request runs a plan only: a pull
+# request run never gets the environment, so never the App key.
+# workflow_dispatch only triggers when the file is on the default branch
+# (main), and schedule and workflow_run run main's copy, so none of them is
+# used. When dev is idle and no live run is ticking, a newly labelled pull
+# request waits for the next push to dev.
 
 on:
   push:
@@ -40,6 +47,7 @@ env:
   DEVFLOW_TRAIN_MAX_ROLLUPS: ${{ vars.DEVFLOW_TRAIN_MAX_ROLLUPS }}
   DEVFLOW_TRAIN_QUEUE_BUILDS: ${{ vars.DEVFLOW_TRAIN_QUEUE_BUILDS }}
   DEVFLOW_TRAIN_REQUIRE_VERDICT: ${{ vars.DEVFLOW_TRAIN_REQUIRE_VERDICT }}
+  APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}
 
 jobs:
   plan:
@@ -57,7 +65,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          sparse-checkout: .github/scripts
+          sparse-checkout: .github
       - name: Self-test
         run: python3 -I .github/scripts/test_devflow_train.py
       - name: Plan the next batches (writes nothing)
@@ -70,30 +78,27 @@ jobs:
     name: Batch train
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev' && vars.DEVFLOW_TRAIN_MODE == 'live'
     runs-on: ubuntu-latest
-    # The App token lasts an hour; the loop stops at 50 minutes.
-    timeout-minutes: 58
+    # The loop stops at DEVFLOW_TRAIN_LOOP_MINUTES (keep it at 330 or less).
+    timeout-minutes: 345
     environment: devflow-train
     permissions:
       contents: read
       pull-requests: write # approve the rollup as github-actions[bot]
       issues: write # labels and comments on members
-      actions: write # re-run an infra-red rollup's failed jobs
+      actions: write # re-run an infra-red rollup's failed jobs; a member's full run
       checks: read
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          sparse-checkout: .github/scripts
+          sparse-checkout: .github
       - name: Self-test
         run: python3 -I .github/scripts/test_devflow_train.py
-      - uses: actions/create-github-app-token@v2
-        id: app
-        with:
-          app-id: ${{ secrets.TRAIN_APP_ID }}
-          private-key: ${{ secrets.TRAIN_APP_PRIVATE_KEY }}
-      - name: Run the train while rollups are in flight
+      - name: Run the train while anything is in flight
         env:
           GH_TOKEN: ${{ github.token }}
-          APP_TOKEN: ${{ steps.app.outputs.token }}
+          TRAIN_APP_ID: ${{ secrets.TRAIN_APP_ID }}
+          TRAIN_APP_PRIVATE_KEY: ${{ secrets.TRAIN_APP_PRIVATE_KEY }}
           REPO: ${{ github.repository }}
-        run: python3 -I .github/scripts/devflow_train.py tick --mode live --loop-minutes 50
+          LOOP_MINUTES: ${{ vars.DEVFLOW_TRAIN_LOOP_MINUTES || 330 }}
+        run: python3 -I .github/scripts/devflow_train.py tick --mode live --loop-minutes "$LOOP_MINUTES" --idle-minutes 10

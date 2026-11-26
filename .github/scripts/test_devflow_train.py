@@ -8,10 +8,12 @@ that records each call.
     python3 -I .github/scripts/test_devflow_train.py
 """
 
+import base64
 import json
 import pathlib
 import re
 import sys
+import time
 import unittest
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent
@@ -188,7 +190,7 @@ def data(admitted=(), rollups=(), queue=(), base_red=()):
             },
             "admitted": {"nodes": list(admitted)},
             "rollups": {"nodes": list(rollups)},
-        }
+        },
     }
 
 
@@ -236,9 +238,16 @@ class Globs(unittest.TestCase):
         from unittest import mock
 
         with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertEqual((train.Config().max_batch, train.Config().max_rollups), (6, 4))
-        with mock.patch.dict(os.environ, {"DEVFLOW_TRAIN_MAX_BATCH": "8", "DEVFLOW_TRAIN_MAX_ROLLUPS": "8"}):
-            self.assertEqual((train.Config().max_batch, train.Config().max_rollups), (8, 8))
+            self.assertEqual(
+                (train.Config().max_batch, train.Config().max_rollups), (6, 4)
+            )
+        with mock.patch.dict(
+            os.environ,
+            {"DEVFLOW_TRAIN_MAX_BATCH": "8", "DEVFLOW_TRAIN_MAX_ROLLUPS": "8"},
+        ):
+            self.assertEqual(
+                (train.Config().max_batch, train.Config().max_rollups), (8, 8)
+            )
 
     def test_floor_always_applies(self):
         self.assertEqual(cfg().high_globs, (".github/**",))
@@ -281,7 +290,7 @@ class Checks(unittest.TestCase):
                 return answer["runs"]
 
         gh, clock = Counting("t", "o/r"), [1000.0]
-        now = lambda: clock[0]  # noqa: E731
+        now = lambda: clock[0]
         gh.member_check_runs(sha(1), REQUIRED, now)
         gh.member_check_runs(sha(1), REQUIRED, now)
         self.assertEqual(reads, [sha(1)], "green on the same head: read once")
@@ -300,7 +309,9 @@ class Checks(unittest.TestCase):
         answer["runs"] = green()[:2] + [run("Python Lint Pass", "FAILURE")]
         gh.member_check_runs(sha(4), REQUIRED, now)
         gh.member_check_runs(sha(4), REQUIRED, now)
-        self.assertEqual(reads.count(sha(4)), 2, "red is never cached: a re-run may fix it")
+        self.assertEqual(
+            reads.count(sha(4)), 2, "red is never cached: a re-run may fix it"
+        )
 
     def test_rollup_checks_are_always_fresh(self):
         reads = []
@@ -317,20 +328,32 @@ class Checks(unittest.TestCase):
         self.assertEqual(reads, [sha(70), sha(1), sha(70)])
 
     def test_backoff_waits_for_the_low_resource_reset(self):
-        limits = {"core": {"remaining": 4000, "reset": 2000}, "graphql": {"remaining": 50, "reset": 1300}}
+        limits = {
+            "core": {"remaining": 4000, "reset": 2000},
+            "graphql": {"remaining": 50, "reset": 1300},
+        }
         self.assertEqual(train.backoff_seconds(limits, 1000, 200), 305)
         self.assertEqual(train.backoff_seconds({"core": limits["core"]}, 1000, 200), 0)
         self.assertEqual(train.backoff_seconds({}, 1000, 200), 0)
 
     def test_rate_limit_headers_are_kept_per_resource(self):
         gh = train.GitHub("t", "o/r")
-        gh.note_limits({"x-ratelimit-remaining": "17", "x-ratelimit-reset": "99", "x-ratelimit-resource": "graphql"})
+        gh.note_limits(
+            {
+                "x-ratelimit-remaining": "17",
+                "x-ratelimit-reset": "99",
+                "x-ratelimit-resource": "graphql",
+            }
+        )
         gh.note_limits({})
         self.assertEqual(gh.limits, {"graphql": {"remaining": 17, "reset": 99}})
 
     def test_gather_reads_every_page(self):
         pages = {
-            train.ADMIT_LABEL: [[pr_node(n) for n in range(1, 51)], [pr_node(n) for n in range(51, 121)]],
+            train.ADMIT_LABEL: [
+                [pr_node(n) for n in range(1, 51)],
+                [pr_node(n) for n in range(51, 121)],
+            ],
             train.ROLLUP_LABEL: [[]],
         }
 
@@ -338,13 +361,20 @@ class Checks(unittest.TestCase):
             def graphql(self, query, **variables):
                 if "mergeQueue" in query:
                     return {"repository": {"mergeQueue": {"entries": {"nodes": []}}}}
-                label = train.ADMIT_LABEL if train.ADMIT_LABEL in query else train.ROLLUP_LABEL
+                label = (
+                    train.ADMIT_LABEL
+                    if train.ADMIT_LABEL in query
+                    else train.ROLLUP_LABEL
+                )
                 index = int(variables["after"] or 0)
                 more = index + 1 < len(pages[label])
                 return {
                     "repository": {
                         "pullRequests": {
-                            "pageInfo": {"hasNextPage": more, "endCursor": str(index + 1)},
+                            "pageInfo": {
+                                "hasNextPage": more,
+                                "endCursor": str(index + 1),
+                            },
                             "nodes": pages[label][index],
                         }
                     }
@@ -427,13 +457,23 @@ class Deferred(unittest.TestCase):
     def test_deferred_is_green_for_members_only(self):
         states = train.check_states(self.deferred_runs(), REQUIRED, deferred=True)
         self.assertEqual(states["Backend Tests Pass"], "deferred")
-        self.assertEqual(train.check_states(self.deferred_runs(), REQUIRED)["Backend Tests Pass"], "missing")
         self.assertEqual(
-            train.check_states(self.deferred_runs("FAILURE"), REQUIRED, deferred=True)["Backend Tests Pass"],
+            train.check_states(self.deferred_runs(), REQUIRED)["Backend Tests Pass"],
+            "missing",
+        )
+        self.assertEqual(
+            train.check_states(self.deferred_runs("FAILURE"), REQUIRED, deferred=True)[
+                "Backend Tests Pass"
+            ],
             "failure",
         )
-        rerun = self.deferred_runs() + [run("Backend Tests Pass", started="2026-11-26T12:00:00Z")]
-        self.assertEqual(train.check_states(rerun, REQUIRED, deferred=True)["Backend Tests Pass"], "success")
+        rerun = self.deferred_runs() + [
+            run("Backend Tests Pass", started="2026-11-26T12:00:00Z")
+        ]
+        self.assertEqual(
+            train.check_states(rerun, REQUIRED, deferred=True)["Backend Tests Pass"],
+            "success",
+        )
         node = pr_node(1)
         node["_check_runs"] = self.deferred_runs()
         self.assertIsNone(train.exclusion(view(node), cfg(), {}))
@@ -453,8 +493,15 @@ class Deferred(unittest.TestCase):
 
     def test_member_enqueued_alone_makes_its_rollup_stale(self):
         rollup = rollup_node(70, [(1, sha(1)), (2, sha(2))])
-        result = train.plan(data([pr_node(1, isInMergeQueue=True), pr_node(2)], [rollup]), REQUIRED, cfg())
-        self.assertEqual(result["rollup_actions"][0], {"action": "rebuild", "drop": [1], "rollup": 70})
+        result = train.plan(
+            data([pr_node(1, isInMergeQueue=True), pr_node(2)], [rollup]),
+            REQUIRED,
+            cfg(),
+        )
+        self.assertEqual(
+            result["rollup_actions"][0],
+            {"action": "rebuild", "drop": [1], "rollup": 70},
+        )
 
     def test_go_alone_member_on_a_deferred_head_gets_a_full_run(self):
         alone = pr_node(1, title='Revert "feat: x"')
@@ -464,28 +511,61 @@ class Deferred(unittest.TestCase):
         draft["_check_runs"] = self.deferred_runs()
         self.assertTrue(train.needs_checks(alone, REQUIRED, cfg()))
         result = train.plan(data([alone, full, draft]), REQUIRED, cfg())
-        self.assertEqual(result["full_runs"], [{"pr": 1, "head_sha": sha(1), "labelled": False}])
+        self.assertEqual(
+            result["full_runs"], [{"pr": 1, "head_sha": sha(1), "labelled": False}]
+        )
         self.assertEqual(result["batches"], [])
 
     def test_full_run_labels_then_reruns_the_whole_light_run_once(self):
         def runs(status="completed", attempt=1):
-            return (200, {"workflow_runs": [
-                {"id": 7, "status": "completed", "run_attempt": 1, "created_at": "2026-11-26T09:00:00Z"},
-                {"id": 8, "status": status, "run_attempt": attempt, "created_at": "2026-11-26T10:00:00Z"},
-            ]})
+            return (
+                200,
+                {
+                    "workflow_runs": [
+                        {
+                            "id": 7,
+                            "status": "completed",
+                            "run_attempt": 1,
+                            "created_at": "2026-11-26T09:00:00Z",
+                        },
+                        {
+                            "id": 8,
+                            "status": status,
+                            "run_attempt": attempt,
+                            "created_at": "2026-11-26T10:00:00Z",
+                        },
+                    ]
+                },
+            )
 
-        actions = FakeGitHub({("GET", "repos/o/r/actions/workflows/backend-ci.yml/runs"): runs()})
+        actions = FakeGitHub(
+            {("GET", "repos/o/r/actions/workflows/backend-ci.yml/runs"): runs()}
+        )
         live = train.Live("o/r", FakeGitHub({}), actions)
-        self.assertEqual(live.full_run(1, sha(1), labelled=False), "re-ran run 8 with ci:full")
+        self.assertEqual(
+            live.full_run(1, sha(1), labelled=False), "re-ran run 8 with ci:full"
+        )
         calls = [(c[0], c[1]) for c in actions.calls]
         self.assertEqual(calls[0], ("POST", "repos/o/r/issues/1/labels"))
-        self.assertIn(("POST", "repos/o/r/actions/runs/8/rerun"), calls, "a full re-run, not rerun-failed-jobs")
+        self.assertIn(
+            ("POST", "repos/o/r/actions/runs/8/rerun"),
+            calls,
+            "a full re-run, not rerun-failed-jobs",
+        )
         self.assertIn(("FORGET", sha(1)), calls)
-        for answer, why in ((runs("in_progress"), "running"), (runs(attempt=2), "already re-run")):
-            actions = FakeGitHub({("GET", "repos/o/r/actions/workflows/backend-ci.yml/runs"): answer})
+        for answer, why in (
+            (runs("in_progress"), "running"),
+            (runs(attempt=2), "already re-run"),
+        ):
+            actions = FakeGitHub(
+                {("GET", "repos/o/r/actions/workflows/backend-ci.yml/runs"): answer}
+            )
             live = train.Live("o/r", FakeGitHub({}), actions)
             self.assertIn(why, live.full_run(1, sha(1), labelled=True))
-            self.assertFalse([c for c in actions.calls if c[0] == "POST"], "labelled already, no re-run")
+            self.assertFalse(
+                [c for c in actions.calls if c[0] == "POST"],
+                "labelled already, no re-run",
+            )
 
 
 class Verdicts(unittest.TestCase):
@@ -499,13 +579,14 @@ class Verdicts(unittest.TestCase):
             "submittedAt": "2026-11-26T12:00:00Z",
         }
         good = verdict_review(sha(1), tier="high")
-        self.assertEqual(train.latest_verdict([good, broken, bad], "author-a")["tier"], "high")
+        self.assertEqual(
+            train.latest_verdict([good, broken, bad], "author-a")["tier"], "high"
+        )
 
     def test_newest_trusted_wins(self):
         old = verdict_review(sha(1), tier="high", when="2026-11-26T10:00:00Z")
         new = verdict_review(sha(1), tier="low", when="2026-11-26T11:00:00Z")
         self.assertEqual(train.latest_verdict([new, old], "author-a")["tier"], "low")
-
 
     def test_the_authors_own_verdict_never_counts(self):
         own = verdict_review(sha(1), login="author-a", when="2026-11-26T12:00:00Z")
@@ -517,10 +598,18 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(train.latest_verdict([own, other], "author-a")["tier"], "high")
 
     def test_the_assigned_reviewer_wins_over_a_newer_verdict(self):
-        assigned = verdict_review(sha(1), tier="high", login="bob", when="2026-11-26T10:00:00Z")
-        newer = verdict_review(sha(1), tier="low", login="carol", when="2026-11-26T11:00:00Z")
-        self.assertEqual(train.latest_verdict([assigned, newer], "a", "bob")["tier"], "high")
-        self.assertEqual(train.latest_verdict([assigned, newer], "a", "dave")["tier"], "low")
+        assigned = verdict_review(
+            sha(1), tier="high", login="bob", when="2026-11-26T10:00:00Z"
+        )
+        newer = verdict_review(
+            sha(1), tier="low", login="carol", when="2026-11-26T11:00:00Z"
+        )
+        self.assertEqual(
+            train.latest_verdict([assigned, newer], "a", "bob")["tier"], "high"
+        )
+        self.assertEqual(
+            train.latest_verdict([assigned, newer], "a", "dave")["tier"], "low"
+        )
 
     def test_assignment_marker_only_from_the_bot(self):
         marker = "<!-- devflow-assigned:v1 login={} at=2026-11-26T05:00:00Z by=reviewer-assigner round=1 -->"
@@ -549,7 +638,7 @@ class CodeOwners(unittest.TestCase):
   # indented comment
 /.github/CODEOWNERS @lint
 """
-    VECTORS = [
+    VECTORS = (
         ("/.github/", ".github/workflows/a.yml", True),
         ("/.github/", "x/.github/a.yml", False),
         ("/futureagi/accounts/", "futureagi/accounts_v2/a.py", False),
@@ -560,12 +649,14 @@ class CodeOwners(unittest.TestCase):
         ("*billing*", "a\nbilling", True),
         ("apps/", "x/apps/a.md", True),  # a trailing slash alone does not anchor
         ("apps/", "x/apps", False),
-    ]
+    )
 
     def test_matcher_vectors(self):
         for pattern, path, expected in self.VECTORS:
             with self.subTest(pattern=pattern, path=path):
-                self.assertEqual(bool(train.codeowners_regex(pattern).fullmatch(path)), expected)
+                self.assertEqual(
+                    bool(train.codeowners_regex(pattern).fullmatch(path)), expected
+                )
 
     def test_same_matcher_as_ci_scope(self):
         try:
@@ -582,18 +673,30 @@ class CodeOwners(unittest.TestCase):
                 )
 
     def test_last_match_wins_and_needs_owners(self):
-        self.assertEqual(train.code_owned(["futureagi/accounts/a.py"], self.TEXT), "futureagi/accounts/a.py")
-        self.assertIsNone(train.code_owned(["futureagi/accounts/public/a.py"], self.TEXT), "a later line with no owners")
+        self.assertEqual(
+            train.code_owned(["futureagi/accounts/a.py"], self.TEXT),
+            "futureagi/accounts/a.py",
+        )
+        self.assertIsNone(
+            train.code_owned(["futureagi/accounts/public/a.py"], self.TEXT),
+            "a later line with no owners",
+        )
         self.assertIsNone(train.code_owned(["futureagi/x.py"], self.TEXT))
-        self.assertIsNone(train.code_owned(["futureagi/accounts/a.py"], ""), "no CODEOWNERS on dev")
+        self.assertIsNone(
+            train.code_owned(["futureagi/accounts/a.py"], ""), "no CODEOWNERS on dev"
+        )
 
     def test_code_owned_member_goes_alone(self):
-        node = pr_node(1, files=("futureagi/x.py", "frontend/src/BillingPage.jsx", "a/billing.py"))
+        node = pr_node(
+            1, files=("futureagi/x.py", "frontend/src/BillingPage.jsx", "a/billing.py")
+        )
         self.assertEqual(
             train.exclusion(view(node), cfg(codeowners=self.TEXT), {}),
             "code-owned path, goes alone (a/billing.py)",
         )
-        self.assertIsNone(train.exclusion(view(pr_node(1)), cfg(codeowners=self.TEXT), {}))
+        self.assertIsNone(
+            train.exclusion(view(pr_node(1)), cfg(codeowners=self.TEXT), {})
+        )
 
     def test_real_codeowners_on_this_tree(self):
         path = SCRIPTS.parent / "CODEOWNERS"
@@ -678,7 +781,9 @@ class Exclusions(unittest.TestCase):
             with self.subTest(review=review["body"][-160:]):
                 # The bot's approval is on the head; medium still waits for a person.
                 self.assertIn(medium, self.reason(node))
-        self.assertIn(medium, self.reason(pr_node(1), cfg(tight=True)), "tight: low is medium")
+        self.assertIn(
+            medium, self.reason(pr_node(1), cfg(tight=True)), "tight: low is medium"
+        )
 
     def test_medium_needs_a_writer_who_is_not_the_author_nor_a_bot(self):
         def approval(login, kind="User"):
@@ -708,15 +813,39 @@ class Exclusions(unittest.TestCase):
     def test_contract_2_unknown_tier_is_high(self):
         for tier in ("Medium", "", None, "critical", ["low"], 1):
             with self.subTest(tier=tier):
-                self.assertEqual(train.final_tier({"tier": tier, "tier_check": {"tier": "low"}, "needs_person": False}), "high")
-                self.assertEqual(train.final_tier({"tier": "low", "tier_check": {"tier": tier}, "needs_person": False}), "high")
-        self.assertEqual(train.final_tier({"tier": "low", "needs_person": False}), "high", "missing tier_check")
+                self.assertEqual(
+                    train.final_tier(
+                        {
+                            "tier": tier,
+                            "tier_check": {"tier": "low"},
+                            "needs_person": False,
+                        }
+                    ),
+                    "high",
+                )
+                self.assertEqual(
+                    train.final_tier(
+                        {
+                            "tier": "low",
+                            "tier_check": {"tier": tier},
+                            "needs_person": False,
+                        }
+                    ),
+                    "high",
+                )
+        self.assertEqual(
+            train.final_tier({"tier": "low", "needs_person": False}),
+            "high",
+            "missing tier_check",
+        )
         node = self.with_verdict(verdict_review(sha(1), tier_check=None))
         self.assertEqual(self.reason(node), "review tier high: goes alone")
 
     def test_contract_3_ordinal_max(self):
         def tier(a, b):
-            return train.final_tier({"tier": a, "tier_check": {"tier": b}, "needs_person": False})
+            return train.final_tier(
+                {"tier": a, "tier_check": {"tier": b}, "needs_person": False}
+            )
 
         self.assertEqual(tier("low", "medium"), "medium")
         self.assertEqual(tier("medium", "low"), "medium")
@@ -737,7 +866,11 @@ class Exclusions(unittest.TestCase):
         off = cfg(require_verdict=False)
         self.assertIn("medium tier", self.reason(node, off))
         node["reviews"]["nodes"].append(
-            {"state": "APPROVED", "commit": {"oid": sha(1)}, "author": {"__typename": "User", "login": "w"}}
+            {
+                "state": "APPROVED",
+                "commit": {"oid": sha(1)},
+                "author": {"__typename": "User", "login": "w"},
+            }
         )
         node["_permissions"] = {"w": "write"}
         self.assertIsNone(self.reason(node, off))
@@ -1126,8 +1259,16 @@ class Plan(unittest.TestCase):
         self.assertEqual(out["rollup_actions"][0]["action"], "split")
 
     def test_base_red_pauses_new_rollups_and_closes_red_ones(self):
-        one = rollup_node(80, [(1, sha(1)), (2, sha(2))], checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:])
-        solo = rollup_node(81, [(3, sha(3))], checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:])
+        one = rollup_node(
+            80,
+            [(1, sha(1)), (2, sha(2))],
+            checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:],
+        )
+        solo = rollup_node(
+            81,
+            [(3, sha(3))],
+            checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:],
+        )
         busy = rollup_node(82, [(4, sha(4))], checks=[])
         members = [pr_node(n) for n in (1, 2, 3, 4, 5)]
         result = train.plan(
@@ -1139,7 +1280,9 @@ class Plan(unittest.TestCase):
         acts = {a["rollup"]: a["action"] for a in result["rollup_actions"]}
         self.assertEqual(acts, {80: "close-red", 81: "close-red", 82: "ensure"})
         self.assertEqual(result["batches"], [], "no new rollups while paused")
-        self.assertEqual(result["eligible"], [1, 2, 3, 5], "closed members stay eligible")
+        self.assertEqual(
+            result["eligible"], [1, 2, 3, 5], "closed members stay eligible"
+        )
         self.assertTrue(result["busy"], "waiting work keeps the loop awake")
         self.assertEqual(result["paused_by"], [900])
         resumed = train.plan(data(members, [], base_red=[]), REQUIRED, cfg())
@@ -1148,13 +1291,23 @@ class Plan(unittest.TestCase):
     def test_execute_close_red_neither_splits_nor_evicts(self):
         app, actions = FakeGitHub({}), FakeGitHub({})
         live = train.Live("o/r", app, actions)
-        red = rollup_node(81, [(3, sha(3))], checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:])
-        result = train.plan(data([pr_node(3)], [red], base_red=[900]), REQUIRED, cfg(), {81: "red"})
+        red = rollup_node(
+            81,
+            [(3, sha(3))],
+            checks=[run("Backend Tests Pass", "FAILURE")] + green()[1:],
+        )
+        result = train.plan(
+            data([pr_node(3)], [red], base_red=[900]), REQUIRED, cfg(), {81: "red"}
+        )
         train.execute(result, live, {})
         writes = [(c[0], c[1]) for c in app.calls + actions.calls]
         self.assertIn(("PATCH", "repos/o/r/pulls/81"), writes)
-        self.assertFalse(any("/merges" in w[1] or "/labels" in w[1] for w in writes), writes)
-        comment = next(c[2]["body"] for c in actions.calls if c[1].endswith("/issues/81/comments"))
+        self.assertFalse(
+            any("/merges" in w[1] or "/labels" in w[1] for w in writes), writes
+        )
+        comment = next(
+            c[2]["body"] for c in actions.calls if c[1].endswith("/issues/81/comments")
+        )
         self.assertIn("#900", comment)
 
     def test_conflict_and_manual_removals(self):
@@ -1246,6 +1399,94 @@ class FakeGitHub:
 
     def forget(self, sha):
         self.calls.append(("FORGET", sha, None))
+
+
+class Liveness(unittest.TestCase):
+    def test_loop_runs_while_busy_and_stops_after_idle(self):
+        keep = train.keep_looping
+        self.assertTrue(
+            keep(now=100, deadline=19800, last_busy=100, idle_s=600, interval=90)
+        )
+        self.assertTrue(
+            keep(now=699, deadline=19800, last_busy=100, idle_s=600, interval=90)
+        )
+        self.assertFalse(
+            keep(now=700, deadline=19800, last_busy=100, idle_s=600, interval=90),
+            "idle 10 min",
+        )
+        self.assertFalse(
+            keep(now=19750, deadline=19800, last_busy=19750, idle_s=600, interval=90),
+            "deadline",
+        )
+        self.assertFalse(
+            keep(now=0, deadline=0, last_busy=0, idle_s=600, interval=90),
+            "loop 0: one tick",
+        )
+
+    def test_app_token_is_minted_for_this_repo_and_again_before_it_expires(self):
+        clock, signed, made = [1_800_000_000.0], [], []
+
+        class Client:
+            def __init__(self, token, repo):
+                self.token, self.repo = token, repo
+                made.append(self)
+                self.calls = []
+
+            def call(self, method, path, body=None):
+                self.calls.append((method, path, body))
+                if path.endswith("/installation"):
+                    return {"id": 42}
+                expires = time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(clock[0] + 3600)
+                )
+                return {"token": f"ghs_{len(made)}", "expires_at": expires}
+
+            def request(self, method, path, body=None):
+                self.calls.append((method, path, body))
+                return 204, None
+
+        def sign(data, key):
+            signed.append((data, key))
+            return b"sig"
+
+        minter = train.AppToken(
+            "123", "KEY", "o/r", sign=sign, client=Client, now=lambda: clock[0]
+        )
+        self.assertEqual(minter.get(), "ghs_1")
+        jwt = made[0].token
+        head, body, _sig = jwt.split(".")
+        claims = json.loads(base64.urlsafe_b64decode(body + "=="))
+        self.assertEqual(
+            claims,
+            {"iat": 1_800_000_000 - 60, "exp": 1_800_000_000 + 540, "iss": "123"},
+        )
+        self.assertEqual(
+            json.loads(base64.urlsafe_b64decode(head + "==")),
+            {"alg": "RS256", "typ": "JWT"},
+        )
+        self.assertEqual(signed, [(f"{head}.{body}".encode(), "KEY")])
+        self.assertEqual(
+            made[0].calls[1],
+            ("POST", "app/installations/42/access_tokens", {"repositories": ["r"]}),
+        )
+        clock[0] += 2999  # 601 s left: keep it
+        self.assertEqual(minter.get(), "ghs_1")
+        clock[0] += 2  # under 10 min left: mint again
+        self.assertEqual(minter.get(), "ghs_2")
+        self.assertEqual(minter.minted, 2)
+        minter.revoke()
+        self.assertEqual(made[-1].token, "ghs_2")
+        self.assertEqual(made[-1].calls, [("DELETE", "installation/token", None)])
+
+    def test_workflow_loops_past_the_token_hour_from_dev_only(self):
+        text = (SCRIPTS.parent / "workflows" / "devflow-train.yml").read_text()
+        self.assertNotIn(
+            "create-github-app-token", text, "the script mints its own tokens"
+        )
+        self.assertNotIn("workflow_dispatch:", text, "it would need the file on main")
+        self.assertIn("timeout-minutes: 345", text)
+        self.assertIn("DEVFLOW_TRAIN_LOOP_MINUTES || 330", text)
+        self.assertIn("environment: devflow-train", text)
 
 
 class LiveWrites(unittest.TestCase):
@@ -1397,9 +1638,13 @@ class LiveWrites(unittest.TestCase):
 
     def test_non_infra_red_splits_at_once_with_no_rerun(self):
         node = rollup_node(
-            70, [(1, sha(1)), (2, sha(2))], checks=green()[:2] + [run("Python Lint Pass", "FAILURE")]
+            70,
+            [(1, sha(1)), (2, sha(2))],
+            checks=green()[:2] + [run("Python Lint Pass", "FAILURE")],
         )
-        result = train.plan(data([pr_node(1), pr_node(2)], [node]), REQUIRED, cfg(), {70: "red"})
+        result = train.plan(
+            data([pr_node(1), pr_node(2)], [node]), REQUIRED, cfg(), {70: "red"}
+        )
         self.assertEqual(result["rollup_actions"][0]["action"], "split")
         app, actions = FakeGitHub({}), FakeGitHub({})
 
