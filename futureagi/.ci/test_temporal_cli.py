@@ -129,7 +129,9 @@ class TemporalCliScriptTest(unittest.TestCase):
         self.assertFalse((self.root / "must-not-extract").exists())
         self.assertFalse((self.root / "calls").exists())
 
-    def test_install_never_falls_back_to_a_download(self):
+    def test_cache_hit_with_missing_archive_fails_without_network(self):
+        # A cache action can report a hit while restoring no archive. The
+        # consumer must fail rather than silently downloading a replacement.
         self.assertNotEqual(self.run_script("install").returncode, 0)
         self.cached.write_bytes(b"corrupt")
         self.assertNotEqual(self.run_script("install").returncode, 0)
