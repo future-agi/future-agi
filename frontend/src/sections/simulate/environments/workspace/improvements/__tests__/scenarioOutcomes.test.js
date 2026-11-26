@@ -162,6 +162,20 @@ describe("scenarioOutcomes", () => {
     ]);
   });
 
+  it("names each scenario by the read's stored name, never its key", () => {
+    // A call names its scenario by key; the read stores the name.
+    const rows = scenarioOutcomes(
+      [task("late-cancel", "failed"), task("refund", "passed")],
+      [task("late-cancel", "passed"), task("refund", "passed")],
+      null,
+      { "late-cancel": "Late cancellation" },
+    );
+    expect(rows.map((r) => [r.key, r.name])).toEqual([
+      ["late-cancel", "Late cancellation"],
+      ["refund", "Unnamed scenario"],
+    ]);
+  });
+
   it("keeps every call of a scenario for the compare, and counts the measured trials", () => {
     const [row] = scenarioOutcomes(
       [task("a", "failed"), task("a", "unmeasured")],

@@ -4229,3 +4229,24 @@
 - No safe improvement asks for state=no_improvement and shows exactly that epoch
 - Ready for review asks for state=ready and says no epoch has that status
 - All statuses again shows the three epochs
+
+### SIM-E2E-041 — an Epoch page shows each candidate's change and each scenario by its stored name
+
+**Goal:** A developer opens a finished Epoch and reads what each candidate changes, and each scenario by the name it was stored under, never its key
+
+**Spec:** `flows/simulate/epoch-change-and-scenario-names.spec.ts:60`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished epoch's page
+2. read the winner's row on the Candidates tab
+3. open the Scenarios tab
+
+**Browser observations:**
+
+- the winner's What it changes cell says the read's change line, not the engine's note
+- a scenario whose key differs from its stored name reads the stored name
+- a scenario with no stored name reads Unnamed scenario
+- no scenario row shows a scenario key

@@ -39326,16 +39326,18 @@ export const simulateApiAgentFixRunsReadResponseReportOneFlakyProtectedDefault =
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767;
 
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneMustPassWithinNoiseDefault =
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemDetailDefault = ``;
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsItemNameMax = 64;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemNameMax = 64;
 
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsItemDetailDefault = ``;
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsDefault =
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault = ``;
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault =
   [];
-export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersDefault =
+export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault =
   [];
+
+export const simulateApiAgentFixRunsReadResponseCandidatesItemWordingMustPassBrokenMin = 0;
 
 export const SimulateApiAgentFixRunsReadResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -39550,72 +39552,69 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       outcome: zod
         .enum(["pending", "rejected", "finalist", "winner"])
         .optional(),
-      verdict: zod.union([
-        zod.object({
-          accepted: zod.boolean(),
-          reason: zod.string().min(1),
-          target_pass_rate: zod.array(zod.number()).optional(),
-          held_back_pass_rate: zod.array(zod.number()).optional(),
-          must_pass_regressions: zod.array(zod.string().min(1)),
-          must_pass_within_noise: zod
-            .array(zod.string().min(1))
-            .default(
-              simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneMustPassWithinNoiseDefault,
-            ),
-          tiers: zod
-            .array(
-              zod.object({
-                name: zod.string().min(1),
-                status: zod.enum(["passed", "failed", "pending", "skipped"]),
-                detail: zod
-                  .string()
-                  .default(
-                    simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemDetailDefault,
-                  ),
-                parts: zod
-                  .array(
-                    zod.object({
-                      name: zod
-                        .string()
-                        .min(1)
-                        .max(
-                          simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsItemNameMax,
-                        ),
-                      status: zod.enum(["passed", "failed", "skipped"]),
-                      detail: zod
-                        .string()
-                        .default(
-                          simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsItemDetailDefault,
-                        ),
-                    }),
-                  )
-                  .default(
-                    simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersItemPartsDefault,
-                  ),
-                latency: zod
-                  .object({
-                    baseline: zod.number().optional(),
-                    candidate: zod.number().optional(),
-                    allowed: zod.number().optional(),
-                    limit: zod.number().optional(),
-                  })
-                  .optional(),
-                cost: zod
-                  .object({
-                    baseline: zod.number().optional(),
-                    candidate: zod.number().optional(),
-                    allowed: zod.number().optional(),
-                    limit: zod.number().optional(),
-                  })
-                  .optional(),
-              }),
-            )
-            .default(
-              simulateApiAgentFixRunsReadResponseCandidatesItemVerdictOneTiersDefault,
-            ),
-        }),
-        zod.null(),
-      ]),
+      verdict: zod.object({
+        accepted: zod.boolean(),
+        reason: zod.string().min(1),
+        target_pass_rate: zod.array(zod.number()).optional(),
+        held_back_pass_rate: zod.array(zod.number()).optional(),
+        must_pass_regressions: zod.array(zod.string().min(1)),
+        must_pass_within_noise: zod
+          .array(zod.string().min(1))
+          .default(
+            simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
+          ),
+        tiers: zod
+          .array(
+            zod.object({
+              name: zod.string().min(1),
+              status: zod.enum(["passed", "failed", "pending", "skipped"]),
+              detail: zod
+                .string()
+                .default(
+                  simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemDetailDefault,
+                ),
+              parts: zod
+                .array(
+                  zod.object({
+                    name: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemNameMax,
+                      ),
+                    status: zod.enum(["passed", "failed", "skipped"]),
+                    detail: zod
+                      .string()
+                      .default(
+                        simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsItemDetailDefault,
+                      ),
+                  }),
+                )
+                .default(
+                  simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersItemPartsDefault,
+                ),
+              latency: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
+              cost: zod
+                .object({
+                  baseline: zod.number().optional(),
+                  candidate: zod.number().optional(),
+                  allowed: zod.number().optional(),
+                  limit: zod.number().optional(),
+                })
+                .optional(),
+            }),
+          )
+          .default(
+            simulateApiAgentFixRunsReadResponseCandidatesItemVerdictTiersDefault,
+          ),
+      }),
       check_runs: zod
         .array(
           zod.object({
@@ -39643,6 +39642,19 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
         .optional(),
       pull_request_url: zod.string(),
       created_at: zod.string().datetime({ offset: true }).optional(),
+      wording: zod
+        .object({
+          headline: zod.string(),
+          must_pass: zod.string(),
+          must_pass_broken: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsReadResponseCandidatesItemWordingMustPassBrokenMin,
+            ),
+          changes: zod.union([zod.string().min(1), zod.null()]),
+          caveats: zod.array(zod.string().min(1)),
+        })
+        .optional(),
     }),
   ),
   started_at: zod
@@ -39664,6 +39676,8 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     )
     .optional(),
   eval_grading: zod.enum(["none", "pending", "done", "incomplete"]).optional(),
+  flaky_protected_text: zod.array(zod.string().min(1)).optional(),
+  scenario_names: zod.record(zod.string(), zod.string().min(1)).optional(),
 });
 
 /**
