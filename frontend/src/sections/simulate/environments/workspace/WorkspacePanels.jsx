@@ -79,8 +79,10 @@ export default function WorkspacePanels({
   // the Overview and back.
   const showRuns = runsTotal > 0 || (runsLoading && tab === "runs");
   // Improvements appears once the environment has a fix, the same way Runs does.
-  const { count: fixCount, isLoading: fixesLoading } = useEnvironmentFixRuns(env?.id);
-  const showImprovements = fixCount > 0 || (fixesLoading && tab === "improvements");
+  // A backed environment whose list failed to load keeps it, so the tab says why.
+  const { count: fixCount, isLoading: fixesLoading, error: fixesError } = useEnvironmentFixRuns(env?.id);
+  const showImprovements =
+    fixCount > 0 || (fixesLoading && tab === "improvements") || (backed && !!fixesError);
   // Versions appears only while versioning is switched on for this environment.
   const showVersions = Boolean(env?.versioning?.enabled);
   // Alignment exists only on a composition: a released environment bound to the agent.

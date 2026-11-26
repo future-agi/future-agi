@@ -587,6 +587,29 @@ export interface TimezoneResponseApi {
   timezone: string;
 }
 
+export type EmailUnsubscribeRequestApiAction =
+  (typeof EmailUnsubscribeRequestApiAction)[keyof typeof EmailUnsubscribeRequestApiAction];
+
+export const EmailUnsubscribeRequestApiAction = {
+  unsubscribe: "unsubscribe",
+  resubscribe: "resubscribe",
+} as const;
+
+export interface EmailUnsubscribeRequestApi {
+  action?: EmailUnsubscribeRequestApiAction;
+}
+
+export type SnoozeRequestApiAction =
+  (typeof SnoozeRequestApiAction)[keyof typeof SnoozeRequestApiAction];
+
+export const SnoozeRequestApiAction = {
+  snooze: "snooze",
+} as const;
+
+export interface SnoozeRequestApi {
+  action?: SnoozeRequestApiAction;
+}
+
 export interface UserOnboardingResultApi {
   role: string;
   goals: string[];
@@ -19411,6 +19434,23 @@ export interface AgentFixIssueScenariosApi {
   limit: number;
 }
 
+/**
+ * pull_request for a GitHub agent; make_default for an uploaded one.
+ */
+export type AgentFixShipReadinessApiPath =
+  (typeof AgentFixShipReadinessApiPath)[keyof typeof AgentFixShipReadinessApiPath];
+
+export const AgentFixShipReadinessApiPath = {
+  pull_request: "pull_request",
+  make_default: "make_default",
+} as const;
+
+export interface AgentFixShipReadinessApi {
+  /** pull_request for a GitHub agent; make_default for an uploaded one. */
+  path: AgentFixShipReadinessApiPath;
+  blocked: AgentFixFailureApi | null;
+}
+
 export interface AgentFixIssuePlanApi {
   issue: AgentFixIssueApi;
   environment: AgentFixIssueEnvironmentApi | null;
@@ -19419,6 +19459,7 @@ export interface AgentFixIssuePlanApi {
   open_job_id: string | null;
   issue_scenarios: AgentFixIssueScenariosApi | null;
   defaults: AgentFixIssueDefaultsApi;
+  ship: AgentFixShipReadinessApi | null;
 }
 
 export type AgentFixIssueRunApiSurfacesItem =
@@ -19479,9 +19520,8 @@ export interface AgentFixAgentApi {
   /** @minLength 1 */
   kind: string;
   version_id: string;
-  version_number: number;
-  /** @minLength 1 */
-  ref: string;
+  version_number: number | null;
+  ref: string | null;
 }
 
 export type AgentFixRunApiState =
@@ -19536,6 +19576,7 @@ export interface AgentFixEpochIssueApi {
   /** @minLength 1 */
   cluster_id: string;
   project_id: string;
+  title: string | null;
 }
 
 export interface AgentFixCheckRunApi {
@@ -19613,6 +19654,8 @@ export interface AgentFixRunApi {
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
+  /** Run from an Error Feed issue, even once the issue is gone. */
+  readonly from_issue?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
@@ -19681,18 +19724,17 @@ export interface AgentFixLaunchApi {
 
 export interface AgentFixLaunchSourceRunApi {
   id: string;
-  number: number;
+  number: number | null;
   /** @minLength 1 */
   state: string;
-  /** @minLength 1 */
-  finished_at: string;
+  finished_at: string | null;
 }
 
 export interface AgentFixLaunchEnvironmentApi {
   id: string;
   /** @minLength 1 */
   name: string;
-  version: number;
+  version: number | null;
 }
 
 export interface AgentFixLaunchScenarioApi {
@@ -19700,10 +19742,9 @@ export interface AgentFixLaunchScenarioApi {
   key: string;
   /** @minLength 1 */
   name: string;
-  passed: boolean;
+  passed: boolean | null;
   failing_sub_goals: string[];
-  /** The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence. */
-  evidence_import_id: string;
+  evidence_import_id: string | null;
 }
 
 export interface AgentFixLaunchSuggestedApi {
@@ -19742,17 +19783,27 @@ export interface AgentFixLaunchLimitsApi {
   scenarios_max: number;
 }
 
+export interface AgentFixLaunchBlockedApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+  cluster_id: string | null;
+}
+
 export interface AgentFixLaunchOptionsApi {
   source_run: AgentFixLaunchSourceRunApi;
   environment: AgentFixLaunchEnvironmentApi;
-  agent: AgentFixAgentApi;
+  agent: AgentFixAgentApi | null;
   scenarios: AgentFixLaunchScenarioApi[];
   suggested: AgentFixLaunchSuggestedApi;
   surfaces: AgentFixLaunchSurfaceApi[];
   defaults: AgentFixLaunchDefaultsApi;
   limits: AgentFixLaunchLimitsApi;
-  blocked: AgentFixFailureApi;
-  variations_blocked: AgentFixFailureApi;
+  blocked: AgentFixLaunchBlockedApi | null;
+  variations_blocked: AgentFixFailureApi | null;
+  held_back_scenario_keys: string[] | null;
+  ship: AgentFixShipReadinessApi | null;
 }
 
 export type AgentFixRunDetailApiState =
@@ -19780,6 +19831,46 @@ export const AgentFixRunDetailApiEvalGrading = {
   done: "done",
   incomplete: "incomplete",
 } as const;
+
+export type AgentFixRunDetailApiScenarioNames = { [key: string]: string };
+
+export type AgentFixCandidateDetailApiOutcome =
+  (typeof AgentFixCandidateDetailApiOutcome)[keyof typeof AgentFixCandidateDetailApiOutcome];
+
+export const AgentFixCandidateDetailApiOutcome = {
+  pending: "pending",
+  rejected: "rejected",
+  finalist: "finalist",
+  winner: "winner",
+} as const;
+
+export interface AgentFixCandidateWordingApi {
+  headline: string;
+  must_pass: string;
+  /** @minimum 0 */
+  must_pass_broken: number;
+  changes: string | null;
+  caveats: string[];
+}
+
+export interface AgentFixCandidateDetailApi {
+  readonly id?: string;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  attempt: number;
+  agent_version_id: string;
+  version_number: number;
+  summary?: string;
+  outcome?: AgentFixCandidateDetailApiOutcome;
+  verdict: AgentFixVerdictApi;
+  readonly check_runs?: readonly AgentFixCheckRunApi[];
+  override?: AgentFixOverrideApi;
+  pull_request_url: string;
+  readonly created_at?: string;
+  wording?: AgentFixCandidateWordingApi;
+}
 
 export interface AgentFixEvalWarningApi {
   /** @minLength 1 */
@@ -19814,14 +19905,18 @@ export interface AgentFixRunDetailApi {
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
+  /** Run from an Error Feed issue, even once the issue is gone. */
+  readonly from_issue?: boolean;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
-  candidates: AgentFixCandidateApi[];
+  candidates: AgentFixCandidateDetailApi[];
   started_at?: string | null;
   finished_at?: string | null;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
   readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
+  readonly flaky_protected_text?: readonly string[];
+  readonly scenario_names?: AgentFixRunDetailApiScenarioNames;
 }
 
 export interface AgentFixShipApi {
@@ -21160,6 +21255,8 @@ export interface HarnessEnvironmentApi {
   created_at: string;
   agent: HarnessEnvironmentAgentRefApi;
   last_run: HarnessRunSummaryApi;
+  /** Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing. */
+  epoch_pickable: boolean;
 }
 
 export interface HarnessEnvironmentStatusCountsApi {
@@ -47041,6 +47138,49 @@ export type AccountsGcpMarketplaceVerifyTokenCreateBody = {
   "x-gcp-marketplace-token": string;
 };
 
+export type AccountsNotificationsEmailUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsEmailUnsubscribeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsSnoozeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsSnoozeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
 export type AccountsOrganizationMembersListParams = {
   /**
    * @minimum 1
@@ -49653,6 +49793,11 @@ export type SimulateApiAgentFixRunsListParams = {
    * @maximum 100
    */
   limit?: number;
+  /**
+   * Comma-separated fix states to list, any of: queued, running, stopping, ready, no_improvement, not_reproduced, out_of_budget, stopped, failed, too_few_cases.
+   * @minLength 1
+   */
+  state?: string;
 };
 
 export type SimulateApiAgentFixRunsLaunchOptionsParams = {

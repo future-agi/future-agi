@@ -1,4 +1,4 @@
-name: Python types (advisory)
+name: Python types
 
 # Whole-repo mypy against the committed baseline, futureagi/mypy-baseline.txt,
 # the way PostHog ran it: known errors are listed with their line numbers set
@@ -6,14 +6,14 @@ name: Python types (advisory)
 # fails the job. It also catches errors a change causes in files it did not
 # touch. See scripts/mypy_baseline.py.
 #
-# Advisory for now: "Python Types Pass" is not a required check. It reports on
-# every PR (no workflow-level paths filter), so it can be made required later
-# without changes here. A PR that changes none of the paths in the changes job
-# skips mypy, and the summary still passes.
+# "Python Types Pass" is the one summary check. It reports on every PR and
+# every merge group (no workflow-level paths filter), so branch rules can
+# require it. A PR that changes none of the paths in the changes job skips mypy,
+# and the summary still passes. A merge group always runs mypy: it checks the
+# change merged onto the latest dev, which the PR's own run may predate.
 #
 # Every push to dev runs mypy too (no paths filter), so a merge that adds errors
-# without syncing the baseline shows up as a failed run on dev. It is advisory
-# there as well.
+# without syncing the baseline shows up as a failed run on dev.
 #
 # mypy's Django plugin imports tfc.settings.settings ([tool.django-stubs] in
 # futureagi/pyproject.toml) to build the model registry. EE_LICENSE_KEY on the
@@ -24,23 +24,25 @@ name: Python types (advisory)
 # cache can never hide an error.
 #
 # No branches filter on pull_request: stacked PRs into feature branches get the
-# check too. An "edited" event runs the check only when the base changes: that
-# event checks the new merge commit. Ordinary body/title edits skip every job
-# and use an isolated concurrency group, leaving an active check alone.
+# check too. Only opened, synchronize and reopened start a run: an edit-started
+# suite would hide this check from the queue and block enqueue (#4332, #4001).
+# A retarget starts no run; the merge queue re-tests the change against dev.
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
   push:
     branches: [dev]
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
 
 concurrency:
-  # Pushes and retargets share the PR group; ordinary edits cannot cancel them.
-  # Pushes to dev get one group per commit, so later merges cannot cancel them.
-  group: python-types-${{ github.event.action == 'edited' && !github.event.changes.base && github.run_id || github.event_name == 'push' && github.sha || github.ref }}
+  # One active run per PR or merge group. Pushes to dev get one group per
+  # commit, so later merges cannot cancel them.
+  group: python-types-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -50,15 +52,14 @@ env:
 
 jobs:
   changes:
-    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read # dorny/paths-filter reads the PR's file list
     outputs:
-      # Pushes to dev and retargets always run mypy, even for a docs-only PR.
-      python: ${{ (github.event_name == 'push' || github.event.changes.base) && 'true' || steps.filter.outputs.python }}
+      # Pushes to dev and merge groups always run mypy, even for a docs-only PR.
+      python: ${{ (github.event_name == 'push' || github.event_name == 'merge_group') && 'true' || steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v4
         if: github.event_name == 'pull_request'
@@ -86,7 +87,7 @@ jobs:
       # On a PR, the merge commit (the default): the code and the baseline as
       # they would be after merging, so an error that only appears in
       # combination with the current base is caught too. On a push, the
-      # pushed dev commit.
+      # pushed dev commit. In a merge group, the queue's merge commit.
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -145,7 +146,7 @@ jobs:
   python-types-pass:
     name: Python Types Pass
     needs: [changes, mypy-baseline]
-    if: always() && (github.event.action != 'edited' || github.event.changes.base)
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
