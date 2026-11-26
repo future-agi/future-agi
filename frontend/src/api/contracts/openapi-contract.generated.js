@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1230,
+  endpointCount: 1231,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -31524,6 +31524,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessReleaseListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-releases/customize/": {
+      post: {
+        operationId: "simulate_api_harness-releases_customize",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessReleaseCustomizeRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessJobRead",
+          },
+          400: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -74894,6 +74922,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["review", "run"],
           default: "review",
+        },
+      },
+    },
+    HarnessReleaseCustomizeRequest: {
+      required: [
+        "suite_id",
+        "agent_version_id",
+        "name",
+        "change",
+        "idempotency_key",
+      ],
+      type: "object",
+      properties: {
+        suite_id: {
+          title: "Suite id",
+          type: "string",
+          format: "uuid",
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          description:
+            "The agent whose workspace the copy is built in, as every build is.",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        change: {
+          title: "Change",
+          description: "What should change in the copy, in the person's words.",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
         },
       },
     },
@@ -119251,6 +119322,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "policy",
         "suites",
         "catalogue",
+        "derived_from",
       ],
       type: "object",
       properties: {
@@ -119293,6 +119365,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         catalogue: {
           $ref: "#/definitions/HarnessReleaseCatalogue",
+        },
+        derived_from: {
+          $ref: "#/definitions/HarnessReleaseSource",
         },
       },
     },
@@ -144020,6 +144095,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    HarnessReleaseSource: {
+      description:
+        "For a private copy, the ready environment it was customized from.",
+      required: ["digest", "name", "title"],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessReleaseTool: {
       required: ["name", "description", "mutates_state"],

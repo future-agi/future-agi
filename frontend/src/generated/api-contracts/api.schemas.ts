@@ -26586,6 +26586,18 @@ export interface HarnessReleaseCatalogueApi {
   example_requests: string[];
 }
 
+/**
+ * For a private copy, the ready environment it was customized from.
+ */
+export interface HarnessReleaseSourceApi {
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  title: string;
+}
+
 export interface HarnessReleaseApi {
   id: string;
   /** @minLength 1 */
@@ -26598,10 +26610,33 @@ export interface HarnessReleaseApi {
   policy: HarnessReleasePolicyApi;
   suites: HarnessSuiteSummaryApi[];
   catalogue: HarnessReleaseCatalogueApi;
+  derived_from: HarnessReleaseSourceApi;
 }
 
 export interface HarnessReleaseListResponseApi {
   results: HarnessReleaseApi[];
+}
+
+export interface HarnessReleaseCustomizeRequestApi {
+  suite_id: string;
+  /** The agent whose workspace the copy is built in, as every build is. */
+  agent_version_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /**
+   * What should change in the copy, in the person's words.
+   * @minLength 1
+   * @maxLength 4000
+   */
+  change: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
 }
 
 export type HarnessReleaseFitRequestApiPairing = { [key: string]: string };
