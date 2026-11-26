@@ -871,18 +871,27 @@ PR_FIELDS = """
 """
 
 
-def build_query() -> str:
-    # Check runs are not read here: a CI run on one head has over 100 check
-    # runs and the aggregates finish last, so a head's first 100 contexts
-    # miss them, and filtered lookups per pull request exceed GraphQL's
-    # resource limits. GitHub.attach_checks reads them by name over REST.
-    def prs(alias: str, label: str, count: int) -> str:
-        return f'{alias}: pullRequests(states: OPEN, baseRefName: "{BASE}", labels: ["{label}"], first: {count}) {{ nodes {{ {PR_FIELDS} }} }}'
+PAGE_SIZE = 50
+MAX_PAGES = 40  # 2,000 labelled pull requests; past that something is wrong
 
-    return (
-        "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { "
-        f'mergeQueue(branch: "{BASE}") {{ entries(first: 100) {{ nodes {{ pullRequest {{ number }} }} }} }} '
-        f"{prs('admitted', ADMIT_LABEL, 100)} {prs('rollups', ROLLUP_LABEL, 20)} }} }}"
+
+def build_query(label: str | None = None) -> str:
+    """One page of open pull requests into dev with this label, or (no label)
+    the merge queue's entries.
+
+    Check runs are not read here: a CI run on one head has over 100 check
+    runs and the aggregates finish last, so a head's first 100 contexts miss
+    them, and filtered lookups per pull request exceed GraphQL's resource
+    limits. GitHub.attach_checks reads them by name over REST."""
+    head = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { "
+    if label is None:
+        return head + (
+            f'mergeQueue(branch: "{BASE}") {{ entries(first: 100) {{ nodes {{ pullRequest {{ number }} }} }} }} }} }}'
+        )
+    return head + (
+        f'pullRequests(states: OPEN, baseRefName: "{BASE}", labels: ["{label}"], '
+        f"first: {PAGE_SIZE}, after: $after) {{ pageInfo {{ hasNextPage endCursor }} "
+        f"nodes {{ {PR_FIELDS} }} }} }} }}"
     )
 
 
@@ -977,8 +986,27 @@ class GitHub:
         return sorted(i["number"] for i in out if "pull_request" not in i)
 
     def gather(self) -> dict:
+        """The queue and every admitted and rollup pull request, all pages."""
         owner, name = self.repo.split("/")
-        return self.graphql(build_query(), owner=owner, name=name)
+        repo = {
+            "mergeQueue": self.graphql(build_query(), owner=owner, name=name)[
+                "repository"
+            ]["mergeQueue"]
+        }
+        for key, label in (("admitted", ADMIT_LABEL), ("rollups", ROLLUP_LABEL)):
+            nodes, after = [], None
+            for _ in range(MAX_PAGES):
+                page = self.graphql(
+                    build_query(label), owner=owner, name=name, after=after
+                )["repository"]["pullRequests"]
+                nodes += page["nodes"]
+                if not page["pageInfo"]["hasNextPage"]:
+                    break
+                after = page["pageInfo"]["endCursor"]
+            else:
+                raise RuntimeError(f"more than {MAX_PAGES} pages of {label}")
+            repo[key] = {"nodes": nodes}
+        return {"repository": repo}
 
     def check_runs(self, sha: str, required: list) -> list:
         """Every run of each required check on one commit, by name and app."""

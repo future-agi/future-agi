@@ -258,9 +258,41 @@ class Globs(unittest.TestCase):
 
 class Checks(unittest.TestCase):
     def test_query_reads_no_check_runs(self):
-        query = train.build_query()
-        self.assertNotIn("checkRuns", query)
-        self.assertNotIn("statusCheckRollup", query)
+        for query in (train.build_query(), train.build_query(train.ADMIT_LABEL)):
+            self.assertNotIn("checkRuns", query)
+            self.assertNotIn("statusCheckRollup", query)
+
+    def test_gather_reads_every_page(self):
+        pages = {
+            train.ADMIT_LABEL: [[pr_node(n) for n in range(1, 51)], [pr_node(n) for n in range(51, 121)]],
+            train.ROLLUP_LABEL: [[]],
+        }
+
+        class Paged(train.GitHub):
+            def graphql(self, query, **variables):
+                if "mergeQueue" in query:
+                    return {"repository": {"mergeQueue": {"entries": {"nodes": []}}}}
+                label = train.ADMIT_LABEL if train.ADMIT_LABEL in query else train.ROLLUP_LABEL
+                index = int(variables["after"] or 0)
+                more = index + 1 < len(pages[label])
+                return {
+                    "repository": {
+                        "pullRequests": {
+                            "pageInfo": {"hasNextPage": more, "endCursor": str(index + 1)},
+                            "nodes": pages[label][index],
+                        }
+                    }
+                }
+
+        out = Paged("t", "o/r").gather()
+        self.assertEqual(len(out["repository"]["admitted"]["nodes"]), 120)
+        self.assertEqual(out["repository"]["rollups"]["nodes"], [])
+
+    def test_excluded_old_prs_do_not_starve_newer_ones(self):
+        old = [pr_node(n, isDraft=True) for n in range(1, 111)]
+        result = train.plan(data(old + [pr_node(111)]), REQUIRED, cfg())
+        self.assertEqual(result["eligible"], [111])
+        self.assertEqual(len(result["excluded"]), 110)
 
     def test_checks_are_read_only_when_they_decide(self):
         self.assertTrue(train.needs_checks(pr_node(1), REQUIRED, cfg()))
