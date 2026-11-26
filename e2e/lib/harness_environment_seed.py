@@ -3,6 +3,9 @@
 Run inside the backend container by ``e2e/lib/simulate-seed.ts``; prints one JSON line.
 """
 
+import base64
+import hashlib
+import io
 import json
 import os
 import sys
@@ -200,7 +203,24 @@ TRIAL_STATES = {
     "actor": ACTOR_TRIAL_STATE,
     "duplicate": DUPLICATE_TRIAL_STATE,
     "refused": REFUSED_TRIAL_STATE,
+    # Built at seed time: its trial names a stored world_state file by digest (``_browser_trial``).
+    "browser": None,
 }
+
+# A browser environment's one site, a public host name as the environment's create input takes it
+# (simulate/services/browser_sites.py).
+BROWSER_SITE = "shop.example.com"
+# An 8x6 JPEG: the screenshot the trial's browser took when its page loaded.
+BROWSER_SHOT = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQ"
+    "YEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAAGAAgD"
+    "ASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKB"
+    "kaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZ"
+    "mqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQF"
+    "BgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5"
+    "OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX"
+    "2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwCjRRRXvHiH/9k="
+)
 
 
 def _payload(count):
@@ -451,6 +471,9 @@ def seed_environment(
         "authoring_object_key": object_key,
         "authoring_revision": authoring_content_digest(body),
     }
+    if trial == "browser":
+        # The environment's create input, read at its pin; the backfill records it on the version.
+        payload["browser"] = {"allowed_sites": [BROWSER_SITE]}
     environment.payload = payload
     environment.name = f"e2e-harness-{suffix}"
     environment.state = HostedHarnessJob.State.COMPLETED
@@ -496,11 +519,14 @@ def seed_environment(
         raise RuntimeError("backfill cached no certified bundle")
     if failed_check:
         _fail_check(environment, failed_check)
-    trial_ids = (
-        _finished_trial(environment, definition, documents[0], TRIAL_STATES[trial])
-        if trial
-        else {}
-    )
+    if trial == "browser":
+        trial_ids = _browser_trial(environment, definition, documents[0], suffix)
+    elif trial:
+        trial_ids = _finished_trial(
+            environment, definition, documents[0], TRIAL_STATES[trial]
+        )
+    else:
+        trial_ids = {}
     return {
         **trial_ids,
         "environmentId": str(environment.id),
@@ -513,9 +539,9 @@ def seed_environment(
     }
 
 
-def _finished_trial(environment, definition, document, trial_state):
+def _finished_trial(environment, definition, document, trial_state, receipt=None):
     """One finished run of the Environment with one completed trial of its first scenario, its World changes as the
-    harness seals them (ingestion keeps them under ``harness_trial_state``)."""
+    harness seals them (ingestion keeps them under ``harness_trial_state``); ``receipt`` is the job's receipt for it."""
     from simulate.models import Scenarios
     from simulate.models.test_execution import CallExecution, TestExecution
     from simulate.services.hosted_harness_ingestion import TRIAL_STATE_KEY
@@ -543,6 +569,7 @@ def _finished_trial(environment, definition, document, trial_state):
             "harness_scenario_key": document["scenario_key"],
             "harness_trial_index": 0,
             TRIAL_STATE_KEY: trial_state,
+            **({"hosted_harness_receipt": receipt} if receipt else {}),
         },
     )
     return {
@@ -550,6 +577,113 @@ def _finished_trial(environment, definition, document, trial_state):
         "testExecutionId": str(execution.id),
         "callExecutionId": str(call.id),
     }
+
+
+def _store(environment, data, *, kind, content_type, scenario_key):
+    """An artifact the job uploaded: its bytes in the object store, its row as ingestion keeps it."""
+    from simulate.models import HostedHarnessArtifact
+    from tfc.settings.settings import UPLOAD_BUCKET_NAME
+    from tfc.utils.storage_client import ensure_bucket, get_storage_client
+
+    digest = hashlib.sha256(data).hexdigest()
+    object_key = f"alk-harness/{environment.organization_id}/{environment.id}/{digest}"
+    client = get_storage_client()
+    ensure_bucket(client, UPLOAD_BUCKET_NAME)
+    client.put_object(
+        bucket_name=UPLOAD_BUCKET_NAME,
+        object_name=object_key,
+        data=io.BytesIO(data),
+        length=len(data),
+        content_type=content_type,
+    )
+    HostedHarnessArtifact.no_workspace_objects.create(
+        job=environment,
+        sha256=digest,
+        kind=kind,
+        size=len(data),
+        content_type=content_type,
+        object_key=object_key,
+        scenario_key=scenario_key,
+    )
+    return f"sha256:{digest}"
+
+
+def _browser_trial(environment, definition, document, suffix):
+    """A finished trial of a browser environment with no world door, as the kit leaves it: its screenshot stored, and
+    its world_state file (``futureagi.browser-world-state.v1``) holding the page the browser loaded and the page it was
+    refused, named by digest in the sealed record. The page and the refused host are minted for this seed."""
+    page = f"https://{BROWSER_SITE}/e2e-{suffix}/cart"
+    refused_host = f"ads-{suffix}.example.net"
+    key = document["scenario_key"]
+    shot = _store(
+        environment,
+        BROWSER_SHOT,
+        kind="screenshot",
+        content_type="image/jpeg",
+        scenario_key=key,
+    )
+    world_state = {
+        "schema": "futureagi.browser-world-state.v1",
+        "why": "no_world_door",
+        "recorded": False,
+        "not_held": ["tables", "action_log"],
+        "browser": {
+            "state": "used",
+            "complete": True,
+            "truncated": False,
+            "rows": [{"kind": "navigation", "url": page, "at": 100.0, "tab": 1}],
+            "blocked_navigations": [
+                {"url": f"https://{refused_host}/deals", "at": 101.0, "tab": 1}
+            ],
+            "blocked_page_requests": [],
+            "screenshots": [
+                {
+                    "file": "shot-001-load.jpg",
+                    "when": "load",
+                    "url": page,
+                    "tab": 1,
+                    "at": 102.0,
+                    "bytes": len(BROWSER_SHOT),
+                    "artifact_id": shot,
+                }
+            ],
+            "screenshots_capped": False,
+        },
+        "blocked": [
+            {
+                "host": refused_host,
+                "via": "browser",
+                "what": "navigation",
+                "url": f"https://{refused_host}/deals",
+                "at": 101.0,
+            }
+        ],
+    }
+    end_state = _store(
+        environment,
+        json.dumps(world_state).encode(),
+        kind="world_state",
+        content_type="application/json",
+        scenario_key=key,
+    )
+    trial_state = {
+        "state_changes": [],
+        "recorded": False,
+        "why": "no_world_door",
+        "end_state_artifact": end_state,
+    }
+    ids = _finished_trial(
+        environment,
+        definition,
+        document,
+        trial_state,
+        receipt={
+            "job_id": str(environment.id),
+            "scenario_key": key,
+            "status": "passed",
+        },
+    )
+    return {**ids, "browserPage": page, "refusedHost": refused_host}
 
 
 def _fail_check(environment, action):

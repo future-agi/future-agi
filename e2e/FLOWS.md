@@ -3785,3 +3785,32 @@
 - the environment opens on its workspace with its name
 - Run simulation is disabled and its tooltip says "You don't have permission to start runs."
 - Rename environment is disabled
+
+### SIM-E2E-038 — A trial of a browser environment shows its browser's screenshot and the page it was refused
+
+**Goal:** A developer opens a trial of a browser environment and sees what its browser did: the screenshot it took, with the page's address, and the page it was refused; a trial of an environment with no browser has no Browser entry
+
+**Spec:** `flows/simulate/trial-browser.spec.ts:29`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a browser environment and one finished trial with no world door: its screenshot and its world_state file stored (e2e/lib/harness_environment_seed.py, trial: browser)
+2. seed an environment with no browser and one finished trial
+3. read each trial (GET v3/call-executions/<id>)
+4. read the browser trial's browser (GET .../browser/)
+5. open the browser trial and its Browser entry
+6. open the other trial
+
+**Backend state verified:**
+
+- the browser trial is of a browser environment and the other is not
+- its browser lists one kept screenshot of the minted page
+- its refusals come from its file and name the minted host as a page
+
+**Browser observations:**
+
+- the Browser entry captions the screenshot "Page loaded · Tab 1 · <minted page>" and shows its picture
+- it lists the minted host under Pages blocked
+- the other trial has no Browser entry

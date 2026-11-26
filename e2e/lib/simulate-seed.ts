@@ -222,6 +222,9 @@ export interface HarnessEnvironmentSeed {
   runTestId?: string;
   testExecutionId?: string;
   callExecutionId?: string;
+  /** With `trial: 'browser'`: the page its browser loaded and photographed, and the host it was refused. */
+  browserPage?: string;
+  refusedHost?: string;
 }
 
 /**
@@ -239,7 +242,7 @@ export function seedHarnessEnvironment(opts: {
   /** The refunds include a world actor with no channel (Dana Brooks). */
   actors?: boolean;
   /** One finished trial; the string variants pick its World changes (see harness_environment_seed.py). */
-  trial?: boolean | 'fault' | 'actor' | 'duplicate' | 'refused';
+  trial?: boolean | 'fault' | 'actor' | 'duplicate' | 'refused' | 'browser';
   /** The contract's tools with their fields: inputs, units and what each returns. */
   toolDetail?: boolean;
 }): HarnessEnvironmentSeed {
