@@ -206,7 +206,13 @@ def filter_for_list(
                     Value(""),
                     output_field=TextField(),
                 ),
-                list_version_modality=Lower(Trim(KT("version_contract__modality"))),
+                # Empty, not NULL, for a contract that names no modality: the browser filter negates
+                # the voice test, and NOT NULL would leave such a browser agent out.
+                list_version_modality=Coalesce(
+                    Lower(Trim(KT("version_contract__modality"))),
+                    Value(""),
+                    output_field=TextField(),
+                ),
             )
             .annotate(
                 list_is_voice=Case(
