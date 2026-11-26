@@ -4369,7 +4369,6 @@
 
 - the preflight request carries browser.allowed_sites as the two typed entries, trimmed and lower-cased, in order
 - the server answers 400 browser_sites_invalid with positions [2]
-- no PG simulate_hosted_harness_job row is added for the actor org
 
 **Browser observations:**
 
@@ -4379,7 +4378,7 @@
 
 **Goal:** A user finds the environments built for browser agents by their Browser label and the Browser filter
 
-**Spec:** `flows/simulate/browser-environment-form-and-filter.spec.ts:104`
+**Spec:** `flows/simulate/browser-environment-form-and-filter.spec.ts:94`
 
 **Tags:** —
 

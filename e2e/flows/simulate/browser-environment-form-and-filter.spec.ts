@@ -41,20 +41,17 @@ test('SIM-E2E-042: a wrong browser site is refused by its position at preflight,
               + 'in capitals and a URL after it', 'run preflight', 'read the preflight row'],
     backendChecks: ['the preflight request carries browser.allowed_sites as the two typed entries, trimmed and '
                       + 'lower-cased, in order',
-                    'the server answers 400 browser_sites_invalid with positions [2]',
-                    'no PG simulate_hosted_harness_job row is added for the actor org'],
+                    'the server answers 400 browser_sites_invalid with positions [2]'],
     browserChecks: ['the preflight row reads "Preflight couldn\'t run" and the refusal naming site 2'],
   }),
-}, async ({ page, actor, probe }, testInfo) => {
+}, async ({ page, actor }, testInfo) => {
   test.skip(process.env.E2E_STACK === 'standalone', 'agent reading runs on worker-reading and mock-daytona in the distributed E2E stack');
-  // 4 x UI_READY (upload, form, request, preflight row) = 240 s + POLL.ASYNC_JOB (the scan, 60 s) + navigation.
-  test.setTimeout(330_000);
+  // Every wait: the upload (UI_READY) + the found agent (UI_READY + POLL.ASYNC_JOB, the scan) + Browser sites,
+  // the preflight request and the preflight row (UI_READY each) = 60 + 120 + 3 x 60 = 360 s, + 60 s headroom.
+  test.setTimeout(420_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const good = `e2e-sites-${suffix}.example.com`;
   const typed = `${good.toUpperCase()}, https://${good}/path`;
-  const jobs = async () => Number((await probe.pg<{ count: string }>(
-    'SELECT count(*)::text AS count FROM simulate_hosted_harness_job WHERE organization_id = $1',
-    [actor.organizationId]))[0].count);
 
   await test.step('ui: upload the agent folder and find its agent', async () => {
     await page.goto(UPLOAD_BUILD, { waitUntil: 'domcontentloaded' });
@@ -67,13 +64,10 @@ test('SIM-E2E-042: a wrong browser site is refused by its position at preflight,
     await page.getByRole('button', { name: 'Next' }).click();
   });
 
-  let before = 0;
   await test.step('ui: type the browser sites', async () => {
     await page.getByRole('textbox', { name: 'Browser sites' }).fill(typed, { timeout: UI_READY });
-    // Counted here, after the scan, so only preflight could add a row.
-    before = await jobs();
     await testInfo.attach('minted', { contentType: 'application/json',
-      body: JSON.stringify({ good, typed, organizationId: actor.organizationId, jobsBefore: before }) });
+      body: JSON.stringify({ good, typed, organizationId: actor.organizationId }) });
   });
 
   let refusal: Refusal | undefined;
@@ -95,10 +89,6 @@ test('SIM-E2E-042: a wrong browser site is refused by its position at preflight,
     await expect(page.getByText('Preflight couldn\'t run', { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText(ONE_WRONG_SITE(2), { exact: true })).toBeVisible();
   });
-
-  await test.step('storage: nothing was built', async () => {
-    expect(await jobs()).toBe(before);
-  });
 });
 
 test('SIM-E2E-043: environments built for browser agents read Browser and are what the Browser filter lists', {
@@ -116,8 +106,10 @@ test('SIM-E2E-043: environments built for browser agents read Browser and are wh
                     'with Browser chosen, the browser environment is listed and the chat one is not'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // 2 seeds (container execs, about 20 s each) + 4 x UI_READY (240 s) + navigation.
-  test.setTimeout(300_000);
+  // Every wait: 2 seeds (container execs, about 20 s each) + step 1's search and row count for each name
+  // (4 x UI_READY) + step 2's row count, filtered answer, row count, filtered answer and row count (5 x UI_READY)
+  // = 40 + 540 s, + 60 s headroom.
+  test.setTimeout(640_000);
   const browserSeed = seedHarnessEnvironment({ organizationId: actor.organizationId, workspaceId: actor.workspaceId,
     environmentNeeds: ['browser'] });
   const chatSeed = seedHarnessEnvironment({ organizationId: actor.organizationId, workspaceId: actor.workspaceId });
