@@ -527,13 +527,10 @@ def _agent_evals_allowed(organization: Any) -> bool:
 def _usage_check(organization: Any, model: str) -> Any:
     """Billing's usage check for the model's evaluator type, or None without ee."""
     from sdk.utils.helpers import _get_api_call_type
+    from tfc.ee_gates import eval_usage_check
 
     try:
-        from ee.usage.services.metering import check_usage
-    except ImportError:
-        return None
-    try:
-        return check_usage(str(organization.id), _get_api_call_type(model))
+        return eval_usage_check(organization.id, _get_api_call_type(model))
     except Exception:
         # Billing is a call out; one that can't answer refuses the launch.
         logger.exception("ask_usage_check_failed")

@@ -152,6 +152,16 @@ _TURING_MODELS = frozenset(
 )
 
 
+def eval_usage_check(organization_id, api_call_type: str):
+    """Billing's usage check for an evaluator's call type, or None where ee.usage is
+    absent. Errors from billing itself are the caller's to handle."""
+    try:
+        from ee.usage.services.metering import check_usage
+    except ImportError:
+        return None
+    return check_usage(str(organization_id), api_call_type)
+
+
 def is_turing_model(model_name: object) -> bool:
     if not model_name:
         return False
