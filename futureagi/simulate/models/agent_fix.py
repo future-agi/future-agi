@@ -138,6 +138,9 @@ class AgentFixCandidate(BaseModel):
     )
     # The candidate's change against the base version, as a git patch.
     patch_object_key = models.CharField(max_length=512)
+    # Each file that patch changes, as [path, added lines, removed lines], counted when it
+    # was stored; null when it could not be counted.
+    changed_files = models.JSONField(null=True, blank=True)
     summary = models.TextField(blank=True, default="")
     outcome = models.CharField(
         max_length=16, choices=Outcome.choices, default=Outcome.PENDING

@@ -40,6 +40,21 @@ Dot.propTypes = {
   size: PropTypes.number,
 };
 
+/**
+ * @typedef {object} StatusBadgeOwnProps
+ * @property {string | boolean | number} [status]
+ * @property {import("react").ReactNode} [label]
+ * @property {"success" | "warning" | "danger" | "info" | "neutral" | "discovery"} [role] One of STATUS_ROLES.
+ * @property {"badge" | "dot"} [variant]
+ * @property {"md" | "sm"} [size]
+ * @property {import("react").ReactNode} [icon]
+ * @property {boolean} [dot]
+ * @property {import("@mui/system").SystemStyleObject<import("@mui/material/styles").Theme>} [sx]
+ */
+/**
+ * The rest goes to the root span.
+ * @param {StatusBadgeOwnProps & Omit<import("@mui/material").BoxProps<"span">, keyof StatusBadgeOwnProps | "component">} props
+ */
 export default function StatusBadge({
   status,
   label,

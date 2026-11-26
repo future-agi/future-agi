@@ -25,13 +25,15 @@ export const DERIVING_LABEL = {
 };
 
 // The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
-// Actors, Runs, Improvements and Versions are left out — an environment that is
-// still building (or failed to build) has no draft, runs, fixes or versions yet.
+// Actors, Runs, Improvements, Versions and Alignment are left out — an
+// environment that is still building (or failed to build) has no draft, runs,
+// fixes, versions or composition yet.
 const NOT_WHILE_BUILDING = new Set([
   "actors",
   "runs",
   "improvements",
   "versions",
+  "composition",
 ]);
 export const BUILDING_TABS = WORKSPACE_TABS.filter(
   (t) => !NOT_WHILE_BUILDING.has(t.id),
