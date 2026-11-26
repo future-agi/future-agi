@@ -22,6 +22,12 @@ One legacy_scan report per 100 jobs (no job/attempt) adds a finding and a
 membership that 0118 cannot fill. Totals: 100k jobs and attempts, 101k reports
 and findings, 1k issues and 96k memberships, of which 70k satisfy 0118's join.
 
+0118 also creates one FeedEscalationPolicy per non-deleted workspace. The
+fixture adds no workspaces for that step on purpose: accounts_workspace is not a
+registered high-volume table, so it has no row floor; the step is a plain
+get_or_create that already runs over every existing source workspace; and extra
+workspaces in the witness organisation could change what other witnesses read.
+
 The source schema has no occurrence-time columns (0117 adds them NULL), so every
 source membership is pending and an "already filled" cohort cannot exist before
 the upgrade. No target-only field is written. v1.56.1 through v1.59.1 have the
