@@ -179,7 +179,7 @@ def _lock_unanswered_given_up(task_id) -> list:
 
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT l.id FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "
+            "SELECT l.id FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "  # noqa: S608 - only the constant _ENTRY_RID row-id fragment is interpolated; every value is bound
             f"ON r.task_id = %(task)s AND r.row_id = {_ENTRY_RID} "
             "WHERE l.eval_task_id = %(task_s)s AND l.deleted = false "
             "AND l.status = %(status)s AND l.error_message = %(message)s "
