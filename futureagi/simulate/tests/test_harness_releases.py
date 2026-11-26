@@ -610,6 +610,25 @@ class TestUnlockAndDelete:
         assert response.status_code == 200
         assert auth_client.delete(f"{BASE}/{environment.id}/").status_code == 204
 
+    def test_an_admin_can_unlock_with_versioning_off(
+        self, auth_client, user, workspace, storage, settings
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [release] = _lock(auth_client, environment).json()["releases"]
+        settings.HARNESS_VERSIONING_ENABLED = False
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"release_id": release["id"]},
+            format="json",
+        )
+
+        # New locks stop with the flag; the delete guard and its way out stay.
+        assert _lock(auth_client, environment).status_code == 404
+        assert response.status_code == 200, response.json()
+        assert auth_client.delete(f"{BASE}/{environment.id}/").status_code == 204
+
     def test_a_member_may_lock(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
