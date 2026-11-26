@@ -398,6 +398,7 @@ def _stage(
     *,
     repair_request=None,
     redact_text_sources=(),
+    synthetic_text_sources=(),
 ) -> HarnessSourceReview:
     reading = HarnessSourceReview.objects.filter(
         pk=row.id, state=State.READING, revision=row.revision
@@ -463,6 +464,8 @@ def _stage(
             row.refresh_from_db()
             return row
         options = {}
+        if synthetic_text_sources:
+            options["synthetic_text_sources"] = synthetic_text_sources
         if schema_repairs:
             options["schema_repairs"] = schema_repairs
         if redact_text_sources:
@@ -862,6 +865,7 @@ def reprepare_review(
     environment=None,
     expected_draft=None,
     redact_text_sources=(),
+    synthetic_text_sources=(),
 ):
     scope = require_source_scope(request, write=True)
     if environment:
@@ -871,6 +875,7 @@ def reprepare_review(
             "key": idempotency_key,
             "expected_revision": expected_revision,
             "redact_text_sources": sorted(redact_text_sources),
+            **({"synthetic_text_sources": sorted(synthetic_text_sources)} if synthetic_text_sources else {}),
             "target_table": target_table,
             "schema_repairs": schema_repairs,
         }
@@ -923,16 +928,17 @@ def reprepare_review(
             kb = authorized_knowledge_base(request, kb_id)
             if kb.files.filter(pk__in=file_ids).count() != len(file_ids):
                 raise _not_found()
-        if redact_text_sources:
+        privacy_sources = set(redact_text_sources) | set(synthetic_text_sources)
+        if privacy_sources:
             flagged = {
                 issue.get("span", {}).get("source_id")
                 for issue in row.preview.get("diagnostics", [])
                 if issue["code"] == "source_privacy_unresolved"
             }
-            if set(redact_text_sources) - flagged:
+            if privacy_sources - flagged:
                 raise _conflict("Select a source with a privacy finding.")
         if row.owner_kind == Owner.ENVIRONMENT and (
-            target_table or redact_text_sources
+            target_table or privacy_sources
         ):
             scope = {
                 **row.basis,
@@ -954,7 +960,7 @@ def reprepare_review(
             )
             if schema_repairs and schema is not None:
                 raise _conflict("Schema repairs require an inferred simulation schema.")
-        elif redact_text_sources:
+        elif privacy_sources:
             basis, schema = _owner_basis(row.owner, row.owner_kind, row.basis)
         else:
             raise _conflict("This review does not support that repair.")
@@ -969,6 +975,7 @@ def reprepare_review(
                 schema_repairs
                 or staged.get("prepare_options", {}).get("schema_repairs", ()),
                 repair_request=repair_request,
+                synthetic_text_sources=sorted(set(synthetic_text_sources) | set(staged.get("prepare_options", {}).get("synthetic_text_sources", ()))),
                 redact_text_sources=sorted(
                     set(redact_text_sources)
                     | set(

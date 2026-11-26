@@ -1,3 +1,4 @@
+import { visibleScenarioTest } from "./reviewedScenarioText";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { isScenarioSampleMode } from "./scenariosSampleMode";
@@ -177,6 +178,7 @@ export const getSourceChanges = async (envId, versionId) =>
 // untouched.
 export const scenarioFromApi = (row = {}) => {
   const persona = row.persona || null;
+  const expected = visibleScenarioTest(row.tests);
   return {
     id: row.id,
     scenarioId: row.scenario_id ?? null,
@@ -186,8 +188,8 @@ export const scenarioFromApi = (row = {}) => {
     useCase: row.use_case,
     situation: row.instruction,
     task: row.instruction,
-    expected: row.tests,
-    outcome: row.tests,
+    expected,
+    outcome: expected,
     conversationBranch: row.branch,
     branchCategory: row.branch,
     subTasks: Array.isArray(row.sub_goals) ? row.sub_goals : [],

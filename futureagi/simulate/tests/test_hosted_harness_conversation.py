@@ -1937,8 +1937,7 @@ def test_chat_on_run_whose_saved_files_are_gone_fails_at_once(
         raise _storage_error(storage_code)
 
     monkeypatch.setattr(
-        gateway_module,
-        "get_storage_client",
+        "simulate.services.harness_storage.get_storage_client",
         lambda: SimpleNamespace(get_object=get_object),
     )
     gateway = object.__new__(gateway_module.HostedHarnessGateway)
@@ -1985,8 +1984,7 @@ def test_missing_checkpoint_object_falls_back_instead_of_retiring(
             raise _storage_error(code)
 
         monkeypatch.setattr(
-            conv_module,
-            "get_storage_client",
+            "simulate.services.harness_storage.get_storage_client",
             lambda: SimpleNamespace(get_object=get_object),
         )
 

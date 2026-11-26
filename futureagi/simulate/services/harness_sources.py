@@ -554,6 +554,7 @@ def prepare_draft(
     schema_repairs=(),
     *,
     redact_text_sources=(),
+    synthetic_text_sources=(),
 ) -> dict:
     prepare_request = {
         "version": REQUEST_VERSION,
@@ -578,6 +579,7 @@ def prepare_draft(
             if redact_text_sources
             else {}
         ),
+        **({"synthetic_text_sources": list(synthetic_text_sources)} if synthetic_text_sources else {}),
         **({"schema_repairs": schema_repairs} if schema_repairs else {}),
     }
     return _alk_result(execute_source_request(prepare_request))["draft"]

@@ -80,11 +80,23 @@ class HarnessSourceReviewReprepareSerializer(StrictInputSerializer):
         max_length=100,
     )
 
+    synthetic_text_sources = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        required=False,
+        allow_empty=False,
+        max_length=100,
+    )
+
     def validate(self, attrs):
         if (
             sum(
                 key in attrs
-                for key in ("target_table", "schema_repairs", "redact_text_sources")
+                for key in (
+                    "target_table",
+                    "schema_repairs",
+                    "redact_text_sources",
+                    "synthetic_text_sources",
+                )
             )
             != 1
         ):

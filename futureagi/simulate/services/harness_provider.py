@@ -93,6 +93,20 @@ _SOURCE_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
 _SOURCE_UPLOAD_FRAMING_BYTES = 8 * 1024 * 1024
 
 
+def _receive_source_zip(request, store):
+    from simulate.services.harness_source_zip import unpack_source_zip
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    archives = request.FILES.getlist("archive")
+    if len(archives) != 1 or "files" in request.FILES or "paths" in request.data:
+        return Response({"detail": "Choose a single ZIP or a source folder."}, status=400)
+    try:
+        with unpack_source_zip(archives[0], _SOURCE_UPLOAD_MAX_BYTES, settings.DATA_UPLOAD_MAX_NUMBER_FILES or 1000) as source:
+            return Response(store(*source), status=status.HTTP_201_CREATED)
+    except HostedHarnessError as exc:
+        return Response(exc.as_dict(), status=exc.status_code)
+
+
 def _rejected_archive_upload(files) -> Response | None:
     """Refuse a lone archive: nothing unpacks it, so it would ship as an opaque blob."""
     if len(files) == 1 and str(files[0].name).lower().endswith(
@@ -3911,6 +3925,8 @@ class HostedHarnessProvider:
                 {"detail": "Organization not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        if "archive" in request.FILES:
+            return _receive_source_zip(request, lambda files, paths, name: store_source_archive(organization, files, paths, name))
         files = request.FILES.getlist("files")
         paths = request.data.getlist("paths")
         if not files or len(files) != len(paths):
@@ -4251,6 +4267,13 @@ class SandboxHarnessProvider:
 
         if (oversized := _oversized_upload(request)) is not None:
             return oversized
+        if "archive" in request.FILES:
+            try:
+                return _receive_source_zip(request, self._client().upload_source)
+            except HarnessSandboxRejected as exc:
+                return Response({"detail": str(exc)}, status=exc.status_code)
+            except HarnessSandboxUnavailable as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         files = request.FILES.getlist("files")
         paths = request.data.getlist("paths")
         if not files or len(files) != len(paths):

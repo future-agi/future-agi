@@ -293,7 +293,7 @@ export default function SourcesSection({ env, locked }) {
                     {
                       failed: "Upload failed",
                       uploading: "Uploading…",
-                      done: "Uploaded",
+                      done: create.isPending ? "Preparing review…" : "Uploaded",
                     }[file.status]
                   }
                 </Typography>

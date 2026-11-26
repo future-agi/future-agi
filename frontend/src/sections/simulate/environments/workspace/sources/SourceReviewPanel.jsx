@@ -328,11 +328,11 @@ function SourceReviewEditor({
                     {privacyPages.length
                       ? ` on ${privacyPages.length === 1 ? "page" : "pages"} ${privacyPages.join(", ")}`
                       : ""}
-                    . Remove those details from the review copy or upload a
-                    sanitized file.
+                    . Remove or replace those details in the review copy, or
+                    upload a sanitized file.
                   </Alert>
                   <FormControlLabel
-                    label="Remove emails and phone numbers from this review copy"
+                    label="Select emails and phone numbers in this review copy"
                     control={
                       <Checkbox
                         checked={redactions.includes(sid)}
@@ -516,13 +516,21 @@ function SourceReviewEditor({
             Cancel review
           </Button>
           {state === "needs_repair" && privateText.size > 0 && (
-            <Button
-              variant="contained"
-              disabled={!editable || !redactions.length}
-              onClick={() => doRepair({ redact_text_sources: redactions })}
-            >
-              Remove personal details and prepare again
-            </Button>
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="contained"
+                disabled={!editable || !redactions.length}
+                onClick={() => doRepair({ synthetic_text_sources: redactions })}
+              >
+                Replace with synthetic contacts
+              </Button>
+              <Button
+                disabled={!editable || !redactions.length}
+                onClick={() => doRepair({ redact_text_sources: redactions })}
+              >
+                Remove personal details and prepare again
+              </Button>
+            </Stack>
           )}
           {((state === "needs_repair" && hasRepairControls) ||
             (state === "ready" && changingTable)) && (

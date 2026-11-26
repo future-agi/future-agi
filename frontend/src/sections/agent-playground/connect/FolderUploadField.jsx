@@ -1,11 +1,13 @@
+import { fromEvent } from "file-selector";
 import PropTypes from "prop-types";
 import React, { useRef, useState } from "react";
-import { Box, LinearProgress, Stack, Typography } from "@mui/material";
+import { Box, Button, LinearProgress, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fData } from "src/utils/format-number";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import {
   prepareSourceFolder,
+  prepareSourceZip,
   uploadErrorText,
   uploadSourceFolder,
 } from "src/pages/dashboard/harness/sourceUpload";
@@ -23,24 +25,25 @@ export default function FolderUploadField({
   testId = "upload-folder",
 }) {
   const inputRef = useRef(null);
+  const zipRef = useRef(null);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState(null);
   const shown = picked || folder;
 
-  const pick = async (files) => {
+  const pick = async (files, zip = false) => {
     setError("");
     let prepared;
     try {
-      prepared = prepareSourceFolder(files);
+      prepared = zip ? prepareSourceZip(files[0]) : prepareSourceFolder(files);
     } catch (e) {
       setError(e.message);
       return;
     }
     const summary = {
       name: prepared.name,
-      files: prepared.files.length,
+      files: prepared.files?.length,
       bytes: prepared.totalBytes,
     };
     setPicked(summary);
@@ -49,9 +52,17 @@ export default function FolderUploadField({
     setProgress(0);
     try {
       const uploaded = await uploadSourceFolder(prepared, setProgress);
-      onUploaded({ ...summary, sourceId: uploaded.source_id });
+      const stored = {
+        ...summary,
+        files: uploaded.file_count ?? summary.files,
+        bytes: uploaded.total_bytes ?? summary.bytes,
+        sourceId: uploaded.source_id,
+      };
+      setPicked(stored);
+      onUploaded(stored);
     } catch (e) {
-      setError(uploadErrorText(e, errorMessage));
+      setPicked(null);
+      setError(zip ? errorMessage(e) : uploadErrorText(e, errorMessage));
     } finally {
       setUploading(false);
       onUploading?.(false);
@@ -60,7 +71,25 @@ export default function FolderUploadField({
 
   const busy = disabled || uploading;
   return (
-    <Stack spacing={1}>
+    <Stack
+      spacing={1}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={async (event) => {
+        event.preventDefault();
+        if (busy) return;
+        try {
+          const items = await fromEvent(event.nativeEvent);
+          const zip =
+            items.length === 1 &&
+            !items[0].webkitRelativePath &&
+            !items[0].path?.replace(/^\//, "").includes("/") &&
+            /\.zip$/i.test(items[0].name);
+          await pick(items, zip);
+        } catch (e) {
+          setError(errorMessage(e));
+        }
+      }}
+    >
       <Box
         component="button"
         type="button"
@@ -93,9 +122,11 @@ export default function FolderUploadField({
               {shown ? shown.name : "Choose a folder"}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {shown
-                ? `${shown.files} file${shown.files === 1 ? "" : "s"} · ${fData(shown.bytes)}`
-                : "Secrets files and dependencies are left out."}
+              {shown && shown.files == null
+                ? fData(shown.bytes)
+                : shown
+                  ? `${shown.files} file${shown.files === 1 ? "" : "s"} · ${fData(shown.bytes)}`
+                  : "Secrets files and dependencies are left out."}
             </Typography>
           </Box>
           {shown && !busy && (
@@ -108,6 +139,25 @@ export default function FolderUploadField({
       <Box ref={inputRef} component="span" sx={{ display: "none" }}>
         <FolderInput onPick={pick} />
       </Box>
+      <Button
+        disabled={busy}
+        onClick={() => zipRef.current?.click()}
+        sx={{ alignSelf: "flex-start" }}
+      >
+        Choose a ZIP
+      </Button>
+      <Box
+        component="input"
+        hidden
+        ref={zipRef}
+        type="file"
+        accept=".zip,application/zip"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) pick([file], true);
+        }}
+      />
       {uploading && <LinearProgress variant="determinate" value={progress} />}
       {error && (
         <Typography

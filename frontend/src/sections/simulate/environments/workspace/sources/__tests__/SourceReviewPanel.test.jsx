@@ -213,7 +213,10 @@ describe("Prebuild source review", () => {
     ).toBe("accepted");
   });
 
-  it("repairs the flagged text source with no raw passage in the preview", async () => {
+  it.each([
+    ["Remove personal details and prepare again", "redact_text_sources"],
+    ["Replace with synthetic contacts", "synthetic_text_sources"],
+  ])("repairs a flagged text source with %s", async (label, field) => {
     serverReview = {
       ...repair,
       preview: {
@@ -238,19 +241,15 @@ describe("Prebuild source review", () => {
     });
     mount();
     expect(await screen.findByText(/detected on page 3/)).toBeVisible();
-    fireEvent.click(screen.getByRole("checkbox", { name: /Remove emails/ }));
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Remove personal details and prepare again",
-      }),
-    );
+    fireEvent.click(screen.getByRole("checkbox", { name: /Select emails/ }));
+    fireEvent.click(screen.getByRole("button", { name: label }));
     await screen.findByRole("button", {
       name: "Approve sources and start build",
     });
     expect(api.post).toHaveBeenCalledWith(`${path}reprepare/`, {
       expected_revision: 2,
       idempotency_key: expect.any(String),
-      redact_text_sources: ["private"],
+      [field]: ["private"],
     });
   });
 

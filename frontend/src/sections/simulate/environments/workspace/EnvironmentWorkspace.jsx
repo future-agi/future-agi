@@ -572,7 +572,14 @@ export default function EnvironmentWorkspace() {
   // While the environment is still deriving, the builder can't accept edits —
   // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
-  const attachable = backed && envLive && canEdit && !locked;
+  const attachable =
+    backed &&
+    jobQuery.data &&
+    !metadata.design &&
+    !metadata.adaptation &&
+    envLive &&
+    canEdit &&
+    !locked;
   const WorkspaceConsole = attachable ? SourceBuilderConsole : BuilderConsole;
 
   // The tab count, the "no evals" gap and the Runs summary read the
