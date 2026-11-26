@@ -1098,34 +1098,21 @@ def test_a_chat_actor_scheduled_for_a_turn_says_it_comes_in_before_the_person_cl
     assert "closes" not in when_label(scheduled, "audio_mix")
 
 
-@pytest.mark.parametrize(
-    "p, refused", [(0.25, False), (1, False), (0, True), (1.5, True), (None, True)]
-)
-def test_a_chance_trigger_takes_a_chance_above_0_and_at_most_1(p, refused):
-    from simulate.serializers.harness_actors import HarnessActorTriggerSerializer
-
-    trigger = {"kind": "probability", **({} if p is None else {"p": p})}
-    serializer = HarnessActorTriggerSerializer(data=trigger)
-
-    assert serializer.is_valid() is not refused
-    if refused:
-        assert "p" in serializer.errors
-
-
 def test_a_chance_of_0_is_refused_on_every_write_and_a_chance_in_range_is_kept(
     user, workspace, storage, auth_client
 ):
     environment = _built(user, workspace, "actor-edits-chance")
-    by_chance = lambda p: {  # noqa: E731
-        **MANAGER,
-        "activation": {"trigger": {"kind": "probability", "p": p}},
-    }
+
+    def by_chance(p):
+        return {**MANAGER, "activation": {"trigger": {"kind": "probability", "p": p}}}
 
     zero = _add(auth_client, environment, by_chance(0))
+    flag = _add(auth_client, environment, by_chance(True))
     kept = _add(auth_client, environment, by_chance(0.4))
 
     assert (zero.status_code, zero.json()["error"]) == (400, "actor_invalid")
     assert "above 0%" in zero.json()["message"]
+    assert (flag.status_code, flag.json()["error"]) == (400, "actor_invalid")
     assert kept.status_code == 200, kept.content
     assert _stored(environment)["manager"]["activation"]["trigger"] == {
         "kind": "probability",

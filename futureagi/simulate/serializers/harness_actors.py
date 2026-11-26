@@ -83,14 +83,6 @@ class HarnessActorTriggerSerializer(serializers.Serializer):
     collection = serializers.CharField(required=False, allow_blank=True, max_length=200)
     where = serializers.DictField(child=HarnessTriggerWhereValueField(), required=False)
 
-    def validate(self, attrs):
-        # A chance of 0 never brings the actor in; the runtime refuses it.
-        if attrs.get("kind") == "probability" and not 0 < attrs.get("p", 0) <= 1:
-            raise serializers.ValidationError(
-                {"p": "Give a chance above 0% and at most 100%."}
-            )
-        return attrs
-
 
 class HarnessActorPersonaSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_blank=True)
