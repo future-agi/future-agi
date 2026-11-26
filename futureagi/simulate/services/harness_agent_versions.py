@@ -2333,7 +2333,11 @@ def activate_agent_version(
     ):
         moved = _activate_production(version, only_if_none=True)
         base = _side_row(values_from) if values_from is not None else parent
-        if moved == "has_production" and values_only(runtime, base):
+        if (
+            moved == "has_production"
+            and base is not None
+            and values_only(runtime, base)
+        ):
             # Only the values differ from the production version the change was
             # made from: production moves on, and its followers with it, with
             # nothing to rebuild. Production moved since: offered as any other.
