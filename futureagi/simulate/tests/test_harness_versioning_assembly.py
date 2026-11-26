@@ -115,6 +115,10 @@ def _environment(user, workspace, key, storage, *, body=None):
     backfill_environment(environment.id)
     environment.refresh_from_db()
     assert environment.assembled_bundle_id is not None
+    # Its build proved every case on this pair, so a run sends them.
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment)
     return environment
 
 
@@ -1002,7 +1006,7 @@ class TestLaunchMiss:
         first = _run(environment, key="r1")
         assert assembly.prepare_launch(first).outcome == "miss"
 
-        assembly.mark_failed(first, "the certify did not pass")
+        assembly.mark_failed(first, {"message": "the certify did not pass"})
         assert _row(environment).certificate is None
 
         assert assembly.prepare_launch(_run(environment, key="r2")).outcome == "miss"
@@ -1172,7 +1176,7 @@ class TestLaunchMiss:
             "python -m "
             "fi.alk.harness.hosted_authoring_entrypoint /work/certify-job.json "
             "--source /work/source --output /work/authoring --certify-only "
-            "--bundle-output /work/bundle "
+            f"--bundle-output /work/bundle{assembly.AGENT_DOCUMENT_FLAG} "
             "&& rm -rf /work/authoring/environment-bundle "
             "&& cp -a /work/bundle /work/authoring/environment-bundle && "
             "python -m fi.alk.harness.hosted_entrypoint /work/job.json"
@@ -1232,7 +1236,10 @@ class TestLaunchMiss:
 
         assert attempt.state == HostedHarnessAttempt.State.RUNNING
         command = _command(gateway)
-        assert "--certify-only --bundle-output /work/bundle " in command
+        assert (
+            f"--certify-only --bundle-output /work/bundle{assembly.AGENT_DOCUMENT_FLAG}"
+            in command
+        )
         # Certify is an entrypoint too: it runs the suite's customer processes, so it is a harness
         # step, and the copies around it are not.
         steps = gateway.client.sandbox.process.session_request.steps
@@ -1852,7 +1859,7 @@ def test_certify_is_today_s_command_with_only_its_entrypoint_a_harness_step():
         f"cp /work/authoring/scenarios.json {assembly.SUITE_INDEX_PATH}; fi && "
         "python -m fi.alk.harness.hosted_authoring_entrypoint "
         f"{assembly.CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
-        "--certify-only --bundle-output /work/bundle "
+        f"--certify-only --bundle-output /work/bundle{assembly.AGENT_DOCUMENT_FLAG} "
         "&& rm -rf /work/authoring/environment-bundle "
         "&& cp -a /work/bundle /work/authoring/environment-bundle"
     )

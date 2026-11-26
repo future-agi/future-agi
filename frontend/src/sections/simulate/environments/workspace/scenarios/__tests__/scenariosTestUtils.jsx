@@ -41,7 +41,7 @@ export function renderWithClient(ui) {
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
   Wrapper.propTypes = { children: PropTypes.node };
-  return render(<Wrapper>{ui}</Wrapper>);
+  return { client, ...render(<Wrapper>{ui}</Wrapper>) };
 }
 
 // View, grouping and row height live in the toolbar's Display panel: View and

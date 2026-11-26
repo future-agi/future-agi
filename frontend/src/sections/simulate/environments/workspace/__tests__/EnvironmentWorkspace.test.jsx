@@ -976,7 +976,9 @@ describe("EnvironmentWorkspace unsaved changes", () => {
         Object.assign(new Error("Not found"), { statusCode: 404 }),
       );
     });
-  const saveButton = () => screen.findByRole("button", { name: "Save" });
+  // Saving starts from the bar's Review and save, which the holds grey out.
+  const saveButton = () =>
+    screen.findByRole("button", { name: "Review and save" });
 
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -997,15 +999,15 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     expect(await saveButton()).toBeEnabled();
   });
 
-  it("opens the draft in the Versions tab from the bar", async () => {
+  it("opens the review of the changes from the bar", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
-      await screen.findByRole("button", { name: "View changes" }),
+      await screen.findByRole("button", { name: "Review and save" }),
     );
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "/dashboard/simulate/environments/job-done?tab=versions&version=environment%3Aed",
-    );
+    expect(
+      await screen.findByRole("dialog", { name: "Review changes" }),
+    ).toBeInTheDocument();
   });
 
   it("shows no bar without drafts", async () => {
