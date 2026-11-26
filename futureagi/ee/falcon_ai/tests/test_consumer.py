@@ -332,6 +332,9 @@ class TestFalconAIConsumer:
         stream_buffer.cleanup_after_done.return_value = None
 
         agent = mock_agent_loop.return_value
+        agent.partial_content = None
+        agent.total_input_tokens = 0
+        agent.total_output_tokens = 0
         agent.llm_client = SimpleNamespace(_gateway_cost=0.07)
         agent.run = AsyncMock(
             return_value={
@@ -371,7 +374,9 @@ class TestFalconAIConsumer:
         )
         task = consumer._agent_task
         assert task is not None
-        await asyncio.wait_for(task, timeout=2)
+        await task
+        assert not task.cancelling(), "Chat turn was cancelled before completion"
+        stream_buffer.cleanup_after_done.assert_called_once_with()
 
         event = mock_emit.call_args.args[0]
         logger.info("captured_falcon_usage_event %s", event.model_dump(mode="json"))
