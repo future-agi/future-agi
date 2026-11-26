@@ -1587,7 +1587,7 @@ def test_a_failed_grading_closed_as_dead_meanwhile_still_names_its_charge(
     ask = _launch(selection, organization, workspace, user)
     row = _rows(ask)[0]
 
-    def closed_before_the_evaluator_logs(model, template, values):
+    def closed_before_the_evaluator_logs(*_args):
         SimulateEvalResult.objects.filter(id=row.id).update(
             claimed_at=timezone.now() - engine.GRADING_GIVE_UP - timedelta(seconds=1)
         )
