@@ -297,17 +297,78 @@ class TestPlanSplits:
         assert (second.train, second.test, second.test_target) == (240, 60, 60)
         assert set(second.assign.values()) == {"train"}
 
-    def test_a_category_added_to_a_full_test_split_trains(self):
+    def test_a_new_category_on_a_full_split_takes_one_test_task(self):
+        # Option C: a category with no test task takes one seat from its new tasks even
+        # when the target is met, while the split stays within 30% of N. Nothing moves.
         first = plan_splits(_tasks({"a": 100, "b": 100}), {}, "env")
 
         second = plan_splits(
             _tasks({"a": 100, "b": 100, "c": 50}), dict(first.assign), "env"
         )
 
-        # Nothing already assigned moves, and new tasks take only the test seats the
-        # target leaves; the 60 retained tests already meet it, so c trains.
-        assert second.test == second.test_target == 60
-        assert _tests_by_category(second.assign, "c") == {"c": 0}
+        assert second.test_target == 60
+        assert second.test == 61
+        assert _tests_by_category(second.assign, "c") == {"c": 1}
+        assert all(
+            second.assign.get(key, split) == split
+            for key, split in first.assign.items()
+        )
+
+    def test_each_new_category_on_a_full_split_takes_one(self):
+        first = plan_splits(_tasks({"a": 100, "b": 100}), {}, "env")
+
+        second = plan_splits(
+            _tasks({"a": 100, "b": 100, "c": 20, "d": 20, "e": 20}),
+            dict(first.assign),
+            "env",
+        )
+
+        assert second.test == 63
+        assert _tests_by_category(second.assign, "cde") == dict.fromkeys("cde", 1)
+
+    def test_a_growing_target_absorbs_the_coverage_seats(self):
+        first = plan_splits(_tasks({"a": 100, "b": 100}), {}, "env")
+        covered = plan_splits(
+            _tasks({"a": 100, "b": 100, "c": 50}), dict(first.assign), "env"
+        )
+        assigned = {**first.assign, **covered.assign}
+
+        # N = 400: target 80. The 61 retained tests count towards it.
+        third = plan_splits(
+            _tasks({"a": 100, "b": 100, "c": 50, "d": 150}), assigned, "env"
+        )
+
+        assert third.test == third.test_target == 80
+
+    def test_the_30_percent_cap_binds_coverage(self):
+        # 40 tasks in 15 categories: the cap is ceil(0.3 × 40) = 12, so 12 are covered.
+        sizes = {"big": 12} | {f"c{i}": 2 for i in range(14)}
+
+        plan = plan_splits(_tasks(sizes), {}, "env")
+
+        assert plan.test == 12
+        covered = [
+            name for name in sizes if _tests_by_category(plan.assign, [name])[name]
+        ]
+        assert len(covered) == 12
+
+    def test_coverage_never_takes_a_category_s_only_train_task(self):
+        # Four pairs: 8 tasks, cap 3. Each pair keeps a train task, so at most 3 test.
+        plan = plan_splits(_tasks({f"p{i}": 2 for i in range(4)}), {}, "env")
+
+        assert plan.test == 3
+        for i in range(4):
+            assert "train" in {plan.assign[f"p{i}-0"], plan.assign[f"p{i}-1"]}
+
+    def test_an_all_assigned_train_category_stays_uncovered(self):
+        first = plan_splits(_tasks({"a": 100, "b": 100}), {}, "env")
+        trained = {f"b-{i}": "train" for i in range(100)}
+        assigned = {**first.assign, **trained}
+
+        # b has no new tasks: nothing can move, so b stays without a test task.
+        again = plan_splits(_tasks({"a": 100, "b": 100}), assigned, "env")
+
+        assert again.assign == {}
 
     def test_growth_fills_the_target_from_the_new_tasks(self):
         first = plan_splits(_tasks({"a": 40}), {}, "env")
