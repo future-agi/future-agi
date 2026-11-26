@@ -6,21 +6,16 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
 
-// carriageField marks a stored response that was produced over the Responses
-// route. It is the only thing stored: the settings that route omits (stop, n,
-// logprobs, the penalties, logit_bias) are not part of the cache key, so a hit
-// names them from the request it answers, not from the one that produced the
-// entry. Every backend keeps the mark without an interface change: each one
-// round-trips the response through JSON, and Extra is written beside the named
-// fields. It exists only in stored copies and is removed from every response
-// read back before anything is sent.
+// carriageField is a cache-only route marker. Keep the historical JSON true
+// for Responses entries; Gemini entries use the string "gemini". Only the
+// producing route is persisted, not caller-dependent warnings.
 const carriageField = "x_agentcc_responses_carriage"
 
 // withCarriage returns the copy of resp to store, marked when the attempt
-// that produced it went over the Responses route. The field is always
+// used a translation route. The field is always
 // rewritten here, so an upstream body that happens to carry the same key is
 // never taken for the gateway's mark. resp itself is not modified.
-func withCarriage(resp *models.ChatCompletionResponse, carriage bool) *models.ChatCompletionResponse {
+func withCarriage(resp *models.ChatCompletionResponse, route models.ChatRoute) *models.ChatCompletionResponse {
 	if resp == nil {
 		return nil
 	}
@@ -31,8 +26,11 @@ func withCarriage(resp *models.ChatCompletionResponse, carriage bool) *models.Ch
 			extra[k] = v
 		}
 	}
-	if carriage {
+	switch route {
+	case models.RouteResponses:
 		extra[carriageField] = json.RawMessage(`true`)
+	case models.RouteGemini:
+		extra[carriageField] = json.RawMessage(`"gemini"`)
 	}
 	if len(extra) == 0 {
 		extra = nil
@@ -42,7 +40,7 @@ func withCarriage(resp *models.ChatCompletionResponse, carriage bool) *models.Ch
 }
 
 // restoreCarriage strips carriageField from a cached response. When the entry
-// was produced over the Responses route, it reports what that route omits
+// was produced over a marked route, it reports what that route omits
 // from the current request, combined with this request's translator notes,
 // for the request log and the x-agentcc-translation-drops header. It returns
 // a copy rather than editing resp: an in-memory backend may share resp's
@@ -67,10 +65,17 @@ func restoreCarriage(rc *models.RequestContext, resp *models.ChatCompletionRespo
 	}
 	served.Extra = extra
 
-	var carriage bool
-	if json.Unmarshal(raw, &carriage) == nil && carriage {
-		rc.ResponsesCarriage = true
-		rc.SetResponsesRouteDrops(models.ResponsesRouteNotes(rc.Request))
+	var drops []string
+	switch string(raw) {
+	case "true":
+		rc.ChatRoute = models.RouteResponses
+		drops = models.ResponsesOmittedParams(rc.Request)
+	case `"gemini"`:
+		rc.ChatRoute = models.RouteGemini
+		drops = models.GeminiOmittedParams(rc.Request)
+	default:
+		return &served
 	}
+	rc.SetRouteDrops(models.RouteNotes(rc.Request, drops))
 	return &served
 }

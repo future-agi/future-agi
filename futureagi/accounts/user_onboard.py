@@ -4442,12 +4442,26 @@ def _write_demo_trace_to_clickhouse(trace, spans):
             column_names=list(_TRACE_COLUMNS),
             settings={"async_insert": 0},
         )
-        client.insert(
-            "trace_sessions",
-            [trace_session_to_row(trace.session)],
-            column_names=list(_TRACE_SESSION_COLUMNS),
-            settings={"async_insert": 0},
-        )
+        # session_id is a soft reference: a trace can outlive its PG session.
+        # Keep that ID on the trace and spans without fabricating a session row.
+        try:
+            session = trace.session
+        except TraceSession.DoesNotExist:
+            session = None
+            transaction.on_commit(
+                lambda: logger.info(
+                    "demo_trace_session_missing",
+                    trace_id=str(trace.id),
+                    session_id=str(trace.session_id),
+                )
+            )
+        if session is not None:
+            client.insert(
+                "trace_sessions",
+                [trace_session_to_row(session)],
+                column_names=list(_TRACE_SESSION_COLUMNS),
+                settings={"async_insert": 0},
+            )
         # Publication is serialized by its pending-row lock. Re-inserting saved
         # spans after a lost acknowledgement would double additive MV metrics,
         # even though ReplacingMergeTree deduplicates the source rows under FINAL.

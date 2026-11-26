@@ -235,7 +235,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	ttl := p.resolveTTL(rc)
 	// Store a copy marked with the attempt's route; rc.Response itself is
 	// still to be sent to this caller and must not gain the reserved field.
-	stored := withCarriage(rc.Response, rc.ResponsesCarriage)
+	stored := withCarriage(rc.Response, rc.ChatRoute)
 	p.store.Set(key, stored, ttl)
 
 	// Also store in semantic cache (L2).
