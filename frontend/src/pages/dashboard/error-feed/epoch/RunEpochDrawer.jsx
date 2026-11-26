@@ -165,28 +165,69 @@ function Footer({ note, children }) {
 }
 Footer.propTypes = { note: PropTypes.node, children: PropTypes.node };
 
+// A step with nothing to fill in: its message and one action, centred in the drawer.
+function CenteredMessage({ title, children, action, ...rest }) {
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+        px: 4,
+        py: 6,
+      }}
+      {...rest}
+    >
+      <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+        {title}
+      </Typography>
+      <Typography
+        sx={{
+          typography: "s2",
+          color: "text.secondary",
+          mt: 0.5,
+          maxWidth: 420,
+        }}
+      >
+        {children}
+      </Typography>
+      <Box sx={{ mt: 2 }}>{action}</Box>
+    </Box>
+  );
+}
+CenteredMessage.propTypes = {
+  title: PropTypes.node,
+  children: PropTypes.node,
+  action: PropTypes.node,
+};
+
 // No code-agent environment exists yet: say why, and offer to build one. The build
 // opens in a new tab; the list is read again when the person comes back to this one.
 function NoEnvironment() {
   return (
-    <Box sx={{ px: 2, pt: 2, pb: 2 }} data-testid="epoch-no-environment">
-      <StepIntro title="No environment can run an epoch yet">
-        An epoch runs on a code agent, uploaded or from GitHub, in one of its
-        environments. Build one for this issue&apos;s agent, then come back
-        here.
-      </StepIntro>
-      <Button
-        size="small"
-        variant="contained"
-        color="primary"
-        href={paths.dashboard.simulate.environments.root}
-        target="_blank"
-        rel="noopener"
-        data-testid="epoch-build-environment"
-      >
-        Build an environment
-      </Button>
-    </Box>
+    <CenteredMessage
+      data-testid="epoch-no-environment"
+      title="No environment can run an epoch yet"
+      action={
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          href={paths.dashboard.simulate.environments.root}
+          target="_blank"
+          rel="noopener"
+          data-testid="epoch-build-environment"
+        >
+          Build an environment
+        </Button>
+      }
+    >
+      An epoch runs on a code agent, uploaded or from GitHub, in one of its
+      environments. Build one for this issue&apos;s agent, then come back here.
+    </CenteredMessage>
   );
 }
 
@@ -1014,12 +1055,22 @@ JobProgress.propTypes = {
 // only on a click.
 function Ended({ status, onPlan }) {
   return (
-    <Box sx={{ px: 2, pt: 2, pb: 2 }} data-testid="epoch-ended">
-      <StepIntro title={epochLabel(status)}>{epochSentence(status)}</StepIntro>
-      <Button size="small" variant="contained" color="primary" onClick={onPlan}>
-        Run Epoch again
-      </Button>
-    </Box>
+    <CenteredMessage
+      data-testid="epoch-ended"
+      title={epochLabel(status)}
+      action={
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          onClick={onPlan}
+        >
+          Run Epoch again
+        </Button>
+      }
+    >
+      {epochSentence(status)}
+    </CenteredMessage>
   );
 }
 Ended.propTypes = {
