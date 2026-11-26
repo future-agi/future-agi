@@ -53,7 +53,6 @@ test('SIM-E2E-020: giving an actor an action only another actor holds is flagged
   await test.step('browser: the conflict shows before saving and Save waits for the confirmation', async () => {
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=actors`);
     await page.getByRole('button', { name: 'Add actor' }).click({ timeout: UI_READY });
-    await page.getByRole('menuitem', { name: /In the world/ }).click();
     await page.getByLabel('Name', { exact: true }).fill(NEW_ACTOR);
     await page.getByLabel('World actions they may take (optional)').click();
     await page.getByRole('option', { name: new RegExp(ACTION.replace('.', '\\.')) }).click();

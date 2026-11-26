@@ -29,14 +29,14 @@ test('SIM-E2E-010: an actor with no channel is named on Scenarios, and World sta
               + 'finished trial (e2e/lib/harness_environment_seed.py)',
             'read the cast (GET actors)', 'check an edit to the actor (POST actor-validation)',
             'read the scenarios (GET harness-jobs/<id>/scenarios)',
-            'read the trial (GET v3/call-executions/<id>)', 'open the Actors tab and pick a side from Add actor',
+            'read the trial (GET v3/call-executions/<id>)', 'open the Actors tab and click Add actor',
             'open the Scenarios tab',
             'open the trial\'s World state'],
     backendChecks: ['the cast lists the actor with no channel',
                     'checking an edit to it finds nothing to fix and writes nothing',
                     'the refund scenario includes it by id',
                     'the trial\'s World state count 1 committed (issue_refund) and 1 read (lookup_order)'],
-    browserChecks: ['Add actor offers the caller\'s side and the world, and opens Add actor on the side picked',
+    browserChecks: ['Add actor opens the form straight away, with no side to pick',
                     'the Scenarios table names the actor, never its raw id',
                     'World state reads "1 read" and "Committed: issue_refund"'],
   }),
@@ -63,12 +63,11 @@ test('SIM-E2E-010: an actor with no channel is named on Scenarios, and World sta
     expect(cast.actors.find((one) => one.id === ACTOR.id)?.role).not.toBe('claims lead');
   });
 
-  await test.step('browser: Add actor asks the side first and opens the form on it', async () => {
+  await test.step('browser: Add actor opens the form straight away, with no side to pick', async () => {
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=actors`);
     await page.getByRole('button', { name: 'Add actor' }).click({ timeout: UI_READY });
-    await expect(page.getByRole('menuitem', { name: /On the caller's side/ })).toBeVisible();
-    await page.getByRole('menuitem', { name: /In the world/ }).click();
-    await expect(page.getByText('In the world · added to this environment\'s draft')).toBeVisible();
+    await expect(page.getByText('Added to this environment\'s draft')).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByRole('menuitem')).toHaveCount(0);
   });
 
   await test.step('api: the refund scenario includes it by id', async () => {
