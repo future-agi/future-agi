@@ -1,0 +1,24 @@
+name: Devflow approval self-test
+
+on:
+  pull_request:
+    paths:
+      - ".github/approval-floor.json"
+      - ".github/scripts/devflow_approval.py"
+      - ".github/scripts/test_devflow_approval.py"
+      - ".github/workflows/devflow-approval.yml"
+      - ".github/workflows/devflow-approval-selftest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Approval decision tests
+        run: python3 -I .github/scripts/test_devflow_approval.py -v
