@@ -28,6 +28,7 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.audio_processor import (
     AudioProcessor,
 )
+from model_hub.utils.run_prompt_errors import LiteralTTSError
 
 logger = structlog.get_logger(__name__)
 
@@ -192,6 +193,8 @@ class SpeechAPIHandler(BaseModelHandler):
                 response=None,
                 start_time=start_time,
                 failure=str(e),
+                literal_tts_failure=not self._is_audio_preview_alias()
+                and isinstance(e, LiteralTTSError),
             )
 
     async def execute_async(self, streaming: bool = False) -> HandlerResponse:
@@ -272,6 +275,8 @@ class SpeechAPIHandler(BaseModelHandler):
                 response=None,
                 start_time=start_time,
                 failure=str(e),
+                literal_tts_failure=not self._is_audio_preview_alias()
+                and isinstance(e, LiteralTTSError),
             )
 
     def _fallback_to_completion_sync(self, start_time: float) -> HandlerResponse:

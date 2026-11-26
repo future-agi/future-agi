@@ -1334,7 +1334,9 @@ class TestPreviewRunPromptColumnView:
 
 
 @pytest.fixture
-def execute_prompt_error_case(auth_client, dataset, row, organization):
+def execute_prompt_error_case(
+    auth_client, dataset, row, organization, openai_provider_key
+):
     """Exercise the public preview and both row writers without provider calls."""
     from types import SimpleNamespace
 

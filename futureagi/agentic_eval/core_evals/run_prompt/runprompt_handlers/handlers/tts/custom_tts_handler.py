@@ -27,6 +27,7 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.adapters import (
     RunPromptAdapter,
 )
+from model_hub.utils.run_prompt_errors import LiteralTTSError
 
 logger = structlog.get_logger(__name__)
 
@@ -126,6 +127,7 @@ class CustomTTSHandler(BaseModelHandler):
                 response=None,
                 start_time=start_time,
                 failure=str(e),
+                literal_tts_failure=isinstance(e, LiteralTTSError),
             )
 
     async def execute_async(self, streaming: bool = False) -> HandlerResponse:
@@ -178,4 +180,5 @@ class CustomTTSHandler(BaseModelHandler):
                 response=None,
                 start_time=start_time,
                 failure=str(e),
+                literal_tts_failure=isinstance(e, LiteralTTSError),
             )
