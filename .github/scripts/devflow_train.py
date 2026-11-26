@@ -10,17 +10,21 @@ dev and nobody bypasses a rule.
 
 One tick reads GitHub, plans, and (live mode only) acts:
 
-1. Open rollups. A member that moved, closed, lost its admit label or gained
-   a high label makes the rollup stale: close it and let the rest re-batch.
-   A rollup that is no longer approved on its head was pushed to by someone:
-   close it. A rollup whose required checks failed, or that the queue
-   removed, is retried once only if every failed job matches a known infra
-   signature; otherwise it splits in halves, and a red single member leaves
-   with train:red. A rollup removed for a conflict is rebuilt on the new dev.
+1. Open rollups. A member that moved, closed, lost its admit label, gained
+   a high label or was enqueued alone makes the rollup stale: close it and
+   let the rest re-batch. A rollup that is no longer approved on its head
+   was pushed to by someone: close it. A rollup whose required checks
+   failed, or that the queue removed, is retried once only if every failed
+   job matches a known infra signature; otherwise it splits in halves at
+   once, and a red single member leaves with train:red. A rollup removed for
+   a conflict is rebuilt on the new dev. While an open issue carries the
+   base-red label, no rollup starts, and a red one is closed without a split.
 2. Admitted pull requests (label devflow:train). Exclusions send a pull
-   request down the normal path: drafts, forks, high tier, reverts, natively
-   enqueued or auto-merge on, conflicts with dev, high-risk paths, required
-   checks not green on the head, no approval on the head.
+   request down the normal path: drafts, forks, high tier (tier contract
+   v2), reverts, natively enqueued, auto-merge on a full head, conflicts with
+   dev, high-risk or code-owned paths, required checks not green on the
+   head, no approval on the head (medium: a person's). One that goes alone
+   on a light-mode (deferred) head gets ci:full and a full re-run.
 3. Batches. Size B = clamp(ceil(eligible / free train slots), 1, MAX_BATCH),
    so under load B grows and when idle a pull request goes alone at once.
    Two members that each add a migration to the same app never share a
