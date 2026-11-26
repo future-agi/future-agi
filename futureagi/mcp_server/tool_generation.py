@@ -403,6 +403,22 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             parameters, contract, method=method
         )
         _apply_pagination_policy(entry, input_schema, request_mapping)
+        # A view that requires an Idempotency-Key header gets it as a required argument, so a
+        # client's retry with the same key returns the first answer instead of repeating the work.
+        if entry.get("idempotency_header"):
+            if (
+                entry["idempotency_header"] is not True
+                or "idempotency_key" in input_schema["properties"]
+            ):
+                raise ToolGenerationError(f"Invalid idempotency_header for {name}")
+            input_schema["properties"]["idempotency_key"] = {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255,
+                "description": "Any unique value; reuse it to repeat this call safely.",
+            }
+            input_schema.setdefault("required", []).append("idempotency_key")
+            request_mapping["headers"] = {"idempotency_key": "Idempotency-Key"}
         annotations = _annotations(method, access)
         if "idempotent" in entry:
             if not isinstance(entry["idempotent"], bool):

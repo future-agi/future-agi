@@ -14,6 +14,7 @@ from mcp_server.generated_registry import GeneratedToolRegistry
 from mcp_server.tests.test_tool_generation import CONTRACT_PATH
 from mcp_server.tool_generation import ToolGenerationError, generate_tool_manifest
 from simulate.services.harness_versioning import read as version_reads
+from simulate.views import harness_environment
 from simulate.views.harness_environment import HarnessEnvironmentViewSet
 
 ENVIRONMENTS = "/simulate/api/harness-environments/"
@@ -196,3 +197,77 @@ def test_actor_limits_and_accept_need_their_fields(registry):
     assert "limits" in limits.input_schema["required"]
     assert "policy" in accept.input_schema["required"]
     assert delete.request["parameters"]["query"] == ["expected_revision"]
+
+
+def test_a_run_takes_its_idempotency_key_as_a_required_argument(registry):
+    tool = registry.get("run_environment")
+
+    assert "idempotency_key" in tool.input_schema["required"]
+    assert tool.request["parameters"]["headers"] == {
+        "idempotency_key": "Idempotency-Key"
+    }
+    assert "idempotency_key" not in tool.request["parameters"]["body"]
+    assert tool.annotations["idempotentHint"] is True
+
+
+@pytest.mark.django_db
+def test_the_idempotency_key_reaches_the_run_view_as_its_header(
+    auth_client, monkeypatch
+):
+    seen = []
+
+    class Provider:
+        def run(self, request, pk):
+            from rest_framework.response import Response
+
+            seen.append(
+                (pk, request.headers.get("Idempotency-Key"), request.data.get("seed"))
+            )
+            return Response({"job_id": "j1"}, status=202)
+
+    monkeypatch.setattr(harness_environment, "get_harness_provider", lambda: Provider())
+    environment = str(uuid4())
+
+    response = auth_client.post(
+        "/mcp/internal/tool-call/",
+        {
+            "tool_name": "run_environment",
+            "params": {
+                "id": environment,
+                "scenario_ids": ["refund-flow"],
+                "trials": 1,
+                "seed": "7",
+                "idempotency_key": "k-1",
+            },
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    assert seen == [(environment, "k-1", "7")]
+
+
+@pytest.mark.parametrize("flag", [False, "yes"])
+def test_generator_rejects_an_invalid_idempotency_header(tmp_path, flag):
+    catalog = {
+        "expected_tool_count": 1,
+        "tools": [
+            {
+                "name": "run_environment",
+                "group": "simulation",
+                "description": "Run",
+                "operation": {"method": "POST", "path": ENVIRONMENT + "run/"},
+                "access": "write",
+                "idempotency_header": flag,
+            }
+        ],
+    }
+    path = tmp_path / "tools.json"
+    path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    if flag is False:
+        manifest = generate_tool_manifest(CONTRACT_PATH, path)
+        assert "headers" not in manifest["tools"][0]["request"]["parameters"]
+    else:
+        with pytest.raises(ToolGenerationError, match="Invalid idempotency_header"):
+            generate_tool_manifest(CONTRACT_PATH, path)

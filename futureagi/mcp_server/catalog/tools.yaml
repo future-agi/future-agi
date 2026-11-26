@@ -590,10 +590,12 @@ tools:
     access: read
   - name: run_environment
     group: simulation
-    description: Start one run of an environment against its agent for the chosen scenarios (scenario_ids) and trials. Pass seed to draw the same personas and variations again. It runs the agent and simulated people, so it may incur usage charges. Check get_environment_run_plan first; read each trial with get_call_execution.
+    description: Start one run of an environment against its agent for the chosen scenarios (scenario_ids) and trials. Pass seed (a whole number as text) to draw the same personas and variations again. It runs the agent and simulated people, so it may incur usage charges. Reuse the same idempotency_key to get the same run back instead of starting another. Check get_environment_run_plan first; read each trial with get_call_execution.
     operation: {method: POST, path: "/simulate/api/harness-environments/{id}/run/"}
     access: write
     open_world: true
+    idempotent: true
+    idempotency_header: true
   - name: get_call_execution
     group: simulation
     description: Return one trial (call) of a run with its transcript, tool calls, checks and the World changes it made.

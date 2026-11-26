@@ -11862,7 +11862,7 @@
     },
     {
       "name": "run_environment",
-      "description": "Start one run of an environment against its agent for the chosen scenarios (scenario_ids) and trials. Pass seed to draw the same personas and variations again. It runs the agent and simulated people, so it may incur usage charges. Check get_environment_run_plan first; read each trial with get_call_execution.",
+      "description": "Start one run of an environment against its agent for the chosen scenarios (scenario_ids) and trials. Pass seed (a whole number as text) to draw the same personas and variations again. It runs the agent and simulated people, so it may incur usage charges. Reuse the same idempotency_key to get the same run back instead of starting another. Check get_environment_run_plan first; read each trial with get_call_execution.",
       "group": "simulation",
       "inputSchema": {
         "type": "object",
@@ -11935,17 +11935,24 @@
                 "type": "null"
               }
             ]
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Any unique value; reuse it to repeat this call safely."
           }
         },
         "additionalProperties": false,
         "required": [
-          "id"
+          "id",
+          "idempotency_key"
         ]
       },
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false,
-        "idempotentHint": false,
+        "idempotentHint": true,
         "openWorldHint": true
       },
       "request": {
@@ -11963,7 +11970,10 @@
             "agent_version_id",
             "environment_version_id",
             "suite_version_id"
-          ]
+          ],
+          "headers": {
+            "idempotency_key": "Idempotency-Key"
+          }
         }
       },
       "response": {

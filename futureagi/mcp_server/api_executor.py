@@ -143,6 +143,11 @@ class DjangoAPIExecutor:
                 str(context.workspace.id) if context.workspace is not None else ""
             ),
         }
+        for name, header in parameter_map.get("headers", {}).items():
+            if arguments.get(name) is not None:
+                request_kwargs["HTTP_" + header.upper().replace("-", "_")] = str(
+                    arguments[name]
+                )
         if body:
             request = self._request_factory.generic(
                 method,
