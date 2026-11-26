@@ -1,14 +1,13 @@
-import PropTypes from "prop-types";
-import { useState } from "react";
+import { useState, type ComponentType } from "react";
 import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
-import Iconify from "src/components/iconify";
-import StatusBadge from "src/components/status-badge";
+import IconifyJs from "src/components/iconify";
+import StatusBadgeJs from "src/components/status-badge";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   useEnvironmentVersions,
-  useLockRelease,
-  useUnlockRelease,
+  useLockRelease as useLockReleaseJs,
+  useUnlockRelease as useUnlockReleaseJs,
 } from "src/api/simulate-environments/versions";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import SectionCard from "../../components/SectionCard";
@@ -23,24 +22,96 @@ import { RELEASE_COPY, versionLine } from "./overview.constants";
   Each task keeps the split it got at its first lock.
 */
 
+// A release as useEnvironmentVersions maps it (versions.js::releaseFromApi).
+export interface Release {
+  id: string;
+  label: string;
+  environmentVersionId: string;
+  environmentLabel: string | null;
+  suiteVersionId: string;
+  suiteLabel: string | null;
+  lockedAt: string | null;
+  lockedBy: string | null;
+  unlockedAt: string | null;
+  unlockedBy: string | null;
+  train: number;
+  test: number;
+}
+
+// The default pair a lock names.
+export interface VersionPair {
+  environmentVersionId: string | null;
+  suiteVersionId: string | null;
+}
+
+// Whether the default pair can be locked (versions.js::lockFromApi).
+interface LockPreview extends VersionPair {
+  proved: boolean;
+  canLock: boolean;
+  refusal: { code: string; message: string } | null;
+  train: number | null;
+  test: number | null;
+  testTarget: number | null;
+}
+
+// What the open confirmation acts on: the pair it opened with, or a release.
+type Confirm = { lock: VersionPair } | { unlock: Release } | null;
+
+interface ReleaseCardProps {
+  envId: string;
+  // Jumps to a workspace tab, for the refusals the author fixes there.
+  onGo?: (tab: string) => void;
+}
+
+interface UnlockButtonProps {
+  disabled?: boolean;
+  onClick: () => void;
+}
+
+// The JS modules this card uses, typed here for what it passes them.
+interface ReleaseMutation<Variables> {
+  isPending: boolean;
+  mutate: (
+    variables: Variables,
+    options: { onError: (error: unknown) => void },
+  ) => void;
+}
+const useLockRelease = useLockReleaseJs as unknown as (
+  envId: string,
+) => ReleaseMutation<VersionPair>;
+const useUnlockRelease = useUnlockReleaseJs as unknown as (
+  envId: string,
+) => ReleaseMutation<{ releaseId: string }>;
+const Iconify = IconifyJs as unknown as ComponentType<{
+  icon: string;
+  width: number;
+}>;
+const StatusBadge = StatusBadgeJs as unknown as ComponentType<{
+  status: string;
+  label: string;
+  role: string;
+}>;
+
 // Refusals the author fixes by adding scenarios.
 const ADD_SCENARIOS_FOR = ["release_too_few_test", "release_too_few_train"];
 
-const shortDate = (at) =>
-  new Date(at).toLocaleDateString(undefined, {
+const shortDate = (at: string | null) =>
+  new Date(at ?? 0).toLocaleDateString(undefined, {
     day: "numeric",
     month: "short",
   });
 
-export default function ReleaseCard({ envId, onGo }) {
+export default function ReleaseCard({ envId, onGo }: ReleaseCardProps) {
   const { data } = useEnvironmentVersions(envId);
   const { canEdit, canUnlockRelease } = useSimulationAccess();
   const lockRelease = useLockRelease(envId);
   const unlockRelease = useUnlockRelease(envId);
-  const [confirm, setConfirm] = useState(null);
+  const [confirm, setConfirm] = useState<Confirm>(null);
   if (!data?.lock) return null;
 
-  const { lock, releases, defaults } = data;
+  const lock: LockPreview = data.lock;
+  const releases: Release[] = data.releases;
+  const { defaults } = data;
   const current = releases.find(
     (release) =>
       !release.unlockedAt &&
@@ -63,20 +134,22 @@ export default function ReleaseCard({ envId, onGo }) {
     : lock.canLock
       ? RELEASE_COPY.readyLine(lock.train, lock.test)
       : lock.refusal?.message;
-  const failed = (error) =>
+  const failed = (error: unknown) =>
     enqueueSnackbar(errorMessage(error), { variant: "error" });
   // Locks the pair the dialog was opened on, which a refresh may since have moved.
-  const onLock = (pair) => {
+  const onLock = (pair: VersionPair) => {
     setConfirm(null);
     lockRelease.mutate(pair, { onError: failed });
   };
   // Any locked release can be unlocked, not only the default pair's: an edit moves
   // the default on, and delete still waits for every lock to go.
-  const onUnlock = (release) => {
+  const onUnlock = (release: Release) => {
     setConfirm(null);
     unlockRelease.mutate({ releaseId: release.id }, { onError: failed });
   };
-  const needsScenarios = ADD_SCENARIOS_FOR.includes(lock.refusal?.code);
+  const needsScenarios = ADD_SCENARIOS_FOR.includes(lock.refusal?.code ?? "");
+  const confirmLock = confirm && "lock" in confirm ? confirm.lock : null;
+  const confirmUnlock = confirm && "unlock" in confirm ? confirm.unlock : null;
 
   const cell = { typography: "s1", py: 1, px: 1.5 };
   const head = {
@@ -265,7 +338,7 @@ export default function ReleaseCard({ envId, onGo }) {
         </Box>
       )}
 
-      {confirm?.lock && (
+      {confirmLock && (
         <ConfirmDialog
           open
           onClose={() => setConfirm(null)}
@@ -277,26 +350,26 @@ export default function ReleaseCard({ envId, onGo }) {
               size="small"
               variant="contained"
               color="primary"
-              onClick={() => onLock(confirm.lock)}
+              onClick={() => onLock(confirmLock)}
             >
               {RELEASE_COPY.lockAction}
             </Button>
           }
         />
       )}
-      {confirm?.unlock && (
+      {confirmUnlock && (
         <ConfirmDialog
           open
           onClose={() => setConfirm(null)}
           PaperProps={{ sx: { maxWidth: 480 } }}
-          title={RELEASE_COPY.unlockTitle(confirm.unlock.label)}
+          title={RELEASE_COPY.unlockTitle(confirmUnlock.label)}
           content={RELEASE_COPY.unlockBody}
           action={
             <Button
               size="small"
               variant="contained"
               color="primary"
-              onClick={() => onUnlock(confirm.unlock)}
+              onClick={() => onUnlock(confirmUnlock)}
             >
               {RELEASE_COPY.unlockAction}
             </Button>
@@ -307,7 +380,7 @@ export default function ReleaseCard({ envId, onGo }) {
   );
 }
 
-function UnlockButton({ disabled, onClick }) {
+function UnlockButton({ disabled, onClick }: UnlockButtonProps) {
   return (
     <Button
       size="small"
@@ -323,14 +396,3 @@ function UnlockButton({ disabled, onClick }) {
     </Button>
   );
 }
-
-UnlockButton.propTypes = {
-  disabled: PropTypes.bool,
-  onClick: PropTypes.func.isRequired,
-};
-
-ReleaseCard.propTypes = {
-  envId: PropTypes.string.isRequired,
-  // Jumps to a workspace tab, for the refusals the author fixes there.
-  onGo: PropTypes.func,
-};

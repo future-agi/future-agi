@@ -2,14 +2,45 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
+import type {
+  HarnessLockPreviewApi,
+  HarnessReleaseApi,
+} from "src/generated/api-contracts/api.schemas";
+import type { Release, VersionPair } from "../ReleaseCard";
+
+// A version row as the read sends it, with only the fields the card reads.
+interface PieceRow {
+  id: string;
+  label: string;
+  status: string;
+  is_default: boolean;
+  source?: { repository: string; ref: string; commit_sha: string };
+}
+
+// The versions read's body, with only the fields the card reads.
+interface VersionsBody {
+  agent: PieceRow[];
+  environment: PieceRow[];
+  suite: PieceRow[];
+  releases: HarnessReleaseApi[];
+  lock: HarnessLockPreviewApi;
+}
+
 // What the server answered for the versions read, and what each action got.
-const state = { versions: undefined, canUnlockRelease: true, canEdit: true };
-const calls = { lock: [], unlock: [] };
+const state: {
+  versions: VersionsBody | undefined;
+  canUnlockRelease: boolean;
+  canEdit: boolean;
+} = { versions: undefined, canUnlockRelease: true, canEdit: true };
+const calls: { lock: VersionPair[]; unlock: { releaseId: Release["id"] }[] } = {
+  lock: [],
+  unlock: [],
+};
 
 vi.mock("src/api/simulate-environments/versions", async () => {
-  const actual = await vi.importActual(
-    "src/api/simulate-environments/versions",
-  );
+  const actual = await vi.importActual<
+    typeof import("src/api/simulate-environments/versions")
+  >("src/api/simulate-environments/versions");
   return {
     ...actual,
     useEnvironmentVersions: vi.fn(() => ({
@@ -17,11 +48,12 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     })),
     useLockRelease: vi.fn(() => ({
       isPending: false,
-      mutate: (variables) => calls.lock.push(variables),
+      mutate: (variables: VersionPair) => calls.lock.push(variables),
     })),
     useUnlockRelease: vi.fn(() => ({
       isPending: false,
-      mutate: (variables) => calls.unlock.push(variables),
+      mutate: (variables: { releaseId: string }) =>
+        calls.unlock.push(variables),
     })),
   };
 });
@@ -36,13 +68,13 @@ vi.mock("../../../hooks/useSimulationAccess", () => ({
 const { default: ReleaseCard } = await import("../ReleaseCard");
 const { versionLine } = await import("../overview.constants");
 
-const piece = (id, label) => ({
+const piece = (id: string, label: string): PieceRow => ({
   id,
   label,
   status: "active",
   is_default: true,
 });
-const RELEASE = {
+const RELEASE: HarnessReleaseApi = {
   id: "rel-1",
   label: "2026.11.1",
   environment_version_id: "env-3",
@@ -56,7 +88,13 @@ const RELEASE = {
   train: 54,
   test: 14,
 };
-const answer = ({ releases = [], lock = {} } = {}) => ({
+const answer = ({
+  releases = [],
+  lock = {},
+}: {
+  releases?: HarnessReleaseApi[];
+  lock?: Partial<HarnessLockPreviewApi>;
+} = {}): VersionsBody => ({
   agent: [
     {
       ...piece("agent-4", "v4"),
