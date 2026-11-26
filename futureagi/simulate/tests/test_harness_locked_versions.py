@@ -780,7 +780,8 @@ class TestUnlockAndDelete:
     ):
         environment = _environment(user, workspace, storage)
         _suite(environment, _scenarios(20))
-        label = _lock(auth_client, environment).json()["locked_versions"][0]["label"]
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
+        label = locked_version["label"]
 
         response = auth_client.delete(f"{BASE}/{environment.id}/")
 
@@ -789,8 +790,33 @@ class TestUnlockAndDelete:
         assert response.json()["message"] == (
             f"A workspace admin or owner must unlock version {label} first."
         )
+        # What an admin's Unlock action in the refusal needs.
+        assert response.json()["locked_version_id"] == locked_version["id"]
+        assert response.json()["label"] == label
         environment.refresh_from_db()
         assert environment.deleted is False
+
+    def test_unlock_with_versioning_off_says_why_nothing_can_be_locked(
+        self, auth_client, user, workspace, storage, settings
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [locked_version] = _lock(auth_client, environment).json()["locked_versions"]
+        settings.HARNESS_VERSIONING_ENABLED = False
+
+        response = auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"locked_version_id": locked_version["id"]},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        assert response.json()["lock"]["can_lock"] is False
+        assert response.json()["lock"]["refusal"] == {
+            "code": "versioning_disabled",
+            "message": "environment versioning is not enabled",
+        }
+        assert HarnessLockedVersion.no_workspace_objects.get().unlocked_at is not None
 
     def test_a_member_may_not_unlock(self, auth_client, user, workspace, storage):
         environment = _environment(user, workspace, storage)
