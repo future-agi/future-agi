@@ -78,13 +78,20 @@ def browser_evidence(call: CallExecution) -> BrowserEvidence:
     state = state if isinstance(state, Mapping) else {}
     # A door trial's blocked lists are kept on its record and shown with its changes; never from both.
     from_record = state.get("recorded") is not False
+    # The kit says on the agent's entry when the browser's refusals could not be read: the record then holds none.
+    unread = any(
+        isinstance(one, Mapping)
+        and one.get("who") == "agent"
+        and one.get("browser_blocked_unreadable") is True
+        for one in state.get("state_changes") or []
+    )
     shown: BrowserEvidence = {
         "state": "not_kept",
         "capped": False,
         "level_keeps_none": False,
         "screenshots": [],
         "more": 0,
-        "blocked_source": "record" if from_record else "unreadable",
+        "blocked_source": "record" if from_record and not unread else "unreadable",
     }
     # The kit names a file holding only the browser's record as the browser's own, and one with the world's tables as
     # the end state; the Browser tab reads whichever the trial has. Older kits named both as the end state.
