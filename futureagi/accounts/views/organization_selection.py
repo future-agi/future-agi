@@ -74,13 +74,11 @@ class OrganizationSelectionView(APIView):
                     "You don't have access to this organization"
                 )
 
-            # Update config with new key
-            if not request.user.config:
-                request.user.config = {}
-            request.user.config["currentOrganizationId"] = str(selected_org.id)
-            # Keep legacy key for backward compat
-            request.user.config["selected_organization_id"] = str(selected_org.id)
-            request.user.save(update_fields=["config"])
+            # Update config with new key, and the legacy key for backward compat
+            request.user.update_config(
+                currentOrganizationId=str(selected_org.id),
+                selected_organization_id=str(selected_org.id),
+            )
 
             return self._gm.success_response(
                 {
@@ -251,18 +249,17 @@ class SwitchOrganizationView(APIView):
             # Get workspace role
             ws_role = user.get_workspace_role(workspace) if workspace else None
 
-            # Update user config
-            if not user.config:
-                user.config = {}
-            user.config["currentOrganizationId"] = str(selected_org.id)
-            # Keep legacy key for backward compat
-            user.config["selected_organization_id"] = str(selected_org.id)
+            # Update user config (keeping the legacy key for backward compat)
+            changes: dict[str, object] = {
+                "currentOrganizationId": str(selected_org.id),
+                "selected_organization_id": str(selected_org.id),
+            }
             if workspace:
-                user.config["currentWorkspaceId"] = str(workspace.id)
-                org_workspace_map = user.config.get("orgWorkspaceMap", {})
+                org_workspace_map = dict((user.config or {}).get("orgWorkspaceMap", {}))
                 org_workspace_map[str(selected_org.id)] = str(workspace.id)
-                user.config["orgWorkspaceMap"] = org_workspace_map
-            user.save(update_fields=["config"])
+                changes["currentWorkspaceId"] = str(workspace.id)
+                changes["orgWorkspaceMap"] = org_workspace_map
+            user.update_config(**changes)
 
             response_data = {
                 "organization": {
