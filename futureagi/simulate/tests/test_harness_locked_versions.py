@@ -21,6 +21,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.services.harness_tool_reach import blocked_tools
 from simulate.services.harness_versioning.backfill import backfill_environment
 from simulate.services.harness_versioning.locked_versions import (
     Task,
@@ -684,6 +685,93 @@ class TestLock:
         assert (older["train"], older["test"]) == (14, 6)
         assert newer["test"] == target_test_size(40)
         assert newer["label"].endswith(".2")
+
+
+def _needs_production(environment, keys):
+    """The default environment version's ``issue_refund`` reaches a payments API
+    someone else runs, and the default suite's scenarios ``keys`` call it."""
+    version = HarnessEnvironmentVersion._base_manager.get(
+        id=environment.environment_version_id
+    )
+    HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+        documents={
+            **(version.documents or {}),
+            "contract": {
+                "dependencies": [
+                    {
+                        "name": "payments",
+                        "kind": "service",
+                        "engine": "http",
+                        "reached": {"dsn_env": "PAYMENTS_API_URL"},
+                        "used_by": ["issue_refund"],
+                    }
+                ],
+            },
+        }
+    )
+    members = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=environment.suite_version_id
+    ).values_list("scenario_key", flat=True)
+    HarnessSuiteVersion._base_manager.filter(id=environment.suite_version_id).update(
+        documents={
+            "scenarios": [
+                {
+                    "name": key,
+                    "solution": [
+                        {"tool": "issue_refund" if key in keys else "lookup_order"}
+                    ],
+                }
+                for key in members
+            ]
+        }
+    )
+    environment.refresh_from_db()
+
+
+class TestProductionOnlyTasks:
+    """A task that needs a production-only tool of the pinned environment version
+    can't run, so it gets no split and doesn't count in N."""
+
+    @pytest.fixture(autouse=True)
+    def actors_on(self, settings):
+        settings.HARNESS_ACTORS_ENABLED = True
+
+    def test_a_task_that_needs_a_production_only_tool_gets_no_split(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        blocked = {f"s{index}" for index in range(5)}
+        _needs_production(environment, blocked)
+        assert [entry["tool"] for entry in blocked_tools(environment)] == [
+            "issue_refund"
+        ]
+
+        lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
+        response = _lock(auth_client, environment)
+
+        assert (lock["train"], lock["test"]) == (15 - target_test_size(15), 5)
+        assert response.status_code == 200, response.content
+        [locked_version] = response.json()["locked_versions"]
+        assert locked_version["train"] + locked_version["test"] == 15
+        assert set(_splits(environment)) == {f"s{index}" for index in range(20)} - (
+            blocked
+        )
+
+    def test_a_suite_whose_every_task_needs_one_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        _needs_production(environment, {f"s{index}" for index in range(20)})
+
+        response = _lock(auth_client, environment)
+
+        assert response.status_code == 422
+        assert response.json()["error"] == "lock_too_few_test"
+        assert (response.json()["train"], response.json()["test"]) == (0, 0)
+        assert not HarnessLockedVersion.no_workspace_objects.exists()
+        assert _splits(environment) == {}
 
 
 class TestUnlockAndDelete:
