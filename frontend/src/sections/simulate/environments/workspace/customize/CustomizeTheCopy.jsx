@@ -70,7 +70,9 @@ export default function CustomizeTheCopy({ jobId, job, chat }) {
   const customization = metadata.customization || {};
   const source = customization.source || {};
   const result = metadata.customization_result || null;
-  const state = info.state || "queued";
+  // The job read carries its state and failure under status, beside the job's details.
+  const status = job?.status || {};
+  const state = status.state || "queued";
   const finished = terminalStages.has(state);
   // The job stays "provisioning" while the builder designs, which reads as nothing
   // happening: show the conversation's state until the job ends.
@@ -225,7 +227,7 @@ export default function CustomizeTheCopy({ jobId, job, chat }) {
             )}
             {state === "failed" && (
               <Alert severity="error">
-                {info.failure?.message || "The copy couldn't be built."}
+                {status.failure?.message || "The copy couldn't be built."}
               </Alert>
             )}
             {state === "canceled" && (

@@ -24,10 +24,10 @@ const { cancelHarnessJob } = await import("src/api/harness/harness");
 const { default: CustomizeTheCopy } = await import("../CustomizeTheCopy");
 
 const CHAT = { turns: [], running: false, send: vi.fn() };
-const jobOf = (state, extra = {}) => ({
+const jobOf = (state, extra = {}, failure = null) => ({
+  // The job read's shape: details under job, state and failure under status.
+  status: { state, failure },
   job: {
-    state,
-    failure: null,
     metadata: {
       customization: {
         source: { environment_name: "retail", suite_id: "suite-1" },
@@ -99,12 +99,13 @@ describe("The copy's design", () => {
   });
 
   it("says why a copy wasn't made", () => {
-    render({
-      job: {
-        ...jobOf("failed").job,
-        failure: { code: "design_stopped", message: "no such records" },
-      },
-    });
+    render(
+      jobOf(
+        "failed",
+        {},
+        { code: "design_stopped", message: "no such records" },
+      ),
+    );
 
     expect(screen.getByText("no such records")).toBeInTheDocument();
   });
