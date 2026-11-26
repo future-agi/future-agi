@@ -244,7 +244,7 @@ func TestInspectionR3RegistrationInventory(t *testing.T) {
 		for _, routes := range srv.router.paramIndex {
 			n += len(routes)
 		}
-		return n
+		return n + len(srv.router.remainders)
 	}() {
 		t.Fatal("inventory does not cover actual registrations")
 	}
@@ -254,6 +254,9 @@ func TestInspectionR3RegistrationInventory(t *testing.T) {
 			t.Fatalf("unqualified inventory row: %+v", row)
 		}
 		found[row.Method+" "+row.Pattern] = row
+	}
+	if row, ok := found["GET /v1/models/{model...}"]; !ok || row.Contract.Operation == "" || row.Auth == "" {
+		t.Fatalf("remainder route missing qualified inventory row: %+v", row)
 	}
 	for _, key := range []string{"POST /v1/search", "POST /v1/audio/transcriptions", "GET /v1/responses/{id}", "POST /v1/scheduled", "POST /forgotten/{id}"} {
 		row, ok := found[key]
