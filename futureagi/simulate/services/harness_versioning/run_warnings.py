@@ -1,0 +1,361 @@
+"""What a run of the picked versions should be warned about, read without writing.
+
+Warnings never block a run. They come in a fixed order: the suite, the agent, then the
+bundle. A failed cache row reads as failed rather than as a miss: the run that meets it
+prepares it again. Cache warnings concern only a run that prepares its bundle; one of the
+defaults without a cached bundle runs as before.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from simulate.models import (
+    HarnessAgentVersionRuntime,
+    HarnessAssembledBundle,
+    HarnessSuiteValidation,
+    HostedHarnessJob,
+)
+from simulate.services.harness_scenario_lifecycle import (
+    lifecycle_counts,
+    scenario_lifecycle,
+)
+from simulate.services.harness_versioning.assembly import bundle_key, certify_enabled
+from simulate.services.harness_versioning.read import (
+    _agent_label,
+    _label,
+    _message_label,
+    version_refs,
+)
+from simulate.services.harness_versioning.review_items import saved_changes
+from simulate.services.harness_versioning.versions import versioning_enabled
+from simulate.services.hosted_harness import (
+    ResolvedPins,
+    VersionPicks,
+    job_pins,
+    resolve_run_pins,
+)
+
+_NO_VERSIONS = {"agent": None, "environment": None, "suite": None}
+
+
+def _warning(
+    code: str, message: str, piece: str | None, scenario_keys: list[str] | None = None
+) -> dict[str, Any]:
+    warning: dict[str, Any] = {"code": code, "message": message, "piece": piece}
+    if scenario_keys is not None:
+        warning["scenario_keys"] = scenario_keys
+    return warning
+
+
+def _prepares(pins: ResolvedPins) -> bool:
+    """Whether a run of ``pins`` prepares its bundle rather than replaying it."""
+    return (
+        pins.runtime is not None
+        and not pins.cached
+        and (not pins.defaults or pins.unsealed)
+        and certify_enabled()
+    )
+
+
+def _assembles(pins: ResolvedPins) -> bool:
+    """Whether a run of ``pins`` replays or prepares a bundle at all."""
+    return bool(pins.cached) or _prepares(pins)
+
+
+def _cache_state(environment: HostedHarnessJob, pins: ResolvedPins) -> str | None:
+    if pins.runtime is None:
+        return None
+    return (
+        HarnessAssembledBundle._base_manager.filter(
+            job_id=environment.id,
+            assembly_key=pins.assembly_key
+            or bundle_key(pins.runtime, pins.environment_version, pins.suite_version),
+        )
+        .values_list("state", flat=True)
+        .first()
+    )
+
+
+def _names(names: list[str]) -> str:
+    return ", ".join(names)
+
+
+def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[str]:
+    """The suite's scenarios a saved, graded change touched (on the environment version or the suite version) that no
+    validation reached on this pair since. A case validated again and held by its own checks says so on its own
+    reason; it is not asked to be proved again."""
+    from simulate.models import HarnessSuiteMember
+
+    reviewed = [
+        one
+        for version in (environment_version, suite_version)
+        for one in saved_changes(getattr(version, "documents", None))
+    ]
+    touched = {
+        key
+        for one in reviewed
+        if one["decision"] == "accepted" and one["graded"]
+        for key in one["revalidate"]
+    }
+    if not touched:
+        return []
+    members = set(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=suite_version
+        ).values_list("scenario_key", flat=True)
+    )
+    proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version=suite_version, environment_version=environment_version
+        )
+        .values_list("proofs", flat=True)
+        .first()
+    ) or {}
+    from simulate.services.harness_starting_records import scenario_token
+
+    # A change names a scenario by its folder, the suite by its key: the same scenario either way once normalised.
+    tokens = {scenario_token(key) for key in touched}
+    return sorted(
+        key
+        for key in members
+        if scenario_token(key) in tokens
+        and not any(
+            _reached(proof) and scenario_token(name) == scenario_token(key)
+            for name, proof in proofs.items()
+        )
+    )
+
+
+def _reached(proof: object) -> bool:
+    """Whether a validation reached the case, whatever it found."""
+    return (
+        isinstance(proof, dict)
+        and proof.get("blocked_reason") != "validation_incomplete"
+    )
+
+
+def _credential_warnings(runtime: HarnessAgentVersionRuntime) -> list[dict[str, Any]]:
+    """What the pinned agent version's credentials lack, by name; no value is read
+    except to learn whether its set can be decrypted at all."""
+    from simulate.serializers.harness_job import CONNECTOR_ALIASES
+    from simulate.services.harness_agent_versions import (
+        credential_set_readable,
+        own_credential_set,
+        version_credential_names,
+    )
+
+    warnings = []
+    names = set(version_credential_names(runtime))
+    required = runtime.required_variable_names
+    if required is not None:
+        missing = sorted({str(name) for name in required} - names)
+        if missing:
+            warnings.append(
+                _warning(
+                    "variable_missing",
+                    f"This agent version has no value for {_names(missing)}",
+                    "agent",
+                )
+            )
+    if not own_credential_set(runtime):
+        return warnings
+    agent_payload = runtime.agent_payload or {}
+    config = agent_payload.get("config") or {}
+    held = set(names)
+    if str(config.get("livekit_url") or config.get("LIVEKIT_URL") or "").strip():
+        held.add("LIVEKIT_URL")
+    connector = str(agent_payload.get("connector") or "")
+    unavailable = [
+        alias for alias in CONNECTOR_ALIASES.get(connector, ()) if alias not in held
+    ]
+    if unavailable:
+        warnings.append(
+            _warning(
+                "provider_key_unavailable",
+                f"This agent version has no {_names(unavailable)} for {connector}",
+                "agent",
+            )
+        )
+    if not credential_set_readable(runtime):
+        warnings.append(
+            _warning(
+                "credential_unavailable",
+                "This agent version's credentials can't be read; save them again",
+                "agent",
+            )
+        )
+    return warnings
+
+
+def _nudge_warnings(
+    environment: HostedHarnessJob, agent_version: Any, environment_version: Any
+) -> list[dict[str, Any]]:
+    """An unanswered or skipped update of this agent for the picked environment."""
+    from simulate.services.harness_versioning.nudges import open_nudge_for_run
+
+    nudge = open_nudge_for_run(environment.id, agent_version.id, environment_version.id)
+    if nudge is None:
+        return []
+    label = _message_label(
+        _agent_label(agent_version.version_name, agent_version.version_number)
+    )
+    environment_label = _message_label(_label(environment_version.version_number))
+    message = (
+        f"Agent {label} has an update for environment {environment_label} that"
+        " hasn't been answered"
+        if nudge.state == "pending"
+        else f"The update for agent {label} was skipped; environment"
+        f" {environment_label} wasn't rebuilt for it"
+    )
+    return [_warning("nudge_open", message, "agent")]
+
+
+def run_warnings(
+    environment: HostedHarnessJob,
+    pins: ResolvedPins | None,
+    *,
+    failed_before: bool = False,
+) -> list[dict[str, Any]]:
+    """Each ``{code, message, piece}`` a run of ``pins`` should show before it starts.
+
+    ``failed_before`` reads the cache row as failed: a created run reset it.
+    """
+    if pins is None:
+        return []
+    environment_version, suite_version = pins.environment_version, pins.suite_version
+    environment_label = _message_label(_label(environment_version.version_number))
+    warnings = []
+    suite_label = _message_label(_label(suite_version.version_number))
+    # As the scenario lifecycle reads the pair, so a legacy case kept as written counts as one.
+    counts = lifecycle_counts(
+        scenario_lifecycle(
+            environment,
+            suite_version=suite_version,
+            environment_version=environment_version,
+        ).values()
+    )
+    if not counts["proved"] and not counts["kept_as_written"]:
+        warnings.append(
+            _warning(
+                "suite_unproved",
+                f"Suite {suite_label} hasn't been proved"
+                f" against environment {environment_label}",
+                "suite",
+            )
+        )
+    elif counts["kept_as_written"] or counts["not_proved"]:
+        # Validated, but not every case proved: say how the cases stand, not "not proved".
+        warnings.append(
+            _warning(
+                "suite_partly_proved",
+                f"Suite {suite_label} on environment {environment_label}:"
+                f" {counts['proved']} proved, {counts['kept_as_written']} kept as written,"
+                f" {counts['not_proved']} not proved",
+                "suite",
+            )
+        )
+    unproved = _needs_revalidation(environment_version, suite_version)
+    if unproved:
+        shown = unproved[:5] + (
+            [f"{len(unproved) - 5} more"] if len(unproved) > 5 else []
+        )
+        warnings.append(
+            _warning(
+                "scenarios_need_revalidation",
+                f"Saved changes to environment {environment_label} or its suite changed what"
+                f" {len(unproved)} scenario{'s' if len(unproved) != 1 else ''} are graded on;"
+                f" prove {_names(shown)} again",
+                "suite",
+                scenario_keys=unproved,
+            )
+        )
+    agent_version = pins.agent_version
+    built_with = environment_version.agent_version_id
+    if agent_version is not None and built_with and agent_version.id != built_with:
+        label = _message_label(
+            _agent_label(agent_version.version_name, agent_version.version_number)
+        )
+        warnings.append(
+            _warning(
+                "agent_differs",
+                f"Agent {label} differs from the agent that environment"
+                f" {environment_label} was built with",
+                "agent",
+            )
+        )
+    if agent_version is not None and pins.runtime is not None:
+        warnings.extend(_credential_warnings(pins.runtime))
+    # TODO: source_unavailable (piece agent) once a GitHub commit can be checked
+    # cheaply; today only a sandbox clone resolves one.
+    if agent_version is not None and built_with != agent_version.id:
+        warnings.extend(
+            _nudge_warnings(environment, agent_version, environment_version)
+        )
+    if not _prepares(pins):
+        return warnings
+    if failed_before or (
+        _cache_state(environment, pins) == HarnessAssembledBundle.State.FAILED
+    ):
+        warnings.append(
+            _warning(
+                "bundle_cache_failed",
+                "The last preparation of this combination failed and will be retried",
+                None,
+            )
+        )
+    else:
+        warnings.append(
+            _warning(
+                "bundle_cache_miss",
+                "The first run of this combination prepares it, which takes several"
+                " minutes",
+                None,
+            )
+        )
+    return warnings
+
+
+def _versions(pins: ResolvedPins | None) -> dict[str, Any]:
+    if pins is None:
+        return dict(_NO_VERSIONS)
+    return version_refs(
+        pins.agent_version, pins.environment_version, pins.suite_version
+    )
+
+
+def preview_run(
+    environment: HostedHarnessJob,
+    picks: VersionPicks | None = None,
+    *,
+    scenario_keys: list[str] | None = None,
+    hidden: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """The versions a run of ``picks`` would use, its warnings, whether its bundle
+    is cached (``None`` when the run is not assembled) and ``run_verdict`` for
+    ``scenario_keys``; without versioning only the verdict is filled."""
+    from simulate.services.harness_tool_reach import run_verdict
+
+    pins = resolve_run_pins(environment, picks=picks)
+    return {
+        "versions": _versions(pins),
+        "warnings": run_warnings(environment, pins),
+        "bundle_cached": (
+            pins.cached if pins is not None and _assembles(pins) else None
+        ),
+        **run_verdict(environment, pins, scenario_keys=scenario_keys, hidden=hidden),
+    }
+
+
+def created_run(environment: HostedHarnessJob, job: HostedHarnessJob) -> dict[str, Any]:
+    """The versions a created run is pinned to and its warnings, as its 202 shows them."""
+    if not versioning_enabled():
+        return {"versions": dict(_NO_VERSIONS), "warnings": []}
+    pins = job_pins(environment, job)
+    assembly = ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
+    return {
+        "versions": _versions(pins),
+        "warnings": run_warnings(
+            environment, pins, failed_before=bool(assembly.get("failed_before"))
+        ),
+    }

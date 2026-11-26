@@ -1,0 +1,18 @@
+# CI only: the optional Gateway API routes, over examples/bundled.yaml and
+# examples/gateway-api.yaml, with NetworkPolicies on, and the GKE
+# HealthCheckPolicies for every routed Service (the LLM gateway's included).
+gatewayApi:
+  annotations:
+    example.com/route: futureagi
+  gke:
+    healthChecks:
+      enabled: true
+  llmGateway:
+    enabled: true
+    host: llm.futureagi.example.com
+# Exercise a saved override: the client-facing Service port must stay 9464.
+fiCollector:
+  extraEnv:
+    FI_ADMIN_ADDR: ":9500"
+networkPolicy:
+  enabled: true

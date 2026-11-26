@@ -36,13 +36,20 @@ function MockAgGridReact({
   noRowsOverlayComponent: NoRowsOverlay,
   rowSelection,
   selectionColumnDef,
+  defaultColDef,
   onSelectionChanged,
 }) {
   if (!rowData || rowData.length === 0) {
     return NoRowsOverlay ? <NoRowsOverlay /> : null;
   }
   return (
-    <div data-testid="ag-grid">
+    <div
+      data-testid="ag-grid"
+      data-default-columns-resizable={defaultColDef?.resizable}
+      data-actions-column-resizable={
+        columnDefs.find((column) => column.field === "actions")?.resizable
+      }
+    >
       {rowSelection && selectionColumnDef && (
         <div
           data-testid="selection-column-def"
@@ -108,6 +115,7 @@ MockAgGridReact.propTypes = {
   noRowsOverlayComponent: PropTypes.elementType,
   rowSelection: PropTypes.object,
   selectionColumnDef: PropTypes.object,
+  defaultColDef: PropTypes.object,
   onSelectionChanged: PropTypes.func,
 };
 
@@ -239,6 +247,19 @@ const tableProps = {
 };
 
 describe("QueueItemsTable", () => {
+  it("allows resizing data columns while keeping fixed columns opt-out", () => {
+    render(<QueueItemsTable {...tableProps} />);
+
+    expect(screen.getByTestId("ag-grid")).toHaveAttribute(
+      "data-default-columns-resizable",
+      "true",
+    );
+    expect(screen.getByTestId("ag-grid")).toHaveAttribute(
+      "data-actions-column-resizable",
+      "false",
+    );
+  });
+
   it("renders table headers", () => {
     render(<QueueItemsTable {...tableProps} />);
     expect(screen.getByText("Source")).toBeInTheDocument();
@@ -319,7 +340,7 @@ describe("QueueItemsTable", () => {
     expect(
       screen
         .queryAllByTestId("iconify")
-        .some((el) => el.getAttribute("data-icon") === "mingcute:close-line"),
+        .some((el) => el.getAttribute("data-icon") === "solar:close-linear"),
     ).toBe(false);
   });
 
@@ -339,7 +360,7 @@ describe("QueueItemsTable", () => {
     expect(
       screen
         .queryAllByTestId("iconify")
-        .some((el) => el.getAttribute("data-icon") === "mingcute:close-line"),
+        .some((el) => el.getAttribute("data-icon") === "solar:close-linear"),
     ).toBe(false);
 
     await user.click(screen.getByLabelText("select-item-1"));
@@ -470,7 +491,7 @@ describe("QueueItemsTable", () => {
     // Click the close/remove icon – opens confirmation dialog
     const removeIcons = screen
       .getAllByTestId("iconify")
-      .filter((el) => el.getAttribute("data-icon") === "mingcute:close-line");
+      .filter((el) => el.getAttribute("data-icon") === "solar:close-linear");
     await user.click(removeIcons[0].closest("button"));
 
     // Confirm removal in the dialog

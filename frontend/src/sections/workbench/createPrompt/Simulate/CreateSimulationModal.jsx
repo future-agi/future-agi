@@ -36,6 +36,7 @@ import { useGetScenarioList } from "src/api/scenarios/scenarios";
 import CustomTooltip from "src/components/tooltip";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import { usePromptVersions } from "../hooks/use-prompt-versions";
+import ContentSkeleton from "src/components/content-skeleton";
 
 // Generate auto name based on date/time
 const generateAutoName = () => {
@@ -244,17 +245,17 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
     <Dialog
       open={open}
       onClose={onClose}
-      maxWidth="sm"
+      maxWidth={false}
       fullWidth
       PaperProps={{
-        sx: { borderRadius: 2 },
+        sx: { maxWidth: 720, borderRadius: 2 },
       }}
     >
       <DialogTitle>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="h6">Create Chat Simulation</Typography>
           <IconButton onClick={onClose} size="small">
-            <Iconify icon="eva:close-fill" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>
@@ -304,8 +305,8 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                           color: "primary.contrastText",
                           px: 0.75,
                           py: 0.25,
-                          borderRadius: 0.5,
-                          fontSize: "0.65rem",
+                          borderRadius: "4px",
+                          fontSize: "0.75rem",
                         }}
                       >
                         Default
@@ -320,8 +321,8 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                           color: "warning.contrastText",
                           px: 0.75,
                           py: 0.25,
-                          borderRadius: 0.5,
-                          fontSize: "0.65rem",
+                          borderRadius: "4px",
+                          fontSize: "0.75rem",
                         }}
                       >
                         Draft
@@ -370,8 +371,8 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                     disabled={isFetchingScenarios}
                   >
                     <Iconify
-                      icon="mdi:refresh"
-                      width={18}
+                      icon="solar:refresh-linear"
+                      width={20}
                       sx={{
                         animation: isFetchingScenarios
                           ? "spin 1s linear infinite"
@@ -396,7 +397,7 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
 
             {isLoadingScenarios ? (
               <Box display="flex" justifyContent="center" py={3}>
-                <CircularProgress size={24} />
+                <ContentSkeleton variant="panel" />
               </Box>
             ) : (
               <List
@@ -418,8 +419,8 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                   >
                     <ListItemIcon sx={{ minWidth: 36 }}>
                       <Iconify
-                        icon="mdi:plus-circle-outline"
-                        width={20}
+                        icon="solar:add-circle-linear"
+                        width={16}
                         sx={{ color: theme.palette.primary.main }}
                       />
                     </ListItemIcon>
@@ -432,7 +433,7 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                       }}
                     />
                     <Iconify
-                      icon="mdi:open-in-new"
+                      icon="solar:arrow-right-up-linear"
                       width={16}
                       sx={{ color: theme.palette.text.secondary }}
                     />

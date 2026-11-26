@@ -1,10 +1,27 @@
 """
-Shared helper for resolving the set of project IDs a request is allowed to see.
+Shared helpers for the error-feed views: accessible-project resolution and
+the Enterprise license gate.
 """
 
 from typing import List, Optional
 
 from tracer.models.project import Project
+
+
+class ErrorFeedLicenseRequired:
+    """Mixin denying error-feed APIs without the error_feed entitlement.
+
+    Error feed is an Enterprise feature: the code is public but
+    use requires a valid EE license (or a cloud plan). Raises
+    FeatureUnavailable (HTTP 402) via check_ee_feature otherwise.
+    """
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        from tfc.ee_gating import EEFeature, check_ee_feature
+
+        org = getattr(request, "organization", None)
+        check_ee_feature(EEFeature.ERROR_FEED, org_id=str(org.id) if org else None)
 
 
 def get_accessible_project_ids(request) -> List[str]:
@@ -44,3 +61,26 @@ def resolve_requested_project_ids(
     if str(requested_project_id) in accessible:
         return [str(requested_project_id)]
     return None
+
+
+def is_authorized_empty_feed_scope(request) -> bool:
+    """True when an empty project list means "this scope has no projects yet".
+
+    `get_accessible_project_ids` returns ``[]`` both for a request with no
+    organization and for a valid organization/workspace that simply has no
+    projects. The list and stats endpoints use this to tell the two apart
+    (TH-8209); the resolver itself and its other callers are unchanged.
+
+    Only the organization the authentication class resolved onto the request
+    counts. The resolver's ``user.organization`` fallback does not: a request
+    whose scope could not be established keeps the existing denial. When a
+    workspace was resolved it must belong to that organization. Workspace
+    membership itself was already enforced during authentication.
+    """
+    org = getattr(request, "organization", None)
+    if org is None:
+        return False
+    workspace = getattr(request, "workspace", None)
+    if workspace is not None and str(workspace.organization_id) != str(org.id):
+        return False
+    return True

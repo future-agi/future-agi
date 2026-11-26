@@ -1,0 +1,131 @@
+# Large: many teams and heavy evaluation or simulation load. The production
+# topology scaled down: one worker Deployment per Temporal queue, each with its
+# own autoscaling, drain time and placement, next to the single-slot
+# exact-aggregation worker; a Guaranteed-QoS collector; a gateway sharing
+# state in Redis; Django through a transaction-mode pooler. Layer it over your
+# datastore values:
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -f external.yaml -f sizes/large.yaml --timeout 20m
+#
+# Needs at least three nodes across zones and HA datastores. Scale the
+# PostgreSQL connection budget with the pods: each API or worker pod opens
+# about (Granian workers or activity slots) connections, so put PgBouncer in
+# front (postgres.pooler) before raising maxReplicas.
+topologySpread:
+  preset: hard
+postgres:
+  pooler:
+    enabled: true
+    host: pgbouncer.example.internal
+    port: 6432
+backend:
+  granian:
+    workers: 4
+  preStopSleepSeconds: 15
+  terminationGracePeriodSeconds: 300
+  resources:
+    requests: {cpu: "2", memory: 4Gi}
+    limits: {cpu: "4", memory: 8Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+worker:
+  preStopSleepSeconds: 30
+  gracefulShutdownSeconds: 300
+  allQueues:
+    # Whatever the queues below leave (trace ingestion and the rest).
+    maxConcurrentActivities: 100
+    resources:
+      requests: {cpu: "1", memory: 2Gi}
+      limits: {cpu: "2", memory: 4Gi}
+    autoscaling:
+      enabled: true
+      minReplicas: 2
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+      targetMemoryUtilizationPercentage: 70
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 600
+    # The queues below run only on their own Deployments.
+    excludeDedicatedQueues: true
+  exactAggregation:
+    enabled: true
+  queues:
+    - name: default
+      maxConcurrentActivities: 100
+      gracefulShutdownSeconds: 300
+      resources:
+        requests: {cpu: "1", memory: 2Gi}
+        limits: {cpu: "2", memory: 4Gi}
+      autoscaling: {enabled: true, minReplicas: 2, maxReplicas: 6}
+    - name: tasks_s
+      maxConcurrentActivities: 200
+      gracefulShutdownSeconds: 300
+      resources:
+        requests: {cpu: "1", memory: 2Gi}
+        limits: {cpu: "2", memory: 4Gi}
+      autoscaling: {enabled: true, minReplicas: 2, maxReplicas: 8}
+    - name: tasks_l
+      maxConcurrentActivities: 50
+      gracefulShutdownSeconds: 600
+      resources:
+        requests: {cpu: "2", memory: 6Gi}
+        limits: {cpu: "4", memory: 10Gi}
+      autoscaling: {enabled: true, minReplicas: 2, maxReplicas: 6}
+    - name: tasks_xl
+      maxConcurrentActivities: 10
+      gracefulShutdownSeconds: 900
+      resources:
+        requests: {cpu: "2", memory: 12Gi}
+        limits: {cpu: "4", memory: 16Gi}
+      autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 4}
+      # Long jobs on their own pool (drop these if you have none).
+      # nodeSelector: {workload: batch}
+      # tolerations: [{key: workload, operator: Equal, value: batch, effect: NoSchedule}]
+    - name: agent_compass
+      maxConcurrentActivities: 50
+      gracefulShutdownSeconds: 600
+      resources:
+        requests: {cpu: "1", memory: 3Gi}
+        limits: {cpu: "2", memory: 6Gi}
+      autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 4}
+frontend:
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+fiCollector:
+  # Requests equal to limits: Guaranteed QoS, never evicted first.
+  goMemLimit: 3600MiB
+  resources:
+    requests: {cpu: "2", memory: 4Gi}
+    limits: {cpu: "2", memory: 4Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 70
+agentccGateway:
+  # Replicas share rate limits and budgets in Redis (database 4); with
+  # redis.external.tls, in the Redis agentccGateway.extraEnv names.
+  redis:
+    enabled: auto
+  goMemLimit: 900MiB
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 70

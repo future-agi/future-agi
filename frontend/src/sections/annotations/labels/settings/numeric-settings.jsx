@@ -9,10 +9,31 @@ import {
   Typography,
 } from "@mui/material";
 import { Controller } from "react-hook-form";
+import { enqueueSnackbar } from "notistack";
+
+const MAX_VALUE = 10;
 
 NumericSettings.propTypes = {
   control: PropTypes.object.isRequired,
 };
+
+const handleNumberChange =
+  (field, max = Infinity) =>
+  (e) => {
+    const raw = e.target.value;
+    const cleaned = raw.replace(/^(-?)0+(?=\d)/, "$1");
+    if (cleaned !== raw) e.target.value = cleaned;
+    if (cleaned === "") {
+      field.onChange("");
+      return;
+    }
+    const num = Number(cleaned);
+    if (num > max) {
+      enqueueSnackbar(`Maximum value is ${max}`, { variant: "warning" });
+      return;
+    }
+    field.onChange(num);
+  };
 
 export default function NumericSettings({ control }) {
   return (
@@ -36,7 +57,7 @@ export default function NumericSettings({ control }) {
               fullWidth
               error={!!fieldState.error}
               helperText={fieldState.error?.message}
-              onChange={(e) => field.onChange(Number(e.target.value))}
+              onChange={handleNumberChange(field)}
               inputProps={{ min: 0 }}
             />
           )}
@@ -46,6 +67,7 @@ export default function NumericSettings({ control }) {
           control={control}
           rules={{
             required: "Required",
+            max: { value: MAX_VALUE, message: `Maximum is ${MAX_VALUE}` },
             validate: (value, formValues) => {
               if (Number(value) < 0) return "Maximum cannot be negative";
               return (
@@ -64,8 +86,8 @@ export default function NumericSettings({ control }) {
               fullWidth
               error={!!fieldState.error}
               helperText={fieldState.error?.message}
-              onChange={(e) => field.onChange(Number(e.target.value))}
-              inputProps={{ min: 0 }}
+              onChange={handleNumberChange(field, MAX_VALUE)}
+              inputProps={{ min: 0, max: MAX_VALUE }}
             />
           )}
         />
@@ -89,7 +111,7 @@ export default function NumericSettings({ control }) {
             fullWidth
             error={!!fieldState.error}
             helperText={fieldState.error?.message}
-            onChange={(e) => field.onChange(Number(e.target.value))}
+            onChange={handleNumberChange(field)}
             inputProps={{ min: 0.000001, step: "any" }}
           />
         )}

@@ -1,4 +1,5 @@
-import { Box, Tab, Tabs, Typography } from "@mui/material";
+import { Box, Tab, Typography } from "@mui/material";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import PropTypes from "prop-types";
 import React from "react";
 import Iconify from "src/components/iconify";
@@ -65,34 +66,13 @@ const CompositeAxisTabs = ({ value, onChange, disabled = false }) => {
         All children in a composite must produce the same kind of score so the
         aggregate number is comparable.
       </Typography>
-      <Tabs
+      <SegmentedTabs
         value={value || "pass_fail"}
         onChange={(_, val) => {
           if (disabled) return;
           onChange?.(val);
         }}
-        TabIndicatorProps={{ style: { display: "none" } }}
-        sx={{
-          minHeight: 32,
-          "& .MuiTab-root": {
-            minHeight: 32,
-            px: 1.5,
-            py: 0,
-            mr: "0px !important",
-            textTransform: "none",
-            fontSize: "13px",
-            borderRadius: "6px",
-          },
-          border: "1px solid",
-          borderColor: "divider",
-          p: "2px",
-          borderRadius: "8px",
-          width: "fit-content",
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark"
-              ? "rgba(255,255,255,0.04)"
-              : "background.neutral",
-        }}
+        sx={{ width: "fit-content" }}
       >
         {COMPOSITE_AXIS_OPTIONS.map((t) => (
           <Tab
@@ -105,28 +85,9 @@ const CompositeAxisTabs = ({ value, onChange, disabled = false }) => {
                 {t.label}
               </Box>
             }
-            sx={{
-              bgcolor:
-                value === t.value
-                  ? (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.12)"
-                        : "background.paper"
-                  : "transparent",
-              boxShadow:
-                value === t.value
-                  ? (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "none"
-                        : "0 1px 3px rgba(0,0,0,0.08)"
-                  : "none",
-              borderRadius: "6px",
-              fontWeight: value === t.value ? 600 : 400,
-              color: value === t.value ? "text.primary" : "text.disabled",
-            }}
           />
         ))}
-      </Tabs>
+      </SegmentedTabs>
     </Box>
   );
 };

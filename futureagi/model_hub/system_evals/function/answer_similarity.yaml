@@ -88,7 +88,8 @@ config:
                         if s1[i] != s2[k]:
                             transpositions += 1
                         k += 1
-                    jaro = (matches / len_s1 + matches / len_s2 + (matches - transpositions / 2) / matches) / 3
+                    transpositions //= 2
+                    jaro = (matches / len_s1 + matches / len_s2 + (matches - transpositions) / matches) / 3
                     prefix = 0
                     for i in range(min(4, min(len_s1, len_s2))):
                         if s1[i] == s2[i]:

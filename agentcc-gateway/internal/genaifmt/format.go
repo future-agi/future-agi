@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // ValidActions are the supported Google GenAI endpoint actions.
@@ -68,6 +69,25 @@ func ExtractTextFromContents(reqBody []byte) string {
 	return strings.Join(parts, " ")
 }
 
+// EmbedInputCharacters counts the characters of text an embedContent request
+// sends, the unit some embedding models are priced in. The response carries
+// no usage to price from.
+func EmbedInputCharacters(reqBody []byte) int {
+	var m struct {
+		Content struct {
+			Parts []json.RawMessage `json:"parts"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(reqBody, &m); err != nil {
+		return 0
+	}
+	characters := 0
+	for _, part := range m.Content.Parts {
+		characters += utf8.RuneCountInString(extractTextFromPart(part))
+	}
+	return characters
+}
+
 // ExtractTextFromResponse extracts text from a Google GenAI response body.
 func ExtractTextFromResponse(respBody []byte) string {
 	var m struct {
@@ -120,4 +140,15 @@ func extractTextFromPart(raw json.RawMessage) string {
 		return part.Text
 	}
 	return ""
+}
+
+// ExtractModelVersion names the concrete model behind an alias.
+func ExtractModelVersion(respBody []byte) string {
+	var m struct {
+		ModelVersion string `json:"modelVersion"`
+	}
+	if err := json.Unmarshal(respBody, &m); err != nil {
+		return ""
+	}
+	return m.ModelVersion
 }

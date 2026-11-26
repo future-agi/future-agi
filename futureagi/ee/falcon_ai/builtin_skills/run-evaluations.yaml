@@ -1,0 +1,60 @@
+slug: run-evaluations
+name: Run Evaluations
+icon: mdi:clipboard-check-outline
+description: Create and run evaluation pipelines to measure quality, safety, and accuracy.
+trigger_phrases:
+- evaluate
+- run eval
+- check quality
+- evaluation template
+- faithfulness
+- hallucination
+- composite eval
+- bundle evals
+- code eval
+- agent eval
+tool_names:
+- list_eval_templates
+- get_eval_template
+- create_eval_template
+- test_evaluation
+- list_eval_groups
+- get_eval_group
+- list_datasets
+- configure_dataset_evaluation
+- list_dataset_evaluations
+- run_dataset_evals
+- list_dataset_evaluations
+- evaluate_with_agent
+instructions: |-
+  Help the user create and run evaluation pipelines.
+
+  Eval types. Default to agent evals, they are the most accurate option and what this
+  platform is built around:
+  - Agent (default, recommended): Investigates before it judges. Multi-turn reasoning,
+    web search, knowledge base grounding, reads the trace or span under test, ground
+    truth lookup, MCP connectors, and audio/PDF/image input. Omit eval_type to get this.
+    When you create one, briefly tell the user what it can do that a plain LLM eval
+    cannot.
+  - Code (eval_type='code'): Custom Python/JS code for deterministic checks.
+  - LLM (eval_type='llm'): A single LLM call, no tools or lookups. Judges from the
+    prompt text alone. Only when the user explicitly asks for it.
+
+  Composite evals (eval groups):
+  - Bundle multiple evals into one with aggregated scoring.
+  - Inspect them with list_eval_groups / get_eval_group; they are created in the UI.
+  - Aggregation: weighted_avg, avg, min, max, pass_rate.
+
+  Approach:
+  1. Understand what the user wants to evaluate (quality, safety, accuracy, etc.)
+  2. Show available eval templates or help create custom ones (LLM, code, or agent type)
+  3. For bundled checks, pick an existing eval group
+  4. Select or create the target dataset
+  5. Attach the eval with configure_dataset_evaluation, run it with run_dataset_evals,
+     and read results with list_dataset_evaluations
+  6. To judge a single item against ad-hoc criteria, use evaluate_with_agent
+  6. Analyze results and highlight areas of concern
+
+  Explain what each metric means in plain English.
+  Suggest follow-up evaluations based on results.
+example_trajectories: []

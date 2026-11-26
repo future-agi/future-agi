@@ -87,49 +87,22 @@ describe("libraryTemplateUtils", () => {
     });
   });
 
-  it("preserves safe JSON schema settings for structured library imports", () => {
+  it.each(["text", "string", "json"])("accepts the %s response format with string output", (responseFormat) => {
     const config = toDetachedLibraryTemplateConfig({
       ...baseTemplate,
       prompt_config_snapshot: {
         ...baseTemplate.prompt_config_snapshot,
         configuration: {
-          response_format: "json_schema",
+          ...baseTemplate.prompt_config_snapshot.configuration,
+          response_format: responseFormat,
           response_schema: responseSchema,
-          output_format: "json",
-          template_format: "mustache",
         },
       },
     });
 
-    expect(config).toMatchObject({
-      outputFormat: "json",
-      templateFormat: "mustache",
-      modelConfig: {
-        responseFormat: "json_schema",
-        responseSchema,
-      },
-    });
-  });
-
-  it("drops response schemas for non-schema response formats", () => {
-    ["text", "json_object", "string"].forEach((responseFormat) => {
-      const config = toDetachedLibraryTemplateConfig({
-        ...baseTemplate,
-        prompt_config_snapshot: {
-          ...baseTemplate.prompt_config_snapshot,
-          configuration: {
-            response_format: responseFormat,
-            response_schema: responseSchema,
-            output_format: "json",
-          },
-        },
-      });
-
-      expect(config.modelConfig.responseSchema).toBeNull();
-      expect(config.payload.promptConfig[0].configuration).not.toHaveProperty(
-        "response_schema",
-      );
-    });
+    expect(config.outputFormat).toBe("string");
+    expect(config.modelConfig.responseFormat).toBe(responseFormat === "string" ? "text" : responseFormat);
+    expect(config.modelConfig.responseSchema).toBeNull();
   });
 
   it("rejects unsupported execution-affecting response and template settings", () => {
@@ -160,50 +133,22 @@ describe("libraryTemplateUtils", () => {
     ).toBeNull();
   });
 
-  it("rejects response schemas with refs or excessive size before import", () => {
+  it.each([
+    { output_format: "json" },
+    { response_format: "json_object" },
+    { response_format: "json_schema", response_schema: responseSchema },
+    { model: "" },
+    { model: "   " },
+    { model: undefined },
+  ])("rejects a template the existing drawer cannot save: %o", (configuration) => {
     expect(
       toDetachedLibraryTemplateConfig({
         ...baseTemplate,
         prompt_config_snapshot: {
           ...baseTemplate.prompt_config_snapshot,
           configuration: {
-            response_format: "json_schema",
-            response_schema: { $ref: "https://example.com/schema.json" },
-            output_format: "json",
-          },
-        },
-      }),
-    ).toBeNull();
-
-    expect(
-      toDetachedLibraryTemplateConfig({
-        ...baseTemplate,
-        prompt_config_snapshot: {
-          ...baseTemplate.prompt_config_snapshot,
-          configuration: {
-            response_format: "json_schema",
-            response_schema: {
-              type: "object",
-              description: "x".repeat(50_001),
-            },
-            output_format: "json",
-          },
-        },
-      }),
-    ).toBeNull();
-
-    expect(
-      toDetachedLibraryTemplateConfig({
-        ...baseTemplate,
-        prompt_config_snapshot: {
-          ...baseTemplate.prompt_config_snapshot,
-          configuration: {
-            response_format: "json_schema",
-            response_schema: {
-              type: "object",
-              description: "é".repeat(25_000),
-            },
-            output_format: "json",
+            ...baseTemplate.prompt_config_snapshot.configuration,
+            ...configuration,
           },
         },
       }),

@@ -2,6 +2,7 @@ import os
 
 from rest_framework.views import APIView
 
+from tfc.ee_loader import is_cloud_env
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
@@ -26,7 +27,7 @@ class DeploymentInfoView(APIView):
         }
     )
     def get(self, request, *args, **kwargs):
-        if os.environ.get("CLOUD_DEPLOYMENT", "") in ("US", "EU", "DEV"):
+        if is_cloud_env():
             mode = "cloud"
         elif os.environ.get("EE_LICENSE_KEY", ""):
             mode = "ee"

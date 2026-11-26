@@ -3,6 +3,7 @@ Tests for Phase 4: Eval Detail & Update API.
 """
 
 import copy
+from unittest.mock import patch
 
 import pytest
 
@@ -76,6 +77,31 @@ class TestEvalTemplateDetailAPI:
     def test_get_nonexistent(self, auth_client):
         response = auth_client.get(self._url("00000000-0000-0000-0000-000000000000"))
         assert response.status_code == 404
+
+    def test_model_is_null_when_turing_unavailable(self, auth_client, system_template):
+        """System evals are seeded without a model and without version rows,
+        so the fallback is the only source. Off-cloud deployments that can't
+        serve Turing must get nothing rather than a model they'd be 402'd on."""
+        with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=True):
+            response = auth_client.get(self._url(system_template.id))
+        assert response.status_code == 200
+        assert response.data["result"]["model"] is None
+
+    def test_model_falls_back_to_turing_when_available(
+        self, auth_client, system_template
+    ):
+        with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=False):
+            response = auth_client.get(self._url(system_template.id))
+        assert response.status_code == 200
+        assert response.data["result"]["model"] == "turing_large"
+
+    def test_stored_model_survives_the_turing_gate(self, auth_client, user_template):
+        """The gate only replaces the fallback — a model already stored on the
+        template is returned as-is."""
+        with patch("tfc.ee_gates._turing_denied_off_cloud", return_value=True):
+            response = auth_client.get(self._url(user_template.id))
+        assert response.status_code == 200
+        assert response.data["result"]["model"] == "turing_large"
 
     def test_version_count_reflects_actual(
         self, auth_client, user_template, user, organization

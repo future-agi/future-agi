@@ -76,6 +76,18 @@ class AgentDefinition(BaseModel):
 
     inbound = models.BooleanField(help_text="Whether the agent handles inbound calls")
 
+    target_speaks_first = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Whether the target agent speaks first (greets) in a hosted voice "
+            "simulation. True: the simulator waits for the target's greeting; "
+            "False: the simulator opens the conversation; null: derive from "
+            "inbound/outbound. Retell targets always let the simulator open "
+            "(SDK limitation)."
+        ),
+    )
+
     description = models.TextField(
         help_text="Detailed description of the AI agent's purpose and capabilities"
     )
@@ -152,6 +164,16 @@ class AgentDefinition(BaseModel):
         blank=True,
         null=True,
     )
+    # The Observe project a code agent's production traces land in, chosen by
+    # the user. Independent of observability_provider, which for a code agent
+    # only gates the export of simulation spans to its hidden project.
+    production_project = models.ForeignKey(
+        "tracer.Project",
+        on_delete=models.SET_NULL,
+        related_name="production_agents",
+        blank=True,
+        null=True,
+    )
 
     authentication_method = models.CharField(
         choices=AgentDefinitionAuthenticationChoices,
@@ -173,6 +195,11 @@ class AgentDefinition(BaseModel):
         help_text="Details of the model",
         default=dict,
     )
+
+    # When someone confirmed what the first reading found of an agent connected
+    # on its own; until then it is not built or run.
+    found_checked_at = models.DateTimeField(null=True, blank=True)
+    source_checked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_agent_definition"
@@ -203,7 +230,12 @@ class AgentDefinition(BaseModel):
         return self.versions.filter(id=id).first()
 
     def create_version(
-        self, description, commit_message, release_notes=None, status="draft"
+        self,
+        description,
+        commit_message,
+        release_notes=None,
+        status="draft",
+        version_number=None,
     ):
         """Create a new version of this agent"""
         from .agent_version import AgentVersion
@@ -217,6 +249,7 @@ class AgentDefinition(BaseModel):
             release_notes=release_notes,
             status=status,
             workspace=self.workspace,
+            version_number=version_number,
         )
 
         return version

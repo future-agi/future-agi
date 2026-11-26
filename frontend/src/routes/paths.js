@@ -9,6 +9,8 @@ const ROOTS = {
 
 export const paths = {
   minimalUI: "https://mui.com/store/items/minimal-dashboard/",
+  // OSS self-hosted first-run flow (pre-auth, no dashboard layout)
+  ossSetup: "/setup",
   // AUTH
   auth: {
     jwt: {
@@ -43,12 +45,13 @@ export const paths = {
       workspaceIntegrationDetail: (workspaceId, id) =>
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
-      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
+      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
       usageSummary: `${ROOTS.DASHBOARD}/settings/usage-summary`,
       billing: `${ROOTS.DASHBOARD}/settings/billing`,
       pricing: `${ROOTS.DASHBOARD}/settings/pricing`,
       eeLicenses: `${ROOTS.DASHBOARD}/settings/ee-licenses`,
+      updates: `${ROOTS.DASHBOARD}/settings/updates`,
     },
     performance: `${ROOTS.DASHBOARD}/performance`,
     data: `${ROOTS.DASHBOARD}/data`,
@@ -56,6 +59,12 @@ export const paths = {
     tasks: `${ROOTS.DASHBOARD}/tasks`,
     users: `${ROOTS.DASHBOARD}/users`,
     evals: `${ROOTS.DASHBOARD}/evaluations`,
+    metrics: {
+      root: `${ROOTS.DASHBOARD}/metrics`,
+      new: `${ROOTS.DASHBOARD}/metrics/new`,
+      detail: (metricId) => `${ROOTS.DASHBOARD}/metrics/${metricId}`,
+      edit: (metricId) => `${ROOTS.DASHBOARD}/metrics/${metricId}/edit`,
+    },
     docs: `${ROOTS.DASHBOARD}/docs`,
     sync: `${ROOTS.DASHBOARD}/sync`,
     develop: `${ROOTS.DASHBOARD}/develop`,
@@ -82,15 +91,28 @@ export const paths = {
       root: `${ROOTS.DASHBOARD}/simulate`,
       agentDefinition: `${ROOTS.DASHBOARD}/simulate/agent-definitions`,
       scenarios: `${ROOTS.DASHBOARD}/simulate/scenarios`,
-      personas: `${ROOTS.DASHBOARD}/simulate/personas`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
+      testCallDetails: (testId, executionId) =>
+        `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
+      environments: {
+        root: `${ROOTS.DASHBOARD}/simulate/environments`,
+        templates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
+        detail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+        workspaceTab: (envId, tab) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
+        execution: (envId, testId, executionId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
+        improvement: (envId, fixId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/improvements/${fixId}`,
+      },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,
     errorFeed: {
       root: `${ROOTS.DASHBOARD}/error-feed`,
       detail: (id) => `${ROOTS.DASHBOARD}/error-feed/${id}`,
     },
+    derivedMetrics: `${ROOTS.DASHBOARD}/derived-metrics`,
     dashboards: {
       root: `${ROOTS.DASHBOARD}/dashboards`,
       detail: (id) => `${ROOTS.DASHBOARD}/dashboards/${id}`,
@@ -106,6 +128,7 @@ export const paths = {
         root: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         overview: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         configuration: `${ROOTS.DASHBOARD}/gateway/guardrails/configuration`,
+        policies: `${ROOTS.DASHBOARD}/gateway/guardrails/policies`,
         analytics: `${ROOTS.DASHBOARD}/gateway/guardrails/analytics`,
         feedback: `${ROOTS.DASHBOARD}/gateway/guardrails/feedback`,
         playground: `${ROOTS.DASHBOARD}/gateway/guardrails/playground`,

@@ -17,6 +17,7 @@ from accounts.serializers.contracts import (
     OrganizationSwitchRequestSerializer,
     OrganizationSwitchResponseSerializer,
 )
+from accounts.services.default_workspace import get_or_create_default_workspace
 from accounts.services.workspace_membership import resolve_org_membership
 from tfc.constants.roles import RoleMapping
 from tfc.utils.api_contracts import validated_api_request, validated_request
@@ -32,6 +33,13 @@ def _validate_uuid(value):
         return True
     except (ValueError, AttributeError):
         return False
+
+
+def _saml_scope_allows(request, organization_id):
+    """Keep SAML sessions inside their signing organization before any write."""
+
+    auth_scope = getattr(request, "auth_scope", None)
+    return auth_scope is None or str(auth_scope.org_id) == str(organization_id)
 
 
 class OrganizationSelectionView(APIView):
@@ -51,6 +59,11 @@ class OrganizationSelectionView(APIView):
         try:
             organization_id = request.validated_data["organization_id"]
 
+            if not _saml_scope_allows(request, organization_id):
+                return self._gm.forbidden_response(
+                    "You don't have access to this organization"
+                )
+
             try:
                 selected_org = Organization.objects.get(id=organization_id)
             except Organization.DoesNotExist:
@@ -61,13 +74,11 @@ class OrganizationSelectionView(APIView):
                     "You don't have access to this organization"
                 )
 
-            # Update config with new key
-            if not request.user.config:
-                request.user.config = {}
-            request.user.config["currentOrganizationId"] = str(selected_org.id)
-            # Keep legacy key for backward compat
-            request.user.config["selected_organization_id"] = str(selected_org.id)
-            request.user.save(update_fields=["config"])
+            # Update config with new key, and the legacy key for backward compat
+            request.user.update_config(
+                currentOrganizationId=str(selected_org.id),
+                selected_organization_id=str(selected_org.id),
+            )
 
             return self._gm.success_response(
                 {
@@ -94,6 +105,31 @@ class OrganizationSelectionView(APIView):
         """Get all organizations the user has access to."""
         try:
             user = request.user
+            auth_scope = getattr(request, "auth_scope", None)
+            if auth_scope is not None:
+                org = getattr(
+                    request, "organization", None
+                ) or Organization.objects.get(id=auth_scope.org_id)
+                membership = resolve_org_membership(user, org)
+                return self._gm.success_response(
+                    {
+                        "organizations": [
+                            {
+                                "id": str(org.id),
+                                "name": org.name,
+                                "display_name": org.display_name,
+                                "role": membership.role
+                                if membership
+                                else user.organization_role,
+                                "level": membership.level_or_legacy
+                                if membership
+                                else None,
+                                "is_selected": True,
+                            }
+                        ],
+                        "total_count": 1,
+                    }
+                )
             # Use the org resolved by middleware (respects X-Organization-Id
             # header) so the frontend sees the correct "selected" state.
             current_org = getattr(request, "organization", None)
@@ -185,6 +221,11 @@ class SwitchOrganizationView(APIView):
         try:
             organization_id = request.validated_data["organization_id"]
 
+            if not _saml_scope_allows(request, organization_id):
+                return self._gm.forbidden_response(
+                    "You don't have access to this organization"
+                )
+
             try:
                 selected_org = Organization.objects.get(id=organization_id)
             except Organization.DoesNotExist:
@@ -208,18 +249,17 @@ class SwitchOrganizationView(APIView):
             # Get workspace role
             ws_role = user.get_workspace_role(workspace) if workspace else None
 
-            # Update user config
-            if not user.config:
-                user.config = {}
-            user.config["currentOrganizationId"] = str(selected_org.id)
-            # Keep legacy key for backward compat
-            user.config["selected_organization_id"] = str(selected_org.id)
+            # Update user config (keeping the legacy key for backward compat)
+            changes: dict[str, object] = {
+                "currentOrganizationId": str(selected_org.id),
+                "selected_organization_id": str(selected_org.id),
+            }
             if workspace:
-                user.config["currentWorkspaceId"] = str(workspace.id)
-                org_workspace_map = user.config.get("orgWorkspaceMap", {})
+                org_workspace_map = dict((user.config or {}).get("orgWorkspaceMap", {}))
                 org_workspace_map[str(selected_org.id)] = str(workspace.id)
-                user.config["orgWorkspaceMap"] = org_workspace_map
-            user.save(update_fields=["config"])
+                changes["currentWorkspaceId"] = str(workspace.id)
+                changes["orgWorkspaceMap"] = org_workspace_map
+            user.update_config(**changes)
 
             response_data = {
                 "organization": {
@@ -263,24 +303,12 @@ class SwitchOrganizationView(APIView):
             except (Workspace.DoesNotExist, ValueError):
                 pass
 
-        # 2. Org's default workspace
+        # 2. Org's default workspace, created if missing. A concurrent first
+        # login may create it first; the helper then returns that workspace.
         try:
-            ws = Workspace.objects.get(
-                organization=organization, is_default=True, is_active=True
-            )
-            return ws
-        except Workspace.DoesNotExist:
-            pass
-
-        # 3. Create default workspace
-        try:
-            ws = Workspace.objects.create(
-                name="Default Workspace",
-                organization=organization,
-                is_default=True,
-                is_active=True,
-                created_by=user,
-            )
+            ws, created = get_or_create_default_workspace(organization, created_by=user)
+            if not created:
+                return ws
             # Ensure workspace membership
             org_role = user.get_organization_role(organization)
             ws_role = RoleMapping.get_workspace_role(org_role or "Member")

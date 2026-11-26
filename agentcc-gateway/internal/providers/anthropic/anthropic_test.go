@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +34,111 @@ func newTestProvider(t *testing.T, baseURL string) *Provider {
 		t.Fatalf("failed to create provider: %v", err)
 	}
 	return p
+}
+
+func TestAllowedToolsUnknownNameFailsBeforeAnthropicRequest(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	p := newTestProvider(t, server.URL)
+	defer func() {
+		if err := p.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	req := &models.ChatCompletionRequest{
+		Model:      "claude-sonnet-4-20250514",
+		Messages:   []models.Message{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		Tools:      []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}},
+		ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","name":"missing"}]}}`),
+	}
+	_, err := p.ChatCompletion(context.Background(), req)
+	if apiErr, ok := err.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, "allowed_tools") {
+		t.Fatalf("non-streaming error = %v, want 400 naming allowed_tools", err)
+	}
+	chunks, errs := p.StreamChatCompletion(context.Background(), req)
+	for range chunks {
+		t.Fatal("unexpected streaming chunk")
+	}
+	streamErr := <-errs
+	if apiErr, ok := streamErr.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, "allowed_tools") {
+		t.Fatalf("streaming error = %v, want 400 naming allowed_tools", streamErr)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("sent %d requests despite invalid policy", calls.Load())
+	}
+}
+
+func TestIntegration_ToolChoiceNone(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				var body map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				var choice anthropicToolChoice
+				if err := json.Unmarshal(body["tool_choice"], &choice); err != nil || choice.Type != "none" {
+					t.Errorf("upstream tool_choice = %s, want explicit none", body["tool_choice"])
+				}
+				if !bytes.Contains(body["tools"], []byte("do_not_call")) {
+					t.Error("historical tool declaration missing")
+				}
+				if stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					if _, err := fmt.Fprint(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_none\",\"model\":\"claude-sonnet-4-20250514\"}}\n\n"); err != nil {
+						t.Error(err)
+					}
+					if _, err := fmt.Fprint(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n"); err != nil {
+						t.Error(err)
+					}
+					if _, err := fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"); err != nil {
+						t.Error(err)
+					}
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					if _, err := fmt.Fprint(w, `{"id":"msg_none","model":"claude-sonnet-4-20250514","content":[{"type":"text","text":"Hi"}],"stop_reason":"end_turn"}`); err != nil {
+						t.Error(err)
+					}
+				}
+			}))
+			defer server.Close()
+			p := newTestProvider(t, server.URL)
+			defer func() {
+				if err := p.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			parallel := false
+			req := &models.ChatCompletionRequest{
+				Model:             "claude-sonnet-4-20250514",
+				Messages:          []models.Message{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+				Tools:             []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "do_not_call", Parameters: json.RawMessage(`{"type":"object"}`)}}},
+				ToolChoice:        json.RawMessage(`"none"`),
+				ParallelToolCalls: &parallel,
+			}
+			if stream {
+				chunks, errs := p.StreamChatCompletion(context.Background(), req)
+				for range chunks {
+				}
+				for err := range errs {
+					t.Fatal(err)
+				}
+			} else if _, err := p.ChatCompletion(context.Background(), req); err != nil {
+				t.Fatal(err)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("upstream calls = %d, want 1", calls.Load())
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -268,6 +375,42 @@ func TestIntegration_NonStreamingChatCompletion(t *testing.T) {
 	}
 	if result.Usage.TotalTokens != 18 {
 		t.Errorf("total_tokens = %d, want 18", result.Usage.TotalTokens)
+	}
+}
+
+// A base URL that already ends in "/v1" must not double it: the request has
+// to land on "/v1/messages", not "/v1/v1/messages".
+func TestChatCompletion_BaseURLAlreadyHasVersionSegment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("path = %q, want /v1/messages", r.URL.Path)
+		}
+		resp := anthropicResponse{
+			ID:         "msg_v1_base",
+			Type:       "message",
+			Model:      "claude-3-sonnet-20240229",
+			Role:       "assistant",
+			Content:    []anthropicContentBlock{{Type: "text", Text: "ok"}},
+			StopReason: "end_turn",
+			Usage:      anthropicUsage{InputTokens: 1, OutputTokens: 1},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	p := newTestProvider(t, server.URL+"/v1")
+	defer p.Close()
+
+	req := &models.ChatCompletionRequest{
+		Model: "claude-3-sonnet-20240229",
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"Hello!"`)},
+		},
+	}
+
+	if _, err := p.ChatCompletion(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -752,8 +895,11 @@ func TestIntegration_NonStreamingToolUseRoundtrip(t *testing.T) {
 		if len(ar.Tools) != 1 {
 			t.Errorf("tools length = %d, want 1", len(ar.Tools))
 		}
-		if ar.Tools[0].Name != "get_weather" {
-			t.Errorf("tool name = %q, want %q", ar.Tools[0].Name, "get_weather")
+		var tool anthropicTool
+		if err := json.Unmarshal(ar.Tools[0], &tool); err != nil {
+			t.Errorf("decoding tool: %v", err)
+		} else if tool.Name != "get_weather" {
+			t.Errorf("tool name = %q, want %q", tool.Name, "get_weather")
 		}
 
 		// Return a tool_use response.

@@ -1,7 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import SvgColor from "../svg-color";
 import CustomTooltip from "../tooltip/CustomTooltip";
 import FormattedValueReason from "src/sections/evals/EvaluationsTabs/FormattedReason";
@@ -26,17 +25,8 @@ const ScoreChip = ({
         display: "flex",
         alignItems: "center",
         flexDirection: "row",
-        borderRadius: 0.5,
         gap: 0.5,
-        p: 0.5,
-        px: 1,
-        color: "info.main",
-        borderColor: "info.main",
-        bgcolor: (theme) =>
-          alpha(
-            theme.palette.info.main,
-            theme.palette.mode === "dark" ? 0.16 : 0.1,
-          ),
+        color: "text.primary",
       }}
       onClick={(e) => {
         e.stopPropagation();
@@ -44,7 +34,7 @@ const ScoreChip = ({
       }}
     >
       {startIcon}
-      <Typography typography={"s2"} fontWeight={500}>
+      <Typography typography={"s2"} sx={{ fontVariantNumeric: "tabular-nums" }}>
         {label} {score}/{total}
       </Typography>
       <CustomTooltip

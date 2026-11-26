@@ -273,7 +273,7 @@ class TestTraceSpanCompositeBranch:
             patch.object(
                 tracer_eval, "_execute_composite_on_span", return_value={"value": 0.5}
             ) as mock_composite,
-            patch.object(tracer_eval.CustomEvalConfig.objects, "get") as mock_cfg_get,
+            patch.object(tracer_eval.CustomEvalConfig.objects, "using") as mock_cfg_db,
             patch.object(
                 tracer_eval.ObservationSpan.objects, "select_related"
             ) as mock_span_select,
@@ -286,7 +286,7 @@ class TestTraceSpanCompositeBranch:
             fake_config = MagicMock()
             fake_config.eval_template = aggregated_composite
             fake_config.eval_template.template_type = "composite"
-            mock_cfg_get.return_value = fake_config
+            mock_cfg_db.return_value.get.return_value = fake_config
 
             result = tracer_eval._execute_evaluation(
                 observation_span_id="span-1",
@@ -296,5 +296,52 @@ class TestTraceSpanCompositeBranch:
                 run_params={"input": "hello"},
             )
 
+        # The config is read from the primary (TH-3119).
+        mock_cfg_db.assert_called_once_with("default")
         mock_composite.assert_called_once()
         assert result == {"value": 0.5}
+
+    def test_independent_composite_records_child_summary_as_result(
+        self, independent_composite, organization
+    ):
+        """Aggregation off: the completed span result carries the per-child
+        summary instead of a blank score and reason."""
+        from tracer.utils import eval as tracer_eval
+
+        fake_span = MagicMock()
+        fake_span.project.organization = organization
+        fake_span.project.workspace = None
+        fake_config = MagicMock()
+        fake_config.eval_template = independent_composite
+        fake_config.config = {}
+        fake_config.model = None
+
+        with (
+            patch.object(tracer_eval.CustomEvalConfig.objects, "using") as mock_cfg_db,
+            patch(
+                "model_hub.views.utils.evals.run_eval_func",
+                return_value={
+                    "output": 1.0,
+                    "reason": "leaf reason",
+                    "output_type": "score",
+                    "model": "turing_large",
+                    "metadata": {},
+                    "log_id": None,
+                },
+            ),
+        ):
+            mock_cfg_db.return_value.get.return_value = fake_config
+            logger_kwargs = tracer_eval._execute_composite_on_span(
+                observation_span_id="span-1",
+                custom_eval_config_id="cfg-1",
+                eval_task_id="task-1",
+                run_params={"input": "hello"},
+                observation_span=fake_span,
+            )
+
+        # The config is read from the primary (TH-3119).
+        mock_cfg_db.assert_called_once_with("default")
+        assert not logger_kwargs.get("error")
+        assert "[leaf-child]" in logger_kwargs["output_str"]
+        assert "leaf reason" in logger_kwargs["output_str"]
+        assert logger_kwargs["eval_explanation"] == logger_kwargs["output_str"]

@@ -12,7 +12,6 @@ from tracer.models.observation_span import (
 )
 from tracer.models.project import Project
 from tracer.models.trace import Trace
-from tracer.models.trace_scan import TraceScanIssue
 from tracer.models.trace_session import TraceSession
 
 
@@ -167,10 +166,22 @@ class ClusterSource(models.TextChoices):
     EVAL = "eval"
 
 
+class ErrorGroupTargetType(models.TextChoices):
+    ERROR_FEED = "error_feed"
+    SIMULATION = "simulation"
+
+
 class TraceErrorGroup(BaseModel):
     """Stores grouped error information — each row = one Feed issue."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    redirect_to = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="redirected_from",
+    )
 
     project = models.ForeignKey(
         Project,
@@ -199,6 +210,19 @@ class TraceErrorGroup(BaseModel):
         blank=True,
         help_text="span/trace/session for eval clusters; null for scanner",
     )
+    target_type = models.CharField(
+        max_length=20,
+        choices=ErrorGroupTargetType.choices,
+        default=ErrorGroupTargetType.ERROR_FEED,
+        db_index=True,
+    )
+    test_execution = models.ForeignKey(
+        "simulate.TestExecution",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="error_groups",
+    )
     issue_group = models.CharField(
         max_length=100,
         null=True,
@@ -225,7 +249,30 @@ class TraceErrorGroup(BaseModel):
     status = models.CharField(
         max_length=20,
         choices=FeedIssueStatus.choices,
-        default=FeedIssueStatus.ESCALATING,
+        default=FeedIssueStatus.FOR_REVIEW,
+    )
+    status_origin = models.CharField(
+        max_length=20,
+        default="system",
+        db_default="legacy_unknown",
+        choices=[
+            ("system", "System"),
+            ("manual", "Manual"),
+            ("legacy_unknown", "Unknown legacy ownership"),
+        ],
+    )
+    status_changed_at = models.DateTimeField(null=True, blank=True)
+    status_changed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="changed_feed_issue_statuses",
+    )
+    status_revision = models.PositiveBigIntegerField(default=0, db_default=0)
+    escalation_state = models.JSONField(default=dict, db_default={}, blank=True)
+    escalation_next_evaluation_at = models.DateTimeField(
+        null=True, blank=True, db_index=True
     )
     eval_config = models.ForeignKey(
         CustomEvalConfig,
@@ -272,6 +319,10 @@ class TraceErrorGroup(BaseModel):
     priority = models.CharField(
         max_length=20, default=Priority.MEDIUM, choices=Priority.choices
     )
+    # Legacy rows are explicitly unassessed, not retrospectively LLM graded.
+    severity_assessment_status = models.CharField(max_length=32, default="unassessed")
+    severity_source = models.CharField(max_length=16, default="legacy")
+    severity_reason = models.TextField(blank=True)
     external_issue_url = models.URLField(
         max_length=500,
         null=True,
@@ -336,6 +387,10 @@ class TraceErrorGroup(BaseModel):
         db_table = "tracer_trace_error_group"
         ordering = ["cluster_id"]
         indexes = [
+            models.Index(
+                fields=["project", "status_origin", "status"],
+                name="feed_issue_evaluation_idx",
+            ),
             models.Index(fields=["project", "cluster_id"]),
             models.Index(fields=["error_type"]),
             models.Index(fields=["combined_impact"]),
@@ -354,6 +409,19 @@ class TraceErrorGroup(BaseModel):
                 fields=["project", "cluster_id"],
                 condition=models.Q(deleted=False),
                 name="unique_project_cluster_if_not_deleted",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        target_type=ErrorGroupTargetType.ERROR_FEED,
+                        test_execution__isnull=True,
+                    )
+                    | models.Q(
+                        target_type=ErrorGroupTargetType.SIMULATION,
+                        test_execution__isnull=False,
+                    )
+                ),
+                name="valid_error_group_target_scope",
             ),
         ]
 
@@ -507,6 +575,10 @@ class ErrorClusterTraces(BaseModel):
     """Stores the traces that are clustered together, with provenance."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    occurred_at = models.DateTimeField(null=True, blank=True)
+    occurrence_time_source = models.CharField(
+        max_length=32, blank=True, default="", db_default=""
+    )
     trace = models.ForeignKey(
         Trace,
         on_delete=models.CASCADE,
@@ -557,6 +629,14 @@ class ErrorClusterTraces(BaseModel):
         related_name="cluster_memberships",
         help_text="Scanner finding that caused membership",
     )
+    finding = models.ForeignKey(
+        "tracer.TraceInvestigationFinding",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cluster_memberships",
+        help_text="Canonical scanner finding that caused membership",
+    )
     eval_logger = models.ForeignKey(
         EvalLogger,
         on_delete=models.SET_NULL,
@@ -576,12 +656,16 @@ class ErrorClusterTraces(BaseModel):
             ["cluster", "trace_session"],
         ]
         indexes = [
+            models.Index(
+                fields=["cluster", "occurred_at"], name="feed_membership_occurrence_idx"
+            ),
             models.Index(fields=["cluster", "trace"]),
             models.Index(fields=["cluster"]),
             models.Index(fields=["trace"]),
             models.Index(fields=["span"]),
             models.Index(fields=["trace_session"]),
             models.Index(fields=["scan_issue"]),
+            models.Index(fields=["finding"], name="tracer_erro_finding_72b66f_idx"),
             models.Index(fields=["eval_logger"]),
             models.Index(
                 fields=["cluster", "-created_at"],

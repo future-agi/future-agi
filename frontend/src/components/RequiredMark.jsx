@@ -5,7 +5,7 @@ export default function RequiredMark() {
     <Box
       component="span"
       sx={{
-        color: (t) => (t.palette.mode === "dark" ? "error.light" : "#d32f2f"),
+        color: "status.danger.fg",
       }}
     >
       *

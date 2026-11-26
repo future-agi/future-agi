@@ -33,7 +33,10 @@ class TraceScanConfig(BaseModel):
         default=0, help_text="0.0-1.0, fraction of traces to scan"
     )
     enabled = models.BooleanField(default=True)
-    scan_version = models.CharField(max_length=20, default="v7.2")
+    scan_version = models.CharField(max_length=20, default="omega-v1")
+    omega_memory = models.JSONField(default=list, blank=True)
+    omega_limits = models.JSONField(default=dict, blank=True)
+    omega_last_claimed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     last_swept_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -109,6 +112,10 @@ class TraceScanIssue(BaseModel):
     """Individual issue found by the scanner — one-to-many from TraceScanResult."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    occurred_at = models.DateTimeField(null=True, blank=True)
+    occurrence_time_source = models.CharField(
+        max_length=32, blank=True, default="", db_default=""
+    )
     scan_result = models.ForeignKey(
         TraceScanResult,
         on_delete=models.CASCADE,
@@ -143,6 +150,9 @@ class TraceScanIssue(BaseModel):
         db_table = "tracer_trace_scan_issue"
         ordering = ["-created_at"]
         indexes = [
+            models.Index(
+                fields=["cluster", "occurred_at"], name="feed_scan_occurrence_idx"
+            ),
             models.Index(fields=["scan_result"]),
             models.Index(fields=["group"]),
             models.Index(fields=["category"]),

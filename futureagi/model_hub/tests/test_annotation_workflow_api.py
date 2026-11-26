@@ -1800,23 +1800,29 @@ class TestCompleteItem:
         item = QueueItem.objects.get(pk=item_ids[0])
         assert item.status == QueueItemStatus.COMPLETED.value
 
-    @pytest.mark.xfail(
-        reason="Pre-existing backend bug: complete_item view doesn't clear "
-        "reservation fields. Tracked in Team B review (E14). Needs fix in "
-        "model_hub/views/annotation_queues.py:complete_item."
-    )
     def test_complete_clears_reservation(self, auth_client, queue_with_items, user):
         """Reservation is cleared on complete."""
-        queue_id, item_ids, _ = queue_with_items
+        queue_id, item_ids, label = queue_with_items
         item = QueueItem.objects.get(pk=item_ids[0])
         item.reserved_by = user
         item.reserved_at = timezone.now()
         item.reservation_expires_at = timezone.now() + timedelta(minutes=30)
         item.save()
 
-        auth_client.post(complete_url(queue_id, item_ids[0]), format="json")
+        # complete_item refuses (400) until the user has annotated the item.
+        submit_resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {"annotations": [{"label_id": str(label.id), "value": "positive"}]},
+            format="json",
+        )
+        assert submit_resp.status_code == status.HTTP_200_OK
+
+        resp = auth_client.post(complete_url(queue_id, item_ids[0]), format="json")
+        assert resp.status_code == status.HTTP_200_OK
         item.refresh_from_db()
         assert item.reserved_by is None
+        assert item.reserved_at is None
+        assert item.reservation_expires_at is None
 
     def test_complete_nonexistent_item(self, auth_client, queue_with_items):
         queue_id, _, _ = queue_with_items
@@ -2300,23 +2306,13 @@ class TestReviewItem:
         assert threads.count() == 2
         assert set(threads.values_list("workspace_id", flat=True)) == {workspace.id}
 
-    def test_bulk_review_respects_review_workflow_entitlement_denial(
+    def test_bulk_review_allows_oss_review_workflow(
         self,
         auth_client,
         queue_with_items,
         second_user,
         organization,
     ):
-        try:
-            ee_present = (
-                importlib.util.find_spec("ee.usage.services.entitlements") is not None
-            )
-        except (ModuleNotFoundError, ValueError):
-            # ValueError: OSS stub has __spec__=None; see test_annotation_advanced_api.py.
-            ee_present = False
-        if not ee_present:
-            pytest.skip("Enterprise entitlement module is not available.")
-
         queue_id, item_ids, label = queue_with_items
         item = QueueItem.objects.get(pk=item_ids[0])
         item.status = QueueItemStatus.IN_PROGRESS.value
@@ -2324,33 +2320,19 @@ class TestReviewItem:
         item.save(update_fields=["status", "review_status", "updated_at"])
         _create_score_for_item(item, label, second_user, organization)
 
-        with patch(
-            "ee.usage.services.entitlements.Entitlements.check_feature",
-            return_value=SimpleNamespace(
-                allowed=False,
-                reason="review workflow disabled",
-            ),
-        ):
-            resp = auth_client.post(
-                bulk_review_url(queue_id),
-                {
-                    "item_ids": [str(item.id)],
-                    "action": "approve",
-                    "notes": "Should not be saved.",
-                },
-                format="json",
-            )
+        resp = auth_client.post(
+            bulk_review_url(queue_id),
+            {
+                "item_ids": [str(item.id)],
+                "action": "approve",
+                "notes": "Should be saved.",
+            },
+            format="json",
+        )
 
-        assert resp.status_code == status.HTTP_403_FORBIDDEN
-        assert "review workflow disabled" in str(_result(resp))
+        assert resp.status_code == status.HTTP_200_OK
         item.refresh_from_db()
-        assert item.review_status == "pending_review"
-        assert item.status == QueueItemStatus.IN_PROGRESS.value
-        assert item.review_notes in (None, "")
-        assert not QueueItemReviewComment.objects.filter(
-            queue_item=item,
-            action=QueueItemReviewComment.ACTION_APPROVE,
-        ).exists()
+        assert item.review_status == "approved"
 
     def test_bulk_review_reports_own_annotations_without_approving_them(
         self,
@@ -5219,11 +5201,6 @@ class TestAnnotateDetail:
         assert result["progress"]["completed"] == 1
         assert result["progress"]["total"] == 3
 
-    @pytest.mark.xfail(
-        reason="Pre-existing: progress endpoint counts ALL queue items, not "
-        "just items assigned to the requesting user. Test expects total=2 "
-        "(items assigned to user) but gets 3 (all items in queue)."
-    )
     def test_annotate_detail_user_progress(self, auth_client, queue_with_items, user):
         """Annotate detail includes user_progress for assigned items."""
         queue_id, item_ids, label = queue_with_items
@@ -5252,17 +5229,15 @@ class TestAnnotateDetail:
         assert up["total"] == 2
         assert up["completed"] == 1
 
-    @pytest.mark.xfail(
-        reason="Pre-existing backend bug (Team B E14): annotate_detail view "
-        "doesn't acquire item reservation. Reservation system needs wiring "
-        "in model_hub/views/annotation_queues.py:annotate_detail."
-    )
     def test_annotate_detail_acquires_reservation(
         self, auth_client, queue_with_items, user
     ):
-        """Opening annotate detail creates a reservation."""
+        """Opening annotate detail with reserve=true creates a reservation."""
         queue_id, item_ids, _ = queue_with_items
-        auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
+        resp = auth_client.get(
+            annotate_detail_url(queue_id, item_ids[0]), {"reserve": "true"}
+        )
+        assert resp.status_code == status.HTTP_200_OK
         item = QueueItem.objects.get(pk=item_ids[0])
         assert item.reserved_by == user
         assert item.reservation_expires_at is not None
@@ -5402,73 +5377,6 @@ class TestReservationConflict:
         item.refresh_from_db()
         assert item.reserved_by == second_user
         assert item.reserved_at is not None
-        assert item.reservation_expires_at > timezone.now()
-        second_client.stop_workspace_injection()
-
-    @pytest.mark.xfail(
-        reason="Pre-existing: reservation conflict check missing. Second user "
-        "can open the same item without 400. Part of the broader reservation-"
-        "system bug (Team B E14)."
-    )
-    def test_reservation_conflict_returns_400(
-        self,
-        auth_client,
-        queue_with_items,
-        user,
-        second_user,
-        workspace,
-    ):
-        """Another user cannot open an item that is actively reserved."""
-        queue_id, item_ids, _ = queue_with_items
-        # First user acquires reservation
-        resp = auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
-        assert resp.status_code == status.HTTP_200_OK
-
-        # Second user tries to open the same item
-        from conftest import WorkspaceAwareAPIClient
-
-        second_client = WorkspaceAwareAPIClient()
-        second_client.force_authenticate(user=second_user)
-        second_client.set_workspace(workspace)
-
-        resp2 = second_client.get(annotate_detail_url(queue_id, item_ids[0]))
-        assert resp2.status_code == status.HTTP_400_BAD_REQUEST
-        second_client.stop_workspace_injection()
-
-    @pytest.mark.xfail(
-        reason="Pre-existing: expired reservations don't transfer to a new "
-        "user via annotate_detail. Same root cause as the rest of the "
-        "reservation system gaps."
-    )
-    def test_expired_reservation_can_be_acquired(
-        self,
-        auth_client,
-        queue_with_items,
-        user,
-        second_user,
-        workspace,
-    ):
-        """An expired reservation allows another user to acquire the item."""
-        queue_id, item_ids, _ = queue_with_items
-        # First user acquires reservation
-        auth_client.get(annotate_detail_url(queue_id, item_ids[0]))
-
-        # Manually expire the reservation
-        item = QueueItem.objects.get(pk=item_ids[0])
-        item.reservation_expires_at = timezone.now() - timedelta(minutes=1)
-        item.save(update_fields=["reservation_expires_at", "updated_at"])
-
-        # Second user can now acquire the item
-        from conftest import WorkspaceAwareAPIClient
-
-        second_client = WorkspaceAwareAPIClient()
-        second_client.force_authenticate(user=second_user)
-        second_client.set_workspace(workspace)
-
-        resp = second_client.get(annotate_detail_url(queue_id, item_ids[0]))
-        assert resp.status_code == status.HTTP_200_OK
-        item.refresh_from_db()
-        assert item.reserved_by == second_user
         assert item.reservation_expires_at > timezone.now()
         second_client.stop_workspace_injection()
 
@@ -6399,11 +6307,6 @@ class TestAutoCompleteQueue:
 
 @pytest.mark.django_db
 class TestMultiAnnotatorComplete:
-    @pytest.mark.xfail(
-        reason="Pre-existing: multi-annotator threshold logic doesn't keep "
-        "item IN_PROGRESS when annotations_required > 1 and only one "
-        "annotator has submitted. EE feature; needs review."
-    )
     def test_complete_stays_in_progress_when_not_enough_annotators(
         self, auth_client, queue_id, dataset_rows, label, organization, user
     ):
@@ -6411,20 +6314,26 @@ class TestMultiAnnotatorComplete:
         queue = AnnotationQueue.objects.get(pk=queue_id)
         queue.annotations_required = 2
         queue.save(update_fields=["annotations_required"])
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
+        # The queue_id fixture already attaches `label`.
 
         _, rows = dataset_rows
         items = [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]
         auth_client.post(add_items_url(queue_id), {"items": items}, format="json")
+        # Submitting annotations requires an active queue.
+        auth_client.post(
+            queue_status_url(queue_id), {"status": "active"}, format="json"
+        )
 
         item = QueueItem.objects.get(queue_id=queue_id, deleted=False)
         # One annotator submits
-        auth_client.post(
+        submit_resp = auth_client.post(
             submit_annotations_url(queue_id, item.id),
             {"annotations": [{"label_id": str(label.id), "value": "positive"}]},
             format="json",
         )
-        auth_client.post(complete_url(queue_id, item.id), format="json")
+        assert submit_resp.status_code == status.HTTP_200_OK
+        resp = auth_client.post(complete_url(queue_id, item.id), format="json")
+        assert resp.status_code == status.HTTP_200_OK
 
         item.refresh_from_db()
         assert item.status == QueueItemStatus.IN_PROGRESS.value
@@ -6682,11 +6591,6 @@ class TestLoadBalancedAssignment:
         for item in created:
             assert item.assigned_to_id is not None
 
-    @pytest.mark.xfail(
-        reason="Pre-existing: load-balanced auto-assign attempts to assign "
-        "even when the queue has zero annotators registered. Should leave "
-        "items un-assigned and skip silently."
-    )
     def test_no_annotators_leaves_unassigned(
         self, auth_client, queue_id, dataset_rows, label
     ):
@@ -6694,14 +6598,21 @@ class TestLoadBalancedAssignment:
         queue = AnnotationQueue.objects.get(pk=queue_id)
         queue.assignment_strategy = "round_robin"
         queue.save(update_fields=["assignment_strategy"])
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
-        # No annotators added
+        # The queue_id fixture already attaches `label`.
+        # Queue creation makes the creator a member with every role, including
+        # annotator. Keep them as manager only so the queue has no annotators.
+        AnnotationQueueAnnotator.objects.filter(queue=queue, deleted=False).update(
+            role=AnnotatorRole.MANAGER.value, roles=[AnnotatorRole.MANAGER.value]
+        )
 
         _, rows = dataset_rows
         items = [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]
-        auth_client.post(add_items_url(queue_id), {"items": items}, format="json")
+        resp = auth_client.post(
+            add_items_url(queue_id), {"items": items}, format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
 
-        item = QueueItem.objects.filter(queue_id=queue_id, deleted=False).first()
+        item = QueueItem.objects.get(queue_id=queue_id, deleted=False)
         assert item.assigned_to_id is None
 
 

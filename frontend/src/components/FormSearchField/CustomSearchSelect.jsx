@@ -222,12 +222,7 @@ const SelectContent = ({
           <Button
             variant="outlined"
             size="small"
-            startIcon={
-              <SvgColor
-                sx={{ height: 16, width: 16 }}
-                src="/assets/icons/ic_add.svg"
-              />
-            }
+            startIcon={<SvgColor width={16} src="/assets/icons/ic_add.svg" />}
             onClick={() => window.open(zeroOptionsActionUrl, "_blank")}
           >
             {zeroOptionsActionLabel}
@@ -236,10 +231,7 @@ const SelectContent = ({
             variant="outlined"
             size="small"
             startIcon={
-              <SvgColor
-                sx={{ height: 16, width: 16 }}
-                src="/assets/icons/ic_reload.svg"
-              />
+              <SvgColor width={16} src="/assets/icons/ic_reload.svg" />
             }
             onClick={onRefresh}
           >
@@ -274,10 +266,7 @@ const SelectContent = ({
             variant="outlined"
             size="small"
             startIcon={
-              <SvgColor
-                sx={{ height: 16, width: 16 }}
-                src="/assets/icons/ic_reload.svg"
-              />
+              <SvgColor width={16} src="/assets/icons/ic_reload.svg" />
             }
             onClick={onRefresh}
           >
@@ -311,8 +300,8 @@ const SelectContent = ({
               startAdornment: (
                 <InputAdornment position="start">
                   <Iconify
-                    icon="eva:search-fill"
-                    width={20}
+                    icon="solar:magnifier-linear"
+                    width={16}
                     color={"text.disabled"}
                   />
                 </InputAdornment>
@@ -401,12 +390,7 @@ const SelectContent = ({
             <Button
               variant="outlined"
               size="small"
-              startIcon={
-                <SvgColor
-                  sx={{ height: 16, width: 16 }}
-                  src="/assets/icons/ic_add.svg"
-                />
-              }
+              startIcon={<SvgColor width={16} src="/assets/icons/ic_add.svg" />}
               onClick={() => window.open(zeroOptionsActionUrl, "_blank")}
             >
               {zeroOptionsActionLabel}
@@ -522,13 +506,7 @@ const SelectContent = ({
             <Button
               sx={{ color: "primary.main" }}
               startIcon={
-                <SvgColor
-                  sx={{
-                    height: 16,
-                    width: 16,
-                  }}
-                  src="/assets/icons/ic_reload.svg"
-                />
+                <SvgColor width={16} src="/assets/icons/ic_reload.svg" />
               }
               onClick={onRefresh}
             >
@@ -543,8 +521,6 @@ const SelectContent = ({
             sx={{
               borderColor: "divider",
               color: "text.primary",
-              fontWeight: "fontWeightMedium",
-              fontSize: "12px",
             }}
           >
             Clear
@@ -554,8 +530,6 @@ const SelectContent = ({
             size="small"
             onClick={handleAdd}
             sx={{
-              textTransform: "none",
-              fontSize: "0.875rem",
               backgroundColor: "primary.main",
               color: "primary.contrastText",
               "&:hover": {

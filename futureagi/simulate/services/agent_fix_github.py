@@ -1,0 +1,931 @@
+"""Ship a GitHub agent's winner, or a candidate only its must-pass check refused, as a pull
+request on its repository: the candidate's patch, applied to the commit the fix started
+from, on a branch of its own."""
+
+import base64
+import html
+import re
+import subprocess
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+import requests
+import structlog
+from django.conf import settings
+
+from simulate.models import AgentFixCandidate
+from simulate.pydantic_schemas.agent_fix import (
+    HELD_BACK_VERIFIED_MIN,
+    EvalGrading,
+    EvalReview,
+    VerdictTier,
+    VerdictTierPart,
+)
+from simulate.selectors.agent_fix import (
+    eval_review,
+    github_ship_source,
+    held_back_cases,
+    overridable_regressions,
+    too_few_held_back,
+    verdict_tiers,
+)
+from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
+from simulate.selectors.agent_fix_wording import (
+    CandidateWording,
+    FixNames,
+    candidate_wording,
+    flaky_protected,
+    percent,
+    plural,
+    regressions,
+)
+from simulate.services.agent_fix_engine import ChangedFile, counted_files, load_object
+from simulate.services.agent_fix_runs import (
+    base_moved,
+    record_override,
+    require_shippable,
+)
+from simulate.services.harness_github import short_ref
+from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_harness_gateway import (
+    GitHubAppTokenProvider,
+    github_checkout,
+)
+
+logger = structlog.get_logger(__name__)
+
+_COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
+_NO_DRAFTS = "draft pull requests are not supported"
+_TITLE_CHARS = 72
+# GitHub refuses a pull request body over 65,536 characters; this leaves it room.
+_BODY_CHARS = 60_000
+# The changed files a body lists; the rest are counted.
+_FILES_LISTED = 50
+
+
+def open_pull_request(
+    candidate: AgentFixCandidate, *, user: Any, override_reason: str = ""
+) -> str:
+    """Open the candidate's pull request once and return its URL. Refused when the ref the
+    agent runs from (its branch or tag) moved since the fix's commit, whatever the reason
+    given: the fix proved its change on that commit alone."""
+    require_shippable(candidate, override_reason=override_reason)
+    if candidate.pull_request_url:
+        return candidate.pull_request_url
+    fix_run = candidate.fix_run
+    installation_id, repository, ref, commit = github_ship_source(
+        fix_run.base_agent_version_id, fix_run.source_run
+    )
+    patch = load_object(candidate.patch_object_key) or b""
+    branch = f"futureagi/fix-{str(fix_run.id)[:8]}-{candidate.attempt}"
+    with GitHubAppTokenProvider.from_settings().credential(installation_id) as token:
+        base = _base_branch(repository, ref, token)
+        head = _ref_head(repository, ref, base, token)
+        if head is not None and head != commit:
+            name = short_ref(ref) if ref.startswith("refs/tags/") else base
+            raise base_moved(f"{name} @ {commit[:7]}", f"{name} @ {head[:7]}")
+        # Before the description, whose body gives the reason.
+        record_override(candidate, reason=override_reason, user=user)
+        title, body = _description(candidate, patch)
+        _push(repository, commit, branch, patch, candidate, title, body, token)
+        url = _pull_request(
+            repository,
+            branch,
+            base,
+            title,
+            body,
+            token,
+            draft=too_few_held_back(fix_run) or bool(candidate.override_reason),
+        )
+    AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+        pull_request_url=url
+    )
+    candidate.pull_request_url = url
+    logger.info(
+        "agent_fix_pull_request_opened",
+        fix_run=str(fix_run.id),
+        candidate=str(candidate.id),
+    )
+    return url
+
+
+def _evals_note(candidate: AgentFixCandidate, review: EvalReview) -> str:
+    """The platform evals the winner does worse on than the current version. They do not
+    decide a fix, so the reviewer reads them here, or that none did. That they did not
+    finish is a caveat. Only a winner is graded."""
+    if candidate.outcome != AgentFixCandidate.Outcome.WINNER:
+        return ""
+    lines = []
+    if review.warnings:
+        lines.append(
+            "**Platform evals this change does worse on.** They do not pick the winner;"
+            " review them before you merge."
+        )
+        lines += [
+            f"- {_text(one.name)}: {percent(one.pass_rate)} passed ({one.trials} trials),"
+            f" {percent(one.base_pass_rate)} on the current version"
+            f" ({one.base_trials} trials)"
+            for one in review.warnings
+        ]
+    elif review.grading == EvalGrading.DONE and review.compared:
+        lines.append("Platform evals: none did worse than the current version.")
+    return "\n".join(lines)
+
+
+def _strength(held: int) -> str:
+    """The label of a result too few held-back cases verify: proven on the targets only
+    when none were held back, limited validation when some were."""
+    return "Proven on the targets only" if not held else "Limited validation"
+
+
+def _limited_note(candidate: AgentFixCandidate) -> str:
+    held = held_back_cases(candidate.fix_run)
+    which = (
+        "No failing cases were"
+        if not held
+        else f"Only {held} failing case was"
+        if held == 1
+        else f"Only {held} failing cases were"
+    )
+    return (
+        f"**{_strength(held)}.** {which} held back from the epoch to verify it; it takes"
+        f" {HELD_BACK_VERIFIED_MIN} or more. Check the changed behavior yourself before"
+        " you merge."
+    )
+
+
+def _override_note(candidate: AgentFixCandidate, names: FixNames) -> str:
+    """What a candidate the must-pass check refused is opened with, and the user's reason."""
+    checks = "\n".join(
+        f"- {_text(one)}"
+        for one in regressions(overridable_regressions(candidate), names)
+    )
+    reason = "\n".join(
+        f"> {_line(line)}" for line in candidate.override_reason.splitlines()
+    )
+    return (
+        "**Known regression.** Epoch did not accept this change: it broke these"
+        f" must-pass checks.\n\n{checks}\n\nIt was opened anyway, for this reason:"
+        f"\n\n{reason}"
+    )
+
+
+def _causes(candidate: AgentFixCandidate) -> list[str]:
+    """What the fix's diagnosis found its target cases fail on, in its own words."""
+    causes = (candidate.fix_run.diagnosis or {}).get("causes") or []
+    return [str(cause).strip() for cause in causes if str(cause).strip()]
+
+
+def _title(candidate: AgentFixCandidate, files: list[ChangedFile], marks: str) -> str:
+    """What the pull request is for and where: the causes the diagnosis found, fixed in
+    the files the whole diff changes. Made only of counts and a file name, so it never
+    cuts a sentence; the first wording that fits is used."""
+    name = f"Epoch ({marks})" if marks else "Epoch"
+    causes = len(_causes(candidate))
+    counted = plural(len(files), "file", "files") if files else "the agent"
+    places = [Path(files[0][0]).name, counted] if len(files) == 1 else [counted]
+    if not causes:
+        wordings = [f"{name}: change {place}" for place in places]
+    else:
+        fixes = plural(causes, "diagnosed cause", "diagnosed causes")
+        wordings = [f"{name}: fix {fixes} in {place}" for place in places]
+        # Both marks leave room only for the shorter word, or for no causes at all.
+        wordings.append(f"{name}: fix {plural(causes, 'cause', 'causes')} in {counted}")
+        wordings.append(f"{name}: change {counted}")
+    return next((one for one in wordings if len(one) <= _TITLE_CHARS), wordings[-1])
+
+
+def _cell(text: Any) -> str:
+    """A line as one table cell: on one line, with any pipe not yet escaped escaped."""
+    return re.sub(r"(?<!\\)\|", r"\\|", " ".join(str(text).split()))
+
+
+# What GitHub Markdown reads as inline syntax; HTML's own characters become entities.
+# An underscore inside a word never starts emphasis, so only one at a word's edge counts.
+_INLINE_SYNTAX = re.compile(r"[\\`*\[\]|~]|_(?![^\W_])|(?<![^\W_])_")
+
+
+def _text(value: Any) -> str:
+    """Words the engine, a check or a person wrote, as literal Markdown on one line: never
+    a tag, a link, emphasis or a table cell, and never the end of the page's own markup."""
+    flat = html.escape(" ".join(str(value).split()), quote=False)
+    return _INLINE_SYNTAX.sub(lambda found: f"\\{found[0]}", flat)
+
+
+def _line(value: Any) -> str:
+    """One line as ``_text``, which also cannot start a heading, a list or a rule."""
+    text = _text(value)
+    if numbered := re.match(r"\d+(?=[.)])", text):
+        return f"{numbered[0]}\\{text[numbered.end() :]}"
+    return f"\\{text}" if text[:1] in ("#", "+", "-", "=") and text else text
+
+
+def _code(value: Any) -> str:
+    """A path as inline code in a table cell, literal whatever it holds: fenced with more
+    backticks than it has in a row, its pipes escaped."""
+    flat = " ".join(str(value).split()).replace("|", "\\|")
+    fence = "`" * (max(map(len, re.findall("`+", flat)), default=0) + 1)
+    pad = " " if flat[:1] == "`" or flat[-1:] == "`" else ""
+    return f"{fence}{pad}{flat}{pad}{fence}"
+
+
+# The fix page's words for a check and for the parts of the reply time and cost check
+# (fixRunView.js: CHECK_LABELS, checkLabel, describePart, unknownWhy). The engine's ids
+# are never shown.
+_CHECK_LABELS = {
+    "static": "Change is valid",
+    "target": "Target scenarios",
+    "held-back": "Held-back scenarios",
+    "must-pass": "Must-pass scenarios",
+    "repeats": "Holds over repeats",
+    "ceilings": "Reply time and cost",
+}
+_PART_LABELS = {"reply latency": "Reply time", "agent cost": "Agent's cost"}
+_UNKNOWN_PARTS = {"reply latency": "Reply time unknown", "agent cost": "Cost unknown"}
+_UNTRACED_COST = (
+    "This agent's model calls weren't measured. Epoch measures calls made through the"
+    " OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing."
+)
+
+
+def _check_label(name: str, request: dict) -> str:
+    if name == "model-lock":
+        many = len(request.get("allowed_models") or []) > 1
+        return "Approved models" if many else "Model unchanged"
+    if name in _CHECK_LABELS:
+        return _CHECK_LABELS[name]
+    words = re.sub(r"[-_]+", " ", name)
+    return _text(words[:1].upper() + words[1:])
+
+
+def _result(status: str) -> str:
+    # A shipped candidate failed no check but must-pass, and ran every check after it,
+    # so a skipped check here ran and could not measure.
+    return "Couldn't measure" if status == "skipped" else _text(status.capitalize())
+
+
+def _part_line(part: VerdictTierPart, request: dict) -> str:
+    """A part of the reply time and cost check in words: within its limit, or unknown with
+    why and what would make it known (fixRunView.js partDetail, unknownWhy)."""
+    status, text = part.status, part.detail
+    if status == "passed":
+        return "Within the limit."
+    if status == "failed":
+        return "Over the limit."
+    if part.name == "reply latency":
+        return (
+            "The conversations recorded no reply times. Run again; if it repeats, check"
+            " that the agent replies within the turn."
+        )
+    if not request.get("meters_agent_cost"):
+        return _UNTRACED_COST
+    if "sandbox could not measure" in text:
+        return (
+            f"{_conversations(text, 'have a model call the sandbox')} made a model call"
+            " that couldn't be measured, such as a call through another SDK or a direct"
+            " HTTP request. Route that call through the OpenAI or Anthropic SDK, or add"
+            " traceAI tracing."
+        )
+    if re.search("baseline not measured|not verified against the baseline", text):
+        return (
+            "The current version's cost wasn't measured, so there is nothing to compare"
+            " it with. Run the environment again to measure it."
+        )
+    if "with no cost" in text:
+        return (
+            "A model the agent called has no price. Add a price for it to measure cost."
+        )
+    return (
+        f"{_conversations(text, 'exported no model call')} returned no model-call"
+        " record. Run again to measure them."
+    )
+
+
+def _conversations(text: str, cause: str) -> str:
+    """The count in the engine's "3 of 12 finalist conversations …", which the line keeps."""
+    found = re.search(rf"(\d+) of (\d+) finalist conversations {cause}", text)
+    return f"{found[1]} of {found[2]} conversations" if found else "Some conversations"
+
+
+def _part_label(name: str) -> str:
+    return _PART_LABELS.get(name) or _text(name)
+
+
+def _part_row(part: VerdictTierPart, request: dict) -> str:
+    result = _result(part.status)
+    if part.status == "skipped":
+        result = _UNKNOWN_PARTS.get(part.name, result)
+    label = _cell(_part_label(part.name))
+    return f"| ↳ {label} | {result} | {_cell(_part_line(part, request))} |"
+
+
+def _rate_line(rate: Any, gain: bool, tail: str = "") -> str:
+    said = "a clear gain" if gain else "not a clear gain"
+    if rate:
+        return f"{percent(rate[0])} → {percent(rate[1])}{tail}, {said}."
+    return f"{said[:1].upper()}{said[1:]}{tail}."
+
+
+# What a check that passed shows when the verdict holds no number for it.
+_PASSED = {
+    "static": "Applies cleanly and edits only allowed files.",
+    "repeats": "Held up over the repeat runs.",
+    "ceilings": "Within the reply-time and cost limits.",
+}
+
+
+def _tier_line(
+    tier: VerdictTier, verdict: dict, request: dict, wording: CandidateWording
+) -> str:
+    """A check's result in plain words from the verdict's own numbers, as the fix page says
+    it (fixRunView.js tierLine). A shipped candidate passed every check but must-pass, or
+    could not measure one; the parts of one that could not measure say why."""
+    name, passed = tier.name, tier.status == "passed"
+    if name == "target":
+        return _rate_line(verdict.get("target_pass_rate"), passed)
+    if name == "held-back":
+        tail = " on scenarios the epoch never saw"
+        return _rate_line(verdict.get("held_back_pass_rate"), passed, tail)
+    if name == "must-pass":
+        return wording.must_pass
+    if name == "model-lock":
+        models = request.get("allowed_models") or []
+        if passed:
+            return (
+                f"Called only {', '.join(_text(model) for model in models)}."
+                if models
+                else "Called only allowed models."
+            )
+        sent = (
+            "Some conversations sent no traces."
+            if request.get("observes_models")
+            else "This agent sends no traces."
+        )
+        return f"{sent} The change names no new model."
+    if not passed:
+        return ""
+    return _PASSED.get(name, "Passed.")
+
+
+# What measuring an agent's model calls on its own reads (fixRunView.js MEASURED_NOTICE).
+_MEASURED = (
+    "Measured automatically: model, tokens and timing only. Prompts and replies are"
+    " never recorded."
+)
+
+
+def _decided_section(tiers: list[VerdictTier], verdict: dict, request: dict) -> str:
+    """The engine's own account of each check, its statistics included, folded away for a
+    reviewer who wants to see how the verdict was reached."""
+    lines = []
+    for tier in tiers:
+        if tier.detail:
+            lines.append(f"- {_check_label(tier.name, request)}: {_text(tier.detail)}")
+        lines += [
+            f"  - {_part_label(part.name)}: {_text(part.detail)}"
+            for part in tier.parts
+            if part.detail
+        ]
+    if not lines:
+        return ""
+    # The engine reports the held-back pass rate from the repeat runs when they ran.
+    pooled = verdict.get("held_back_pass_rate") and any(
+        tier.name == "repeats" for tier in tiers
+    )
+    note = (
+        "The held-back pass rate above comes from the repeat runs.\n\n"
+        if pooled
+        else ""
+    )
+    listed = "\n".join(lines)
+    return f"<details><summary>How it was decided</summary>\n\n{note}{listed}\n\n</details>"
+
+
+def _verdict_section(
+    tiers: list[VerdictTier],
+    verdict: dict,
+    standing: str,
+    request: dict,
+    wording: CandidateWording,
+) -> str:
+    """The verdict's checks in the fix page's words, each part of one on its own row, and
+    the engine's statistics folded below them. A normal result has no standing, so its
+    heading carries no label."""
+    heading = f"### Verdict: {standing}" if standing else "### Verdict"
+    if not tiers:
+        return heading
+    rows = []
+    for tier in tiers:
+        rows.append(
+            f"| {_cell(_check_label(tier.name, request))}"
+            f" | {_result(tier.status)}"
+            f" | {_cell(_tier_line(tier, verdict, request, wording))} |"
+        )
+        rows += [_part_row(part, request) for part in tier.parts]
+    listed = "\n".join(rows)
+    table = f"| Check | Result | Detail |\n|---|---|---|\n{listed}"
+    # Only when the platform measured the agent's model calls itself, as the fix page.
+    measured = (
+        f"\n\n{_MEASURED}" if request.get("measured_automatically") is True else ""
+    )
+    decided = _decided_section(tiers, verdict, request)
+    return "\n\n".join(
+        part for part in (f"{heading}\n\n{table}{measured}", decided) if part
+    )
+
+
+def _files_section(files: list[ChangedFile], wording: CandidateWording) -> str:
+    if not files:
+        return ""
+    rows = "\n".join(
+        f"| {_code(path)} | +{added} | −{removed} |"
+        for path, added, removed in files[:_FILES_LISTED]
+    )
+    more = len(files) - _FILES_LISTED
+    tail = f"\n\nand {plural(more, 'more file', 'more files')}" if more > 0 else ""
+    return (
+        f"### What changed\n\n{_text(wording.changes)}\n\n"
+        f"| File | Added | Removed |\n|---|---|---|\n{rows}{tail}"
+    )
+
+
+def _fit(head: str, tail: str) -> str:
+    """The body under GitHub's size limit. Too long, the head is cut at a line and says
+    so; the link to the epoch and the closing line always stay."""
+    body = f"{head}\n\n{tail}" if head else tail
+    if len(body) <= _BODY_CHARS:
+        return body
+    note = "\n\n*Cut to fit GitHub's size limit. The epoch's page has all of it.*"
+    cut = head[: _BODY_CHARS - len(tail) - len(note) - len("\n</details>\n\n")]
+    cut = cut[: cut.rfind("\n")] if "\n" in cut else cut
+    if cut.count("<details>") > cut.count("</details>"):
+        cut += "\n</details>"
+    return f"{cut}{note}\n\n{tail}"
+
+
+def _why_section(candidate: AgentFixCandidate) -> str:
+    causes = _causes(candidate)
+    if not causes:
+        return ""
+    listed = "\n".join(f"- {_text(cause)}" for cause in causes)
+    return (
+        f"### Why\n\nThe diagnosis found these causes of the failing cases:\n\n{listed}"
+    )
+
+
+def _risks_section(
+    candidate: AgentFixCandidate,
+    wording: CandidateWording,
+    review: EvalReview | None,
+    names: FixNames,
+) -> str:
+    """What the checks could not hold this change to, or flagged without refusing it: the
+    epoch page's caveats, word for word, then the flaky protected scenarios and the evals.
+    No scenario key or check id is ever said."""
+    flaky = flaky_protected(candidate.fix_run.report or {}, names)
+    lines = [f"- {_text(line)}" for line in [*wording.caveats, *flaky]]
+    evals = _evals_note(candidate, review) if review is not None else ""
+    if not lines and not evals:
+        return "### What could still go wrong\n\nNothing the checks flagged."
+    return "\n\n".join(
+        part
+        for part in ("### What could still go wrong", "\n".join(lines), evals)
+        if part
+    )
+
+
+# The evidence-import page's words for each kind of source: one, many, and where from.
+_EVIDENCE_SOURCES = {
+    "session": ("session", "sessions", " from Observe"),
+    "call": ("call", "calls", " from Observe"),
+    "trace": ("trace", "traces", " from Observe"),
+    "transcript": ("transcript", "transcripts", ""),
+    "dataset": ("dataset row", "dataset rows", ""),
+}
+
+
+def _evidence_origin(candidate: AgentFixCandidate) -> str:
+    """The evidence the fix started from: how many sources of each import's kind, each
+    one added as one case. Never an id, a source's name or its content."""
+    imports = (candidate.fix_run.request or {}).get("evidence") or []
+    if not imports:
+        return ""
+    lines = []
+    for one in imports:
+        cases = len(one.get("scenario_keys") or [])
+        kind = _EVIDENCE_SOURCES.get(str(one.get("source_kind")))
+        lines.append(
+            f"- {plural(cases, kind[0], kind[1])}{kind[2]}"
+            if kind
+            else f"- {plural(cases, 'imported case', 'imported cases')}"
+        )
+    listed = "\n".join(lines)
+    return f"### Evidence\n\nThis epoch started from imported evidence:\n\n{listed}"
+
+
+def _lines(value: str) -> str:
+    """Text of several lines, each as ``_line``; a blank line stays a paragraph break."""
+    return "\n".join(_line(line) for line in value.splitlines())
+
+
+def _notes_section(candidate: AgentFixCandidate) -> str:
+    """The engine's own summary, labelled: it describes only the candidate's last change."""
+    summary = candidate.summary.strip()
+    if not summary:
+        return ""
+    return (
+        "<details><summary>Notes from Epoch on the last change of Candidate"
+        f" {candidate.attempt}</summary>\n\n{_lines(summary)}\n\n</details>"
+    )
+
+
+def _fix_link(candidate: AgentFixCandidate) -> str:
+    base = str(getattr(settings, "FRONTEND_BASE_URL", "") or "").rstrip("/")
+    if not base:
+        return ""
+    run = candidate.fix_run
+    # frontend/src/routes/sections/dashboard.jsx: simulate → environments/:envId →
+    # improvements/:fixId, the fix run's page.
+    return (
+        f"[Open this epoch on Future AGI]({base}/dashboard/simulate/environments/"
+        f"{run.environment_id}/improvements/{run.id})"
+    )
+
+
+def _issue_link(candidate: AgentFixCandidate) -> str:
+    """The Error Feed issue the epoch was run from, by its id with a link to it, as
+    the feed shows it now (after a merge, the issue it was merged into). Never its
+    title: the feed writes that from the traces."""
+    job = jobs_of_epochs([candidate.fix_run]).get(candidate.fix_run_id)
+    issue = live_issue(job.evidence_import.source_issue) if job else None
+    if issue is None:
+        return ""
+    base = str(getattr(settings, "FRONTEND_BASE_URL", "") or "").rstrip("/")
+    named = (
+        f"[{issue.cluster_id}]({base}/dashboard/error-feed/"
+        f"{quote(issue.cluster_id, safe='')})"
+        if base
+        else issue.cluster_id
+    )
+    return f"Run from Error Feed issue {named}."
+
+
+def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
+    """The title and body: what the whole change does, the verdict it earned, the files it
+    changes and why, what could still go wrong, and where it came from. Both say so when
+    too few cases were held back to verify it, and when it ships with a known regression
+    on the user's reason."""
+    verdict = candidate.verdict or {}
+    tiers = verdict_tiers(candidate)
+    # Only a winner is graded.
+    winner = candidate.outcome == AgentFixCandidate.Outcome.WINNER
+    review = eval_review(candidate.fix_run) if winner else None
+    # Counted the way the candidate's stored files were, from the patch that ships.
+    # When git cannot count them, the pull request still opens, with no change line.
+    counted = counted_files(candidate.fix_run, patch)
+    files = counted or []
+    names = FixNames(candidate.fix_run)
+    # The epoch page's words: the read takes them from the same place.
+    wording = candidate_wording(
+        candidate, tiers, review=review, files=counted, names=names
+    )
+    held = held_back_cases(candidate.fix_run)
+    limited = too_few_held_back(candidate.fix_run)
+    overridden = bool(candidate.override_reason)
+    # A normal result carries no label; only a weaker one says how strong it is.
+    standing = "Known regression" if overridden else _strength(held) if limited else ""
+    head = "\n\n".join(
+        part
+        for part in (
+            _override_note(candidate, names) if overridden else "",
+            _limited_note(candidate) if limited else "",
+            # Not the engine's own reason: the checks below say the same in words.
+            _text(wording.headline),
+            _verdict_section(
+                tiers, verdict, standing, candidate.fix_run.request or {}, wording
+            ),
+            _files_section(files, wording),
+            _why_section(candidate),
+            _risks_section(candidate, wording, review, names),
+            _evidence_origin(candidate),
+            _notes_section(candidate),
+        )
+        if part
+    )
+    tail = "\n\n".join(
+        part
+        for part in (
+            _issue_link(candidate),
+            _fix_link(candidate),
+            "Opened by Epoch on Future AGI.",
+        )
+        if part
+    )
+    body = _fit(head, tail)
+    marks = ", ".join(
+        mark
+        for mark, applies in (
+            (_strength(held).lower(), limited),
+            ("known regression", overridden),
+        )
+        if applies
+    )
+    return _title(candidate, files, marks), body
+
+
+def _push(
+    repository: str,
+    commit: str,
+    branch: str,
+    patch: bytes,
+    candidate: AgentFixCandidate,
+    title: str,
+    body: str,
+    token: str,
+) -> None:
+    """Make the patch, applied on ``commit``, the head of ``branch`` through GitHub's Git
+    Data API. GitHub signs a commit the App makes that way, with no author, committer or
+    signature of its own: it reads Verified, under the App's name and icon. A branch that
+    already holds the change on ``commit`` (the same tree, on that parent alone) is kept,
+    so a retry writes nothing, whatever the description says by then; a branch someone
+    changed is refused, never overwritten."""
+    with tempfile.TemporaryDirectory(prefix=f"agent-fix-{candidate.id}-") as temp:
+        checkout = Path(temp) / "source"
+        environment = github_checkout(repository, commit, checkout, token)
+
+        def local(*args: str, data: bytes | None = None) -> bytes:
+            completed = subprocess.run(
+                ["git", "-C", str(checkout), *args],
+                env=environment,
+                input=data,
+                capture_output=True,
+                timeout=300,
+                check=False,
+            )
+            if completed.returncode:
+                detail = completed.stderr.decode(errors="replace")
+                raise HostedHarnessError(
+                    "fix_github_patch_failed",
+                    (detail.replace(token, "[REDACTED]") if token else detail)[:500],
+                    status_code=409,
+                )
+            return completed.stdout
+
+        local("apply", "--index", "--binary", "-", data=patch)
+        tree = local("write-tree").decode().strip()
+        # Before anything is uploaded, so a retry writes nothing.
+        if _branch_holds(repository, branch, tree, commit, token):
+            return
+        made = _create(
+            repository,
+            "trees",
+            token,
+            base_tree=local("rev-parse", f"{commit}^{{tree}}").decode().strip(),
+            tree=_tree_entries(repository, local, commit, tree, token),
+        )
+        if made["sha"] != tree:
+            raise HostedHarnessError(
+                "fix_github_push_failed",
+                "GitHub made another tree than the patch makes on this commit",
+                status_code=502,
+            )
+        made = _create(
+            repository,
+            "commits",
+            token,
+            message=f"{title}\n\n{body}",
+            tree=tree,
+            parents=[commit],
+        )
+        verification = made.get("verification") or {}
+        if not verification.get("verified"):
+            # Still the change it proved; only the badge is missing.
+            logger.warning(
+                "agent_fix_commit_unverified",
+                repository=repository,
+                reason=verification.get("reason"),
+            )
+        response = _api(
+            "POST",
+            f"/repos/{repository}/git/refs",
+            token,
+            json={"ref": f"refs/heads/{branch}", "sha": made["sha"]},
+        )
+        if response.status_code == 201:
+            return
+        # Another ship of the same candidate made the branch first.
+        if (
+            response.status_code == 422
+            and "already exists" in response.text.lower()
+            and _branch_holds(repository, branch, tree, commit, token)
+        ):
+            return
+        raise _refused(repository, response)
+
+
+def _tree_entries(
+    repository: str,
+    local: Callable[..., bytes],
+    commit: str,
+    tree: str,
+    token: str,
+) -> list[dict[str, Any]]:
+    """Each path the patch changes, as GitHub's tree takes it: its new content, uploaded,
+    with its mode; none for a path it removes."""
+    fields = local("diff-tree", "-r", "-z", "--no-renames", commit, tree).split(b"\0")
+    entries = []
+    for meta, path in zip(fields[0::2], fields[1::2], strict=False):
+        old_mode, new_mode, _, new_sha, status = meta.decode().lstrip(":").split(" ")
+        mode = old_mode if status == "D" else new_mode
+        kind = "commit" if mode == "160000" else "blob"
+        sha = None if status == "D" else new_sha
+        if sha is not None and kind == "blob":
+            content = base64.b64encode(local("cat-file", "blob", sha)).decode()
+            sha = _create(
+                repository, "blobs", token, content=content, encoding="base64"
+            )["sha"]
+        entries.append({"path": path.decode(), "mode": mode, "type": kind, "sha": sha})
+    return entries
+
+
+def _branch_holds(
+    repository: str, branch: str, tree: str, commit: str, token: str
+) -> bool:
+    """Whether ``branch`` already holds the change, as an earlier try made it: a commit of
+    ``tree`` on ``commit`` alone. A branch that holds anything else is refused."""
+    response = _api(
+        "GET",
+        f"/repos/{repository}/git/ref/heads/{quote(branch, safe='/')}",
+        token,
+        missing_ok=True,
+    )
+    if response.status_code == 404:
+        return False
+    head = response.json()["object"]["sha"]
+    made = _api("GET", f"/repos/{repository}/git/commits/{head}", token).json()
+    if made["tree"]["sha"] == tree and [one["sha"] for one in made["parents"]] == [
+        commit
+    ]:
+        return True
+    raise HostedHarnessError(
+        "fix_github_branch_changed",
+        f"the branch {branch} changed on GitHub since the pull request was made",
+        status_code=409,
+    )
+
+
+def _create(repository: str, kind: str, token: str, **payload: Any) -> dict[str, Any]:
+    """One Git object made on GitHub; refused as GitHub says why."""
+    response = _api("POST", f"/repos/{repository}/git/{kind}", token, json=payload)
+    if response.status_code == 201:
+        made: dict[str, Any] = response.json()
+        return made
+    raise _refused(repository, response)
+
+
+def _refused(repository: str, response: requests.Response) -> HostedHarnessError:
+    """A write GitHub refused, as the user can act on it: wait out a rate limit (a 403 says
+    so too), give the App write access, or read what GitHub said."""
+    status, headers = response.status_code, response.headers
+    if status == 429 or (
+        status == 403
+        and (
+            headers.get("x-ratelimit-remaining") == "0"
+            or "retry-after" in headers
+            or "rate limit" in response.text.lower()
+        )
+    ):
+        return HostedHarnessError(
+            "fix_github_rate_limited",
+            "GitHub is limiting the Future AGI GitHub App's requests; try again in a few"
+            " minutes",
+            status_code=502,
+            retryable=True,
+        )
+    if status == 403:
+        return _no_write_access(repository)
+    return HostedHarnessError(
+        "fix_github_push_failed",
+        f"GitHub refused the change: {response.text[:300]}",
+        status_code=502,
+        retryable=status >= 500,
+    )
+
+
+def _no_write_access(repository: str) -> HostedHarnessError:
+    return HostedHarnessError(
+        "fix_github_no_write_access",
+        f"the Future AGI GitHub App cannot write to {repository}: approve its request for"
+        " contents and pull requests write access",
+        status_code=422,
+    )
+
+
+def _base_branch(repository: str, ref: str, token: str) -> str:
+    """The branch the agent is connected to; the repository's default when it names a tag
+    or a commit, or nothing."""
+    name = short_ref(ref)
+    if name and not ref.startswith("refs/tags/") and not _COMMIT.fullmatch(name):
+        return name
+    return _api("GET", f"/repos/{repository}", token).json()["default_branch"]
+
+
+def _ref_head(repository: str, ref: str, branch: str, token: str) -> str | None:
+    """The commit the agent's ref points at on GitHub now: a tag's commit, else the head
+    of ``branch``, the branch it runs from. None for a ref pinned to a commit, which never
+    moves."""
+    name = short_ref(ref)
+    if name and _COMMIT.fullmatch(name):
+        return None
+    if ref.startswith("refs/tags/"):
+        # A tag ref that names no tag has no commit to compare: as a pinned commit.
+        if not name:
+            return None
+        tag_head: str = _api(
+            "GET", f"/repos/{repository}/commits/{quote(name)}", token
+        ).json()["sha"]
+        return tag_head
+    branch_head: str = _api(
+        "GET", f"/repos/{repository}/git/ref/heads/{quote(branch, safe='/')}", token
+    ).json()["object"]["sha"]
+    return branch_head
+
+
+def _pull_request(
+    repository: str,
+    branch: str,
+    base: str,
+    title: str,
+    body: str,
+    token: str,
+    *,
+    draft: bool,
+) -> str:
+    """Open the pull request, or find the one already open for ``branch``. A repository
+    without draft pull requests gets a normal one, and its title still says what it is."""
+    path = f"/repos/{repository}/pulls"
+    pull = {"title": title, "head": branch, "base": base, "body": body, "draft": draft}
+    response = _api("POST", path, token, json=pull)
+    if response.status_code == 422 and _NO_DRAFTS in response.text.lower():
+        response = _api("POST", path, token, json={**pull, "draft": False})
+    if response.status_code == 201:
+        return response.json()["html_url"]
+    if response.status_code == 403:
+        raise _no_write_access(repository)
+    if response.status_code == 422 and "already exists" in response.text:
+        owner = repository.split("/")[0]
+        found = _api(
+            "GET",
+            f"/repos/{repository}/pulls",
+            token,
+            params={"head": f"{owner}:{branch}", "state": "all"},
+        ).json()
+        if found:
+            return found[0]["html_url"]
+    raise HostedHarnessError(
+        "fix_github_pull_request_failed",
+        f"GitHub refused the pull request: {response.text[:300]}",
+        status_code=502,
+        retryable=response.status_code >= 500,
+    )
+
+
+def _api(
+    method: str, path: str, token: str, *, missing_ok: bool = False, **kwargs
+) -> requests.Response:
+    """GitHub's REST API as the installation. A read that GitHub refuses raises, except a
+    404 when ``missing_ok``: the caller then reads it as nothing there."""
+    try:
+        response = requests.request(
+            method,
+            settings.GITHUB_API_ENDPOINT.rstrip("/") + path,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            timeout=(5, 30),
+            **kwargs,
+        )
+    except requests.RequestException as exc:
+        raise HostedHarnessError(
+            "fix_github_unreachable",
+            "GitHub could not be reached",
+            status_code=502,
+            retryable=True,
+        ) from exc
+    if (
+        method == "GET"
+        and response.status_code != 200
+        and not (missing_ok and response.status_code == 404)
+    ):
+        raise HostedHarnessError(
+            "fix_github_pull_request_failed",
+            f"GitHub refused {path}: {response.status_code}",
+            status_code=502,
+            retryable=response.status_code >= 500,
+        )
+    return response

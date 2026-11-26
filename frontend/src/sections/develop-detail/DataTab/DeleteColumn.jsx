@@ -80,7 +80,7 @@ const ConfirmDeleteColumn = ({ dataset: datasetId }) => {
             Are you sure you want to delete this column?
           </Typography>
           <IconButton onClick={onClose}>
-            <Iconify icon="mdi:close" />
+            <Iconify icon="solar:close-linear" />
           </IconButton>
         </Box>
       </DialogTitle>

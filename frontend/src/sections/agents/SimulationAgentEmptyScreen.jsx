@@ -64,12 +64,7 @@ const SimulationAgentEmptyScreen = () => {
           <Button
             variant="outlined"
             size="small"
-            sx={{
-              borderRadius: "4px",
-              height: "38px",
-              px: "8px",
-              width: "119px",
-            }}
+            sx={{ width: "119px" }}
             onClick={() => {
               handleOnDocsClicked("agent-definition");
               window.open(
@@ -198,20 +193,12 @@ const SimulationAgentEmptyScreen = () => {
             <Button
               variant="contained"
               color="primary"
-              sx={{
-                px: "24px",
-                borderRadius: "4px",
-                height: "38px",
-                alignSelf: "flex-start",
-              }}
+              sx={{ alignSelf: "flex-start" }}
               startIcon={
                 <SvgColor
                   src="/assets/icons/ic_add.svg"
                   bgcolor="background.paper"
-                  sx={{
-                    width: "20px",
-                    height: "20px",
-                  }}
+                  width="20px"
                 />
               }
               disabled={

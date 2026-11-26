@@ -10,6 +10,7 @@ import {
   FormControlLabel,
   Radio,
 } from "@mui/material";
+import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "../../iconify";
 import PropTypes from "prop-types";
 import { useQuery } from "@tanstack/react-query";
@@ -32,6 +33,7 @@ const AddDataset = ({
   selectedSpans,
   currentTab,
   selectAll,
+  selectAllFilters,
   onSuccess,
 }) => {
   const [selectedOptionDataset, setSelectedOptionDataset] =
@@ -77,18 +79,21 @@ const AddDataset = ({
     return [...matchedFields, ...VIRTUAL_FIELDS];
   }, [observationFields]);
 
+  const covered = useDrawerCovered(Boolean(actionToDataset));
+
   return (
     <Drawer
       anchor="right"
       open={actionToDataset}
       onClose={handleClose}
+      sx={coveredDrawerSx(covered)}
       PaperProps={{
         sx: {
           height: "100vh",
           position: "fixed",
           overflowY: "hidden",
           zIndex: 9999,
-          borderRadius: "10px",
+          borderRadius: "8px",
           backgroundColor: "background.paper",
           width: "45vw",
           p: 2,
@@ -103,7 +108,7 @@ const AddDataset = ({
       {/* Close Icon */}
       <Box sx={{ position: "absolute", top: 10, right: 7 }}>
         <IconButton onClick={handleClose}>
-          <Iconify icon="mingcute:close-line" />
+          <Iconify icon="solar:close-linear" />
         </IconButton>
       </Box>
       {/* Header */}
@@ -135,7 +140,7 @@ const AddDataset = ({
               <Typography
                 sx={{
                   fontWeight: 500,
-                  fontSize: "14px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                   paddingLeft: "5px",
                 }}
@@ -152,7 +157,7 @@ const AddDataset = ({
               <Typography
                 sx={{
                   fontWeight: 500,
-                  fontSize: "14px",
+                  fontSize: "12px",
                   color: theme.palette.text.secondary,
                   paddingLeft: "5px",
                 }}
@@ -173,6 +178,7 @@ const AddDataset = ({
           selectedTraces={selectedTraces}
           selectedSpans={selectedSpans}
           selectAll={selectAll}
+          selectAllFilters={selectAllFilters}
           currentTab={currentTab}
           onSuccess={onSuccess}
         />
@@ -184,6 +190,7 @@ const AddDataset = ({
           selectedTraces={selectedTraces}
           selectedSpans={selectedSpans}
           selectAll={selectAll}
+          selectAllFilters={selectAllFilters}
           currentTab={currentTab}
           onSuccess={onSuccess}
         />
@@ -200,6 +207,7 @@ AddDataset.propTypes = {
   selectedSpans: PropTypes.array,
   currentTab: PropTypes.string,
   selectAll: PropTypes.bool,
+  selectAllFilters: PropTypes.array,
   onSuccess: PropTypes.func,
 };
 

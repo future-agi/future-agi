@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -225,4 +227,86 @@ func TestHTTPTransportClose(t *testing.T) {
 	if err := transport.Close(); err != nil {
 		t.Fatalf("unexpected close error: %v", err)
 	}
+}
+
+func TestStdioTransportHandlesLargeResponses(t *testing.T) {
+	transport := NewStdioTransport(os.Args[0], []string{
+		"-test.run=^TestStdioTransportHelperProcess$",
+		"--",
+		"mcp-stdio-large-response",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := transport.Start(ctx); err != nil {
+		t.Fatalf("start stdio transport: %v", err)
+	}
+	defer transport.Close()
+
+	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: MethodPing}
+	resp, err := transport.Send(ctx, msg)
+	if err != nil {
+		t.Fatalf("send request: %v", err)
+	}
+
+	var result struct {
+		Payload string `json:"payload"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("decode response result: %v", err)
+	}
+	if len(result.Payload) != 128*1024 {
+		t.Fatalf("expected 128 KiB payload, got %d bytes", len(result.Payload))
+	}
+}
+
+// The gateway connects each server under a startup timeout and cancels it
+// once the handshake is done; the subprocess has to survive that.
+func TestStdioTransportOutlivesStartContext(t *testing.T) {
+	transport := NewStdioTransport(os.Args[0], []string{
+		"-test.run=^TestStdioTransportHelperProcess$",
+		"--",
+		"mcp-stdio-large-response",
+	})
+
+	startCtx, cancelStart := context.WithCancel(context.Background())
+	if err := transport.Start(startCtx); err != nil {
+		t.Fatalf("start stdio transport: %v", err)
+	}
+	defer transport.Close()
+	cancelStart()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: MethodPing}
+	resp, err := transport.Send(ctx, msg)
+	if err != nil {
+		t.Fatalf("send after start context was cancelled: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected error response: %s", resp.Error.Message)
+	}
+}
+
+func TestStdioTransportHelperProcess(t *testing.T) {
+	if len(os.Args) == 0 || os.Args[len(os.Args)-1] != "mcp-stdio-large-response" {
+		return
+	}
+
+	var request Message
+	if err := json.NewDecoder(os.Stdin).Decode(&request); err != nil {
+		os.Exit(2)
+	}
+
+	response, err := NewResponse(request.ID, map[string]string{
+		"payload": strings.Repeat("x", 128*1024),
+	})
+	if err != nil {
+		os.Exit(2)
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(response); err != nil {
+		os.Exit(2)
+	}
+
+	os.Exit(0)
 }

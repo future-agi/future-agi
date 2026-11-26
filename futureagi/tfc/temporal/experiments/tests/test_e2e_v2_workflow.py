@@ -243,6 +243,112 @@ class TestLLMPromptFlow:
             cells = await _get_cells_for_column(col_id)
             assert len(cells) == 3
 
+    async def test_multiple_columns_wait_for_persisted_cell_writes(
+        self,
+        workflow_environment,
+        experiment,
+        experiment_prompt_config,
+        prompt_template,
+        prompt_version,
+        snapshot_dataset,
+        monkeypatch,
+    ):
+        """Exercise early column completion during 128 real Temporal row activities."""
+        from django.db import connections
+
+        from model_hub.models.choices import CellStatus, StatusType
+        from model_hub.models.develop_dataset import Cell, Column, Row
+        from model_hub.models.experiments import (
+            ExperimentDatasetTable,
+            ExperimentPromptConfig,
+        )
+        from model_hub.views.experiment_runner import (
+            check_and_update_experiment_dataset_status,
+        )
+
+        @sync_to_async
+        def prepare_load():
+            for index in range(3, 32):
+                row = Row.objects.create(dataset=snapshot_dataset, order=index)
+                for column in snapshot_dataset._test_columns:
+                    Cell.objects.create(
+                        dataset=snapshot_dataset,
+                        row=row,
+                        column=column,
+                        value=f"synthetic input {index}",
+                        status=CellStatus.PASS.value,
+                    )
+            for index in range(1, 4):
+                edt = ExperimentDatasetTable.objects.create(
+                    name=f"Concurrent prompt {index}",
+                    experiment=experiment,
+                    status=StatusType.NOT_STARTED.value,
+                )
+                ExperimentPromptConfig.objects.create(
+                    experiment_dataset=edt,
+                    prompt_template=prompt_template,
+                    prompt_version=prompt_version,
+                    name=edt.name,
+                    model=f"synthetic-model-{index}",
+                    model_config={},
+                    model_params={},
+                    configuration={},
+                    output_format="string",
+                    order=index,
+                )
+
+        observed_completion = []
+
+        def delayed_cell_write(row_id, column_id, dataset_id, *args):
+            close_old_connections()
+            try:
+                column = Column.objects.get(id=column_id)
+                # Freeze the ordering reported in #320: the column is published
+                # complete while this activity's persisted cell is still running.
+                Column.objects.filter(id=column_id).update(
+                    status=StatusType.COMPLETED.value
+                )
+                cell = Cell.objects.get(
+                    row_id=row_id, column_id=column_id, deleted=False
+                )
+                assert cell.status == CellStatus.RUNNING.value
+                observed_completion.append(
+                    check_and_update_experiment_dataset_status(column.source_id)
+                )
+                cell.value = "synthetic response"
+                cell.status = CellStatus.PASS.value
+                cell.save(update_fields=["value", "status"])
+                return {"row_id": row_id, "column_id": column_id, "status": "COMPLETED"}
+            finally:
+                connections.close_all()
+
+        await prepare_load()
+        monkeypatch.setattr(
+            "tfc.temporal.experiments.activities._process_row_sync", delayed_cell_write
+        )
+
+        result = await run_experiment_workflow(
+            workflow_environment, experiment.id, max_concurrent_rows=16
+        )
+
+        assert result.failed_rows == 0
+        assert result.total_rows_processed == 128
+        assert len(observed_completion) == 128
+        assert not any(observed_completion), "dataset completed before its cell write"
+        assert (
+            await _get_experiment(experiment.id)
+        ).status == StatusType.COMPLETED.value
+        columns = await _get_experiment_columns(experiment.id)
+        assert len(columns) == 4
+        for column_id, _, _ in columns:
+            cells = await _get_cells_for_column(column_id)
+            assert len(cells) == 32
+            assert all(status == CellStatus.PASS.value for _, _, status in cells)
+        assert all(
+            status == StatusType.COMPLETED.value
+            for _, _, status in await _get_experiment_datasets(experiment.id)
+        )
+
 
 # =============================================================================
 # Group 2: LLM Experiment — Agent Flow Only

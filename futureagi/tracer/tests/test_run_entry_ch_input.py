@@ -10,6 +10,7 @@ import pytest
 from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 from tracer.models.observation_span import (
     EvalEntryStatus,
     EvalLogger,
@@ -129,7 +130,7 @@ class TestRunEntryChInput:
         assert not Trace.objects.filter(id=trace.id).exists()  # from CH, not PG
 
     def test_session_evaluates_from_ch_with_pg_empty(
-        self, observe_project, eval_template, eval_task, stub_run_eval, stub_cost_log
+        self, observe_project, eval_template, stub_run_eval, stub_cost_log
     ):
         session = TraceSession.objects.create(project=observe_project, name="sess")
         seed_ch_trace_sessions([session])
@@ -142,14 +143,24 @@ class TestRunEntryChInput:
             mapping={"input": "name"},
             filters={},
         )
+        task = EvalTask.objects.create(
+            project=observe_project,
+            name="Session Eval Task",
+            filters={},
+            sampling_rate=1.0,
+            run_type=RunType.CONTINUOUS,
+            status=EvalTaskStatus.PENDING,
+            spans_limit=100,
+        )
+        task.evals.add(config)
         entry = _make_entry(
             target_type=EvalTargetType.SESSION,
             trace_session=session,
             custom_eval_config=config,
-            eval_task_id=str(eval_task.id),
+            eval_task_id=str(task.id),
             status=EvalEntryStatus.RUNNING,
         )
-        _assert_completed(run_entry(entry), entry, task_id=str(eval_task.id))
+        _assert_completed(run_entry(entry), entry, task_id=str(task.id))
 
     def test_ch_miss_hard_fails_to_errored(
         self, project, custom_eval_config, eval_task, stub_run_eval, stub_cost_log

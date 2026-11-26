@@ -21,7 +21,9 @@ from simulate.utils.test_execution_utils import (
 pytestmark = pytest.mark.django_db
 
 
-def _make_dataset_with_column(organization, workspace, user, name, column_name="outcome"):
+def _make_dataset_with_column(
+    organization, workspace, user, name, column_name="outcome"
+):
     dataset = Dataset.no_workspace_objects.create(
         name=f"ds-{name}",
         organization=organization,
@@ -77,9 +79,7 @@ def test_execution(run_test):
 
 
 class TestReconcileScenarioColumnOrder:
-    def test_collapses_outcome_across_datasets(
-        self, organization, workspace, user
-    ):
+    def test_collapses_outcome_across_datasets(self, organization, workspace, user):
         s1, _, c1 = _make_scenario(organization, workspace, user, "scenario-a")
         s2, _, c2 = _make_scenario(organization, workspace, user, "scenario-b")
 
@@ -122,9 +122,7 @@ class TestReconcileScenarioColumnOrder:
         )
         assert entry["visible"] is False
 
-    def test_preserves_scenario_block_position(
-        self, organization, workspace, user
-    ):
+    def test_preserves_scenario_block_position(self, organization, workspace, user):
         s1, _, _ = _make_scenario(organization, workspace, user, "scenario-a")
         seed = [
             {"type": "metadata", "id": "call_details", "column_name": "Call"},
@@ -309,8 +307,7 @@ class TestScenarioDatasetGrouping:
         )
 
         hostile_group_field = (
-            f"scenario_{s1.id}_dataset_"
-            "b'; DROP TABLE simulate_call_execution; --"
+            f"scenario_{s1.id}_dataset_b'; DROP TABLE simulate_call_execution; --"
         )
 
         TestExecutionUtils()._apply_scenario_dataset_grouping(

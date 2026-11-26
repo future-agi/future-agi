@@ -13,6 +13,14 @@ import uuid
 import pytest
 from rest_framework import status
 
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.user import User
+from accounts.models.workspace import WorkspaceMembership
+from conftest import WorkspaceAwareAPIClient
+from model_hub.models.develop_annotations import AnnotationsLabels
+from tfc.constants.levels import Level
+from tfc.constants.roles import OrganizationRoles
+
 BASE_URL = "/model-hub/annotations-labels/"
 
 
@@ -446,6 +454,128 @@ class TestArchiveAndRestore:
         # Don't archive — try to restore directly
         resp = auth_client.post(restore_url(label_id))
         assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.fixture
+def membership_only_user(db, organization, workspace):
+    """A member whose org access comes only from ``OrganizationMembership``.
+
+    ``User.organization`` is the legacy nullable FK. Members provisioned through
+    RBAC never get it populated — they reach their organization through an
+    active membership row instead.
+    """
+    user = User.objects.create_user(
+        email=f"membership-only-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Membership Only User",
+        organization=None,
+        organization_role=None,
+    )
+    org_membership = OrganizationMembership.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=True,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=user,
+        workspace=workspace,
+        role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.WORKSPACE_MEMBER,
+        is_active=True,
+        organization_membership=org_membership,
+    )
+    # ``assign_workspace_organization_post_save`` backfills a blank organization
+    # from the thread-local context, which the ``user`` fixture sets. Null the FK
+    # through the queryset so no signal fires — this user must reach its org
+    # through the membership alone.
+    User.objects.filter(pk=user.pk).update(organization=None)
+    user.refresh_from_db()
+    return user
+
+
+@pytest.fixture
+def membership_only_client(membership_only_user, workspace):
+    """Workspace-scoped client, so ``request.organization`` is populated."""
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=membership_only_user)
+    client.set_workspace(workspace)
+    yield client
+    client.stop_workspace_injection()
+
+
+@pytest.fixture
+def membership_only_client_without_workspace(membership_only_user):
+    """No workspace header, so the view must fall back to active membership."""
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=membership_only_user)
+    yield client
+    client.stop_workspace_injection()
+
+
+@pytest.mark.django_db
+class TestRestoreOrganizationScoping:
+    """Restore must scope by the resolved org, not ``user.organization``.
+
+    ``restore`` used to filter on ``request.user.organization``. That FK is NULL
+    for membership-only users, so the lookup became ``organization_id IS NULL``;
+    ``AnnotationsLabels.organization`` is non-nullable, so every restore 404'd
+    even though the label was listable. The rest of this module passes either
+    way because its fixtures set the legacy FK — these two do not.
+    """
+
+    @staticmethod
+    def _create_and_archive(client, name):
+        create_resp = create_label(client, name=name)
+        assert create_resp.status_code == status.HTTP_200_OK, create_resp.data
+        label_id = create_resp.data["result"]["id"]
+
+        delete_resp = client.delete(detail_url(label_id))
+        assert delete_resp.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_204_NO_CONTENT,
+        ), delete_resp.data
+        return label_id
+
+    def test_restore_for_member_without_legacy_user_organization(
+        self, membership_only_client, membership_only_user
+    ):
+        """Org comes from the request, not the null ``user.organization`` FK."""
+        # Canary: if a fixture ever backfills the FK this stops covering the
+        # regression, so fail loudly rather than pass vacuously.
+        assert membership_only_user.organization_id is None
+
+        name = "Membership Only Restorable"
+        label_id = self._create_and_archive(membership_only_client, name)
+
+        resp = membership_only_client.post(restore_url(label_id))
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["status"] is True
+        assert resp.data["result"]["archived"] is False
+
+        list_resp = membership_only_client.get(BASE_URL, {"search": name})
+        assert [str(row["id"]) for row in list_resp.data["results"]] == [str(label_id)]
+
+    def test_restore_falls_back_to_active_membership(
+        self, membership_only_client_without_workspace, membership_only_user
+    ):
+        """No workspace header: the org resolves from the active membership."""
+        assert membership_only_user.organization_id is None
+
+        client = membership_only_client_without_workspace
+        label_id = self._create_and_archive(client, "Membership Fallback Restorable")
+
+        resp = client.post(restore_url(label_id))
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["status"] is True
+        assert resp.data["result"]["archived"] is False
+
+        restored = AnnotationsLabels.all_objects.get(pk=label_id)
+        assert restored.deleted is False
+        assert restored.deleted_at is None
 
 
 # ---------------------------------------------------------------------------

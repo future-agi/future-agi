@@ -6,6 +6,12 @@ export const QUEUE_ROLES = {
   MANAGER: "manager",
 };
 
+export function shortId(value) {
+  if (!value) return "";
+  const text = String(value);
+  return text.length > 8 ? text.slice(0, 8) : text;
+}
+
 export const ROLE_PRIORITY = [
   QUEUE_ROLES.MANAGER,
   QUEUE_ROLES.REVIEWER,
@@ -130,9 +136,9 @@ export const SIMULATION_RULE_FILTER_FIELDS = [
 ];
 
 export const SIMPLE_FILTER_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "System", icon: "mdi:tune-variant" },
-  { key: "persona", label: "Persona", icon: "mdi:account-outline" },
+  { key: "all", label: "All", icon: "solar:widget-4-linear" },
+  { key: "system", label: "System", icon: "solar:tuning-2-linear" },
+  { key: "persona", label: "Persona", icon: "solar:user-linear" },
 ];
 
 export const SESSION_RULE_FILTER_FIELDS = [

@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from webauthn.helpers import base64url_to_bytes
 
 from accounts.models.user import User
+from accounts.permissions import RequiresIndependentAuth
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsEmptyRequestSerializer,
@@ -115,7 +116,7 @@ class TwoFactorStatusView(APIView):
 class TOTPSetupView(APIView):
     """POST /accounts/2fa/totp/setup/ - Begin TOTP setup."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RequiresIndependentAuth]
     throttle_classes = [TOTPRateThrottle]
     _gm = GeneralMethods()
 
@@ -143,7 +144,7 @@ class TOTPSetupView(APIView):
 class TOTPConfirmView(APIView):
     """POST /accounts/2fa/totp/confirm/ - Confirm TOTP with code."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RequiresIndependentAuth]
     throttle_classes = [TOTPRateThrottle]
     _gm = GeneralMethods()
 
@@ -171,7 +172,7 @@ class TOTPConfirmView(APIView):
 class TOTPDisableView(APIView):
     """DELETE /accounts/2fa/totp/ - Disable TOTP."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RequiresIndependentAuth]
     _gm = GeneralMethods()
 
     @validated_request(
@@ -398,7 +399,7 @@ class RecoveryCodesView(APIView):
 class RecoveryCodesRegenerateView(APIView):
     """POST /accounts/2fa/recovery-codes/regenerate/ - Generate new codes."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RequiresIndependentAuth]
     _gm = GeneralMethods()
 
     @validated_request(

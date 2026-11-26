@@ -11,6 +11,42 @@ from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 from tracer.utils.filters import ColType, FilterEngine
 
 
+@pytest.mark.parametrize(
+    "apply",
+    [
+        lambda rows: FilterEngine([]).apply_filters(rows),
+        FilterEngine.get_filter_conditions_for_system_metrics,
+        FilterEngine.get_filter_conditions_for_non_system_metrics,
+        FilterEngine.get_filter_conditions_for_voice_system_metrics,
+        FilterEngine.get_sql_filter_conditions_for_cte_system_metrics,
+        FilterEngine.get_sql_filter_conditions_for_cte_eval_metrics,
+        lambda rows: FilterEngine.get_sql_filter_conditions_for_system_metrics(
+            rows, "SELECT 1"
+        ),
+        lambda rows: FilterEngine.get_sql_filter_conditions_for_eval_metrics(
+            rows, "SELECT 1"
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "column_id", ["metric_field:2eb3795d-9234-4a0c-a5ca-2bcf56cf2291", "latency"]
+)
+def test_python_filter_engine_explicitly_rejects_metric_fields(apply, column_id):
+    rows = [
+        {
+            "column_id": column_id,
+            "filter_config": {
+                "col_type": "METRIC_FIELD",
+                "filter_type": "number",
+                "filter_op": "equals",
+                "filter_value": 0,
+            },
+        }
+    ]
+    with pytest.raises(ValueError, match="Python FilterEngine does not support"):
+        apply(rows)
+
+
 def test_packaged_filter_contract_matches_repo_contract():
     repo_contract = next(
         (
@@ -21,9 +57,7 @@ def test_packaged_filter_contract_matches_repo_contract():
         None,
     )
     packaged_contract = (
-        Path(__file__).resolve().parents[1]
-        / "contracts"
-        / "filter_contract.json"
+        Path(__file__).resolve().parents[1] / "contracts" / "filter_contract.json"
     )
 
     if repo_contract is None:
@@ -190,11 +224,18 @@ class TestClickHouseFilterOperatorMatrix:
 
         _assert_sql_shape(where)
         if filter_op == "contains":
-            assert "%alpha%" in params.values()
+            assert "positionUTF8(lowerUTF8(toString(model))" in where
+            assert "> 0" in where
         if filter_op == "starts_with":
-            assert "alpha%" in params.values()
+            assert "startsWith(lowerUTF8(toString(model))" in where
         if filter_op == "ends_with":
-            assert "%alpha" in params.values()
+            assert "endsWith(lowerUTF8(toString(model))" in where
+        if filter_op in {"contains", "starts_with", "ends_with"}:
+            # Wildcard characters are user data under the literal-text
+            # contract.  Prefix/suffix semantics live in the SQL function,
+            # never in a LIKE-shaped parameter.
+            assert "alpha" in params.values()
+            assert not {"%alpha%", "alpha%", "%alpha"}.intersection(params.values())
 
     @pytest.mark.parametrize("filter_op", sorted(FILTER_TYPE_ALLOWED_OPS["number"]))
     def test_voice_numeric_expression_metrics_accept_every_number_operator(

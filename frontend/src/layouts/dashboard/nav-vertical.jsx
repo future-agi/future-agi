@@ -57,11 +57,9 @@ export default function NavVertical({ openNav, onCloseNav }) {
     }
   }, [onCloseNav, openNav, pathname]);
 
-  // Sync settings sidebar visibility with URL on page reload
+  // Settings sidebar follows the URL, so a redirect out of settings closes it.
   useEffect(() => {
-    if (pathname.includes("/settings/")) {
-      setSettingOpen(true);
-    }
+    setSettingOpen(pathname.includes("/settings/"));
   }, [pathname, setSettingOpen]);
 
   // Auto-open gateway panel when on gateway routes, close when leaving
@@ -83,7 +81,8 @@ export default function NavVertical({ openNav, onCloseNav }) {
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
-        borderRight: (theme) => `solid 1px ${theme.palette.border.light}`,
+        borderRight: (theme) => `1px solid ${theme.palette.divider}`,
+        bgcolor: "background.default",
       }}
     >
       {/* Fixed Header */}
@@ -92,11 +91,11 @@ export default function NavVertical({ openNav, onCloseNav }) {
           flexShrink: 0,
           display: "flex",
           flexDirection: "column",
-          gap: "6px",
-          pt: "12px",
+          gap: "4px",
+          pt: "8px",
         }}
       >
-        <Logo sx={{ mb: "4px" }} />
+        <Logo sx={{ mb: 0 }} />
         <WorkspaceSwitcher />
         <NavSectionVertical
           data={navDashboardData}
@@ -135,8 +134,10 @@ export default function NavVertical({ openNav, onCloseNav }) {
       <Box
         sx={{
           flexShrink: 0,
-          bgcolor: "background.paper",
-          gap: 1,
+          bgcolor: "background.default",
+          borderTop: (theme) => `1px solid ${theme.palette.border.subtle}`,
+          pt: 1,
+          pb: 1,
         }}
       >
         <NavSectionVertical
@@ -159,7 +160,7 @@ export default function NavVertical({ openNav, onCloseNav }) {
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          bgcolor: "background.paper",
+          bgcolor: "background.default",
           transform: settingOpen ? "translateX(0)" : "translateX(100%)",
           visibility: settingOpen ? "visible" : "hidden",
           pointerEvents: settingOpen ? "auto" : "none",
@@ -280,7 +281,7 @@ export default function NavVertical({ openNav, onCloseNav }) {
         flexShrink: { xs: 0 },
         width: { xs: NAV.W_VERTICAL - 40 },
         position: "relative",
-        backgroundColor: "background.paper",
+        backgroundColor: "background.default",
         height: "100vh",
       }}
     >

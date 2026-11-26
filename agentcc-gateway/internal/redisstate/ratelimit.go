@@ -3,6 +3,7 @@ package redisstate
 import (
 	"context"
 	"log/slog"
+	"math"
 	"strconv"
 	"time"
 
@@ -20,7 +21,9 @@ import (
 // ARGV[2] = window size in seconds (int)
 // ARGV[3] = current unix timestamp (int)
 //
-// Returns {allowed (0/1), total_count, ttl_seconds}.
+// Returns {allowed (0/1), total_count, ttl_seconds, prev_count, curr_count}.
+// The two counts let a refusal say when the window reopens; the TTL is the
+// counter key's expiry (twice the window), not that.
 var slidingWindowScript = redis.NewScript(`
 local curr_key  = KEYS[1]
 local prev_key  = KEYS[2]
@@ -41,7 +44,7 @@ if total >= limit then
     -- Over limit — do NOT increment.
     local ttl = redis.call('TTL', curr_key)
     if ttl < 0 then ttl = window end
-    return {0, total, ttl}
+    return {0, total, ttl, prev, curr}
 end
 
 -- Under limit — increment current window.
@@ -54,7 +57,7 @@ total = math.floor(prev * weight) + curr
 local ttl = redis.call('TTL', curr_key)
 if ttl < 0 then ttl = window end
 
-return {1, total, ttl}
+return {1, total, ttl, prev, curr}
 `)
 
 const windowSeconds = 60 // 60-second windows for RPM
@@ -70,6 +73,8 @@ type RateLimiter struct {
 // LocalLimiter is satisfied by the in-memory ratelimit.RateLimiter.
 type LocalLimiter interface {
 	Allow(key string, limit int) (allowed bool, remaining int, resetSeconds int)
+	AllowTokens(key string, limit int) (allowed bool, remaining int, resetSeconds int)
+	AddTokens(key string, tokens int)
 	Stop()
 }
 
@@ -115,7 +120,7 @@ func (r *RateLimiter) Allow(key string, limit int) (bool, int, int) {
 		return r.local.Allow(key, limit)
 	}
 
-	if len(result) < 3 {
+	if len(result) < 5 {
 		return r.local.Allow(key, limit)
 	}
 
@@ -134,7 +139,60 @@ func (r *RateLimiter) Allow(key string, limit int) (bool, int, int) {
 	// Write-through: also update local limiter so it stays warm for fallback.
 	// We skip this for now — local will catch up on its own.
 
+	if !allowed {
+		// A refusal's reset is sent as Retry-After. The key's TTL is twice the
+		// window from its first request, so it told callers to wait up to
+		// 120 s for a window that reopens within about 60.
+		return false, remaining, secondsUntilAdmitted(result[3], result[4], limit, now)
+	}
 	return allowed, remaining, ttl
+}
+
+// slidingTotal is the script's weighted count at a second elapsed into a
+// window, computed with the same float arithmetic so the two agree exactly.
+func slidingTotal(prev, curr, elapsed int64) int64 {
+	weight := float64(windowSeconds-elapsed) / float64(windowSeconds)
+	return int64(math.Floor(float64(prev)*weight)) + curr
+}
+
+// secondsUntilAdmitted is how long a request refused at unix second now must
+// wait, with no other traffic, before the script admits it: later in this
+// window as the previous window's weighted share decays, or in the next one,
+// where this window's count becomes the previous one. A caller that waits
+// exactly this long, as Retry-After tells it to, is admitted; one second less
+// is refused.
+func secondsUntilAdmitted(prev, curr int64, limit int, now int64) int {
+	window := now / windowSeconds
+	for wait := int64(1); wait < 3*windowSeconds; wait++ {
+		at := now + wait
+		elapsed := at % windowSeconds
+		var total int64
+		switch at / windowSeconds {
+		case window:
+			total = slidingTotal(prev, curr, elapsed)
+		case window + 1:
+			total = slidingTotal(curr, 0, elapsed)
+		}
+		if total < int64(limit) {
+			return int(wait)
+		}
+	}
+	return 2 * windowSeconds
+}
+
+// AllowTokens and AddTokens hold the token budget in the local limiter, so a
+// token limit counts per pod rather than across the cluster. The sliding
+// window above is a Lua script this package cannot run in tests without a
+// Redis; a second one, counting a number that only the answering pod knows,
+// would ship untested. Per-pod matches how providers.max_concurrent already
+// behaves: with N replicas the effective limit is N times the configured one,
+// which the deployment docs state.
+func (r *RateLimiter) AllowTokens(key string, limit int) (bool, int, int) {
+	return r.local.AllowTokens(key, limit)
+}
+
+func (r *RateLimiter) AddTokens(key string, tokens int) {
+	r.local.AddTokens(key, tokens)
 }
 
 // Stop stops the local fallback limiter.

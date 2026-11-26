@@ -87,8 +87,8 @@ def test_upload_file_link_infers_file_extension_without_forcing_object_key(
         fake_upload_document,
     )
     monkeypatch.setattr(
-        "model_hub.views.prompt_template.requests.head",
-        lambda url, timeout: SimpleNamespace(
+        "model_hub.views.prompt_template.safe_fetch",
+        lambda url, method="GET", timeout=10: SimpleNamespace(
             headers={"Content-Type": "application/pdf; charset=utf-8"}
         ),
     )

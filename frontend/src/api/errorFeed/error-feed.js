@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 
 // Mirrors `DeepAnalysisResponse.status` on the backend
 // (futureagi/tracer/types/feed_types.py:DeepAnalysisResponse).
@@ -11,9 +12,16 @@ export const DEEP_ANALYSIS_STATUS = Object.freeze({
 });
 
 const KEYS = {
+  escalationSettings: (organizationId, workspaceId) => [
+    "errorFeed",
+    "escalationSettings",
+    organizationId,
+    workspaceId,
+  ],
   list: (params) => ["errorFeed", "list", params],
   stats: (params) => ["errorFeed", "stats", params],
   detail: (clusterId) => ["errorFeed", "detail", clusterId],
+  redirect: (clusterId) => ["errorFeed", "redirect", clusterId],
   overview: (clusterId) => ["errorFeed", "overview", clusterId],
   traces: (clusterId, params) => ["errorFeed", "traces", clusterId, params],
   trends: (clusterId, params) => ["errorFeed", "trends", clusterId, params],
@@ -28,6 +36,54 @@ const KEYS = {
   projects: ["errorFeed", "projects"],
 };
 
+const scopeHeaders = (organizationId, workspaceId) => ({
+  "X-Organization-Id": organizationId,
+  "X-Workspace-Id": workspaceId,
+});
+
+export const useErrorFeedEscalationSettings = ({
+  organizationId,
+  workspaceId,
+  enabled = true,
+}) =>
+  useQuery({
+    queryKey: KEYS.escalationSettings(organizationId, workspaceId),
+    queryFn: ({ signal }) =>
+      axios.get(endpoints.errorFeed.escalationSettings, {
+        headers: scopeHeaders(organizationId, workspaceId),
+        signal,
+      }),
+    select: (response) => response.data.result,
+    enabled: enabled && !!organizationId && !!workspaceId,
+    retry: false,
+    staleTime: 30_000,
+  });
+
+export const useUpdateErrorFeedEscalationSettings = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ organizationId, workspaceId, values, revision }) =>
+      axios.patch(
+        endpoints.errorFeed.escalationSettings,
+        { ...values, revision },
+        {
+          headers: scopeHeaders(organizationId, workspaceId),
+        },
+      ),
+    onSuccess: (response, variables) => {
+      queryClient.setQueryData(
+        KEYS.escalationSettings(
+          variables.organizationId,
+          variables.workspaceId,
+        ),
+        response,
+      );
+      queryClient.invalidateQueries({ queryKey: ["errorFeed", "list"] });
+      queryClient.invalidateQueries({ queryKey: ["errorFeed", "stats"] });
+    },
+  });
+};
+
 /**
  * Fetch the list of observe projects the user has access to.
  * Used to populate the Project filter dropdown.
@@ -36,19 +92,11 @@ export const useObserveProjectList = (options = {}) => {
   return useQuery({
     ...options,
     queryKey: KEYS.projects,
-    queryFn: () =>
-      axios.get(endpoints.project.projectObserveList, {
-        params: {
-          project_type: "observe",
-          page_number: 0,
-          page_size: 200,
-        },
-      }),
-    select: (res) => {
-      const rows = res?.data?.result?.table ?? [];
-      return rows.map((p) => ({ value: p.id, label: p.name }));
-    },
+    queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
+    select: (rows) =>
+      rows.map((project) => ({ value: project.id, label: project.name })),
     staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 };
 
@@ -61,7 +109,10 @@ export const useErrorFeedList = (params, options = {}) => {
   return useQuery({
     ...options,
     queryKey: KEYS.list(params),
-    queryFn: () => axios.get(endpoints.errorFeed.list, { params }),
+    // Thread React Query's AbortSignal so a list read in flight is cancelled
+    // when the page unmounts or params change (TH-8209).
+    queryFn: ({ signal }) =>
+      axios.get(endpoints.errorFeed.list, { params, signal }),
     select: (res) => res?.data?.result,
     staleTime: 30 * 1000,
     keepPreviousData: true,
@@ -97,6 +148,19 @@ export const useErrorFeedDetail = (clusterId, options = {}) => {
   });
 };
 
+export const useErrorFeedRedirect = (clusterId, options = {}) => {
+  const enabled = !!clusterId && (options.enabled ?? true);
+
+  return useQuery({
+    ...options,
+    queryKey: KEYS.redirect(clusterId),
+    queryFn: () => axios.get(endpoints.errorFeed.redirect(clusterId)),
+    select: (res) => res?.data?.result,
+    enabled,
+    retry: false,
+  });
+};
+
 /**
  * Overview tab: events over time, pattern summary, representative traces.
  */
@@ -109,6 +173,25 @@ export const useErrorFeedOverview = (clusterId, options = {}) => {
     queryFn: () => axios.get(endpoints.errorFeed.overview(clusterId)),
     select: (res) => res?.data?.result,
     enabled,
+  });
+};
+
+// The overview endpoint's `rep_limit` max, so one request covers the export.
+export const EXPORT_TRACE_LIMIT = 200;
+
+/**
+ * One-shot Overview read for the issue exports: every card up to the max for
+ * the traces CSV, or a smaller sample for the analysis. Kept apart from
+ * useErrorFeedOverview so an export payload never replaces the tab's cache.
+ */
+export const useExportErrorFeedTraces = () => {
+  return useMutation({
+    mutationFn: ({ clusterId, repLimit = EXPORT_TRACE_LIMIT }) =>
+      axios
+        .get(endpoints.errorFeed.overview(clusterId), {
+          params: { rep_limit: repLimit },
+        })
+        .then((res) => res?.data?.result),
   });
 };
 

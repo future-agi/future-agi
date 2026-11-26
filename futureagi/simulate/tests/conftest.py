@@ -3,7 +3,11 @@ Conftest for simulate app tests.
 Provides fixtures specific to simulate models and test data.
 """
 
+import os
+from pathlib import Path
+
 import pytest
+from django.core.cache import cache
 
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
@@ -13,9 +17,29 @@ from tfc.middleware.workspace_context import (
 TEST_INTEGRATION_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 
+@pytest.fixture
+def temporal_test_server_options():
+    """Use CI's verified binary; preserve the SDK default for local test runs."""
+    path = os.environ.get("TEMPORAL_TEST_SERVER")
+    if path is None:
+        return {}
+    if not Path(path).is_file() or not os.access(path, os.X_OK):
+        raise pytest.UsageError(
+            f"TEMPORAL_TEST_SERVER is not an executable file: {path!r}"
+        )
+    # The SDK guarantees that existing_path never attempts a download.
+    return {"test_server_existing_path": path}
+
+
 @pytest.fixture(autouse=True)
 def set_integration_encryption_key(settings):
     settings.INTEGRATION_ENCRYPTION_KEY = TEST_INTEGRATION_ENCRYPTION_KEY
+
+
+@pytest.fixture(autouse=True)
+def enable_harness_actors(settings):
+    """Actors on, as the tests of the actors feature expect; a test of the off switch turns it off itself."""
+    settings.HARNESS_ACTORS_ENABLED = True
 
 
 @pytest.fixture(autouse=True)
@@ -32,3 +56,33 @@ def set_workspace_context_fixture(request):
         clear_workspace_context()
     else:
         yield
+
+
+@pytest.fixture
+def readiness_on(settings):
+    """Versioning and certifying on, with a clean cache: what run readiness reads. Opted in per module."""
+    settings.HARNESS_VERSIONING_ENABLED = True
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = True
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
+    cache.clear()
+
+
+@pytest.fixture
+def storage(monkeypatch):
+    """Object storage held in memory; a module that defines its own keeps it."""
+    from simulate.tests.test_harness_versioning_backfill import _RealisticStorage
+    from tfc.utils import storage_client
+
+    fake = _RealisticStorage()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
+
+
+@pytest.fixture
+def moves_without_validation(monkeypatch):
+    """Default-agent moves happen at once, as where a pairing cannot be validated. For a
+    single test of that path only: with certifying on, a move waits for validation."""
+    monkeypatch.setattr(
+        "simulate.services.harness_versioning.validation.can_validate",
+        lambda _environment, _agent_version_id: False,
+    )

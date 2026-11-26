@@ -14,6 +14,7 @@ import { useAudioPlayback } from "./context-provider/useAudioPlayback";
 import { getRandomId } from "src/utils/utils";
 import logger from "src/utils/logger";
 import { ShowComponent } from "../show";
+import { palette } from "src/theme/palette";
 
 const CustomAudioPlayer = ({
   audioData,
@@ -199,7 +200,8 @@ const CustomAudioPlayer = ({
             backend: "MediaElement",
             normalize: true,
             progressColor:
-              activeColor || getCSSVar("--text-primary", "#201e25"),
+              activeColor ||
+              getCSSVar("--text-primary", palette("light").text.primary),
             interact: true,
             renderFunction: (channels, ctx) => {
               const { width, height } = ctx.canvas;
@@ -209,7 +211,8 @@ const CustomAudioPlayer = ({
 
               ctx.clearRect(0, 0, width, height);
               ctx.fillStyle =
-                inactiveColor || getCSSVar("--border-default", "#e1dfec");
+                inactiveColor ||
+                getCSSVar("--border-default", palette("light").border.default);
               ctx.translate(0, height / 2);
 
               for (let x = 0; x < width; x += step) {
@@ -368,12 +371,12 @@ const CustomAudioPlayer = ({
       onMouseDown={(event) => event.stopPropagation()}
     >
       {showFileName && (
-        <Typography sx={{ fontSize: "14px", ml: "5px", color: "text.primary" }}>
+        <Typography sx={{ fontSize: "12px", ml: "5px", color: "text.primary" }}>
           {audioData?.fileName}
         </Typography>
       )}
       <ShowComponent condition={isError}>
-        <Typography typography="s1" color="red.500">
+        <Typography typography="s1" color="status.danger.fg">
           {isError?.message}
         </Typography>
       </ShowComponent>
@@ -385,10 +388,9 @@ const CustomAudioPlayer = ({
               event.stopPropagation();
               handlePlayPause();
             }}
-            sx={{ padding: "8px" }}
           >
             <Icon
-              icon={isPlaying ? "lineicons:pause" : "akar-icons:play"}
+              icon={isPlaying ? "solar:pause-linear" : "solar:play-linear"}
               width={20}
               height={20}
               color="var(--text-primary)"
@@ -459,10 +461,13 @@ const CustomAudioPlayer = ({
               event.stopPropagation();
               handleMute();
             }}
-            sx={{ padding: "8px" }}
           >
             <Icon
-              icon={isMuted ? "lucide:volume-x" : "lucide:volume-2"}
+              icon={
+                isMuted
+                  ? "solar:volume-cross-linear"
+                  : "solar:volume-loud-linear"
+              }
               width={22}
               height={22}
               color="var(--text-primary)"

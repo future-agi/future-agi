@@ -10,6 +10,8 @@ import pytest
 from django.conf import settings
 from django.test import override_settings
 
+from conftest import _open_ch_test_native_client
+
 _CH_TABLES_TO_TRUNCATE = [
     "spans",
     "traces",
@@ -56,33 +58,32 @@ class _CHDriverAdapter:
 
 @pytest.fixture(scope="session")
 def ch_client():
-    """Client to the test ClickHouse container (native protocol, port 19000).
+    """Client to the explicitly named test ClickHouse sidecar.
 
     The wrapper exposes a ``.command()`` method so the rest of the suite can
-    pretend it's talking to the clickhouse_connect HTTP client.
+    pretend it's talking to the clickhouse_connect HTTP client. The shared
+    opener refuses unnamed and forwarded general ports before connecting, and
+    verifies the sidecar replica macro before this fixture can issue DDL.
     """
-    try:
-        from clickhouse_driver import Client
-    except ImportError:
-        pytest.skip("clickhouse-driver not installed")
     ch = settings.CLICKHOUSE
+    native = _open_ch_test_native_client(
+        owned_database=ch["CH_DATABASE"],
+        user=ch.get("CH_USERNAME", "default"),
+        password=ch.get("CH_PASSWORD", ""),
+    )
     try:
-        native = Client(
-            host=ch.get("CH_HOST", "localhost"),
-            port=int(ch.get("CH_PORT", "19000")),
-            user=ch.get("CH_USERNAME", "default"),
-            password=ch.get("CH_PASSWORD", ""),
-        )
-        native.execute("SELECT 1")
-        return _CHDriverAdapter(native)
-    except Exception as exc:
-        pytest.skip(f"ClickHouse not reachable for integration tests: {exc}")
+        yield _CHDriverAdapter(native)
+    finally:
+        native.disconnect_connection()
 
 
 @pytest.fixture(scope="session")
 def ch_schema(ch_client):
     """Apply schema DDL once per session. Targets the database in settings.CLICKHOUSE['CH_DATABASE']."""
     from tracer.services.clickhouse.schema import get_all_schema_ddl
+    from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+        with_dictionary_credentials,
+    )
 
     db = settings.CLICKHOUSE["CH_DATABASE"]
     ch_client.command(f"CREATE DATABASE IF NOT EXISTS {db}")
@@ -92,13 +93,26 @@ def ch_schema(ch_client):
     except Exception:
         pass
     for _name, ddl in get_all_schema_ddl():
-        rewritten = ddl.replace("futureagi.", f"{db}.")
+        rewritten = with_dictionary_credentials(
+            ddl.replace("futureagi.", f"{db}."),
+            settings.CLICKHOUSE.get("CH_USERNAME", "default"),
+            settings.CLICKHOUSE.get("CH_PASSWORD", ""),
+        )
         try:
             ch_client.command(rewritten)
         except Exception:
             # idempotent — table/view already exists from a previous session,
             # or DDL refers to dependencies that don't materialize here.
             pass
+    # Test-only parity with the deployed direct-write Score table. The legacy
+    # bootstrap DDL intentionally remains untouched by this release, while the
+    # US/EU runtime tables already carry this tenant fence. Integration queries
+    # must compile against that real shape or project-scoped Score regressions
+    # are hidden behind a test-only Code 47.
+    ch_client.command(
+        f"ALTER TABLE {db}.model_hub_score "
+        "ADD COLUMN IF NOT EXISTS tracer_project_id UUID"
+    )
     # The eval filter subqueries hardcode ``tracer_eval_logger`` with the v2
     # column shape (``is_deleted``), but the legacy DDL above and the django
     # boot hook create that name CDC-shaped. Reshape it to a structural clone

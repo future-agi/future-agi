@@ -6,10 +6,10 @@ const EditExperimentCopy = ({ name, type }) => {
   return (
     <Box
       sx={{
-        backgroundColor: "blue.o5",
+        backgroundColor: "status.info.bg",
         border: "1px solid",
-        borderColor: "blue.o10",
-        borderRadius: 0.25,
+        borderColor: "status.info.border",
+        borderRadius: "4px",
         padding: 1.5,
         display: "flex",
         alignItems: "center",
@@ -42,7 +42,7 @@ const EditExperimentCopy = ({ name, type }) => {
       <Divider
         orientation="vertical"
         flexItem
-        sx={{ mx: 2, borderColor: "blue.o10" }}
+        sx={{ mx: 2, borderColor: "status.info.border" }}
       />
       {/* Experiment Type - Text Only */}
       <Box flex={1}>

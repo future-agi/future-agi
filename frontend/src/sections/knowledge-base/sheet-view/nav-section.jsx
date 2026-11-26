@@ -69,16 +69,13 @@ export default function NavSection({
             display: "flex",
             alignItems: "center",
             flexDirection: "row",
-            py: theme.spacing(0.5),
-            px: theme.spacing(1.5),
-            borderRadius: "4px",
             "& .MuiButton-startIcon": {
               marginRight: "4px",
             },
           }}
           startIcon={
             <Iconify
-              icon="octicon:chevron-left-24"
+              icon="solar:alt-arrow-left-linear"
               width="16px"
               height="16px"
               sx={{ color: "text.primary" }}

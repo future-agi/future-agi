@@ -67,9 +67,12 @@ class TestArtifactForUrlType:
 
 class TestIsAuthenticatedDownload:
     def test_all_args_and_vapi_provider_returns_true(self):
-        assert VapiRecordingService.is_authenticated_download(
-            "vapi", "k", "cid", "mono-recording"
-        ) is True
+        assert (
+            VapiRecordingService.is_authenticated_download(
+                "vapi", "k", "cid", "mono-recording"
+            )
+            is True
+        )
 
     @pytest.mark.parametrize(
         "provider,api_key,call_id,artifact",
@@ -83,9 +86,12 @@ class TestIsAuthenticatedDownload:
         ],
     )
     def test_missing_or_wrong_returns_false(self, provider, api_key, call_id, artifact):
-        assert VapiRecordingService.is_authenticated_download(
-            provider, api_key, call_id, artifact
-        ) is False
+        assert (
+            VapiRecordingService.is_authenticated_download(
+                provider, api_key, call_id, artifact
+            )
+            is False
+        )
 
 
 class TestIsFagiS3Url:
@@ -115,7 +121,11 @@ class _FakeHttpResponse:
 
     def raise_for_status(self):
         if 400 <= self.status_code < 600:
-            raise httpx.HTTPStatusError("http error", request=Mock(), response=Mock(status_code=self.status_code))
+            raise httpx.HTTPStatusError(
+                "http error",
+                request=Mock(),
+                response=Mock(status_code=self.status_code),
+            )
 
     def __enter__(self):
         return self
@@ -135,6 +145,7 @@ class _FakeHttpResponse:
     async def aiter_bytes(self, chunk_size=None):
         yield self.content
 
+
 class _FakeAsyncClient:
     def __init__(self, response, follow_redirects=True, timeout=None):
         self._response = response
@@ -150,6 +161,7 @@ class _FakeAsyncClient:
 
     def stream(self, method, url, headers=None):
         return self._response
+
 
 class _FakeSyncClient:
     def __init__(self, response, follow_redirects=True, timeout=None):
@@ -167,11 +179,15 @@ class _FakeSyncClient:
     def stream(self, method, url, headers=None):
         return self._response
 
+
 class TestDownloadArtifactAsync:
     @pytest.mark.asyncio
     async def test_returns_bytes_on_200(self):
         response = _FakeHttpResponse(200, content=b"mp3-bytes")
-        with patch("tracer.utils.vapi_recording.httpx.AsyncClient", return_value=_FakeAsyncClient(response)):
+        with patch(
+            "tracer.utils.vapi_recording.httpx.AsyncClient",
+            return_value=_FakeAsyncClient(response),
+        ):
             out = await VapiRecordingService.download_artifact_async(
                 "cid", "mono-recording", "key"
             )
@@ -181,7 +197,10 @@ class TestDownloadArtifactAsync:
     @pytest.mark.asyncio
     async def test_raises_auth_error(self, status):
         response = _FakeHttpResponse(status)
-        with patch("tracer.utils.vapi_recording.httpx.AsyncClient", return_value=_FakeAsyncClient(response)):
+        with patch(
+            "tracer.utils.vapi_recording.httpx.AsyncClient",
+            return_value=_FakeAsyncClient(response),
+        ):
             with pytest.raises(VapiAuthError):
                 await VapiRecordingService.download_artifact_async(
                     "cid", "mono-recording", "key"
@@ -190,7 +209,10 @@ class TestDownloadArtifactAsync:
     @pytest.mark.asyncio
     async def test_raises_not_ready_on_404(self):
         response = _FakeHttpResponse(404)
-        with patch("tracer.utils.vapi_recording.httpx.AsyncClient", return_value=_FakeAsyncClient(response)):
+        with patch(
+            "tracer.utils.vapi_recording.httpx.AsyncClient",
+            return_value=_FakeAsyncClient(response),
+        ):
             with pytest.raises(VapiArtifactNotReadyError):
                 await VapiRecordingService.download_artifact_async(
                     "cid", "mono-recording", "key"
@@ -199,7 +221,10 @@ class TestDownloadArtifactAsync:
     @pytest.mark.asyncio
     async def test_raises_rate_limit_on_429(self):
         response = _FakeHttpResponse(429)
-        with patch("tracer.utils.vapi_recording.httpx.AsyncClient", return_value=_FakeAsyncClient(response)):
+        with patch(
+            "tracer.utils.vapi_recording.httpx.AsyncClient",
+            return_value=_FakeAsyncClient(response),
+        ):
             with pytest.raises(VapiRateLimitError):
                 await VapiRecordingService.download_artifact_async(
                     "cid", "mono-recording", "key"
@@ -208,12 +233,16 @@ class TestDownloadArtifactAsync:
     @pytest.mark.asyncio
     async def test_missing_call_id_raises(self):
         with pytest.raises(ValueError):
-            await VapiRecordingService.download_artifact_async("", "mono-recording", "key")
+            await VapiRecordingService.download_artifact_async(
+                "", "mono-recording", "key"
+            )
 
     @pytest.mark.asyncio
     async def test_missing_api_key_raises(self):
         with pytest.raises(ValueError):
-            await VapiRecordingService.download_artifact_async("cid", "mono-recording", "")
+            await VapiRecordingService.download_artifact_async(
+                "cid", "mono-recording", ""
+            )
 
     @pytest.mark.asyncio
     async def test_stops_streaming_when_authenticated_artifact_exceeds_limit(
@@ -227,25 +256,47 @@ class TestDownloadArtifactAsync:
 
         response.aiter_bytes = oversized_chunks
         monkeypatch.setattr("tracer.utils.vapi_recording.MAX_AUDIO_FILE_SIZE", 4)
-        with patch("tracer.utils.vapi_recording.httpx.AsyncClient", return_value=_FakeAsyncClient(response)):
+        with patch(
+            "tracer.utils.vapi_recording.httpx.AsyncClient",
+            return_value=_FakeAsyncClient(response),
+        ):
             with pytest.raises(ValueError, match="maximum size"):
                 await VapiRecordingService.download_artifact_async(
                     "cid", "mono-recording", "key"
                 )
 
+
 class TestDownloadArtifactSync:
     def test_returns_bytes_on_200(self):
         response = _FakeHttpResponse(200, content=b"mp3-bytes")
-        with patch("tracer.utils.vapi_recording.httpx.Client", return_value=_FakeSyncClient(response)):
-            out = VapiRecordingService.download_artifact_sync("cid", "mono-recording", "key")
+        with patch(
+            "tracer.utils.vapi_recording.httpx.Client",
+            return_value=_FakeSyncClient(response),
+        ):
+            out = VapiRecordingService.download_artifact_sync(
+                "cid", "mono-recording", "key"
+            )
         assert out == b"mp3-bytes"
 
-    @pytest.mark.parametrize("status,exc_type", [(401, VapiAuthError), (403, VapiAuthError), (404, VapiArtifactNotReadyError), (429, VapiRateLimitError)])
+    @pytest.mark.parametrize(
+        "status,exc_type",
+        [
+            (401, VapiAuthError),
+            (403, VapiAuthError),
+            (404, VapiArtifactNotReadyError),
+            (429, VapiRateLimitError),
+        ],
+    )
     def test_raises_typed_error(self, status, exc_type):
         response = _FakeHttpResponse(status)
-        with patch("tracer.utils.vapi_recording.httpx.Client", return_value=_FakeSyncClient(response)):
+        with patch(
+            "tracer.utils.vapi_recording.httpx.Client",
+            return_value=_FakeSyncClient(response),
+        ):
             with pytest.raises(exc_type):
-                VapiRecordingService.download_artifact_sync("cid", "mono-recording", "key")
+                VapiRecordingService.download_artifact_sync(
+                    "cid", "mono-recording", "key"
+                )
 
     def test_stops_streaming_when_authenticated_artifact_exceeds_limit(
         self, monkeypatch
@@ -253,9 +304,15 @@ class TestDownloadArtifactSync:
         response = _FakeHttpResponse(200)
         response.iter_bytes = lambda chunk_size=None: iter([b"1234", b"5"])
         monkeypatch.setattr("tracer.utils.vapi_recording.MAX_AUDIO_FILE_SIZE", 4)
-        with patch("tracer.utils.vapi_recording.httpx.Client", return_value=_FakeSyncClient(response)):
+        with patch(
+            "tracer.utils.vapi_recording.httpx.Client",
+            return_value=_FakeSyncClient(response),
+        ):
             with pytest.raises(ValueError, match="maximum size"):
-                VapiRecordingService.download_artifact_sync("cid", "mono-recording", "key")
+                VapiRecordingService.download_artifact_sync(
+                    "cid", "mono-recording", "key"
+                )
+
 
 class TestParseCallLogContent:
     def _gzip(self, lines):
@@ -266,10 +323,12 @@ class TestParseCallLogContent:
         return buf.getvalue()
 
     def test_parses_gzipped_jsonl(self):
-        content = self._gzip([
-            json.dumps({"severity": "info", "body": "hi"}),
-            json.dumps({"severity": "warn", "body": "yo"}),
-        ])
+        content = self._gzip(
+            [
+                json.dumps({"severity": "info", "body": "hi"}),
+                json.dumps({"severity": "warn", "body": "yo"}),
+            ]
+        )
         entries = VapiRecordingService.parse_call_log_content(content)
         assert len(entries) == 2
 
@@ -295,8 +354,12 @@ class TestFetchCallLogsContentTiers:
 
     def test_tier1_success_returns_bytes_without_touching_tier2(self):
         gz_bytes = self._gzip()
-        response = _FakeHttpResponse(200, content=gz_bytes, headers={"content-type": "application/gzip"})
-        with patch("tracer.utils.vapi_recording.requests.get", return_value=response) as mock_get:
+        response = _FakeHttpResponse(
+            200, content=gz_bytes, headers={"content-type": "application/gzip"}
+        )
+        with patch(
+            "tracer.utils.vapi_recording.requests.get", return_value=response
+        ) as mock_get:
             out = VapiRecordingService._fetch_call_logs_content(
                 call_id="cid",
                 api_key="key",
@@ -312,7 +375,9 @@ class TestFetchCallLogsContentTiers:
         gz_bytes = self._gzip()
         tier1 = _FakeHttpResponse(401)
         tier2 = _FakeHttpResponse(200, content=gz_bytes)
-        with patch("tracer.utils.vapi_recording.requests.get", side_effect=[tier1, tier2]) as mock_get:
+        with patch(
+            "tracer.utils.vapi_recording.requests.get", side_effect=[tier1, tier2]
+        ) as mock_get:
             out = VapiRecordingService._fetch_call_logs_content(
                 call_id="cid",
                 api_key="key",
@@ -342,7 +407,9 @@ class TestFetchCallLogsContentTiers:
 
     def test_no_tier2_when_legacy_url_missing(self):
         tier1 = _FakeHttpResponse(401)
-        with patch("tracer.utils.vapi_recording.requests.get", return_value=tier1) as mock_get:
+        with patch(
+            "tracer.utils.vapi_recording.requests.get", return_value=tier1
+        ) as mock_get:
             out = VapiRecordingService._fetch_call_logs_content(
                 call_id="cid",
                 api_key="key",
@@ -356,7 +423,9 @@ class TestFetchCallLogsContentTiers:
     def test_skips_tier1_when_missing_args_and_uses_tier2(self):
         gz_bytes = self._gzip()
         tier2 = _FakeHttpResponse(200, content=gz_bytes)
-        with patch("tracer.utils.vapi_recording.requests.get", return_value=tier2) as mock_get:
+        with patch(
+            "tracer.utils.vapi_recording.requests.get", return_value=tier2
+        ) as mock_get:
             out = VapiRecordingService._fetch_call_logs_content(
                 call_id=None,
                 api_key=None,
@@ -413,14 +482,16 @@ class TestFetchAndParseCallLogs:
         def capture(event, **kwargs):
             events.append((event, kwargs))
 
-        with patch("tracer.utils.vapi_recording.logger.info", side_effect=capture), patch(
-            "tracer.utils.vapi_recording.requests.get", return_value=response
+        with (
+            patch("tracer.utils.vapi_recording.logger.info", side_effect=capture),
+            patch("tracer.utils.vapi_recording.requests.get", return_value=response),
         ):
             VapiRecordingService.fetch_and_parse_call_logs(
                 call_id=None, api_key=None, legacy_url=signed_url
             )
 
         assert signed_url not in str(events)
+
 
 class TestMirrorS3UrlToConsumerFields:
     """DB-mirror side-effects are patched away; behaviour tested is the returned attrs dict."""
@@ -448,13 +519,19 @@ class TestMirrorS3UrlToConsumerFields:
 
     def test_does_not_clobber_existing_s3(self):
         with self._patch_db_mirrors():
-            attrs = {"recording_url": "https://fi-customer-data.s3.amazonaws.com/prev.mp3"}
+            attrs = {
+                "recording_url": "https://fi-customer-data.s3.amazonaws.com/prev.mp3"
+            }
             out = VapiRecordingService.mirror_s3_url_to_consumer_fields(
                 attrs=attrs,
                 call_id="cid",
-                s3_url_by_url_type={"mono_combined": "https://new.s3.amazonaws.com/new.mp3"},
+                s3_url_by_url_type={
+                    "mono_combined": "https://new.s3.amazonaws.com/new.mp3"
+                },
             )
-        assert out["recording_url"] == "https://fi-customer-data.s3.amazonaws.com/prev.mp3"
+        assert (
+            out["recording_url"] == "https://fi-customer-data.s3.amazonaws.com/prev.mp3"
+        )
 
     def test_overwrites_raw_vapi_alias(self):
         with self._patch_db_mirrors():
@@ -462,7 +539,9 @@ class TestMirrorS3UrlToConsumerFields:
             out = VapiRecordingService.mirror_s3_url_to_consumer_fields(
                 attrs=attrs,
                 call_id="cid",
-                s3_url_by_url_type={"mono_combined": "https://new.s3.amazonaws.com/new.mp3"},
+                s3_url_by_url_type={
+                    "mono_combined": "https://new.s3.amazonaws.com/new.mp3"
+                },
             )
         assert out["recording_url"] == "https://new.s3.amazonaws.com/new.mp3"
 
@@ -472,7 +551,9 @@ class TestMirrorS3UrlToConsumerFields:
             out = VapiRecordingService.mirror_s3_url_to_consumer_fields(
                 attrs=attrs,
                 call_id="cid",
-                s3_url_by_url_type={"mono_combined": "https://x.s3.amazonaws.com/m.mp3"},
+                s3_url_by_url_type={
+                    "mono_combined": "https://x.s3.amazonaws.com/m.mp3"
+                },
             )
         assert out is not attrs
         assert attrs == {"other": "keep"}
@@ -487,19 +568,29 @@ class TestMirrorS3UrlToConsumerFields:
         assert isinstance(out, dict)
 
     def test_invokes_db_mirror_methods_when_call_id_present(self):
-        with patch.object(VapiRecordingService, "_mirror_to_call_execution") as ce, \
-             patch.object(VapiRecordingService, "_mirror_to_call_execution_snapshot") as snap:
+        with (
+            patch.object(VapiRecordingService, "_mirror_to_call_execution") as ce,
+            patch.object(
+                VapiRecordingService, "_mirror_to_call_execution_snapshot"
+            ) as snap,
+        ):
             VapiRecordingService.mirror_s3_url_to_consumer_fields(
                 attrs={},
                 call_id="cid",
-                s3_url_by_url_type={"mono_combined": "https://x.s3.amazonaws.com/m.mp3"},
+                s3_url_by_url_type={
+                    "mono_combined": "https://x.s3.amazonaws.com/m.mp3"
+                },
             )
         ce.assert_called_once()
         snap.assert_called_once()
 
     def test_does_not_invoke_db_mirror_when_no_urls(self):
-        with patch.object(VapiRecordingService, "_mirror_to_call_execution") as ce, \
-             patch.object(VapiRecordingService, "_mirror_to_call_execution_snapshot") as snap:
+        with (
+            patch.object(VapiRecordingService, "_mirror_to_call_execution") as ce,
+            patch.object(
+                VapiRecordingService, "_mirror_to_call_execution_snapshot"
+            ) as snap,
+        ):
             VapiRecordingService.mirror_s3_url_to_consumer_fields(
                 attrs={},
                 call_id="cid",
@@ -518,7 +609,11 @@ class TestMirrorS3UrlToConsumerFields:
 
         with patch.dict(
             sys.modules,
-            {"simulate.models.test_execution": SimpleNamespace(CallExecutionSnapshot=snapshot_model)},
+            {
+                "simulate.models.test_execution": SimpleNamespace(
+                    CallExecutionSnapshot=snapshot_model
+                )
+            },
         ):
             VapiRecordingService._mirror_to_call_execution_snapshot(
                 call_id="cid",
@@ -534,11 +629,14 @@ class TestMirrorS3UrlToConsumerFields:
         first.save.assert_called_once_with(update_fields=["recording_url"])
         second.save.assert_called_once_with(update_fields=["recording_url"])
 
+
 class TestNormaliseCallLogEntry:
     """Only verify shape stability — the exact fields depend on Vapi's payload."""
 
     def test_returns_dict(self):
-        out = VapiRecordingService._normalise_call_log_entry({"severity": "info", "body": "hi"})
+        out = VapiRecordingService._normalise_call_log_entry(
+            {"severity": "info", "body": "hi"}
+        )
         assert isinstance(out, dict)
 
     def test_handles_raw_line_wrapper(self):
@@ -558,22 +656,34 @@ class TestApiKeyFromAgentDefinition:
 
     def test_prefers_versioned_snapshot(self):
         agent = self._agent(snapshot={"api_key": "snap"}, plaintext="plain")
-        with patch("simulate.services.agent_definition.resolve_api_key_for_version", return_value="snap"):
+        with patch(
+            "simulate.services.agent_definition.resolve_api_key_for_version",
+            return_value="snap",
+        ):
             assert VapiRecordingService._api_key_from_agent_definition(agent) == "snap"
 
     def test_falls_back_to_plaintext_when_snapshot_missing(self):
         agent = self._agent(snapshot={}, plaintext="plain")
-        with patch("simulate.services.agent_definition.resolve_api_key_for_version", return_value="plain"):
+        with patch(
+            "simulate.services.agent_definition.resolve_api_key_for_version",
+            return_value="plain",
+        ):
             assert VapiRecordingService._api_key_from_agent_definition(agent) == "plain"
 
     def test_falls_back_when_no_latest_version(self):
         agent = self._agent(has_latest_version=False, plaintext="plain")
-        with patch("simulate.services.agent_definition.resolve_api_key_for_version", return_value="plain"):
+        with patch(
+            "simulate.services.agent_definition.resolve_api_key_for_version",
+            return_value="plain",
+        ):
             assert VapiRecordingService._api_key_from_agent_definition(agent) == "plain"
 
     def test_returns_none_when_all_absent(self):
         agent = self._agent(snapshot={}, plaintext=None)
-        with patch("simulate.services.agent_definition.resolve_api_key_for_version", return_value=None):
+        with patch(
+            "simulate.services.agent_definition.resolve_api_key_for_version",
+            return_value=None,
+        ):
             assert VapiRecordingService._api_key_from_agent_definition(agent) is None
 
 
@@ -584,20 +694,36 @@ class TestGetApiKeyForProject:
         assert VapiRecordingService.get_api_key_for_project(None) is None
 
     def test_returns_provider_row_key_when_present(self):
-        agent = MagicMock(latest_version=MagicMock(configuration_snapshot={"api_key": "abc"}), api_key="ignored")
+        agent = MagicMock(
+            latest_version=MagicMock(configuration_snapshot={"api_key": "abc"}),
+            api_key="ignored",
+        )
         provider = MagicMock(agent_definition=agent)
-        with patch.object(
-            VapiRecordingService, "_get_vapi_provider_for_project", return_value=provider
-        ), patch(
-            "simulate.services.agent_definition.resolve_api_key_for_version", return_value="abc"
+        with (
+            patch.object(
+                VapiRecordingService,
+                "_get_vapi_provider_for_project",
+                return_value=provider,
+            ),
+            patch(
+                "simulate.services.agent_definition.resolve_api_key_for_version",
+                return_value="abc",
+            ),
         ):
             assert VapiRecordingService.get_api_key_for_project("proj-id") == "abc"
 
     def test_falls_through_to_any_agent_on_project(self):
-        with patch.object(
-            VapiRecordingService, "_get_vapi_provider_for_project", return_value=None
-        ), patch.object(
-            VapiRecordingService, "_api_key_from_any_agent_on_project", return_value="xyz"
+        with (
+            patch.object(
+                VapiRecordingService,
+                "_get_vapi_provider_for_project",
+                return_value=None,
+            ),
+            patch.object(
+                VapiRecordingService,
+                "_api_key_from_any_agent_on_project",
+                return_value="xyz",
+            ),
         ):
             assert VapiRecordingService.get_api_key_for_project("proj-id") == "xyz"
 
@@ -615,4 +741,6 @@ class TestGetApiKeyForAgentDefinition:
         assert VapiRecordingService.get_api_key_for_agent_definition(None) is None
 
     def test_returns_none_for_invalid_uuid_string(self):
-        assert VapiRecordingService.get_api_key_for_agent_definition("not-a-uuid") is None
+        assert (
+            VapiRecordingService.get_api_key_for_agent_definition("not-a-uuid") is None
+        )

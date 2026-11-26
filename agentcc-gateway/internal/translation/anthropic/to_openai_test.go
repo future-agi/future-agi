@@ -10,6 +10,26 @@ import (
 
 var tr = anthropic.New()
 
+func TestRequestToCanonical_PreservesToolPolicy(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-20250514","max_tokens":64,"messages":[{"role":"user","content":"hi"}],` +
+		`"tool_choice":{"type":"tool","name":"tool_b","disable_parallel_tool_use":true},` +
+		`"tools":[{"name":"tool_a","allowed_callers":["code_execution_20260120"],"input_schema":{"type":"object"}},` +
+		`{"name":"tool_b","input_schema":{"type":"object"}}]}`)
+	req, drops, err := tr.RequestToCanonical(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.ParallelToolCalls == nil || *req.ParallelToolCalls {
+		t.Fatalf("parallel_tool_calls = %v, want explicit false", req.ParallelToolCalls)
+	}
+	if len(req.Tools) != 2 || len(req.Tools[0].AllowedCallers) != 1 || req.Tools[0].AllowedCallers[0] != "code_execution_20260120" {
+		t.Fatalf("tools lost allowed_callers: %+v", req.Tools)
+	}
+	if len(drops) != 0 {
+		t.Fatalf("policy was reported as dropped: %v", drops)
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 func mustJSON(v interface{}) string {
@@ -335,42 +355,6 @@ func TestRequestToCanonical_VisionURL(t *testing.T) {
 	content := string(req.Messages[0].Content)
 	if !strings.Contains(content, "https://example.com/image.jpg") {
 		t.Errorf("expected URL to pass through, got: %s", content)
-	}
-}
-
-// ─── Thinking config → Extra ──────────────────────────────────────────────────
-
-func TestRequestToCanonical_ThinkingConfig(t *testing.T) {
-	body := []byte(`{
-		"model": "claude-3-7-sonnet-20250219",
-		"max_tokens": 16000,
-		"thinking": {"type":"enabled","budget_tokens":10000},
-		"messages": [{"role":"user","content":"Solve this hard math problem."}]
-	}`)
-
-	req, drops, err := tr.RequestToCanonical(body)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(drops) != 0 {
-		t.Errorf("unexpected drops: %v", drops)
-	}
-	if req.Extra == nil {
-		t.Fatal("Extra map is nil")
-	}
-	thinkingRaw, ok := req.Extra["anthropic_thinking_config"]
-	if !ok {
-		t.Fatal("anthropic_thinking_config not found in Extra")
-	}
-	var cfg map[string]interface{}
-	if err := json.Unmarshal(thinkingRaw, &cfg); err != nil {
-		t.Fatalf("cannot unmarshal thinking config: %v", err)
-	}
-	if cfg["type"] != "enabled" {
-		t.Errorf("expected type=enabled, got %v", cfg["type"])
-	}
-	if cfg["budget_tokens"].(float64) != 10000 {
-		t.Errorf("expected budget_tokens=10000, got %v", cfg["budget_tokens"])
 	}
 }
 

@@ -15,6 +15,7 @@ type Router struct {
 	modelTargets    map[string][]RoutingTarget // model → routing targets
 	defaultStrategy Strategy
 	latencyTracker  *LatencyTracker
+	healthMonitor   *HealthMonitor
 }
 
 // RoutingResult is returned by Select with the chosen target and strategy name.
@@ -26,16 +27,31 @@ type RoutingResult struct {
 // NewRouter creates a router from config.
 // providerIDs is the set of valid provider IDs for validation.
 // modelProviders maps model name → list of provider IDs that serve it.
-func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProviders map[string][]string) (*Router, error) {
-	strategy, err := NewStrategy(cfg.DefaultStrategy)
-	if err != nil {
-		return nil, fmt.Errorf("creating default strategy: %w", err)
+func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProviders map[string][]string, existingHealth ...*HealthMonitor) (*Router, error) {
+	var strategy Strategy
+	if cfg.DefaultStrategy != "adaptive" {
+		var err error
+		strategy, err = NewStrategy(cfg.DefaultStrategy)
+		if err != nil {
+			return nil, fmt.Errorf("creating default strategy: %w", err)
+		}
+	}
+
+	tracker := NewLatencyTracker(0.3)
+	health := NewHealthMonitor(tracker, nil)
+	if len(existingHealth) > 0 && existingHealth[0] != nil {
+		health = existingHealth[0]
+		if health.tracker == nil {
+			return nil, fmt.Errorf("existing health monitor has no latency tracker")
+		}
+		tracker = health.tracker
 	}
 
 	r := &Router{
 		modelTargets:    make(map[string][]RoutingTarget),
 		defaultStrategy: strategy,
-		latencyTracker:  NewLatencyTracker(0.3),
+		latencyTracker:  tracker,
+		healthMonitor:   health,
 	}
 
 	// Build targets from explicit config.
@@ -75,6 +91,13 @@ func NewRouter(cfg config.RoutingConfig, providerIDs map[string]bool, modelProvi
 		}
 	}
 
+	// Initialize adaptive routing only after all target validation has passed:
+	// its constructor starts a background weight-update loop.
+	if cfg.DefaultStrategy == "adaptive" {
+		strategy = NewAdaptiveStrategy(cfg.Adaptive, tracker, health)
+		r.defaultStrategy = strategy
+	}
+
 	slog.Info("router initialized",
 		"strategy", strategy.Name(),
 		"models_with_routing", len(r.modelTargets),
@@ -93,22 +116,33 @@ func (r *Router) HasTargets(model string) bool {
 
 // Select picks a provider for the given model using the configured strategy.
 func (r *Router) Select(model string) (*RoutingResult, error) {
-	return r.selectMatching(model, nil, false)
+	return r.SelectForScope(model, nil, false, nil)
 }
 
 // SelectExactModel picks a provider for the given model but only from targets
-// that preserve the requested model name.
+// that preserve the requested model name, when any target does. When every
+// target overrides it, the name is an alias and the overrides serve it.
 func (r *Router) SelectExactModel(model string) (*RoutingResult, error) {
-	return r.selectMatching(model, nil, true)
+	return r.SelectExactModelExcluding(model, nil)
 }
 
-func (r *Router) selectMatching(model string, exclude map[string]bool, requireExactModel bool) (*RoutingResult, error) {
-	// Copy healthy targets under read lock to avoid racing with SetHealthy.
+// SelectExactModelExcluding preserves exact model matching when retrying selection.
+func (r *Router) SelectExactModelExcluding(model string, exclude map[string]bool) (*RoutingResult, error) {
+	return r.SelectForScope(model, exclude, true, nil)
+}
+
+// SelectForScope retains operator health filtering except for targets served by
+// an independent credential. Evaluate that predicate outside the router lock:
+// resolving an org adapter can involve validating an endpoint.
+func (r *Router) SelectForScope(model string, exclude map[string]bool, requireExactModel bool, independent func(string) bool) (*RoutingResult, error) {
 	r.mu.RLock()
 	targets := r.modelTargets[model]
+	if requireExactModel && !anyTargetKeepsModel(targets, model) {
+		requireExactModel = false
+	}
 	healthy := make([]RoutingTarget, 0, len(targets))
 	for _, t := range targets {
-		if !t.Healthy {
+		if !t.Healthy && independent == nil {
 			continue
 		}
 		if exclude != nil && exclude[t.ProviderID] {
@@ -121,6 +155,16 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 	}
 	r.mu.RUnlock()
 
+	if independent != nil {
+		eligible := healthy[:0]
+		for _, target := range healthy {
+			if target.Healthy || independent(target.ProviderID) {
+				target.Healthy = true // Request-local eligibility, never shared state.
+				eligible = append(eligible, target)
+			}
+		}
+		healthy = eligible
+	}
 	if len(targets) == 0 {
 		return nil, fmt.Errorf("no routing targets for model %q", model)
 	}
@@ -149,6 +193,15 @@ func (r *Router) selectMatching(model string, exclude map[string]bool, requireEx
 	}, nil
 }
 
+func anyTargetKeepsModel(targets []RoutingTarget, model string) bool {
+	for _, t := range targets {
+		if t.ModelOverride == "" || t.ModelOverride == model {
+			return true
+		}
+	}
+	return false
+}
+
 // RecordLatency records a provider's response latency for least-latency routing.
 func (r *Router) RecordLatency(providerID string, d time.Duration) {
 	r.latencyTracker.Record(providerID, d)
@@ -169,7 +222,7 @@ func (r *Router) SetHealthy(providerID string, healthy bool) {
 
 // SelectExcluding picks a provider, excluding the given provider IDs.
 func (r *Router) SelectExcluding(model string, exclude map[string]bool) (*RoutingResult, error) {
-	return r.selectMatching(model, exclude, false)
+	return r.SelectForScope(model, exclude, false, nil)
 }
 
 // TargetCount returns the number of routing targets for a model.
@@ -187,4 +240,38 @@ func (r *Router) Strategy() string {
 // GetLatencyTracker returns the latency tracker for external health monitoring.
 func (r *Router) GetLatencyTracker() *LatencyTracker {
 	return r.latencyTracker
+}
+
+// GetHealthMonitor exposes the monitor used to score adaptive routing.
+// The server records request results into this same monitor.
+func (r *Router) GetHealthMonitor() *HealthMonitor {
+	return r.healthMonitor
+}
+
+// InheritAdaptiveState keeps what adaptive routing learned across a reload:
+// weights for providers in providerIDs and the learning phase. It does nothing
+// unless both routers use the adaptive strategy.
+func (r *Router) InheritAdaptiveState(old *Router, providerIDs map[string]bool) {
+	if r == nil || old == nil {
+		return
+	}
+	next, ok := r.defaultStrategy.(*AdaptiveStrategy)
+	if !ok {
+		return
+	}
+	prev, ok := old.defaultStrategy.(*AdaptiveStrategy)
+	if !ok {
+		return
+	}
+	next.inheritFrom(prev, providerIDs)
+}
+
+// Close stops strategy-owned background workers. It is safe to call repeatedly.
+func (r *Router) Close() {
+	if r == nil {
+		return
+	}
+	if adaptive, ok := r.defaultStrategy.(*AdaptiveStrategy); ok {
+		adaptive.Stop()
+	}
 }

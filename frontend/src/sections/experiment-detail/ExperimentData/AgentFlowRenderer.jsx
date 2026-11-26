@@ -12,7 +12,7 @@ const DashedConnector = () => (
         width: 0,
         height: 32,
         borderLeft: "2px dashed",
-        borderColor: "black.300",
+        borderColor: "divider",
         marginY: "-1px",
       }}
     />
@@ -34,7 +34,7 @@ const DashedConnector = () => (
           height: 8,
           borderLeft: "2px solid",
           borderBottom: "2px solid",
-          borderColor: "black.300",
+          borderColor: "divider",
           transform: "rotate(-45deg) translateY(-0px)",
         },
       }}
@@ -82,7 +82,6 @@ const AgentFlowRenderer = ({
             onClick={() => setViewAllPrompts((prev) => !prev)}
             variant="outlined"
             size="small"
-            sx={{ padding: "8px 12px" }}
           >
             <Typography typography={"s1"} fontWeight={"fontWeightMedium"}>
               View All Prompts
@@ -113,7 +112,10 @@ const AgentFlowRenderer = ({
             justifyContent: "center",
           }}
         >
-          <SvgColor src="/assets/icons/ic_agent_flow.svg" color="blue.500" />
+          <SvgColor
+            src="/assets/icons/ic_agent_flow.svg"
+            color="status.info.fg"
+          />
         </Box>
 
         <DashedConnector />

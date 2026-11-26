@@ -24,7 +24,7 @@ export default function PromptTemplateSection({
     <Box
       sx={{
         border: "1px solid",
-        borderRadius: 0.5,
+        borderRadius: "4px",
         borderColor: "divider",
         padding: (theme) => theme.spacing(1, 2, 2, 2),
         display: "flex",
@@ -48,7 +48,7 @@ export default function PromptTemplateSection({
             <Typography
               component={"span"}
               sx={{
-                color: "red.500",
+                color: "status.danger.fg",
               }}
             >
               *

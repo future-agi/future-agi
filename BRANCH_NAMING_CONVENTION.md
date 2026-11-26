@@ -89,12 +89,12 @@ feat/TICKET-123-implement-comprehensive-user-authentication-system-with-oauth-an
 ## 🚀 Branch Lifecycle
 
 ### Main Branch
-- `main` — production-ready code; PRs target this directly (see `CONTRIBUTING.md`).
+- `main` — production-ready code; PRs target `dev` (see `CONTRIBUTING.md`).
 
 ### Workflow
-1. Branch from `main` using a valid `type/short-description` name.
+1. Branch from `dev` using a valid `type/short-description` name.
 2. Make focused changes — keep the diff small.
-3. Open a PR against `main`.
+3. Open a PR against `dev`.
 4. After review and merge, delete the branch.
 
 ## 🛠️ Enforcement

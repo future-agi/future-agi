@@ -64,8 +64,6 @@ const ShowModelOptionsChild = (
         zIndex: 10,
         "& .MuiPaper-root": {
           bgcolor: "background.paper",
-          border: "1px solid",
-          borderColor: "divider",
           p: "12px",
           marginTop: "4px",
           borderRadius: "4px !important",

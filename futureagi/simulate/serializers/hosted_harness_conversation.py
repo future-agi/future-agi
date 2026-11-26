@@ -1,0 +1,439 @@
+from __future__ import annotations
+
+from rest_framework import serializers
+
+# Set on a command by the server; a client never sends them.
+_SERVER_PAYLOAD_KEYS = frozenset({"command_kind", "nudge_id", "origin"})
+
+
+class HarnessConversationMessageCreateSerializer(serializers.Serializer):
+    content = serializers.CharField(max_length=20_000, trim_whitespace=False)
+    client_request_id = serializers.RegexField(r"^[A-Za-z0-9_-]{1,128}$")
+    kind = serializers.ChoiceField(
+        choices=(
+            "user_message",
+            "user_response",
+            "approval",
+            "interrupt",
+            "cancel_operation",
+        ),
+        required=False,
+        default="user_message",
+    )
+    reply_to = serializers.UUIDField(required=False, allow_null=True)
+    payload = serializers.JSONField(required=False, default=dict)
+
+    def validate(self, attrs):
+        kind = attrs["kind"]
+        reply_to = attrs.get("reply_to")
+        if kind in {"user_response", "approval"} and reply_to is None:
+            raise serializers.ValidationError(
+                {"reply_to": "This field is required when answering ALK."}
+            )
+        if kind == "user_message" and reply_to is not None:
+            raise serializers.ValidationError(
+                {"reply_to": "A new message cannot answer a blocking question."}
+            )
+        payload = attrs.get("payload")
+        if isinstance(payload, dict) and any(
+            key in _SERVER_PAYLOAD_KEYS or str(key).startswith("_") for key in payload
+        ):
+            raise serializers.ValidationError(
+                {"payload": "These keys are set by the server only."}
+            )
+        if attrs["client_request_id"].startswith("nudge-"):
+            raise serializers.ValidationError(
+                {"client_request_id": "This prefix is reserved."}
+            )
+        return attrs
+
+
+class HarnessConversationAdjustmentSerializer(serializers.Serializer):
+    instruction = serializers.CharField(
+        min_length=1,
+        max_length=2000,
+        trim_whitespace=True,
+    )
+    client_request_id = serializers.CharField(
+        max_length=128, required=False, allow_blank=False
+    )
+    target_stage = serializers.ChoiceField(
+        choices=("understand", "environment", "scenarios"), required=False
+    )
+    scenario_delta = serializers.IntegerField(min_value=1, required=False)
+
+
+class HarnessConversationAdjustmentResponseSerializer(serializers.Serializer):
+    adjustment_id = serializers.UUIDField()
+    client_request_id = serializers.CharField(
+        allow_null=True, required=False, allow_blank=False
+    )
+    instruction = serializers.CharField()
+    target_stage = serializers.CharField()
+    scenario_delta = serializers.IntegerField()
+    status = serializers.CharField()
+    created_at = serializers.DateTimeField()
+
+
+class HarnessConversationMessageSerializer(serializers.Serializer):
+    message_id = serializers.UUIDField()
+    sequence = serializers.IntegerField(min_value=1)
+    role = serializers.ChoiceField(choices=("user", "assistant", "system"))
+    kind = serializers.ChoiceField(
+        choices=("message", "question", "confirmation", "status")
+    )
+    state = serializers.ChoiceField(
+        choices=("queued", "delivered", "streaming", "completed", "failed")
+    )
+    stage = serializers.CharField(allow_blank=True)
+    content = serializers.CharField(allow_blank=True)
+    payload = serializers.JSONField()
+    invocation_id = serializers.CharField(allow_null=True, required=False)
+    function_call_id = serializers.CharField(allow_null=True, required=False)
+    reply_to = serializers.UUIDField(allow_null=True, required=False)
+    created_at = serializers.DateTimeField()
+
+
+class HarnessConversationEventReadSerializer(serializers.Serializer):
+    event_id = serializers.CharField()
+    sequence = serializers.IntegerField(min_value=1)
+    kind = serializers.CharField()
+    message_id = serializers.UUIDField(allow_null=True, required=False)
+    stage = serializers.CharField(allow_blank=True)
+    invocation_id = serializers.CharField(allow_null=True, required=False)
+    function_call_id = serializers.CharField(allow_null=True, required=False)
+    payload = serializers.JSONField()
+    emitted_at = serializers.DateTimeField()
+
+
+class HarnessConversationRuntimeSerializer(serializers.Serializer):
+    state = serializers.CharField()
+    warm_until = serializers.DateTimeField(allow_null=True)
+    degraded = serializers.BooleanField()
+    available = serializers.BooleanField()
+
+
+class HarnessConversationBlockingInputSerializer(serializers.Serializer):
+    """The question or confirmation the builder waits on, as the runtime asked it."""
+
+    message_id = serializers.CharField()
+    kind = serializers.CharField(
+        help_text="question_requested or confirmation_requested."
+    )
+    prompt = serializers.CharField(required=False, allow_blank=True)
+    options = serializers.ListField(child=serializers.JSONField(), required=False)
+    options_only = serializers.BooleanField(
+        required=False,
+        help_text="True when only one of its options answers it: free text is not an answer.",
+    )
+
+
+class HarnessConversationWindowSerializer(serializers.Serializer):
+    oldest_sequence = serializers.IntegerField(
+        allow_null=True,
+        help_text="The oldest sequence in this read; read what came before it with `before` set to it.",
+    )
+    has_older = serializers.BooleanField(
+        help_text="Items before `oldest_sequence` this read leaves out.",
+    )
+
+
+class HarnessConversationHistorySerializer(serializers.Serializer):
+    messages = HarnessConversationWindowSerializer()
+    events = HarnessConversationWindowSerializer(
+        required=False,
+        help_text="Absent on a read of only the events past `events_after`.",
+    )
+
+
+class HarnessConversationHistoryQuerySerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("messages", "events"))
+    before = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        help_text="Read the items just before this sequence. Give this or `around`.",
+    )
+    around = serializers.UUIDField(
+        required=False,
+        help_text=(
+            "Read the page of messages that holds this message (a change's `used` message id). Give this or"
+            " `before`; only with `kind` messages."
+        ),
+    )
+
+    def validate(self, attrs):
+        if ("before" in attrs) == ("around" in attrs):
+            raise serializers.ValidationError(
+                "Give exactly one of `before` and `around`."
+            )
+        if "around" in attrs and attrs["kind"] != "messages":
+            raise serializers.ValidationError("`around` reads messages only.")
+        return attrs
+
+
+class HarnessJobReadQuerySerializer(serializers.Serializer):
+    events_after = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text=(
+            "Only the builder chat events past this sequence, oldest first, `events_has_newer` saying whether more are"
+            " left; the newest ones when absent. Messages are always the newest ones whole."
+        ),
+    )
+
+
+class HarnessConversationHistoryPageSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("messages", "events"))
+    messages = HarnessConversationMessageSerializer(
+        many=True, help_text="Oldest first; empty for `kind` events."
+    )
+    events = HarnessConversationEventReadSerializer(
+        many=True, help_text="Oldest first; empty for `kind` messages."
+    )
+    oldest_sequence = serializers.IntegerField(allow_null=True)
+    newest_sequence = serializers.IntegerField(allow_null=True)
+    has_older = serializers.BooleanField(
+        help_text="Items before `oldest_sequence` this page leaves out."
+    )
+    has_newer = serializers.BooleanField(
+        help_text="Items after `newest_sequence` this page leaves out."
+    )
+
+
+class HarnessConversationReadSerializer(serializers.Serializer):
+    conversation_id = serializers.UUIDField()
+    job_id = serializers.UUIDField()
+    state = serializers.CharField()
+    stage = serializers.CharField()
+    active_invocation_id = serializers.CharField(allow_null=True)
+    blocking_input = HarnessConversationBlockingInputSerializer(allow_null=True)
+    messages = HarnessConversationMessageSerializer(many=True)
+    events = HarnessConversationEventReadSerializer(many=True)
+    event_watermark = serializers.IntegerField(min_value=0)
+    history = HarnessConversationHistorySerializer(
+        help_text="Where `messages` and `events` start, and whether older ones can be read with the history read."
+    )
+    events_has_newer = serializers.BooleanField(
+        help_text="On a read with `events_after`, whether more events past the last one here are left to read."
+    )
+    runtime = HarnessConversationRuntimeSerializer()
+
+
+class HarnessConversationCommandQuerySerializer(serializers.Serializer):
+    after = serializers.IntegerField(min_value=0, required=False, default=0)
+
+
+class HarnessConversationEventSerializer(serializers.Serializer):
+    schema_version = serializers.ChoiceField(
+        choices=("futureagi.harness-conversation-event.v1",)
+    )
+    event_id = serializers.RegexField(r"^[A-Za-z0-9_-]{1,128}$")
+    conversation_id = serializers.UUIDField()
+    sequence = serializers.IntegerField(min_value=1)
+    kind = serializers.ChoiceField(
+        choices=(
+            "turn_started",
+            "assistant_delta",
+            "assistant_message",
+            "stage_changed",
+            "authoring_activity",
+            "tool_started",
+            "tool_result",
+            "question_requested",
+            "confirmation_requested",
+            "question_answered",
+            "turn_interrupted",
+            "turn_completed",
+            "checkpoint_committed",
+            "capability_changed",
+        )
+    )
+    message_id = serializers.UUIDField(required=False, allow_null=True)
+    stage = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    invocation_id = serializers.CharField(
+        max_length=255, required=False, allow_null=True, allow_blank=False
+    )
+    function_call_id = serializers.CharField(
+        max_length=255, required=False, allow_null=True, allow_blank=False
+    )
+    emitted_at = serializers.DateTimeField()
+    payload = serializers.JSONField()
+    digest = serializers.RegexField(r"^sha256:[0-9a-f]{64}$")
+
+
+class HarnessConversationEventBatchSerializer(serializers.Serializer):
+    schema_version = serializers.ChoiceField(
+        choices=("futureagi.harness-conversation-event.v1",)
+    )
+    acknowledged_through = serializers.IntegerField(min_value=0)
+    events = HarnessConversationEventSerializer(many=True, max_length=100)
+
+
+class HarnessConversationEventAckSerializer(serializers.Serializer):
+    acked_through_sequence = serializers.IntegerField(min_value=0)
+
+
+class HarnessConversationTranscriptKeySerializer(serializers.Serializer):
+    project_key = serializers.CharField(min_length=1, max_length=255)
+    session_id = serializers.CharField(min_length=1, max_length=255)
+    subpath = serializers.CharField(
+        required=False,
+        default="",
+        allow_blank=True,
+        max_length=512,
+    )
+
+
+class HarnessConversationTranscriptQuerySerializer(
+    HarnessConversationTranscriptKeySerializer
+):
+    pass
+
+
+class HarnessConversationTranscriptAppendSerializer(
+    HarnessConversationTranscriptKeySerializer
+):
+    entries = serializers.ListField(
+        child=serializers.JSONField(),
+        min_length=1,
+        max_length=500,
+    )
+
+    def validate_entries(self, entries):
+        if any(
+            not isinstance(entry, dict) or not str(entry.get("type") or "")
+            for entry in entries
+        ):
+            raise serializers.ValidationError(
+                "Each transcript entry must be an object with a type."
+            )
+        return entries
+
+
+class HarnessConversationTranscriptAppendResponseSerializer(serializers.Serializer):
+    appended = serializers.IntegerField(min_value=0)
+
+
+class HarnessConversationTranscriptReadSerializer(serializers.Serializer):
+    entries = serializers.JSONField(allow_null=True)
+    subkeys = serializers.ListField(child=serializers.CharField())
+
+
+class HarnessConversationWorkspaceResponseSerializer(serializers.Serializer):
+    digest = serializers.RegexField(r"^sha256:[0-9a-f]{64}$")
+    size = serializers.IntegerField(min_value=0)
+
+
+class HarnessConversationRunStatusSerializer(serializers.Serializer):
+    job_id = serializers.UUIDField()
+    state = serializers.CharField()
+    stage = serializers.CharField()
+    completed_scenarios = serializers.IntegerField(min_value=0)
+    failed_scenarios = serializers.IntegerField(min_value=0)
+    total_scenarios = serializers.IntegerField(min_value=0)
+    receipts = serializers.JSONField()
+
+
+class HarnessConversationRerunSerializer(serializers.Serializer):
+    pass
+
+
+class HarnessConversationScenarioQuerySerializer(serializers.Serializer):
+    numbers = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, max_length=5000
+    )
+    ranges = serializers.ListField(
+        child=serializers.DictField(child=serializers.IntegerField(min_value=1)),
+        required=False,
+        max_length=100,
+    )
+    names = serializers.ListField(
+        child=serializers.CharField(max_length=255), required=False, max_length=500
+    )
+    ids = serializers.ListField(
+        child=serializers.CharField(max_length=64), required=False, max_length=1000
+    )
+    search = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    filters = serializers.DictField(required=False)
+    page = serializers.IntegerField(required=False, min_value=1)
+    page_size = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    full = serializers.BooleanField(required=False, default=False)
+    removed = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Read instead the cases the environment had and no longer holds, to restore or copy one.",
+    )
+
+
+class HarnessConversationFailedScenarioSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField(max_length=255)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+
+class HarnessConversationPublishSerializer(serializers.Serializer):
+    digest = serializers.CharField(max_length=128)
+    # Scenarios the builder could not apply in this save.
+    failed_scenarios = serializers.ListField(
+        child=HarnessConversationFailedScenarioSerializer(),
+        required=False,
+        max_length=200,
+    )
+
+
+class HarnessConversationRunsQuerySerializer(serializers.Serializer):
+    run_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=50)
+
+
+class HarnessConversationRunStartSerializer(serializers.Serializer):
+    numbers = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, max_length=5000
+    )
+    ranges = serializers.ListField(
+        child=serializers.DictField(child=serializers.IntegerField(min_value=1)),
+        required=False,
+        max_length=100,
+    )
+    trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+    operation_id = serializers.CharField(
+        required=False, allow_blank=True, max_length=64
+    )
+
+
+class HarnessConversationOverviewQuerySerializer(serializers.Serializer):
+    pass
+
+
+class HarnessLifecycleCountsSerializer(serializers.Serializer):
+    """Cases per state, and proved / not proved over every case not archived."""
+
+    draft = serializers.IntegerField()
+    validated = serializers.IntegerField()
+    active = serializers.IntegerField()
+    kept_as_written = serializers.IntegerField()
+    archived = serializers.IntegerField()
+    proved = serializers.IntegerField()
+    not_proved = serializers.IntegerField()
+    legacy_without_control = serializers.IntegerField(
+        help_text="Legacy cases running kept as written with no negative control: Validate and rebuild keep them "
+        "running as written, each with a warning that it has no negative control."
+    )
+
+
+class HarnessConversationOverviewSerializer(serializers.Serializer):
+    environment = serializers.DictField()
+    scenario_count = serializers.IntegerField()
+    use_cases = serializers.ListField(child=serializers.DictField())
+    coverage = serializers.DictField()
+    recent_runs = serializers.ListField(child=serializers.DictField())
+    build_changes = serializers.ListField(child=serializers.DictField())
+    earlier_messages = serializers.ListField(child=serializers.DictField())
+    drafts = serializers.DictField(
+        required=False,
+        help_text="The unsaved changes by piece, where the environment has drafts.",
+    )
+    lifecycle_counts = HarnessLifecycleCountsSerializer(
+        required=False,
+        allow_null=True,
+        help_text="Cases per lifecycle state, as the Scenarios tab counts them; null for an environment without versions.",
+    )

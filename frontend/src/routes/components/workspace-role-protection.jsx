@@ -1,7 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { useParams, Navigate } from "react-router";
-import { CircularProgress, Box } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useWorkspaceFromList } from "src/api/workspaces/list";
 import { useAuthContext } from "src/auth/hooks";
 
@@ -39,16 +39,7 @@ const WorkspaceRoleProtection = ({ allowedRoles, children }) => {
   // Loading state
   if (isLoading && !isOrgAdminPlus) {
     return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: 300,
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ minHeight: "60vh" }} />
     );
   }
 

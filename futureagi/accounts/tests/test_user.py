@@ -4,9 +4,16 @@ User API Tests
 Tests for user authentication, token management, and user info endpoints.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from django.core.cache import cache
+from django.test import override_settings
 from rest_framework import status
+
+# The endpoint compares against this module's SECRET_KEY, which the test
+# settings' override does not reach, so send the value the view will read.
+from tfc.settings import settings
 
 
 def assert_unknown_field(response, field_name):
@@ -206,6 +213,110 @@ class TestGetUserInfoAPI:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "remember_me" in data
+
+
+CUTOFF = datetime(2026, 10, 14, 12, 30, tzinfo=UTC)
+
+
+def _set_org_created_at(organization, created_at):
+    # created_at is auto_now_add, so a value passed to create() is ignored.
+    from accounts.models import Organization
+
+    Organization.objects.filter(pk=organization.pk).update(created_at=created_at)
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestUserInfoSimulateRestriction:
+    """restrict_simulate_to_environments: orgs created at or after the cutoff
+    see only Environments in Simulate."""
+
+    @override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=None)
+    def test_unset_cutoff_restricts_nobody(self, auth_client, organization):
+        _set_org_created_at(organization, CUTOFF + timedelta(days=1))
+        response = auth_client.get("/accounts/user-info/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["restrict_simulate_to_environments"] is False
+
+    @pytest.mark.parametrize(
+        "created_at, restricted",
+        [
+            (CUTOFF - timedelta(seconds=1), False),
+            (CUTOFF, True),
+            (CUTOFF + timedelta(days=1), True),
+        ],
+    )
+    @override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=CUTOFF)
+    def test_org_created_at_or_after_the_cutoff_is_restricted(
+        self, auth_client, organization, created_at, restricted
+    ):
+        _set_org_created_at(organization, created_at)
+        response = auth_client.get("/accounts/user-info/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["restrict_simulate_to_environments"] is restricted
+
+    @override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=CUTOFF)
+    def test_follows_the_selected_org_not_the_users_own(
+        self, api_client, user, organization, clear_cache
+    ):
+        from accounts.models import Organization
+        from accounts.models.organization_membership import OrganizationMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        _set_org_created_at(organization, CUTOFF - timedelta(days=30))
+        new_org = Organization.objects.create(name="New Organization")
+        _set_org_created_at(new_org, CUTOFF + timedelta(days=1))
+        OrganizationMembership.no_workspace_objects.create(
+            user=user,
+            organization=new_org,
+            role=OrganizationRoles.OWNER,
+            level=Level.OWNER,
+            is_active=True,
+        )
+        login = api_client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": "testpassword123"},
+            format="json",
+        )
+        assert login.status_code == status.HTTP_200_OK
+        auth = f"Bearer {login.json()['access']}"
+
+        for org, restricted in ((new_org, True), (organization, False)):
+            response = api_client.get(
+                "/accounts/user-info/",
+                HTTP_AUTHORIZATION=auth,
+                HTTP_X_ORGANIZATION_ID=str(org.id),
+            )
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json()["organization"]["id"] == str(org.id)
+            assert response.json()["restrict_simulate_to_environments"] is restricted
+
+    def test_the_flag_is_a_required_boolean_in_the_user_info_contract(self):
+        from rest_framework import serializers
+
+        from accounts.serializers.contracts import UserInfoResponseSerializer
+
+        field = UserInfoResponseSerializer().fields.get(
+            "restrict_simulate_to_environments"
+        )
+        assert isinstance(field, serializers.BooleanField)
+        assert field.required
+
+    @override_settings(RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=CUTOFF)
+    def test_user_without_an_org_is_not_restricted(
+        self, auth_client, user, organization
+    ):
+        from accounts.models.organization_membership import OrganizationMembership
+
+        _set_org_created_at(organization, CUTOFF + timedelta(days=1))
+        OrganizationMembership.no_workspace_objects.filter(user=user).update(
+            is_active=False
+        )
+        response = auth_client.get("/accounts/user-info/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json().get("requires_org_setup") is True
+        assert response.json()["restrict_simulate_to_environments"] is False
 
 
 @pytest.mark.integration
@@ -530,6 +641,23 @@ class TestManageRedisKeyAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_manage_redis_key_accepts_secret_and_sets_value(
+        self, auth_client, clear_cache
+    ):
+        """A valid secret reaches the cache write through the real API path."""
+        response = auth_client.post(
+            "/accounts/redis-key/",
+            {
+                "access_token_id": settings.SECRET_KEY,
+                "key": "test_key",
+                "value": "test_value",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert cache.get("test_key") == "test_value"
+
     def test_manage_redis_key_rejects_unknown_request_fields(self, auth_client):
         response = auth_client.post(
             "/accounts/redis-key/",
@@ -552,6 +680,89 @@ class TestManageRedisKeyAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_manage_redis_key_compares_secret_in_constant_time(
+        self, auth_client, clear_cache
+    ):
+        """The shared secret is checked with a constant-time digest, not ``!=``.
+
+        ``str.__ne__`` returns at the first differing character, so response
+        time leaks how long a correct prefix the caller guessed. Django's
+        ``constant_time_compare`` delegates to ``secrets.compare_digest``;
+        spying on it proves the view's check runs through that path.
+        """
+        import secrets as secrets_module
+        from unittest import mock
+
+        near_miss = settings.SECRET_KEY[:-1] + (
+            "x" if settings.SECRET_KEY[-1] != "x" else "y"
+        )
+        with mock.patch(
+            "django.utils.crypto.secrets.compare_digest",
+            wraps=secrets_module.compare_digest,
+        ) as compare_digest:
+            response = auth_client.post(
+                "/accounts/redis-key/",
+                {
+                    "access_token_id": near_miss,
+                    "key": "timing_probe_key",
+                    "value": "attacker_value",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert cache.get("timing_probe_key") is None
+        compare_digest.assert_any_call(near_miss.encode(), settings.SECRET_KEY.encode())
+
+    @pytest.mark.parametrize(
+        "make_token",
+        [
+            pytest.param(lambda secret: secret[:-1], id="prefix"),
+            pytest.param(lambda secret: secret + "x", id="secret-plus-suffix"),
+            pytest.param(
+                lambda secret: secret[:-1] + ("x" if secret[-1] != "x" else "y"),
+                id="same-length-last-char-differs",
+            ),
+            pytest.param(lambda secret: secret.upper() + "!", id="case-variant"),
+        ],
+    )
+    def test_manage_redis_key_rejects_near_miss_secrets(
+        self, auth_client, clear_cache, make_token
+    ):
+        """Tokens that only partially match the secret never reach the cache."""
+        response = auth_client.post(
+            "/accounts/redis-key/",
+            {
+                "access_token_id": make_token(settings.SECRET_KEY),
+                "key": "near_miss_key",
+                "value": "attacker_value",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert cache.get("near_miss_key") is None
+
+    def test_manage_redis_key_delete_requires_secret(self, auth_client, clear_cache):
+        """DELETE with a wrong secret leaves the key; the real secret removes it."""
+        cache.set("delete_probe_key", "kept")
+
+        rejected = auth_client.delete(
+            "/accounts/redis-key/",
+            {"access_token_id": "invalid-token", "key": "delete_probe_key"},
+            format="json",
+        )
+        assert rejected.status_code == status.HTTP_400_BAD_REQUEST
+        assert cache.get("delete_probe_key") == "kept"
+
+        accepted = auth_client.delete(
+            "/accounts/redis-key/",
+            {"access_token_id": settings.SECRET_KEY, "key": "delete_probe_key"},
+            format="json",
+        )
+        assert accepted.status_code == status.HTTP_200_OK
+        assert cache.get("delete_probe_key") is None
 
 
 @pytest.mark.integration

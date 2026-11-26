@@ -656,7 +656,7 @@ class ChatSDKCodeView(APIView):
             except RunTest.DoesNotExist:
                 return self.gm.not_found("Run test not found")
 
-            rendered_code = CHAT_SDK_CODE.format(run_test_name=run_test.name)
+            rendered_code = CHAT_SDK_CODE.format(run_id=run_test.id)
 
             return self.gm.success_response(
                 {

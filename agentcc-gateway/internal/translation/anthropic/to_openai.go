@@ -18,7 +18,7 @@ import (
 //   - tool_result user blocks  → separate role:"tool" messages emitted before the user message
 //   - tool_use assistant blocks → message.tool_calls[]
 //   - base64 images            → data: URLs
-//   - thinking config          → Extra["anthropic_thinking_config"]
+//   - thinking config          → dropped, recorded in drops
 //   - top_k                    → dropped, recorded in drops
 //   - tool names > 64 chars    → truncated, mapping stored in Extra["tool_name_mapping"]
 func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequest, []string, error) {
@@ -66,7 +66,8 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 				name = short
 			}
 			oaiTools = append(oaiTools, models.Tool{
-				Type: "function",
+				Type:           "function",
+				AllowedCallers: at.AllowedCallers,
 				Function: models.ToolFunction{
 					Name:        name,
 					Description: at.Description,
@@ -99,15 +100,23 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 			out.ToolChoice = translated
 		}
 		drops = append(drops, tcDrops...)
+		var policy struct {
+			DisableParallelToolUse bool `json:"disable_parallel_tool_use"`
+		}
+		if err := json.Unmarshal(req.ToolChoice, &policy); err != nil {
+			return nil, nil, fmt.Errorf("anthropic: tool_choice: %w", err)
+		}
+		if policy.DisableParallelToolUse {
+			falseValue := false
+			out.ParallelToolCalls = &falseValue
+		}
 	}
 
-	// ── thinking config → Extra ────────────────────────────────────────────────
+	// ── thinking config ────────────────────────────────────────────────────────
+	// No canonical field carries it, and Extra is forwarded to OpenAI-format
+	// upstreams verbatim, which reject unknown parameters.
 	if req.Thinking != nil {
-		b, err := json.Marshal(req.Thinking)
-		if err != nil {
-			return nil, nil, fmt.Errorf("anthropic: marshal thinking_config: %w", err)
-		}
-		out.Extra["anthropic_thinking_config"] = b
+		drops = append(drops, "thinking_unsupported")
 	}
 
 	// ── Build messages slice ───────────────────────────────────────────────────
@@ -513,20 +522,14 @@ func translateAnthropicToolChoice(
 	toolNameMapping map[string]string,
 ) (json.RawMessage, []string, error) {
 	var obj struct {
-		Type                   string `json:"type"`
-		Name                   string `json:"name,omitempty"`
-		DisableParallelToolUse *bool  `json:"disable_parallel_tool_use,omitempty"`
+		Type string `json:"type"`
+		Name string `json:"name,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, nil, fmt.Errorf("unmarshal: %w", err)
 	}
 
 	var drops []string
-	if obj.DisableParallelToolUse != nil && *obj.DisableParallelToolUse {
-		// OpenAI expresses parallelism via top-level parallel_tool_calls, not
-		// inside tool_choice. We don't currently forward it end-to-end, so drop.
-		drops = append(drops, "disable_parallel_tool_use_unsupported")
-	}
 
 	switch obj.Type {
 	case "auto":

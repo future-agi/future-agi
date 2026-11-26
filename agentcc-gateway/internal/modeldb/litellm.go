@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 )
 
 type liteLLMEntry struct {
@@ -13,6 +14,16 @@ type liteLLMEntry struct {
 	InputCostPerTokenBatches        float64  `json:"input_cost_per_token_batches"`
 	OutputCostPerTokenBatches       float64  `json:"output_cost_per_token_batches"`
 	OutputCostPerImage              float64  `json:"output_cost_per_image"`
+	InputCostPerImage               float64  `json:"input_cost_per_image"`
+	InputCostPerSecond              float64  `json:"input_cost_per_second"`
+	InputCostPerCharacter           float64  `json:"input_cost_per_character"`
+	InputCostPerQuery               float64  `json:"input_cost_per_query"`
+	OCRCostPerPage                  float64  `json:"ocr_cost_per_page"`
+	OutputCostPerSecond             float64  `json:"output_cost_per_second"`
+	InputCostPerPixel               float64  `json:"input_cost_per_pixel"`
+	OutputCostPerPixel              float64  `json:"output_cost_per_pixel"`
+	InputCostPerImageToken          float64  `json:"input_cost_per_image_token"`
+	OutputCostPerImageToken         float64  `json:"output_cost_per_image_token"`
 	Provider                        string   `json:"litellm_provider"`
 	Mode                            string   `json:"mode"`
 	MaxInputTokens                  float64  `json:"max_input_tokens"`
@@ -20,19 +31,28 @@ type liteLLMEntry struct {
 	MaxTokens                       float64  `json:"max_tokens"`
 	DeprecationDate                 string   `json:"deprecation_date"`
 	SupportedRegions                []string `json:"supported_regions"`
-	SupportsFunctionCalling         bool     `json:"supports_function_calling"`
+	SupportsFunctionCalling         *bool    `json:"supports_function_calling"`
 	SupportsParallelFunctionCalling bool     `json:"supports_parallel_function_calling"`
-	SupportsVision                  bool     `json:"supports_vision"`
+	SupportsVision                  *bool    `json:"supports_vision"`
 	SupportsAudioInput              bool     `json:"supports_audio_input"`
 	SupportsAudioOutput             bool     `json:"supports_audio_output"`
 	SupportsPDFInput                bool     `json:"supports_pdf_input"`
-	SupportsResponseSchema          bool     `json:"supports_response_schema"`
+	SupportsResponseSchema          *bool    `json:"supports_response_schema"`
 	SupportsSystemMessages          bool     `json:"supports_system_messages"`
 	SupportsPromptCaching           bool     `json:"supports_prompt_caching"`
 	SupportsReasoning               bool     `json:"supports_reasoning"`
 }
 
-func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
+// parseLiteLLM parses a LiteLLM-format catalogue. With strict, as for a
+// fetched catalogue, an entry that states no rate the gateway reads is skipped
+// instead of kept at zero: a download of the wrong shape must not price models
+// at zero. An explicit 0 is a stated rate (a free price).
+func parseLiteLLM(data []byte, strict bool) (map[string]*ModelInfo, error) {
+	return loadLiteLLM(data, strict, nil)
+}
+
+// loadLiteLLM keeps zero-token declarations separate from the general model table.
+func loadLiteLLM(data []byte, strict bool, zero priceDeclarations) (map[string]*ModelInfo, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("unmarshal litellm JSON: %w", err)
@@ -53,8 +73,22 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 			continue
 		}
 
+		if badRate(entry) {
+			slog.Warn("skipping litellm entry with a negative or invalid rate", "key", key)
+			skipped++
+			continue
+		}
+
+		if strict && !statesRate(rawEntry) {
+			skipped++
+			continue
+		}
+
 		mode := mapMode(entry.Mode)
 
+		if zero != nil && (mode == ModeChat || mode == ModeEmbedding) {
+			zero[key] = priceDeclaration{raw: rawEntry, free: isZeroPricing(mode, entry) && declaresFree(rawEntry, nil)}
+		}
 		if isZeroPricing(mode, entry) {
 			skipped++
 			continue
@@ -78,19 +112,33 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 				BatchInputPerToken:  entry.InputCostPerTokenBatches,
 				BatchOutputPerToken: entry.OutputCostPerTokenBatches,
 				OutputPerImage:      entry.OutputCostPerImage,
+				InputPerImage:       entry.InputCostPerImage,
+				InputPerSecond:      entry.InputCostPerSecond,
+				InputPerCharacter:   entry.InputCostPerCharacter,
+				InputPerQuery:       entry.InputCostPerQuery,
+				PerPage:             entry.OCRCostPerPage,
+				OutputPerSecond:     entry.OutputCostPerSecond,
+				InputPerPixel:       entry.InputCostPerPixel,
+				OutputPerPixel:      entry.OutputCostPerPixel,
+				InputPerImageToken:  entry.InputCostPerImageToken,
+				OutputPerImageToken: entry.OutputCostPerImageToken,
 			},
 			Capabilities: CapabilityFlags{
-				FunctionCalling:   entry.SupportsFunctionCalling,
+				FunctionCalling:   stated(entry.SupportsFunctionCalling),
 				ParallelToolCalls: entry.SupportsParallelFunctionCalling,
-				Vision:            entry.SupportsVision,
+				Vision:            stated(entry.SupportsVision),
 				AudioInput:        entry.SupportsAudioInput,
 				AudioOutput:       entry.SupportsAudioOutput,
 				PDFInput:          entry.SupportsPDFInput,
 				Streaming:         mode == ModeChat,
-				ResponseSchema:    entry.SupportsResponseSchema,
+				ResponseSchema:    stated(entry.SupportsResponseSchema),
 				SystemMessages:    entry.SupportsSystemMessages,
 				PromptCaching:     entry.SupportsPromptCaching,
 				Reasoning:         entry.SupportsReasoning,
+
+				FunctionCallingUnstated: entry.SupportsFunctionCalling == nil,
+				VisionUnstated:          entry.SupportsVision == nil,
+				ResponseSchemaUnstated:  entry.SupportsResponseSchema == nil,
 			},
 			DeprecationDate: entry.DeprecationDate,
 			Regions:         entry.SupportedRegions,
@@ -103,13 +151,18 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 	return models, nil
 }
 
+// stated reports a capability flag the table states as true.
+func stated(flag *bool) bool {
+	return flag != nil && *flag
+}
+
 func mapMode(s string) ModelMode {
 	switch s {
 	case "chat", "completion":
 		return ModeChat
 	case "embedding":
 		return ModeEmbedding
-	case "image_generation":
+	case "image_generation", "image_edit":
 		return ModeImageGeneration
 	case "audio_transcription":
 		return ModeAudioTranscription
@@ -119,6 +172,14 @@ func mapMode(s string) ModelMode {
 		return ModeRerank
 	case "moderation":
 		return ModeModeration
+	// Mapped to chat, these were dropped as zero-priced chat models, so the
+	// per-page, per-second and per-query prices never loaded.
+	case "ocr":
+		return ModeOCR
+	case "video_generation":
+		return ModeVideoGeneration
+	case "search":
+		return ModeSearch
 	default:
 		return ModeChat
 	}
@@ -135,6 +196,49 @@ func normalizeProvider(p string) string {
 	default:
 		return p
 	}
+}
+
+// rates are e's rate fields: every price the gateway reads from an entry.
+func (e *liteLLMEntry) rates() []*float64 {
+	return []*float64{
+		&e.InputCostPerToken, &e.OutputCostPerToken, &e.CacheReadInputTokenCost,
+		&e.InputCostPerTokenBatches, &e.OutputCostPerTokenBatches,
+		&e.OutputCostPerImage, &e.InputCostPerImage, &e.InputCostPerSecond,
+		&e.InputCostPerCharacter, &e.InputCostPerQuery, &e.OCRCostPerPage,
+		&e.OutputCostPerSecond, &e.InputCostPerPixel, &e.OutputCostPerPixel,
+		&e.InputCostPerImageToken, &e.OutputCostPerImageToken,
+	}
+}
+
+// badRate reports a negative or non-finite value in any rate the gateway reads.
+// A rate that is absent is 0 and fine; an explicit 0 is a free price.
+func badRate(e liteLLMEntry) bool {
+	for _, r := range e.rates() {
+		if *r < 0 || math.IsNaN(*r) || math.IsInf(*r, 0) {
+			return true
+		}
+	}
+	return false
+}
+
+// statesRate reports whether an entry states any rate the gateway reads. An
+// explicit 0 counts; an absent or null rate does not.
+func statesRate(raw json.RawMessage) bool {
+	var probe liteLLMEntry
+	rates := probe.rates()
+	// JSON has no NaN, so a rate still NaN after decoding was not stated.
+	for _, r := range rates {
+		*r = math.NaN()
+	}
+	if json.Unmarshal(raw, &probe) != nil {
+		return false
+	}
+	for _, r := range rates {
+		if !math.IsNaN(*r) {
+			return true
+		}
+	}
+	return false
 }
 
 func isZeroPricing(mode ModelMode, entry liteLLMEntry) bool {

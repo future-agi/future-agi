@@ -14,6 +14,7 @@ from model_hub.models.run_prompt import PromptVersion, RunPrompter
 from model_hub.services.derived_variable_service import (
     cleanup_derived_variables_for_column,
 )
+from model_hub.services.lifecycle import bulk_soft_delete
 
 logger = structlog.get_logger(__name__)
 
@@ -28,6 +29,7 @@ def _check_resource_limit(organization, workspace, api_call_type, config=None):
     """Check resource limits. Returns True if allowed, False if limit reached."""
     try:
         from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
         try:
             from ee.usage.utils import log_and_deduct_cost_for_resource_request
         except ImportError:
@@ -297,7 +299,10 @@ def delete_column(*, dataset_id, column_id, organization=None):
     # Delete associated source model based on source type
     if column.source_id:
         if column.source == SourceChoices.RUN_PROMPT.value:
-            RunPrompter.objects.filter(id=column.source_id).update(deleted=True)
+            bulk_soft_delete(
+                RunPrompter.objects.filter(id=column.source_id),
+                now=now,
+            )
             # Clean up derived variables from associated prompt versions
             try:
                 run_prompter = RunPrompter.objects.filter(id=column.source_id).first()
@@ -315,9 +320,7 @@ def delete_column(*, dataset_id, column_id, organization=None):
                     f"Failed to cleanup derived variables for column {column.name}: {cleanup_error}"
                 )
         if column.source == SourceChoices.EVALUATION.value:
-            eval_metric = UserEvalMetric.objects.filter(
-                id=column.source_id
-            ).first()
+            eval_metric = UserEvalMetric.objects.filter(id=column.source_id).first()
             if eval_metric and eval_metric.status in (
                 StatusType.RUNNING.value,
                 StatusType.NOT_STARTED.value,
@@ -337,8 +340,10 @@ def delete_column(*, dataset_id, column_id, organization=None):
                     eval_metric, reason="Evaluation column deleted by user"
                 )
             if eval_metric:
-                eval_metric.deleted = True
-                eval_metric.save(update_fields=["deleted"])
+                bulk_soft_delete(
+                    UserEvalMetric.objects.filter(id=eval_metric.id),
+                    now=now,
+                )
         if column.source == SourceChoices.ANNOTATION_LABEL.value:
             source_parts = column.source_id.split("-sourceid-")
 
@@ -354,8 +359,13 @@ def delete_column(*, dataset_id, column_id, organization=None):
                 deleted=False,
             )
 
-            Cell.objects.filter(column__in=columns_to_delete).update(
-                deleted=True, deleted_at=timezone.now()
+            bulk_soft_delete(
+                Cell.objects.filter(
+                    column__in=columns_to_delete,
+                    dataset=dataset,
+                    dataset__organization_id=dataset.organization_id,
+                ),
+                now=now,
             )
 
             for col in columns_to_delete:
@@ -366,23 +376,31 @@ def delete_column(*, dataset_id, column_id, organization=None):
                 annotation.columns.remove(col)
 
             annotation.labels.remove(label)
-            columns_to_delete.update(deleted=True)
+            bulk_soft_delete(columns_to_delete, now=now)
 
             annotation.save()
             dataset.save()
 
     # Soft delete cells and column
-    Cell.objects.filter(dataset=dataset, column=column).update(
-        deleted=True, deleted_at=now
+    bulk_soft_delete(
+        Cell.objects.filter(dataset=dataset, column=column),
+        now=now,
     )
     # Delete cells where source_id starts with column.id
-    Cell.objects.filter(column__source_id__startswith=f"{column.id}").update(
-        deleted=True
+    bulk_soft_delete(
+        Cell.objects.filter(
+            column__source_id__startswith=f"{column.id}",
+            dataset=dataset,
+            dataset__organization_id=dataset.organization_id,
+        ),
+        now=now,
     )
 
     # Get columns to delete (including those with source_id starting with column.id)
     columns_to_delete = Column.objects.filter(
-        Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
+        Q(id=column.id) | Q(source_id__startswith=f"{column.id}"),
+        dataset=dataset,
+        dataset__organization_id=dataset.organization_id,
     ).values_list("id", flat=True)
 
     # Clean up column_order and column_config
@@ -407,9 +425,9 @@ def delete_column(*, dataset_id, column_id, organization=None):
             str(dataset.organization_id), col_id_str
         )
         if metrics:
-            UserEvalMetric.objects.filter(
-                id__in=[m.id for m in metrics]
-            ).update(column_deleted=True)
+            UserEvalMetric.objects.filter(id__in=[m.id for m in metrics]).update(
+                column_deleted=True
+            )
     except Exception:
         logger.warning(
             "failed_to_mark_dependent_metrics",
@@ -418,9 +436,14 @@ def delete_column(*, dataset_id, column_id, organization=None):
         )
 
     # Now safe to delete columns
-    Column.objects.filter(
-        Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-    ).update(deleted=True)
+    bulk_soft_delete(
+        Column.objects.filter(
+            Q(id=column.id) | Q(source_id__startswith=f"{column.id}"),
+            dataset=dataset,
+            dataset__organization_id=dataset.organization_id,
+        ),
+        now=now,
+    )
 
     return {
         "dataset_id": str(dataset.id),
@@ -704,6 +727,8 @@ def delete_rows(*, dataset_id, row_ids, organization=None):
     Returns:
         dict with dataset_id, deleted or ServiceError
     """
+    from django.utils import timezone
+
     from model_hub.models.develop_dataset import Cell, Dataset, Row
     from model_hub.services.dataset_validators import cleanup_annotation_metadata
 
@@ -721,8 +746,12 @@ def delete_rows(*, dataset_id, row_ids, organization=None):
     if existing_rows.count() == 0:
         return ServiceError("No matching rows found in this dataset.", "NOT_FOUND")
 
-    deleted = existing_rows.update(deleted=True)
-    Cell.objects.filter(row_id__in=row_ids, dataset=dataset).update(deleted=True)
+    now = timezone.now()
+    deleted = bulk_soft_delete(existing_rows, now=now)
+    bulk_soft_delete(
+        Cell.objects.filter(row_id__in=row_ids, dataset=dataset),
+        now=now,
+    )
 
     # Clean up annotation metadata
     cleanup_annotation_metadata(dataset)
@@ -736,8 +765,6 @@ def delete_datasets(*, dataset_ids, organization):
     Returns:
         dict with deleted count and names or ServiceError
     """
-    from django.utils import timezone
-
     from model_hub.models.develop_dataset import Dataset
 
     datasets = Dataset.objects.filter(
@@ -754,7 +781,7 @@ def delete_datasets(*, dataset_ids, organization):
         )
 
     names = list(datasets.values_list("name", flat=True))
-    deleted = datasets.update(deleted=True, deleted_at=timezone.now())
+    deleted = bulk_soft_delete(datasets)
 
     return {"deleted": deleted, "names": names}
 

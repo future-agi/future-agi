@@ -8,6 +8,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from google.protobuf.json_format import MessageToJson
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest,
@@ -61,6 +62,7 @@ def create_test_otlp_request(num_spans: int = 1) -> ExportTraceServiceRequest:
     return request
 
 
+@pytest.mark.requires_ee
 class TestObservationSpanServiceUnit:
     """Unit tests for ObservationSpanService gRPC service."""
 
@@ -88,10 +90,16 @@ class TestObservationSpanServiceUnit:
             service = ObservationSpanService()
             request = create_test_otlp_request(num_spans=3)
 
-            with patch(
-                "ee.usage.services.rate_limiter.RateLimiter.check",
-                return_value=SimpleNamespace(allowed=True, reason=None),
-            ), patch("tracer.services.grpc.payload_storage.store", return_value="payload-key"):
+            with (
+                patch(
+                    "ee.usage.services.rate_limiter.RateLimiter.check",
+                    return_value=SimpleNamespace(allowed=True, reason=None),
+                ),
+                patch(
+                    "tracer.services.grpc.payload_storage.store",
+                    return_value="payload-key",
+                ),
+            ):
                 response = await service.Export(request, mock_context)
 
             # Verify response
@@ -125,10 +133,16 @@ class TestObservationSpanServiceUnit:
             service = ObservationSpanService()
             request = create_test_otlp_request()
 
-            with patch(
-                "ee.usage.services.rate_limiter.RateLimiter.check",
-                return_value=SimpleNamespace(allowed=True, reason=None),
-            ), patch("tracer.services.grpc.payload_storage.store", return_value="payload-key"):
+            with (
+                patch(
+                    "ee.usage.services.rate_limiter.RateLimiter.check",
+                    return_value=SimpleNamespace(allowed=True, reason=None),
+                ),
+                patch(
+                    "tracer.services.grpc.payload_storage.store",
+                    return_value="payload-key",
+                ),
+            ):
                 await service.Export(request, mock_context)
 
             call_args = mock_task.apply_async.call_args
@@ -159,8 +173,12 @@ class TestObservationSpanServiceUnit:
             service = ObservationSpanService()
             request = create_test_otlp_request()
 
-            with patch("ee.usage.services.rate_limiter.RateLimiter", None), patch(
-                "tracer.services.grpc.payload_storage.store", return_value="payload-key"
+            with (
+                patch("ee.usage.services.rate_limiter.RateLimiter", None),
+                patch(
+                    "tracer.services.grpc.payload_storage.store",
+                    return_value="payload-key",
+                ),
             ):
                 response = await service.Export(request, mock_context)
 

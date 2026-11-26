@@ -114,19 +114,20 @@ class OrganizationCreateAPIView(APIView):
             )
 
             # 7. Set user config
-            if not user.config:
-                user.config = {}
-            user.config["currentWorkspaceId"] = str(workspace.id)
-            user.config["defaultWorkspaceId"] = str(workspace.id)
-            user.config["selected_organization_id"] = str(organization.id)
-            user.config["currentOrganizationId"] = str(organization.id)
-            user.save(update_fields=["config"])
+            user.update_config(
+                currentWorkspaceId=str(workspace.id),
+                defaultWorkspaceId=str(workspace.id),
+                selected_organization_id=str(organization.id),
+                currentOrganizationId=str(organization.id),
+            )
 
         # 8. Trigger post-registration onboarding.
         # Password is None since the user already has an account — the signup
         # email portion will be a no-op or gracefully skipped.
         try:
-            process_post_registration(str(user.id), None)
+            process_post_registration(
+                str(user.id), None, organization_id=str(organization.id)
+            )
         except Exception:
             logger.exception(
                 "Failed to trigger post-registration onboarding",

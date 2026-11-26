@@ -17,6 +17,7 @@ eval_tags:
 - Red Teaming
 - Harmful Objects
 - Chatbot behaviors
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

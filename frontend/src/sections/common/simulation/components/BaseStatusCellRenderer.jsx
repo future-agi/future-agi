@@ -1,10 +1,14 @@
-import { Button, Chip } from "@mui/material";
+import { Button } from "@mui/material";
 import React, { useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useCancelExecution } from "../hooks/useCancelExecution";
-import { statusStyles, STOPPABLE_STATUSES } from "../constants/statusStyles";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import {
+  EXECUTION_STATUS_ROLE,
+  STOPPABLE_STATUSES,
+} from "../constants/statusStyles";
 
 /**
  * Base status cell renderer component for AG Grid
@@ -51,32 +55,24 @@ const BaseStatusCellRenderer = ({ params, onRefresh, showSnackbar = true }) => {
 
   return (
     <>
-      <Chip
-        variant="soft"
+      <StatusBadge
+        status={value}
         label={value}
-        size="small"
-        sx={{
-          typography: "s3",
-          fontWeight: "fontWeightRegular",
-          pointerEvents: "none",
-          ...statusStyles[value],
-        }}
+        role={EXECUTION_STATUS_ROLE[value]}
+        sx={{ pointerEvents: "none" }}
       />
       {showStopButton && (
         <Button
           variant="outlined"
           size="small"
           sx={{
-            borderRadius: "4px",
-            paddingX: 1.5,
             width: "70px",
-            height: "26px",
             ml: 2,
           }}
           onClick={handleStop}
           startIcon={
             <Iconify
-              icon="bi:stop-circle"
+              icon="solar:stop-circle-linear"
               color="text.primary"
               width="14px"
               height="14px"

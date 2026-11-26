@@ -1,7 +1,13 @@
 import re
+from typing import Any
 
 from rest_framework import serializers
 
+from simulate.constants.agent_filters import (
+    AGENT_ENVIRONMENT_FILTERS,
+    AGENT_OBSERVE_FILTERS,
+    AGENT_SOURCE_FILTERS,
+)
 from simulate.models.agent_definition import (
     AgentDefinition,
     AgentDefinitionAuthenticationChoices,
@@ -26,6 +32,7 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
     )
     commit_message = serializers.CharField(required=True)
     inbound = serializers.BooleanField(required=False, default=True)
+    target_speaks_first = serializers.BooleanField(required=False, allow_null=True)
 
     # Optional fields
     description = serializers.CharField(required=False, allow_blank=True, default="")
@@ -104,7 +111,11 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
         required=False, allow_null=True, default=None
     )
     livekit_max_concurrency = serializers.IntegerField(
-        required=False, allow_null=True, default=None, min_value=1
+        required=False,
+        allow_null=True,
+        default=None,
+        min_value=1,
+        max_value=DEFAULT_ORG_LIMIT,
     )
 
     # -- Field-level validators --
@@ -188,22 +199,17 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
                         }
                     )
             else:
-                # Contact number is optional when api_key + assistant_id are
-                # provided (web bridge will be used instead of SIP/phone).
-                has_web_bridge_creds = bool(
-                    api_key
-                    and api_key.strip()
-                    and assistant_id
-                    and assistant_id.strip()
-                )
+                # Provider-backed targets can be registered by assistant ID
+                # before credentials are attached.
+                has_provider_identity = bool(assistant_id and assistant_id.strip())
                 if (
                     not contact_number or not contact_number.strip()
-                ) and not has_web_bridge_creds:
+                ) and not has_provider_identity:
                     raise serializers.ValidationError(
                         {
                             "contact_number": (
                                 "Contact number is required "
-                                "(or provide API Key and Assistant ID for web bridge)"
+                                "(or provide an Assistant ID for a provider target)"
                             )
                         }
                     )
@@ -291,6 +297,10 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
     All fields are optional to support partial updates.
     """
 
+    observability_enabled = serializers.BooleanField(required=False)
+    # The Observe project a code agent's production traces land in; null
+    # clears it. Leaves the observability switch as it is.
+    production_project_id = serializers.UUIDField(required=False, allow_null=True)
     agent_name = serializers.CharField(max_length=255, required=False)
     agent_type = serializers.ChoiceField(
         choices=AgentTypeChoices.choices, required=False
@@ -319,6 +329,7 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True
     )
     inbound = serializers.BooleanField(required=False)
+    target_speaks_first = serializers.BooleanField(required=False, allow_null=True)
     knowledge_base = serializers.UUIDField(required=False, allow_null=True)
     model = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     model_details = serializers.JSONField(required=False, allow_null=True)
@@ -345,7 +356,7 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
     )
     livekit_config_json = serializers.JSONField(required=False, allow_null=True)
     livekit_max_concurrency = serializers.IntegerField(
-        required=False, allow_null=True, min_value=1
+        required=False, allow_null=True, min_value=1, max_value=DEFAULT_ORG_LIMIT
     )
 
     def validate_agent_name(self, value):
@@ -409,21 +420,51 @@ class AgentDefinitionBulkDeleteRequestSerializer(serializers.Serializer):
     )
 
 
+class OneOrManyField(serializers.ListField):
+    swagger_collection_format = "multi"
+
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            data = [data]
+        return super().to_internal_value(data)
+
+
 class AgentDefinitionFilterSerializer(serializers.Serializer):
     """
     Serializer for validating GET /agent-definitions/ query parameters.
     """
 
     search = serializers.CharField(required=False, allow_blank=True, default="")
-    agent_type = serializers.ChoiceField(
-        choices=AgentTypeChoices.choices,
+    agent_type = OneOrManyField(
+        child=serializers.ChoiceField(
+            choices=AgentTypeChoices.choices, allow_blank=True
+        ),
         required=False,
-        allow_blank=True,
-        allow_null=True,
+    )
+    source: Any = OneOrManyField(
+        child=serializers.ChoiceField(choices=AGENT_SOURCE_FILTERS),
+        required=False,
+    )
+    environments = OneOrManyField(
+        child=serializers.ChoiceField(choices=AGENT_ENVIRONMENT_FILTERS),
+        required=False,
+    )
+    observe = OneOrManyField(
+        child=serializers.ChoiceField(choices=AGENT_OBSERVE_FILTERS),
+        required=False,
     )
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     page = serializers.IntegerField(required=False, default=1, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1)
+
+    def validate_agent_type(self, value):
+        return [agent_type for agent_type in value if agent_type]
+
+
+class AgentRunsQuerySerializer(serializers.Serializer):
+    limit = serializers.IntegerField(
+        required=False, default=5, min_value=1, max_value=20
+    )
 
 
 class FetchAssistantRequestSerializer(serializers.Serializer):

@@ -14,7 +14,7 @@ export const SpinnerControls = ({ value, onChange }) => {
       }}
     >
       <Iconify
-        icon="tabler:chevron-up"
+        icon="solar:alt-arrow-up-linear"
         sx={{
           cursor: "pointer",
           color: "text.primary",
@@ -32,7 +32,7 @@ export const SpinnerControls = ({ value, onChange }) => {
         }}
       />
       <Iconify
-        icon="tabler:chevron-down"
+        icon="solar:alt-arrow-down-linear"
         sx={{
           cursor: "pointer",
           color: "text.primary",

@@ -5,15 +5,8 @@ import { mapVersionToFormConfig } from "./promptVersionUtils";
 // UI components consume already-detached prompt-node config.
 const SUPPORTED_PROMPT_ROLES = new Set(["system", "user", "assistant"]);
 const SUPPORTED_CONTENT_TYPES = new Set(["text"]);
-const SUPPORTED_LIBRARY_OUTPUT_FORMATS = new Set(["string", "json"]);
 const SUPPORTED_LIBRARY_TEMPLATE_FORMATS = new Set(["mustache", "jinja"]);
-const SUPPORTED_LIBRARY_RESPONSE_FORMATS = new Set([
-  "text",
-  "json",
-  "json_object",
-  "json_schema",
-  "string",
-]);
+const SUPPORTED_LIBRARY_RESPONSE_FORMATS = new Set(["text", "string", "json"]);
 const CONFIGURATION_KEYS_TO_LIFT = [
   "model",
   "model_detail",
@@ -40,67 +33,8 @@ const STRIPPED_LIBRARY_CONFIGURATION_KEYS = [
   "tool_choice",
   "toolChoice",
 ];
-const DISALLOWED_RESPONSE_SCHEMA_KEYS = new Set([
-  "$ref",
-  "$recursiveRef",
-  "$dynamicRef",
-]);
-const MAX_LIBRARY_RESPONSE_SCHEMA_BYTES = 50_000;
-const MAX_LIBRARY_RESPONSE_SCHEMA_DEPTH = 12;
-const MAX_LIBRARY_RESPONSE_SCHEMA_NODES = 1_000;
-const MAX_LIBRARY_RESPONSE_SCHEMA_ARRAY_LENGTH = 200;
-
 export const INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE =
-  "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.";
-
-function isPlainObject(value) {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-function hasSafeResponseSchemaShape(schema) {
-  if (schema == null) return true;
-  if (!isPlainObject(schema)) return false;
-
-  let serialized;
-  try {
-    serialized = JSON.stringify(schema);
-  } catch {
-    return false;
-  }
-
-  if (
-    new TextEncoder().encode(serialized).length >
-    MAX_LIBRARY_RESPONSE_SCHEMA_BYTES
-  ) {
-    return false;
-  }
-
-  let visitedNodes = 0;
-  const seen = new WeakSet();
-
-  function visit(value, depth) {
-    if (value == null || typeof value !== "object") return true;
-    if (depth > MAX_LIBRARY_RESPONSE_SCHEMA_DEPTH) return false;
-    if (seen.has(value)) return false;
-    seen.add(value);
-    visitedNodes += 1;
-    if (visitedNodes > MAX_LIBRARY_RESPONSE_SCHEMA_NODES) return false;
-
-    if (Array.isArray(value)) {
-      if (value.length > MAX_LIBRARY_RESPONSE_SCHEMA_ARRAY_LENGTH) {
-        return false;
-      }
-      return value.every((item) => visit(item, depth + 1));
-    }
-
-    return Object.entries(value).every(([key, child]) => {
-      if (DISALLOWED_RESPONSE_SCHEMA_KEYS.has(key)) return false;
-      return visit(child, depth + 1);
-    });
-  }
-
-  return visit(schema, 0);
-}
+  "This library template can't be added. Agent Builder requires text-only messages, a string output, a supported response format, and a configured model.";
 
 function normalizeTemplateContentBlock(block) {
   if (typeof block === "string") {
@@ -173,7 +107,7 @@ function normalizeTemplateConfiguration(snapshot) {
 
   const outputFormat =
     configuration.output_format || configuration.outputFormat || "string";
-  if (!SUPPORTED_LIBRARY_OUTPUT_FORMATS.has(outputFormat)) {
+  if (outputFormat !== "string") {
     return null;
   }
   configuration.output_format = outputFormat;
@@ -198,19 +132,12 @@ function normalizeTemplateConfiguration(snapshot) {
   configuration.response_format = responseFormat;
   delete configuration.responseFormat;
 
-  const responseSchema =
-    configuration.response_schema ?? configuration.responseSchema ?? null;
-  if (responseFormat === "json_schema") {
-    if (!hasSafeResponseSchemaShape(responseSchema)) {
-      return null;
-    }
-    if (responseSchema !== null) {
-      configuration.response_schema = responseSchema;
-    }
-  } else {
-    delete configuration.response_schema;
-  }
+  delete configuration.response_schema;
   delete configuration.responseSchema;
+
+  if (typeof configuration.model !== "string" || !configuration.model.trim()) {
+    return null;
+  }
 
   return configuration;
 }

@@ -105,7 +105,7 @@ const ConfigureAnnotationsMainForm = ({
 
   return (
     <Box sx={style.wrapper}>
-      <Typography fontWeight={700} color="text.secondary">
+      <Typography fontWeight={600} color="text.secondary">
         Configure annotation view template
       </Typography>
       <form

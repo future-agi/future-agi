@@ -27,6 +27,7 @@ import "yet-another-react-lightbox/styles.css";
 import { useLocation } from "react-router";
 import { LoadingButton } from "@mui/lab";
 import { useNavigate } from "react-router";
+import { LoadingScreen } from "src/components/loading-screen";
 
 const defaultFilter = () => ({
   id: getRandomId(),
@@ -289,8 +290,8 @@ const DatasetDetail = () => {
     if (datasetSelectMode)
       elements.push(
         <Button
-          variant="contained"
-          color="error"
+          variant="outlined"
+          color="inherit"
           size="small"
           onClick={() => resetSelectionState()}
         >
@@ -335,7 +336,7 @@ const DatasetDetail = () => {
     return opts;
   }, [datasetProperties]);
 
-  if (overAllLoading) return <LinearProgress />;
+  if (overAllLoading) return <LoadingScreen />;
 
   return (
     <>

@@ -33,26 +33,31 @@ config:
   code: |
     def evaluate(input, output, expected, context, **kwargs):
         import json
-        import ast
         import math
-        def _parse(val):
+        def parse_items(val):
             if val is None:
                 return []
             if isinstance(val, list):
                 return val
             if isinstance(val, str):
                 try:
-                    return json.loads(val)
+                    parsed = json.loads(val)
                 except (json.JSONDecodeError, ValueError):
-                    pass
-                try:
-                    return ast.literal_eval(val)
-                except (ValueError, SyntaxError):
-                    pass
+                    try:
+                        import ast
+                        parsed = ast.literal_eval(val)
+                    except ImportError:
+                        if val.lstrip().startswith(("'", '"', "[", "(", "{")):
+                            raise ValueError("Use valid JSON for quoted IDs or collections in the local executor")
+                        return [val]
+                    except (ValueError, SyntaxError):
+                        return [val]
+                return [parsed] if isinstance(parsed, (str, int, float)) else parsed
+            if isinstance(val, (int, float)):
                 return [val]
             return list(val)
-        reference = _parse(kwargs.get("reference", expected))
-        hypothesis = _parse(kwargs.get("hypothesis", output))
+        reference = parse_items(kwargs.get("reference", expected))
+        hypothesis = parse_items(kwargs.get("hypothesis", output))
         k = kwargs.get("k", None)
         if not reference:
             return {"score": 0.0, "reason": "NDCG@K requires at least one ground-truth item"}
@@ -62,8 +67,14 @@ config:
         ground_truth_set = set(str(x) for x in reference)
         # DCG: binary relevance (1 if relevant, 0 if not)
         dcg = 0.0
+        seen = set()
         for i, item in enumerate(hypothesis):
-            rel = 1.0 if str(item) in ground_truth_set else 0.0
+            # Credit each relevant item at most once. IDCG counts distinct
+            # ground-truth items, so repeats let NDCG exceed 1.0:
+            # hyp=["a","a"] against ref=["a"] scored 1.631.
+            key = str(item)
+            rel = 1.0 if key in ground_truth_set and key not in seen else 0.0
+            seen.add(key)
             dcg += rel / math.log2(i + 2)  # i+2 because rank starts at 1, log2(1)=0
         # Ideal DCG: all relevant items at the top
         n_relevant = min(len(ground_truth_set), len(hypothesis))

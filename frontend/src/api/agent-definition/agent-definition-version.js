@@ -1,7 +1,10 @@
 import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
-export const useAgentDefinitionVersions = ({ selectedAgentId }) => {
+export const useAgentDefinitionVersions = ({
+  selectedAgentId,
+  refetchInterval,
+}) => {
   return useInfiniteQuery({
     queryKey: ["agent-definition-versions", selectedAgentId],
     queryFn: async ({ pageParam = 1 }) => {
@@ -21,6 +24,7 @@ export const useAgentDefinitionVersions = ({ selectedAgentId }) => {
     },
     initialPageParam: 1,
     enabled: !!selectedAgentId,
+    refetchInterval,
   });
 };
 

@@ -497,7 +497,14 @@ class TestAnnotationsViewSet:
     def test_create_annotation_required_label_requires_entitlement(
         self, auth_client, dataset, user, annotation_label
     ):
-        """Required labels are plan-gated and should fail cleanly."""
+        """A required-label capability denial propagates cleanly as 402.
+
+        required_labels is free self-hosted (not oss_locked), so simulate a
+        cloud-plan denial by patching the gate — this still covers the view
+        calling the gate and mapping FeatureUnavailable to 402.
+        """
+        from tfc.ee_gating import EEFeature, FeatureUnavailable
+
         payload = {
             "name": "Required Label Annotation",
             "dataset": str(dataset.id),
@@ -505,7 +512,13 @@ class TestAnnotationsViewSet:
             "labels": [{"id": str(annotation_label.id), "required": True}],
             "responses": 1,
         }
-        response = auth_client.post("/model-hub/annotations/", payload, format="json")
+        with patch(
+            "tfc.ee_gating.check_ee_feature",
+            side_effect=FeatureUnavailable(EEFeature.REQUIRED_LABELS),
+        ):
+            response = auth_client.post(
+                "/model-hub/annotations/", payload, format="json"
+            )
         assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
 
     def test_retrieve_annotation(self, auth_client, annotation):
@@ -549,11 +562,17 @@ class TestAnnotationsViewSet:
             ],
             "responses": 1,
         }
-        response = auth_client.put(
-            f"/model-hub/annotations/{annotation.id}/",
-            payload,
-            format="json",
-        )
+        from tfc.ee_gating import EEFeature, FeatureUnavailable
+
+        with patch(
+            "tfc.ee_gating.check_ee_feature",
+            side_effect=FeatureUnavailable(EEFeature.REQUIRED_LABELS),
+        ):
+            response = auth_client.put(
+                f"/model-hub/annotations/{annotation.id}/",
+                payload,
+                format="json",
+            )
         assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
 
     def test_partial_update_preserves_labels_and_assignees(
@@ -831,6 +850,11 @@ class TestAnnotationsViewSetActions:
         self, auth_client, annotation, row, column
     ):
         """Falsy-but-valid annotation values should survive request validation."""
+        label = annotation.labels.get()
+        column.source_id = f"{annotation.id}-sourceid-{label.id}"
+        column.source = SourceChoices.ANNOTATION_LABEL.value
+        column.save()
+        annotation.columns.add(column)
         payload = {
             "label_values": [
                 {
@@ -848,6 +872,10 @@ class TestAnnotationsViewSetActions:
         )
 
         assert response.status_code == status.HTTP_200_OK
+        assert (
+            Cell.objects.get(row=row, column=column, dataset=annotation.dataset).value
+            == "0"
+        )
 
     def test_update_cells_missing_data(self, auth_client, annotation):
         """Test update_cells with missing label_values and response_field_values."""

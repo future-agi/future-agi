@@ -1,3 +1,4 @@
+import SelectionBar from "src/components/selection-bar";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Box,
@@ -14,7 +15,6 @@ import { useSnackbar } from "notistack";
 import { useForm } from "react-hook-form";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { Events, trackEvent } from "src/utils/Mixpanel";
-import SvgColor from "src/components/svg-color";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import { Helmet } from "react-helmet-async";
@@ -374,89 +374,23 @@ const MonitorsView = () => {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
               {selectedRowsData.length > 0 ? (
-                <Box
-                  sx={{
-                    display: "flex",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: "4px",
-                    alignItems: "center",
-                    gap: 1.5,
-                    px: 1.5,
-                    height: "38px",
-                  }}
-                >
-                  <Typography
-                    fontWeight="fontWeightMedium"
-                    typography="s1"
-                    color="primary.main"
-                  >
-                    {selectedRowsData.length} Selected
-                  </Typography>
-                  <Divider
-                    orientation="vertical"
-                    flexItem
-                    sx={{ width: "1px", height: "20px", mt: 1 }}
-                  />
-                  {selectedRowsData.length === 1 && (
-                    <Button
-                      startIcon={
-                        <SvgColor
-                          src="/assets/icons/ic_copy.svg"
-                          sx={{ width: 20, height: 20, color: "text.disabled" }}
-                        />
-                      }
-                      size="small"
-                      onClick={toggleDialog}
-                      disabled={selectedRowsData.length !== 1}
-                    >
-                      <Typography
-                        typography="s1"
-                        fontWeight={"fontWeightRegular"}
-                        color="text.primary"
-                      >
-                        Duplicate as new
-                      </Typography>
-                    </Button>
-                  )}
-                  <Button
-                    startIcon={
-                      <SvgColor
-                        src="/assets/icons/ic_delete.svg"
-                        sx={{ width: 20, height: 20, color: "text.primary" }}
-                      />
-                    }
-                    size="small"
-                    sx={{ color: "text.primary", fontWeight: 400 }}
-                    onClick={handleDelete}
-                  >
-                    <Typography
-                      typography="s1"
-                      fontWeight={"fontWeightRegular"}
-                      color="text.primary"
-                    >
-                      Delete
-                    </Typography>
-                  </Button>
-                  <Divider
-                    orientation="vertical"
-                    flexItem
-                    sx={{ width: "1px", height: "20px", mt: 1 }}
-                  />
-                  <Button
-                    size="small"
-                    sx={{ color: "text.primary", fontWeight: 400, mx: -1 }}
-                    onClick={clearSelection}
-                  >
-                    <Typography
-                      typography="s1"
-                      fontWeight={"fontWeightRegular"}
-                      color="text.primary"
-                    >
-                      Cancel
-                    </Typography>
-                  </Button>
-                </Box>
+                <SelectionBar
+                  count={selectedRowsData.length}
+                  onCancel={clearSelection}
+                  actions={[
+                    {
+                      label: "Duplicate as new",
+                      icon: "solar:copy-linear",
+                      onClick: toggleDialog,
+                      hidden: selectedRowsData.length !== 1,
+                    },
+                    {
+                      label: "Delete",
+                      icon: "solar:trash-bin-trash-linear",
+                      onClick: handleDelete,
+                    },
+                  ]}
+                />
               ) : (
                 <Button
                   variant="contained"
@@ -466,15 +400,12 @@ const MonitorsView = () => {
                     setShowAddMonitor(true);
                     trackEvent(Events.createNewMonitorClicked);
                   }}
-                  sx={{ height: "38px", width: "190px" }}
+                  sx={{ width: "190px" }}
                   startIcon={
                     <Iconify
-                      icon="fe:plus"
+                      icon="solar:add-linear"
                       color="background.paper"
-                      sx={{
-                        width: "20px",
-                        height: "20px",
-                      }}
+                      width="20px"
                     />
                   }
                 >

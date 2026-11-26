@@ -1,0 +1,194 @@
+{
+  "per_axis": [
+    {
+      "axis": "task",
+      "levels": 4,
+      "scenarios": 6,
+      "counts": {
+        "cancel_ride": 2,
+        "create_guest": 2,
+        "handoff_human": 1,
+        "retrieve_saved_place": 1
+      }
+    },
+    {
+      "axis": "counterparty",
+      "levels": 4,
+      "scenarios": 6,
+      "counts": {
+        "guest_caller": 2,
+        "registered_rider": 2,
+        "blocked_rider": 1,
+        "third_party": 1
+      }
+    },
+    {
+      "axis": "disposition",
+      "levels": 4,
+      "scenarios": 6,
+      "counts": {
+        "active_booking_in_flight": 2,
+        "active_cash_market": 2,
+        "active_wallet_credit": 1,
+        "suspended_account": 1
+      }
+    },
+    {
+      "axis": "interface",
+      "levels": 2,
+      "scenarios": 6,
+      "counts": {
+        "accented": 4,
+        "noisy_line": 2
+      }
+    },
+    {
+      "axis": "interaction",
+      "levels": 4,
+      "scenarios": 6,
+      "counts": {
+        "single_request": 3,
+        "hesitant_pause": 1,
+        "interrupted": 1,
+        "multi_turn_correction": 1
+      }
+    },
+    {
+      "axis": "overlay",
+      "levels": 4,
+      "scenarios": 6,
+      "counts": {
+        "none": 3,
+        "destructive": 1,
+        "emergency_crisis": 1,
+        "privacy_pii": 1
+      }
+    },
+    {
+      "axis": "overlay_vector",
+      "levels": 3,
+      "scenarios": 6,
+      "counts": {
+        "none": 3,
+        "background_audio": 2,
+        "spoken_caller": 1
+      }
+    },
+    {
+      "axis": "overlay_intensity",
+      "levels": 3,
+      "scenarios": 6,
+      "counts": {
+        "absent": 3,
+        "subtle": 2,
+        "overt": 1
+      }
+    }
+  ],
+  "row_axis": "task",
+  "col_axis": "overlay",
+  "rows": [
+    "cancel_ride",
+    "create_guest",
+    "handoff_human",
+    "retrieve_saved_place"
+  ],
+  "columns": [
+    "destructive",
+    "emergency_crisis",
+    "none",
+    "privacy_pii"
+  ],
+  "cells": [
+    {
+      "row": "cancel_ride",
+      "column": "destructive",
+      "count": 1
+    },
+    {
+      "row": "cancel_ride",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "cancel_ride",
+      "column": "none",
+      "count": 1
+    },
+    {
+      "row": "cancel_ride",
+      "column": "privacy_pii",
+      "count": 0
+    },
+    {
+      "row": "create_guest",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "create_guest",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "create_guest",
+      "column": "none",
+      "count": 1
+    },
+    {
+      "row": "create_guest",
+      "column": "privacy_pii",
+      "count": 1
+    },
+    {
+      "row": "handoff_human",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "emergency_crisis",
+      "count": 1
+    },
+    {
+      "row": "handoff_human",
+      "column": "none",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "privacy_pii",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "none",
+      "count": 1
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "privacy_pii",
+      "count": 0
+    }
+  ],
+  "axes": [
+    "task",
+    "counterparty",
+    "disposition",
+    "interface",
+    "interaction",
+    "overlay",
+    "overlay_vector",
+    "overlay_intensity"
+  ]
+}

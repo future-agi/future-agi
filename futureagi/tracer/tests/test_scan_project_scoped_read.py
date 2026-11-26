@@ -93,6 +93,16 @@ def test_list_by_trace_ids_heavy_by_default():
     assert "attributes_extra" in client.sql  # fat column read in full
 
 
+def test_list_by_trace_ids_limits_rows_only_when_asked():
+    client = _RecordingClient()
+    _reader_with(client).list_by_trace_ids(["t1"])
+    assert "LIMIT" not in client.sql
+    _reader_with(client).list_by_trace_ids(["t1"], limit=5001)
+    # Bound as a parameter, never put into the SQL text.
+    assert client.sql.endswith("ORDER BY trace_id, start_time, id LIMIT %(limit)s")
+    assert client.params["limit"] == 5001
+
+
 def test_list_by_trace_ids_lean_stubs_fat_columns():
     client = _RecordingClient()
     _reader_with(client).list_by_trace_ids(["t1"], include_heavy=False)
@@ -164,8 +174,10 @@ def test_project_cluster_inputs_corpus_scopes_read():
     reader = _FakeReaderCM(sink, "roots_by_trace_ids")
     with (
         patch("tracer.queries.feed.get_reader", return_value=reader),
-        patch("tracer.queries.feed.ErrorClusterTraces") as ect,
+        patch("tracer.queries.feed._current_memberships") as memberships,
     ):
-        ect.objects.filter.return_value.values_list.return_value = [("cluster-1", "t-1")]
+        memberships.return_value.filter.return_value.values_list.return_value = [
+            ("cluster-1", "t-1")
+        ]
         _project_cluster_inputs_corpus("proj-corpus")
     assert sink["project_id"] == "proj-corpus"

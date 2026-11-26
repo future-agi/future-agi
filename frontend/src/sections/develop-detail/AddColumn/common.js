@@ -3,7 +3,7 @@ import { getRandomId } from "src/utils/utils";
 export const StaticColumns = [
   {
     label: "Text",
-    icon: "material-symbols:notes",
+    icon: "solar:notes-linear",
     value: "text",
     helpingText: "Generate a column of text values.",
   },
@@ -15,7 +15,7 @@ export const StaticColumns = [
   },
   {
     label: "Integer",
-    icon: "material-symbols:tag",
+    icon: "solar:hashtag-linear",
     value: "integer",
     helpingText: "Generate a column of number values.",
   },
@@ -27,43 +27,43 @@ export const StaticColumns = [
   },
   {
     label: "JSON",
-    icon: "material-symbols:data-object",
+    icon: "solar:braces-linear",
     value: "json",
     helpingText: "Generate a column of json values.",
   },
   {
     label: "Array",
-    icon: "material-symbols:data-array",
+    icon: "solar:brackets-linear",
     value: "array",
     helpingText: "Generate a column of array values.",
   },
   {
     label: "Date Time",
-    icon: "tabler:calendar",
+    icon: "solar:calendar-linear",
     value: "datetime",
     helpingText: "Generate a column of date time values.",
   },
   {
     label: "Audio",
-    icon: "fluent:speaker-2-16-regular",
+    icon: "solar:volume-loud-linear",
     value: "audio",
     helpingText: "Generate a column of audio type.",
   },
   {
     label: "Image",
-    icon: "material-symbols:image-outline",
+    icon: "solar:gallery-linear",
     value: "image",
     helpingText: "Generate a column of image values.",
   },
   {
     label: "Images",
-    icon: "material-symbols:art-track-outline",
+    icon: "solar:gallery-linear",
     value: "images",
     helpingText: "Generate a column for multiple images.",
   },
   {
     label: "Document",
-    icon: "fluent:document-square-28-regular",
+    icon: "solar:document-text-linear",
     value: "document",
     helpingText: "Generate a column of document values.",
   },
@@ -88,7 +88,7 @@ export const DynamicColumns = [
   },
   {
     label: "Extract Entities",
-    icon: "material-symbols:chip-extraction",
+    icon: "solar:cpu-linear",
     value: "extractEntities",
     color: "text.primary",
     helpingText:
@@ -96,14 +96,14 @@ export const DynamicColumns = [
   },
   {
     label: "Extract a JSON Key",
-    icon: "mdi:code-json",
+    icon: "solar:code-linear",
     value: "extractJsonKey",
     color: "text.primary",
     helpingText:
       "Extract specific keys from JSON using JSONPath syntax, allowing for target retreival of nested information within JSON objects.",
   },
   // {
-  //   icon: "mdi:code",
+  //   icon: "solar:code-linear",
   //   label: "Execute Custom Code",
   //   value: "executeCustomCode",
   //   color: "text.primary",
@@ -112,7 +112,7 @@ export const DynamicColumns = [
   // },
   {
     label: "Classification",
-    icon: "mingcute:classify-2-line",
+    icon: "solar:tag-horizontal-linear",
     value: "classification",
     color: "text.primary",
     helpingText:
@@ -122,13 +122,13 @@ export const DynamicColumns = [
     label: "API Calls",
     value: "apiCall",
     color: "text.primary",
-    icon: "hugeicons:api",
+    icon: "solar:plug-circle-linear",
     helpingText:
       "Generate a column and new entries for every row by making API calls to a specified endpoint.",
   },
   {
     label: "Conditional Node",
-    icon: "hugeicons:node-add",
+    icon: "solar:widget-add-linear",
     color: "text.primary",
     value: "conditionalnode",
     helpingText:

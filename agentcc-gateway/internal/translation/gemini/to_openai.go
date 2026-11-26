@@ -1,8 +1,6 @@
 package gemini
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -51,7 +49,7 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		for _, part := range content.Parts {
 			if part.FunctionCall != nil {
 				name := part.FunctionCall.Name
-				callIDsByName[name] = append(callIDsByName[name], newCallID())
+				callIDsByName[name] = append(callIDsByName[name], models.NewToolCallID())
 			}
 		}
 	}
@@ -63,16 +61,6 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		msgs, partDrops := translateContent(content, callIDsByName, callCursor, respCursor)
 		drops = append(drops, partDrops...)
 		out.Messages = append(out.Messages, msgs...)
-	}
-
-	// Store the per-name ID lists in Extra so a response path can reconstruct
-	// the same correlation if needed.
-	if len(callIDsByName) > 0 {
-		mapBytes, _ := json.Marshal(callIDsByName)
-		if out.Extra == nil {
-			out.Extra = make(map[string]json.RawMessage)
-		}
-		out.Extra["gemini_tool_call_id_map"] = json.RawMessage(mapBytes)
 	}
 
 	// ── 4. generationConfig ──────────────────────────────────────────────────
@@ -100,7 +88,9 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		if cfg.ResponseMimeType == "application/json" {
 			if len(cfg.ResponseSchema) > 0 {
 				// json_schema variant: wrap schema into OpenAI's json_schema format
+				// OpenAI requires a json_schema name; Gemini has none to give.
 				schemaWrapper, _ := json.Marshal(map[string]json.RawMessage{
+					"name":   json.RawMessage(`"response"`),
 					"schema": cfg.ResponseSchema,
 				})
 				out.ResponseFormat = &models.ResponseFormat{
@@ -128,52 +118,39 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 	}
 
 	// ── 6. toolConfig → tool_choice ──────────────────────────────────────────
-	// Gemini expresses tool constraints via mode + allowedFunctionNames.
-	// OpenAI tool_choice is coarser (auto|none|required|specific-function), so
-	// some Gemini configurations can't be represented 1:1 — those are dropped.
+	// Keep allowedFunctionNames as a restriction, not a translation drop. Every
+	// provider can then either enforce the canonical subset or refuse it.
 	if req.ToolConfig != nil && req.ToolConfig.FunctionCallingConfig != nil {
 		fc := req.ToolConfig.FunctionCallingConfig
-		mode := fc.Mode
-		allowed := fc.AllowedFunctionNames
-
-		switch mode {
+		switch fc.Mode {
 		case "NONE":
-			choice, _ := json.Marshal("none")
-			out.ToolChoice = choice
-		case "ANY":
-			switch len(allowed) {
-			case 0:
-				// Force *some* tool.
-				choice, _ := json.Marshal("required")
-				out.ToolChoice = choice
-			case 1:
-				// Force *this* tool — expressible as OpenAI specific-function.
-				choice, err := json.Marshal(map[string]any{
-					"type":     "function",
-					"function": map[string]string{"name": allowed[0]},
-				})
-				if err == nil {
-					out.ToolChoice = choice
-				}
-			default:
-				// Multiple allowed names — OpenAI can't express "force one of these
-				// specific tools". Fall back to "required" and flag the loss.
-				choice, _ := json.Marshal("required")
-				out.ToolChoice = choice
-				drops = append(drops, "allowed_function_names_subset_unsupported")
+			out.ToolChoice = json.RawMessage(`"none"`)
+		case "ANY", "AUTO", "MODE_UNSPECIFIED", "":
+			mode := "auto"
+			if fc.Mode == "ANY" {
+				mode = "required"
 			}
-		case "AUTO", "":
-			choice, _ := json.Marshal("auto")
-			out.ToolChoice = choice
-			// AUTO + allowedFunctionNames can't be expressed via tool_choice;
-			// the upstream would need the tools[] list itself filtered, which
-			// we don't do here.
-			if len(allowed) > 0 {
-				drops = append(drops, "allowed_function_names_in_auto_unsupported")
+			if len(fc.AllowedFunctionNames) == 0 {
+				out.ToolChoice, _ = json.Marshal(mode)
+				break
+			}
+			tools := make([]map[string]string, 0, len(fc.AllowedFunctionNames))
+			for _, name := range fc.AllowedFunctionNames {
+				tools = append(tools, map[string]string{"type": "function", "name": name})
+			}
+			out.ToolChoice, _ = json.Marshal(map[string]any{
+				"type":          "allowed_tools",
+				"allowed_tools": map[string]any{"mode": mode, "tools": tools},
+			})
+			choice, err := models.ParseAllowedToolsChoice(out.ToolChoice)
+			if err != nil {
+				return nil, nil, fmt.Errorf("gemini inbound: %w", err)
+			}
+			if _, err := choice.Filter(out.Tools); err != nil {
+				return nil, nil, fmt.Errorf("gemini inbound: %w", err)
 			}
 		default:
-			choice, _ := json.Marshal("auto")
-			out.ToolChoice = choice
+			return nil, nil, fmt.Errorf("gemini inbound: unsupported function calling mode %q", fc.Mode)
 		}
 	}
 
@@ -334,13 +311,6 @@ func translateContent(
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-// newCallID generates a stable random call ID in the format call_{hex16}.
-func newCallID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return "call_" + hex.EncodeToString(b)
-}
-
 // nextCallID returns the next unclaimed call ID for the given function name,
 // advancing the cursor. Falls back to a fresh ID if the pre-computed list is
 // exhausted (defensive: a functionResponse without a matching functionCall).
@@ -350,7 +320,7 @@ func nextCallID(callIDsByName map[string][]string, cursor map[string]int, name s
 		cursor[name] = idx + 1
 		return ids[idx]
 	}
-	return newCallID()
+	return models.NewToolCallID()
 }
 
 // flattenPartsText concatenates the Text fields of all parts.

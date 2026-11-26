@@ -269,9 +269,9 @@ class TestErrorStateFix:
         )
 
         old_resp = _old_build_response(logger_obj)
-        assert (
-            old_resp["score"] == 0.5
-        ), "OLD response leaks stale score on errored eval"
+        assert old_resp["score"] == 0.5, (
+            "OLD response leaks stale score on errored eval"
+        )
         assert "error" not in old_resp, "OLD response has no error flag"
 
     def test_new_response_returns_error_with_null_score(

@@ -45,9 +45,9 @@ class FiLoggingHelper:
                 request_data_type=request_type,
                 source=FiEvalRequestSource.DEV_SDK.value,
             )
-            eval_request_id = FiApiService.create_eval_request(eval_request)[
-                "data"
-            ]["eval_request"]["id"]
+            eval_request_id = FiApiService.create_eval_request(eval_request)["data"][
+                "eval_request"
+            ]["id"]
             return eval_request_id
         except Exception as e:
             logger.exception(
@@ -68,10 +68,19 @@ class FiLoggingHelper:
 
             for eval_result in eval_results:
                 # Construct eval result object
-                failure_value = eval_result.get("failure") if "failure" in eval_result else None
-                failed_percent = float(failure_value) if failure_value is not None and isinstance(failure_value, (bool, int, float)) else None
+                failure_value = (
+                    eval_result.get("failure") if "failure" in eval_result else None
+                )
+                failed_percent = (
+                    float(failure_value)
+                    if failure_value is not None
+                    and isinstance(failure_value, (bool, int, float))
+                    else None
+                )
                 metrics = eval_result.get("metrics", [])
-                datapoint_field_annotations = eval_result.get("datapoint_field_annotations", None)
+                datapoint_field_annotations = eval_result.get(
+                    "datapoint_field_annotations", None
+                )
                 Fi_eval_result = FiEvalResult(
                     job_type=FiJobType.LLM_EVAL.value,
                     failed_percent=failed_percent,
@@ -79,7 +88,9 @@ class FiLoggingHelper:
                     flakiness=0.0,
                     run_results=[
                         FiEvalRunResult(
-                            failed=eval_result["failure"] if "failure" in eval_result else None,
+                            failed=eval_result["failure"]
+                            if "failure" in eval_result
+                            else None,
                             runtime=eval_result["runtime"],
                             reason=eval_result["reason"],
                             datapoint_field_annotations=datapoint_field_annotations,
@@ -121,6 +132,7 @@ class FiLoggingHelper:
     @staticmethod
     def log_eval_results_with_config(eval_results_with_config: dict, dataset_id: str):
         try:
+
             def remove_none_values(data: dict) -> dict:
                 return {k: v for k, v in data.items() if v is not None}
 
@@ -132,16 +144,18 @@ class FiLoggingHelper:
             for eval_result in sliced_eval_results:
                 cleaned_eval_result = {
                     "metrics": eval_result.get("metrics"),
-                    "reason": eval_result.get("reason")
+                    "reason": eval_result.get("reason"),
                 }
                 cleaned_eval_results.append(remove_none_values(cleaned_eval_result))
 
-            development_eval_config = remove_none_values(eval_results_with_config.get("development_eval_config", {}))
+            development_eval_config = remove_none_values(
+                eval_results_with_config.get("development_eval_config", {})
+            )
 
             cleaned_results = {
                 "dataset_id": dataset_id,
                 "eval_results": cleaned_eval_results,
-                "development_eval_config": development_eval_config
+                "development_eval_config": development_eval_config,
             }
 
             # Replace with your logging mechanism

@@ -52,7 +52,9 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.ImageRequest = &req
 
+	rc.Metadata["client_ip"] = h.clientIP(r)
 	setAuthMetadataFromRequest(rc, r)
+	applyCallerMetadata(rc, r, nil)
 
 	// Resolve timeout and apply.
 	timeout := h.resolveTimeout(rc, r)
@@ -69,7 +71,7 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider.
-	provider, err := h.resolveProvider(ctx, rc, req.Model)
+	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
 			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
@@ -83,8 +85,11 @@ func (h *Handlers) CreateImage(w http.ResponseWriter, r *http.Request) {
 			models.WriteErrorFromError(w, err)
 			return
 		}
-	} else if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	} else {
+		req.Model = upstreamModel
+		if shouldApplyOrgProviderOverride(rc) {
+			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+		}
 	}
 
 	// Type-assert to ImageProvider.

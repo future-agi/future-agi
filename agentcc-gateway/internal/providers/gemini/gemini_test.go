@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -140,6 +141,90 @@ func basicRequest() *models.ChatCompletionRequest {
 	}
 }
 
+// A dropped setting must leave the upstream request identical to one without it.
+// The HTTP-level test checks the warning returned to the caller.
+func TestGeminiToolPolicyDropped(t *testing.T) {
+	f := false
+	for _, tc := range []struct {
+		name     string
+		parallel *bool
+		callers  []string
+	}{
+		{"parallel_tool_calls", &f, nil},
+		{"allowed_callers", nil, []string{"code_execution_20250825"}},
+		{"empty_allowed_callers", nil, []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := basicRequest()
+			req.Tools = []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}}
+			plain, _ := translateRequest(req)
+			want, err := json.Marshal(plain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.ParallelToolCalls = tc.parallel
+			req.Tools[0].AllowedCallers = tc.callers
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got, err := io.ReadAll(r.Body)
+				if err != nil || string(got) != string(want) {
+					t.Errorf("wire request = %s (%v), want unchanged %s", got, err, want)
+				}
+				const result = `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`
+				if r.URL.Query().Get("alt") == "sse" {
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "data: %s\n\n", result)
+				} else {
+					io.WriteString(w, result)
+				}
+			}))
+			defer server.Close()
+			p := newTestProvider(t, server.URL)
+			if _, err := p.ChatCompletion(context.Background(), req); err != nil {
+				t.Errorf("non-stream: %v", err)
+			}
+			req.Stream = true
+			chunks, errs := p.StreamChatCompletion(context.Background(), req)
+			for range chunks {
+			}
+			for err := range errs {
+				if err != nil {
+					t.Errorf("stream: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestGeminiToolPolicyInvalidChoice(t *testing.T) {
+	for _, tc := range []struct{ name, choice string }{
+		{"undeclared", `{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","name":"missing"}]}}`},
+		{"malformed", `{"type":"allowed_tools","allowed_tools":{"tools":"bad"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+			defer server.Close()
+			p := newTestProvider(t, server.URL)
+			req := basicRequest()
+			req.Tools = []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}}
+			req.ToolChoice = json.RawMessage(tc.choice)
+			_, err := p.ChatCompletion(context.Background(), req)
+			chunks, errs := p.StreamChatCompletion(context.Background(), req)
+			for range chunks {
+				t.Fatal("unexpected streaming chunk")
+			}
+			for _, got := range []error{err, <-errs} {
+				if apiErr, ok := got.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || apiErr.Code != "invalid_tool_choice" || !strings.Contains(apiErr.Message, "allowed_tools") {
+					t.Errorf("error = %v, want 400 invalid_tool_choice naming allowed_tools", got)
+				}
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("sent %d requests despite invalid choice", calls.Load())
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Non-streaming integration tests
 // ---------------------------------------------------------------------------
@@ -176,9 +261,13 @@ func TestIntegration_NonStreamingRoundTrip(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "/v1beta/models/gemini-1.5-pro:generateContent") {
 			t.Errorf("URL path = %q, want to contain generateContent", r.URL.Path)
 		}
-		// Verify API key in query.
-		if r.URL.Query().Get("key") != "test-api-key" {
-			t.Errorf("key param = %q, want %q", r.URL.Query().Get("key"), "test-api-key")
+		// The credential belongs in a header, never the URL: a URL reaches the
+		// caller's error body and the request log on any network failure.
+		if got := r.Header.Get("x-goog-api-key"); got != "test-api-key" {
+			t.Errorf("x-goog-api-key = %q, want %q", got, "test-api-key")
+		}
+		if r.URL.Query().Has("key") {
+			t.Errorf("the key was sent in the query: %s", r.URL.RawQuery)
 		}
 		// Verify request body.
 		body, err := io.ReadAll(r.Body)
@@ -312,9 +401,11 @@ func TestIntegration_StreamingRoundTrip(t *testing.T) {
 		if r.URL.Query().Get("alt") != "sse" {
 			t.Errorf("alt param = %q, want %q", r.URL.Query().Get("alt"), "sse")
 		}
-		// Verify API key in query (appended with &).
-		if r.URL.Query().Get("key") != "test-api-key" {
-			t.Errorf("key param = %q, want %q", r.URL.Query().Get("key"), "test-api-key")
+		if got := r.Header.Get("x-goog-api-key"); got != "test-api-key" {
+			t.Errorf("x-goog-api-key = %q, want %q", got, "test-api-key")
+		}
+		if r.URL.Query().Has("key") {
+			t.Errorf("the key was sent in the query: %s", r.URL.RawQuery)
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -392,6 +483,43 @@ func TestIntegration_StreamingRoundTrip(t *testing.T) {
 	}
 	if lastUsage.TotalTokens != 8 {
 		t.Errorf("TotalTokens = %d, want 8", lastUsage.TotalTokens)
+	}
+}
+
+func TestIntegration_StreamingStopsAtFinishReasonWithoutWaitingForEOF(t *testing.T) {
+	requestClosed := make(chan struct{})
+	finalChunk := `{"candidates":[{"content":{"role":"model","parts":[{"text":"done"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(requestClosed)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "data: %s\n\n", finalChunk)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	provider := newTestProvider(t, server.URL)
+	request := basicRequest()
+	request.Stream = true
+	started := time.Now()
+
+	chunks, errs := provider.StreamChatCompletion(context.Background(), request)
+	for range chunks {
+	}
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("stream error: %v", err)
+		}
+	}
+
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stream stayed open for %v after its final finish reason", elapsed)
+	}
+	select {
+	case <-requestClosed:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not close the upstream response body")
 	}
 }
 
@@ -593,10 +721,13 @@ func TestIntegration_StreamError500(t *testing.T) {
 // API key in URL tests
 // ---------------------------------------------------------------------------
 
-func TestIntegration_APIKeyInQueryParam(t *testing.T) {
-	var capturedKey string
+// The key travels in a header. It used to be appended to the URL, which put
+// it in every *url.Error, and from there in the 502 body and the request log.
+func TestIntegration_APIKeyIsSentAsAHeader(t *testing.T) {
+	var capturedKey, capturedQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedKey = r.URL.Query().Get("key")
+		capturedKey = r.Header.Get("x-goog-api-key")
+		capturedQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(geminiResponse{
 			Candidates: []geminiCandidate{
@@ -615,7 +746,10 @@ func TestIntegration_APIKeyInQueryParam(t *testing.T) {
 		t.Fatalf("ChatCompletion() error = %v", err)
 	}
 	if capturedKey != "test-api-key" {
-		t.Errorf("API key in query = %q, want %q", capturedKey, "test-api-key")
+		t.Errorf("x-goog-api-key = %q, want %q", capturedKey, "test-api-key")
+	}
+	if strings.Contains(capturedQuery, "key=") {
+		t.Errorf("the key was sent in the query: %s", capturedQuery)
 	}
 }
 
@@ -655,10 +789,11 @@ func TestIntegration_NoAPIKey(t *testing.T) {
 	}
 }
 
-func TestIntegration_StreamAPIKeyAppendedWithAmpersand(t *testing.T) {
-	var capturedURL string
+func TestIntegration_StreamAPIKeyIsSentAsAHeader(t *testing.T) {
+	var capturedURL, capturedHeaderKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedURL = r.URL.String()
+		capturedHeaderKey = r.Header.Get("x-goog-api-key")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "data: %s\n\n", `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`)
@@ -678,12 +813,15 @@ func TestIntegration_StreamAPIKeyAppendedWithAmpersand(t *testing.T) {
 		}
 	}
 
-	// Streaming URL should have ?alt=sse&key=...
+	// The streaming URL keeps alt=sse and carries no credential.
 	if !strings.Contains(capturedURL, "alt=sse") {
 		t.Errorf("URL = %q, should contain alt=sse", capturedURL)
 	}
-	if !strings.Contains(capturedURL, "key=test-api-key") {
-		t.Errorf("URL = %q, should contain key=test-api-key", capturedURL)
+	if strings.Contains(capturedURL, "key=") {
+		t.Errorf("the key was sent in the URL: %s", capturedURL)
+	}
+	if capturedHeaderKey != "test-api-key" {
+		t.Errorf("x-goog-api-key = %q, want %q", capturedHeaderKey, "test-api-key")
 	}
 }
 

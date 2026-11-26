@@ -16,7 +16,8 @@ criteria: "You are evaluating whether the conversation reaches a clear and satis
   \ fully addressed with clear acknowledgment and closure.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Conversation
-- Chatbot behaviors
+- Quality
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

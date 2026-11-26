@@ -12,12 +12,12 @@
 ### The OpenAI-compatible gateway for production AI.
 
 **One gateway, every modality.**
-Text · chat · embeddings · images · audio (speech + TTS) · video · OCR · rerank · realtime WebSocket · Assistants + threads · vector stores · batch jobs — all with dedicated routes.
+Text · chat · embeddings · images · audio (speech + TTS) · [video](#-video-generation) · OCR · rerank · structured decisions · realtime WebSocket · Assistants + threads · vector stores · batch jobs — all with dedicated routes.
 Route · cache · govern · guard · observe. Single Go binary. Drop-in OpenAI API.
 
 <p>
   <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0"></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.23-00ADD8?style=flat-square&logo=go" alt="Go 1.23"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/built%20with-Go%201.25-00ADD8?style=flat-square&logo=go" alt="Go 1.25"></a>
   <a href="https://docs.futureagi.com/docs/prism"><img src="https://img.shields.io/badge/docs-docs.futureagi.com-fafafa?style=flat-square" alt="Docs"></a>
   <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/community-Discord-5865F2?style=flat-square" alt="Discord"></a>
 </p>
@@ -43,7 +43,7 @@ Agent Command Center sits between your app and LLM providers. Every request flow
 - **Cost control** — exact + semantic caching, per-key budgets, quotas, virtual keys, rate limits, credits ledger.
 - **Safety** — 18 built-in guardrail scanners (PII, injection, jailbreak, secrets, hallucination, MCP security, content moderation, custom policy, validation, leakage, language, blocklist, …) + adapters for 15 third-party guardrail vendors.
 - **Observability** — Prometheus + OpenTelemetry, per-request metrics (cost, tokens, cache hit, provider).
-- **Modern protocols first-class** — MCP, A2A, Assistants + threads, vector stores, batch, files, realtime WebSocket, responses API, video — shipped, not roadmap.
+- **Modern protocols first-class** — MCP, A2A, Assistants + threads, vector stores, batch, files, realtime WebSocket, responses API — shipped, not roadmap.
 
 One binary. One config. No proprietary control plane.
 
@@ -51,211 +51,34 @@ One binary. One config. No proprietary control plane.
 
 ## 📈 Benchmarks
 
-> **Methodology:** gateway routes to a **mock OpenAI upstream** (returns a canned response instantly) so we measure pure gateway processing, not provider latency. Load driven by [`hey`](https://github.com/rakyll/hey) with an authenticated internal key. Every run is reproducible — mock upstream, configs, and commands are committed under [`bench/`](./bench/).
+### Measure routing and HTTP handlers locally
 
-### 🏋️ t3.xlarge (4 vCPU / 16 GB)
+From the repository root, run the committed Go benchmarks. No provider key or running gateway is required.
 
-End-to-end latency (client → gateway → mock upstream → client), 4 vCPU / 16 GB Docker container, Linux 6.8.
+```bash
+cd agentcc-gateway
+go test -run='^$' -bench=. -benchmem ./internal/routing/ ./internal/server/
+```
 
-| Workload | Concurrency | Throughput | P50 | P95 | P99 | Success |
-|---|---:|---:|---:|---:|---:|---:|
-| 🔻 Baseline (direct to mock) | 200 | 58 852 req/s | 1.2 ms | 13.3 ms | 31.9 ms | 100 % |
-| **Gateway, bare proxy** | 50 | **28 904 req/s** | **1.4 ms** | **3.8 ms** | **5.6 ms** | 100 % |
-| **Gateway, bare proxy** | 100 | **29 584 req/s** | 2.6 ms | 7.9 ms | 12.3 ms | 100 % |
-| **Gateway, bare proxy** | 200 | **28 889 req/s** | 5.4 ms | 14.8 ms | 20.8 ms | 100 % |
-| **Gateway + 3 guardrails** | 200 | **29 049 req/s** | 5.1 ms | 16.2 ms | 31.0 ms | 100 % |
+The [routing benchmarks](./internal/routing/weighted_bench_test.go) measure weighted target selection. The server benchmarks exercise [router dispatch](./internal/server/router_test.go) and [HTTP handlers](./internal/server/benchmark_test.go); the chat handlers call a local test upstream. Compare `ns/op` and `allocs/op` for the same benchmark on the same machine.
 
-**Even inside a 4-vCPU container, the gateway holds ~29 k req/s at P99 ≤ 20 ms with 100 % success. 3 inline guardrails add negligible cost at this concurrency profile — CPU is already the bottleneck.**
+These are not end-to-end throughput or tail-latency measurements. The mock-upstream setup used for the historical load figures is not included in this repository, so those figures are not a target for these commands.
 
-### 🏎️ Unconstrained on host (reference) — M4 Max, 14 cores, 36 GB
+### Optional: measure a configured gateway
 
-| Workload | Concurrency | Throughput | P50 | P95 | P99 | Success |
-|---|---:|---:|---:|---:|---:|---:|
-| 🔻 Baseline (direct to mock) | 200 | 62 288 req/s | 2.6 ms | 6.3 ms | 12.7 ms | 100 % |
-| Gateway, bare proxy | 50 | 28 276 req/s | 1.4 ms | 2.8 ms | 10.7 ms | 100 % |
-| Gateway, bare proxy | 100 | **34 659 req/s** | 2.7 ms | 5.1 ms | **6.1 ms** | 100 % |
-| Gateway, bare proxy | 200 | 34 834 req/s | 4.7 ms | 11.8 ms | 22.2 ms | 100 % |
-| Gateway + 3 guardrails | 200 | 27 765 req/s | 4.9 ms | 19.2 ms | 32.6 ms | 100 % |
+From `agentcc-gateway/`, start the gateway with your local configuration:
 
-### Gateway-added overhead (subtract baseline at matched concurrency)
+```bash
+go run ./cmd/agentcc --config config.yaml
+```
 
-| Config | P50 overhead | P95 overhead | P99 overhead |
-|---|---:|---:|---:|
-| Bare proxy (routing + auth + metrics) | **+2.1 ms** | **+5.5 ms** | **+9.5 ms** |
-| + 3 inline guardrails (PII · prompt-injection · secrets) | **+2.3 ms** | +12.9 ms | +19.9 ms |
+In a second terminal in `agentcc-gateway/`, inspect the [load-test client](./cmd/loadtest) options without sending requests:
 
-### Gateway-internal wall time (`go test -bench`, no network I/O)
+```bash
+go run ./cmd/loadtest -help
+```
 
-These numbers measure **what the gateway itself does per request** — fed through the full handler pipeline via `httptest.NewRecorder()`, with an in-process mock OpenAI upstream. No TCP loopback, no kernel socket, no driver. Pure Go wall time.
-
-| Operation | ns/op | µs | allocs/op |
-|---|---:|---:|---:|
-| **Weighted target select** (3 targets, 0 allocs) | **~9.9 ns** | 0.010 µs | 0 |
-| **Weighted target select** (16 targets, 0 allocs) | **~22 ns** | 0.022 µs | 0 |
-| HTTP router — static hot path dispatch | **36 ns** | 0.036 µs | 1 |
-| HTTP router — `/health` | 36 ns | 0.036 µs | 1 |
-| HTTP router — not-found fall-through | 471 ns | 0.47 µs | 4 |
-| HTTP router — 1 path parameter | 578 ns | 0.58 µs | 14 |
-| HTTP router — 3 path parameters | 1 309 ns | 1.3 µs | 23 |
-| Full read endpoint (`GET /v1/models`) — routing + auth + plugins + JSON response | **5 186 ns** | **~5 µs** | 50 |
-| Full chat completion (`POST /v1/chat/completions`) — all of the above + proxy to mock upstream | **66 258 ns** | **~66 µs** | 233 |
-
-**Translation:**
-- The gateway's **dispatch cost per request is ~36 ns** — the cost of choosing which handler to call.
-- A complete auth-checked read endpoint flows through in **~5 µs** — that is the floor on end-to-end gateway overhead when there is no upstream call.
-- A full chat-completion proxy — route, auth, resolve model, run plugins, rewrite the request, round-trip to the upstream, parse and rewrite the response — runs in **~66 µs** of gateway-internal wall time. Any external latency on top is provider latency, not ours.
-
-Reproduce: `go test -bench=. -benchmem -run=^$ ./internal/server/`
-
-### 🏁 How we compare to the rest
-
-Every row below uses the **same methodology** each vendor uses for their own claim. When vendors didn't publish numbers, those cells stay empty — we don't make them up.
-
-<table>
-<thead>
-<tr>
-<th align="left">Metric (matching their methodology)</th>
-<th align="right">Agent Command Center</th>
-<th align="right">Bifrost</th>
-<th align="right">LiteLLM</th>
-<th align="right">Portkey</th>
-<th align="right">Helicone</th>
-<th align="right">Kong AI</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>End-to-end P95 @ ~1k RPS <sub>(client-observed)</sub></td>
-<td align="right"><b>2.8 ms</b> 🏆</td>
-<td align="right">—</td>
-<td align="right">8 ms</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>End-to-end P99 @ 100c <sub>(sustained 34 k req/s)</sub></td>
-<td align="right"><b>6.1 ms</b></td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Gateway-internal wall time, full read path <sub>(in-process)</sub></td>
-<td align="right"><b>5 µs</b></td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Gateway-internal wall time, full chat proxy <sub>(parallel, in-process)</sub></td>
-<td align="right"><b>~24 µs</b></td>
-<td align="right">11 µs¹</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Weighted key / target selection</td>
-<td align="right"><b>~9.9 ns</b> (3 targets) 🏆 <br> ~22 ns (16 targets)</td>
-<td align="right">~10 ns²</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>HTTP router dispatch <sub>(static route — ours only; Bifrost doesn't publish)</sub></td>
-<td align="right"><b>36 ns</b></td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Sustained throughput @ 4 vCPU, 16 GB <sub>(t3.xlarge profile)</sub></td>
-<td align="right"><b>28 889 rps</b> 🏆</td>
-<td align="right">5 000 rps¹</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Sustained throughput @ 100c unconstrained</td>
-<td align="right"><b>34 659 rps</b></td>
-<td align="right">—</td>
-<td align="right">1 000 rps</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Cost with 3 inline guardrails <sub>(vs bare, 4 vCPU)</sub></td>
-<td align="right"><b>+0.5 % / +1.4 ms P95</b></td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Hardware used for benchmark</td>
-<td align="right">4 vCPU / 16 GB container (M4 Max cores)</td>
-<td align="right">t3.xlarge (Intel, 4 vCPU)</td>
-<td align="right">undisclosed</td>
-<td align="right">undisclosed</td>
-<td align="right">—</td>
-<td align="right">—</td>
-</tr>
-<tr>
-<td>Binary / image size</td>
-<td align="right">17 MB</td>
-<td align="right">~20 MB</td>
-<td align="right">n/a (Python)</td>
-<td align="right"><b>122 KB</b> 🏆</td>
-<td align="right">~300 MB</td>
-<td align="right">~60 MB</td>
-</tr>
-<tr>
-<td>Reproducible harness committed in-repo</td>
-<td align="right">✅</td>
-<td align="right">⚠️ partial</td>
-<td align="right">❌</td>
-<td align="right">❌</td>
-<td align="right">❌</td>
-<td align="right">❌</td>
-</tr>
-</tbody>
-</table>
-
-<sup>¹ Bifrost claim: "11 µs gateway overhead at 5 k RPS on t3.xlarge, 4 vCPU" — [github.com/maximhq/bifrost](https://github.com/maximhq/bifrost).</sup><br>
-<sup>² Bifrost claim: "~10 ns to pick weighted API keys".</sup>
-
-### What the numbers mean
-
-- **Against LiteLLM**, the closest OpenAI-compatible Python proxy: at roughly the same workload class (~1 k RPS, client-observed end-to-end), our **P95 is 2.8 ms vs their 8 ms — a ~2.9× latency reduction**, and we sustain ~34 k rps vs their 1 k rps baseline on comparable boxes. This is the cleanest head-to-head we have; both claims use the same methodology.
-
-- **Against Bifrost**, the fastest published Go gateway: Bifrost claims **5 000 req/s** at 11 µs overhead on t3.xlarge (4 vCPU). **On the same t3.xlarge profile** our gateway sustains **~28 900 req/s — roughly 5.7×** the RPS at P99 ≤ 21 ms with 100 % success. On the apples-to-apples microbench, our **weighted target selection runs at ~9.9 ns** (vs their ~10 ns key-pick — we're slightly faster) and our **HTTP router dispatches in 36 ns**. Full chat pipeline in-process measures ~5 µs for a read path and ~66 µs for a full proxy round-trip through the plugin pipeline.
-
-- **Against Portkey**, the Node.js gateway: Portkey ships a 122 KB binary and claims "< 1 ms latency" (unqualified). Our binary is ~140× bigger because it includes the full guardrail stack (18 built-in scanners), 6 exact + 4 semantic cache backends, MCP/A2A/batch/files/realtime/responses/video endpoints, multi-tenant RBAC, and clustering — all compiled in, no plugin marketplace required. The "< 1 ms" claim has no hardware or workload attached; any face-value comparison is apples-to-oranges.
-
-- **Against Helicone + Kong AI Gateway**: neither publishes performance numbers. Run our harness, then theirs, then tell us.
-
-### What our harness measures
-
-- **Guardrail-on throughput** — at 200c / 10 k reqs with 3 inline guardrails: ~29 k req/s, +1.4 ms P95 vs bare.
-- **Gateway-internal wall time at ns precision** — full `ServeHTTP` pipeline in-process via `httptest.NewRecorder()`, no loopback TCP.
-- **End-to-end latency under load** — `hey`-driven, P50/P95/P99 across 50 / 100 / 200 concurrency.
-
-Every number above is reproducible by running [`bench/run.sh`](./bench/run.sh) or `docker run --rm --cpuset-cpus="0-3" --memory=16g acc-bench`. PRs with your own machine's numbers welcome.
-
+The chat client sends requests to the gateway URL and models you choose. It does not supply gateway authentication or start a mock provider. Use it only with a compatible test configuration: requests to a real provider can incur charges, including warmups. The results include upstream latency.
 
 ---
 
@@ -276,14 +99,26 @@ curl http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-<details><summary><b>Run from source (Go 1.23+)</b></summary>
+<details><summary><b>Run from source (Go 1.25+)</b></summary>
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi/agentcc-gateway
 cp config.example.yaml config.yaml
-go run ./cmd/server
+# Set OPENAI_API_KEY in your environment, or configure another provider in config.yaml.
+go run ./cmd/agentcc --config config.yaml
 ```
+
+The `--config` flag explicitly loads the file you just copied. Alternatively,
+set `AGENTCC_CONFIG_FILE` to its path. The example binds to `0.0.0.0:8080`
+(all network interfaces); for a local-only server, set `server.host` to
+`127.0.0.1` in `config.yaml` before starting it. Once it starts, check it with:
+
+```bash
+curl --fail http://localhost:8080/healthz
+```
+
+This health check does not call a model provider.
 
 </details>
 
@@ -318,7 +153,7 @@ Nobody publishes a head-to-head gateway comparison. So we did.
 | **Files API** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
 | **Realtime / WebSocket** | ✅ | ❌ | ❌ | ⚠️ | ❌ | ❌ |
 | **Responses API** | ✅ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Video API** | ✅ | ❌ | ❌ | ⚠️ | ❌ | ❌ |
+| **Video API** | ⚠️ ² | ❌ | ❌ | ⚠️ | ❌ | ❌ |
 | **Prometheus metrics** | ✅ native | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **OpenTelemetry spans** | ✅ native | ⚠️ | ⚠️ | ✅ | ✅ | ✅ |
 | **Multi-tenant RBAC** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -329,6 +164,8 @@ Nobody publishes a head-to-head gateway comparison. So we did.
 Legend: ✅ first-class · ⚠️ partial/paid · ❌ not in OSS.
 
 <sup>¹ 18 built-in scanners + adapters for: Lakera, Aporia, AWS Bedrock Guardrails, Azure AI Content Safety, Presidio, Llama Guard, Pangea, Enkrypt, Lasso, HiddenLayer, Gray Swan, DynamoAI, CrowdStrike, IBM watsonx, Zscaler — all chainable in the same pipeline.</sup>
+
+<sup>² BytePlus Seedance (native, contract-tested, not live-verified) and seven models through the OpenRouter aggregator route (live-smoked); other native providers designed, not implemented. See the <a href="#-video-generation">video support matrix</a>.</sup>
 
 Corrections welcome — open an issue or send a PR.
 
@@ -416,7 +253,7 @@ Corrections welcome — open an issue or send a PR.
 - Files API
 - Realtime (WebSocket)
 - OpenAI Responses API
-- Video models
+- [Video models (BytePlus Seedance)](#-video-generation)
 - Streaming SSE + chunk-level plugins
 - Webhooks
 - Scheduled jobs
@@ -452,25 +289,72 @@ Corrections welcome — open an issue or send a PR.
 
 ## 📋 Capabilities in detail
 
-**One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · video generation · OCR · grounded search · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through.
+**One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · [video generation](#-video-generation) · OCR · grounded search · structured decisions · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through, except video, which uses the validated contract and support matrix below.
 
-**Surface area at a glance:** 🔌 **109 routes** across 23 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **7 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
+**Surface area at a glance:** 🔌 **112 routes** across 24 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **8 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
+
+### Selected-key guardrail policy limits
+
+Dashboard **Guardrails → Policies** binds policies to selected API keys. Org
+checks still run first; key policies cannot weaken them. Monitor policies do not
+block or rewrite client output. Dormant legacy key policies remain dormant until
+an explicit policy save activates their gateway configuration.
+
+The enforcement repair has two deliberate compatibility trade-offs, still
+subject to owner feature, image-budget and rollout approval:
+
+- **Selected-key response caching is bypassed.** Every applicable selected-key
+  policy bypasses exact, semantic and conditional edge-cache reads and writes,
+  including Monitor policies and policies with empty or disabled checks.
+  `x-agentcc-cache: skip_key_policy` identifies this path. Admitted requests reach
+  the provider instead of reusing cached output, which can increase latency and
+  provider cost. This conservative choice is broader than bypassing only known
+  request-dependent checks; it is not cache feature parity. Keys with no
+  applicable scoped policy retain their existing cache behavior. Effective
+  failure policy, timeout and pipeline settings remain part of the policy
+  fingerprint; an old request cannot populate a newly changed policy partition.
+- **Blocking output checks require nonstreaming requests.** An applicable
+  selected-key Enforce Block post-stage check, such as Hallucination Detection,
+  causes an HTTP text stream to return `403 stream_guardrail_unsupported` before
+  the provider is invoked. This also applies to clean output and `fail_open`
+  configurations. Use a nonstreaming request for these policies; nonstreaming
+  support does not imply streaming support. Speech has the separate
+  supported-direction rules documented below.
+
+Pass-through routes inspect projections but forward the original body. A
+projection-only redaction is reported as unsupported wire remediation and cannot
+hide the original content from a later Block check. Supported chat remediation
+still changes the actual forwarded request. Enabled checks with no resolvable
+implementation produce an unavailable result: Enforce Block returns
+`503 guardrail_unavailable` when fail-closed; fail-open logs the failure, and
+Monitor stays nonblocking. Arbitrary names can legitimately resolve to deployed
+static/custom implementations, so a successful policy save is not proof that an
+implementation exists on every gateway.
+
+**Monitor stream observation is incomplete.** With request/trace body capture
+disabled, post-stage checks receive no reconstructed output text and may record
+no `would_block` result. An empty guardrail-results list is not proof that the
+stream was inspected or passed. Even enabled capture is bounded and omits
+tool-call deltas. This repair does not enable persistent body logging or promise
+complete streamed-output observability; Monitor's unchanged-output guarantee is
+separate from that observation gap.
 
 ### 🌈 Modalities
 
-Every modality below has dedicated routes in the gateway. The **specific models** reachable depend on what your configured provider(s) support — we pass through whatever the provider exposes at the endpoint.
+Every modality below has dedicated routes in the gateway. The **specific models** reachable depend on what your configured provider(s) support — we pass through whatever the provider exposes at the endpoint, except video, which is limited to the support matrix below.
 
 | Modality | Gateway endpoints |
 |---|---|
 | Text / chat | `/v1/chat/completions` · `/v1/completions` · `/v1/messages` (Anthropic) · `/v1/responses` |
 | Vision (image → text) | `/v1/chat/completions` with image content parts |
 | Image generation | `/v1/images/generations` |
-| Speech-to-text | `/v1/audio/transcriptions` · `/v1/audio/translations` |
-| Text-to-speech (+ streaming) | `/v1/audio/speech` · `/v1/audio/speech/stream` |
-| Realtime voice + text (WebSocket) | `/v1/realtime` |
-| Video generation | `/v1/videos` · `/v1/videos/{id}` |
+| Speech-to-text | `/v1/audio/transcriptions` · `/v1/audio/translations` · streaming: `/deepgram/v1/listen` · `/cartesia/stt/websocket` |
+| Text-to-speech (+ streaming) | `/v1/audio/speech` · `/v1/audio/speech/stream` · streaming: `/deepgram/v1/speak` · `/cartesia/tts/websocket` |
+| Generic realtime (not supported) | `/v1/realtime` returns 501; use a vendor speech route |
+| [Video generation](#-video-generation) | `/v1/videos` · `/v1/videos/{id}` · `/v1/videos/{id}/content` · `/v1/videos/{id}/cancel` |
 | Embeddings | `/v1/embeddings` |
 | Reranking | `/v1/rerank` |
+| Structured decisions (your own provider key) | `/v1/systemone` · `/v1/decisions` · `/v1/decisions/models` |
 | OCR | `/v1/ocr` |
 | Search | `/v1/search` |
 | Tool calling | on all chat endpoints (provider-native schemas preserved) |
@@ -479,7 +363,191 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 | Vector stores (RAG) | `/v1/vector_stores` · `/v1/vector_stores/{id}/{files,file_batches,search}` |
 | Batch (async) | `/-/batches` |
 
-### 🔌 Endpoints — 109 routes across 23 categories
+### Streaming speech guardrail contract
+
+Speech routes authenticate server-side SDK clients; browser origins remain refused.
+Each session binds the authenticated organization's managed checks and static rules,
+then applies the key policy and authorized `X-Guardrail-Policy` override using the
+same precedence as chat. Reconnect after a policy change. Configured blocking checks
+must be available before the session connects to the vendor. Missing evaluation credentials,
+missing/duplicate evaluation IDs and an invalid webhook URL return HTTP 503 with
+error type `guardrail_error` and code `guardrail_unavailable` before vendor dial:
+these are unavailable supported checkers, not unsupported speech directions.
+External-provider adapters are unsupported for blocking speech checks until they
+implement the realtime verdict contract.
+Malformed or missing expressions and validation patterns that cannot compile are
+also unsupported for blocking speech checks: admission returns HTTP 403
+`realtime_guardrail_unsupported`, with no vendor dial. Legacy HTTP checker behavior
+is unchanged by these realtime readiness checks.
+
+| Protocol | Inspectable direction and boundary |
+|---|---|
+| Deepgram `/v1/speak` | Pre-stage: buffer `Speak.text` messages until `Flush`; `Clear`/`Close` discard pending text |
+| Cartesia `/tts/websocket` | Pre-stage: accumulate `transcript` per `context_id` until `continue` is false (or omitted); checks see `request.model` as `cartesia/<model_id>` for each model the context's requests name (a request without `model_id` uses the last one named on the connection); a `cancel` without `transcript` discards only that context's pending text and is forwarded |
+| Deepgram `/v1/listen` | Post-stage: suppress interim hypotheses; accumulate final alternatives per channel until `speech_final` or canonical `UtteranceEnd.channel` |
+| Cartesia `/stt/websocket` | Post-stage: suppress interim hypotheses; inspect the complete `is_final` transcript |
+
+A blocking pre-stage check on transcription cannot inspect the incoming audio. A
+blocking post-stage check on synthesis cannot inspect the outgoing audio. These
+sessions, and Cartesia `/stt/turns/websocket` with a blocking post-stage check, return
+HTTP 403 with code `realtime_guardrail_unsupported` before any vendor connection.
+`/v1/realtime` remains unsupported and returns 501 `realtime_not_supported`; use a
+documented vendor speech route.
+
+Dashboard key policies (Guardrails → Policies) apply to speech sessions opened with
+one of their keys, with two differences from chat. Only an Enforce policy's Block
+checks run on speech relays: Monitor (log only) policies and Warn or Log checks would
+only write a log line there, so they never hold, buffer or refuse speech traffic. An
+Enforce policy's Block checks run only in the direction the session reads as text: its
+pre-stage checks on synthesis input, its post-stage checks on transcripts. A check
+for the other direction is skipped instead of refusing the session, so enforcing a
+pre-stage check (secret detection, PII, injection, blocklist and the like) on a key
+leaves that key's transcription sessions connected. Cartesia
+`/stt/turns/websocket` reads neither direction, so no key-policy check runs there.
+Org-wide checks keep the refusal described above.
+
+Supported text units are checked synchronously before any held frame is released.
+Pre-stage checks see the text as a request message; post-stage checks see it once,
+as the response, with the model on the request. Checks that read only request
+messages (topic restriction, instruction-override detection, language detection and
+system prompt protection) see post-stage text as a request message.
+Execution failure is separate from the score: a checker HTTP error, malformed or
+missing verdict, incomplete evaluation results or invalid score cannot approve
+speech, even with a threshold of 1. A genuine scored decision still follows the
+configured threshold. Webhook verdicts require one exact boolean `pass` key and an
+optional finite numeric `score` in [0,1]. Duplicate keys, case aliases and oversized
+envelopes are unavailable verdicts, not approvals.
+A blocking content decision closes with WebSocket 1008 and reason
+`realtime_guardrail_blocked`. Checker execution failures (including timeouts, panics,
+missing results and unapplied wire rewrites) close with 1008 and reason
+`guardrail_unavailable`, never a content-denial classification. An already-upgraded
+connection cannot return an HTTP 503; both connections terminate without releasing
+unchecked content. Realtime
+blocking checks fail closed even when ordinary chat is configured fail-open or the
+rule is marked asynchronous. Warning/log decisions do not block approved protocol
+units. Audio-only warning/log checks are not evaluated.
+
+Pending text plus frames are limited to 1 MiB and 1024 frames per session across all
+contexts. Exceeding either bound, malformed protected content, an unsupported event
+shape, or a changing alternative count closes with 1008
+`realtime_guardrail_unsupported`. Duplicate JSON keys and case aliases of protected
+protocol keys are rejected before checking or forwarding the original bytes.
+Deepgram final alternatives are checked both individually and as word-separated
+utterances; cross-segment concatenation checks are retained too. Incomplete units are discarded on disconnect,
+never flushed unchecked. These boundaries add latency: incremental transcripts and
+unapproved synthesis text are not streamed through. Checks are per completed unit,
+not across separate utterances/contexts, and do not claim to classify raw audio.
+
+### 🎬 Video generation
+
+Video generation is a durable, Redis-backed job lifecycle behind `/v1/videos`.
+It is **off by default** (`video.enabled: false`). This release implements two
+adapters: BytePlus ModelArk Seedance (native API, contract tests only: no
+account was available, so its auth, billing and output privacy are unproven)
+and the OpenRouter aggregator route for the seven models in the second table.
+Every other native family in the first table is designed (capability record,
+adapter contract, tests mapped) but **not implemented** until its cohort PR
+lands. A model reached through OpenRouter proves the OpenRouter route only: it
+does not upgrade the native row of the same vendor. The tables are the
+support claim; nothing outside them is supported.
+
+The same routes accept the OpenAI Videos API shape (`seconds`, `size`,
+`input_reference`, multipart), so the OpenAI SDKs and LiteLLM's video client
+work with `base_url` pointed at the gateway. The gateway never calls OpenAI:
+Sora is retired. See [OpenAI Videos API compatibility](docs/video-generation/api-reference.md#openai-videos-api-compatibility).
+
+State vocabulary: `documented` = upstream contract verified from primary
+docs and adapter designed, not implemented · `implemented` = adapter and
+lifecycle shipped behind config, LIVE smoke pending authorization ·
+`gated` = blocked by an explicit decision (output exposure, account,
+tariff) even once implemented · `unverified` = at least one contract field
+could not be established; fails closed · `deferred` = product-owner-approved
+deferral (none today) · `retired` = provider retired the API.
+
+| ID | Family | Exact model IDs | State | Text→video | Image→video | References | Audio out | Cancel | Evidence |
+|---|---|---|---|---|---|---|---|---|---|
+| P01 | BytePlus Seedance 2.5 | `dreamina-seedance-2-5-260628` | implemented | yes | first, first+last | image / video / audio (audio-only allowed) | optional, default on | queued only | adapter + contract suite; account activation and LIVE smoke pending; 2026-11-07 doc revalidation left open mapping mismatches ([contract §2a](docs/video-generation/provider-adapter-contract.md#2a-revalidation-against-current-modelark-docs-2026-11-07)) |
+| P02 | BytePlus Seedance 2.0 | `dreamina-seedance-2-0-260128` | implemented | yes | first, first+last | image / video / audio (audio needs image or video) | optional | queued only | same as P01 |
+| P03 | BytePlus Seedance 2.0 Fast / Mini | `dreamina-seedance-2-0-fast-260128`, `dreamina-seedance-2-0-mini-260615` | implemented | yes | first, first+last | image / video / audio (audio needs image or video) | optional | queued only | same as P01; 480p/720p only |
+| P04 | BytePlus Seedance 1.x | `seedance-1-5-pro-251215`, `seedance-1-0-pro-250528`, `seedance-1-0-pro-fast-251015` | implemented | yes | first; first+last except 1.0 Pro Fast | none | 1.5 only | queued only | same as P01; legacy inventory kept under D03 |
+| P05 | Google Veo 3.1 (Gemini API) | `veo-3.1-generate-preview`, `veo-3.1-fast-generate-preview` | documented | yes | first, first+last | up to 3 images | always on | no (not documented) | cohort L06 |
+| P06 | Google Veo 3.1 Lite (Gemini API) | `veo-3.1-lite-generate-preview` | documented | yes | first, first+last | none (docs conflict; fails closed) | always on | no | cohort L06 |
+| P07 | Google Gemini Omni Flash | `gemini-omni-1.1-flash` | unverified | yes | yes | video ≤ 3 clips; no audio refs | yes | unverified | background mode, URI expiry, duration unverified |
+| P08 | Google Vertex Veo 3.1 | `veo-3.1-generate-001`, `veo-3.1-fast-generate-001`, `veo-3.1-lite-generate-001` | unverified | yes | yes | Standard/Fast only | yes | unverified | operation binding and tariff unverified; PAYG unsupported upstream |
+| P09 | Runway | `gen4.5` | documented | yes | first | none pinned | unverified | pending, throttled, running | cohort L07 |
+| P10 | Runway | `gen4_turbo` | documented | no | first | none pinned | unverified | pending, throttled, running | cohort L07 |
+| P11 | Luma Agents | `ray-3.2` | documented | yes | first, last, keyframes | none | unverified | no (not documented) | cohort L07; HDR+10s fails closed |
+| P12 | Kling 3.0 | `kling-3.0` | documented | yes | first (+last) | Elements | native / off | no (not documented) | cohort L08; price sheet not recovered |
+| P13 | Kling additional versions | `kling-3.0-turbo`, `kling-v3-omni`, `kling-video-o1`, `kling-v2-6`, `kling-v2-5-turbo` | unverified | — | — | — | — | — | per-variant schema unverified |
+| P14 | MiniMax H3 | `MiniMax-H3`, `MiniMax-H3-Max` | documented | yes | first, first+last | ≤ 9 images, ≤ 3 videos, ≤ 3 audio | yes | queued only | cohort L08 |
+| P15 | MiniMax Hailuo (legacy) | `MiniMax-Hailuo-2.3`, `MiniMax-Hailuo-2.3-Fast`, `MiniMax-Hailuo-02` | unverified | — | — | — | — | — | v1 contract unverified |
+| P16 | Alibaba Wan 3.0 | `wan3.0-video`, `wan3.0-video-prime` | unverified | yes | first, first+last | image / video / audio (file and web refs rejected) | yes | unverified | enums and status strings to pin; cohort L09 |
+| P17 | Alibaba Wan 2.7 | `wan2.7-t2v`, `wan2.7-i2v` | documented | yes | yes | per-version schema | yes | unverified | cohort L09 |
+| P18 | Alibaba HappyHorse 1.1 | `happyhorse-1.1-t2v`, `happyhorse-1.1-i2v`, `happyhorse-1.1-r2v` | unverified | yes | first | r2v model only | yes | unverified | per-operation schema to pin; cohort L09 |
+| P19 | xAI Grok Imagine Video | `grok-imagine-video-1.5` | documented | yes | yes | preset voices (separate page) | yes | no (not documented) | cohort L09; URL lifetime unverified |
+| P20 | Amazon Nova Reel 1.1 (Bedrock) | `amazon.nova-reel-v1:1` | gated | yes | first frame per shot | none | none verified | unverified | requires customer S3 bucket, IAM and tariff; account decision pending |
+| P21 | Pika 2.2 via fal | `fal-ai/pika/v2.2/text-to-video`, `fal-ai/pika/v2.2/image-to-video` | gated | yes | first | none | not documented | queued only | fal CDN output public by default; exposure authorization pending |
+| P22 | Pika 2.5 via fal | `fal-ai/pika/v2.5/image-to-video` | gated | unverified | first | none | unverified | queued only | same exposure gate as P21 |
+| P23 | Lightricks LTX 2.5 via fal | `lightricks/ltx-2.5/image-to-video/fast` | gated | unverified | first (+last) | none | toggle | queued only | same exposure gate; direct API unverified; tariff unverified |
+| P24 | PixVerse v6 | `v6` (native), `fal-ai/pixverse/v6/image-to-video` | gated | yes (native) | yes | none | switch (native T2V) | unverified | native status/upload/cancel unverified; fal route under the P21 exposure gate |
+| P25 | Replicate inventory | `tencent/hunyuan-video`, `prunaai/p-video`, `lightricks/ltx-video` | unverified | — | — | — | — | — | model versions and schemas unverified |
+| P26 | Runway third-party catalog | `seedance2_5`, `seedance2`, `seedance2_fast`, `seedance2_mini`, `hailuo3`, `h3_max`, `wan3`, `wan3_prime`, `grok_imagine_1_5`, `happyhorse_1_0`, `veo3.1`, `veo3.1_fast`, `gemini_omni_flash_1.1`, `gemini_omni_flash` | unverified | per model | per model | per model | per model | Runway task semantics | explicit opt-in route only, never a fallback; per-model schema unpinned |
+| P27 | OpenAI Sora | `sora-2`, `sora-2-pro`, `sora-2-2025-10-06`, `sora-2-2025-12-08`, `sora-2-pro-2025-10-06` | retired | — | — | — | — | — | API retired 2026-09-24; IDs answer 400 `unsupported_model` |
+
+**OpenRouter aggregator route** (`openrouter/<vendor>/<model>`, catalog pinned
+2026-11-06). Live smoke on 2026-11-07: one synthetic clip per model through the
+gateway's `/v1/videos` route with the official `openai` SDK, run on an
+ephemeral cloud VM; every job reached `completed`, the gateway copied a
+playable MP4 into its own storage, and settled the `usage.cost` OpenRouter
+reported (total USD 1.298101 for the seven clips). Cancel is not offered
+upstream; local delete never stops upstream generation or billing.
+
+| ID | Gateway model | Smoke request | State | Text→video | Image→video | Audio out | Output (ffprobe) | Reported cost |
+|---|---|---|---|---|---|---|---|---|
+| O01 | `openrouter/bytedance/seedance-1-5-pro` | 4s, 480p, 16:9, audio off | live-smoked (aggregator) | yes | first, first+last | optional, default on | 864x496, 4.04s | USD 0.048226 |
+| O02 | `openrouter/google/veo-3.1-lite` | 4s, 720p, audio off | live-smoked (aggregator) | yes | first, first+last | optional, default on | 1280x720, 4.00s | USD 0.1188 |
+| O03 | `openrouter/kwaivgi/kling-v3.0-std` | 3s, 720p, audio off | live-smoked (aggregator) | yes | first, first+last | optional, default on | 1920x1080, 3.04s; billed 5s | USD 0.4158 |
+| O04 | `openrouter/alibaba/wan-3.0` | 2s, 480p, audio off | live-smoked (aggregator) | yes | first, first+last | optional, default on | 854x480, 2.02s; billed 5s | USD 0.210375 |
+| O05 | `openrouter/minimax/hailuo-3-max` | 5s, 480p | live-smoked (aggregator) | yes | first, first+last | no | 832x480, 5.18s | USD 0.2475 |
+| O06 | `openrouter/runway/gen-4.5` | 2s, 720p | live-smoked (aggregator) | yes | first | no | 1280x720, 2.04s | USD 0.2376 |
+| O07 | `openrouter/x-ai/grok-imagine-video-1.5-lite` | 1s, 480p | live-smoked (aggregator) | yes | first | not switchable (catalog `null`); never claimed silent | 848x480, 1.04s | USD 0.0198 |
+
+Reference inputs (`reference_image`/`video`/`audio`) are not enabled for any
+OpenRouter model: the catalog does not establish per-model support. The
+reservation is an upper bound from the pinned SKUs, with Kling and Wan billed
+at their observed 5-second minimum and 15% token headroom for Seedance; the
+job then settles at OpenRouter's reported `usage.cost`. A missing or null cost
+leaves the job unsettled with the reservation held, never settled at zero.
+
+"Cancel" is what the upstream API documents, not a gateway promise:
+`POST /v1/videos/{id}/cancel` returns `cancel_unsupported` or
+`cancel_not_available` whenever the provider cannot confirm it. Dedicated
+edit, extend, upscale and avatar operations are out of scope (D04). Prices
+are not listed here: see the tariff revision in each job's `estimate`.
+
+Quickstart (BytePlus Seedance, operator key, `video.enabled: true`):
+
+```bash
+# 1. Start from the full video block in config.example.yaml. Enable Redis and video,
+#    set VIDEO_CORRELATION_SECRET and ARK_API_KEY in the environment, enable byteplus,
+#    and explicitly set acknowledge_public_output: true after reviewing the output ACL.
+#    Keep its deadlines, limits, region, account_ref, tariff and model settings.
+# 2. Submit (Idempotency-Key is required; reuse it on retries, never on a new generation)
+curl -s http://localhost:8080/v1/videos -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" -H "Idempotency-Key: my-chatbot-0001" \
+  -d '{"model":"byteplus/dreamina-seedance-2-5-260628","prompt":"A fox in tall grass at dawn","duration_seconds":5,"resolution":"720p","aspect_ratio":"16:9"}'
+# 3. Poll the gateway id until status is completed | failed | cancelled (reads hit Redis, never the provider)
+curl -s http://localhost:8080/v1/videos/video_01J9... -H "Authorization: Bearer YOUR_API_KEY"
+# 4. Download the gateway copy (valid until artifacts[].expires_at, 24h by default)
+curl -s -o out.mp4 "http://localhost:8080/v1/videos/video_01J9.../content?artifact_index=0" -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Full contract: [api-reference](docs/video-generation/api-reference.md), [configuration](docs/video-generation/configuration.md),
+[operator-runbook](docs/video-generation/operator-runbook.md).
+
+Migration and release commit footer: [migration notes](docs/video-generation/migration.md).
+
+### 🔌 Endpoints — 112 routes across 24 categories
 
 <table>
 <tr><th>Category</th><th>Endpoints</th><th>Highlights</th></tr>
@@ -494,6 +562,11 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <td>OpenAI, Cohere, Voyage, Jina; text + image embeddings; batch mode</td>
 </tr>
 <tr>
+<td><b>Decisions</b></td>
+<td><code>POST /v1/systemone</code><br><code>POST /v1/decisions</code><br><code>GET /v1/decisions/models</code></td>
+<td>System One (TypeSafe Jev, Perplexity Decider, any System One endpoint) and OpenAI Decisions · body forwarded byte for byte · always the customer's own provider key</td>
+</tr>
+<tr>
 <td><b>Audio</b></td>
 <td><code>POST /v1/audio/transcriptions</code><br><code>POST /v1/audio/translations</code><br><code>POST /v1/audio/speech</code><br><code>POST /v1/audio/speech/stream</code></td>
 <td>Whisper + Azure Speech · TTS with streaming chunk-level plugins · multi-lingual translation</td>
@@ -505,8 +578,8 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 </tr>
 <tr>
 <td><b>Video</b></td>
-<td><code>POST /v1/videos</code><br><code>GET /v1/videos</code><br><code>GET /v1/videos/{id}</code><br><code>DELETE /v1/videos/{id}</code></td>
-<td>Async job model · Sora · Veo · Runway via provider</td>
+<td><code>POST /v1/videos</code><br><code>GET /v1/videos</code><br><code>GET /v1/videos/{id}</code><br><code>DELETE /v1/videos/{id}</code><br><code>GET /v1/videos/{id}/content</code><br><code>POST /v1/videos/{id}/cancel</code></td>
+<td>Durable async jobs · BytePlus Seedance (this release) · <a href="#-video-generation">see support matrix</a></td>
 </tr>
 <tr>
 <td><b>OCR &amp; Search</b></td>
@@ -536,7 +609,12 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <tr>
 <td><b>Realtime (WebSocket)</b></td>
 <td><code>GET /v1/realtime</code></td>
-<td>OpenAI Realtime voice + text · WebSocket passthrough with per-frame plugins</td>
+<td>Not supported: returns 501 <code>realtime_not_supported</code> without dispatch</td>
+</tr>
+<tr>
+<td><b>Streaming speech (WebSocket)</b></td>
+<td><code>GET /deepgram/v1/listen</code> · <code>/deepgram/v1/speak</code> · <code>/cartesia/tts/websocket</code> · <code>/cartesia/stt/websocket</code> · <code>/cartesia/stt/turns/websocket</code></td>
+<td>Deepgram and Cartesia's own streaming APIs, relayed on the platform's vendor key · vendor SDKs need only a base URL and the gateway key · metered in audio seconds / characters</td>
 </tr>
 <tr>
 <td><b>Assistants API</b></td>
@@ -590,7 +668,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 </tr>
 <tr>
 <td><b>Admin — keys, orgs, config</b></td>
-<td><code>/-/keys</code> · <code>/-/orgs/{id}/config</code> · <code>/-/keys/{id}/credits</code> · <code>/-/reload</code></td>
+<td><code>/-/keys</code> · <code>/-/orgs/{id}/config</code> · <code>/-/keys/{id}/credits</code> · <code>/-/reload</code> · <code>/-/model-catalogue/source</code></td>
 <td>Virtual-key CRUD · per-org config · live reload without restart</td>
 </tr>
 <tr>
@@ -632,7 +710,7 @@ Every guardrail runs in the pipeline with configurable request/response/streamin
 | 17 | `webhook` | Call your own HTTP endpoint for custom checks |
 | 18 | `futureagi` | Future AGI platform integration (90+ evals + Protect scanners) |
 
-<sup>Per-guardrail latency varies by payload, provider, and scanner. Run [`bench/`](./bench/) to measure against your workload.</sup>
+<sup>Per-guardrail latency varies by payload, provider, and scanner. See [Benchmarks](#-benchmarks) before measuring a configured gateway.</sup>
 
 #### 🤝 External guardrail vendors — 15 first-class adapters
 
@@ -698,7 +776,7 @@ Every request flows through an ordered plugin pipeline. Each plugin is optional,
 | `alerting` | Always | Fire alerts on SLO breach / guardrail violation |
 | `logging` | Always | Structured JSON access log with redaction |
 
-### 🌐 Provider formats — 8 native (100+ upstreams)
+### 🌐 Provider formats — 11 native (100+ upstreams)
 
 One gateway HTTP endpoint, each provider's native protocol preserved — we don't lossy-convert provider-specific features.
 
@@ -711,7 +789,10 @@ One gateway HTTP endpoint, each provider's native protocol preserved — we don'
 | **Vertex AI** | Google Vertex AI | — | SigV4-style SA auth, `/v1beta/models/{action}:{verb}` native routing |
 | **Bedrock** | AWS Bedrock (all model families: Anthropic, Meta, Cohere, AI21, Mistral, Amazon) | — | SigV4 signing, inference profiles, cross-region invocations |
 | **Cohere** | Cohere · AWS Bedrock (Cohere) | — | command-R family, embed-v3, rerank-3 |
+| **System One** (`systemone`, alias `typesafe`) | TypeSafe (Jev) · Perplexity Decider | any System One endpoint: Microsoft Foundry, Strands, vLLM | `noul` / `choice` / `score` questions and any new type passed through untouched, vendor-reported usage |
 | **Google (gauth)** | Vertex, Gemini, PaLM | — | service-account + workload-identity auth flows |
+| **Deepgram** (`api_format: deepgram`) | Deepgram | — | streaming speech-to-text and Aura text-to-speech over Deepgram's own WebSocket API |
+| **Cartesia** (`api_format: cartesia`) | Cartesia | — | streaming Sonic text-to-speech and Ink speech-to-text over Cartesia's own WebSocket API |
 
 Add a new provider with ~30 lines of YAML — no code changes. See [`config.example.yaml`](./config.example.yaml).
 
@@ -769,7 +850,7 @@ Each subsystem is its own Go package — isolated, tested, independently replace
 </tr>
 <tr>
 <td><b>Modern protocols</b></td>
-<td><code>mcp</code> · <code>a2a</code> · <code>realtime</code> · <code>responses</code> · <code>files</code> · <code>video</code></td>
+<td><code>mcp</code> · <code>a2a</code> · <code>realtime</code> · <code>responses</code> · <code>files</code> · <a href="#-video-generation"><code>video</code> (BytePlus Seedance)</a></td>
 </tr>
 <tr>
 <td><b>Deployment</b></td>
@@ -827,7 +908,7 @@ Every request goes through a pluggable router stack. Mix and match — per virtu
 |---|---|---|
 | **Weighted round-robin** | `roundrobin` | Distribute traffic across providers by configurable weights |
 | **Latency-aware** | `latency` | Route to the provider with the lowest current P95 for the same model |
-| **Cost-optimized** | `costopt` | Route to the cheapest provider that meets your SLO |
+| **Cost-optimized** | `costopt` | Round-robin among targets with the lowest configured priority value. No price or latency lookup. |
 | **Adaptive** | `adaptive` | Online learning — continuously adjust weights based on success/latency |
 | **Complexity-based** | `complexity` | Route simple queries to small/fast models, complex queries to large models |
 | **Conditional** | `conditional` | Rule-based routing (by user, region, header, model family, prompt length…) |
@@ -876,6 +957,7 @@ Combines with provider-key rotation (`POST /-/admin/providers/{id}/rotate` · `/
 | **Accurate tokenizer** | Token counting package at [`internal/tokenizer/`](./internal/tokenizer/) |
 | **Hot config reload** | `POST /-/reload` reloads providers / keys / routes |
 | **Cost tracking** | Uses the LiteLLM pricing DB (2 373 models loaded at startup); emits `agentcc_cost_microdollars_total` |
+| **Provider-reported cost** | For OpenRouter, Perplexity and xAI at their official hosts, records the cost the vendor states in its response (`usage.cost`, `usage.cost.total_cost`, `usage.cost_in_usd_ticks`) instead of the catalogue estimate, on chat, Responses, Messages and completions, streamed or not. Org custom pricing still wins; `ignore_provider_cost: true` on a provider turns it off. Each priced row's metadata says `cost_source`: `org_custom`, `provider_reported`, `catalogue` or `unpriced`. A `provider_reported` row also carries `cost_reported_unit` (`openrouter_credits`, `usd` or `usd_ticks`), `cost_catalogue` (what the catalogue would have charged), `cost_is_byok` (`true` on an OpenRouter BYOK call) and `cost_reported_zero` (`true` when the vendor stated 0 for tokens the catalogue prices above 0; the 0 is recorded). Callers cannot set these keys. Trust rule and switch: `config.example.yaml` |
 | **Per-tenant spend sync** | [`internal/tenant/spend_sync.go`](./internal/tenant/spend_sync.go) |
 | **Clustering** | [`internal/cluster/`](./internal/cluster/) |
 | **Edge mode** | [`internal/edge/`](./internal/edge/) |
@@ -968,6 +1050,91 @@ routing:
 
 See [`config.example.yaml`](./config.example.yaml) for the full reference.
 
+### Structured decisions (bring your own key)
+
+Decision models answer typed questions about a state (a yes/no probability, a
+choice, a score) instead of generating text. The gateway serves them on three
+routes, none streaming:
+
+| Route | Body |
+|---|---|
+| `POST /v1/systemone` | System One: `{model, state, questions: {<id>: {type, instructions?, criteria?}}}` |
+| `POST /v1/decisions` | `questions` as an array is OpenAI Decisions, sent to an `openai` provider's `/v1/decisions`; as an object it is System One, served as `/v1/systemone` serves it |
+| `GET /v1/decisions/models` | The decision models the caller's organization holds a key for, with their price per million input tokens |
+
+```json
+{"model":"typesafe/jev-1.13.0","state":{"ticket":"Charged twice","reply":"Refunded the duplicate."},
+ "questions":{"resolved":{"type":"noul","instructions":"Did the reply resolve the issue?"}}}
+```
+
+The body goes to the vendor byte for byte; the only rewrite strips the
+`<provider>/` prefix from `model`. The vendor's 200 body comes back unchanged
+with the usual `x-agentcc-*` headers. The gateway checks only the envelope (an
+object, a `model`, a non-null `state`, a non-empty `questions` whose entries
+carry a string `type`), so new question types and fields pass through. A body
+in one format sent to a provider that speaks the other gets `422
+format_mismatch`; nothing is translated. Bodies are capped at the server limit
+or 32 MiB, whichever is smaller.
+
+**Keys.** Third-party decision models run only on the customer's own provider
+key. Future AGI holds no decision-model key, and a decision call never draws
+Future AGI credits, on a managed key included: the vendor bills the customer's
+key directly, and `x-agentcc-cost` is informational.
+
+- Customers add the key under **Gateway > Providers**, with the TypeSafe,
+  Perplexity Decider or Custom System One endpoint preset (`api_format:
+  systemone`, a fixed model list, never probed for models). OpenAI Decisions
+  (`gpt-6-luna`) use the organization's existing OpenAI provider.
+- A `byok` or `managed` key is served only from its organization's own
+  providers, in provider ID order. A `<provider>/` prefix or a provider lock
+  narrows that to one of them; a lock naming any other provider is refused.
+  No organization key means `403 decision_provider_not_configured`; so does a
+  provider that holds the vendor's key but does not list the model, and the
+  message then names that provider and says to add the model to it. One saved
+  with a format that serves no decisions means `403
+  decision_provider_wrong_format`. An enabled Generic System One provider with
+  an explicit, valid organization-owned `base_url` may be keyless, for a
+  self-hosted endpoint that needs no authentication. TypeSafe, Perplexity and
+  OpenAI providers still require the organization's credentials.
+- An internal key must send the end customer's own key in
+  `x-agentcc-provider-key` and name the vendor in the model
+  (`typesafe/…`, `perplexity/…`, `openai/…`); without it the call is refused
+  with `403 byok_required`. The key is used for that one call. It is never
+  logged, never put in metadata, request logs, mirrors or spans, and the
+  provider built for it is cached under a hash of it. The vendor's default
+  upstream is used, or only the `base_url` of a configured provider for that
+  vendor; a configured provider's own key is never used. Customer keys may not
+  send the header (`400 provider_key_header_not_allowed`).
+- Licence tokens are refused: decision models are never a managed service.
+- With auth off (a self-host with no key store), the configured provider that
+  lists the model serves it with its configured key, which there is the
+  operator's own.
+
+Decisions never use conditional routes, model fallbacks, failover, retries or
+the mirror. Vendor errors map onto the usual error envelope, with
+`x-agentcc-upstream-status` set: a rejected key is `403 provider_key_rejected`,
+`429` and `503 provider_overloaded` pass on `Retry-After`, timeouts are `504
+gateway_timeout`, and a vendor's `400`/`422` text is passed on only when it
+echoes neither the key nor the request's content. Organization calls are
+request-logged with the question IDs and types, the state's size, the answers
+and the usage; full bodies only when body logging is on and privacy mode
+allows. Spans are evaluator spans carrying the format, question count and
+question types, never the state or the instructions.
+
+**Outbound proxy.** All System One and OpenAI decision calls follow the
+gateway's `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`, including configured
+providers, organization providers and internal callers' own keys. Chat
+connections remain direct, even on an OpenAI provider that also serves
+decisions. An organization provider with its own `base_url` keeps its address
+checks: its host must resolve, from the gateway, only to addresses the gateway
+allows. That is checked before every call over HTTP/1.1, including a pooled
+connection: a transient DNS failure fails the request even when that connection
+is live. Over HTTP/2 the check runs whenever a connection is opened; a call on
+an open connection reuses that check. A direct connection (a `NO_PROXY` host)
+is checked again when it is dialled. These checks fail closed to preserve SSRF
+protection. The proxy resolves the host again for itself, so its own egress
+rules still apply.
+
 ---
 
 ## 🖥️ Self-host
@@ -983,56 +1150,9 @@ See [`config.example.yaml`](./config.example.yaml) for the full reference.
 
 ---
 
-## 🔬 Reproduce the benchmarks
-
-Numbers above are fully reproducible. Two modes:
-
-### Containerised (matches the t3.xlarge-equivalent numbers)
-
-```bash
-# Build the self-contained bench image
-docker build -f bench/Dockerfile.bench -t acc-bench .
-
-# Pin to 4 vCPU / 16 GB (t3.xlarge resource profile)
-docker run --rm --cpuset-cpus="0-3" --memory=16g acc-bench
-
-# Or unconstrained (uses all host cores)
-docker run --rm acc-bench
-```
-
-The image bundles the gateway, mock upstream, `hey`, the configs, and a runner script. Output prints throughput and P50/P95/P99 for every profile to stdout in ~30 seconds.
-
-### Host-direct (matches the unconstrained numbers)
-
-```bash
-brew install hey            # or: go install github.com/rakyll/hey@latest
-
-bash bench/run.sh           # full suite
-bash bench/run.sh --quick   # short (5k reqs per profile)
-```
-
-What the harness does:
-
-1. Builds a minimal OpenAI-compatible **mock upstream** ([`bench/mock-upstream.go`](./bench/mock-upstream.go)) that returns a canned chat-completion instantly — so measurements reflect gateway processing, not provider latency.
-2. Starts **two gateway instances** side by side: bare ([`bench/bench.config.yaml`](./bench/bench.config.yaml)) and guardrails-on ([`bench/bench-guardrails.config.yaml`](./bench/bench-guardrails.config.yaml)).
-3. Drives load with `hey` at 50 / 100 / 200 concurrent against each profile.
-4. Runs `go test -bench=./internal/server/` for the Go microbenchmarks.
-5. Reports throughput + P50/P95/P99 for every profile.
-
-Real-provider smoke test (needs an actual API key):
-
-```bash
-# Point at any provider in your config and hit it through the loadtest binary
-bin/loadtest -c 10 -n 50 -models gpt-4o-mini
-```
-
-**Commit your numbers** — we aggregate community results across hardware. PRs welcome.
-
----
-
 ## 🤝 Contributing
 
-Agent Command Center is part of the [Future AGI monorepo](../../README.md). See the top-level [CONTRIBUTING.md](../../CONTRIBUTING.md) for setup, CLA, and PR conventions. Gateway-specific tips in [`cmd/server/README.md`](./cmd/server).
+Agent Command Center is part of the [Future AGI monorepo](../README.md). See the top-level [CONTRIBUTING.md](../CONTRIBUTING.md) for setup, CLA, and PR conventions. The gateway entrypoint is [`cmd/agentcc/main.go`](./cmd/agentcc/main.go).
 
 ---
 

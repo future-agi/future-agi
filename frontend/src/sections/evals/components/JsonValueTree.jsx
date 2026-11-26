@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box, Typography } from "@mui/material";
+import { Box, Typography, ButtonBase } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import Iconify from "src/components/iconify";
@@ -20,7 +20,7 @@ export function JsonValueTree({ value, expanded, onToggle }) {
         component="pre"
         sx={{
           fontFamily: "monospace",
-          fontSize: "11px",
+          fontSize: "12px",
           color: "primary.main",
           whiteSpace: "pre-wrap",
           wordBreak: "break-all",
@@ -54,10 +54,11 @@ export function JsonValueTree({ value, expanded, onToggle }) {
 
   return (
     <Box>
-      <Box
+      <ButtonBase
         onClick={onToggle}
         sx={{
           display: "flex",
+          justifyContent: "flex-start",
           alignItems: "center",
           gap: 0.5,
           cursor: "pointer",
@@ -65,20 +66,24 @@ export function JsonValueTree({ value, expanded, onToggle }) {
         }}
       >
         <Iconify
-          icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+          icon={
+            expanded
+              ? "solar:alt-arrow-down-linear"
+              : "solar:alt-arrow-right-linear"
+          }
           width={14}
           sx={{ color: "text.disabled" }}
         />
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ fontSize: "11px" }}
+          sx={{ fontSize: "12px" }}
         >
           {Array.isArray(parsed)
             ? `Array (${parsed.length} items)`
             : `Object (${Object.keys(parsed).length} keys)`}
         </Typography>
-      </Box>
+      </ButtonBase>
       {expanded && (
         <Box
           sx={{
@@ -102,7 +107,7 @@ export function JsonEntries({ data, depth = 0 }) {
       <Typography
         variant="caption"
         color="text.disabled"
-        sx={{ fontSize: "10px" }}
+        sx={{ fontSize: "12px" }}
       >
         ...
       </Typography>
@@ -146,7 +151,11 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
       >
         {isObject ? (
           <Iconify
-            icon={open ? "mdi:chevron-down" : "mdi:chevron-right"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.disabled", mt: 0.25, flexShrink: 0 }}
           />
@@ -157,7 +166,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           variant="caption"
           fontWeight={600}
           sx={{
-            fontSize: "11px",
+            fontSize: "12px",
             minWidth: 60,
             flexShrink: 0,
             color: "text.secondary",
@@ -169,7 +178,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           <Typography
             variant="caption"
             sx={{
-              fontSize: "11px",
+              fontSize: "12px",
               color: "primary.main",
               wordBreak: "break-all",
               overflow: "hidden",
@@ -192,7 +201,7 @@ function JsonEntryRow({ entryKey, entryValue, isObject, depth }) {
           <Typography
             variant="caption"
             color="text.disabled"
-            sx={{ fontSize: "10px" }}
+            sx={{ fontSize: "12px" }}
           >
             {Array.isArray(entryValue)
               ? `[${entryValue.length}]`

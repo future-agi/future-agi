@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#root{width:1000px;padding:26px 30px 26px}
+.top{display:grid;grid-template-columns:1fr 470px;gap:48px;align-items:end;margin-bottom:34px}
+.lede{font-size:15.5px}
+.group{display:grid;grid-template-columns:150px 1fr;border-top:1px solid var(--line)}
+.group:last-child{border-bottom:1px solid var(--line)}
+.gl{padding:18px 0 0;font-size:15px;font-weight:600;color:var(--fg)}
+.gl span{display:block;font-weight:400;color:var(--fg3);font-size:13px;margin-top:3px;line-height:1.35;padding-right:14px}
+.tiles{display:grid;grid-template-columns:repeat(8,1fr)}
+.tile{height:92px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;border-left:1px solid var(--line)}
+.tiles .tile:nth-child(n+9){border-top:1px solid var(--line)}
+.m{width:30px;height:30px;background:var(--fg);-webkit-mask:var(--u) center/contain no-repeat;mask:var(--u) center/contain no-repeat;opacity:.92}
+.n{font-size:13px;color:var(--fg2);text-align:center;line-height:1.2}
+.more .n{color:var(--fg)}
+.more b{font-size:20px;font-weight:500;color:var(--fg2)}
+</style></head>
+<body><div class="root" id="root">
+<div id="groups"></div>
+</div>
+<script>
+document.body.className=new URLSearchParams(location.search).get('theme')||'dark';
+const G=[
+ ['Agent frameworks','One traceAI package each. In Python, most need no code changes',[
+  ['langchain','LangChain'],['langgraph','LangGraph'],['llamaindex','LlamaIndex'],['crewai','CrewAI'],['openai-agents','OpenAI Agents'],['claude-agent-sdk','Claude Agent'],['google-adk','Google ADK'],['lh-pydanticai','PydanticAI'],
+  ['dspy','DSPy'],['haystack','Haystack'],['mastra','Mastra'],['vercel','Vercel AI'],['smolagents','smolagents'],['autogen','AutoGen'],['instructor','Instructor'],['litellm','LiteLLM']]],
+ ['Model providers','Through the gateway or traced directly',[
+  ['openai','OpenAI'],['anthropic','Anthropic'],['google-genai','Gemini'],['lh-bedrock','Bedrock'],['lh-azure','Azure OpenAI'],['mistral','Mistral'],['groq','Groq'],['openrouter','OpenRouter'],
+  ['ollama','Ollama'],['vllm','vLLM'],['huggingface','Hugging Face'],['xai','xAI'],['deepseek','DeepSeek'],['together','Together'],['fireworks','Fireworks'],['cohere','Cohere']]],
+ ['Voice and retrieval','Voice pipelines and vector stores',[
+  ['livekit','LiveKit'],['pipecat','Pipecat'],['lh-elevenlabs','ElevenLabs'],['qdrant','Qdrant'],['si-milvus','Milvus'],['mongodb','MongoDB'],['redis','Redis'],['pgvector','pgvector']]],
+ ['Standards and tools','Open protocols, so nothing is locked in',[
+  ['opentelemetry','OpenTelemetry'],['mcp','MCP'],['__text:A2A','Agent2Agent'],['n8n','n8n'],['guardrails','Guardrails AI'],['elasticsearch','Elasticsearch'],['lh-ibm','watsonx'],['__more','More']]],
+];
+document.getElementById('groups').innerHTML=G.map(([l,s,items])=>`<div class="group"><div class="gl">${l}<span>${s}</span></div><div class="tiles">${
+ items.map(([f,n])=>f.startsWith('__text:')?`<div class="tile"><div style="font:600 19px 'IBM Plex Sans';letter-spacing:.02em;color:var(--fg);height:32px;display:flex;align-items:center">${f.slice(7)}</div><div class="n">${n}</div></div>`:f==='__more'?`<div class="tile more"><b>+</b><div class="n">${n}</div></div>`:`<div class="tile"><div class="m" style="--u:url('logos/${f}.svg')"></div><div class="n">${n}</div></div>`).join('')}</div></div>`).join('');
+</script></body></html>

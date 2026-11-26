@@ -26,21 +26,6 @@ const BUDGET_LEVELS = [
     label: "Hard Limit",
     description: "Absolute cap — requests are blocked when exceeded",
   },
-  {
-    value: "per_key",
-    label: "Per API Key",
-    description: "Spending limit applied to each individual API key",
-  },
-  {
-    value: "per_user",
-    label: "Per User",
-    description: "Spending limit per user across all their API keys",
-  },
-  {
-    value: "per_model",
-    label: "Per Model",
-    description: "Spending limit per model (e.g., cap expensive models)",
-  },
 ];
 
 const ACTIONS = [
@@ -116,7 +101,13 @@ const SetBudgetDialog = ({ open, onClose, gatewayId, budget }) => {
   const selectedLevel = BUDGET_LEVELS.find((b) => b.value === level);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth={false}
+      PaperProps={{ sx: { maxWidth: 720 } }}
+      fullWidth
+    >
       <DialogTitle>{isEditMode ? "Edit Budget" : "Set Budget"}</DialogTitle>
       <DialogContent>
         <Stack spacing={2.5} mt={1}>

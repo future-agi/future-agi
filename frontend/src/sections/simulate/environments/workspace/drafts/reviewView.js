@@ -1,0 +1,209 @@
+const GROUPS = [
+  {
+    id: "rules",
+    label: "Rules",
+    tab: "contract",
+    kinds: ["rule", "contract_field", "sub_goal"],
+  },
+  {
+    id: "state",
+    label: "Starting state and records",
+    tab: "contract",
+    kinds: ["world_state"],
+  },
+  { id: "tools", label: "Tools", tab: "contract", kinds: ["tool"] },
+  { id: "actors", label: "Actors", tab: "contract", kinds: ["actor"] },
+  {
+    id: "scenarios",
+    label: "Scenarios",
+    tab: "scenarios",
+    kinds: ["scenario"],
+  },
+  { id: "other", label: "Other", tab: "contract", kinds: ["source", "file"] },
+];
+
+const FIELD_LABEL = {
+  rule: "Rules",
+  contract_field: "Contract",
+  sub_goal: "Sub-goals",
+  world_state: "Starting state",
+  tool: "Tools",
+  actor: "Actors",
+  scenario: "Scenarios",
+  source: "Sources",
+  file: "Files",
+};
+
+/** Undo rejects a change: it leaves the list. Keeping one accepts it at Save. */
+export const keptChanges = (changes = []) =>
+  changes.filter((one) => one.decision !== "rejected");
+
+/** The kept changes in the design's order, under what they change. */
+export const groupChanges = (changes = []) =>
+  GROUPS.map(({ kinds, ...group }) => ({
+    ...group,
+    changes: changes.filter((one) => kinds.includes(one.kind)),
+  })).filter((group) => group.changes.length);
+
+const nameOf = (value) => {
+  if (value === null || value === undefined || value === "") return "none";
+  if (typeof value !== "object") return String(value);
+  return value.name || value.title || value.label || value.id || "an item";
+};
+
+const fieldWords = (path) =>
+  path.replace(/^\//, "").replaceAll("/", " · ").replaceAll("_", " ");
+
+const rowCounts = ({ added, removed, changed }) =>
+  [
+    added && `${added} added`,
+    removed && `${removed} removed`,
+    changed && `${changed} changed`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+/**
+ * A change as before → after lines in the screens' words:
+ * [{ sign: "+" | "−" | "~", field, text, before? }]. `before` is a reworded
+ * whole item's old text, shown struck through above the new.
+ */
+export const diffLines = (change) => {
+  const field = FIELD_LABEL[change.kind];
+  const patch = change.patch || [];
+  const read = Object.fromEntries(
+    patch.filter((op) => op.op === "test").map((op) => [op.path, op.value]),
+  );
+  const lines = patch
+    .filter((op) => op.op !== "test")
+    .map((op) => {
+      const old = read[op.path];
+      if (op.path === "") {
+        if (op.op === "add")
+          return { sign: "+", field, text: nameOf(op.value) };
+        return {
+          sign: "~",
+          field,
+          before: nameOf(old),
+          text: nameOf(op.value),
+        };
+      }
+      const name = `${change.key} · ${fieldWords(op.path)}`;
+      if (op.op === "remove") {
+        return { sign: "−", field, text: `${name}: ${nameOf(old)}` };
+      }
+      if (op.op === "add") {
+        return { sign: "+", field, text: `${name}: ${nameOf(op.value)}` };
+      }
+      return {
+        sign: "~",
+        field,
+        text: `${name}: ${nameOf(old)} → ${nameOf(op.value)}`,
+      };
+    });
+  if (change.action === "removed" && "" in read) {
+    lines.push({ sign: "−", field, text: nameOf(read[""]) });
+  }
+  (change.rows || []).forEach((row) =>
+    lines.push({
+      sign: "~",
+      field: "Tables",
+      text: `${row.table} · ${rowCounts(row)}`,
+    }),
+  );
+  return lines;
+};
+
+/** Every scenario a kept change needs proved again. */
+export const recheckedKeys = (changes = []) => [
+  ...new Set(keptChanges(changes).flatMap((one) => one.revalidate || [])),
+];
+
+/** The kept change that needs this one, so rejecting it would break the save. */
+export const rejectBlock = (change, changes = []) => {
+  const needs = keptChanges(changes).find((one) =>
+    (one.depends_on || []).includes(change.id),
+  );
+  return needs ? { by: needs.summary } : null;
+};
+
+/** The rejected change this one needs, so restoring it would break the save. */
+export const restoreBlock = (change, changes = []) => {
+  const needed = changes.find(
+    (one) =>
+      one.decision === "rejected" && (change.depends_on || []).includes(one.id),
+  );
+  return needed ? { by: needed.summary } : null;
+};
+
+/** How far the review has got. */
+export const reviewCounts = (changes = []) => {
+  const accepted = changes.filter((one) => one.decision === "accepted").length;
+  const rejected = changes.filter((one) => one.decision === "rejected").length;
+  return {
+    total: changes.length,
+    accepted,
+    rejected,
+    undecided: changes.length - accepted - rejected,
+  };
+};
+
+/** The saved version these changes sit on: the environment's if any touch it. */
+export const pieceOf = (changes = []) =>
+  changes.some((one) => one.piece === "environment") ? "environment" : "suite";
+
+const fileOf = (source) =>
+  (source?.used || []).find((one) => one.kind === "file");
+
+/** Where a change came from, to read. */
+export const sourceLine = (source = {}) => {
+  const used = fileOf(source);
+  const at = source.at || null;
+  if (used) {
+    return {
+      kind: "file",
+      file: used.name || null,
+      row: used.row ?? null,
+      at,
+    };
+  }
+  const kinds = { chat: "chat", nudge: "update" };
+  return { kind: kinds[source.origin] || "hand", at };
+};
+
+/** Where a change came from, to go to. */
+export const sourceLink = (source = {}) => {
+  if (source.origin === "chat") {
+    // The person's message the change answered, when the server names it.
+    const message = (source.used || []).find((one) => one.kind === "message");
+    return { kind: "chat", messageId: message?.id };
+  }
+  const used = fileOf(source);
+  return used
+    ? { kind: "file", file: used.name || null, row: used.row ?? null }
+    : { kind: "tab" };
+};
+
+/**
+ * What Save makes: the footer's one line. No version number: the server counts versions the page isn't sent, and can
+ * reuse one.
+ */
+export const saveLine = (changes = []) => {
+  const kept = keptChanges(changes);
+  const spec = kept.some((one) =>
+    ["rule", "contract_field", "sub_goal"].includes(one.kind),
+  );
+  let kind = "scenarios";
+  if (pieceOf(kept) === "environment") kind = spec ? "spec" : "environment";
+  return { kind, rechecked: recheckedKeys(kept).length };
+};
+
+// The server keeps a version name of at most 80 characters.
+export const NAME_LIMIT = 80;
+
+// The version name Save suggests: the first accepted change's own words, cut to the limit.
+export const suggestedName = (changes = []) =>
+  (changes.find((one) => one.decision === "accepted")?.summary ?? "").slice(
+    0,
+    NAME_LIMIT,
+  );

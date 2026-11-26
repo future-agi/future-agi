@@ -2,6 +2,7 @@ import { Box, Typography, useTheme } from "@mui/material";
 import React from "react";
 import ChartsTheme from "./ChartsTheme";
 import PropTypes from "prop-types";
+import { seriesColor } from "src/theme/data-colors";
 import { format } from "date-fns";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { throttle } from "src/utils/utils";
@@ -14,7 +15,7 @@ const EvalsChartsGenerator = ({ id, series, subLabel, label, onZoom }) => {
     });
   }, 30000);
 
-  const color = id == "chart-1" ? "#E2A6F1" : "#AE9AFD";
+  const color = seriesColor(theme, id == "chart-1" ? 4 : 0);
 
   const chartOptions = {
     chart: {
@@ -122,7 +123,7 @@ const EvalsChartsGenerator = ({ id, series, subLabel, label, onZoom }) => {
       show: true,
       position: "top",
       horizontalAlign: "left",
-      fontSize: "14px",
+      fontSize: "12px",
       labels: {
         colors: "var(--text-primary)",
       },
@@ -136,11 +137,10 @@ const EvalsChartsGenerator = ({ id, series, subLabel, label, onZoom }) => {
   return (
     <Box
       sx={{
-        border: "2px solid",
+        border: "1px solid",
         borderColor: "divider",
         padding: 2,
-        borderRadius: "15px",
-        boxShadow: "0px",
+        borderRadius: "8px",
       }}
     >
       <Typography fontWeight={500} color="text.disabled">

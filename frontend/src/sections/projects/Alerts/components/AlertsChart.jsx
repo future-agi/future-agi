@@ -1,4 +1,4 @@
-import { Box, Typography, useTheme } from "@mui/material";
+import { Box, IconButton, Typography, useTheme } from "@mui/material";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import ReactApexChart from "react-apexcharts";
 import Iconify from "src/components/iconify";
@@ -88,7 +88,7 @@ export default function AlertsChart({ series, options }) {
             sx={{
               height: 16,
               width: 16,
-              bgcolor: "green.500",
+              bgcolor: "status.success.solid",
             }}
           />
           <Typography
@@ -105,7 +105,7 @@ export default function AlertsChart({ series, options }) {
             sx={{
               height: 16,
               width: 16,
-              bgcolor: "red.500",
+              bgcolor: "status.danger.solid",
             }}
           />
           <Typography
@@ -122,7 +122,7 @@ export default function AlertsChart({ series, options }) {
             sx={{
               height: 16,
               width: 16,
-              bgcolor: "orange.400",
+              bgcolor: "status.warning.solid",
             }}
           />
           <Typography
@@ -135,30 +135,26 @@ export default function AlertsChart({ series, options }) {
         </Box>
       </Box>
 
-      <Box
+      <IconButton
+        size="small"
+        aria-label="Toggle chart height"
         sx={{
           position: "absolute",
           bottom: "-12px",
           left: "30px",
-          borderRadius: "50%",
           zIndex: 10,
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
           border: "1px solid",
           borderColor: "divider",
-          padding: 0.3,
-          cursor: "pointer",
           backgroundColor: "background.paper",
         }}
         onClick={toggleHeight}
       >
         <Iconify
-          icon="bi:arrows-collapse"
+          icon="solar:chevrons-down-up-linear"
           width={16}
           sx={{ color: "text.disabled" }}
         />
-      </Box>
+      </IconButton>
       <Box
         sx={{
           position: "absolute",
@@ -180,7 +176,7 @@ export default function AlertsChart({ series, options }) {
         onMouseDown={handleMouseDown}
       >
         <Iconify
-          icon="charm:grab-horizontal"
+          icon="solar:grip-horizontal-linear"
           width={16}
           sx={{ color: "text.disabled", padding: theme.spacing(0.25) }}
         />

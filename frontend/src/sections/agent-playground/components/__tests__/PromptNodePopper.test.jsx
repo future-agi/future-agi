@@ -139,8 +139,8 @@ const legacyListLibraryTemplate = {
       messages: [{ role: "user", content: "Hello {{name}}" }],
       model: "gpt-4o",
       model_detail: { model_name: "gpt-4o", providers: "openai" },
-      response_format: "json_object",
-      output_format: "json",
+      response_format: "json",
+      output_format: "string",
       template_format: "mustache",
       temperature: 0.4,
     },
@@ -371,7 +371,7 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.",
+      "This library template can't be added. Agent Builder requires text-only messages, a string output, a supported response format, and a configured model.",
       { variant: "error" },
     );
   });
@@ -404,7 +404,7 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.",
+      "This library template can't be added. Agent Builder requires text-only messages, a string output, a supported response format, and a configured model.",
       { variant: "error" },
     );
   });
@@ -435,12 +435,12 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.",
+      "This library template can't be added. Agent Builder requires text-only messages, a string output, a supported response format, and a configured model.",
       { variant: "error" },
     );
   });
 
-  it("seeds library templates with structured output formats", () => {
+  it("rejects structured outputs before opening an unsupported drawer", () => {
     const onClose = vi.fn();
     const onNodeSelect = vi.fn();
     useGetLibraryTemplatesInfinite.mockReturnValue(
@@ -466,28 +466,8 @@ describe("PromptNodePopper", () => {
 
     fireEvent.click(screen.getByText("JSON Output Library Template"));
 
-    expect(onNodeSelect).toHaveBeenCalledWith(
-      "llm_prompt",
-      "node-template-llm-prompt",
-      expect.objectContaining({
-        outputFormat: "json",
-        name: "JSON Output Library Template",
-        modelConfig: expect.objectContaining({
-          responseFormat: "json_schema",
-          responseSchema,
-        }),
-        payload: expect.objectContaining({
-          promptConfig: [
-            expect.objectContaining({
-              configuration: expect.objectContaining({
-                response_schema: responseSchema,
-              }),
-            }),
-          ],
-        }),
-      }),
-    );
-    expect(onClose).toHaveBeenCalled();
+    expect(onNodeSelect).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("normalizes legacy list-shaped library snapshots before inserting", () => {
@@ -506,11 +486,11 @@ describe("PromptNodePopper", () => {
       "node-template-llm-prompt",
       expect.objectContaining({
         name: legacyListLibraryTemplate.name,
-        outputFormat: "json",
+        outputFormat: "string",
         templateFormat: "mustache",
         modelConfig: expect.objectContaining({
           model: "gpt-4o",
-          responseFormat: "json_object",
+          responseFormat: "json",
         }),
         messages: expect.arrayContaining([
           expect.objectContaining({

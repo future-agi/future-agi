@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
+import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
+import { useSearchParams } from "react-router-dom";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 
 import { Box, Button, Typography, useTheme } from "@mui/material";
@@ -22,6 +24,7 @@ import {
   emptyStateContent,
 } from "src/components/custom-model-dropdown/KeysHelper";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
+import EmptyState from "src/components/empty-state";
 import { ConfirmDialog } from "../../../components/custom-dialog";
 import { LoadingButton } from "@mui/lab";
 import {
@@ -59,11 +62,32 @@ const normalizeCustomModel = (model = {}) => {
   };
 };
 
+// What a search on each category looks through, for "No … match".
+const NO_MATCH_NOUN = {
+  all: "AI providers",
+  default_model: "model providers",
+  cloud: "cloud providers",
+  custom: "custom models",
+};
+
 const ConfigureProviders = () => {
   const { role } = useAuthContext();
   const theme = useTheme();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  // `?provider=typesafe` (a link from a feature that needs that key) opens
+  // the list already searched to that provider. A new or removed provider
+  // in the URL searches again; what the user types stands until then.
+  const [searchParams] = useSearchParams();
+  const provider = searchParams.get("provider") || "";
+  const [searchQuery, setSearchQuery] = useState(provider);
+  const [searchedProvider, setSearchedProvider] = useState(provider);
+  const [selectedFilter, setSelectedFilter] = useState("all");
+  if (provider !== searchedProvider) {
+    setSearchedProvider(provider);
+    setSearchQuery(provider);
+    // A linked provider shows its card whichever category was picked.
+    if (provider) setSelectedFilter("all");
+  }
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["api-key-status"],
     queryFn: () => axios.get(endpoints.develop.apiKey.status),
@@ -71,7 +95,6 @@ const ConfigureProviders = () => {
       (d.data?.result?.providers || []).map(normalizeProviderStatus),
   });
 
-  const [selectedFilter, setSelectedFilter] = useState("all");
   const searchDebounce = useDebounce(searchQuery.trim(), 300);
   const { data: customModalsData } = useQuery({
     queryKey: ["customModals"],
@@ -195,7 +218,7 @@ const ConfigureProviders = () => {
         width: "8px", // required
       },
       "&::-webkit-scrollbar-thumb": {
-        backgroundColor: "rgba(0, 0, 0, 0.3)",
+        backgroundColor: "var(--text-disabled)",
         borderRadius: "4px",
       },
       "&::-webkit-scrollbar-track": {
@@ -278,7 +301,8 @@ const ConfigureProviders = () => {
                 disabled={!RolePermission.API_KEYS[PERMISSIONS.CREATE][role]}
                 startIcon={
                   <SvgColor
-                    sx={{ color: "text.primary", height: 16, width: 16 }}
+                    width={16}
+                    sx={{ color: "text.primary" }}
                     src={"/assets/icons/ic_add.svg"}
                   />
                 }
@@ -294,8 +318,24 @@ const ConfigureProviders = () => {
             </Box>
           </Box>
 
-          {/* Unified Empty State */}
-          <ShowComponent condition={isEmpty}>
+          {/* A search that matched nothing, else nothing added yet */}
+          {/* Gone as soon as the search is cleared, not after the debounce. */}
+          <ShowComponent
+            condition={
+              isEmpty && searchDebounce !== "" && searchQuery.trim() !== ""
+            }
+          >
+            <EmptyState
+              variant="no-results"
+              icon="solar:magnifer-linear"
+              title={`No ${NO_MATCH_NOUN[selectedFilter] ?? NO_MATCH_NOUN.all} match “${searchDebounce}”`}
+              onClearFilters={() => {
+                setSearchQuery("");
+                setSelectedFilter("all");
+              }}
+            />
+          </ShowComponent>
+          <ShowComponent condition={isEmpty && searchDebounce === ""}>
             <Box
               sx={{
                 gridColumn: "1 / -1",
@@ -309,11 +349,7 @@ const ConfigureProviders = () => {
               <EmptyLayout
                 icon="/assets/icons/navbar/hugeicons.svg"
                 title={emptyStateContent[selectedFilter]?.title}
-                description={
-                  searchDebounce !== ""
-                    ? `No relevant search results were found for '${searchDebounce}'`
-                    : emptyStateContent[selectedFilter]?.description
-                }
+                description={emptyStateContent[selectedFilter]?.description}
                 action={null}
               />
             </Box>
@@ -415,8 +451,9 @@ const ConfigureProviders = () => {
             sx={{ color: "common.white" }}
             startIcon={
               <SvgColor
+                width={2}
                 // @ts-ignore
-                sx={{ height: 2, width: 2, mt: -0.5 }}
+                sx={{ mt: -0.5 }}
                 src={"/assets/icons/ic_delete.svg"}
               />
             }
@@ -446,27 +483,11 @@ const AIProviders = () => {
           height: "100vh",
         }}
       >
-        <Box>
-          <Typography
-            sx={{
-              typography: "m2",
-              fontWeight: "fontWeightSemiBold",
-              color: "text.primary",
-            }}
-          >
-            AI Providers
-          </Typography>
-          <Typography
-            sx={{
-              typography: "s1",
-              fontWeight: "fontWeightRegular",
-              color: "text.primary",
-              marginTop: (theme) => theme.spacing(0.5),
-            }}
-          >
-            Manage your AI providers
-          </Typography>
-        </Box>
+        <PageHeader
+          title="AI Providers"
+          description="Manage your AI providers"
+          sx={{ mb: 0 }}
+        />
 
         <ConfigureProviders />
       </Box>

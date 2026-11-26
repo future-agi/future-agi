@@ -13,6 +13,25 @@ import {
   StatusCell,
 } from "../components/AlertsListView/AlertCells";
 import { useAlertSheetStore } from "./useAlertSheetStore";
+import { buildAlertTraceLink } from "../alertTraceLink";
+
+// The window "View trace" should scope to. A row action names one fire and uses
+// its window. The header names none, so it spans every fire, taken from the
+// rule-level window_start/window_end the details endpoint aggregates before its
+// type filter and pagination — reading the newest row out of logs.results would
+// instead follow whichever slice the issues grid last requested.
+export const pickTraceWindow = (alertRuleDetails, clickedLog) => {
+  if (clickedLog) {
+    return {
+      windowStart: clickedLog.time_window_start,
+      windowEnd: clickedLog.time_window_end,
+    };
+  }
+  return {
+    windowStart: alertRuleDetails?.windowStart ?? alertRuleDetails?.window_start,
+    windowEnd: alertRuleDetails?.windowEnd ?? alertRuleDetails?.window_end,
+  };
+};
 
 // Custom hook that combines Zustand store with React hooks and mutations
 export const useAlertSheetView = () => {
@@ -57,12 +76,23 @@ export const useAlertSheetView = () => {
     }
   }, [store]);
 
-  const handleViewTrace = useCallback(() => {
-    if (!store?.alertRuleDetails?.project) return;
-    const basePath = `/dashboard/observe/${store?.alertRuleDetails?.project}/llm-tracing`;
-    navigate(basePath);
-    return;
-  }, [navigate, store?.alertRuleDetails?.project]);
+  const handleViewTrace = useCallback(
+    (clickedLog) => {
+      const details = store?.alertRuleDetails;
+      if (!details?.project) return;
+      const { windowStart, windowEnd } = pickTraceWindow(details, clickedLog);
+      navigate(
+        buildAlertTraceLink({
+          projectId: details.project,
+          windowStart,
+          windowEnd,
+          monitorFilters: details.filters,
+          metricType: details.metric_type,
+        }),
+      );
+    },
+    [navigate, store?.alertRuleDetails],
+  );
 
   const handleResolveAlerts = () => {
     if (store?.selectedAll) {
@@ -186,7 +216,7 @@ export const useAlertSheetView = () => {
                   [PropertyName.list]: [params?.data?.id],
                 });
               } else if (action === "view_trace") {
-                handleViewTrace();
+                handleViewTrace(params?.data);
               }
             },
           };

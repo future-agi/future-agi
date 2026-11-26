@@ -1,17 +1,10 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback } from "react";
 import { Box, Typography, Skeleton, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { format, isValid } from "date-fns";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { EXECUTION_STATUS } from "../utils/workflowExecution";
-
-const STATUS_COLORS = {
-  [EXECUTION_STATUS.SUCCESS]: "success.main",
-  [EXECUTION_STATUS.RUNNING]: "info.main",
-  [EXECUTION_STATUS.PENDING]: "warning.main",
-  [EXECUTION_STATUS.ERROR]: "error.main",
-  [EXECUTION_STATUS.FAILED]: "error.main",
-};
 
 const STATUS_LABELS = {
   [EXECUTION_STATUS.SUCCESS]: "Success",
@@ -48,14 +41,6 @@ const ExecutionsList = ({
 
   const scrollContainerRef = useScrollEnd(fetchNext, [fetchNext]);
 
-  // Auto-select top execution whenever the newest item changes
-  const firstExecutionId = executions[0]?.id;
-  useEffect(() => {
-    if (firstExecutionId) {
-      onExecutionChange(firstExecutionId);
-    }
-  }, [firstExecutionId, onExecutionChange]);
-
   return (
     <Box
       ref={scrollContainerRef}
@@ -66,14 +51,13 @@ const ExecutionsList = ({
         "&::-webkit-scrollbar": { width: "6px" },
         "&::-webkit-scrollbar-thumb": {
           backgroundColor: "rgba(0, 0, 0, 0.3)",
-          borderRadius: "3px",
+          borderRadius: "4px",
         },
         "&::-webkit-scrollbar-track": { backgroundColor: "transparent" },
       }}
     >
       {executions.map((execution) => {
         const isSelected = execution.id === selectedExecutionId;
-        const statusColor = STATUS_COLORS[execution.status] || "text.disabled";
         const statusLabel = STATUS_LABELS[execution.status] || execution.status;
         const startedDate = new Date(execution.startedAt);
         const dateStr = isValid(startedDate)
@@ -105,21 +89,12 @@ const ExecutionsList = ({
             >
               {dateStr}
             </Typography>
-            <Box
-              sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.5 }}
-            >
-              <Box
-                sx={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  bgcolor: statusColor,
-                  flexShrink: 0,
-                }}
+            <Box sx={{ mt: 0.5 }}>
+              <StatusBadge
+                variant="dot"
+                status={execution.status}
+                label={statusLabel}
               />
-              <Typography typography="s3" color="text.secondary">
-                {statusLabel}
-              </Typography>
             </Box>
           </Box>
         );

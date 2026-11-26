@@ -276,9 +276,7 @@ class TestResolveFeedbackTemplateData:
         assert data["multi_choice"] is False
         assert data["choices"] == ["neutral", "joy", "sadness"]
 
-    def test_multi_choice_from_template_ignores_metric_false(
-        self, user, workspace
-    ):
+    def test_multi_choice_from_template_ignores_metric_false(self, user, workspace):
         """Template says multi_choice=True; metric override is ignored."""
         tpl = _template(
             user,
@@ -330,9 +328,7 @@ class TestResolveFeedbackTemplateData:
 
         assert data["multi_choice"] is True
 
-    def test_choices_type_with_no_choices_anywhere_returns_empty(
-        self, user, workspace
-    ):
+    def test_choices_type_with_no_choices_anywhere_returns_empty(self, user, workspace):
         tpl = _template(user, workspace, config={"output": "choices"})
         metric = _metric_for(user, workspace, tpl)
 

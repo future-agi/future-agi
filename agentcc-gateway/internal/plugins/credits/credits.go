@@ -41,16 +41,23 @@ func (p *Plugin) SetRedisCredit(rc RedisCreditBackend) {
 	p.redisCredit = rc
 }
 
-func (p *Plugin) Name() string           { return "credits" }
-func (p *Plugin) Priority() int          { return 510 } // After auth (100) and cost (500).
+func (p *Plugin) Name() string               { return "credits" }
+func (p *Plugin) Priority() int              { return 510 }  // After auth (100) and cost (500).
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No credits deducted on cache hits.
+
+// skips reports whether the request draws no credits. A decision call runs on
+// the customer's own provider key, which the vendor bills; it never draws
+// Future AGI credits, on a managed key included.
+func skips(rc *models.RequestContext) bool {
+	return rc.Metadata["key_type"] != "managed" || rc.EndpointType == "decision"
+}
 
 // ProcessRequest checks credit balance for managed keys.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	if !p.enabled || p.keyStore == nil {
+	if !p.enabled || p.keyStore == nil || rc.Flags.NoSpend {
 		return pipeline.ResultContinue()
 	}
-	if rc.Metadata["key_type"] != "managed" {
+	if skips(rc) {
 		return pipeline.ResultContinue()
 	}
 
@@ -98,7 +105,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	if !p.enabled || p.keyStore == nil {
 		return pipeline.ResultContinue()
 	}
-	if rc.Metadata["key_type"] != "managed" {
+	if skips(rc) {
 		return pipeline.ResultContinue()
 	}
 
@@ -122,7 +129,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
-	micros := auth.USDToMicros(costUSD)
+	// credits_used reports what is deducted, not the raw cost: a cost below
+	// half a micro-dollar is deducted as one micro-dollar.
+	micros := models.SpendMicros(costUSD)
 
 	// Write-through: unconditionally deduct from Redis (shared), then sync local.
 	// ForceDeductMicros is used because the request already completed — spend
@@ -131,7 +140,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		if redisBal, ok := p.redisCredit.ForceDeductMicros(keyID, micros); ok {
 			// Sync local balance to match Redis (authoritative source).
 			key.SetBalanceMicros(redisBal)
-			rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", costUSD)
+			rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", auth.MicrosToUSD(micros))
 			rc.Metadata["credits_remaining"] = fmt.Sprintf("%.6f", auth.MicrosToUSD(redisBal))
 			return pipeline.ResultContinue()
 		}
@@ -139,7 +148,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 
 	// Fallback: local-only deduction.
 	newBalance := key.DeductMicros(micros)
-	rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", costUSD)
+	rc.Metadata["credits_used"] = fmt.Sprintf("%.6f", auth.MicrosToUSD(micros))
 	rc.Metadata["credits_remaining"] = fmt.Sprintf("%.6f", newBalance)
 
 	return pipeline.ResultContinue()

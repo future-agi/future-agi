@@ -36,7 +36,7 @@ const SaveNewAgentVersionModal = ({
       fullWidth
       PaperProps={{
         sx: {
-          width: 500,
+          width: 560,
           borderRadius: 3,
         },
       }}
@@ -58,9 +58,9 @@ const SaveNewAgentVersionModal = ({
             Save version {latestVersionNumber + 1}
           </Typography>
 
-          <IconButton onClick={onClose} sx={{ padding: 0.5 }}>
+          <IconButton onClick={onClose} size="small">
             <Iconify
-              icon="mdi:close"
+              icon="solar:close-linear"
               color="text.primary"
               width={26}
               height={26}
@@ -105,13 +105,6 @@ const SaveNewAgentVersionModal = ({
           size="medium"
           loading={isSubmitting}
           onClick={handleSave}
-          sx={{
-            color: "common.white",
-            borderRadius: "4px",
-            textTransform: "none",
-            fontWeight: 500,
-            height: 44,
-          }}
         >
           <Typography
             typography={"s1"}

@@ -132,11 +132,7 @@ export const CollaboratorsCellRenderer = (params) => {
           "& .MuiAvatar-root": {
             width: 24,
             height: 24,
-            fontSize: 10,
-            border: "1px solid",
-            borderColor: "primary.main",
-            bgcolor: "background.paper",
-            color: "primary.main",
+            fontSize: 12,
           },
         }}
       >
@@ -153,7 +149,7 @@ export const CollaboratorsCellRenderer = (params) => {
               sx={{
                 width: 24,
                 height: 24,
-                fontSize: 10,
+                fontSize: 12,
               }}
             >
               {_.toUpper(collaborator?.name?.[0])}

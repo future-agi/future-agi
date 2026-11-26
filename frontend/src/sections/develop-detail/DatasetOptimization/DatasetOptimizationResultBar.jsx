@@ -124,7 +124,7 @@ const DatasetOptimizationResultBar = ({ optimizationData }) => {
           <SvgColor
             src="/assets/icons/ic_info.svg"
             sx={{
-              color: "blue.500",
+              color: "status.info.fg",
               width: "16px",
               height: "16px",
             }}

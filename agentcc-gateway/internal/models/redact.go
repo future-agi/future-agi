@@ -1,0 +1,116 @@
+package models
+
+import (
+	"net/url"
+	"strings"
+)
+
+// redacted replaces a credential wherever one is found.
+const redacted = "REDACTED"
+
+// trailingPunctuation ends a sentence rather than a URL.
+const trailingPunctuation = `.,;:)]}>"'`
+
+// RedactCredentials removes credentials from any URL in a message.
+//
+// An error from an HTTP call is a *url.Error carrying the whole URL it tried,
+// and that text reaches three places a credential must never reach: the error
+// body the caller reads, the request log the dashboard shows, and the
+// operator's own logs. A provider that puts its key in the query string, or a
+// base_url written with a password in it, therefore publishes it on the first
+// network failure.
+//
+// Only URLs are touched. Redacting anything that merely looks like a secret
+// would hide the upstream's own error text, which is what the message is for.
+func RedactCredentials(message string) string {
+	if !strings.Contains(message, "://") {
+		return message
+	}
+
+	var out strings.Builder
+	rest := message
+	for {
+		i := strings.Index(rest, "://")
+		if i < 0 {
+			out.WriteString(rest)
+			return out.String()
+		}
+		// Walk back to the start of the scheme, and forward to the end of the URL.
+		start := i
+		for start > 0 && isSchemeByte(rest[start-1]) {
+			start--
+		}
+		end := i + len("://")
+		for end < len(rest) && !isURLTerminator(rest[end]) {
+			end++
+		}
+		out.WriteString(rest[:start])
+		out.WriteString(redactURL(rest[start:end]))
+		rest = rest[end:]
+	}
+}
+
+func isSchemeByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '+' || b == '-' || b == '.'
+}
+
+func isURLTerminator(b byte) bool {
+	// Commas and apostrophes can occur inside URL components. Leave surrounding
+	// punctuation to redactURL, which separates it only at the end of the token.
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '"' || b == '<' || b == '>' || b == '\\'
+}
+
+// redactURL rewrites one URL with its credentials removed.
+func redactURL(raw string) string {
+	// Find the boundary first, then slice once. Growing a string a byte at a
+	// time is quadratic, and the input is a caller's: a model name of
+	// "https://host/" followed by a hundred thousand brackets reaches here
+	// through an unknown-model error.
+	end := len(raw)
+	for end > 0 && strings.IndexByte(trailingPunctuation, raw[end-1]) >= 0 {
+		end--
+	}
+	raw, trailing := raw[:end], raw[end:]
+
+	raw, _, _ = strings.Cut(raw, "#")
+	u, err := url.Parse(raw)
+	if err != nil {
+		return redactUnparseable(raw) + trailing
+	}
+
+	if u.User != nil {
+		u.User = url.User(redacted)
+	}
+
+	if u.RawQuery != "" {
+		q := u.Query()
+		for _, values := range q {
+			for i := range values {
+				values[i] = redacted
+			}
+		}
+		u.RawQuery = q.Encode()
+	}
+
+	return u.String() + trailing
+}
+
+// redactUnparseable removes what a URL that does not parse may hold. There is
+// no telling which part of the userinfo or the query is the credential, so
+// both go whole.
+func redactUnparseable(raw string) string {
+	if i := strings.Index(raw, "://"); i >= 0 {
+		authority := raw[i+len("://"):]
+		end := strings.IndexAny(authority, "/?#")
+		if end < 0 {
+			end = len(authority)
+		}
+		if at := strings.LastIndexByte(authority[:end], '@'); at >= 0 {
+			raw = raw[:i+len("://")] + redacted + authority[at:]
+		}
+	}
+	if i := strings.IndexByte(raw, '?'); i >= 0 {
+		return raw[:i+1] + redacted
+	}
+	return raw
+}

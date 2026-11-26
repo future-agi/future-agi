@@ -11,11 +11,27 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+from tracer.services.clickhouse.application_read_policy import (
+    application_read_settings as _application_read_settings,
+)
+
 _settings: ContextVar[dict | None] = ContextVar("ch_query_settings", default=None)
 
 
+def application_read_settings(
+    settings: dict | None = None,
+    *,
+    timeout_ms: int | None = None,
+) -> dict:
+    """Apply the same analytics policy as the native query-service boundary.
+
+    Legacy timeout arguments no longer impose per-statement execution limits.
+    """
+    return _application_read_settings(settings)
+
+
 def current_settings() -> dict:
-    return dict(_settings.get() or {})
+    return application_read_settings(_settings.get())
 
 
 @contextmanager

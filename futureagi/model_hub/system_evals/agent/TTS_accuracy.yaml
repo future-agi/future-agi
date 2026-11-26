@@ -16,7 +16,8 @@ criteria: "You are evaluating whether text-to-speech audio output accurately con
   ## Inputs\n\n<text>{{text}}</text>\n\n<generated_audio>{{generated_audio}}</generated_audio>"
 eval_tags:
 - Audio
-- NLP Metrics
+- TTS
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

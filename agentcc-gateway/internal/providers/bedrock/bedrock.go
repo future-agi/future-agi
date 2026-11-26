@@ -14,6 +14,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 const bedrockService = "bedrock"
@@ -56,6 +57,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		MaxIdleConnsPerHost: poolSize,
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
+		DialContext:         cfg.DialContext,
 	}
 
 	region := extractRegion(cfg.BaseURL, cfg.Headers, cfg.AWSRegion)
@@ -76,6 +78,11 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 
 func (p *Provider) ID() string { return p.id }
 
+// ClientTimeout reports the timeout on this provider's HTTP client. It bounds
+// the whole exchange, a streamed body included, so it is a hard ceiling on any
+// request this provider serves.
+func (p *Provider) ClientTimeout() time.Duration { return p.httpClient.Timeout }
+
 func (p *Provider) acquireSemaphore(ctx context.Context) error {
 	select {
 	case p.semaphore <- struct{}{}:
@@ -91,6 +98,12 @@ func (p *Provider) releaseSemaphore() {
 
 // ChatCompletion sends a non-streaming request to Bedrock.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "bedrock", ParallelCalls: !isInferenceProfile(resolveModelName(req.Model)), RequiredChoice: true, NamedChoice: true})
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	req = prepared
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("bedrock: concurrency limit reached")
 	}
@@ -124,7 +137,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
+		if common.TimedOut(ctx, err) {
 			return nil, models.ErrGatewayTimeout("bedrock: request timed out")
 		}
 		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock: request failed: %v", err))
@@ -133,7 +146,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock: reading response: %v", err))
+		return nil, common.ReadError(err, resp.StatusCode, "bedrock: reading response")
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -156,6 +169,12 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "bedrock", ParallelCalls: !isInferenceProfile(resolveModelName(req.Model)), RequiredChoice: true, NamedChoice: true})
+		if policyErr != nil {
+			errs <- policyErr
+			return
+		}
+		req = prepared
 
 		if err := p.acquireSemaphore(ctx); err != nil {
 			errs <- models.ErrGatewayTimeout("bedrock: concurrency limit reached")
@@ -213,7 +232,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		resp, err := p.httpClient.Do(httpReq)
 		if err != nil {
-			if ctx.Err() != nil {
+			if common.TimedOut(ctx, err) {
 				errs <- models.ErrGatewayTimeout("bedrock: request timed out")
 				return
 			}
@@ -245,7 +264,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			msg, err := readEventStreamMessage(resp.Body)
 			if err != nil {
 				if ctx.Err() == nil {
-					errs <- models.ErrUpstreamProvider(0, fmt.Sprintf("bedrock: stream read error: %v", err))
+					errs <- common.ReadError(err, 0, "bedrock: stream read")
 				}
 				return
 			}

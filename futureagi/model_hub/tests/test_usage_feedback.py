@@ -30,11 +30,12 @@ class TestEvalUsageStatsAPI:
         assert response.status_code == 200
         result = response.data["result"]
         assert result["template_id"] == str(eval_template.id)
-        assert "total_runs" in result
-        assert "runs_last_30_days" in result
-        assert "success_count" in result
-        assert "error_count" in result
-        assert "pass_rate" in result
+        stats = result["stats"]
+        assert "total_runs" in stats
+        assert "runs_period" in stats
+        assert "success_count" in stats
+        assert "error_count" in stats
+        assert "pass_rate" in stats
 
     def test_usage_nonexistent(self, auth_client):
         response = auth_client.get(

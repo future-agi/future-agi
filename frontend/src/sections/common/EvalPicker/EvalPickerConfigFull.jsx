@@ -16,7 +16,8 @@ import {
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
-import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
 import PropTypes from "prop-types";
 import React, {
@@ -30,6 +31,7 @@ import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show/ShowComponent";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
+import { activeTaskCompositeMapping } from "src/sections/tasks/taskEvalMapping";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
@@ -46,8 +48,16 @@ import LLMPromptEditor from "src/sections/evals/components/LLMPromptEditor";
 import CodeEvalEditor from "src/sections/evals/components/CodeEvalEditor";
 import OutputTypeConfig from "src/sections/evals/components/OutputTypeConfig";
 import FewShotExamples from "src/sections/evals/components/FewShotExamples";
+import JevOutputConfig from "src/sections/evals/components/JevOutputConfig";
+import {
+  hasExtraJevMessages,
+  orderChoiceScores,
+} from "src/sections/evals/utils/jevMapping";
+import useDecisionBinding, {
+  normalizeDecisionOutput,
+} from "./useDecisionBinding";
 import { useCompositeDetail } from "src/sections/evals/hooks/useCompositeEval";
-import { useCompositeChildrenUnionKeys } from "src/sections/evals/hooks/useCompositeChildrenKeys";
+import { useCompositeChildrenInputs } from "src/sections/evals/hooks/useCompositeChildrenKeys";
 import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
@@ -71,6 +81,7 @@ import {
   extractVariablesFromMessages,
 } from "src/utils/utils";
 import { format } from "date-fns";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import {
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
@@ -81,9 +92,10 @@ import {
   hasNonEmptyPromptMessage,
 } from "./evalPickerConfigUtils";
 import RequiredMark from "src/components/RequiredMark";
+import ContentSkeleton from "src/components/content-skeleton";
 
-const ERROR_LOCALIZER_OSS_TOOLTIP =
-  "Error Localization is not available on self-hosted (OSS) deployments.";
+const ERROR_LOCALIZER_LOCKED_TOOLTIP =
+  "Error Localization isn't enabled for this workspace.";
 
 const build_tools_payload = (selected_tools) =>
   (selected_tools || []).reduce((acc, tool_name) => {
@@ -119,8 +131,26 @@ const SOURCE_NAME_SLUGS = {
 const getEvalPromptText = (evalData, config = {}) =>
   evalData?.instructions || config?.rule_prompt || "";
 
-const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
-  const { isOSS } = useDeploymentMode();
+const EvalPickerConfigFull = ({
+  evalData,
+  onBack,
+  onSave,
+  isSaving,
+  progress = null,
+  primaryLabel = null,
+  showClose = false,
+}) => {
+  // Fail closed while capabilities load (both flags true) so gated controls
+  // never flash as available before the fetch resolves.
+  const { locked: fagiLocked, isLoading: capsLoading } = useFeatureLocked(
+    CAPABILITY.TURING_MODELS,
+  );
+  const { locked: agentEvalLocked } = useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
+  const errorLocalizerAvailable = useErrorLocalizationAvailable();
+  // Confirmed denial (loaded AND not allowed) — seed the model default raw and
+  // only strip it here, never off `locked` (true while loading), so entitled
+  // users keep "turing_large" through the fetch.
+  const fagiModelsDenied = fagiLocked && !capsLoading;
   const {
     source,
     sourceId,
@@ -133,6 +163,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     onFiltersChange,
     sourceTimeWindow,
     filterForm: localFilterForm,
+    onClose,
+    requireInputs,
   } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
     () => normalizeEvalPickerEval(evalData),
@@ -155,13 +187,21 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [selectedVersionId, setSelectedVersionId] = useState(
     evalData?.pinned_version_id ?? null,
   );
+  const [versionSelectionChanged, setVersionSelectionChanged] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
   const [model, setModel] = useState("turing_large");
+  // Drop the seeded Turing default only once denial is confirmed, so entitled
+  // users keep it through the capabilities fetch (and any config load).
+  useEffect(() => {
+    if (fagiModelsDenied && FAGI_MODEL_VALUES.has(model)) setModel("");
+  }, [fagiModelsDenied, model]);
+  const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
+  const [decisionMapping, setDecisionMapping] = useState({});
   const [multiChoice, setMultiChoice] = useState(false);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
@@ -176,7 +216,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [knowledgeBaseIds, setKnowledgeBaseIds] = useState([]);
   const [contextOptions, setContextOptions] = useState(["variables_only"]);
   const [errorLocalizerEnabled, setErrorLocalizerEnabled] = useState(false);
-  const errorLocalizerActive = errorLocalizerEnabled && !isOSS;
+  const errorLocalizerActive =
+    errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   // Name for the UserEvalMetric — defaults to template name, user can customise
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
@@ -184,7 +225,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   useEffect(() => {
     const pinned =
       evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
-    if (pinned && !selectedVersionId && !isDirty) {
+    if (pinned && !selectedVersionId && !isDirty && !versionSelectionChanged) {
       setSelectedVersionId(pinned);
     }
   }, [
@@ -192,13 +233,25 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     evalData?.pinnedVersionId,
     selectedVersionId,
     isDirty,
+    versionSelectionChanged,
   ]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
   const [sourceReady, setSourceReady] = useState(false);
+  const [sourceBlocker, setSourceBlocker] = useState("");
+  const handleReadinessChange = useCallback(
+    ({ message }) => setSourceBlocker(message),
+    [],
+  );
   const [promptMessageError, setPromptMessageError] = useState("");
   const [sourceMapping, setSourceMapping] = useState({});
+  // Readiness reports describe the currently visible schema, not user edits.
+  // In particular, a warm partial schema must not replace a saved binding.
+  const [taskPathEdits, setTaskPathEdits] = useState({});
+  const rememberTaskPath = useCallback((key, path) => {
+    setTaskPathEdits((prev) => ({ ...prev, [key]: path }));
+  }, []);
   const sourceRef = useRef(null);
 
   const localFormFilters = useWatch({
@@ -243,14 +296,127 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const isComposite =
     (normalizedFullEval?.templateType || normalizedEvalData?.templateType) ===
     "composite";
+  const decision = useDecisionBinding({
+    model,
+    evalType,
+    outputType,
+    choiceScores,
+    mapping: decisionMapping,
+    multiChoice,
+    messages: evalType === "llm" ? messages : [],
+    isComposite,
+    inputDataTypes: fullEval?.input_data_types,
+    config: {
+      ...(fullEval?.config || {}),
+      agent_mode: evalType === "agent" ? agentMode : undefined,
+      check_internet: useInternet,
+      few_shot_examples: fewShotExamples,
+      ...(evalType === "agent"
+        ? {
+            tools: build_tools_payload(connectorIds),
+            knowledge_bases: knowledgeBaseIds,
+            data_injection: buildDataInjection(contextOptions),
+          }
+        : {}),
+    },
+  });
+  const decisionRunConfig = useMemo(
+    () =>
+      decision.active
+        ? {
+            ...decision.payload,
+            model,
+            output_type: {
+              pass_fail: "Pass/Fail",
+              percentage: "score",
+              deterministic: "choices",
+            }[normalizeDecisionOutput(outputType)],
+            choice_scores: choiceScores,
+            choices: Object.keys(choiceScores || {}),
+            pass_threshold: passThreshold,
+            multi_choice: multiChoice,
+            agent_mode: evalType === "agent" ? agentMode : "quick",
+            check_internet: useInternet,
+            few_shot_examples: fewShotExamples,
+            messages: evalType === "llm" ? messages : [],
+            ...(evalType === "agent"
+              ? {
+                  tools: build_tools_payload(connectorIds),
+                  knowledge_bases: knowledgeBaseIds,
+                  data_injection: buildDataInjection(contextOptions),
+                }
+              : {}),
+          }
+        : undefined,
+    [
+      decision.active,
+      decision.payload,
+      model,
+      outputType,
+      choiceScores,
+      passThreshold,
+      multiChoice,
+      evalType,
+      agentMode,
+      useInternet,
+      fewShotExamples,
+      messages,
+      connectorIds,
+      knowledgeBaseIds,
+      contextOptions,
+    ],
+  );
   // Composite metadata + per-binding weight overrides. Loaded lazily via
   // `useCompositeDetail` only when the selected template is composite so
   // single-eval picks don't pay the round-trip cost. `compositeChildWeights`
   // is the state that flows into `composite_weight_overrides` on save.
-  const { data: compositeDetail } = useCompositeDetail(templateId, isComposite);
-  const compositeUnionKeys = useCompositeChildrenUnionKeys(
-    compositeDetail?.children || [],
-  );
+  const compositeQuery = useCompositeDetail(templateId, isComposite);
+  const compositeDetail = compositeQuery.data;
+  const taskComposite = source === "task" && isComposite;
+  const childInputs = useCompositeChildrenInputs(compositeDetail?.children, {
+    taskComposite,
+  });
+  const childInputsFailed =
+    taskComposite && (compositeQuery.isError || childInputs.isError);
+  const refreshingInputs =
+    taskComposite &&
+    (compositeQuery.isPending ||
+      compositeQuery.isFetching ||
+      compositeQuery.isPaused ||
+      childInputs.isLoading);
+  const schemaBlocker = childInputsFailed
+    ? "Failed to load child evaluation inputs."
+    : refreshingInputs
+      ? "Loading child evaluation inputs."
+      : taskComposite && childInputs.unknown
+        ? "Cannot determine child inputs. Check the child entry point or declare its required keys."
+        : "";
+  // Keep the editor (and its typed paths) mounted with the last complete
+  // schema during background refreshes. Never submit using that stale schema.
+  const lastSchema = useRef(null);
+  useEffect(() => {
+    if (taskComposite && !schemaBlocker) lastSchema.current = childInputs;
+  }, [taskComposite, schemaBlocker, childInputs]);
+  const hasUsableSchema = lastSchema.current ||
+    (Array.isArray(compositeDetail?.children) && childInputs.hasData);
+  const visibleSchema = (schemaBlocker && lastSchema.current) || childInputs;
+  const compositeUnionKeys = visibleSchema.keys;
+  const taskMapping = useMemo(() => {
+    if (!taskComposite) return sourceMapping;
+    return activeTaskCompositeMapping(childInputs.keys, {
+      ...evalData?.mapping,
+      ...sourceMapping,
+      ...taskPathEdits,
+    });
+  }, [taskComposite, childInputs.keys, evalData?.mapping, sourceMapping, taskPathEdits]);
+  const taskMappingBlocked =
+    taskComposite &&
+    (Boolean(schemaBlocker) ||
+      !childInputs.required.every((key) => Object.hasOwn(taskMapping, key)));
+  const retrySchema = () => {
+    if (compositeQuery.isError) compositeQuery.refetch();
+    childInputs.retry?.();
+  };
   const [compositeChildWeights, setCompositeChildWeights] = useState({});
   const compositePopulatedRef = useRef(false);
   useEffect(() => {
@@ -373,11 +539,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
   const hasDataInjection = useMemo(
     () =>
+      // A composite containing an agent is classified as "agent", but its
+      // other children still need their explicit task inputs.
+      (!taskComposite || compositeUnionKeys.length === 0) &&
       evalType === "agent" &&
       (source === "task" || source === "tracing") &&
       Array.isArray(contextOptions) &&
       contextOptions.some((o) => o && o !== "variables_only"),
-    [evalType, source, contextOptions],
+    [evalType, source, contextOptions, taskComposite, compositeUnionKeys.length],
   );
 
   const visibleCodeParamEntries = useMemo(() => {
@@ -418,7 +587,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     const version = versions.find((v) => v.id === selectedVersionId);
     if (!version) return;
 
-    const config = version.config_snapshot || version.configSnapshot || {};
+    const snapshot = version.config_snapshot || version.configSnapshot || {};
+    const bindingConfig =
+      evalData?.bindingConfig || evalData?.binding_config || {};
+    const savedBinding = versionSelectionChanged
+      ? {}
+      : {
+          ...bindingConfig,
+          ...(bindingConfig.run_config || {}),
+          ...(evalData?.config?.run_config || {}),
+          ...(evalData?.runConfig || {}),
+          ...(evalData?.run_config || {}),
+        };
+    const config = { ...snapshot, ...savedBinding };
     const promptText = config.rule_prompt || version.criteria || "";
     const _type =
       normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
@@ -437,9 +618,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
 
     setModel(config.model || fullEval?.model || "turing_large");
-    if (config.output) setOutputType(config.output);
+    if (config.output_type || config.output)
+      setOutputType(
+        normalizeDecisionOutput(config.output_type ?? config.output),
+      );
+    setDecisionMapping(config.jev_mapping || {});
     if (config.pass_threshold != null) setPassThreshold(config.pass_threshold);
-    if (config.choice_scores) setChoiceScores(config.choice_scores);
+    if (config.choice_scores)
+      setChoiceScores(
+        orderChoiceScores(
+          config.choice_scores,
+          config.jev_mapping?.choice?.labels,
+        ),
+      );
     if (config.multi_choice != null) setMultiChoice(!!config.multi_choice);
     if (config.template_format) setTemplateFormat(config.template_format);
     if (Array.isArray(config.few_shot_examples))
@@ -480,6 +671,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     normalizedEvalData,
     isEditMode,
     evalData,
+    versionSelectionChanged,
   ]);
 
   // ── Populate from eval detail (same logic as EvalDetailPage) ──
@@ -502,6 +694,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         evalData?.config?.run_config ||
         evalData?.config?.runConfig ||
         {};
+      const bindingConfig =
+        evalData?.bindingConfig || evalData?.binding_config || {};
 
       const normalizedRunConfig = {
         ...rawRunConfig,
@@ -547,6 +741,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalData?.multi_choice ??
           evalData?.multiChoice,
         params: rawRunConfig.params ?? evalData?.params,
+        jev_mapping:
+          rawRunConfig.jev_mapping ??
+          rawRunConfig.jevMapping ??
+          evalData?.jev_mapping ??
+          evalData?.jevMapping,
         // Multi-turn LLM evals store the full message chain on the template
         // config (fullEval.config.messages). Fall through every source so a
         // dataset / simulate / task / experiment scoped copy of a template
@@ -557,9 +756,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalData?.config?.messages ??
           fullEval?.config?.messages,
       };
+      Object.keys(normalizedRunConfig).forEach((key) => {
+        if (normalizedRunConfig[key] === undefined)
+          delete normalizedRunConfig[key];
+      });
       const config = {
         ...(fullEval.config || {}),
-        ...normalizedRunConfig,
+        ...(versionSelectionChanged
+          ? {}
+          : { ...bindingConfig, ...normalizedRunConfig }),
       };
       const promptText = getEvalPromptText(fullEval, config);
       // Set template format BEFORE instructions so the InstructionEditor
@@ -588,13 +793,29 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // ("small") for built-in templates while detail returns the full
       // canonical value, so we intentionally prefer `fullEval.model`
       // over `evalData.model` to avoid the chip rendering "small".
+      // Do NOT map `model` into `normalizedRunConfig` to "restore" the
+      // saved value: `config` is spread run-config-last, so an explicit
+      // `evalData.model` there lands in `config.model` and wins over
+      // `fullEval.model`, reintroducing the stripped-form bug. The saved
+      // model already arrives via `...rawRunConfig` once the backend
+      // stops filtering it out of `run_config` (see `build_run_config_view`).
       setModel(
         config?.model || fullEval?.model || evalData?.model || "turing_large",
       );
-      setOutputType(fullEval.output_type || "pass_fail");
+      setOutputType(
+        normalizeDecisionOutput(
+          config.output_type ?? fullEval.output_type ?? config.output,
+        ),
+      );
+      setDecisionMapping(config.jev_mapping || {});
       // Prefer user's saved run_config overrides (edit flow) over template defaults
       setPassThreshold(config.pass_threshold ?? fullEval.pass_threshold ?? 0.5);
-      setChoiceScores(config.choice_scores || fullEval.choice_scores || {});
+      setChoiceScores(
+        orderChoiceScores(
+          config.choice_scores || fullEval.choice_scores || {},
+          config.jev_mapping?.choice?.labels,
+        ),
+      );
       setMultiChoice(config.multi_choice ?? fullEval.multi_choice ?? false);
       // Messages: use config.messages if present, otherwise build from
       // instructions — but only for llm/agent evals, since code evals
@@ -706,12 +927,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     normalizedEvalData,
     isEditMode,
     selectedVersionId,
+    versionSelectionChanged,
   ]);
 
   // ── Version selection ──
   const handleVersionChange = useCallback(
     (e) => {
       const vId = e.target.value;
+      setVersionSelectionChanged(true);
       setSelectedVersionId(vId || null);
       if (!vId && fullEval) {
         // Type-aware split — see initial-load effect above.
@@ -726,6 +949,18 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           setCode("");
         }
         setModel(fullEval.config?.model || fullEval.model || "turing_large");
+        setDecisionMapping(fullEval.config?.jev_mapping || {});
+        setOutputType(
+          normalizeDecisionOutput(
+            fullEval.output_type || fullEval.config?.output,
+          ),
+        );
+        setChoiceScores(
+          orderChoiceScores(
+            fullEval.choice_scores || fullEval.config?.choice_scores || {},
+            fullEval.config?.jev_mapping?.choice?.labels,
+          ),
+        );
         if (fullEval.config?.messages?.length > 0) {
           setMessages(fullEval.config.messages);
         } else if (_type === "llm" && promptText) {
@@ -783,6 +1018,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           setCode("");
         }
         setModel(config.model || "turing_large");
+        setDecisionMapping(config.jev_mapping || {});
+        setOutputType(normalizeDecisionOutput(config.output));
+        setChoiceScores(
+          orderChoiceScores(
+            config.choice_scores || {},
+            config.jev_mapping?.choice?.labels,
+          ),
+        );
         if (config.messages?.length > 0) {
           setMessages(config.messages);
         } else if (_type === "llm" && promptText) {
@@ -823,27 +1066,42 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   // the user can Apply it to the dataset with the existing
   // "Add Evaluation" button.
   const handleSaveVersion = useCallback(async () => {
+    if (decision.blockedReason) {
+      enqueueSnackbar(decision.blockedReason, { variant: "error" });
+      return;
+    }
     if (isSystemEval) return;
-    if (isOSS && evalType === "agent") {
+    if (agentEvalLocked && evalType === "agent") {
       enqueueSnackbar(
-        "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
+        "Agent evaluations aren't enabled for this workspace. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (fagiLocked && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
-        "Turing models are not available in OSS. Please select your own model.",
+        "Turing models aren't enabled for this workspace. Please select your own model.",
         { variant: "error" },
       );
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
-    if (isOSS && evalType !== "code" && !model) {
+    if (fagiLocked && evalType !== "code" && !model) {
       enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
       return;
     }
     try {
       const payload = {
+        ...decision.payload,
+        ...(decision.active && evalType === "agent"
+          ? {
+              mode: agentMode,
+              tools: build_tools_payload(connectorIds),
+              knowledge_bases: knowledgeBaseIds,
+              data_injection: buildDataInjection(contextOptions),
+            }
+          : {}),
         instructions:
           evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
@@ -864,6 +1122,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
       const configSnapshot = {
         ...(fullEval?.config || evalData?.config || {}),
+        ...(decisionRunConfig || {}),
+        ...decision.payload,
         rule_prompt: evalType === "code" ? "" : instructions,
         code: evalType === "code" ? code : undefined,
         language: evalType === "code" ? codeLanguage : undefined,
@@ -896,19 +1156,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       setIsDirty(false);
       // Jump to the new version so the Apply button picks it up
       if (newVersion?.id) {
+        setVersionSelectionChanged(true);
         setSelectedVersionId(newVersion.id);
       }
     } catch (err) {
-      const message =
-        err?.response?.data?.result || err?.message || "Failed to save version";
       enqueueSnackbar(
-        typeof message === "string" ? message : JSON.stringify(message),
+        getSafeActionErrorMessage(err, "Failed to save version"),
         { variant: "error" },
       );
     }
   }, [
     isSystemEval,
-    isOSS,
+    agentEvalLocked,
+    fagiLocked,
     evalType,
     instructions,
     code,
@@ -924,6 +1184,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     evalData,
     updateEval,
     createVersion,
+    decision.payload,
+    decision.blockedReason,
+    decision.active,
+    decisionRunConfig,
+    agentMode,
+    connectorIds,
+    knowledgeBaseIds,
+    contextOptions,
   ]);
 
   const handleTestResult = useCallback((success, result) => {
@@ -944,15 +1212,41 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   }, []);
 
   const handleTestEvaluation = useCallback(() => {
+    if (decision.blockedReason) {
+      enqueueSnackbar(decision.blockedReason, { variant: "error" });
+      return;
+    }
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     setIsTesting(true);
     setTestError(null);
     setTestPassed(false);
     sourceRef.current?.runTest?.(templateId);
     // Safety timeout
     setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
-  }, [templateId]);
+  }, [
+    templateId,
+    fagiLocked,
+    evalType,
+    model,
+    isComposite,
+    decision.blockedReason,
+  ]);
 
   const handleAdd = useCallback(() => {
+    if (taskMappingBlocked) return;
+    if (decision.blockedReason) {
+      enqueueSnackbar(decision.blockedReason, { variant: "error" });
+      return;
+    }
+    if (fagiLocked && evalType !== "code" && !model && !isComposite) {
+      enqueueSnackbar("Please select a model.", { variant: "error" });
+      setOpenModelMenuSignal((n) => n + 1);
+      return;
+    }
     // When opened from an optimization context, enforce that the optimized
     // column is mapped to at least one eval input field. Without this the
     // backend's get_metrics_by_column filter would exclude the eval from the
@@ -995,7 +1289,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       evalData?.template_type;
 
     const resolvedConfig = buildEvalTemplateConfig({
-      baseConfig: fullEval?.config || evalData?.config || {},
+      baseConfig: {
+        ...(fullEval?.config || {}),
+        ...(isEditMode ? evalData?.bindingConfig || {} : {}),
+        ...(decision.active
+          ? { ...decision.payload, model, run_config: decisionRunConfig }
+          : {}),
+      },
       evalType,
       instructions,
       code,
@@ -1035,7 +1335,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         evalTemplateId: templateId,
         userEvalId,
         name: resolvedName,
-        mapping: sourceMapping,
+        mapping: taskMapping,
         evalTemplate: fullEval || evalData,
         evalType,
         templateType,
@@ -1060,6 +1360,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       templateType,
       outputType,
       config: resolvedConfig,
+      ...decision.payload,
       versionId: selectedVersionId,
       instructions,
       messages,
@@ -1090,8 +1391,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     evalData,
     evalName,
     isEditMode,
+    fagiLocked,
     model,
     sourceMapping,
+    taskMapping,
+    taskMappingBlocked,
     evalType,
     outputType,
     selectedVersionId,
@@ -1110,6 +1414,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     connectorIds,
     knowledgeBaseIds,
     contextOptions,
+    isComposite,
     compositeChildWeights,
     errorLocalizerActive,
     hasValidPromptMessages,
@@ -1120,9 +1425,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     source,
     onFiltersChange,
     localFilterForm,
+    decision.active,
+    decision.payload,
+    decision.blockedReason,
+    decisionRunConfig,
   ]);
 
-  if (isLoading) {
+  if (isLoading || (refreshingInputs && !hasUsableSchema && !childInputsFailed)) {
     return (
       <Box
         sx={{
@@ -1133,12 +1442,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           py: 8,
         }}
       >
-        <CircularProgress size={32} />
+        <ContentSkeleton variant="panel" />
       </Box>
     );
   }
 
-  if (!templateId || (isError && !fullEval)) {
+  if (!templateId || (isError && !fullEval) || (childInputsFailed && !hasUsableSchema)) {
     return (
       <Box
         sx={{
@@ -1152,21 +1461,23 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         }}
       >
         <Iconify
-          icon="mdi:alert-circle-outline"
+          icon="solar:danger-circle-linear"
           width={40}
           sx={{ color: "text.disabled" }}
         />
         <Typography variant="body2" color="text.secondary">
           {!templateId
             ? "No template ID found for this evaluation."
-            : "Failed to load evaluation details."}
+            : childInputsFailed
+              ? "Failed to load child evaluation inputs."
+              : "Failed to load evaluation details."}
         </Typography>
+        {childInputsFailed && <Button onClick={retrySchema}>Retry loading inputs</Button>}
         <Button
           size="small"
           variant="outlined"
           onClick={onBack}
           startIcon={<Iconify icon="solar:arrow-left-linear" width={16} />}
-          sx={{ textTransform: "none" }}
         >
           Back to list
         </Button>
@@ -1197,7 +1508,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0 }}
         >
           <IconButton size="small" onClick={onBack} sx={{ p: 0.5 }}>
-            <Iconify icon="solar:arrow-left-linear" width={18} />
+            <Iconify icon="solar:arrow-left-linear" width={20} />
           </IconButton>
           <Typography variant="subtitle1" fontWeight={600} noWrap>
             {fullEval?.name || evalData?.name}
@@ -1212,11 +1523,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               size="small"
               color="warning"
               variant="outlined"
-              sx={{ fontSize: "10px", height: 18 }}
             />
           )}
         </Box>
         <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+          {/* Host-supplied progress (multi-eval queue walk). Built-in evals
+              hide the version controls, so a bar floating mid-header reads as
+              misplaced — it sits with the version controls instead. */}
+          {progress}
           {/* Save-as-new-version — user evals only. System evals are
               read-only by product policy (editing triggers Copy flow).
               Sits beside the existing version dropdown so the user can
@@ -1228,15 +1542,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               variant="outlined"
               color="primary"
               loading={updateEval.isPending || createVersion.isPending}
-              disabled={updateEval.isPending || createVersion.isPending}
+              disabled={
+                updateEval.isPending ||
+                createVersion.isPending ||
+                Boolean(decision.blockedReason)
+              }
               onClick={handleSaveVersion}
               startIcon={<Iconify icon="solar:diskette-bold" width={14} />}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                height: 30,
-                px: 1.25,
-              }}
             >
               Save version
             </LoadingButton>
@@ -1249,16 +1561,19 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               displayEmpty
               sx={{ fontSize: "12px", minWidth: 130, height: 30 }}
             >
-              <MenuItem value="" sx={{ fontSize: "12px" }}>
-                Default version
-              </MenuItem>
+              <MenuItem value="">Default version</MenuItem>
               {versions.map((v) => (
-                <MenuItem key={v.id} value={v.id} sx={{ fontSize: "12px" }}>
+                <MenuItem key={v.id} value={v.id}>
                   V{v.version_number}
                   {v.is_default ? " (default)" : ""}
                 </MenuItem>
               ))}
             </Select>
+          )}
+          {showClose && (
+            <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
+              <Iconify icon="solar:close-linear" width={16} />
+            </IconButton>
           )}
         </Box>
       </Box>
@@ -1292,8 +1607,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 ? "Name can't be longer than 50 characters"
                 : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
-          FormHelperTextProps={{ sx: { fontSize: "11px", mt: 0.25, mx: 0 } }}
-          sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 34 } }}
+          FormHelperTextProps={{ sx: { fontSize: "12px", mt: 0.25, mx: 0 } }}
+          sx={{ "& .MuiInputBase-root": { fontSize: "12px", height: 32 } }}
         />
       </Box>
 
@@ -1333,10 +1648,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                       borderRadius: 1,
                       border: "1px solid",
                       borderColor: "divider",
-                      backgroundColor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(255,255,255,0.02)"
-                          : "rgba(0,0,0,0.01)",
+                      backgroundColor: "background.neutral",
                     }}
                   >
                     <Typography
@@ -1419,7 +1731,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                               <Typography
                                 variant="caption"
                                 color="text.secondary"
-                                sx={{ fontSize: "11px" }}
+                                sx={{ fontSize: "12px" }}
                               >
                                 Weight
                               </Typography>
@@ -1445,8 +1757,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                                   padding: "2px 6px",
                                   fontSize: "12px",
                                   borderRadius: 4,
-                                  border:
-                                    "1px solid var(--mui-palette-divider, #444)",
+                                  border: "1px solid var(--border-default)",
                                   background: "transparent",
                                   color: "inherit",
                                   textAlign: "center",
@@ -1479,13 +1790,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     }}
                   >
                     <Iconify
-                      icon="eva:info-outline"
+                      icon="solar:info-circle-linear"
                       width={14}
                       sx={{ flexShrink: 0 }}
                     />
                     <Typography
                       variant="caption"
-                      sx={{ fontSize: "11px", lineHeight: 1.4 }}
+                      sx={{ fontSize: "12px", lineHeight: 1.4 }}
                     >
                       Built-in evaluation: prompt is pre-configured and shown
                       for reference only.
@@ -1497,6 +1808,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   initializes with the actual instructions content */}
               {!isComposite && evalType === "agent" && dataReady && (
                 <InstructionEditor
+                  openModelMenuSignal={openModelMenuSignal}
+                  outputType={normalizeDecisionOutput(outputType)}
+                  choiceCount={Object.keys(choiceScores || {}).length}
                   key={`agent-${templateId}`}
                   value={instructions}
                   onChange={(v) => {
@@ -1556,6 +1870,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               {!isComposite && evalType === "llm" && dataReady && (
                 <>
                   <LLMPromptEditor
+                    openModelMenuSignal={openModelMenuSignal}
+                    outputType={normalizeDecisionOutput(outputType)}
+                    choiceCount={Object.keys(choiceScores || {}).length}
                     key={`llm-${templateId}`}
                     messages={messages}
                     onMessagesChange={(msgs) => {
@@ -1580,6 +1897,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     modelSelectorDisabled={false}
                   />
                   <FewShotExamples
+                    isJevModel={decision.active}
+                    modelLabel={decision.label}
                     selectedDatasets={fewShotExamples}
                     onChange={(v) => {
                       setFewShotExamples(v);
@@ -1667,6 +1986,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 </Box>
               ) : (
                 <OutputTypeConfig
+                  isJevModel={decision.active}
+                  modelLabel={decision.label}
                   outputType={outputType}
                   onOutputTypeChange={(v) => {
                     setOutputType(v);
@@ -1692,47 +2013,79 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 />
               )}
 
-              {/* Error Localization (single-eval concern, LLM/Agent only).
-                  Code evals don't support error localization — the feature
-                  introspects model traces, which code evals don't produce. */}
-              {!isComposite && evalType !== "code" && (
-                <CustomTooltip
-                  show={isOSS}
-                  type=""
-                  arrow
-                  title={ERROR_LOCALIZER_OSS_TOOLTIP}
-                >
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={errorLocalizerActive}
-                        disabled={isOSS}
-                        onChange={(e) => {
-                          setErrorLocalizerEnabled(e.target.checked);
-                          setIsDirty(true);
-                        }}
-                        size="small"
-                      />
-                    }
-                    label={
-                      <Box>
-                        <Typography variant="body2" fontWeight={500}>
-                          Error Localization
-                        </Typography>
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ display: "block" }}
-                        >
-                          Pinpoints which parts of the input caused evaluation
-                          failures
-                        </Typography>
-                      </Box>
-                    }
-                    sx={{ alignItems: "flex-start" }}
+              {decision.active && (
+                <>
+                  <JevOutputConfig
+                    outputType={normalizeDecisionOutput(outputType)}
+                    choiceScores={choiceScores}
+                    mapping={decisionMapping}
+                    onChange={(next) => {
+                      setDecisionMapping(next);
+                      setIsDirty(true);
+                    }}
+                    errors={decision.errors}
+                    locked={decision.locked}
+                    modelLabel={decision.label}
+                    hasExtraMessages={hasExtraJevMessages(
+                      evalType === "llm" ? messages : [],
+                    )}
                   />
-                </CustomTooltip>
+                  {hasDataInjection && (
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setContextOptions(["variables_only"]);
+                        setIsDirty(true);
+                      }}
+                    >
+                      Use only mapped variables
+                    </Button>
+                  )}
+                </>
               )}
+
+              {/* Single-eval concern, LLM/Agent only — code evals don't produce
+                  the model traces the feature introspects. */}
+              {errorLocalizerAvailable &&
+                !isComposite &&
+                evalType !== "code" && (
+                  <CustomTooltip
+                    show={agentEvalLocked}
+                    type=""
+                    arrow
+                    title={ERROR_LOCALIZER_LOCKED_TOOLTIP}
+                  >
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={errorLocalizerActive}
+                          disabled={agentEvalLocked}
+                          onChange={(e) => {
+                            setErrorLocalizerEnabled(e.target.checked);
+                            setIsDirty(true);
+                          }}
+                          size="small"
+                        />
+                      }
+                      label={
+                        <Box>
+                          <Typography variant="body2" fontWeight={500}>
+                            Error Localization
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: "block" }}
+                          >
+                            Pinpoints which parts of the input caused evaluation
+                            failures
+                          </Typography>
+                        </Box>
+                      }
+                      sx={{ alignItems: "flex-start" }}
+                    />
+                  </CustomTooltip>
+                )}
             </Box>
           }
           rightPanel={
@@ -1757,7 +2110,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 <Typography
                   variant="body2"
                   fontWeight={600}
-                  sx={{ fontSize: "13px" }}
+                  sx={{ fontSize: "12px" }}
                 >
                   {source === "composite"
                     ? "Test Playground"
@@ -1768,8 +2121,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     label={ROW_TYPE_LABELS[sourceRowType]}
                     size="small"
                     sx={{
-                      height: 18,
-                      fontSize: "10px",
                       bgcolor: "background.neutral",
                       color: "text.secondary",
                       "& .MuiChip-label": { px: 0.75 },
@@ -1801,7 +2152,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 </Box>
               )}
 
-              <Box sx={{ flex: 1, overflow: "auto", pb: 2 }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", pb: 2 }}>
                 {(source === "dataset" ||
                   source === "experiment" ||
                   source === "workbench" ||
@@ -1811,8 +2162,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     ref={sourceRef}
                     templateId={templateId}
                     variables={variables}
-                    model={model}
+                    model={evalType === "code" ? "" : model}
                     codeParams={codeParams}
+                    runConfig={decisionRunConfig}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
@@ -1832,9 +2184,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    model={model}
+                    model={evalType === "code" ? "" : model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
+                    runConfig={decisionRunConfig}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
@@ -1849,9 +2202,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <SimulationTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    model={model}
+                    model={evalType === "code" ? "" : model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
+                    runConfig={decisionRunConfig}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
@@ -1859,6 +2213,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     errorLocalizerEnabled={errorLocalizerActive}
                     initialMapping={evalData?.mapping}
                     initialRunTestId={sourceId}
+                    sourceColumns={sourceColumns}
                     {...compositeSourceModeProps}
                   />
                 )}
@@ -1878,9 +2233,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
-                    model={model}
+                    model={evalType === "code" ? "" : model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
+                    runConfig={decisionRunConfig}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
@@ -1888,9 +2244,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     hasDataInjection={hasDataInjection}
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
-                    initialMapping={evalData?.mapping}
+                    requiredVariables={taskComposite ? visibleSchema.required : undefined}
+                    initialMapping={taskComposite
+                      ? { ...evalData?.mapping, ...taskPathEdits }
+                      : evalData?.mapping}
+                    onMappingEdit={taskComposite ? rememberTaskPath : undefined}
                     errorLocalizerEnabled={errorLocalizerActive}
                     localFilters={localApiFilters}
+                    onReadinessChange={handleReadinessChange}
+                    taskMapping
                     allowCustomFieldPath
                     {...compositeSourceModeProps}
                   />
@@ -1900,8 +2262,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     ref={sourceRef}
                     templateId={templateId}
                     variables={variables}
-                    model={model}
+                    model={evalType === "code" ? "" : model}
                     codeParams={codeParams}
+                    runConfig={decisionRunConfig}
                     onTestResult={handleTestResult}
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
@@ -1935,6 +2298,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     functionParamsSchema={functionParamsSchema}
                     configParamsDesc={configParamsDesc}
                     codeParams={codeParams}
+                    runConfig={decisionRunConfig}
                     onCodeParamsChange={setCodeParams}
                   />
                 )}
@@ -2019,7 +2383,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             sx={{ display: "flex", alignItems: "center", gap: 0.5, mr: "auto" }}
           >
             <Iconify
-              icon="mdi:check-circle"
+              icon="solar:check-circle-bold"
               width={16}
               sx={{ color: "success.main" }}
             />
@@ -2044,16 +2408,26 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             <Typography
               variant="caption"
               color="text.secondary"
-              sx={{ mr: "auto", fontSize: "11px" }}
+              sx={{ mr: "auto", fontSize: "12px" }}
             >
-              Map all variables to enable testing & adding
+              {source === "task" && sourceBlocker
+                ? sourceBlocker
+                : "Map all variables to enable testing & adding"}
             </Typography>
           )}
+        {schemaBlocker && (
+          <Typography variant="caption" role="status">
+            {schemaBlocker}
+            {childInputsFailed && (
+              <Button size="small" onClick={retrySchema}>Retry loading inputs</Button>
+            )}
+          </Typography>
+        )}
         {isDirty && sourceReady && !testPassed && !testError && (
           <Typography
             variant="caption"
             color="warning.main"
-            sx={{ mr: "auto", fontSize: "11px" }}
+            sx={{ mr: "auto", fontSize: "12px" }}
           >
             Unsaved changes
           </Typography>
@@ -2073,8 +2447,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             const hasVariables =
               Array.isArray(variables) && variables.length > 0;
 
-            let testDisabled = false;
-            let testDisabledReason = "";
+            let testDisabled = Boolean(decision.blockedReason);
+            let testDisabledReason = decision.blockedReason;
 
             if (isTesting) {
               testDisabled = true;
@@ -2120,7 +2494,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
             if (!testDisabled && !sourceReady && !hasDataInjection) {
               testDisabled = true;
-              testDisabledReason = "Map all variables before running a test.";
+              testDisabledReason =
+                source === "task" && sourceBlocker
+                  ? sourceBlocker
+                  : "Map all variables before running a test.";
             }
 
             return (
@@ -2137,15 +2514,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                       color="primary"
                       size="small"
                       onClick={handleTestEvaluation}
-                      disabled={testDisabled}
+                      disabled={testDisabled || taskMappingBlocked}
                       startIcon={
                         isTesting ? (
                           <CircularProgress size={14} />
                         ) : (
-                          <Iconify icon="mdi:play-circle-outline" width={16} />
+                          <Iconify icon="solar:play-circle-linear" width={16} />
                         )
                       }
-                      sx={{ textTransform: "none" }}
                     >
                       {isTesting ? "Testing..." : "Test Evaluation"}
                     </Button>
@@ -2171,8 +2547,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 ? "updating this evaluation"
                 : "adding this evaluation";
 
-          let addDisabled = false;
-          let addDisabledReason = "";
+          let addDisabled = Boolean(decision.blockedReason);
+          let addDisabledReason = decision.blockedReason;
 
           if (isComposite) {
             // Composite templates have no instructions/variables of their
@@ -2208,10 +2584,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             addDisabledReason = `Add instructions before ${actionLabel}.`;
           } else if (!hasVariables && !hasDataInjection) {
             addDisabled = true;
+            // A system eval's template can't be edited here (isSystemEval
+            // locks it read-only), so with requireInputs on, telling the
+            // user to add a {{variable}} to it is a dead end — say why the
+            // add is actually blocked instead.
             addDisabledReason =
-              templateFormat === "jinja"
-                ? `Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) before ${actionLabel}.`
-                : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
+              requireInputs && isSystemEval
+                ? "This evaluation has no inputs to map, so it can't run in an environment."
+                : templateFormat === "jinja"
+                  ? `Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) before ${actionLabel}.`
+                  : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
+          }
+
+          if (!addDisabled && requireInputs && variables.length === 0) {
+            addDisabled = true;
+            addDisabledReason =
+              "This evaluation has no inputs to map, so it can't run in an environment.";
           }
 
           if (
@@ -2221,7 +2609,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             !hasDataInjection
           ) {
             addDisabled = true;
-            addDisabledReason = `Map all variables before ${actionLabel}.`;
+            addDisabledReason =
+              source === "task" && sourceBlocker
+                ? sourceBlocker
+                : `Map all variables before ${actionLabel}.`;
           }
 
           return (
@@ -2238,14 +2629,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   size="small"
                   loading={isSaving}
                   onClick={handleAdd}
-                  disabled={addDisabled}
-                  sx={{ textTransform: "none" }}
+                  disabled={addDisabled || taskMappingBlocked}
                 >
-                  {source === "composite"
-                    ? "Add to Composite"
-                    : isEditMode
-                      ? "Update Evaluation"
-                      : "Add Evaluation"}
+                  {primaryLabel ||
+                    (source === "composite"
+                      ? "Add to Composite"
+                      : isEditMode
+                        ? "Update Evaluation"
+                        : "Add Evaluation")}
                 </LoadingButton>
               </span>
             </CustomTooltip>
@@ -2261,6 +2652,9 @@ EvalPickerConfigFull.propTypes = {
   onBack: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   isSaving: PropTypes.bool,
+  progress: PropTypes.node,
+  primaryLabel: PropTypes.string,
+  showClose: PropTypes.bool,
 };
 
 export default EvalPickerConfigFull;

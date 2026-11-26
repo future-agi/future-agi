@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
@@ -20,12 +21,14 @@ type categoryChecker struct {
 type ContentModerationGuardrail struct {
 	categories     []categoryChecker
 	categoryThresh int // matches per category to reach score 1.0
+	configErr      error
 }
 
 // New creates a ContentModerationGuardrail from rule config.
 func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 	g := &ContentModerationGuardrail{
 		categoryThresh: 3,
+		configErr:      validateConfig(cfg),
 	}
 
 	if cfg != nil {
@@ -73,6 +76,8 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 
 	// Build category checkers.
 	allCategories := defaultCategories()
+	// Preserve legacy constructor ordering for org/static evaluation. Selected
+	// policies obtain their own deterministic copy in SelectedPolicyGuardrail.
 	for name, phrases := range allCategories {
 		if enabledSet != nil && !enabledSet[name] {
 			continue
@@ -88,10 +93,127 @@ func New(cfg map[string]interface{}) *ContentModerationGuardrail {
 		})
 	}
 
+	if g.configErr == nil {
+		// This error gates selected readiness before the resolver takes its copy.
+		// Accumulate in that copy's canonical order, not the legacy map order:
+		// finite weights near MaxFloat64 can overflow in only some orders.
+		selected := g.SelectedPolicyGuardrail().(*ContentModerationGuardrail)
+		var totalWeight float64
+		for _, cat := range selected.categories {
+			totalWeight += cat.weight
+		}
+		if math.IsInf(totalWeight, 0) || math.IsNaN(totalWeight) {
+			g.configErr = fmt.Errorf("content-moderation effective weights must have a finite sum")
+		}
+	}
 	return g
 }
 
-func (g *ContentModerationGuardrail) Name() string           { return "content-moderation" }
+// SelectedPolicyGuardrail returns a separately owned deterministic evaluator.
+// The original may be shared by static/org checks and must never be reordered.
+// Readiness and execution use this same copy, matching control-plane arithmetic.
+func (g *ContentModerationGuardrail) SelectedPolicyGuardrail() guardrails.Guardrail {
+	selected := *g
+	selected.categories = make([]categoryChecker, 0, len(g.categories))
+	for _, name := range []string{"toxicity", "hate_speech", "violence", "sexual", "self_harm"} {
+		for _, cat := range g.categories {
+			if cat.name == name {
+				selected.categories = append(selected.categories, cat)
+			}
+		}
+	}
+	return &selected
+}
+
+// ValidateConfig reports constructor-time configuration errors for selected policies,
+// without changing legacy Check behavior or retaining mutable caller config.
+func (g *ContentModerationGuardrail) ValidateConfig() error { return g.configErr }
+
+func validateConfig(cfg map[string]interface{}) error {
+	catalog := defaultCategories()
+	if value, present := cfg["categories"]; present {
+		list, ok := value.([]interface{})
+		if !ok {
+			return fmt.Errorf("content-moderation categories must be an array of supported category names")
+		}
+		for _, item := range list {
+			name, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("content-moderation categories must contain only supported category names")
+			}
+			if _, supported := catalog[name]; !supported {
+				return fmt.Errorf("content-moderation categories contains an unsupported category name")
+			}
+		}
+	}
+	if value, present := cfg["category_threshold"]; present {
+		valid := false
+		switch n := value.(type) {
+		case int:
+			valid = n > 0
+		case float64:
+			// The exclusive upper bound avoids float64(MaxInt) rounding up to
+			// 2^63. Check before conversion; the legacy constructor still has its
+			// historical fallback, but selected callers must not use truncation.
+			valid = !math.IsNaN(n) && !math.IsInf(n, 0) && n > 0 &&
+				math.Trunc(n) == n && n < math.Ldexp(1, strconv.IntSize-1)
+		}
+		if !valid {
+			return fmt.Errorf("content-moderation category_threshold must be a positive integral count representable as an int")
+		}
+	}
+	if value, present := cfg["weights"]; present {
+		weights, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("content-moderation weights must be an object")
+		}
+		for name, value := range weights {
+			if _, known := catalog[name]; !known {
+				continue // Unknown weight keys are ignored by the constructor.
+			}
+			weight, ok := value.(float64)
+			if !ok || math.IsNaN(weight) || math.IsInf(weight, 0) {
+				return fmt.Errorf("content-moderation known category weights must be finite numbers")
+			}
+			// Preserve actual constructor semantics: positive numbers override
+			// the weight; finite zero/negative numbers leave the default 1.
+		}
+	}
+	// An empty category list intentionally keeps all default categories enabled.
+	return nil
+}
+
+// ValidateSelectedThreshold checks reachability against the selected caller's
+// actual outer confidence threshold. Zero is used as-is, not replaced by a
+// default. It is deliberately not part of legacy org/static Check execution.
+func (g *ContentModerationGuardrail) ValidateSelectedThreshold(threshold float64) error {
+	if g.configErr != nil {
+		return g.configErr
+	}
+	if math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < 0 || threshold > 1 {
+		return fmt.Errorf("content-moderation confidence threshold must be between zero and one")
+	}
+	// Each catalog phrase is counted at most once. Use the same order, weights,
+	// per-category cap and dominance boost as Check, without inspecting text.
+	var weightedSum, totalWeight, maxScore float64
+	for _, cat := range g.categories {
+		score := math.Min(1, float64(len(cat.phrases))/float64(g.categoryThresh))
+		weightedSum += score * cat.weight
+		totalWeight += cat.weight
+		maxScore = math.Max(maxScore, score)
+	}
+	aggregate := weightedSum / totalWeight
+	if maxScore >= 0.9 && aggregate < maxScore {
+		aggregate = maxScore
+	}
+	// shouldTrigger uses strict greater-than; equality is unreachable too.
+	if math.IsNaN(aggregate) || math.IsInf(aggregate, 0) || aggregate <= threshold {
+		return fmt.Errorf("content-moderation configuration cannot exceed the selected confidence threshold")
+	}
+	return nil
+}
+
+func (g *ContentModerationGuardrail) Name() string            { return "content-moderation" }
 func (g *ContentModerationGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates messages for harmful content.

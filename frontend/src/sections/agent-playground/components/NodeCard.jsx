@@ -30,8 +30,8 @@ export default function NodeCard({
     <Box
       onClick={isClickable ? handleCardClick : undefined}
       sx={{
-        backgroundColor: isActive ? "black.o10" : "transparent",
-        borderRadius: 0.5,
+        backgroundColor: isActive ? "action.selected" : "transparent",
+        borderRadius: "4px",
         cursor: isClickable && !readOnly ? "pointer" : "inherit",
         transition: "all 0.2s",
         padding: 0.5,
@@ -39,12 +39,12 @@ export default function NodeCard({
         overflow: "hidden",
         "&:hover": !readOnly
           ? {
-              backgroundColor: isActive ? "black.o10" : "black.o5",
+              backgroundColor: isActive ? "action.selected" : "action.hover",
             }
           : {},
         "&:active": !readOnly
           ? {
-              backgroundColor: "black.o10",
+              backgroundColor: "action.selected",
             }
           : {},
       }}
@@ -52,9 +52,9 @@ export default function NodeCard({
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Box
           sx={{
-            width: 36,
-            height: 36,
-            borderRadius: 0.5,
+            width: 28,
+            height: 28,
+            borderRadius: "4px",
             border: "1px solid",
             borderColor: "border.default",
             display: "flex",
@@ -66,8 +66,8 @@ export default function NodeCard({
           <SvgColor
             src={node?.iconSrc}
             sx={{
-              width: 20,
-              height: 20,
+              width: 16,
+              height: 16,
               bgcolor: node?.color,
             }}
           />

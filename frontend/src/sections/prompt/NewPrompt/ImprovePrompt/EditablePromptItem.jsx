@@ -64,11 +64,8 @@ const EditablePromptItem = ({
           size="small"
           onClick={handleCancelEdit}
           sx={{
-            fontSize: "0.7rem",
             minWidth: "50px",
             margin: 0.5,
-            paddingX: theme.spacing(1.5),
-            borderRadius: theme.spacing(1.25),
             color: "text.primary",
             background: "action.selected",
           }}
@@ -82,10 +79,7 @@ const EditablePromptItem = ({
           color="primary"
           onClick={() => handleUpdatePrompt(index, item.prompt)}
           sx={{
-            fontSize: "0.7rem",
             minWidth: "45px",
-            borderRadius: theme.spacing(1.25),
-            paddingX: theme.spacing(1.5),
           }}
         >
           Update

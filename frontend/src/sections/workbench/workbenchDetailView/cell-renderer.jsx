@@ -3,6 +3,7 @@ import { Avatar, Box, IconButton, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import { format } from "date-fns";
 import stringAvatar from "src/utils/stringAvatar";
+import { isBlackBackgroundLogo } from "src/components/custom-model-dropdown/common";
 
 export const CustomCellRender = ({ value, data, column }) => {
   const theme = useTheme();
@@ -37,8 +38,6 @@ export const CustomCellRender = ({ value, data, column }) => {
                   sx={{
                     width: theme.spacing(3),
                     height: theme.spacing(3),
-                    bgcolor: "background.neutral",
-                    color: "pink.500",
                   }}
                 />
                 <Typography typography="s2" fontWeight={"fontWeightRegular"}>
@@ -68,12 +67,9 @@ export const CustomCellRender = ({ value, data, column }) => {
           {value && typeof value === "string" ? (
             <IconButton
               sx={{
-                borderRadius: theme.spacing(0.5),
                 backgroundColor: "background.paper",
                 border: "1px solid",
                 borderColor: "divider",
-                paddingY: theme.spacing(0.5),
-                paddingX: theme.spacing(1),
                 gap: theme.spacing(1),
                 display: "flex",
                 alignItems: "center",
@@ -92,7 +88,7 @@ export const CustomCellRender = ({ value, data, column }) => {
                     height: theme.spacing(2),
                     objectFit: "cover",
                     ...(theme.palette.mode === "dark" &&
-                      modelDetail?.logo_url?.includes("provider-logos") && {
+                      isBlackBackgroundLogo(modelDetail?.logo_url) && {
                         filter: "invert(1) brightness(2)",
                       }),
                   }}

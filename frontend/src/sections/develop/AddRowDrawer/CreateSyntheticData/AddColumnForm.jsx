@@ -107,9 +107,6 @@ const AddColumnForm = ({
               type="button"
               sx={{
                 width: "max-content",
-                height: "38px",
-                paddingX: "24px",
-                paddingY: "8px",
               }}
               onClick={handleAddColumn}
             >
@@ -136,8 +133,6 @@ const AddColumnForm = ({
           sx={{
             width: "200px",
             color: "text.secondary",
-            height: "38px",
-            paddingX: "24px",
           }}
           onClick={() => handleNextTab(0)}
         >
@@ -149,7 +144,7 @@ const AddColumnForm = ({
           variant="contained"
           color="primary"
           type="button"
-          sx={{ width: "200px", height: "38px", paddingX: "24px" }}
+          sx={{ width: "200px" }}
           onClick={() => handleNextTab(2)}
           disabled={columns?.some(
             (item) =>

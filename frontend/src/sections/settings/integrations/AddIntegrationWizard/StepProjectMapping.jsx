@@ -11,9 +11,8 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 import { backButtonSx } from "../styles";
-import { unwrapResponse } from "../utils";
 
 export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
   const langfuseProjects = data.langfuseProjects || [];
@@ -23,17 +22,12 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
     data: projects,
     isLoading: projectsLoading,
     isError: projectsError,
+    isFetching: projectsFetching,
+    refetch: refetchProjects,
   } = useQuery({
     queryKey: ["project-list-observe"],
-    queryFn: () => axios.get(endpoints.project.projectObserveList),
-    select: (d) => {
-      const result = unwrapResponse(d);
-      return (
-        result?.table ||
-        result?.results ||
-        (Array.isArray(result) ? result : [])
-      );
-    },
+    queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
+    retry: false,
   });
 
   const projectOptions = useMemo(() => {
@@ -89,12 +83,7 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
             )}
           />
           {langfuseProjects.length === 1 && (
-            <Alert
-              severity="info"
-              variant="outlined"
-              icon={false}
-              sx={{ py: 0.5 }}
-            >
+            <Alert severity="info" variant="outlined" icon={false}>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
                 Only 1 project found. Use organization-level API keys to see all
                 Langfuse projects.
@@ -108,7 +97,19 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
       {selectedLangfuse && (
         <>
           {projectsError && (
-            <Alert severity="error">
+            <Alert
+              severity="error"
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  disabled={projectsFetching}
+                  onClick={() => refetchProjects()}
+                >
+                  Retry
+                </Button>
+              }
+            >
               Failed to load projects. Please try again.
             </Alert>
           )}
@@ -161,7 +162,9 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
           size="small"
           variant="outlined"
           onClick={onBack}
-          startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
+          startIcon={
+            <Iconify icon="solar:arrow-left-linear" width={16} height={16} />
+          }
           sx={backButtonSx}
         >
           Back
@@ -172,7 +175,6 @@ export default function StepProjectMapping({ data, onUpdate, onNext, onBack }) {
           size="small"
           onClick={onNext}
           disabled={!canContinue}
-          sx={{ fontWeight: 500 }}
         >
           Continue
         </Button>

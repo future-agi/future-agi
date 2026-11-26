@@ -4,8 +4,25 @@ Authentication API Tests
 Tests for login, token refresh, and authentication flows.
 """
 
+from datetime import timedelta
+from unittest.mock import patch
+
 import pytest
+from django.core.cache import cache
+from django.utils import timezone
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from rest_framework import status
+
+from accounts.authentication import generate_encrypted_message
+from accounts.models.auth_token import AuthToken, AuthTokenType
+
+
+def _wrapped_timeout():
+    error = ConnectionInterrupted(connection=None)
+    error.__cause__ = RedisTimeoutError("Timeout reading from socket")
+    return error
+
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
@@ -117,6 +134,110 @@ class TestTokenRefreshAPI:
         # API returns 400 Bad Request for invalid/missing recaptcha
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def _make_refresh_token(self, user):
+        """Create an active refresh token and return (AuthToken, encrypted_str)."""
+        auth_token = AuthToken.objects.create(
+            user=user,
+            auth_type=AuthTokenType.REFRESH.value,
+            is_active=True,
+            last_used_at=timezone.now(),
+        )
+        encrypted = generate_encrypted_message(
+            {"user_id": str(user.id), "id": str(auth_token.id)}
+        )
+        return auth_token, encrypted
+
+    def test_refresh_empty_string_token(self, api_client):
+        """Refresh fails when refresh token is empty string (serializer rejects)."""
+        response = api_client.post(
+            "/accounts/token/refresh/",
+            {"refresh": ""},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_refresh_fernet_invalid_token(self, api_client):
+        """Refresh fails with a string that isn't a valid Fernet token."""
+        response = api_client.post(
+            "/accounts/token/refresh/",
+            {"refresh": "gAAAAABhNotRealFernetContent"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_refresh_token_with_nonexistent_user(self, api_client, user):
+        """Refresh fails when token references a user that does not exist."""
+        auth_token, _ = self._make_refresh_token(user)
+        # Encrypt with the valid token_id but a nonexistent user_id
+        fake_user_token = generate_encrypted_message(
+            {
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "id": str(auth_token.id),
+            }
+        )
+        response = api_client.post(
+            "/accounts/token/refresh/",
+            {"refresh": fake_user_token},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_refresh_inactive_auth_token_rejected(self, api_client, user):
+        """Refresh fails when the referenced AuthToken is inactive."""
+        auth_token, encrypted = self._make_refresh_token(user)
+        auth_token.is_active = False
+        auth_token.save(update_fields=["is_active"])
+
+        response = api_client.post(
+            "/accounts/token/refresh/",
+            {"refresh": encrypted},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_refresh_expired_token_deactivates_it(self, api_client, user):
+        """Token older than 30 days returns 400 and gets deactivated."""
+        auth_token, encrypted = self._make_refresh_token(user)
+        # Backdate created_at past the 30-day window
+        expired_time = timezone.now() - timedelta(days=31)
+        AuthToken.objects.filter(id=auth_token.id).update(created_at=expired_time)
+
+        response = api_client.post(
+            "/accounts/token/refresh/",
+            {"refresh": encrypted},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        auth_token.refresh_from_db()
+        assert auth_token.is_active is False
+        assert cache.get(f"refresh_token_{auth_token.id}") is None
+
+    def test_refresh_inactive_user_rejected(self, api_client, user):
+        """Refresh fails when the user account is deactivated."""
+        auth_token, encrypted = self._make_refresh_token(user)
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+
+        response = api_client.post(
+            "/accounts/token/refresh/",
+            {"refresh": encrypted},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_refresh_recaptcha_rejected(self, api_client, user):
+        """Refresh fails when reCAPTCHA verification returns False."""
+        from unittest.mock import patch
+
+        _, encrypted = self._make_refresh_token(user)
+        with patch("accounts.views.user.verify_recaptcha", return_value=False):
+            response = api_client.post(
+                "/accounts/token/refresh/",
+                {"refresh": encrypted},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -149,3 +270,32 @@ class TestAuthenticatedEndpoints:
         response = api_client.get("/accounts/user-info/")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["email"] == user.email
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            RedisTimeoutError("Timeout reading from socket"),
+            _wrapped_timeout(),
+        ],
+        ids=["redis", "django_redis"],
+    )
+    def test_token_store_timeout_authenticates_when_database_confirms_token(
+        self, api_client, user, error
+    ):
+        """Cache transport failure does not invalidate a DB-confirmed session."""
+        access_token = api_client.post(
+            "/accounts/token/",
+            {"email": user.email, "password": "testpassword123"},
+            format="json",
+        ).json()["access"]
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+
+        with patch("accounts.authentication.cache") as token_store:
+            token_store.get.side_effect = error
+            response = api_client.get("/accounts/user-info/")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["email"] == user.email
+        token_store.get.assert_called_once()
+        token_store.set.assert_not_called()
+        token_store.delete.assert_not_called()

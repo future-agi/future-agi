@@ -11,7 +11,6 @@ def assign_labels_to_version(template_version_id, label_ids, user, workspace):
     _org = get_current_organization() or user.organization
 
     with transaction.atomic():
-
         try:
             template_version = PromptVersion.objects.select_for_update().get(
                 id=template_version_id,
