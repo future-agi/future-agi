@@ -49,6 +49,19 @@ const open = (apiRow = API_ROW, props = {}) =>
   );
 
 describe("ScenarioDrawer", () => {
+  it("places the source filename and its page or row beside the saved scenario", () => {
+    open({
+      ...API_ROW,
+      source_citations: [
+        { filename: "Returns.pdf", page: 2 },
+        { filename: "Orders.csv", row: 7 },
+      ],
+    });
+    expect(screen.getByText("Returns.pdf · Page 2")).toBeInTheDocument();
+    expect(screen.getByText("Orders.csv · Row 7")).toBeInTheDocument();
+    expect(screen.getByText(API_ROW.tests)).toBeInTheDocument();
+  });
+
   it("shows every table column, in the table's order, as the API sends it", () => {
     open();
     expect(screen.getByText("pricing_objection_handled")).toBeInTheDocument();
