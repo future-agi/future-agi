@@ -176,6 +176,7 @@ def _lock_unanswered_given_up(task_id) -> list:
     outlive the Retry that dropped it. One that stays given up and unanswered
     is selected again by the next reap."""
     from tracer.services.instant_eval_answers import _ENTRY_RID, _lock_retained_run
+    from tracer.services.instant_eval_summary import CONFIDENCE, LABEL
 
     # Match the lock order used by project deletion: the run is retained before
     # any of its entries. Otherwise deletion can hold the run while waiting for
@@ -185,7 +186,7 @@ def _lock_unanswered_given_up(task_id) -> list:
 
     with connection.cursor() as cur:
         cur.execute(
-            "SELECT l.id FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "  # noqa: S608 - only the constant _ENTRY_RID row-id fragment is interpolated; every value is bound
+            "SELECT l.id FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "  # noqa: S608 - only shared row-id and answer projection SQL constants are interpolated
             f"ON r.task_id = %(task)s AND r.row_id = {_ENTRY_RID} "
             "WHERE l.eval_task_id = %(task_s)s AND l.deleted = false "
             "AND l.status = %(status)s AND l.error_message = %(message)s "
@@ -193,7 +194,9 @@ def _lock_unanswered_given_up(task_id) -> list:
             "AND NOT EXISTS (SELECT 1 FROM tracer_instant_eval_answer a "
             "WHERE a.task_id = %(task)s AND a.row_id = r.id "
             "AND a.config_id = l.custom_eval_config_id "
-            "AND a.answered_at = l.updated_at) "
+            "AND a.answered_at = l.updated_at "
+            f"AND a.label = {LABEL} "
+            f"AND a.confidence IS NOT DISTINCT FROM {CONFIDENCE}) "
             "ORDER BY l.id FOR UPDATE OF l SKIP LOCKED",
             {
                 "task": str(task_id),

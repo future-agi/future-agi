@@ -20,11 +20,13 @@ routing, transactions, the answers projection and the stored rows are real.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 from django.core.cache import cache
+from django.db import connection, connections
 from rest_framework import status
 
 from accounts.models.organization import Organization
@@ -459,8 +461,7 @@ def test_d26_retry_is_priced_for_a_failure_only_the_primary_has(
     assert _answers(task) == 2
 
 
-def test_d26_retry_forgets_only_rows_still_failed_at_update(
-    lagging_replica,  # noqa: F811
+def test_retry_forgets_a_failure_committed_just_before_its_update(
     auth_client,
     observe_project,
     yes_no,  # noqa: F811
@@ -468,34 +469,35 @@ def test_d26_retry_forgets_only_rows_still_failed_at_update(
     started,  # noqa: F811
     monkeypatch,
 ):
-    """A failure can be requeued after pricing but before Retry's UPDATE.
-    Only rows returned by that UPDATE may have their old answers forgotten."""
     _workflow_drains(monkeypatch)
-    task, entries = _two_failures_one_replicated(
-        lagging_replica, auth_client, observe_project, yes_no
-    )
-    requeued_between_reads = entries[0]
+    task, sessions = _instant_run(auth_client, observe_project, [yes_no], 2)
+    _running(task)
+    first, late = [_claimed(task, yes_no, sid) for sid in sessions]
+    _settle(first, EvalEntryStatus.ERRORED, error=True)
+    _credit_cap(monkeypatch, left=10.0)
 
-    def requeue_one(*_args, **_kwargs):
-        EvalLogger.objects.filter(pk=requeued_between_reads.pk).update(
-            status=EvalEntryStatus.PENDING,
-            error=False,
-            error_message=None,
-            skipped_reason=None,
-            attempts=0,
-        )
-        return None
+    def finish_late():
+        try:
+            _settle(late, EvalEntryStatus.ERRORED, error=True)
+        finally:
+            connections.close_all()
 
-    monkeypatch.setattr(instant_eval_scale, "check_credits", requeue_one)
-    response = _control(auth_client, observe_project, task, "retry_failed")
+    def before_update(execute, sql, params, many, context):
+        # After any preliminary SELECT of ids, but before the statement that
+        # decides which entries actually become pending. Both answers exist.
+        if sql.replace('"', '').startswith("UPDATE tracer_eval_logger SET"):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(finish_late).result(timeout=10)
+            assert _answers(task) == 2
+        return execute(sql, params, many, context)
+
+    with connection.execute_wrapper(before_update):
+        response = _control(auth_client, observe_project, task, "retry_failed")
 
     assert response.status_code == status.HTTP_200_OK, response.content
-    assert response.json()["result"]["retried"] == 1
-    assert _primary(entries[0]).status == EvalEntryStatus.PENDING
-    assert _primary(entries[1]).status == EvalEntryStatus.PENDING
-    # The row requeued by the interleaving kept its answer; only the UPDATE's
-    # RETURNING id was passed to forget_answers.
-    assert _answers(task) == 1
+    assert response.json()["result"]["retried"] == 2
+    assert [_primary(e).status for e in (first, late)] == [EvalEntryStatus.PENDING] * 2
+    assert _answers(task) == 0
 
 
 def test_d26_retry_forgets_both_answers_and_resume_prices_both_rows(

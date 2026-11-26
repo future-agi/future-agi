@@ -992,14 +992,14 @@ jobs:
       # network fetch: the install step verifies the hit and fails instead.
       - name: Key the pinned Temporal CLI by version and digest
         id: temporal-cli
-        run: echo "sha256=$(bash .ci/temporal-cli.sh digest)" >> "$GITHUB_OUTPUT"
+        run: echo "key=$(bash .ci/temporal-cli.sh cache-key)" >> "$GITHUB_OUTPUT"
 
       - name: Restore the pinned Temporal CLI archive
         id: temporal-cli-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.temp }}/temporal-cli-archive
-          key: temporal-cli-linux-amd64-v1.10.1-sha256-${{ steps.temporal-cli.outputs.sha256 }}
+          key: ${{ steps.temporal-cli.outputs.key }}
 
       - name: Fetch the pinned Temporal CLI archive on a cache miss
         if: steps.temporal-cli-cache.outputs.cache-hit != 'true'

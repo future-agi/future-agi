@@ -101,7 +101,6 @@ from tracer.views.instant_eval import (
 
 logger = structlog.get_logger(__name__)
 
-_EVAL_LOGGER_TABLE = EvalLogger._meta.db_table
 UNITS = ["traces", "spans", "sessions", "users"]
 # The Observe date options a view's window comes from.
 DATE_PRESETS = ["Today", "Yesterday", "7D", "30D", "3M", "6M", "12M", "Custom"]
@@ -1710,23 +1709,16 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         with transaction.atomic():
             if not running and (busy := self._busy_locked(request, task)):
                 return busy
-            # Recheck the failure state in the UPDATE itself. A worker can
-            # requeue an entry after the pricing read and before this block;
-            # RETURNING is the only reliable list of rows whose answers this
-            # retry is now responsible for forgetting.
+            # A worker may fail another entry after the check. Forget exactly
+            # the answers for entries this statement actually requeued.
             with connection.cursor() as cur:
                 cur.execute(
-                    f"UPDATE {_EVAL_LOGGER_TABLE} "  # noqa: S608 — table name is a trusted model attribute; values are bound
-                    "SET status = %s, error = %s, error_message = %s, "
-                    "skipped_reason = %s, attempts = %s "
+                    "UPDATE tracer_eval_logger SET status = %s, error = false, "
+                    "error_message = NULL, skipped_reason = NULL, attempts = 0 "
                     "WHERE eval_task_id = %s AND deleted = false "
                     "AND status IN (%s, %s) RETURNING id",
                     [
                         EvalEntryStatus.PENDING,
-                        False,
-                        None,
-                        None,
-                        0,
                         str(task.id),
                         EvalEntryStatus.ERRORED,
                         EvalEntryStatus.SKIPPED,

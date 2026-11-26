@@ -6,11 +6,15 @@
 # (keyed by the digest below) does not already hold it.
 # SHA256 is the release asset digest from temporalio/cli v1.10.1.
 set -euo pipefail
-name=temporal_cli_1.10.1_linux_amd64
+version=1.10.1
+name="temporal_cli_${version}_linux_amd64"
 sha256=4c1500e2ce2d4de136e5fe8852d9b7f82eb62f19b6b383b3e0c040519a9d20b1
-mode=${1:?usage: temporal-cli.sh digest | fetch ARCHIVE_DIRECTORY | install ARCHIVE_DIRECTORY BIN_DIRECTORY}
+mode=${1:?usage: temporal-cli.sh cache-key | digest | fetch ARCHIVE_DIRECTORY | install ARCHIVE_DIRECTORY BIN_DIRECTORY}
+if [[ "$mode" == cache-key ]]; then
+  echo "$name-sha256-$sha256"
+  exit 0
+fi
 if [[ "$mode" == digest ]]; then
-  # The cache key: a new pin is a new cache entry.
   echo "$sha256"
   exit 0
 fi
@@ -30,7 +34,7 @@ case "$mode" in
       timeout 180s curl --fail --location --show-error \
         --connect-timeout 10 --max-time 60 --retry 3 --retry-all-errors \
         --retry-max-time 120 \
-        "https://github.com/temporalio/cli/releases/download/v1.10.1/$name.tar.gz" \
+        "https://github.com/temporalio/cli/releases/download/v$version/$name.tar.gz" \
         --output "$archive.partial"
       verify "$archive.partial"
       mv "$archive.partial" "$archive"

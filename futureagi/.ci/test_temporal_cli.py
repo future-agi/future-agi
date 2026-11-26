@@ -73,6 +73,12 @@ class TemporalCliScriptTest(unittest.TestCase):
         )
         self.assertEqual(result.stdout, f"{PIN}\n")
 
+    def test_cache_key_identifies_the_versioned_archive_and_digest(self):
+        result = subprocess.run(
+            ["bash", str(SCRIPT), "cache-key"], capture_output=True, text=True, check=True
+        )
+        self.assertEqual(result.stdout.strip(), f"{NAME}-sha256-{PIN}")
+
     def test_cache_miss_downloads_the_github_release_and_verifies_it(self):
         result = self.run_script("fetch")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -156,10 +162,10 @@ class MixedWorkersJobTest(unittest.TestCase):
         self.assertNotIn("temporal.download", self.job)
         self.assertNotRegex(self.job, r"\bcurl\b")
         self.assertIn(
-            'run: echo "sha256=$(bash .ci/temporal-cli.sh digest)" >> "$GITHUB_OUTPUT"',
+            'run: echo "key=$(bash .ci/temporal-cli.sh cache-key)" >> "$GITHUB_OUTPUT"',
             self.job,
         )
-        key = "key: temporal-cli-linux-amd64-v1.10.1-sha256-${{ steps.temporal-cli.outputs.sha256 }}"
+        key = "key: ${{ steps.temporal-cli.outputs.key }}"
         self.assertEqual(self.job.count(key), 1)
         order = [
             "id: temporal-cli\n",

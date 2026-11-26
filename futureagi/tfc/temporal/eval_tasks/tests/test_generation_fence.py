@@ -245,7 +245,6 @@ def test_reaped_error_replaces_a_prior_success_answer(instant_stale_entry):
     from django.utils import timezone
 
     from tracer.models.instant_eval import InstantEvalAnswer, InstantEvalRow
-    from tracer.services.eval_tasks import reaper
     from tracer.services.instant_eval_summary import ERROR
 
     task, entry = instant_stale_entry
@@ -268,7 +267,8 @@ def test_reaped_error_replaces_a_prior_success_answer(instant_stale_entry):
 
     assert (result["requeued"], result["failed"]) == (0, 1)
     assert _answers(task) == [ERROR]
-    assert InstantEvalAnswer.objects.get(task=task).label == ERROR
+    entry.refresh_from_db()
+    assert InstantEvalAnswer.objects.get(task=task).answered_at == entry.updated_at
 
 
 @pytest.mark.django_db(transaction=True)
@@ -277,9 +277,10 @@ def test_reaper_locks_the_run_before_entries(instant_stale_entry, monkeypatch):
 
     The copier must wait for the retained run first; taking an entry and then
     waiting for the run would deadlock with the deletion lock order."""
-    import tracer.services.instant_eval_answers as answer_service
     from tracer.models.instant_eval import InstantEvalRun
+    from tracer.services import instant_eval_answers as answer_service
     from tracer.services.eval_tasks import reaper
+    from tracer.services.instant_eval_summary import ERROR
 
     task, entry = instant_stale_entry
     EvalLogger.objects.filter(pk=entry.pk).update(
@@ -307,13 +308,11 @@ def test_reaper_locks_the_run_before_entries(instant_stale_entry, monkeypatch):
             InstantEvalRun.objects.select_for_update().get(eval_task=task)
             copied = pool.submit(copier)
             assert run_requested.wait(10), "the copier did not request the run lock"
-            with connection.cursor() as cur:
-                cur.execute("SET LOCAL lock_timeout = '2s'")
-            try:
-                EvalLogger.objects.select_for_update().get(pk=entry.pk)
-            except OperationalError as exc:
-                pytest.fail(f"entry lock deadlocked with the copier: {exc}")
+            # NOWAIT makes an inverted lock order fail deterministically,
+            # without PostgreSQL choosing either connection as deadlock victim.
+            EvalLogger.objects.select_for_update(nowait=True).get(pk=entry.pk)
         copied.result(timeout=10)
+    assert _answers(task) == [ERROR]
 
 
 @pytest.mark.django_db(transaction=True)
