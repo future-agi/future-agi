@@ -26,7 +26,11 @@ from simulate.models import AgentDefinition, Scenarios
 from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
-from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.models.test_execution import (
+    CallExecution,
+    CallTranscript,
+    TestExecution,
+)
 
 INPUT_MISSING = "input_missing"
 
@@ -446,3 +450,95 @@ def test_a_call_with_an_eval_that_never_ran_stays_inconclusive(
     )
     (scanned,) = scan_call_values(test_execution, [], "-started_at")
     assert scanned["result_outcome"] == "inconclusive"
+
+
+# --- each runner logs the eval it graded, and only that one --------------------
+
+GRADED = "Always graded"
+
+
+def _grade_or_refuse(*, template, mappings, **_):
+    """Grades the eval with no required input; refuses the empty summary."""
+    if template.name == GRADED:
+        return {"output": "Passed", "reason": "ok", "output_type": "Pass/Fail"}
+    return _refuse_empty_summary(template=template, mappings=mappings)
+
+
+def _run_native(call_execution, eval_config_ids):
+    from simulate.services.test_executor import TestExecutor
+
+    with (
+        patch("simulate.services.test_executor.close_old_connections", lambda: None),
+        patch(
+            "simulate.services.test_executor.run_eval_func",
+            side_effect=_grade_or_refuse,
+        ),
+        patch.object(TestExecutor, "_run_tool_evaluation"),
+    ):
+        TestExecutor(initialize_voice_service=False)._run_simulate_evaluations(
+            call_execution, eval_config_ids=eval_config_ids, skip_status_update=True
+        )
+
+
+def _run_activity(call_execution, eval_config_ids):
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    with (
+        patch("simulate.temporal.activities.xl.close_old_connections", lambda: None),
+        patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_grade_or_refuse,
+        ),
+    ):
+        _run_evaluations_standalone(call_execution, eval_config_ids=eval_config_ids)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "runner", [_run_native, _run_activity], ids=["native", "activity"]
+)
+def test_each_runner_logs_the_graded_eval_as_ran_and_the_skip_only_as_missing(
+    runner, run_test, organization, eval_config, call_execution
+):
+    from structlog.testing import capture_logs
+
+    graded = SimulateEvalConfig.objects.create(
+        name=f"Eval {uuid.uuid4().hex[:6]}",
+        eval_template=EvalTemplate.objects.create(
+            name=GRADED,
+            config={"prompt": "Judge the call", "required_keys": []},
+            organization=organization,
+        ),
+        run_test=run_test,
+        mapping={},
+        config={},
+        status=StatusType.COMPLETED.value,
+    )
+
+    # A conversation, so neither runner skips the call before grading.
+    for at, (role, said) in enumerate((("assistant", "Hello."), ("user", "Hi."))):
+        CallTranscript.objects.create(
+            call_execution=call_execution,
+            speaker_role=role,
+            content=said,
+            start_time_ms=at * 1000,
+            end_time_ms=at * 1000 + 500,
+        )
+
+    with capture_logs() as logs:
+        runner(call_execution, [eval_config.id, graded.id])
+
+    def events(name):
+        return [entry for entry in logs if entry["event"] == name]
+
+    assert [entry["eval_config_id"] for entry in events("simulate_evaluation_ran")] == [
+        str(graded.id)
+    ]
+    assert [
+        entry["eval_config_id"] for entry in events("simulate_eval_input_missing")
+    ] == [str(eval_config.id)]
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(graded.id)]["output"] == "Passed"
+    assert call_execution.eval_outputs[str(eval_config.id)]["reason_code"] == (
+        INPUT_MISSING
+    )

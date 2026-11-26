@@ -14,11 +14,22 @@ logger = structlog.get_logger(__name__)
 Summary = EvalExplanationSummaryStatus
 
 
+# How long a summary job may wait in the queue. It then starts, and ends, well
+# inside SUMMARY_JOB_GIVE_UP from its press; one that would start later never
+# starts, so a second press after the give-up pays for the only job.
+SUMMARY_QUEUE_WAIT_SECONDS = 1800
+
+
 def _md5_of(*fields):
     """md5, in the database, of the rows' fields in id order: the rows are
     never read into the job. A row is written whole (``ROW(...)::text``), so
-    a NULL field still counts."""
-    row = Cast(Func(*(F(f) for f in fields), function="ROW"), TextField())
+    a NULL field still counts, and hashed on its own first, so the joined text
+    is a fixed size per row."""
+    row = Func(
+        Cast(Func(*(F(f) for f in fields), function="ROW"), TextField()),
+        function="md5",
+        output_field=TextField(),
+    )
     return Func(
         Coalesce(StringAgg(row, delimiter=",", ordering="id"), Value("")),
         function="md5",
@@ -43,6 +54,7 @@ def _grading_digest(test_execution):
     time_limit=1800,
     max_retries=0,
     queue="tasks_l",
+    schedule_to_start_timeout=SUMMARY_QUEUE_WAIT_SECONDS,
 )
 def run_eval_summary_task(test_execution_id):
     """Make and store a run's evaluation explanation summary.
@@ -51,8 +63,11 @@ def run_eval_summary_task(test_execution_id):
     did not change while it was made. Otherwise it is stored as out of date
     (pending), and nothing more is queued. When another summary job stored a
     current summary first, that one is kept, and this job's failure does not
-    replace it.
+    replace it. A job that starts after another stored a current summary makes
+    none; one overtaken by a newer job (a newer start stamp) leaves the run to
+    that job.
     """
+    started_at = None
     try:
         logger.info(
             f"Starting eval explanation summary calculation for test_execution: {test_execution_id}"
@@ -61,11 +76,25 @@ def run_eval_summary_task(test_execution_id):
         test_execution = TestExecution.objects.get(id=test_execution_id)
 
         # Stamped at the start, so a job that waited in the queue is timed
-        # from when it began (see SUMMARY_JOB_GIVE_UP).
-        TestExecution.objects.filter(id=test_execution_id).update(
-            eval_explanation_summary_status=Summary.RUNNING,
-            eval_explanation_summary_last_updated=timezone.now(),
+        # from when it began (see SUMMARY_JOB_GIVE_UP). The stamp is this
+        # job's: its writes below apply only while the run still carries it.
+        # A summary another job stored as current since the press is kept,
+        # and nothing is made.
+        started_at = timezone.now()
+        claimed = (
+            TestExecution.objects.filter(id=test_execution_id)
+            .exclude(eval_explanation_summary_status=Summary.COMPLETED)
+            .update(
+                eval_explanation_summary_status=Summary.RUNNING,
+                eval_explanation_summary_last_updated=started_at,
+            )
         )
+        if not claimed:
+            logger.info(
+                "eval_summary_already_current",
+                test_execution_id=str(test_execution_id),
+            )
+            return
 
         before = _grading_digest(test_execution)
         summary = _get_cluster_dict_by_eval(
@@ -78,7 +107,10 @@ def run_eval_summary_task(test_execution_id):
         # as current is left as it is: a later verdict would have marked it
         # out of date.
         written = (
-            TestExecution.objects.filter(id=test_execution_id)
+            TestExecution.objects.filter(
+                id=test_execution_id,
+                eval_explanation_summary_last_updated=started_at,
+            )
             .exclude(eval_explanation_summary_status=Summary.COMPLETED)
             .update(
                 eval_explanation_summary=summary,
@@ -110,8 +142,12 @@ def run_eval_summary_task(test_execution_id):
         logger.exception(f"Error calculating eval explanation summary: {e}")
         try:
             # By id, not through the row read above (which may be what
-            # failed). A current summary another job stored is left as it is.
-            TestExecution.objects.filter(id=test_execution_id).exclude(
+            # failed). A current summary another job stored is left as it is,
+            # and so is a newer job's claim once this job has stamped its own.
+            mine = {"id": test_execution_id}
+            if started_at is not None:
+                mine["eval_explanation_summary_last_updated"] = started_at
+            TestExecution.objects.filter(**mine).exclude(
                 eval_explanation_summary_status=Summary.COMPLETED
             ).update(
                 eval_explanation_summary_status=Summary.FAILED,
