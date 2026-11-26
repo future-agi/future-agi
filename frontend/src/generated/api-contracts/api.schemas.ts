@@ -50041,9 +50041,10 @@ export const SimulateApiHarnessJobsConversationConversationHistoryKind = {
 
 export type SimulateApiHarnessJobsScenariosParams = {
   /**
-   * @minimum 1
+   * A page number from 1, or last.
+   * @minLength 1
    */
-  page?: number;
+  page?: string;
   /**
    * Scenarios per page.
    * @minimum 1
@@ -50063,22 +50064,18 @@ export type SimulateApiHarnessJobsScenariosParams = {
   group_by?: string;
   /**
    * Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written.
-   * @minLength 1
    */
   lifecycle?: string;
   /**
-   * Absent: the environment's default.
-   * @minLength 1
+   * Absent or empty: the environment's default.
    */
   agent_version_id?: string;
   /**
-   * Absent: the environment's default.
-   * @minLength 1
+   * Absent or empty: the environment's default.
    */
   environment_version_id?: string;
   /**
-   * Absent: the environment's default.
-   * @minLength 1
+   * Absent or empty: the environment's default.
    */
   suite_version_id?: string;
 };

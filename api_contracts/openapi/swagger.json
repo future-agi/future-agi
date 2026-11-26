@@ -57327,9 +57327,10 @@
                     {
                         "name": "page",
                         "in": "query",
+                        "description": "A page number from 1, or last.",
                         "required": false,
-                        "type": "integer",
-                        "minimum": 1
+                        "type": "string",
+                        "minLength": 1
                     },
                     {
                         "name": "limit",
@@ -57365,32 +57366,28 @@
                         "in": "query",
                         "description": "Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written.",
                         "required": false,
-                        "type": "string",
-                        "minLength": 1
+                        "type": "string"
                     },
                     {
                         "name": "agent_version_id",
                         "in": "query",
-                        "description": "Absent: the environment's default.",
+                        "description": "Absent or empty: the environment's default.",
                         "required": false,
-                        "type": "string",
-                        "minLength": 1
+                        "type": "string"
                     },
                     {
                         "name": "environment_version_id",
                         "in": "query",
-                        "description": "Absent: the environment's default.",
+                        "description": "Absent or empty: the environment's default.",
                         "required": false,
-                        "type": "string",
-                        "minLength": 1
+                        "type": "string"
                     },
                     {
                         "name": "suite_version_id",
                         "in": "query",
-                        "description": "Absent: the environment's default.",
+                        "description": "Absent or empty: the environment's default.",
                         "required": false,
-                        "type": "string",
-                        "minLength": 1
+                        "type": "string"
                     }
                 ],
                 "responses": {

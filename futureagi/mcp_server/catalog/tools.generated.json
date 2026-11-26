@@ -12082,8 +12082,9 @@
             "type": "string"
           },
           "page": {
-            "type": "integer",
-            "minimum": 1
+            "type": "string",
+            "minLength": 1,
+            "description": "A page number from 1, or last."
           },
           "limit": {
             "type": "integer",
@@ -12105,23 +12106,19 @@
           },
           "lifecycle": {
             "type": "string",
-            "minLength": 1,
             "description": "Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written."
           },
           "agent_version_id": {
             "type": "string",
-            "minLength": 1,
-            "description": "Absent: the environment's default."
+            "description": "Absent or empty: the environment's default."
           },
           "environment_version_id": {
             "type": "string",
-            "minLength": 1,
-            "description": "Absent: the environment's default."
+            "description": "Absent or empty: the environment's default."
           },
           "suite_version_id": {
             "type": "string",
-            "minLength": 1,
-            "description": "Absent: the environment's default."
+            "description": "Absent or empty: the environment's default."
           }
         },
         "additionalProperties": false,

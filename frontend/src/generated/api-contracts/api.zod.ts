@@ -58452,7 +58452,11 @@ export const SimulateApiHarnessJobsScenariosParams = zod.object({
 });
 
 export const SimulateApiHarnessJobsScenariosQueryParams = zod.object({
-  page: zod.number().min(1).optional(),
+  page: zod
+    .string()
+    .min(1)
+    .optional()
+    .describe("A page number from 1, or last."),
   limit: zod.number().min(1).optional().describe("Scenarios per page."),
   search: zod.string().optional().describe("Every word must match."),
   ordering: zod
@@ -58467,26 +58471,22 @@ export const SimulateApiHarnessJobsScenariosQueryParams = zod.object({
     ),
   lifecycle: zod
     .string()
-    .min(1)
     .optional()
     .describe(
       "Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written.",
     ),
   agent_version_id: zod
     .string()
-    .min(1)
     .optional()
-    .describe("Absent: the environment's default."),
+    .describe("Absent or empty: the environment's default."),
   environment_version_id: zod
     .string()
-    .min(1)
     .optional()
-    .describe("Absent: the environment's default."),
+    .describe("Absent or empty: the environment's default."),
   suite_version_id: zod
     .string()
-    .min(1)
     .optional()
-    .describe("Absent: the environment's default."),
+    .describe("Absent or empty: the environment's default."),
 });
 
 export const SimulateApiHarnessJobsScenariosResponse = zod.object({

@@ -31561,8 +31561,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           page: {
             required: false,
             schema: {
-              type: "integer",
-              minimum: 1,
+              type: "string",
+              minLength: 1,
             },
           },
           limit: {
@@ -31594,28 +31594,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
             },
           },
           agent_version_id: {
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
             },
           },
           environment_version_id: {
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
             },
           },
           suite_version_id: {
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
             },
           },
         },

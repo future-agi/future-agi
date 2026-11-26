@@ -184,7 +184,7 @@ def test_scenario_list_filters_reach_the_view(auth_client, monkeypatch):
             "params": {
                 "id": environment,
                 "lifecycle": "archived",
-                "page": 2,
+                "page": "2",
                 "limit": 25,
                 "group_by": "",
             },
@@ -199,3 +199,27 @@ def test_scenario_list_filters_reach_the_view(auth_client, monkeypatch):
             {"lifecycle": "archived", "page": "2", "limit": "25", "group_by": ""},
         )
     ]
+
+
+@pytest.mark.django_db
+def test_the_scenario_list_still_takes_the_last_page_and_blank_filters(
+    auth_client, monkeypatch
+):
+    seen = []
+
+    class Provider:
+        def list_scenarios(self, request, pk):
+            from rest_framework.response import Response
+
+            seen.append(dict(request.query_params.items()))
+            return Response({"count": 0, "next": None, "previous": None, "results": []})
+
+    monkeypatch.setattr(harness_job, "get_harness_provider", lambda: Provider())
+    query = {"page": "last", "lifecycle": "", "environment_version_id": ""}
+
+    response = auth_client.get(
+        f"/simulate/api/harness-jobs/{uuid4()}/scenarios/", query
+    )
+
+    assert response.status_code == 200, response.content
+    assert seen == [query]
