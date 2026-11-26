@@ -162,6 +162,12 @@ func supportsMaxCompletionTokens(apiVersion string) bool {
 
 // ChatCompletion sends a non-streaming chat completion request.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "azure", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true})
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	req = prepared
+
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("provider concurrency limit reached")
 	}
@@ -222,6 +228,12 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		prepared, policyErr := common.PrepareDirectToolPolicy(req, common.ToolPolicySupport{Provider: "azure", ParallelCalls: true, RequiredChoice: true, NamedChoice: true, NoneChoice: true})
+		if policyErr != nil {
+			errs <- policyErr
+			return
+		}
+		req = prepared
 
 		if err := p.acquireSemaphore(ctx); err != nil {
 			errs <- models.ErrGatewayTimeout("provider concurrency limit reached")

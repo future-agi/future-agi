@@ -4254,13 +4254,15 @@ class TestExecutor:
             return False
 
     def _mark_summary_out_of_date(self, test_execution_id):
-        """A late verdict on a completed run: mark its finished summary pending.
+        """A late verdict on a run: mark its finished summary pending.
 
-        The summary was made without this verdict. It is kept, and nothing is
-        queued: pending tells the page, and the SDK, that nobody has asked
-        for a summary since the run's verdicts last changed. A summary that
-        failed or was never made keeps its state. One that is running sees
-        the verdict itself, so it keeps running and the page keeps polling.
+        Any run, whatever its status: a failed or stopped run can be
+        summarised too. The summary was made without this verdict. It is
+        kept, and nothing is queued: pending tells the page, and the SDK,
+        that nobody has asked for a summary since the run's verdicts last
+        changed. A summary that failed or was never made keeps its state.
+        One that is running sees the verdict itself, so it keeps running and
+        the page keeps polling.
 
         The mark is made once the verdict is committed: a summary job that
         looks at the grading after the mark then sees the verdict too.
@@ -4269,7 +4271,6 @@ class TestExecutor:
         def _mark():
             TestExecution.objects.filter(
                 id=test_execution_id,
-                status=TestExecution.ExecutionStatus.COMPLETED,
                 eval_explanation_summary_status=EvalExplanationSummaryStatus.COMPLETED,
             ).update(
                 eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING
@@ -4495,11 +4496,12 @@ class TestExecutor:
                             continue
                         extra = {"harness_run": True} if harness_run else {}
                         mark_eval_progress(call_execution)
-                        self._run_single_simulate_evaluation(
+                        graded = self._run_single_simulate_evaluation(
                             eval_config, call_execution, transcript_data, **extra
                         )
                         logger.info(
-                            f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
+                            f"{'Successfully ran' if graded else 'Skipped (input missing)'} "
+                            f"evaluation {eval_config.name} ({eval_config.id}) "
                             f"on call execution {call_execution.id}"
                         )
                 except EvaluationDenied as denial:
@@ -5052,9 +5054,10 @@ class TestExecutor:
         call_execution: CallExecution,
         transcript_data,
         harness_run=False,
-    ):
+    ) -> bool:
         """
-        Run a single SimulateEvalConfig evaluation
+        Run a single SimulateEvalConfig evaluation. Returns whether it was
+        graded: False when an input was empty, so it was stored as missing.
 
         Args:
             eval_config: SimulateEvalConfig instance
@@ -5444,6 +5447,7 @@ class TestExecutor:
                 eval_config_id=str(eval_config.id),
                 fields=list(missing.fields),
             )
+            return False
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 
@@ -5468,6 +5472,7 @@ class TestExecutor:
             eval_config.status = StatusType.FAILED.value
             eval_config.save(update_fields=["status", "updated_at"])
             raise
+        return True
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):
         """

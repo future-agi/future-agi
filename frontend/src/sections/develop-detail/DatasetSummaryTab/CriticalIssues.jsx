@@ -16,6 +16,16 @@ import CustomTooltip from "../../../components/tooltip/CustomTooltip";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import Iconify from "src/components/iconify";
+import {
+  CriticalIssueStatus,
+  FAILED_MESSAGE,
+  NOT_ANALYSED_MESSAGE,
+  OUT_OF_DATE_MESSAGE,
+  isCriticalIssueFailed,
+  isCriticalIssueInProgress,
+  isCriticalIssueNotAnalysed,
+  isCriticalIssueOutOfDate,
+} from "./criticalIssueStatus";
 
 const MinimumTotalCallsForCriticalIssue = 5;
 
@@ -29,20 +39,6 @@ const spin = keyframes`
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
 `;
-// pending running completed failed
-const CriticalIssueStatus = {
-  PENDING: "pending",
-  RUNNING: "running",
-  COMPLETED: "completed",
-  FAILED: "failed",
-  INSUFFICIENT_DATA: "insufficient_data",
-};
-
-const CriticalIssueRefetchStates = [
-  CriticalIssueStatus.PENDING,
-  CriticalIssueStatus.RUNNING,
-];
-
 const confidenceMapping = {
   high: {
     icon: "ic_critical",
@@ -142,7 +138,7 @@ const CriticalIssues = ({ mode = "develop" }) => {
     refetchOnWindowFocus: false,
     refetchInterval: ({ state }) => {
       const result = state?.data?.data?.result;
-      if (CriticalIssueRefetchStates.includes(result?.status)) {
+      if (isCriticalIssueInProgress(mode, result?.status)) {
         return 5000;
       }
       return false;
@@ -162,11 +158,14 @@ const CriticalIssues = ({ mode = "develop" }) => {
       },
     });
 
+  const hasStoredResult = data?.result !== null && data?.result !== undefined;
+  const isFailed = isCriticalIssueFailed(mode, data?.status);
+
   const isReconfiguring =
     isLoading ||
     isRefetching ||
     isRefetchingCriticalIssue ||
-    CriticalIssueRefetchStates.includes(data?.status) ||
+    isCriticalIssueInProgress(mode, data?.status) ||
     isKpisLoading;
 
   const issues = useMemo(() => {
@@ -271,6 +270,17 @@ const CriticalIssues = ({ mode = "develop" }) => {
           </Typography>
         </Stack>
       )}
+      {(isCriticalIssueOutOfDate(mode, data?.status, data?.result) ||
+        (isFailed && hasStoredResult)) && (
+        <Typography
+          typography="s2"
+          fontWeight={"fontWeightRegular"}
+          color={"text.secondary"}
+          mt={1}
+        >
+          {isFailed ? FAILED_MESSAGE : OUT_OF_DATE_MESSAGE}
+        </Typography>
+      )}
 
       <Box
         marginTop={1.5}
@@ -306,6 +316,16 @@ const CriticalIssues = ({ mode = "develop" }) => {
             fontWeight={"fontWeightRegular"}
           >
             {`At least ${data?.minRowsRequired || 15} data rows are needed for critical issues analysis. Your dataset currently has ${data?.rowCount ?? 0} rows.`}
+          </Typography>
+        ) : isCriticalIssueFetchingAllowed &&
+          ((isFailed && !hasStoredResult) ||
+            isCriticalIssueNotAnalysed(mode, data?.status, data?.result)) ? (
+          <Typography
+            typography={"s1"}
+            color={"text.primary"}
+            fontWeight={"fontWeightRegular"}
+          >
+            {isFailed ? FAILED_MESSAGE : NOT_ANALYSED_MESSAGE}
           </Typography>
         ) : !issues || issues?.length === 0 ? (
           <Typography

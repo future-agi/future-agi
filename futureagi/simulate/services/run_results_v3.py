@@ -40,7 +40,9 @@ from simulate.services.hosted_harness_ingestion import (
     STARTED_BY_KEY,
     STARTED_BY_TASK,
     SUB_GOAL_PASSED,
+    UNVERIFIED_KEY,
     WORLD_ACTIONS_KEY,
+    graded_call_receipt,
     sub_goal_result,
 )
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
@@ -125,6 +127,7 @@ CALL_ROW_METADATA_KEYS = (
     "use_case",
     "goal",
     "hosted_harness_receipt",
+    UNVERIFIED_KEY,
     "sub_goals",
     "conversation_branch",
     "harness_outcome_status",
@@ -237,6 +240,15 @@ def call_outcome(
         and harness_outcome not in SKIPPED_HARNESS_STATUSES
     ):
         return "cancelled"
+    receipt = metadata.get("hosted_harness_receipt")
+    failure = receipt.get("failure") if isinstance(receipt, dict) else None
+    if (
+        harness_outcome in HARNESS_ERROR
+        and isinstance(failure, dict)
+        and failure.get("domain") == "agent"
+    ):
+        # The trial ended on the agent's own failure (it stalled, it hung up): the agent failed it.
+        return "failed"
     if harness_outcome in HARNESS_ERROR:
         return "error"
     if call.status in {
@@ -544,7 +556,7 @@ def sub_goal_entries(
 
 def receipt_sub_goals(metadata: Mapping[str, object] | None) -> list[SubGoalEntry]:
     """The judged sub-goals a call's metadata holds, its receipt's first."""
-    receipt = (metadata or {}).get("hosted_harness_receipt")
+    receipt = graded_call_receipt(metadata)
     raw = (receipt.get("sub_goals") if isinstance(receipt, dict) else None) or (
         metadata or {}
     ).get("sub_goals")
@@ -859,7 +871,7 @@ def build_call_rows(
             or scenario_metadata.get("goal")
             or call.scenario.name
         )
-        receipt = metadata.get("hosted_harness_receipt")
+        receipt = graded_call_receipt(metadata)
         receipt = receipt if isinstance(receipt, dict) else {}
         raw_sub_goals = (
             receipt.get("sub_goals")

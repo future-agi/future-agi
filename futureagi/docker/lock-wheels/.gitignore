@@ -1,0 +1,3 @@
+# CI places verified URL-pinned lock wheels here before an image build.
+# See futureagi/.ci/lock_wheels.py and the extras step in Dockerfile.oss.
+*.whl

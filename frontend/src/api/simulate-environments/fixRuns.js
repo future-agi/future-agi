@@ -137,9 +137,12 @@ export async function shipCandidate(fix, candidateId) {
     endpoints.agentFixRuns.makeDefault(fix.id, candidateId),
     {},
   );
+  const outcome = res.data?.outcome;
+  // `validating`: it becomes the default once its pairing passes a check.
   return {
-    kind:
-      res.data?.outcome === "already_default" ? "already_default" : "activated",
+    kind: ["already_default", "validating"].includes(outcome)
+      ? outcome
+      : "activated",
   };
 }
 

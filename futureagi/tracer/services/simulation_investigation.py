@@ -332,7 +332,7 @@ def _authored_goals(execution: TestExecution, calls: list) -> dict:
     return {
         call_id: _goals_payload(scenario)
         for call_id, scenario in authored_scenarios_for_calls(
-            execution.run_test_id, calls
+            execution.run_test_id, calls, test_execution_id=execution.id
         ).items()
     }
 
@@ -524,7 +524,9 @@ def simulation_evidence_page(
     if cursor > total:
         raise SimulationInvestigationConflict("Evidence cursor is outside the result")
     rows = list(calls_qs[cursor : cursor + 20])
-    authored = authored_scenarios_for_calls(execution.run_test_id, rows)
+    authored = authored_scenarios_for_calls(
+        execution.run_test_id, rows, test_execution_id=execution.id
+    )
     _, live_eval_ids = build_evaluation_catalog(execution)
     live_eval_configs = {
         str(config.id): config

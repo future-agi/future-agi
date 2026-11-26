@@ -18,7 +18,9 @@ if [[ $PROFILE != baseline ]]; then
 fi
 sync_start=$SECONDS
 sync_status=0
-uv sync --frozen --all-extras || sync_status=$?
+# The URL-pinned lock wheels come from this run's plan job instead of
+# GitHub; the action's next step installs them (../lock-wheels).
+uv sync --frozen --all-extras --no-install-package en-core-web-sm || sync_status=$?
 sync_seconds=$((SECONDS - sync_start))
 health_status=0
 if [[ $PROFILE == baseline ]]; then
