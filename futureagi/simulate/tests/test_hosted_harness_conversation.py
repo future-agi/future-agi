@@ -1999,6 +1999,31 @@ def test_missing_checkpoint_object_falls_back_instead_of_retiring(
 
 
 @pytest.mark.django_db
+def test_source_changed_before_runtime_marks_queued_attachment_failed(organization):
+    from simulate.services.hosted_harness_conversation import fail_source_mismatch
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key="source-race")
+    conversation, command, _ = enqueue_message(
+        job, content="Review this attachment", client_request_id="source-race"
+    )
+    detail = "Restore a version with its approved sources."
+    assert fail_source_mismatch(conversation.pk, detail) == 1
+    command.refresh_from_db()
+    conversation.refresh_from_db()
+    assert command.state == command.State.FAILED
+    assert conversation.state == conversation.State.DEGRADED
+    assert (
+        HostedHarnessConversationMessage.no_workspace_objects.filter(
+            conversation=conversation,
+            role=command.Role.ASSISTANT,
+            content=detail,
+        ).count()
+        == 1
+    )
+    assert fail_source_mismatch(conversation.pk, detail) == 0
+
+
+@pytest.mark.django_db
 def test_send_message_rejected_after_conversation_retired(organization):
     from simulate.services.harness_provider import HostedHarnessProvider
 

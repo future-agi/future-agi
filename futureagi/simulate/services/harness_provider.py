@@ -2726,6 +2726,26 @@ class HostedHarnessProvider:
                     },
                     status=status.HTTP_409_CONFLICT,
                 )
+            from simulate.services import harness_reviewed_builds
+
+            if harness_reviewed_builds.has_chat_sources(job):
+                from simulate.services.hosted_harness_conversation import (
+                    ensure_conversation,
+                    fail_source_mismatch,
+                    load_workspace_archive,
+                )
+                from simulate.services.hosted_harness_gateway import chat_workspace_for
+
+                try:
+                    conversation = conversation or ensure_conversation(job)
+                    body = chat_workspace_for(
+                        job, conversation, chat_state=load_workspace_archive(conversation)
+                    )
+                    harness_reviewed_builds.chat_review(job, body)
+                except HostedHarnessError as exc:
+                    if exc.code == "conversation_source_snapshot_changed":
+                        fail_source_mismatch(conversation.id, exc.message)
+                    return Response(exc.as_dict(), status=exc.status_code)
         data = request.validated_data
         attachment = {}
         if review_id := data.get("source_review_id"):

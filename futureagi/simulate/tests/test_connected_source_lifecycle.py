@@ -269,14 +269,41 @@ def test_each_connector_parks_and_recovers_approved_inputs(
         }
 
     monkeypatch.setattr(harness_sources, "execute_source_request", trusted_scenarios)
+    job.name = "Customer support control"
     assert builds.check_archive(job, _archive(files)) == pin
+    assert builds.chat_launch_material(job, _archive(files)) == material
+    owned_review = builds.chat_review(job, _archive(files))
+    foreign_job = HostedHarnessJob(
+        id=uuid4(),
+        organization=job.organization,
+        workspace=job.workspace,
+        payload={},
+    )
+    with pytest.raises(HostedHarnessError, match="Restore a version"):
+        builds.chat_review(foreign_job, _archive(files))
+    with pytest.raises(HostedHarnessError, match="Restore a version"):
+        builds.chat_review(job, _archive({**files, "reviewed-source.json": b"{}"}))
+    # A later environment review may own the source pin selected by the draft.
+    owned_review.owner_kind = owned_review.Owner.ENVIRONMENT
+    owned_review.save(update_fields=["owner_kind"])
+    try:
+        environment_files = {
+            **files,
+            "sources/manifest.json": json.dumps(
+                {
+                    "private_snapshot_digests": [
+                        "sha256:" + owned_review.accepted_artifact_digest
+                    ]
+                }
+            ).encode(),
+        }
+        assert builds.chat_launch_material(job, _archive(environment_files)) == material
+    finally:
+        owned_review.owner_kind = owned_review.Owner.BUILD_JOB
+        owned_review.save(update_fields=["owner_kind"])
     assert trusted_requests[-1]["operation"] == "generate_scenarios"
     assert trusted_requests[-1]["bundle_manifest"] == manifest
-    task = (
-        job.payload["metadata"].get("agent_name")
-        or job.name
-        or "the connected agent"
-    )
+    task = job.payload["metadata"].get("agent_name") or "the connected agent"
     assert trusted_requests[-1]["environment_requirements"] == {
         "task": f"Test the behavior of {task}"
     }

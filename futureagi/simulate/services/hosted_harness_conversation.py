@@ -498,6 +498,20 @@ def _abandon_outstanding(conversation_id) -> int:
         )
 
 
+@transaction.atomic
+def fail_source_mismatch(conversation_id, message):
+    conversation = (
+        HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+            pk=conversation_id
+        )
+    )
+    return _fail_outstanding(
+        conversation,
+        state=HostedHarnessConversation.State.DEGRADED,
+        reply=message,
+    )
+
+
 def _fail_outstanding(
     conversation: HostedHarnessConversation, *, state: str, reply: str
 ) -> int:

@@ -3941,10 +3941,10 @@ class HostedHarnessGateway:
         source; secret refs name its credentials only, never a value. ``None`` when
         ``claim_ref``'s claim was given up meanwhile; the new sandbox is deleted.
         """
-        reviewed = reviewed_builds.launch_material(job)
         workspace_archive = chat_workspace_for(
             job, conversation, chat_state=load_workspace_archive(conversation)
         )
+        reviewed = reviewed_builds.chat_launch_material(job, workspace_archive)
         control_only = workspace_archive is None
         if workspace_archive is None:
             workspace_archive = _empty_workspace_archive()
@@ -4115,7 +4115,7 @@ class HostedHarnessGateway:
                     env=chat_exports,
                     command=(
                         "python -m fi.alk.harness.hosted_chat_entrypoint "
-                        f"--job {reviewed_builds.controller_args(job)} --source /work/source "
+                        f"--job {reviewed_builds.PRIVATE_CONTROLLER_JOB if reviewed else '/work/job.json'} --source /work/source "
                         "--workspace /work/authoring "
                         f"--capabilities {_CHAT_CAPABILITIES_PATH} "
                         f"--policy {_CHAT_POLICY_PATH}"

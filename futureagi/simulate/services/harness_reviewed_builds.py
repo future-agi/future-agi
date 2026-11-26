@@ -120,6 +120,121 @@ def launch_material(job):
     )
 
 
+def has_chat_sources(job):
+    owner = job.environment or job
+    return (
+        sourced(owner)
+        or HarnessSourceReview.objects.filter(
+            owner=owner,
+            owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
+            state=HarnessSourceReview.State.ACCEPTED,
+        ).exists()
+    )
+
+
+def chat_review(job, workspace):
+    """Resolve the accepted review for the restored files, which may postdate the build."""
+    owner = job.environment or job
+    metadata = owner.payload.get("metadata") or {}
+    if any(
+        metadata.get(k) is not None
+        for k in ("design", "adaptation", "release_composition")
+    ):
+        return None
+    files = archives.read_archive(workspace) if workspace else {}
+    invalid = HostedHarnessError(
+        "conversation_source_snapshot_changed",
+        "These saved files do not match an approved source review for this environment. "
+        "Restore a version with its approved sources or rebuild the environment before sending a message.",
+        status_code=409,
+    )
+    try:
+        pin = (
+            json.loads(files["reviewed-source.json"])
+            if "reviewed-source.json" in files
+            else None
+        )
+        bundled = files.get("environment-bundle/reviewed-source.json")
+        manifest = json.loads(files.get("environment-bundle/manifest.json", b"{}"))
+        sealed_pin = manifest.get("metadata", {}).get("reviewed_source")
+        if pin is None:
+            if bundled is not None or sealed_pin is not None or sourced(owner):
+                raise invalid
+            return None
+        if not isinstance(pin, dict) or set(pin) != {"id", "digest", "schema_digest"}:
+            raise invalid
+        if (json.loads(bundled) if bundled is not None else None) != sealed_pin:
+            raise invalid
+    except (ValueError, TypeError, AttributeError):
+        raise invalid from None
+    reviews = HarnessSourceReview.objects.filter(
+        organization_id=owner.organization_id,
+        workspace_id=owner.workspace_id,
+        owner=owner,
+        state=HarnessSourceReview.State.ACCEPTED,
+        basis__schema_digest=pin["schema_digest"],
+    )
+    review = reviews.filter(
+        owner_kind=HarnessSourceReview.Owner.BUILD_JOB,
+        snapshot_digest=pin["digest"],
+        receipt__snapshot_id=pin["id"],
+    ).first()
+    if review is not None and sealed_pin == pin:
+        return review
+    from simulate.services.harness_source_reviews import accepted_source_snapshot
+
+    # A draft can carry an accepted import before its updated bundle is sealed.
+    # Existing-environment receipts expose an aggregate, while the ALK pin
+    # identifies one private artifact listed in the environment manifest.
+    try:
+        manifest = json.loads(files.get("sources/manifest.json", b"{}"))
+        artifacts = [
+            digest.removeprefix("sha256:")
+            for digest in manifest.get("private_snapshot_digests", [])
+        ]
+    except (TypeError, AttributeError, ValueError):
+        raise invalid from None
+    for review in reviews.filter(
+        owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
+        accepted_artifact_digest__in=artifacts,
+    ):
+        _, receipt = accepted_source_snapshot(
+            review.id, owner=owner, owner_kind=review.owner_kind
+        )
+        if (receipt["snapshot_id"], receipt["snapshot_digest"]) == (
+            pin["id"],
+            pin["digest"],
+        ):
+            return review
+    raise invalid
+
+
+def chat_launch_material(job, workspace):
+    from simulate.services.harness_designs import _documents, serialize_document
+    from simulate.services.harness_source_reviews import accepted_source_snapshot
+
+    if not has_chat_sources(job):
+        return None
+    review = chat_review(job, workspace)
+    if review is None:
+        return None
+    snapshot, receipt = accepted_source_snapshot(
+        review.id, owner=review.owner, owner_kind=review.owner_kind
+    )
+    document_ids = [
+        binding["origin"]["document_id"]
+        for binding in receipt["bindings"]
+        if binding["origin"]["kind"] == "upload"
+    ]
+    documents = _documents(
+        review.owner.organization,
+        document_ids,
+        workspace_id=review.workspace_id,
+        allow_duplicate_names=True,
+    )
+    return ReviewedLaunch(snapshot, receipt, [serialize_document(one) for one in documents])
+
+
 def _trusted_scenarios(job, manifest, pin):
     from simulate.services import harness_sources as sources
     from simulate.services.harness_source_reviews import accepted_source_snapshot
@@ -135,7 +250,7 @@ def _trusted_scenarios(job, manifest, pin):
         pin["digest"],
     ):
         raise _invalid()
-    task = metadata.get("agent_name") or job.name or "the connected agent"
+    task = metadata.get("agent_name") or "the connected agent"
     try:
         result = sources._alk_result(
             sources.execute_source_request(
@@ -303,8 +418,10 @@ def check_archive(job, body):
                 raise _invalid(f"scenario source proof changed: {key}")
             seen_cases.add(case["id"])
         covered = {case_identity[key] for key in seen_cases}
-        if covered != set(case_identity.values()) or set(proofs) != seen:
-            raise _invalid("scenario, source case, or proof key set changed")
+        if covered != set(case_identity.values()):
+            raise _invalid("archive does not cover every approved source case")
+        if set(proofs) != seen:
+            raise _invalid("proof keys differ from the archived scenario keys")
     except (KeyError, TypeError, ValueError, UnicodeError):
         raise _invalid() from None
     return pin

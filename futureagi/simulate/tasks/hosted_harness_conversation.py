@@ -19,6 +19,8 @@ def ensure_hosted_harness_conversation_runtime(
 ) -> str:
     """Start or reuse the replaceable managed runtime for one durable conversation."""
     from simulate.models import HostedHarnessConversation
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.services.hosted_harness_conversation import fail_source_mismatch
     from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     close_old_connections()
@@ -33,6 +35,11 @@ def ensure_hosted_harness_conversation_runtime(
             endpoint_base_url=endpoint_base_url,
         )
         return str(lease.id) if lease is not None else ""
+    except HostedHarnessError as exc:
+        if exc.code != "conversation_source_snapshot_changed":
+            raise
+        fail_source_mismatch(conversation_id, exc.message)
+        return ""
     finally:
         close_old_connections()
 
