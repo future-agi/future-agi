@@ -2290,5 +2290,67 @@ class HeldOnRedBase(unittest.TestCase):
         )
 
 
+class WakeAfterBaseRed(unittest.TestCase):
+    """No new trigger types: a paused live loop stays awake to see the
+    base-red issue close, and the push that turns dev green starts a run."""
+
+    def test_a_paused_loop_outlives_the_idle_window_and_batches_once_it_closes(self):
+        from unittest import mock
+
+        clock, ticks = [0.0], []
+
+        class Reader(RedReader):
+            def __init__(self, token, repo):
+                super().__init__(data([pr_node(1)]), [])
+
+            def file_text(self, path):
+                return None
+
+            def required_checks(self):
+                return REQUIRED
+
+            def base_red(self):
+                # Open for 12 ticks of 90 s: 18 min, past the 10 min idle stop.
+                return [100] if len(ticks) < 12 else []
+
+        real_tick = train.tick
+
+        def tick(*args):
+            ticks.append(real_tick(*args))
+            return ticks[-1]
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        with (
+            mock.patch.dict("os.environ", {"REPO": "o/r", "GH_TOKEN": "t"}, clear=True),
+            mock.patch.object(train, "GitHub", Reader),
+            mock.patch.object(train, "tick", tick),
+            mock.patch.object(train.time, "monotonic", lambda: clock[0]),
+            mock.patch.object(train.time, "sleep", sleep),
+            mock.patch("sys.stdout"),
+        ):
+            rc = train.run_cmd(train.parse_args(["tick", "--loop-minutes", "30"]))
+        self.assertEqual(rc, 0)
+        self.assertGreater(len(ticks), 12, "the paused loop kept ticking")
+        self.assertEqual(
+            {(tuple(t["paused_by"]), str(t["batches"])) for t in ticks[:12]},
+            {((100,), "[]")},
+        )
+        self.assertEqual(ticks[12]["batches"], [[1]], "batches on the first clear tick")
+
+    def test_the_push_that_turns_dev_green_starts_a_train_run(self):
+        text = (SCRIPTS.parent / "workflows" / "devflow-train.yml").read_text()
+        triggers = text.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
+        push = triggers.split("  push:\n", 1)[1].split("\n  pull_request:\n", 1)[0]
+        self.assertEqual(push.strip(), "branches: [dev]", "no path filter on the push")
+        self.assertNotIn("issues:", triggers, "an issues event runs main's copy")
+        live = text.split("\n  live:\n", 1)[1]
+        self.assertIn(
+            "if: github.event_name == 'push' && github.ref == 'refs/heads/dev'", live
+        )
+        self.assertIn("cancel-in-progress: false", text, "a newer push waits its turn")
+
+
 if __name__ == "__main__":
     unittest.main()
