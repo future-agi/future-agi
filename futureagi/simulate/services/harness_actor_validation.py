@@ -219,12 +219,9 @@ def _trigger_problems(actor: ActorRecord) -> list[tuple[str, Problem]]:
     if kind == "on_tool" and not str(trigger.get("tool") or "").strip():
         found.append(("tool", "Pick the action whose call brings them in."))
     if kind == "probability":
+        # A chance that is not a number, or outside 0 to 1, is the record schema's to refuse, once.
         chance = trigger.get("p")
-        if (
-            isinstance(chance, bool)
-            or not isinstance(chance, (int, float))
-            or not 0 < chance <= 1
-        ):
+        if "p" not in trigger or (type(chance) in (int, float) and chance == 0):
             found.append(("p", "Give a chance above 0% and at most 100%."))
     if kind == "on_keyword":
         words = trigger.get("words")
@@ -233,9 +230,15 @@ def _trigger_problems(actor: ActorRecord) -> list[tuple[str, Problem]]:
         ):
             found.append(("words", "Give the words that bring them in."))
     if kind == "mid_journey":
+        # A turn that is not a whole number is the record schema's to refuse; 2.0 reads as 2.
         turn = trigger.get("turn")
-        if isinstance(turn, bool) or not isinstance(turn, int) or turn < 1:
-            found.append(("turn", "Give the agent's turn they come in at, 1 or more."))
+        if "turn" not in trigger or (type(turn) in (int, float) and turn < 1):
+            found.append(
+                (
+                    "turn",
+                    "Give the agent's turn they come in at, a whole number from 1.",
+                )
+            )
     if actor.get("channel") == "ivr" and kind != "always":
         found.append(
             (

@@ -1154,7 +1154,19 @@ def test_a_trigger_the_harness_would_refuse_is_refused_when_written(trigger, fie
     problems = actor_problems([actor], "manager", RULES, new_id=True)
 
     assert problems, trigger
-    assert any(one["field"] in (field, "trigger") for one in problems), problems
+    # Refused once: by the record's schema for a value of the wrong type, else by the trigger's own rule.
+    assert len(problems) == 1, problems
+    assert problems[0]["field"] in (field, "trigger", "activation"), problems
+
+
+def test_an_agent_turn_written_as_a_whole_float_is_kept():
+    actor = {
+        **MANAGER,
+        "id": "manager",
+        "activation": {"trigger": {"kind": "mid_journey", "turn": 2.0}},
+    }
+
+    assert actor_problems([actor], "manager", RULES, new_id=True) == []
 
 
 def test_an_old_record_s_trigger_never_blocks_an_edit_of_another_field():
