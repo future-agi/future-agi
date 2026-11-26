@@ -3140,6 +3140,8 @@ def test_finalizer_leaves_a_summary_a_person_is_waiting_for_running(
         "evaluating",
         execution_metadata=dict(_RERUN_MARKER),
         eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
+        # Asked for just now: its job is alive.
+        eval_explanation_summary_last_updated=timezone.now(),
     )
     _call(run, metadata=dict(CLOSED))
 
@@ -3258,6 +3260,35 @@ def test_rerun_finalize_retried_after_a_failed_release_queues_no_summary(
     assert run.status == Status.COMPLETED
     assert run.picked_up_by_executor is False
     assert run.execution_metadata == {"kept": True}
+    dispatch.summary.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "summary_status, expected",
+    [("completed", "pending"), ("running", "running"), ("failed", "pending")],
+)
+def test_a_rerun_that_ends_failed_marks_a_finished_summary_out_of_date(
+    run_test, dispatch, monkeypatch, summary_status, expected
+):
+    """A rerun that ends with every call failed changed the verdicts: a
+    finished summary is from before them and is marked pending, as when the
+    rerun completes. A summary a person is waiting for keeps running."""
+    Status = TestExecution.ExecutionStatus
+    run = _run(
+        run_test,
+        Status.EVALUATING,
+        picked_up_by_executor=True,
+        eval_explanation_summary_status=summary_status,
+        eval_explanation_summary_last_updated=timezone.now(),
+    )
+    _call(run, status="failed", metadata=dict(CLOSED))
+
+    _finalize("rerun", run, monkeypatch)
+
+    run.refresh_from_db()
+    assert run.status == Status.FAILED
+    assert run.eval_explanation_summary_status == expected
     dispatch.summary.assert_not_called()
 
 
@@ -3559,12 +3590,13 @@ def test_the_out_of_date_mark_waits_for_the_verdicts_commit(
 @pytest.mark.parametrize(
     "run_status", ["running", "evaluating", "failed", "cancelling", "cancelled"]
 )
-def test_a_late_verdict_on_a_run_that_is_not_completed_leaves_its_summary_alone(
+def test_a_late_verdict_marks_the_summary_out_of_date_whatever_the_runs_status(
     run_test, eval_template, django_capture_on_commit_callbacks, dispatch, run_status
 ):
-    """Only a completed run's summary goes out of date on a late verdict: a
-    run still scoring is settled later, and a failed or stopped one keeps its
-    summary as it is. The run's status and ``completed_at`` are not touched."""
+    """A finished summary goes out of date on a late verdict on any run: a
+    failed or stopped run can be summarised too, and its summary was made
+    without the verdict. The run's status and ``completed_at`` are not
+    touched, and nothing is queued."""
     from simulate.models.test_execution import EvalExplanationSummaryStatus
     from simulate.services.test_executor import TestExecutor
 
@@ -3588,7 +3620,7 @@ def test_a_late_verdict_on_a_run_that_is_not_completed_leaves_its_summary_alone(
 
     other.refresh_from_db()
     assert (other.status, other.completed_at) == (run_status, earlier)
-    assert other.eval_explanation_summary_status == Summary.COMPLETED
+    assert other.eval_explanation_summary_status == Summary.PENDING
     dispatch.summary.assert_not_called()
 
 
@@ -3607,6 +3639,8 @@ def test_settle_leaves_a_summary_a_person_is_waiting_for_running(
         run_test,
         TestExecution.ExecutionStatus.EVALUATING,
         eval_explanation_summary_status=Summary.RUNNING,
+        # Asked for just now: its job is alive.
+        eval_explanation_summary_last_updated=timezone.now(),
     )
     in_time = _call(
         first,

@@ -178,8 +178,15 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
 
             await test_execution.asave(update_fields=released)
         elif final_status == TestExecution.ExecutionStatus.FAILED:
+            from simulate.services.scoring_status import summary_status_once_graded
+
             update_fields.extend(["completed_at", "picked_up_by_executor"])
             await test_execution.asave(update_fields=update_fields)
+            # The rerun changed the verdicts: a finished summary is from
+            # before them, as when the rerun completes.
+            await TestExecution.objects.filter(id=test_execution.id).aupdate(
+                eval_explanation_summary_status=summary_status_once_graded()
+            )
         else:
             # Still in progress - just update counts and status
             await test_execution.asave(update_fields=update_fields)

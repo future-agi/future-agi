@@ -178,6 +178,10 @@ from simulate.services.run_regrade import (
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.run_reliability_v3 import trial_passes
+from simulate.services.scoring_status import (
+    summary_job_alive,
+    summary_status_as_read,
+)
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -188,6 +192,7 @@ from simulate.tasks.eval_summary_tasks import run_eval_summary_task
 from simulate.utils.agent_optimiser import (
     analysis_on_its_way,
     create_optimiser_run_for_test_execution,
+    dispatch_optimiser_run,
     get_latest_optimiser_result,
     get_or_create_optimiser_for_test_execution,
 )
@@ -6447,6 +6452,18 @@ class RunTestEvalSummaryComparisonView(APIView):
             )
 
 
+def _summary_status_for_pane(test_execution):
+    """The summary status the pane is told. Stored "pending" (nobody has
+    asked since the verdicts last changed; any summary shown is from before
+    them) is told "not_requested": no job is coming, and the old pane polled
+    on pending. A summary left running by a job that is gone is told
+    failed."""
+    read = summary_status_as_read(test_execution)
+    if read == EvalExplanationSummaryStatus.PENDING:
+        return "not_requested"
+    return read
+
+
 class RunTestEvalExplanationSummaryView(APIView):
     """
     API View to get evaluation explanation summary statistics for a single test execution.
@@ -6484,7 +6501,7 @@ class RunTestEvalExplanationSummaryView(APIView):
                 {
                     "response": test_execution.eval_explanation_summary,
                     "last_updated": test_execution.eval_explanation_summary_last_updated,
-                    "status": test_execution.eval_explanation_summary_status,
+                    "status": _summary_status_for_pane(test_execution),
                 }
             )
 
@@ -6554,12 +6571,24 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
             # The summary's model calls start here, when a person presses
             # Refresh, and nowhere else (the Fix My Agent job makes one as a
             # step of the analysis a person started). The pane waits while
-            # the status says running.
-            before = test_execution.eval_explanation_summary_status
-            test_execution.eval_explanation_summary_status = (
-                EvalExplanationSummaryStatus.RUNNING
+            # the status says running. The claim is one conditional write:
+            # while a summary job is alive, a second press (or two at once)
+            # claims nothing and queues nothing.
+            before_status = test_execution.eval_explanation_summary_status
+            before_stamp = test_execution.eval_explanation_summary_last_updated
+            asked_at = timezone.now()
+            claimed = (
+                TestExecution.objects.filter(id=test_execution.id)
+                .exclude(summary_job_alive(asked_at))
+                .update(
+                    eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
+                    eval_explanation_summary_last_updated=asked_at,
+                )
             )
-            test_execution.save(update_fields=["eval_explanation_summary_status"])
+            if not claimed:
+                return self._gm.success_response(
+                    {"message": "A summary is already on its way"}
+                )
             try:
                 run_eval_summary_task.apply_async(args=(str(test_execution.id),))
             except Exception as dispatch_error:
@@ -6570,10 +6599,15 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 )
                 # No job is coming: the summary goes back to what it was, so
                 # the pane stops waiting and a current one stays current.
+                # Only this press's own claim is undone.
                 TestExecution.objects.filter(
                     id=test_execution.id,
                     eval_explanation_summary_status=EvalExplanationSummaryStatus.RUNNING,
-                ).update(eval_explanation_summary_status=before)
+                    eval_explanation_summary_last_updated=asked_at,
+                ).update(
+                    eval_explanation_summary_status=before_status,
+                    eval_explanation_summary_last_updated=before_stamp,
+                )
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
                     "The summary could not be started. Please try again.",
@@ -6681,22 +6715,33 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                 return self._gm.custom_error_response(
                     status.HTTP_409_CONFLICT, _STILL_GRADED_MESSAGE
                 )
-            waiting = analysis_on_its_way(test_execution.agent_optimiser)
-            if waiting is not None:
-                # Each analysis is a chain of paid model calls: a second
-                # press starts nothing and says how the first one stands.
-                return self._gm.success_response(
-                    {
-                        "message": "An analysis is already on its way",
-                        "status": waiting.status,
-                    }
+            # Two presses at once: the run's row is locked around the check
+            # and the create, so the second waits, then finds the first's
+            # analysis on its way. The job is handed over after the commit.
+            with transaction.atomic():
+                # Found and checked above; re-read under the lock.
+                test_execution = TestExecution.all_objects.select_for_update().get(
+                    pk=test_execution.pk
+                )
+                waiting = analysis_on_its_way(test_execution.agent_optimiser)
+                if waiting is not None:
+                    # Each analysis is a chain of paid model calls: a second
+                    # press starts nothing and says how the first one stands.
+                    return self._gm.success_response(
+                        {
+                            "message": "An analysis is already on its way",
+                            "status": waiting.status,
+                        }
+                    )
+
+                optimiser = get_or_create_optimiser_for_test_execution(test_execution)
+
+                run = create_optimiser_run_for_test_execution(
+                    test_execution, optimiser, dispatch=False
                 )
 
-            optimiser = get_or_create_optimiser_for_test_execution(test_execution)
-
-            run = create_optimiser_run_for_test_execution(test_execution, optimiser)
-
             if run:
+                dispatch_optimiser_run(run, test_execution.id)
                 logger.info(
                     f"Created optimiser analysis run {run.id} for test execution {test_execution_id}"
                 )
