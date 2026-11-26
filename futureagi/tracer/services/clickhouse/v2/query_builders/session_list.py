@@ -27,6 +27,10 @@ from tracer.services.clickhouse.query_builders.filter_seed_witness import (
 from tracer.services.clickhouse.query_builders.session_list import (
     SessionListQueryBuilder,
 )
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    source_summary_sql,
+    usage_coverage_sql,
+)
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
@@ -58,6 +62,126 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
         ("session_attribute_number_list", "attrs_number"),
         ("session_attribute_bool_list", "attrs_bool"),
     )
+
+    def bind_current_facts(self, read):
+        """Borrow a source-qualified publication pin for this builder only.
+
+        The HTTP route must not fabricate coverage from a discovery watermark.
+        An absent/expired/unqualified capability leaves every native SQL path
+        unchanged. Non-default filters retain their existing exact compiler.
+        """
+        from tracer.services.derived_metrics.base_list_current import CurrentFactsRead
+
+        if read is not None and not isinstance(read, CurrentFactsRead):
+            raise TypeError("expected a qualified current-fact read")
+        self._current_facts = read
+
+    def _current_facts_available(self):
+        read = getattr(self, "_current_facts", None)
+        return bool(
+            read is not None
+            and self.project_ids is None
+            and not self.user_id
+            and self._is_default_date_only_shape()
+            and read.permits(self.project_id)
+        )
+
+    def _candidate_session_ctes(self, params, **kwargs):
+        if self._current_facts_available() and not any(
+            kwargs.get(key)
+            for key in (
+                "root_filter_plans",
+                "include_trace_id",
+                "additional_root_ctes",
+                "root_membership_predicates",
+            )
+        ):
+            assert self._current_facts is not None  # _current_facts_available()
+            return self._current_facts.session_ctes(
+                self,
+                params,
+                candidate_session_ids=kwargs.get("candidate_session_ids", ()),
+            )
+        return super()._candidate_session_ctes(params, **kwargs)
+
+    def candidate_slice_narrows_root_scan(self):
+        # The qualified current relation already holds the exact full root set.
+        # Do not pay raw-source density probes or relabel it a truncated slice.
+        if self._current_facts_available():
+            return False
+        return super().candidate_slice_narrows_root_scan()
+
+    def _page_hydration_source_ctes(self, params, **native):
+        if not self._current_facts_available():
+            return super()._page_hydration_source_ctes(params, **native)
+        assert self._current_facts is not None  # _current_facts_available()
+        sql, bound = self._current_facts.rows(members=True)
+        params.update(bound)
+        time_scope = self._latest_time_scope_sql(
+            params, param_prefix="current_member_time"
+        )
+        # The manifest has already collapsed immutable physical keys. Restrict
+        # mutable session/time membership only OUTSIDE that collapse. Keep the
+        # existing trace-usage reducer and message precedence in the base builder.
+        current = f"""current_members AS (
+            SELECT *, unit_start AS latest_start_time FROM ({sql})
+            WHERE is_deleted = 0
+                AND canonical_session_id IN %(candidate_session_ids)s
+                {time_scope}
+        )"""
+        roots = f"""{current}, resolved_roots AS (
+            SELECT toUUID(canonical_session_id) AS session_id, project_id, trace_id,
+                attrs_string,
+                unit_start AS start_time, end_time, cost, total_tokens, input,
+                attributes_extra AS session_attribute_json,
+                attrs_string AS session_attribute_string,
+                attrs_number AS session_attribute_number,
+                attrs_bool AS session_attribute_bool,
+                ((attributes_extra != '{{}}' AND attributes_extra != '')
+                    OR length(mapKeys(attrs_string)) > 0
+                    OR length(mapKeys(attrs_number)) > 0
+                    OR length(mapKeys(attrs_bool)) > 0) AS has_span_attributes
+            FROM current_members
+            WHERE isNull(parent_span_id) OR parent_span_id = ''
+        )"""
+        members = f"""session_members AS (
+            SELECT toUUID(canonical_session_id) AS member_session_id,
+                project_id, observation_type, service_name, start_hour, trace_id,
+                span_id AS id, span_id AS latest_id,
+                parent_span_id AS latest_parent_span_id, name AS latest_name,
+                observation_type AS latest_observation_type,
+                ifNull(prompt_tokens, 0) AS latest_prompt_tokens,
+                ifNull(completion_tokens, 0) AS latest_completion_tokens,
+                unit_start AS latest_start_time, ifNull(cost, 0) AS latest_cost,
+                ifNull(total_tokens, 0) AS latest_total_tokens,
+                {usage_coverage_sql(attrs="attrs_string", include_summary=True)} AS latest_usage_coverage,
+                {source_summary_sql(attrs="attrs_string")} AS latest_source_summary_present,
+                (isNull(parent_span_id) OR parent_span_id = '') AS latest_is_root,
+                multiIf(
+                    latest_is_root AND lengthUTF8(input) > 0, 0,
+                    observation_type = 'llm' AND lengthUTF8(input) > 0, 1,
+                    latest_is_root, 2, 3
+                ) AS message_rank
+            FROM current_members
+            WHERE (project_id, toUUID(canonical_session_id)) IN (
+                SELECT project_id, session_id FROM hydration_member_scope
+            )
+        ),
+        {self._session_member_usage_cte(include_messages=True)}"""
+        messages = """message_inputs AS (
+            SELECT groupArray(message_key) AS message_keys,
+                groupArray(input) AS message_input_values
+            FROM (
+                SELECT tuple(project_id, observation_type, service_name,
+                    start_hour, trace_id, span_id) AS message_key, input
+                FROM current_members
+                WHERE message_key IN (
+                    SELECT arrayJoin([first_message_key, last_message_key])
+                    FROM member_rollup
+                )
+            )
+        )"""
+        return roots, members, messages
 
     def _physical_identity_fields(self) -> tuple[tuple[str, str], ...]:
         # CH25 replaces by storage hour, not the mutable microsecond timestamp.
@@ -199,7 +323,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
             if str(row.get("table") or "") != self.TABLE:
                 return None
             counted = row.get("rows")
-            if isinstance(counted, bool) or not isinstance(counted, (int, float)):
+            if isinstance(counted, bool) or not isinstance(counted, int | float):
                 return None
             estimate += max(0, int(counted))
         return estimate if counted_any else EMPTY_DENSITY_ESTIMATE

@@ -70,6 +70,11 @@ describe("Cost tab", () => {
     expect(cell("Committed").getByText("520 credits")).toBeInTheDocument();
     expect(cell("Budget").getByText("1,500 credits")).toBeInTheDocument();
     expect(screen.queryByTestId("cost-Reserved")).toBeNull();
+    expect(
+      screen.getByText(
+        "Spent includes the engine's model calls and billed evaluations on its check runs. Committed adds a worst-case hold for each check run still running.",
+      ),
+    ).toBeInTheDocument();
   });
 });
 

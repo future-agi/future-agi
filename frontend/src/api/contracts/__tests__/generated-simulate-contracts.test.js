@@ -23,7 +23,11 @@ describe.each([
   ],
 ])("generated %s sub-goal contract", (_name, schema) => {
   it.each([true, false, null])("preserves verdict %s", (passed) => {
-    const results = [{ name: "Verify the caller's PIN", passed }];
+    const name = "Verify the caller's PIN";
+    // Every result says what the results show (`display_name`) and whose check it is (`subject_kind`).
+    const results = [
+      { name, display_name: name, subject_kind: "task", passed },
+    ];
 
     expect(schema.parse(results)).toEqual(results);
   });
@@ -173,10 +177,18 @@ describe("generated drafts contract", () => {
     parent_label: "v1",
     default_label: "v1",
     changes: { added: 1, removed: 0, changed: 0 },
+    name: null,
+    candidate_state: null,
   };
 
   it("accepts a piece without a draft and an unnumbered draft", () => {
-    const body = { environment: null, suite: draft, set_aside: [] };
+    const body = {
+      environment: null,
+      suite: draft,
+      set_aside: [],
+      validation: null,
+      candidates: null,
+    };
 
     expect(SimulateApiHarnessEnvironmentsDraftsResponse.parse(body)).toEqual(
       body,

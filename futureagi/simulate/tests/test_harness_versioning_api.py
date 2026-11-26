@@ -435,6 +435,19 @@ class TestVersionsList:
             or "simulate_harness_suite_version" in query["sql"]
         ]
         assert version_selects
+        # Only the two documents the release checks read and the saved-without-check
+        # flag, never the whole column.
+        version_selects = [
+            re.sub(
+                r"\"documents\" -> '(stage_outputs|release_checks)'"
+                r"|\"documents\" ->> 'uncertified'"
+                # Whether a set-aside draft became a saved version: a key test, never the column.
+                r"|\"documents\" \? 'saved_version_id'",
+                "",
+                re.sub(r"\"simulate_harness_environment_version\"\.", "", sql),
+            )
+            for sql in version_selects
+        ]
         assert all('"documents"' not in sql for sql in version_selects)
         assert all(
             '"configuration_snapshot"' not in query["sql"]
@@ -669,8 +682,20 @@ class TestSuiteMembers:
         assert [one["number"] for one in members] == sorted(
             one["number"] for one in members
         )
-        assert set(members[0]) == {"scenario_key", "number", "name", "use_case"}
+        assert set(members[0]) == {
+            "scenario_key",
+            "number",
+            "name",
+            "use_case",
+            "issue_cluster_id",
+            "issue_project_id",
+        }
         assert members[0]["name"] == NAMES[0]
+        # No Error Feed issue drafted these scenarios.
+        assert (members[0]["issue_cluster_id"], members[0]["issue_project_id"]) == (
+            None,
+            None,
+        )
 
     def test_an_environment_version_id_is_not_a_suite(
         self, auth_client, user, workspace, storage

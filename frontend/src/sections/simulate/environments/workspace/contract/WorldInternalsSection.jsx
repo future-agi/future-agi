@@ -11,6 +11,8 @@ import {
   effectLabel,
   inputLine,
 } from "./toolsCard.constants";
+import DeclaredWorkerRows from "./DeclaredWorkerRows";
+import { WORKERS_COPY } from "./workers.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -21,13 +23,17 @@ const MONO = "ui-monospace, Menlo, monospace";
 export default function WorldInternalsSection({ env }) {
   const tables = env?.worldTables;
   const tools = env?.toolStatus || [];
+  const workers = env?.workers || [];
 
   return (
     <Stack spacing={2} sx={{ mb: 2 }}>
       {tables?.length > 0 && (
         <SchemaCard schema={tables} totalRows={env.worldTotalRows} />
       )}
-      {tools.length > 0 && <ToolsCard tools={tools} />}
+      {tools.length > 0 && (
+        <ToolsCard tools={tools} fromDraft={Boolean(env.contractFromDraft)} />
+      )}
+      {workers.length > 0 && <WorkersCard workers={workers} />}
     </Stack>
   );
 }
@@ -228,12 +234,12 @@ const STATUS_CHIP = {
   },
 };
 
-function ToolsCard({ tools }) {
+function ToolsCard({ tools, fromDraft }) {
   const [openTool, setOpenTool] = useState(null);
   return (
     <SectionCard
       title="Tools"
-      subtitle={T.subtitle}
+      subtitle={fromDraft ? `${T.subtitle} · ${T.draft}` : T.subtitle}
       action={
         <Typography
           sx={{
@@ -352,6 +358,20 @@ function ToolsCard({ tools }) {
                   </Tooltip>
                 )}
               </Stack>
+              {tool.status_reason && (
+                <Typography
+                  data-testid="tool-status-reason"
+                  sx={{
+                    typography: "s3",
+                    color: "text.subtitle",
+                    px: 1.5,
+                    pl: 5,
+                    pb: 1,
+                  }}
+                >
+                  {tool.status_reason}
+                </Typography>
+              )}
               <Collapse in={open}>
                 <ToolDetail tool={tool} />
               </Collapse>
@@ -455,6 +475,8 @@ const TOOL_SHAPE = PropTypes.shape({
   tool: PropTypes.string.isRequired,
   status: PropTypes.oneOf(["simulated", "in_process", "unsupported", "unknown"])
     .isRequired,
+  // The server's words for why a test cannot run it; null for a tool a test can run.
+  status_reason: PropTypes.string,
   reset_between_trials: PropTypes.bool,
   runs_at: PropTypes.string,
   writes: PropTypes.bool,
@@ -480,4 +502,40 @@ ToolDetail.propTypes = {
 };
 ToolsCard.propTypes = {
   tools: PropTypes.arrayOf(TOOL_SHAPE).isRequired,
+  fromDraft: PropTypes.bool,
 };
+
+function WorkersCard({ workers }) {
+  return (
+    <SectionCard
+      title={WORKERS_COPY.title}
+      subtitle={WORKERS_COPY.subtitle}
+      action={
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {WORKERS_COPY.count(workers.length)}
+        </Typography>
+      }
+    >
+      <DeclaredWorkerRows workers={workers} />
+      <Typography
+        sx={{
+          typography: "s3",
+          color: "text.subtitle",
+          px: 1.5,
+          py: 1,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        {WORKERS_COPY.footer}
+      </Typography>
+    </SectionCard>
+  );
+}
+WorkersCard.propTypes = { workers: PropTypes.array };

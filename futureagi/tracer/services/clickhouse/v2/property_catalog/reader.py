@@ -14,8 +14,10 @@ from tracer.utils.property_registry import normalize_custom_attribute_source
 
 from .codec import like_contains_pattern
 from .cursor import (
-    decode_property_catalog_cursor,
-    encode_property_catalog_cursor,
+    PROPERTY_CATALOG_CURSOR_SALT,
+    _validate_order,
+    decode_current_cursor,
+    encode_current_cursor,
     normalize_property_catalog_query,
     validate_page_size,
     validate_scope,
@@ -23,6 +25,7 @@ from .cursor import (
 from .models import PropertyCategory, PropertyDefinition, PropertyKind, PropertyRole
 from .runtime_limits import RUNTIME_LIMITS
 from .source_adapters import (
+    _METRIC_CONTEXT_LEVELS,
     CurrentDefinitionSource,
     _span_attribute_aggregations,
     definition_metric,
@@ -136,14 +139,22 @@ class PropertyCatalogReader:
         scope = self._validate_scope(scope)
         query = self._validate_query(query)
         validate_page_size(page_size)
-        cursor = (
-            decode_property_catalog_cursor(
-                cursor_token, scope=scope, query=query, page_size=page_size
+        # Use the shared signed-keyset primitives with the complete normalized
+        # query. The older inventory normalizer intentionally knows nothing of
+        # metric context/level; dropping either would permit cross-grain replay.
+        after = (
+            _validate_order(
+                decode_current_cursor(
+                    token=cursor_token,
+                    salt=PROPERTY_CATALOG_CURSOR_SALT,
+                    scope=scope,
+                    query=query,
+                    page_size=page_size,
+                )
             )
             if cursor_token
             else None
         )
-        after = cursor.order if cursor else None
         try:
             definitions = list(
                 self.definitions.read_page(
@@ -160,17 +171,18 @@ class PropertyCatalogReader:
         visible = definitions[:page_size]
         has_more = len(definitions) > page_size
         next_cursor = (
-            encode_property_catalog_cursor(
+            encode_current_cursor(
+                salt=PROPERTY_CATALOG_CURSOR_SALT,
                 scope=scope,
                 query=query,
                 page_size=page_size,
-                order=definition_order(visible[-1]),
+                order=_validate_order(definition_order(visible[-1])),
             )
             if has_more
             else None
         )
         counts = None
-        if include_counts and cursor is None:
+        if include_counts and cursor_token is None:
             try:
                 counts = self._category_counts(scope, query)
             except (PropertyCatalogUnavailable, DatabaseError, ReadDeadlineExceeded):
@@ -188,6 +200,7 @@ class PropertyCatalogReader:
     def _includes_observed_keys(scope, query):
         return (
             bool(scope["project_ids"])
+            and not query.get("level")
             and query.get("category") in {"", "custom_attribute"}
             and query.get("property_kind") in {"", "custom_attribute"}
             and source_matches(query.get("source", ""), "traces", ())
@@ -320,6 +333,15 @@ ORDER BY key_folded, attribute_key LIMIT %(limit)s
     @staticmethod
     def _validate_query(query):
         normalized = normalize_property_catalog_query(query)
+        for field, allowed in (
+            ("context", _METRIC_CONTEXT_LEVELS),
+            ("level", {"conversation", "span", "trace", "user"}),
+        ):
+            value = str(query.get(field) or "").strip()
+            if value:
+                if value not in allowed:
+                    raise ValueError(f"invalid metric field {field}")
+                normalized[field] = value
         if normalized["source"] and (
             normalized["category"] == "custom_attribute"
             or normalized["property_kind"] == "custom_attribute"

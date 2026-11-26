@@ -33,8 +33,16 @@ export function validateMockRouting(source: string, evalBackground = false): voi
   let cfg;
   try { cfg = doc.toJS({ maxAliasCount: 0 }); }
   catch { throw new Error('STOP: managed mock aliased gateway YAML'); }
-  requireSafe(cfg && same(Object.keys(cfg).sort(), ['guardrails', 'logging', 'providers', 'server']),
+  requireSafe(cfg && same(Object.keys(cfg).sort(), ['cache', 'guardrails', 'logging', 'providers', 'server']),
     'unexpected gateway sections');
+  // Both Distributed and Standalone mount gateway.e2e.yaml. Admit only its local
+  // exact-cache fixture (GW-E2E-007), never Redis, semantic providers or edge routes.
+  const cache = cfg.cache ?? {};
+  requireSafe(same(Object.keys(cache).sort(), ['backend', 'default_ttl', 'edge', 'enabled', 'max_entries', 'semantic']) &&
+    cache.enabled === true && cache.backend === 'memory' && cache.default_ttl === '30m' && cache.max_entries === 10000 &&
+    same(Object.keys(cache.semantic ?? {}), ['enabled']) && cache.semantic.enabled === false &&
+    same(Object.keys(cache.edge ?? {}), ['enabled']) && cache.edge.enabled === false,
+  'unexpected cache configuration');
   // The engine switch lets org-configured checks run (GW-E2E-004). Static rules and
   // streaming checks are refused: a rule names its own upstream, outside the mock.
   const guardrails = cfg.guardrails ?? {};

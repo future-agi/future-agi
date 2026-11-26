@@ -41,7 +41,11 @@ const args = process.argv.slice(2);
 const record = value => fs.appendFileSync(process.env.CALL_LOG, JSON.stringify(value) + '\\n');
 `;
   await writeFile(path.join(dir, 'docker'), `${prelude}
-if (args.includes('exec')) {
+if (args.includes('exec') && args.some(arg => arg.includes('tracer.services.clickhouse.v2.apply_schema'))) {
+  record({ kind: 'metrics', args, stdin: fs.readFileSync(0, 'utf8') });
+  if (process.env.FAIL_AT === 'metrics') process.exit(45);
+  console.log('metrics schema applied');
+} else if (args.includes('exec')) {
   record({ kind: 'sql', args, stdin: fs.readFileSync(0, 'utf8') });
   if (process.env.FAIL_AT === 'sql') process.exit(42);
   console.log('fixture bootstrap completed');
@@ -77,7 +81,7 @@ if (process.env.FAIL_AT === kind) process.exit(44);
 test('standalone up streams the guarded bootstrap once, after health/schema and before ready', async t => {
   const result = await runUp(t);
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.calls.map(call => call.kind), ['up', 'backend', 'spans', 'indexes', 'sql', 'frontend']);
+  assert.deepEqual(result.calls.map(call => call.kind), ['up', 'backend', 'spans', 'indexes', 'sql', 'metrics', 'frontend']);
   const up = result.calls[0];
   assert.deepEqual(up.args.slice(up.args.indexOf('up')), ['up', '-d', '--wait', '--wait-timeout', '1200',
     'app', 'postgres', 'clickhouse', 'mock-llm', 'mock-google', 'code-executor', 'link-canary', 'link-worker-canary']);
@@ -86,7 +90,20 @@ test('standalone up streams the guarded bootstrap once, after health/schema and 
   assert.deepEqual(sql.args.slice(sql.args.indexOf('exec')), ['exec', '-T', '-w', '/app/backend',
     '-e', 'FUTURE_AGI_E2E_FIXTURE=sql-workbench', 'app', 'python', '-']);
   assert.equal(sql.stdin, await readFile(bootstrapPath, 'utf8'));
-  assert.match(result.stdout, /fixture bootstrap completed[\s\S]*E2E stack ready:/);
+  assert.match(result.stdout, /fixture bootstrap completed[\s\S]*metrics schema applied[\s\S]*E2E stack ready:/);
+  // The Metrics ClickHouse schema: the packaged runner in the app container, the
+  // app's own connection settings, no password in argv (metrics-schema-bootstrap.test.mjs
+  // pins the file list against the Distributed job).
+  const metrics = result.calls.find(call => call.kind === 'metrics');
+  assert.deepEqual(metrics.args.slice(0, metrics.args.indexOf('exec')), up.args.slice(0, up.args.indexOf('up')));
+  const exec = metrics.args.slice(metrics.args.indexOf('exec'));
+  assert.deepEqual(exec.slice(0, 13), ['exec', '-T', '-w', '/app/backend', '-e', 'FI_MIGRATION_USER=e2e-metrics-schema-bootstrap',
+    '-e', 'FUTURE_AGI_TELEMETRY_DISABLED=true', '-e', 'FUTURE_AGI_TELEMETRY_URL=http://127.0.0.1:9', 'app', 'sh', '-c']);
+  assert.match(exec[13], /^exec python -m tracer\.services\.clickhouse\.v2\.apply_schema --ch-host="\$CH_HOST"/);
+  assert.equal(exec[14], 'metrics-schema');
+  assert.deepEqual([exec[15], exec.at(-1)], ['009_per_eval_rollup.sql', '038_metric_snapshot_sketches.sql']);
+  assert.ok(!exec.some(arg => /--ch-password|--force/.test(arg)));
+  assert.equal(metrics.stdin, '');
 });
 
 for (const [failure, status, expectedCalls] of [
@@ -94,6 +111,7 @@ for (const [failure, status, expectedCalls] of [
   ['spans', 1, ['up', 'backend', 'spans']],
   ['indexes', 1, ['up', 'backend', 'spans', 'indexes']],
   ['sql', 42, ['up', 'backend', 'spans', 'indexes', 'sql']],
+  ['metrics', 45, ['up', 'backend', 'spans', 'indexes', 'sql', 'metrics']],
 ]) {
   test(`standalone up fails closed at ${failure} without claiming readiness or retrying`, async t => {
     const result = await runUp(t, { failure });

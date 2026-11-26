@@ -25,6 +25,7 @@ from django.db.models import (
     QuerySet,
     Subquery,
     Sum,
+    UUIDField,
     Value,
     When,
 )
@@ -33,6 +34,7 @@ from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
+    AgentFixIssueJob,
     AgentFixRun,
     AgentVersion,
     CallExecution,
@@ -93,18 +95,23 @@ from simulate.services.hosted_harness import (
     HostedHarnessError,
     run_max_duration_seconds,
 )
-from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
+from simulate.services.hosted_harness_ingestion import (
+    SUB_GOAL_PASSED,
+    graded_call_receipt,
+    sub_goal_result,
+)
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
     judge_stored_eval,
     live_eval_specs,
 )
-from simulate.services.run_traces_v3 import CallUsage, run_usage
+from simulate.services.run_traces_v3 import CallUsage, run_traces_source, run_usage
 from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
 )
+from simulate.types import is_worker_subject
 from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
 from tracer.services.clickhouse.client import CHError
 
@@ -317,9 +324,7 @@ def source_failures(
         .order_by("trial_index", "execution_key")
     ):
         key = execution.source_scenario.scenario_key
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if key in found or not isinstance(receipt, Mapping):
             continue
         record = _record(key, execution.trial_index, receipt, "")
@@ -369,9 +374,7 @@ def check_run_status(
     latencies = _reply_latencies(calls) if finished else {}
     records = []
     for execution in executions:
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         records.append(
@@ -448,10 +451,29 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
     )
 
 
+# What a trial failed on when no check of its did: a write the world committed twice, or another failure of the agent's.
+REPEATED_WRITE = "committed_a_write_twice"
+FAILED_BEYOND_CHECKS = "failed_beyond_its_checks"
+
+
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
-    Not applicable and inconclusive sub-goals are left out."""
-    checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
+    Not applicable and inconclusive sub-goals are left out, and a trial that ended on a failure of ours judges none."""
+    failure = (
+        receipt.get("failure") if isinstance(receipt.get("failure"), Mapping) else None
+    )
+    if (
+        receipt.get("status") == "errored"
+        and failure is not None
+        and failure.get("domain") != "agent"
+    ):
+        return {}
+    # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
+    checks = [
+        one
+        for one in receipt.get("sub_goals") or []
+        if isinstance(one, Mapping) and not is_worker_subject(one.get("subject"))
+    ]
     results = {
         str(one["name"]): sub_goal_result(dict(one))
         for one in checks
@@ -464,6 +486,19 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     }
     if (receipt.get("failure") or {}).get("domain") == "agent":
         judged = {name: held is True for name, held in judged.items()}
+    # A check never verified for this scenario is undecided: never the agent's pass, never its failure.
+    judged.update(
+        {name: None for name, result in results.items() if result == "unmeasured"}
+    )
+    # A trial graded failed with no check failing failed beyond its checks: the world committed a write twice.
+    found = receipt.get("call")
+    call: Mapping[str, Any] = found if isinstance(found, Mapping) else {}
+    if (
+        call.get("duplicate_commits") or receipt.get("status") == "failed"
+    ) and False not in judged.values():
+        judged[
+            REPEATED_WRITE if call.get("duplicate_commits") else FAILED_BEYOND_CHECKS
+        ] = False
     return {
         name: held if isinstance(held, bool) else None for name, held in judged.items()
     }
@@ -522,6 +557,15 @@ def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
     if execution is None:
         return {}
     return run_usage(execution) or {}
+
+
+def measured_automatically(run: HostedHarnessJob) -> bool:
+    """Whether only the sandbox's own measuring could see the run's model calls: its agent
+    names no tracing, so any span carries the model, tokens and timing, never a prompt or
+    a reply."""
+    execution = run.test_execution
+    source = run_traces_source(execution) if execution is not None else None
+    return source is not None and source.measured_automatically
 
 
 def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
@@ -733,9 +777,7 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
                 failing_sub_goals=[],
             ),
         )
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         for name, held in judged_sub_goals(receipt).items():
@@ -778,7 +820,9 @@ def worst_case_usd_per_execution(fix_run: AgentFixRun, *, graded: bool) -> Decim
     return _worst_case(evals)
 
 
-def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
+def with_spend(
+    runs: QuerySet[AgentFixRun], *, eval_count: int | None = None
+) -> QuerySet[AgentFixRun]:
     """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls,
     every check run's sealed usage and what its evals billed. ``committed_usd`` is what the
     fix's limit is held against: a check run not settled yet (usage not sealed, or evals
@@ -786,7 +830,11 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     winner's grading may read still holds its evals' worst case while the fix goes on.
 
     A retry reads again the runs the failed fix finished, and grades them: their evals count
-    for the retry (``graded_for``), never for the failed fix that paid their simulation."""
+    for the retry (``graded_for``), never for the failed fix that paid their simulation.
+
+    ``eval_count`` replaces the environment's live count of billed evals in the holds: a
+    winner's grading passes 0 to read what is held without them, and prices the evals it
+    queues itself."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
     actual = ExpressionWrapper(
@@ -801,14 +849,18 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         ),
         output_field=money,
     )
-    evals = Coalesce(
-        Subquery(
-            runnable_eval_configs(OuterRef("environment__run_test_id"))
-            .values("run_test_id")
-            .annotate(total=Count("id"))
-            .values("total")
-        ),
-        0,
+    evals: Any = (
+        eval_count
+        if eval_count is not None
+        else Coalesce(
+            Subquery(
+                runnable_eval_configs(OuterRef("environment__run_test_id"))
+                .values("run_test_id")
+                .annotate(total=Count("id"))
+                .values("total")
+            ),
+            0,
+        )
     )
     graded = Q(check_runs__fix_label__regex=_BASELINE_LABEL.pattern) | Q(
         check_runs__fix_label__regex=_FINALIST_LABEL.pattern
@@ -902,12 +954,15 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
-def committed_usd(fix_run: AgentFixRun) -> Decimal:
+def committed_usd(fix_run: AgentFixRun, *, eval_count: int | None = None) -> Decimal:
     """What the fix's limit is held against: its spend, and a worst case for each check run
-    whose usage is not sealed yet."""
+    whose usage is not sealed yet. ``eval_count`` is ``with_spend``'s."""
     # committed_usd is with_spend's annotation, which the Django plugin cannot see.
     committed: Decimal = (
-        with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))  # type: ignore[misc]
+        with_spend(  # type: ignore[misc]
+            AgentFixRun.no_workspace_objects.filter(id=fix_run.id),
+            eval_count=eval_count,
+        )
         .values_list("committed_usd", flat=True)
         .get()
     )
@@ -975,8 +1030,14 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         .annotate(
             number=Subquery(number),
             source_run_number=run_number("source_run__"),
-            retried=Exists(
-                AgentFixRun.no_workspace_objects.filter(retried_from=OuterRef("pk"))
+            retry_taken=Exists(
+                retries_taking_the_retry(
+                    Coalesce(
+                        OuterRef("retried_from_id"),
+                        OuterRef("pk"),
+                        output_field=UUIDField(),
+                    )
+                )
             ),
         )
         .select_related(
@@ -1005,10 +1066,17 @@ def held_back_cases(fix_run: AgentFixRun) -> int:
     )
 
 
-def limited_validation(fix_run: AgentFixRun) -> bool:
-    """Whether too few cases were held back to call this fix verified, however it scored:
-    they must come from HELD_BACK_VERIFIED_MIN different cases of the run."""
+def too_few_held_back(fix_run: AgentFixRun) -> bool:
+    """Whether too few cases were held back to call this fix verified, however it scored,
+    none included: they must come from HELD_BACK_VERIFIED_MIN different cases of the run.
+    Its pull request opens as a draft."""
     return held_back_cases(fix_run) < HELD_BACK_VERIFIED_MIN
+
+
+def limited_validation(fix_run: AgentFixRun) -> bool:
+    """Whether some cases were held back, but too few to call this fix verified. A fix with
+    none held back is proven on the targets only instead."""
+    return held_back_cases(fix_run) > 0 and too_few_held_back(fix_run)
 
 
 # The tiers the engine's final check records for a finalist, in order.
@@ -1107,13 +1175,33 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     return list(regressions)
 
 
+def retries_taking_the_retry(original_id: Any) -> QuerySet[AgentFixRun]:
+    """The retries of a failed fix that took its one retry: each that started, or still
+    waits to start. One that ended before it started (it could not be scheduled, or waited
+    too long for a slot) spent nothing, so the retry stays free."""
+    return AgentFixRun.no_workspace_objects.filter(
+        Q(started_at__isnull=False) | Q(state__in=AgentFixRun.ACTIVE_STATES),
+        retried_from_id=original_id,
+    )
+
+
+def was_the_retry(fix_run: AgentFixRun) -> bool:
+    """A retry that started, so it took its failed fix's one retry."""
+    return fix_run.retried_from_id is not None and fix_run.started_at is not None
+
+
 def is_retryable(fix_run: AgentFixRun) -> bool:
-    """A failed fix not started again yet. Whatever failed it, the user may try once more;
-    a fix that came through fix_runs_for_read answers without a query."""
-    if fix_run.state != AgentFixRun.State.FAILED:
+    """Whether Retry starts this failed fix again, or the one it retried when it never
+    started. Whatever failed it, the user may try once more, and only once: a retry that
+    started and fails is not retried again. A fix that came through fix_runs_for_read
+    answers without a query."""
+    if fix_run.state != AgentFixRun.State.FAILED or was_the_retry(fix_run):
         return False
-    retried = getattr(fix_run, "retried", None)
-    return not (fix_run.retries.exists() if retried is None else retried)
+    taken = getattr(fix_run, "retry_taken", None)
+    if taken is None:
+        original_id = fix_run.retried_from_id or fix_run.id
+        taken = retries_taking_the_retry(original_id).exists()
+    return not taken
 
 
 def fix_lineage(fix_run: AgentFixRun) -> list[Any]:
@@ -1372,6 +1460,23 @@ def launch_blocker(
             " finish.",
             status_code=409,
         )
+    # An issue's baseline holds the environment for the epoch launched from it.
+    if (
+        AgentFixIssueJob.no_workspace_objects.filter(
+            environment=source_run.environment,
+            baseline_run__isnull=False,
+            fix_run__isnull=True,
+            ending__isnull=True,
+        )
+        .exclude(baseline_run=source_run)
+        .exists()
+    ):
+        return HostedHarnessError(
+            "issue_epoch_measuring",
+            "An epoch from an Error Feed issue is starting in this environment. Wait"
+            " for it, or open it.",
+            status_code=409,
+        )
     if usage:
         decision = check_harness_action(str(source_run.organization_id), "agent_fix")
         if not decision["allowed"]:
@@ -1427,8 +1532,6 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     launch_blocker; None when nothing would. The environment's builder writes them in its
     chat's workspace, which holds any unsaved scenario or setup changes, so those must be
     saved or discarded first: the variations are written from the run's cases only."""
-    from simulate.services.harness_versioning import drafts
-
     environment = source_run.environment
     if environment is None:
         return HostedHarnessError(
@@ -1450,6 +1553,18 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     moved = variations_source_moved(environment, source_run)
     if moved is not None:
         return moved
+    return environment_variations_blocker(environment)
+
+
+def environment_variations_blocker(
+    environment: HostedHarnessJob,
+) -> HostedHarnessError | None:
+    """What of the environment itself would stop its builder writing variations: its
+    chat's saved files are gone, a rebuild is pending, or unsaved changes are open.
+    A launch that writes variations asks it (variations_blocker), and so does Run
+    Epoch from an issue before its baseline is paid for."""
+    from simulate.services.harness_versioning import drafts
+
     if HostedHarnessConversation.no_workspace_objects.filter(
         job=environment, state=HostedHarnessConversation.State.RETIRED
     ).exists():
@@ -1491,6 +1606,23 @@ def variations_source_moved(
         " written from the cases as they ran.",
         status_code=409,
     )
+
+
+def launch_surfaces(offered: Iterable[Surface]) -> list[LaunchSurface]:
+    """Each part of an agent the launch form names, and whether an epoch may change it
+    on this kind of agent."""
+    allowed = set(offered)
+    return [
+        LaunchSurface(
+            id=surface,
+            label=label,
+            allowed=surface in allowed,
+            reason=None
+            if surface in allowed
+            else f"Epoch can't change the {label.lower()} of this kind of agent.",
+        )
+        for surface, label in SURFACE_LABELS.items()
+    ]
 
 
 def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
@@ -1574,17 +1706,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             ],
             protected_scenario_keys=[one.key for one in scenarios if one.passed],
         ),
-        surfaces=[
-            LaunchSurface(
-                id=surface,
-                label=label,
-                allowed=surface in offered,
-                reason=None
-                if surface in offered
-                else f"Epoch can't change the {label.lower()} of this kind of agent.",
-            )
-            for surface, label in SURFACE_LABELS.items()
-        ],
+        surfaces=launch_surfaces(offered),
         defaults=LaunchDefaults(
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,

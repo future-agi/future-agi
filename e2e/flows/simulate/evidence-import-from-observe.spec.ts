@@ -20,7 +20,13 @@ const UI_READY = 60_000;
 // Bulk action and copy, pinned from
 // frontend/src/sections/simulate/environments/evidence/evidence.constants.js.
 const ACTION = 'Create environment test';
-const NOT_EXACT_REPLAY = /the test is not an exact replay/;
+// EVIDENCE_COPY.startingState: the review's one Starting state alert for Observe evidence.
+const STARTING_STATE = "Observe doesn't hold the seed records the tools read first (an earlier refund). "
+  + 'The draft marks them synthetic: the test is not an exact replay.';
+// The bundle's starting-state reason for Observe evidence, pinned from
+// simulate/selectors/evidence_import.py (STATE_MISSING).
+const STATE_MISSING = "Observe doesn't record the seed records the agent's tools read before the "
+  + 'conversation. The draft labels what it assumes synthetic; add the real records to the scenario after drafting.';
 // The import routes, pinned from simulate/views/harness_environment.py
 // (`evidence-imports/` and `evidence-imports/{import_id}/`).
 const imports = (env: string) => `/simulate/api/harness-environments/${env}/evidence-imports/`;
@@ -29,7 +35,7 @@ interface Bundle {
   id: string;
   cases: { id: string; source_id: string; status: string;
     transcript: { status: string; turns: { role: string; text: string }[] };
-    starting_state: { status: string } }[];
+    starting_state: { status: string; reason: string } }[];
   redaction: { method: string; reason: string; total: number;
     findings: { case_id: string; part: string; entity: string }[] };
 }
@@ -56,8 +62,8 @@ test(
         'the Actions menu is exactly "Add to annotation queue" and "Create environment test": no Replay for an environment-only org',
         'from the Actions click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, and no request names replay',
         'simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions',
-        "the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding",
-        'the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay',
+        "the import's bundle re-reads Observe: each case's transcript holds its minted ask, redaction reports the minted email as an EMAIL_ADDRESS finding, and each case's starting state is missing, with the reason that the draft labels what it assumes synthetic",
+        'the review shows both cases waiting, the transcript present, the starting state missing, and one Starting state alert saying Observe lacks the seed records (an earlier refund), the draft marks them synthetic and the test is not an exact replay; it never claims an exact replay',
       ],
     }),
   },
@@ -174,6 +180,9 @@ test(
     expect(emailCase).toBeDefined();
     expect(again.redaction.findings.filter((f) => f.case_id === emailCase!.id && f.part === 'transcript')
       .map((f) => f.entity)).toContain('EMAIL_ADDRESS');
+    // Observe never records the seed records a tool reads first (EV-1): every case says so.
+    expect(again.cases.map((c) => c.starting_state))
+      .toEqual(again.cases.map(() => ({ status: 'missing', reason: STATE_MISSING })));
 
     await test.step('read the review', async () => {
       // Check 6.
@@ -186,7 +195,11 @@ test(
         await expect(card).toContainText('Has: Transcript');
         await expect(card).toContainText(/Missing: .*Starting state/);
       }
-      await expect(review).toContainText(NOT_EXACT_REPLAY);
+      // EvidenceReviewDrawer.jsx: the Starting state section's only alert.
+      await expect(review.getByRole('alert').filter({ hasText: 'seed records' })).toHaveText([STARTING_STATE], { timeout: UI_READY });
+      // Every "exact replay" the review says is "not an exact replay": it never claims one.
+      const said = await review.innerText();
+      expect(said.match(/exact replay/g)?.length).toBe(said.match(/not an exact replay/g)?.length);
     });
   },
 );

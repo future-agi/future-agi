@@ -117,13 +117,37 @@ afterEach(() => {
 
 describe("opt-in query read transport", () => {
   it("declares the enabled POST reads, not a generic POST-to-list rule", () => {
-    // 15 Observe and catalog reads, plus Instant eval's rows and export,
-    // whose selections can outgrow a URL.
+    // Explicit read_post=True declarations in tracer/views/{trace,
+    // observation_span, trace_session, dashboard, instant_eval_scale,
+    // derived_metric}.py, routed by tracer/urls.py. This is a transport
+    // inventory, not functional acceptance of the unavailable unit-values handler.
     expect(
-      Object.values(OPENAPI_CONTRACT.endpoints).filter(
-        (op) => op.post?.readQueryPost,
-      ),
-    ).toHaveLength(17);
+      Object.entries(OPENAPI_CONTRACT.endpoints)
+        .filter(([, op]) => op.post?.readQueryPost)
+        .map(([path]) => path)
+        .sort(),
+    ).toEqual(
+      [
+        "/tracer/dashboard/filter_values/",
+        "/tracer/dashboard/metrics/",
+        "/tracer/derived-metrics/{id}/unit-values/",
+        "/tracer/instant-eval/export/",
+        "/tracer/instant-eval/rows/",
+        "/tracer/observation-span/get_trace_id_by_index_spans_as_base/",
+        "/tracer/observation-span/get_trace_id_by_index_spans_as_observe/",
+        "/tracer/observation-span/list_spans/",
+        "/tracer/observation-span/list_spans_observe/",
+        "/tracer/trace-session/list_sessions/",
+        "/tracer/trace-session/{id}/query/",
+        "/tracer/trace/agent_graph/",
+        "/tracer/trace/get_trace_id_by_index/",
+        "/tracer/trace/get_trace_id_by_index_observe/",
+        "/tracer/trace/list_traces/",
+        "/tracer/trace/list_traces_of_session/",
+        "/tracer/trace/list_voice_calls/",
+        "/tracer/users/",
+      ].sort(),
+    );
     expect(readQuery).toBeTypeOf("function");
   });
   it.each(["metrics", "filter_values"])(
@@ -379,11 +403,14 @@ describe("opt-in query read transport", () => {
     );
     expect(adapter).not.toHaveBeenCalled();
   });
-  it("does not use model-create POST for an unmarked read", async () => {
-    await readQuery("/tracer/trace/", { params: { project_id: pid } });
-    expect(adapter.mock.calls.at(-1)[0].method).toBe("get");
-    expect(adapter.mock.calls.at(-1)[0].params).toEqual({ project_id: pid });
-  });
+  it.each(["/tracer/trace/", "/tracer/derived-metrics/"])(
+    "does not use model-create POST for an unmarked read on %s",
+    async (url) => {
+      await readQuery(url, { params: { project_id: pid } });
+      expect(adapter.mock.calls.at(-1)[0].method).toBe("get");
+      expect(adapter.mock.calls.at(-1)[0].params).toEqual({ project_id: pid });
+    },
+  );
   it("keeps direct GET backward compatible", async () => {
     await client.get("/tracer/users/", {
       params: { project_id: pid, filters },

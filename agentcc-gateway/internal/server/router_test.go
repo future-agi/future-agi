@@ -420,3 +420,35 @@ func BenchmarkRouterNotFound(b *testing.B) {
 		rt.ServeHTTP(w, req)
 	}
 }
+
+func TestRouterModelDetailRemainder(t *testing.T) {
+	rt := NewRouter()
+	rt.Handle("GET", "/v1/models/{model...}", func(w http.ResponseWriter, r *http.Request) {
+		if id := r.URL.Query().Get("model"); id != "vendor/item" && id != "vendor/trailing/" {
+			http.NotFound(w, r)
+		}
+	})
+	rt.Handle("GET", "/v1/files/{id}", dummyHandler("file"))
+	for _, tc := range []struct {
+		method, path string
+		status       int
+		served       bool
+	}{
+		{"GET", "/v1/models/vendor/item", 200, true},
+		{"GET", "/v1/models/vendor%2Fitem", 200, true},
+		{"GET", "/v1/models/vendor/item/", 404, true},
+		{"GET", "/v1/models/vendor/item%2F", 404, true},
+		{"GET", "/v1/models/vendor/trailing/", 200, true},
+		{"GET", "/v1/models/vendor/trailing%2F", 200, true},
+		{"POST", "/v1/models/vendor/item", 405, true},
+		{"GET", "/v1/models/vendor/unknown", 404, true},
+		{"GET", "/v1/files/vendor/item", 404, false},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		w := httptest.NewRecorder()
+		rt.ServeHTTP(w, r)
+		if w.Code != tc.status || rt.ServesPath(r.URL.Path) != tc.served {
+			t.Errorf("%s %s: status %d served %t, want %d %t", tc.method, tc.path, w.Code, rt.ServesPath(r.URL.Path), tc.status, tc.served)
+		}
+	}
+}

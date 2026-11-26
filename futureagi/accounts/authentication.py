@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import ipaddress
 import json
 import re
 import time
@@ -37,9 +38,11 @@ from accounts.models.auth_token import (
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
+from accounts.services.default_workspace import get_or_create_default_workspace
 from accounts.services.workspace_membership import create_workspace_membership
-from tfc.constants.roles import OrganizationRoles
+from tfc.constants.levels import Level
 from tfc.ee_gating import is_oss
+from tfc.permissions.utils import VIEWER_READ_ONLY_CODE, viewer_denied_message
 from tfc.utils.api_errors import (
     ApiErrorCode,
     build_error_envelope,
@@ -113,6 +116,105 @@ def workspace_read_only(view_cls):
     """
     view_cls.workspace_write_exempt = True
     return view_cls
+
+
+class ViewerReadOnly(PermissionDenied):
+    default_code = VIEWER_READ_ONLY_CODE
+
+    def __init__(self, action=None):
+        self.action = action
+        super().__init__(viewer_denied_message(action), code=VIEWER_READ_ONLY_CODE)
+
+
+WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
+_VIEWER_REASON_PREFIX = "/simulate/"
+
+# These paths are excluded from workspace write checks because they:
+# - Don't modify workspace data (switch operations, profile updates)
+# - Or need to be accessible regardless of workspace role
+WORKSPACE_WRITE_EXEMPT_PATHS = (
+    "/accounts/workspace/switch/",
+    "/accounts/organizations/switch/",
+    "/accounts/update-user-full-name/",  # Users can always update their own profile
+    "/accounts/onboarding/",  # Users can always update their own onboarding profile
+    "/accounts/logout/",  # Users can always invalidate their own access token
+    "/accounts/2fa/",  # Users can always manage their own second factor state
+    "/accounts/passkey/",  # Users can always manage their own passkey challenges
+    "/accounts/passkeys/",  # Users can always manage their own passkey records
+)
+_WRITE_METHODS = ("post", "put", "patch", "delete")
+NO_ORGANIZATION_WRITE_DENIED = "You're not a member of any organization."
+NO_ORGANIZATION_WRITE_PATHS = (
+    "/accounts/organizations/create/",
+    "/accounts/organizations/new/",
+)
+NO_ORGANIZATION_READ_PREFIX = "/accounts/"
+
+
+def _is_workspace_write(request) -> bool:
+    if (getattr(request, "method", "") or "").lower() not in _WRITE_METHODS:
+        return False
+    return not (
+        _is_workspace_write_exempt_view(request)
+        or request.path.startswith(WORKSPACE_WRITE_EXEMPT_PATHS)
+        or _is_annotation_queue_role_scoped_write_path(request.path)
+    )
+
+
+def _with_viewer_refusal(schema):
+    from tfc.utils.api_serializers import ViewerReadOnlyErrorSerializer
+
+    return {
+        **schema,
+        "responses": {
+            403: ViewerReadOnlyErrorSerializer,
+            **schema.get("responses", {}),
+        },
+    }
+
+
+def viewer_denied(action):
+    def mark(handler):
+        handler._viewer_denied_action = action
+        schema = getattr(handler, "_swagger_auto_schema", None) or {}
+        methods = [method for method in _WRITE_METHODS if method in schema]
+        if methods:
+            handler._swagger_auto_schema = {
+                **schema,
+                **{method: _with_viewer_refusal(schema[method]) for method in methods},
+            }
+        else:
+            handler._swagger_auto_schema = _with_viewer_refusal(schema)
+        return handler
+
+    return mark
+
+
+def workspace_write_denied(request) -> PermissionDenied:
+    """The refusal of a write the user's role doesn't allow: simulation routes say
+    what a Viewer tried; every other route keeps its original response."""
+    if request.path.startswith(_VIEWER_REASON_PREFIX):
+        return ViewerReadOnly(_viewer_denied_action(request))
+    return PermissionDenied(WORKSPACE_WRITE_DENIED)
+
+
+def _viewer_denied_action(request):
+    view_cls = _resolve_view_class(request)
+    if view_cls is None:
+        return None
+    callback = request.resolver_match.func
+    method = (getattr(request, "method", "") or "").lower()
+    if hasattr(callback, "actions"):
+        actions = callback.actions if isinstance(callback.actions, dict) else {}
+        handler_name = actions.get(method)
+    else:
+        handler_name = method
+    if not isinstance(handler_name, str):
+        return None
+    action = getattr(
+        getattr(view_cls, handler_name, None), "_viewer_denied_action", None
+    )
+    return action if isinstance(action, str) else None
 
 
 def _resolve_view_class(request):
@@ -316,9 +418,33 @@ class APIKeyAuthentication(BaseAuthentication):
         organization = self._resolve_organization(request, user)
 
         if not organization:
+            if not request.path.startswith(NO_ORGANIZATION_READ_PREFIX) or (
+                _is_workspace_write(request)
+                and not request.path.startswith(NO_ORGANIZATION_WRITE_PATHS)
+            ):
+                logger.info(
+                    "access_denied",
+                    reason="no_organization",
+                    user_id=str(user.id),
+                    path=request.path,
+                    method=request.method,
+                )
+                raise PermissionDenied(NO_ORGANIZATION_WRITE_DENIED)
             request.workspace = None
             request.organization = None
             return
+
+        org_level = user.get_membership_level(organization)
+        if org_level is None:
+            logger.warning(
+                "access_denied",
+                reason="not_an_organization_member",
+                user_id=str(user.id),
+                organization_id=str(organization.id),
+                path=request.path,
+                method=request.method,
+            )
+            raise PermissionDenied("You're not a member of this organization.")
 
         # --- Step 2: Resolve workspace within that org ---
         workspace = self._get_requested_workspace(request, user, organization)
@@ -333,34 +459,25 @@ class APIKeyAuthentication(BaseAuthentication):
         if workspace and not self._user_has_workspace_access(user, workspace):
             raise PermissionDenied("Access denied to this workspace")
 
-        # Check write permissions for write operations
-        # These paths are excluded from workspace write checks because they:
-        # - Don't modify workspace data (switch operations, profile updates)
-        # - Or need to be accessible regardless of workspace role
-        excluded_paths = [
-            "workspace/switch/",
-            "organizations/switch/",
-            "update-user-full-name",  # Users can always update their own profile
-            "onboarding/",  # Users can always update their own onboarding profile
-            "logout/",  # Users can always invalidate their own access token
-            "2fa/",  # Users can always manage their own second factor state
-            "passkey/",  # Users can always manage their own passkey challenges
-            "passkeys/",  # Users can always manage their own passkey records
-        ]
-
-        should_skip_write_check = (
-            _is_workspace_write_exempt_view(request)
-            or any(excluded_path in request.path for excluded_path in excluded_paths)
-            or _is_annotation_queue_role_scoped_write_path(request.path)
-        )
-
-        if (
-            request.method in ["POST", "PUT", "PATCH", "DELETE"]
-            and workspace
-            and not should_skip_write_check
-        ):
-            if not self._can_write_to_workspace(user, workspace):
-                raise PermissionDenied("Write access denied to this workspace")
+        if _is_workspace_write(request):
+            if workspace is None:
+                can_write = org_level >= Level.ADMIN
+            else:
+                can_write = self._can_write_to_workspace(user, workspace)
+            if not can_write:
+                logger.info(
+                    "access_denied",
+                    reason="read_only" if workspace else "no_workspace",
+                    user_id=str(user.id),
+                    organization_id=str(organization.id),
+                    path=request.path,
+                    method=request.method,
+                )
+                if workspace is None and org_level >= Level.MEMBER:
+                    raise PermissionDenied(
+                        "Ask an admin to add you to a workspace before making changes."
+                    )
+                raise workspace_write_denied(request)
 
         # Per-request attributes (safe, no race condition)
         request.workspace = workspace
@@ -646,41 +763,22 @@ class APIKeyAuthentication(BaseAuthentication):
         """Get or create the default workspace for an organization.
 
         Also ensures the user has a WorkspaceMembership for the workspace,
-        creating one (as workspace_admin) if missing.  Without a membership
-        the next request's ``_user_has_workspace_access`` check would fail.
+        creating one at the role their organization level grants if missing.
+        Without a membership the next request's ``_user_has_workspace_access``
+        check would fail.
         """
+        org_level = user.get_membership_level(organization)
+        if org_level is None:
+            return None
         try:
-            default_workspace = Workspace.objects.get(
-                organization=organization, is_default=True, is_active=True
+            # A concurrent first login may create it between our read and
+            # insert; the helper then returns that workspace instead.
+            default_workspace, _created = get_or_create_default_workspace(
+                organization, created_by=user
             )
-        except Workspace.DoesNotExist:
-            try:
-                default_workspace = Workspace.objects.create(
-                    name="Default Workspace",
-                    organization=organization,
-                    is_default=True,
-                    is_active=True,
-                    created_by=user,
-                )
-            except IntegrityError as e:
-                if "unique_default_workspace_per_org" in str(e):
-                    try:
-                        default_workspace = Workspace.objects.get(
-                            organization=organization,
-                            is_default=True,
-                            is_active=True,
-                        )
-                    except Workspace.DoesNotExist:
-                        logger.error(
-                            f"Failed to get default workspace after creation conflict: {e}"
-                        )
-                        return None
-                else:
-                    logger.error(f"Failed to create default workspace: {e}")
-                    return None
-            except Exception as e:
-                logger.error(f"Failed to create default workspace: {e}")
-                return None
+        except Exception as e:  # noqa: BLE001 - auth falls back to no workspace
+            logger.error(f"Failed to create default workspace: {e}")
+            return None
 
         # Ensure the user has a workspace membership so that subsequent
         # _user_has_workspace_access checks pass.
@@ -691,7 +789,7 @@ class APIKeyAuthentication(BaseAuthentication):
                 create_workspace_membership(
                     workspace=default_workspace,
                     user=user,
-                    role=OrganizationRoles.WORKSPACE_ADMIN,
+                    role=Level.to_ws_role(Level.get_default_ws_level(org_level)),
                     invited_by=user,
                 )
             except IntegrityError:
@@ -789,62 +887,75 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         return user, None
 
 
+# Private IPv4 ranges treated as non-routable by get_client_ip.
+_PRIVATE_IPV4_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+
+
+def _parse_client_ip(value):
+    """
+    Return ``(host, address)`` for an address-like header value, or None.
+
+    Accepts a bare IPv4/IPv6 address, ``[ipv6]`` or ``[ipv6]:port``, and
+    ``ipv4:port``. ``host`` is the address text as sent (without brackets
+    or port), so valid values keep the exact string used before.
+    """
+    if not isinstance(value, str):
+        return None
+    host = value.strip()
+    candidates = [host]
+    if host.startswith("["):
+        closing = host.find("]")
+        if closing != -1:
+            candidates.append(host[1:closing])
+    elif host.count(":") == 1:
+        candidates.append(host.split(":", 1)[0])
+    for candidate in candidates:
+        try:
+            return candidate, ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+    return None
+
+
 def get_client_ip(request):
     """
     Get client IP address from request object.
     Returns tuple of (ip_address, is_routable).
+
+    The first valid X-Forwarded-For entry is used, as before. Entries that
+    are not IP addresses are skipped; if none is valid, REMOTE_ADDR is
+    used. Malformed values never raise.
     """
+    parsed = None
+
     # Try to get IP from X-Forwarded-For header first
     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-
     if x_forwarded_for:
         # X-Forwarded-For header can contain multiple IPs
         # First IP is the client's, followed by proxy IPs
-        ip = x_forwarded_for.split(",")[0].strip()
-    else:
-        # If no X-Forwarded-For header, use REMOTE_ADDR
-        ip = request.META.get("REMOTE_ADDR")
-
-    # Check if IP is private/routable
-    is_routable = True
-
-    # Private IP ranges
-    private_ips = [
-        ("10.0.0.0", "10.255.255.255"),
-        ("172.16.0.0", "172.31.255.255"),
-        ("192.168.0.0", "192.168.255.255"),
-    ]
-
-    # Convert IP string to integer for range comparison
-    ip_parts = ip.split(".")
-    if len(ip_parts) == 4:
-        ip_int = (
-            (int(ip_parts[0]) << 24)
-            + (int(ip_parts[1]) << 16)
-            + (int(ip_parts[2]) << 8)
-            + int(ip_parts[3])
-        )
-
-        for start, end in private_ips:
-            start_parts = start.split(".")
-            end_parts = end.split(".")
-
-            start_int = (
-                (int(start_parts[0]) << 24)
-                + (int(start_parts[1]) << 16)
-                + (int(start_parts[2]) << 8)
-                + int(start_parts[3])
-            )
-            end_int = (
-                (int(end_parts[0]) << 24)
-                + (int(end_parts[1]) << 16)
-                + (int(end_parts[2]) << 8)
-                + int(end_parts[3])
-            )
-
-            if start_int <= ip_int <= end_int:
-                is_routable = False
+        for entry in x_forwarded_for.split(","):
+            parsed = _parse_client_ip(entry)
+            if parsed is not None:
                 break
+
+    if parsed is None:
+        # If no usable X-Forwarded-For entry, use REMOTE_ADDR
+        remote_addr = request.META.get("REMOTE_ADDR")
+        parsed = _parse_client_ip(remote_addr)
+        if parsed is None:
+            return remote_addr or "unknown", False
+
+    ip, address = parsed
+
+    # Only the private IPv4 ranges count as non-routable
+    is_routable = not (
+        address.version == 4
+        and any(address in network for network in _PRIVATE_IPV4_NETWORKS)
+    )
 
     return ip, is_routable
 
@@ -1390,6 +1501,11 @@ def custom_exception_handler(exc, context):
             status_code=response.status_code,
             code=exception_code(exc),
             details=error_details(response.data),
+            extra=(
+                {"action": exc.action}
+                if isinstance(exc, ViewerReadOnly) and exc.action
+                else None
+            ),
         )
 
     return response

@@ -13,6 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import (
@@ -28,11 +29,14 @@ from tracer.models.monitor import (
     UserAlertMonitorLog,
 )
 from tracer.models.project import Project
+from tracer.permissions.metrics import MonitorWritePermission
 from tracer.serializers.monitor import (
     UserAlertMonitorBulkMuteRequestSerializer,
+    UserAlertMonitorCreateResponseSerializer,
     UserAlertMonitorDetailSerializer,
     UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
+    UserAlertMonitorEntitlementResponseSerializer,
     UserAlertMonitorGraphResponseSerializer,
     UserAlertMonitorListQuerySerializer,
     UserAlertMonitorListResponseSerializer,
@@ -73,7 +77,7 @@ def _parse_page_params(query_params, default_size: int = 30) -> tuple[int, int]:
 
 class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, MonitorWritePermission]
     serializer_class = UserAlertMonitorSerializer
 
     def _current_organization(self):
@@ -537,6 +541,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @validated_request(
         request_serializer=UserAlertMonitorSerializer,
         strict_request_validation=False,
+        responses={
+            200: UserAlertMonitorCreateResponseSerializer,
+            402: UserAlertMonitorEntitlementResponseSerializer,
+        },
     )
     def create(self, request, *args, **kwargs):
         from tfc.ee_gating import EEResource, check_ee_can_create
@@ -713,7 +721,11 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "output_type": "system_metric",
                 }
                 for value, label in MonitorMetricTypeChoices.choices
-                if value != MonitorMetricTypeChoices.EVALUATION_METRICS.value
+                if value
+                not in {
+                    MonitorMetricTypeChoices.EVALUATION_METRICS.value,
+                    MonitorMetricTypeChoices.DERIVED_METRIC.value,
+                }
             ]
 
             eval_options = [
@@ -896,7 +908,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
 class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, MonitorWritePermission]
     serializer_class = UserAlertMonitorLogSerializer
 
     def _current_organization(self):

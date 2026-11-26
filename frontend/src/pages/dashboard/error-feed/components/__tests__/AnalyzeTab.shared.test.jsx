@@ -24,7 +24,7 @@ describe("AnalyzeTab on a shared issue", () => {
     useErrorFeedStore.setState({ analyzeThreadsByCluster: {} });
   });
 
-  it("shows the saved analysis as the product does, with no run or follow-up", () => {
+  it("shows the saved analysis as the product does, with no run or follow-up", async () => {
     hydrateFromCache({
       clusterId: "E-1",
       rca: {
@@ -39,6 +39,8 @@ describe("AnalyzeTab on a shared issue", () => {
     expect(
       screen.getByText("The prompt says refunds are usually allowed."),
     ).toBeInTheDocument();
+    expect(await screen.findByText("In-depth suggestion")).toBeInTheDocument();
+    expect(screen.queryByText("Fix")).not.toBeInTheDocument();
     expect(
       screen.getByText("Showing the last saved analysis"),
     ).toBeInTheDocument();
@@ -52,7 +54,7 @@ describe("AnalyzeTab on a shared issue", () => {
     renderShared();
 
     expect(
-      screen.getByText("No analysis saved for this issue."),
+      screen.getByText("No in-depth analysis saved for this issue."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });

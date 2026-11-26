@@ -6,12 +6,21 @@ import uuid
 from collections.abc import Iterable
 from typing import TypedDict
 
-from django.db.models import CharField, Count, Q, Value
+from django.db.models import Case, CharField, Count, F, Q, Value, When
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Coalesce
 
 from simulate.constants.run_outcome import OutcomeStatus
-from simulate.models import HostedHarnessJob, HostedHarnessReceipt, TestExecution
+from simulate.models import (
+    CallExecution,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    TestExecution,
+)
+from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
+)
 
 _TERMINAL = frozenset(
     {
@@ -58,6 +67,8 @@ class OutcomeFields(TypedDict):
     outcome_failed: int | None
     outcome_errored: int | None
     outcome_skipped: int | None
+    # Calls the user stopped: neither errored nor failed, and outside the pass rate.
+    outcome_cancelled: int | None
     outcome_no_score: int | None
     outcome_status: OutcomeStatus | None
     pass_rate: int | None
@@ -165,7 +176,13 @@ def outcome_fields(
         counts = None
     by_status = receipts["by_status"] if receipts is not None else None
     return {
-        "outcome_passed": by_status.get("passed", 0) if by_status is not None else None,
+        # A passed receipt whose call has no score is not a pass, as `receipt_counts` reads it.
+        "outcome_passed": (
+            receipts["by_status"].get("passed", 0)
+            - receipts["no_score_by_status"].get("passed", 0)
+            if receipts is not None
+            else None
+        ),
         "outcome_failed": (
             by_status.get("failed", 0) + by_status.get("errored", 0)
             if by_status is not None
@@ -176,6 +193,9 @@ def outcome_fields(
         ),
         "outcome_skipped": (
             by_status.get("skipped", 0) if by_status is not None else None
+        ),
+        "outcome_cancelled": (
+            by_status.get("cancelled", 0) if by_status is not None else None
         ),
         "outcome_no_score": (
             sum(receipts["no_score_by_status"].values())
@@ -191,7 +211,8 @@ def receipt_outcome_counts(
 ) -> dict[uuid.UUID, ReceiptTally]:
     """Each job's receipts counted by status, and how many of each belong to a call with no score.
 
-    Soft-deleted calls are not counted. ``job_ids`` must already be scoped to the caller."""
+    A call the user stopped counts as cancelled, receipt or not. Soft-deleted calls are not counted. ``job_ids`` must
+    already be scoped to the caller."""
     job_ids = list(job_ids)
     tallies: dict[uuid.UUID, ReceiptTally] = {}
     if not job_ids:
@@ -203,27 +224,81 @@ def receipt_outcome_counts(
         HostedHarnessReceipt.no_workspace_objects.filter(job_id__in=job_ids)
         .exclude(receipt_of_deleted_call)
         .annotate(
+            # A receipt with no execution (a registration's own call) reads its registration's call.
             call_outcome=Coalesce(
                 KeyTextTransform(
                     "harness_outcome_status", "execution__call_execution__call_metadata"
                 ),
+                KeyTextTransform(
+                    "harness_outcome_status", "scenario__call_execution__call_metadata"
+                ),
                 Value(""),
                 output_field=CharField(),
-            )
+            ),
+            # A call the user stopped is its own count, never an error; a skipped scenario stays skipped.
+            outcome=Case(
+                When(
+                    (
+                        Q(execution__call_execution__status__in=CANCELLED_CALL_STATUSES)
+                        | Q(
+                            execution__isnull=True,
+                            scenario__call_execution__status__in=CANCELLED_CALL_STATUSES,
+                        )
+                    )
+                    & ~Q(status__in=SKIPPED_HARNESS_STATUSES),
+                    then=Value("cancelled"),
+                ),
+                # A failed receipt its call has no score for (only checks its proof never verified failed) is not the
+                # agent's failure: counted with the no-score calls, outside the pass rate.
+                When(
+                    Q(status="failed") & Q(call_outcome=NO_SCORE),
+                    then=Value(NO_SCORE),
+                ),
+                default=F("status"),
+                output_field=CharField(),
+            ),
         )
-        .values("job_id", "status", "call_outcome")
+        .values("job_id", "outcome", "call_outcome")
         .annotate(count=Count("id"))
         .order_by()
     ):
         tally = tallies.setdefault(
             row["job_id"], {"by_status": {}, "no_score_by_status": {}}
         )
-        status = row["status"]
+        status = row["outcome"]
         tally["by_status"][status] = tally["by_status"].get(status, 0) + row["count"]
         if row["call_outcome"] == NO_SCORE:
             tally["no_score_by_status"][status] = (
                 tally["no_score_by_status"].get(status, 0) + row["count"]
             )
+    # A call stopped before its receipt arrived (its seal timed out, or its sandbox never started) is cancelled too.
+    for row in (
+        CallExecution.no_workspace_objects.filter(
+            test_execution__hosted_harness_job__id__in=job_ids,
+            status__in=CANCELLED_CALL_STATUSES,
+            deleted=False,
+            hosted_harness_execution__receipt__isnull=True,
+            hosted_registration__receipts__isnull=True,
+        )
+        .annotate(
+            harness_status=Coalesce(
+                KeyTextTransform("harness_outcome_status", "call_metadata"),
+                Value(""),
+                output_field=CharField(),
+            )
+        )
+        .exclude(harness_status__in=SKIPPED_HARNESS_STATUSES)
+        .values("test_execution__hosted_harness_job__id")
+        .annotate(count=Count("id"))
+        .order_by()
+    ):
+        tally = tallies.setdefault(
+            row["test_execution__hosted_harness_job__id"],
+            {"by_status": {}, "no_score_by_status": {}},
+        )
+        tally["by_status"]["cancelled"] = (
+            tally["by_status"].get("cancelled", 0) + row["count"]
+        )
     return tallies
 
 

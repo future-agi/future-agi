@@ -99,6 +99,46 @@ describe("FixRunPage", () => {
     );
   });
 
+  it("starts the breadcrumb at the Error Feed issue it was run from", async () => {
+    const fix = fixOf("fix-search");
+    fix.issue = {
+      job_id: "job-1",
+      cluster_id: "S-1A2B3C4D",
+      project_id: "proj-1",
+    };
+    hooks.fixRun = { fix, isLoading: false, error: null };
+    renderPage("fix-search");
+    expect(screen.getByTestId("epoch-issue-crumb")).toHaveAttribute(
+      "href",
+      "/dashboard/error-feed/S-1A2B3C4D",
+    );
+    expect(screen.getByTestId("epoch-issue-crumb")).toHaveTextContent(
+      "S-1A2B3C4D",
+    );
+    expect(
+      screen.getByRole("link", { name: "Back to S-1A2B3C4D" }),
+    ).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
+    expect(screen.queryByRole("link", { name: "Back to epochs" })).toBeNull();
+  });
+
+  it("offers a retry instead of blaming the agent when variations time out", async () => {
+    updateFixtureFixRun("fix-failed", (fix) => ({
+      ...fix,
+      failure: {
+        code: "fix_variations_timeout",
+        message: "writing and checking variations of the failing cases took over 10 minutes",
+      },
+      retryable: true,
+    }));
+    renderPage("fix-failed");
+    expect(
+      await screen.findByText(
+        "This epoch stopped because of a problem on our side, not your agent. Nothing changed. Retry it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  });
+
   it("offers no Stop and no stage on a finished fix", async () => {
     renderPage("fix-ready-archive");
     expect(await screen.findByText("Epoch 10")).toBeInTheDocument();

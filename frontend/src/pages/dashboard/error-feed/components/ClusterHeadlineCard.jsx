@@ -65,7 +65,7 @@ function NotAnalyzedState({ onAnalyze, readOnly = false }) {
       </Box>
       <Stack flex={1} gap={0.4} minWidth={0}>
         <Typography fontSize="12px" fontWeight={600} color="text.primary">
-          {readOnly ? "No analysis saved" : "No analysis yet"}
+          {readOnly ? "No analysis saved" : "In-depth analysis not run yet"}
         </Typography>
         <Typography
           fontSize="12px"
@@ -74,7 +74,7 @@ function NotAnalyzedState({ onAnalyze, readOnly = false }) {
         >
           {readOnly
             ? "No analysis saved for this issue."
-            : "No analysis yet — get a plain-English explanation and a suggested fix."}
+            : "The Root cause tab shows what the Error Feed stored."}
         </Typography>
       </Stack>
       {!readOnly && (
@@ -226,7 +226,7 @@ function AnalyzedState({
             bgcolor: "status.success.bg",
           }}
         >
-          Fix
+          In-depth suggestion
         </Typography>
         <Typography
           fontSize="12px"

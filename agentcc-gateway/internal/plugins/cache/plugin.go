@@ -2,9 +2,9 @@ package cache
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"hash/fnv"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +12,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/cache"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // Plugin is a pipeline plugin that caches non-streaming chat completion responses.
@@ -22,6 +23,7 @@ type Plugin struct {
 	semanticStore cache.SemanticBackend
 	edgeHandler   *EdgeCacheHandler
 	defaultTTL    time.Duration
+	tenantStore   *tenant.Store // nil-safe; bypasses caching for selected key policies
 }
 
 // New creates a new cache plugin with a pluggable backend.
@@ -50,6 +52,13 @@ func (p *Plugin) SetSemanticStoreFromConcrete(s *cache.SemanticStore) {
 	p.semanticStore = cache.NewMemorySemanticBackend(s)
 }
 
+// SetTenantStore lets the cache see the org's guardrail key policies. Cache
+// hits skip pre-stage guardrails, so selected keys bypass every cache layer,
+// including Monitor policies whose checks must observe each request.
+func (p *Plugin) SetTenantStore(s *tenant.Store) {
+	p.tenantStore = s
+}
+
 // SetEdgeHandler configures edge (CDN) caching support.
 func (p *Plugin) SetEdgeHandler(h *EdgeCacheHandler) {
 	p.edgeHandler = h
@@ -65,6 +74,15 @@ func (p *Plugin) PostPriority() int { return 55 }
 
 // ProcessRequest checks the cache for a hit before the provider call.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Outputs are authoritative, not caller metadata or state from an earlier
+	// invocation. In particular, a bypass must leave no key eligible for store.
+	clearCacheMetadata(rc)
+	fp, bypass := p.keyPolicyCacheState(rc)
+	if bypass {
+		skipKeyPolicyCache(rc)
+		return pipeline.ResultContinue()
+	}
+
 	// Per-org cache override: if the org has disabled caching, skip entirely.
 	if rc.Metadata["org_cache_disabled"] == "true" {
 		rc.Metadata["cache_status"] = "skip_org_disabled"
@@ -88,14 +106,18 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 		return pipeline.ResultContinue()
 	}
 
-	// Build cache key.
-	namespace := cacheNamespace(rc)
-	key := BuildCacheKey(namespace, rc.Request)
+	// Build cache key only for requests eligible for both lookup and store.
+	rc.Metadata[keyPoliciesMetadata] = fp
+	namespace := namespaceWithKeyPolicies(cacheNamespace(rc), fp)
+	scope := orgScope(rc)
+	key := BuildCacheKey(scope, namespace, rc.Request)
 	rc.Metadata["cache_key"] = key
-	if p.semanticStore != nil {
+	rc.Metadata[cacheInitializedMetadata] = "true"
+	semantic := p.semanticStore != nil && fp == ""
+	if semantic {
 		// Fixed now so ProcessResponse stores under it even on force-refresh or
 		// after later plugins rewrite rc.Request.
-		rc.Metadata["cache_semantic_partition"] = semanticPartition(namespace, rc.Request)
+		rc.Metadata["cache_semantic_partition"] = semanticPartition(scope, namespace, rc.Request)
 	}
 
 	// Edge cache: check conditional request (If-None-Match → 304).
@@ -139,11 +161,11 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 	}
 
 	// L2: Check semantic cache.
-	if p.semanticStore != nil {
+	if semantic {
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
-			if result := p.semanticStore.Search(vec, rc.Metadata["cache_semantic_partition"]); result != nil {
+			if result := p.semanticStore.Search(scope, vec, rc.Metadata["cache_semantic_partition"]); result != nil {
 				resp := restoreCarriage(rc, result.Response)
 				rc.Response = resp
 				rc.Flags.CacheHit = true
@@ -165,6 +187,19 @@ func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pi
 
 // ProcessResponse stores the response in the cache after a provider call.
 func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	// Recheck assignment: a policy may have been added since lookup. A request
+	// that bypassed lookup stays bypassed even if its policies were revoked.
+	currentFP, bypass := p.keyPolicyCacheState(rc)
+	if bypass || rc.Metadata["cache_status"] == "skip_key_policy" {
+		skipKeyPolicyCache(rc)
+		return pipeline.ResultContinue()
+	}
+	// Post plugins can run without this plugin's request stage. A cache_key
+	// alone is not evidence that lookup initialized a cacheable request.
+	if rc.Metadata[cacheInitializedMetadata] != "true" {
+		return pipeline.ResultContinue()
+	}
+
 	// Skip if already a cache hit, streaming, or no response.
 	if rc.Flags.CacheHit || rc.IsStream || rc.Response == nil {
 		return pipeline.ResultContinue()
@@ -190,14 +225,21 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
+	// Keep the fingerprint guard as well as the selection gate: never store
+	// under a policy identity different from the one captured during lookup.
+	fp := rc.Metadata[keyPoliciesMetadata]
+	if currentFP != fp {
+		return pipeline.ResultContinue()
+	}
+
 	ttl := p.resolveTTL(rc)
 	// Store a copy marked with the attempt's route; rc.Response itself is
 	// still to be sent to this caller and must not gain the reserved field.
-	stored := withCarriage(rc.Response, rc.ResponsesCarriage)
+	stored := withCarriage(rc.Response, rc.ChatRoute)
 	p.store.Set(key, stored, ttl)
 
 	// Also store in semantic cache (L2).
-	if p.semanticStore != nil && rc.Request != nil {
+	if p.semanticStore != nil && rc.Request != nil && fp == "" {
 		text := extractLastUserMessage(rc.Request)
 		if text != "" {
 			vec := cache.Vectorize(text, p.semanticStore.Dims())
@@ -205,9 +247,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 			// remediation, fallback model rewrites) may have changed rc.Request.
 			partition := rc.Metadata["cache_semantic_partition"]
 			if partition == "" {
-				partition = semanticPartition(cacheNamespace(rc), rc.Request)
+				partition = semanticPartition(orgScope(rc), cacheNamespace(rc), rc.Request)
 			}
-			p.semanticStore.Set(key, vec, partition, stored, ttl)
+			p.semanticStore.Set(orgScope(rc), key, vec, partition, stored, ttl)
 		}
 	}
 
@@ -217,6 +259,15 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	return pipeline.ResultContinue()
+}
+
+// orgScope returns the cache partition for the request's org. The org is the
+// authenticated key's metadata org_id, which the auth plugin (priority 20, so
+// before this one) and Handlers.peekKeyOrgID copy into key_org_id. Callers
+// cannot write key_* metadata (isBlockedMetadataKey), so this is never caller
+// input. A key without an org lands in cache.NoOrgScope.
+func orgScope(rc *models.RequestContext) string {
+	return cache.OrgScope(rc.Metadata[tenant.MetadataKeyOrgID])
 }
 
 // resolveTTL returns the TTL for the cache entry.
@@ -279,6 +330,67 @@ func cacheNamespace(rc *models.RequestContext) string {
 	return "default"
 }
 
+// keyPoliciesMetadata holds the key-policy fingerprint the request's cache key
+// was built with.
+const keyPoliciesMetadata = "cache_key_policies"
+
+// cacheInitializedMetadata is set only after this plugin accepts a request
+// for caching. The HTTP metadata parser reserves the cache_ prefix, so callers
+// cannot forge this marker. Reset it on every request invocation, including
+// early exits; RequestContext.Release also clears metadata before pool reuse.
+const cacheInitializedMetadata = "cache_request_initialized"
+
+func clearCacheMetadata(rc *models.RequestContext) {
+	for _, key := range []string{
+		"cache_key", keyPoliciesMetadata, cacheInitializedMetadata,
+		"cache_semantic_partition", "cache_similarity", "cache_status",
+		"edge_cache", "edge_cache_control", "edge_cache_vary", "edge_cache_etag",
+	} {
+		delete(rc.Metadata, key)
+	}
+}
+
+func skipKeyPolicyCache(rc *models.RequestContext) {
+	clearCacheMetadata(rc)
+	rc.Metadata["cache_status"] = "skip_key_policy"
+	// edge_* output metadata is not reserved by every input path. Overwrite
+	// forged public headers as well as suppressing our own edge cache headers.
+	rc.Metadata["edge_cache"] = "SKIP"
+	rc.Metadata["edge_cache_control"] = "no-store"
+}
+
+// keyPolicyCacheState returns the policy identity and whether caching must be
+// bypassed. Matching alone is sufficient, even for Monitor or disabled checks:
+// neither identical input nor a configuration fingerprint proves that skipping
+// admission (which can read context or call a webhook) is safe.
+func (p *Plugin) keyPolicyCacheState(rc *models.RequestContext) (string, bool) {
+	if p.tenantStore == nil {
+		return "", false
+	}
+	orgCfg := p.tenantStore.Get(rc.Metadata["org_id"])
+	if orgCfg == nil || orgCfg.Guardrails == nil {
+		return "", false
+	}
+	keyID := rc.Metadata["auth_key_id"]
+	// No guessed engine default: selected policies are never cached, so this
+	// identity is defensive only, not a claim that their checks are replayable.
+	fp, cacheable := orgCfg.Guardrails.KeyPolicyCacheFingerprint(keyID, 0)
+	return fp, !cacheable || len(orgCfg.Guardrails.KeyPoliciesFor(keyID)) > 0
+}
+
+// namespaceWithKeyPolicies partitions the namespace by the key-policy
+// fingerprint. A key with no key policies keeps the plain namespace, so its
+// entries (and every entry stored before key policies existed) stay where
+// they were.
+func namespaceWithKeyPolicies(ns, fp string) string {
+	if fp == "" {
+		return ns
+	}
+	// HTTP header values cannot carry a NUL byte, so no client-chosen
+	// x-agentcc-cache-namespace can name a key-policy partition.
+	return ns + "\x00key_policies=" + fp
+}
+
 // semanticPartition scopes semantic cache entries. Only the last user
 // message's text is compared by similarity, so everything else must match
 // exactly. The partition is the exact-match cache key (namespace, model, every
@@ -287,7 +399,7 @@ func cacheNamespace(rc *models.RequestContext) string {
 // content parts (images, extra text), where the text sits among them, the
 // speaker name, tools or response_format that differ never share an entry,
 // however similar the question.
-func semanticPartition(namespace string, req *models.ChatCompletionRequest) string {
+func semanticPartition(scope, namespace string, req *models.ChatCompletionRequest) string {
 	ctx := *req
 	ctx.Messages = append([]models.Message(nil), req.Messages...)
 	for i := len(ctx.Messages) - 1; i >= 0; i-- {
@@ -296,7 +408,7 @@ func semanticPartition(namespace string, req *models.ChatCompletionRequest) stri
 			break
 		}
 	}
-	return req.Model + "|ctx=" + BuildCacheKey(namespace, &ctx)
+	return req.Model + "|ctx=" + BuildCacheKey(scope, namespace, &ctx)
 }
 
 // withoutComparedText replaces in a user message's content the text that
@@ -335,9 +447,20 @@ func withoutComparedText(content json.RawMessage) json.RawMessage {
 }
 
 // BuildCacheKey generates a deterministic cache key from the request.
-// Uses FNV-1a 128-bit for speed (no crypto needed, just collision resistance).
-func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
-	h := fnv.New128a()
+//
+// scope is the tenant partition from cache.OrgScope and is hashed first. Its
+// tokens are fixed-format and contain no separator, so no namespace, model or
+// message content can make one org's key equal another's.
+//
+// The hash is SHA-256 truncated to 128 bits, rendered as 32 hex digits (the
+// shape vector stores such as Qdrant accept as a point id). It used to be
+// FNV-1a, which is fast but not collision-resistant against a caller who
+// chooses the input; with the key as the tenant boundary that matters.
+func BuildCacheKey(scope, namespace string, req *models.ChatCompletionRequest) string {
+	h := sha256.New()
+	h.Write([]byte("v2|"))
+	h.Write([]byte(scope))
+	h.Write([]byte("|"))
 	h.Write([]byte(namespace))
 	h.Write([]byte("|"))
 	h.Write([]byte(req.Model))
@@ -383,5 +506,5 @@ func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
 		h.Write([]byte(strconv.Itoa(*req.Seed)))
 	}
 
-	return hex.EncodeToString(h.Sum(nil))
+	return hex.EncodeToString(h.Sum(nil)[:16])
 }

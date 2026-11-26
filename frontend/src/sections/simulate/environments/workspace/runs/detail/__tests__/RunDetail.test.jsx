@@ -9,6 +9,7 @@ import {
   waitForElementToBeRemoved,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
 import {
   MemoryRouter,
   useLocation,
@@ -296,7 +297,15 @@ RunAnalyticsStub.propTypes = {
 };
 vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
 
-function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
+function CallDrawerStub({
+  task,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+  onClose,
+  onOpenTrial,
+}) {
   if (!task) return null;
   return (
     <div>
@@ -313,6 +322,9 @@ function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext, onClose }) {
       <button type="button" onClick={onNext} disabled={!hasNext}>
         next call
       </button>
+      <button type="button" onClick={() => onOpenTrial("x1", 3)}>
+        open trial x1 at step 3
+      </button>
     </div>
   );
 }
@@ -323,6 +335,7 @@ CallDrawerStub.propTypes = {
   onPrev: PropTypes.func,
   onNext: PropTypes.func,
   onClose: PropTypes.func,
+  onOpenTrial: PropTypes.func,
 };
 vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
 
@@ -864,12 +877,80 @@ describe("RunDetail", () => {
       ).toBeInTheDocument();
     });
 
-    it("is not offered when no failing case came from evidence", () => {
+    it("locks Export, Run Epoch and Debug failures for a Viewer, saying why", async () => {
+      const user = userEvent.setup();
+      vi.mocked(useSimulationAccess).mockReturnValue({
+        canEdit: false,
+        canRun: false,
+      });
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: { scenarios: [scenario("evidence-a", "import-1", true)] },
+      });
+      try {
+        renderDetail();
+
+        for (const [name, reason] of [
+          ["Export", "You don't have permission to export run results."],
+          ["Run Epoch", "You don't have permission to start runs."],
+          ["Debug failures", "You don't have permission to start runs."],
+        ]) {
+          const button = screen.getByRole("button", { name });
+          expect(button).toBeDisabled();
+          await user.hover(button.parentElement);
+          expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+          await user.unhover(button.parentElement);
+          await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+        }
+      } finally {
+        vi.mocked(useSimulationAccess).mockReturnValue({
+          canEdit: true,
+          canRun: true,
+        });
+      }
+    });
+
+    it.each([
+      ["failed", null],
+      ["pending", null],
+      ["not_requested", null],
+      ["failed", "import-1"],
+      ["completed", null],
+      ["completed", "import-1"],
+    ])(
+      "reports diagnosis availability without requesting analysis: %s, import %s",
+      async (status, evidence) => {
+        const request = vi.fn();
+        useDebugAnalysis.mockReturnValue(debugHook({ ...ANALYSIS, status }, { request }));
+        fixLaunchOptions.mockReturnValue({
+          options: { scenarios: [scenario("case", evidence, true)] },
+        });
+        renderDetail();
+        await userEvent.setup().click(screen.getByRole("button", { name: "Run Epoch" }));
+        expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
+        expect(useDebugAnalysis).toHaveBeenCalledWith("ex1");
+        expect(launchFix.props.diagnosisUnavailable).toBe(status !== "completed");
+        expect(launchFix.props.initialTargets).toEqual(evidence ? ["case"] : undefined);
+        expect(request).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { status: "running" },
+      { fixRun: { id: "check", label: "check" } },
+    ])("does not offer Epoch for live or check runs with cached options", (identity) => {
+      useRunDetail.mockReturnValue({ identity: { ...IDENTITY, ...identity }, stats: STATS });
+      fixLaunchOptions.mockReturnValue({ options: { scenarios: [scenario("ordinary", null, true)] } });
+      renderDetail();
+      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+    });
+
+    it("is not offered when all cases passed", () => {
       finished();
       fixLaunchOptions.mockReturnValue({
         options: {
           scenarios: [
-            scenario("ordinary", null, true),
+            scenario("ordinary", null, false),
             scenario("evidence-b", "import-1", false),
           ],
         },
@@ -1578,6 +1659,20 @@ describe("RunDetail", () => {
     expect(onNext).toHaveBeenCalledTimes(1);
   });
 
+  it("gives the drawer the table's live row for the open call, not the row it opened with", async () => {
+    const user = userEvent.setup();
+    callListNavigation.mockReturnValue({
+      hasPrev: false,
+      hasNext: false,
+      openRow: { id: "c1", simulationCallType: "voice", status: "live-status" },
+      onPrev: vi.fn(),
+      onNext: vi.fn(),
+    });
+    renderDetail();
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    expect(screen.getByText(/live-status/)).toBeInTheDocument();
+  });
+
   it("opens the stepped-to call and has the table follow to its page", async () => {
     const user = userEvent.setup();
     renderDetail();
@@ -1839,6 +1934,48 @@ describe("RunDetail ?rowId=", () => {
     await user.click(screen.getByRole("button", { name: "close call" }));
     expect(screen.queryByText(/^drawer:/)).toBeNull();
     expect(locationText()).toBe("?foo=1|REPLACE");
+  });
+
+  it("keeps a step link while its call opens and drops it on another call", async () => {
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?rowId=x1&participantsStep=3"] });
+
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("participantsStep=3");
+
+    act(() =>
+      navArgs().onStep({
+        task: { id: "c51", simulationCallType: "voice" },
+        source: "table",
+        page: 2,
+      }),
+    );
+    expect(locationText()).toBe("?rowId=c51|REPLACE");
+  });
+
+  it("opens another trial from the trials table at its step, even off the table page", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: CHAT_DETAIL, error: null });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    expect(await screen.findByText("drawer:x1")).toBeInTheDocument();
+    expect(locationText()).toContain("rowId=x1");
+    expect(locationText()).toContain("participantsStep=3");
+  });
+
+  it("keeps the open call when a trial picked from the trials table can't be found", async () => {
+    const user = userEvent.setup();
+    detailFor("x1", { data: undefined, error: { statusCode: 404 } });
+    renderDetail({ initialEntries: ["/?foo=1"] });
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    await user.click(
+      screen.getByRole("button", { name: "open trial x1 at step 3" }),
+    );
+    await waitFor(() => expect(locationText()).toContain("rowId=c1"));
+    expect(screen.getByText("drawer:c1")).toBeInTheDocument();
   });
 
   it("writes a row opened from Analytics to the URL", async () => {

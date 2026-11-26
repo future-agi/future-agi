@@ -1,5 +1,5 @@
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
@@ -7,6 +7,7 @@ from decimal import Decimal
 from hashlib import blake2b
 from math import isfinite
 from numbers import Real
+from threading import BoundedSemaphore, Lock, Thread
 from time import monotonic
 from types import SimpleNamespace
 from uuid import UUID
@@ -61,6 +62,7 @@ from tracer.services.clickhouse.attribute_cursor_state import (
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS,
     ATTRIBUTE_READ_MAX_PROJECTS,
+    ATTRIBUTE_READ_METADATA_TIMEOUT_MS,
     AttributeReadSelector,
     InvalidAttributeKey,
 )
@@ -660,6 +662,197 @@ class _BatchedFilterValueCursor:
     physical_order: tuple
     seen_reference: tuple
     new_project_batch: bool
+
+
+# Socket timeouts bound individual I/O, not the lifetime of a native call.
+# Never queue optional work or wait for a late driver during request cleanup.
+_RETAINED_LOOKUP_SLOT = BoundedSemaphore(1)
+_RETAINED_PAGE_RESERVE_MS = 1_000
+_RETAINED_PAGE_HANDOFF_MS = 100
+
+
+@dataclass(frozen=True)
+class _RetainedLookup:
+    """The one in-flight lookup that concurrent first pages may join."""
+
+    future: Future
+    window_end: datetime
+    deadline: ReadDeadline
+
+
+class _RetainedLookupInFlight:
+    """Process-wide holder for the one in-flight lookup pages may join."""
+
+    def __init__(self) -> None:
+        # Guards ``current`` and the slot hand-over, never a ClickHouse read.
+        self.lock = Lock()
+        self.current: _RetainedLookup | None = None
+
+
+_RETAINED = _RetainedLookupInFlight()
+
+
+def _retained_lookup_refused_reason() -> str | None:
+    """Name a lane that would refuse the optional lookup, before any slot.
+
+    A server profile locked at readonly=1 accepts no client settings, and the
+    optional metadata read is never sent without its server-side time cap.
+    """
+    # Resolve at call time; the selector uses this same process-wide client.
+    from tracer.services.clickhouse.v2 import query_service
+
+    client = query_service.get_v2_query_client()
+    if getattr(client, "server_enforced_readonly", False) and not getattr(
+        client, "allow_query_settings_with_server_readonly", False
+    ):
+        return "server_enforced_readonly"
+    return None
+
+
+def _joined_retained_start(
+    lookup: _RetainedLookup,
+    retained_start: datetime | None,
+    *,
+    window_end: datetime,
+) -> datetime | None:
+    """Reuse another page's global part minimum only where it is exact here.
+
+    A minimum earlier than this window's end belongs to a part inside it too.
+    ``None`` (or a minimum at or after this end) proves an empty window only if
+    the other lookup covered at least this window; otherwise stay lossless.
+    """
+
+    if retained_start is not None and retained_start < window_end:
+        return retained_start
+    if lookup.window_end >= window_end:
+        return None
+    return _FILTER_VALUE_RETAINED_START
+
+
+def _batched_span_system_retained_window_start(
+    project_ids,
+    *,
+    window_end: datetime,
+    deadline,
+) -> datetime:
+    """Reserve the page and its handoff before allocating any metadata wait.
+
+    Budget for wakeup, seen-state preparation and page admission, then spend
+    at most half of what remains. This caps our requested wait; scheduling and
+    queue delays can still reduce the time left at page entry. Every span-table
+    first page (fixed-scope and workspace lanes) uses this bounded path.
+    """
+    # Anchor before sampling the parent so setup cannot renew either wall.
+    lookup_deadline = ReadDeadline.start(ATTRIBUTE_READ_METADATA_TIMEOUT_MS)
+    try:
+        budget = (
+            deadline.remaining_ms()
+            - _RETAINED_PAGE_RESERVE_MS
+            - _RETAINED_PAGE_HANDOFF_MS
+        ) // 2
+    except ReadDeadlineExceeded:
+        return _FILTER_VALUE_RETAINED_START
+    if budget < 25:
+        return _FILTER_VALUE_RETAINED_START
+    try:
+        refused_reason = _retained_lookup_refused_reason()
+    except Exception as exc:  # noqa: BLE001 - optional metadata; epoch is lossless
+        logger.warning(
+            "dashboard_filter_value_retained_window_lookup_failed",
+            error_class=type(exc).__name__,
+        )
+        return _FILTER_VALUE_RETAINED_START
+    if refused_reason is not None:
+        logger.info(
+            "dashboard_filter_value_retained_window_lookup_skipped",
+            reason=refused_reason,
+        )
+        return _FILTER_VALUE_RETAINED_START
+    lookup_deadline = replace(
+        lookup_deadline, total_ms=min(budget, lookup_deadline.total_ms)
+    )
+
+    with _RETAINED.lock:
+        joined = _RETAINED.current
+        if joined is None:
+            if not _RETAINED_LOOKUP_SLOT.acquire(blocking=False):
+                return _FILTER_VALUE_RETAINED_START
+            leader = _RetainedLookup(Future(), window_end, lookup_deadline)
+            _RETAINED.current = leader
+
+    if joined is not None:
+        # Concurrent first pages share the in-flight read instead of skipping
+        # the floor. Never wait past the leader's own waiter: a stalled driver
+        # must not add its allowance to every later first page.
+        try:
+            wait_ms = min(
+                lookup_deadline.remaining_ms(), joined.deadline.remaining_ms()
+            )
+        except ReadDeadlineExceeded:
+            logger.info(
+                "dashboard_filter_value_retained_window_lookup_skipped",
+                reason="expired_lookup_in_flight",
+            )
+            return _FILTER_VALUE_RETAINED_START
+        try:
+            retained_start = _joined_retained_start(
+                joined,
+                joined.future.result(timeout=wait_ms / 1000),
+                window_end=window_end,
+            )
+            return retained_attribute_window_start(
+                retained_start, window_end=window_end
+            )
+        except Exception as exc:  # noqa: BLE001 - optional metadata; epoch is lossless
+            logger.warning(
+                "dashboard_filter_value_retained_window_lookup_failed",
+                error_class=type(exc).__name__,
+            )
+            return _FILTER_VALUE_RETAINED_START
+
+    future = leader.future
+
+    def finish():
+        with _RETAINED.lock:
+            if _RETAINED.current is leader:
+                _RETAINED.current = None
+            _RETAINED_LOOKUP_SLOT.release()
+
+    def lookup():
+        try:
+            selector = AttributeReadSelector(
+                typed_only=True,
+                json_attribute_mode="arrays",
+                wall_timeout_ms=lookup_deadline.remaining_ms(),
+                retained_lookup_deadline=lookup_deadline,
+            )
+            return selector.retained_window_start(project_ids, window_end=window_end)
+        finally:
+            finish()
+
+    def run():
+        try:
+            future.set_result(lookup())
+        except Exception as exc:  # noqa: BLE001 - deliver worker failure to the waiter
+            future.set_exception(exc)
+
+    try:
+        # Executor workers are joined at interpreter shutdown, even after the
+        # request timed out. A late optional read must not hold the process open.
+        Thread(target=run, name="retained-window", daemon=True).start()
+    except RuntimeError as exc:  # Thread did not start: no worker owns the slot.
+        future.set_exception(exc)
+        finish()
+        return _FILTER_VALUE_RETAINED_START
+    try:
+        retained_start = future.result(timeout=lookup_deadline.remaining_ms() / 1000)
+        return retained_attribute_window_start(retained_start, window_end=window_end)
+    except Exception as exc:  # noqa: BLE001 - optional metadata; epoch is lossless
+        logger.warning(
+            "dashboard_filter_value_retained_window_lookup_failed",
+            error_class=type(exc).__name__,
+        )
+        return _FILTER_VALUE_RETAINED_START
 
 
 def _batched_filter_value_cursor(
@@ -2609,6 +2802,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     query={
                         "category": query_params.get("category", ""),
                         "source": query_params.get("source", ""),
+                        "context": query_params.get("context", ""),
+                        "level": query_params.get("level", ""),
                         "property_kind": "",
                         "role": query_params.get("role", ""),
                         "per_eval_config": query_params.get("per_eval_config", False),
@@ -3167,8 +3362,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             except (DatabaseError, MetricsCatalogUnavailable, ReadDeadlineExceeded):
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
 
         try:
@@ -3202,8 +3397,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
             logger.exception(
@@ -3288,8 +3483,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 except ReadDeadlineExceeded:
                     return self._gm.custom_error_response(
                         status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "Filter values are temporarily unavailable. Please retry.",
-                        code="service_unavailable",
+                        get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                        code=ApiErrorCode.SERVICE_UNAVAILABLE,
                     )
             if dataset_id is None:
                 return self._gm.success_response({"values": []})
@@ -3342,8 +3537,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.warning("filter_values_project_scope_deadline_exceeded")
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         project_ids = list(project_scope.project_ids)
 
@@ -3745,8 +3940,21 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             window_start = cursor_state.window_start
                             window_end = cursor_state.window_end
                         else:
-                            window_start = _FILTER_VALUE_RETAINED_START
                             window_end = datetime.now(UTC)
+                            window_start = _FILTER_VALUE_RETAINED_START
+                            if project_ids and batch_lane == "span_system":
+                                # Same retained-data floor as the fixed-scope
+                                # lane: without it a workspace walk issues
+                                # empty slice continuations all the way back
+                                # to 1970 (~60 sequential requests), each one
+                                # another chance for a transient failure.
+                                window_start = (
+                                    _batched_span_system_retained_window_start(
+                                        project_ids,
+                                        window_end=window_end,
+                                        deadline=filter_value_deadline,
+                                    )
+                                )
                         if not project_ids:
                             return self._gm.success_response(
                                 _empty_batched_filter_value_payload(
@@ -4041,7 +4249,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             }
                         )
 
-                    selector = None
                     if cursor_token:
                         cursor_state, cursor_window_mode = decode_native_list_cursor(
                             cursor_token,
@@ -4078,23 +4285,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             window_start = cursor_state.window_start
                             window_end = cursor_state.window_end
                     else:
-                        selector = AttributeReadSelector(
-                            typed_only=True,
-                            json_attribute_mode="arrays",
-                            wall_timeout_ms=(
-                                filter_value_deadline.remaining_ms(
-                                    ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-                                )
-                            ),
-                        )
                         window_end = datetime.now(UTC)
-                        retained_start = selector.retained_window_start(
+                        # Optional metadata: bounded, shared with concurrent
+                        # first pages, and epoch (lossless) when unavailable.
+                        window_start = _batched_span_system_retained_window_start(
                             project_ids,
                             window_end=window_end,
-                        )
-                        window_start = retained_attribute_window_start(
-                            retained_start,
-                            window_end=window_end,
+                            deadline=filter_value_deadline,
                         )
                         segment_end = window_end
                         segment_start = None
@@ -4217,8 +4414,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
                             return self._gm.custom_error_response(
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "Filter values are temporarily unavailable. Please retry.",
-                                code="service_unavailable",
+                                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                                code=ApiErrorCode.SERVICE_UNAVAILABLE,
                             )
                         logger.exception(
                             "filter_values_programming_error",
@@ -4276,8 +4473,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         )
                         return self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Filter values are temporarily unavailable. Please retry.",
-                            code="service_unavailable",
+                            get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                            code=ApiErrorCode.SERVICE_UNAVAILABLE,
                         )
                     logger.exception(
                         "filter_values_programming_error",
@@ -4874,8 +5071,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                 )
                                 return self._gm.custom_error_response(
                                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                                    "Filter values are temporarily unavailable. Please retry.",
-                                    code="service_unavailable",
+                                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                                 )
                             appended_digests = (
                                 page_read.appended_value_digests
@@ -5033,23 +5230,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                                         "The continuation cursor is invalid.",
                                     )
                         else:
-                            selector = AttributeReadSelector(
-                                typed_only=True,
-                                json_attribute_mode="arrays",
-                                wall_timeout_ms=(
-                                    filter_value_deadline.remaining_ms(
-                                        ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-                                    )
-                                ),
-                            )
                             window_end = datetime.now(UTC)
-                            retained_start = selector.retained_window_start(
+                            # Optional metadata: bounded, shared with concurrent
+                            # first pages, and epoch (lossless) when unavailable.
+                            # The page selector below then takes the remaining wall.
+                            window_start = _batched_span_system_retained_window_start(
                                 project_ids,
                                 window_end=window_end,
-                            )
-                            window_start = retained_attribute_window_start(
-                                retained_start,
-                                window_end=window_end,
+                                deadline=filter_value_deadline,
                             )
                             segment_end = window_end
                             segment_start = None
@@ -5122,8 +5310,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
                             return self._gm.custom_error_response(
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "Filter values are temporarily unavailable. Please retry.",
-                                code="service_unavailable",
+                                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                                code=ApiErrorCode.SERVICE_UNAVAILABLE,
                             )
                         values = [
                             {
@@ -5247,8 +5435,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             )
                             return self._gm.custom_error_response(
                                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                                "Filter values are temporarily unavailable. Please retry.",
-                                code="service_unavailable",
+                                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                                code=ApiErrorCode.SERVICE_UNAVAILABLE,
                             )
                     payload = _legacy_filter_value_scope_metadata(
                         {
@@ -5287,8 +5475,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         )
                         return self._gm.custom_error_response(
                             status.HTTP_503_SERVICE_UNAVAILABLE,
-                            "Filter values are temporarily unavailable. Please retry.",
-                            code="service_unavailable",
+                            get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                            code=ApiErrorCode.SERVICE_UNAVAILABLE,
                         )
                     logger.exception(
                         "filter_values_programming_error",
@@ -5308,7 +5496,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.warning("fetch_annotation_filter_values_unavailable")
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except AttributeCursorStateError as exc:
@@ -5337,7 +5525,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
                     code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             logger.exception(
@@ -5460,7 +5648,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if not is_clickhouse_enabled():
                     return self._gm.custom_error_response(
                         status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "Filter values are temporarily unavailable. Please retry.",
+                        get_error_message("FILTER_VALUES_UNAVAILABLE"),
                         code=ApiErrorCode.SERVICE_UNAVAILABLE,
                     )
                 sql = (
@@ -5526,7 +5714,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
@@ -5537,7 +5725,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
                     code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             logger.exception(
@@ -5601,7 +5789,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except ReadDeadlineExceeded:
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
 
@@ -5645,7 +5833,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
@@ -5728,7 +5916,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except (ReadDeadlineExceeded, InvalidChoiceCell):
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
                 code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         values.sort(key=lambda s: s.lower())
@@ -5816,8 +6004,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             if not is_clickhouse_enabled():
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
 
             analytics = AnalyticsQueryService()
@@ -5890,8 +6078,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         except ReadDeadlineExceeded:
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
@@ -5901,8 +6089,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 )
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                    get_error_message("FILTER_VALUES_UNAVAILABLE"),
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             logger.exception(
                 "fetch_simulation_filter_values_failed",
@@ -6174,6 +6362,14 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 frozen_annotation_label_ids_by_project
             )
         query_config["allow_sampled"] = False
+
+        if all(
+            metric.get("source") == "derived_metrics"
+            for metric in query_config["metrics"]
+        ):
+            from tracer.services.derived_metrics.integrations import dashboard_result
+
+            return self._gm.success_response(dashboard_result(query_config, workspace))
 
         query_config["metrics"] = self._normalize_metric_sources(
             query_config["metrics"]

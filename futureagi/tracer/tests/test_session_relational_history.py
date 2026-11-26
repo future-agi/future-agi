@@ -125,7 +125,8 @@ def history_engine(session_engine, request, settings):  # noqa: F811 - pytest in
     state = "is_deleted UInt8" if direct else "deleted UInt8, _peerdb_is_deleted UInt8"
     engine.execute("""CREATE TABLE model_hub_score (
         id String, trace_id Nullable(UUID), observation_span_id Nullable(String),
-        tracer_project_id UUID, label_id UUID, annotator_id Nullable(UUID),
+        tracer_project_id UUID, trace_session_id Nullable(UUID),
+        label_id UUID, annotator_id Nullable(UUID),
         created_at DateTime64(6, 'UTC'), value String,
         deleted UInt8, _peerdb_is_deleted UInt8, _peerdb_version UInt64
     ) ENGINE=ReplacingMergeTree(_peerdb_version) ORDER BY id""")

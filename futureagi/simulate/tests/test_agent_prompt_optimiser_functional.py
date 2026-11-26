@@ -324,20 +324,28 @@ class TestAgentPromptOptimiserCRUD:
         assert mock_optimiser_side_effects["steps"] == []
         assert mock_optimiser_side_effects["workflow"] == []
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="AgentPromptOptimiserRunCreateSerializer silently drops unknown fields; XPASSes when reject_unknown_fields is added.",
+    @pytest.mark.parametrize(
+        ("extra", "named"),
+        [
+            ({"legacy_extra": "ignore me"}, "legacy_extra"),
+            # A typo of a real field: without the check, the run would start
+            # with the default name instead of the one the caller sent.
+            ({"nmae": "Typo"}, "nmae"),
+            ({"zeta": 1, "alpha": 2}, "alpha"),
+        ],
     )
-    def test_create_ignores_unknown_body_field(
+    def test_create_rejects_unknown_body_field_before_work(
         self,
         auth_client,
         active_fixture,
         mock_optimiser_side_effects,
+        extra,
+        named,
     ):
-        payload = {
-            **_create_payload(active_fixture.test_execution.id),
-            "legacy_extra": "ignore me",
-        }
+        payload = {**_create_payload(active_fixture.test_execution.id), **extra}
+        baseline_count = AgentPromptOptimiserRun.no_workspace_objects.filter(
+            test_execution=active_fixture.test_execution
+        ).count()
 
         response = auth_client.post(
             "/simulate/api/agent-prompt-optimiser/",
@@ -346,6 +354,37 @@ class TestAgentPromptOptimiserCRUD:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["result"] == f"{named}: Unknown field."
+        assert (
+            AgentPromptOptimiserRun.no_workspace_objects.filter(
+                test_execution=active_fixture.test_execution
+            ).count()
+            == baseline_count
+        )
+        assert mock_optimiser_side_effects["steps"] == []
+        assert mock_optimiser_side_effects["workflow"] == []
+
+    def test_create_names_the_invalid_configuration_key(
+        self,
+        auth_client,
+        active_fixture,
+        mock_optimiser_side_effects,
+    ):
+        payload = _create_payload(active_fixture.test_execution.id)
+        payload["configuration"] = {**payload["configuration"], "beam_sizee": 3}
+
+        response = auth_client.post(
+            "/simulate/api/agent-prompt-optimiser/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["result"] == (
+            "configuration: Unexpected keys provided for optimizer 'protegi': "
+            "beam_sizee"
+        )
+        assert mock_optimiser_side_effects["workflow"] == []
 
     def test_retrieve_returns_full_detail_body(
         self, auth_client, active_fixture, mock_provider_logo

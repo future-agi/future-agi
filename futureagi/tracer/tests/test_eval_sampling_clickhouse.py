@@ -865,8 +865,29 @@ def test_remapped_session_expands_every_alias_row_for_trace_and_session_rows(
         ),
     )
     task.evals.add(custom_eval_config)
+    survivor_id = min(str(old_a), str(old_b))
+    now = sampling_clock()
+    policy, version = task_policy(task, now=now)
+    query = SamplingQuery(task, policy, version, now)
+    source = query._source()
+    # Prove all three physical alias roots reach the resolved relation, not
+    # merely that one session aggregate happens to survive reconciliation.
+    roots = _rows(
+        (
+            source
+            + " SELECT trace_id, toString(trace_session_id) FROM sampling_source WHERE parent_span_id = ''",
+            query.params,
+        )
+    )
+    assert {
+        trace_id for trace_id, session_id in roots if session_id == survivor_id
+    } == {str(span.trace_id) for span in spans}
+    assert len([row for row in roots if row[1] == survivor_id]) == 3
+    assert {
+        trace_id for trace_id, session_id in roots if session_id == str(other.id)
+    } == {str(span.trace_id) for span in spans_other}
     reconcile(task)
-    survivor = f"session:{min(str(old_a), str(old_b))}"
+    survivor = f"session:{survivor_id}"
     members = list(EvalSamplingMember.objects.filter(cohort__task=task))
     assert [member.unit_id for member in members] == [survivor]
     entries = list(EvalLogger.objects.filter(eval_task_id=str(task.id)))

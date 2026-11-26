@@ -1,4 +1,31 @@
+import pytest
+
 from ai_tools.registry import registry
+
+
+@pytest.mark.django_db
+class TestSearchTool:
+    @pytest.mark.parametrize("query", ['{"status":"FAILED"}', '["ERROR"]'])
+    def test_search_preserves_literal_json_query(self, tool_context, query):
+        from model_hub.models.choices import DatasetSourceChoices
+        from model_hub.models.develop_dataset import Dataset
+
+        dataset = Dataset.objects.create(
+            name=query,
+            source=DatasetSourceChoices.BUILD.value,
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+        )
+        result = registry.get("search").run(
+            {"query": query, "entity_types": '["datasets"]'}, tool_context
+        )
+
+        assert not result.is_error, result.content
+        assert result.data["query"] == query
+        assert result.data["total"] == 1
+        assert result.data["results"]["datasets"] == [
+            {"id": str(dataset.id), "name": query}
+        ]
 
 
 class TestReadSchemaTool:

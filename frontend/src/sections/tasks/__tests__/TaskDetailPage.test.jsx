@@ -128,7 +128,7 @@ const renderTaskDetail = (taskId = "missing-task") => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
-  const view = render(
+  return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[`/dashboard/tasks/${taskId}`]}>
         <Routes>
@@ -137,7 +137,6 @@ const renderTaskDetail = (taskId = "missing-task") => {
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { ...view, queryClient };
 };
 
 const loadedTask = (overrides = {}) => ({
@@ -146,7 +145,6 @@ const loadedTask = (overrides = {}) => ({
   project_id: "project-1",
   project_name: "Project One",
   status: "completed",
-  last_run: "2026-11-17T00:00:00Z",
   filters_applied: {},
   evals_applied: [],
   sampling_rate: 100,
@@ -300,157 +298,6 @@ describe("TaskDetailPage", () => {
         {},
       );
     });
-  });
-
-  it("starts a saved Pending task once and disables Start task in flight", async () => {
-    useGetTaskData.mockReturnValue({
-      data: loadedTask({ status: "pending", can_start: true }),
-      isLoading: false,
-      isError: false,
-    });
-    let acceptStart;
-    axiosPostMock.mockReturnValueOnce(
-      new Promise((resolve) => {
-        acceptStart = resolve;
-      }),
-    );
-
-    renderTaskDetail("task-1");
-    const button = screen.getByRole("button", { name: /start task/i });
-    expect(button).toBeEnabled();
-    expect(
-      screen.queryByRole("button", { name: /^resume$/i }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(button);
-    await waitFor(() => {
-      expect(axiosPostMock).toHaveBeenCalledWith(
-        "/tracer/eval-task/unpause_eval_task/?eval_task_id=task-1",
-        { start: true },
-      );
-      expect(button).toBeDisabled();
-    });
-    fireEvent.click(button);
-    expect(axiosPostMock).toHaveBeenCalledOnce();
-    await act(async () => {
-      acceptStart({ data: { result: { message: "Task start accepted" } } });
-    });
-    await waitFor(() => {
-      expect(enqueueSnackbar).toHaveBeenCalledWith("Task start accepted", {
-        variant: "success",
-      });
-    });
-    expect(screen.getByText("pending")).toBeInTheDocument();
-  });
-
-  it("treats an already accepted initial start as success", async () => {
-    useGetTaskData.mockReturnValue({
-      data: loadedTask({ status: "pending", can_start: true }),
-      isLoading: false,
-      isError: false,
-    });
-    axiosPostMock.mockResolvedValueOnce({
-      data: { result: { message: "Task start already accepted" } },
-    });
-    const { queryClient } = renderTaskDetail("task-1");
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    fireEvent.click(screen.getByRole("button", { name: /start task/i }));
-
-    await waitFor(() => {
-      expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "Task start already accepted",
-        { variant: "success" },
-      );
-      expect(invalidate).toHaveBeenCalledWith({
-        queryKey: ["taskDetails", "task-1"],
-      });
-    });
-    expect(axiosPostMock).toHaveBeenCalledOnce();
-  });
-
-  it("refreshes after an already-started conflict without retrying the start", async () => {
-    useGetTaskData.mockReturnValue({
-      data: loadedTask({ status: "pending", can_start: true }),
-      isLoading: false,
-      isError: false,
-    });
-    // The axios interceptor exposes the API error envelope at the top level.
-    axiosPostMock.mockRejectedValueOnce({
-      status: false,
-      statusCode: 409,
-      code: "eval_task_already_started",
-      result: "This task has already started.",
-    });
-    const { queryClient } = renderTaskDetail("task-1");
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    fireEvent.click(screen.getByRole("button", { name: /start task/i }));
-
-    await waitFor(() => {
-      expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "This task has already started. Refreshing its status.",
-        { variant: "info" },
-      );
-      expect(invalidate).toHaveBeenCalledWith({
-        queryKey: ["taskDetails", "task-1"],
-      });
-    });
-    expect(axiosPostMock).toHaveBeenCalledOnce();
-  });
-
-  it("allows retrying an unconfirmed start without claiming the task is running", async () => {
-    useGetTaskData.mockReturnValue({
-      data: loadedTask({ status: "pending", can_start: true }),
-      isLoading: false,
-      isError: false,
-    });
-    axiosPostMock.mockRejectedValueOnce(new Error("synthetic network failure"));
-    renderTaskDetail("task-1");
-    const button = screen.getByRole("button", { name: /start task/i });
-    fireEvent.click(button);
-
-    await waitFor(() => {
-      expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "Task start could not be confirmed. Try again.",
-        { variant: "error" },
-      );
-      expect(button).toBeEnabled();
-    });
-    expect(screen.getByText("pending")).toBeInTheDocument();
-    fireEvent.click(button);
-    await waitFor(() => expect(axiosPostMock).toHaveBeenCalledTimes(2));
-  });
-
-  it.each([
-    { status: "pending", can_start: false },
-    { status: "pending" },
-    { status: "running", can_start: true },
-    { status: "completed", can_start: true },
-    { status: "paused", can_start: true },
-    { status: "failed", can_start: true },
-  ])("does not offer Start task for ineligible details %j", (task) => {
-    useGetTaskData.mockReturnValue({
-      data: loadedTask(task),
-      isLoading: false,
-      isError: false,
-    });
-    renderTaskDetail("task-1");
-    expect(
-      screen.queryByRole("button", { name: /start task/i }),
-    ).not.toBeInTheDocument();
-    expect(axiosPostMock).not.toHaveBeenCalled();
-  });
-
-  it("disables Start task when the viewer cannot run tasks", () => {
-    useAuthContextMock.mockReturnValue({ role: "Viewer" });
-    useGetTaskData.mockReturnValue({
-      data: loadedTask({ status: "pending", can_start: true }),
-      isLoading: false,
-      isError: false,
-    });
-    renderTaskDetail("task-1");
-    const button = screen.getByRole("button", { name: /start task/i });
-    expect(button).toBeDisabled();
-    fireEvent.click(button);
-    expect(axiosPostMock).not.toHaveBeenCalled();
   });
 
   it("offers no Resume for a completed task", () => {

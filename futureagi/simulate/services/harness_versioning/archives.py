@@ -34,9 +34,21 @@ MAX_ARCHIVE_ENTRIES = 1_000_000
 MAX_ARCHIVE_INFLATED_BYTES = 512 * 1024 * 1024
 
 SUITE_ROOTS = ("scenarios/", "scenario/")
-SUITE_FILES = frozenset({"scenarios.json", "coverage.json", "proofs.json"})
+# dropped.json: scenarios a rebuild dropped for a removed capability, kept to restore them. scenario-proofs.json: the
+# build's own proofs of each case on its sealed runtime (live), kept with the suite they prove.
+SUITE_FILES = frozenset(
+    {
+        "scenarios.json",
+        "coverage.json",
+        "proofs.json",
+        "dropped.json",
+        "scenario-proofs.json",
+    }
+)
 
 SEALED_ROOTS = ("environment-bundle/", "generic-harness/certified-bundle/")
+# The contract a bundle was sealed and certified with: a build can amend the authored one while it builds.
+SEALED_CONTRACT = "environment-bundle/contract.json"
 SEALED_FILES = frozenset(
     {
         "runtime-validation.json",
@@ -240,9 +252,13 @@ def suite_key(organization_id: object, job_id: object, body: bytes) -> str:
     return f"harness-suites/{organization_id}/{job_id}/{sha256_hex(body)}.tar.gz"
 
 
+# Where a build's sealed bundle is kept; a READY cache row a run filled points elsewhere.
+SEALED_PREFIX = "harness-sealed/"
+
+
 def sealed_key(organization_id: object, job_id: object, body: bytes) -> str:
     # Content-addressed copy of a build's sealed bundle; READY cache rows point at it.
-    return f"harness-sealed/{organization_id}/{job_id}/{sha256_hex(body)}.tar.gz"
+    return f"{SEALED_PREFIX}{organization_id}/{job_id}/{sha256_hex(body)}.tar.gz"
 
 
 def pair_key(organization_id: object, job_id: object, body: bytes) -> str:
@@ -311,6 +327,35 @@ def read_members(body: bytes, paths: set[str], max_size: int) -> dict[str, bytes
             if path in paths and member.size <= max_size:
                 source = archive.extractfile(member)
                 found[path] = source.read() if source is not None else b""
+    return found
+
+
+def stream_members(key: str, paths: set[str], max_size: int) -> dict[str, bytes]:
+    """The named regular members of at most ``max_size`` bytes, read off the stored
+    archive as it streams: reading stops once every named member has been passed, and
+    nothing but those members is held in memory. Stored archives are packed with sorted
+    members (``pack_archive``), so reading also stops at the first member that sorts
+    after every named one: an archive missing one of them is not read to its end."""
+    found: dict[str, bytes] = {}
+    passed: set[str] = set()
+    last = max((PurePosixPath(path) for path in paths), default=None)
+    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
+    try:
+        with tarfile.open(fileobj=response, mode="r|gz") as archive:
+            for path, member in _regular_members(archive):
+                if last is None or PurePosixPath(path) > last:
+                    break
+                if path not in paths:
+                    continue
+                if member.size <= max_size:
+                    source = archive.extractfile(member)
+                    found[path] = source.read() if source is not None else b""
+                passed.add(path)
+                if passed >= paths:
+                    break
+    finally:
+        response.close()
+        response.release_conn()
     return found
 
 

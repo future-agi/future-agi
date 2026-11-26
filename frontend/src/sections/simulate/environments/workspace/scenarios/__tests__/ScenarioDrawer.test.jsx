@@ -115,7 +115,15 @@ describe("ScenarioDrawer", () => {
     expect(screen.queryByText("Persona")).toBeNull();
     expect(screen.queryByText("Situation")).toBeNull();
     expect(screen.queryByText("Sub-goals")).toBeNull();
-    // The test conditions always read, even when the scenario sets none.
+    // Without test conditions taken, a scenario that sets none shows no row for them.
+    expect(screen.queryByText("Hidden · test conditions")).toBeNull();
+  });
+
+  it("reads the test conditions, even when the scenario sets none, while they are taken", () => {
+    open(
+      { id: "s2", name: "bare", persona: {}, sub_goals: [] },
+      { testConditions: true },
+    );
     expect(screen.getByText("Hidden · test conditions")).toBeInTheDocument();
     expect(screen.getByText("Tools behave normally")).toBeInTheDocument();
   });
@@ -339,5 +347,112 @@ describe("ScenarioDrawer actors", () => {
       screen.getByText("refunds.void: Unavailable on call 1"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/null/)).toBeNull();
+  });
+});
+
+describe("ScenarioDrawer status", () => {
+  const withLifecycle = (lifecycle) => ({
+    ...API_ROW,
+    lifecycle: { must_pass: false, negative_controls: [], ...lifecycle },
+  });
+
+  it("lists each wrong-way example with whether the checks caught it", () => {
+    open(
+      withLifecycle({
+        state: "active",
+        proof: {
+          proved: true,
+          controls: [
+            {
+              name: "Refunds twice",
+              why: "",
+              ran: true,
+              failed: true,
+              assumed: [],
+            },
+            {
+              name: "Skips the rule",
+              why: "",
+              ran: true,
+              failed: false,
+              assumed: [],
+            },
+          ],
+        },
+      }),
+    );
+    const rows = screen.getAllByTestId("wrong-way-row");
+    expect(rows.map((one) => one.textContent)).toEqual([
+      expect.stringContaining("Caught"),
+      expect.stringContaining("Not caught"),
+    ]);
+  });
+
+  it("says which check isn't measured, and why, without a hover", () => {
+    const why =
+      "refunded reads the tool calls, which this agent does not share with the test; it will read Not measured.";
+    const row = (warning) =>
+      withLifecycle({ state: "active", warning, warning_text: why });
+    const { unmount } = open(row("evidence_not_captured"));
+    expect(screen.getByText("Not measured")).toBeInTheDocument();
+    expect(screen.getByText(why)).toBeInTheDocument();
+    unmount();
+    open(row("recorded_not_run"));
+    expect(screen.queryByText("Not measured")).toBeNull();
+  });
+
+  it("doesn't call a scenario proved since then an older one", () => {
+    open(
+      withLifecycle({
+        state: "kept_as_written",
+        legacy: false,
+        warning: "no_negative_control",
+        warning_text:
+          "Kept as written: no wrong-way example to prove the check can fail.",
+        proof: { proved: false, controls: [] },
+      }),
+    );
+    expect(screen.getByText("None yet.")).toBeInTheDocument();
+    expect(screen.queryByText(/Saved before proofs existed/)).toBeNull();
+  });
+
+  it("says an older kept-as-written scenario has no wrong-way example yet", () => {
+    open(
+      withLifecycle({
+        state: "kept_as_written",
+        legacy: true,
+        reason_text: null,
+        warning_text: null,
+        proof: null,
+      }),
+    );
+    expect(
+      screen.getByText("None yet. Saved before proofs existed."),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Kept as written/).length).toBeGreaterThan(0);
+  });
+});
+
+describe("ScenarioDrawer sources", () => {
+  it("shows where a scenario comes from, as the server words it", () => {
+    open({
+      ...API_ROW,
+      lifecycle: {
+        state: "active",
+        must_pass: false,
+        negative_controls: [],
+        sources: [
+          {
+            kind: "evidence_case",
+            ref: "E-12",
+            label: "Based on evidence case E-12, not an exact replay",
+            problem: "",
+          },
+        ],
+      },
+    });
+    expect(
+      screen.getByText("Based on evidence case E-12, not an exact replay"),
+    ).toBeInTheDocument();
   });
 });

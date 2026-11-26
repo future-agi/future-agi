@@ -829,7 +829,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--config-ref",
-        help="trusted base-branch tip supplying Ruff settings (defaults to --base)",
+        help="immutable policy commit supplying Ruff settings (defaults to --base)",
     )
     parser.add_argument("--ruff", default="ruff", help="the ruff executable")
     parser.add_argument(

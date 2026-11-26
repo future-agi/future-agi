@@ -98,7 +98,8 @@ func newSpeechFixture(t *testing.T, vendor, stage, source, action string, replie
 	}
 	checks := map[string]guardrails.Guardrail{"speech-test": speechTestCheck{gstage}}
 	grCfg := config.GuardrailsConfig{DefaultTimeout: time.Second}
-	if source != "managed" && source != "other-org" && source != "unavailable" {
+	keyPolicyMode, keyPolicy := strings.CutPrefix(source, "key-policy-")
+	if source != "managed" && source != "other-org" && source != "unavailable" && !keyPolicy {
 		staticAction := action
 		if source == "key" || source == "org" {
 			staticAction = "log"
@@ -111,6 +112,13 @@ func newSpeechFixture(t *testing.T, vendor, stage, source, action string, replie
 			org = "other-org"
 		}
 		tenants.Set(org, &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{Checks: map[string]*tenant.GuardrailCheck{"speech-test": {Enabled: true, Action: action}}}})
+	}
+	if keyPolicy {
+		// A dashboard key policy (tenant config), not a static key override.
+		tenants.Set("voice-org", &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{KeyPolicies: []*tenant.KeyGuardrailPolicy{{
+			ID: "pol", Name: "pol", Mode: keyPolicyMode, KeyIDs: []string{keys.Lookup("sk-voice-test").ID},
+			Checks: map[string]*tenant.GuardrailCheck{"speech-test": {Enabled: true, Action: action}},
+		}}}})
 	}
 	if source == "key" {
 		policies.Register(keys.Lookup("sk-voice-test").ID, &config.KeyGuardrailPolicyConfig{Overrides: []config.KeyGuardrailOverride{{Name: "speech-test", Action: action}}})

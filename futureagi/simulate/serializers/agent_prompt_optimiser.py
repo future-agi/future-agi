@@ -53,6 +53,17 @@ class AgentPromptOptimiserRunCreateSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("id", "created_at", "updated_at")
 
+    def to_internal_value(self, data):
+        # A misspelled top-level field would otherwise be dropped and the run
+        # started without it; name it instead, as `configuration` does.
+        if hasattr(data, "keys"):
+            unknown = sorted(set(data.keys()) - set(self.fields))
+            if unknown:
+                raise serializers.ValidationError(
+                    {key: ["Unknown field."] for key in unknown}
+                )
+        return super().to_internal_value(data)
+
     def _test_execution_queryset(self):
         request = self.context.get("request")
         queryset = TestExecution.objects.select_related(

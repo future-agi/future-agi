@@ -86,3 +86,102 @@ def test_metadata_values_are_open_json_in_the_generated_contract(definition):
     ]
 
     assert values["x-json-value"] is True
+
+
+# What the scenario screens read: open objects carry any JSON value, and a change's `affects` is its scenario keys or
+# `all`, so the generated types match what the server sends.
+OPEN_OBJECTS = [
+    ("HarnessEnvironmentWorld", "runtime"),
+    ("HarnessEnvironmentScenario", "fixture"),
+    ("HarnessEnvironmentScenario", "persona"),
+    ("HarnessEnvironmentSettings", "source"),
+    ("HarnessEnvironmentSettings", "runtime"),
+    ("HarnessEnvironmentSettings", "security"),
+    ("HarnessEnvironmentSettings", "artifacts"),
+]
+
+
+@pytest.mark.parametrize(("definition", "field"), OPEN_OBJECTS)
+def test_the_scenario_screens_open_objects_carry_any_json_value(definition, field):
+    values = _swagger_definitions()[definition]["properties"][field][
+        "additionalProperties"
+    ]
+
+    assert values["x-json-value"] is True
+
+
+@pytest.mark.parametrize("field", ["patch", "sources"])
+def test_a_review_change_s_patch_and_sources_carry_any_json_value(field):
+    items = _swagger_definitions()["HarnessReviewChange"]["properties"][field]["items"]
+
+    assert items["additionalProperties"]["x-json-value"] is True
+
+
+def test_a_review_change_affects_its_scenario_keys_or_all():
+    from simulate.serializers.harness_environment import HarnessReviewChangeSerializer
+
+    field = HarnessReviewChangeSerializer().fields["affects"]
+
+    affects = _swagger_definitions()["HarnessReviewChange"]["properties"]["affects"]
+
+    assert affects["x-string-or-array"] is True
+    assert field.to_representation(["refund"]) == ["refund"]
+    assert field.to_representation("all") == "all"
+
+
+def test_the_run_warning_declares_the_scenarios_it_names():
+    keys = _swagger_definitions()["HarnessRunWarning"]["properties"]["scenario_keys"]
+
+    assert keys["type"] == "array" and keys["items"]["type"] == "string"
+
+
+def test_a_readiness_fix_can_open_the_agent_s_versions():
+    category = _swagger_definitions()["HarnessCapabilityFix"]["properties"]["category"]
+
+    assert "agent_version" in category["enum"]
+
+
+def _source_errors(source):
+    data = _create_data(parallelism=1)
+    data["source"] = {**data["source"], **source}
+    serializer = HarnessJobCreateSerializer(data=data)
+    serializer.is_valid()
+    return serializer.errors.get("source", {})
+
+
+_GITHUB = {"kind": "github", "repository": "acme/agent", "visibility": "public"}
+
+
+def test_subfolder_is_refused_until_the_sandbox_reads_it(settings):
+    settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = False
+
+    errors = _source_errors({**_GITHUB, "subfolder": "agents/support"})
+
+    assert "not supported yet" in str(errors["subfolder"][0])
+    assert "subfolder" not in _source_errors({**_GITHUB, "subfolder": ""})
+
+
+def test_subfolder_only_on_a_github_source(settings):
+    settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = True
+
+    errors = _source_errors({"subfolder": "agents/support"})
+
+    assert "only a github source" in str(errors["subfolder"][0])
+
+
+@pytest.mark.parametrize(
+    "subfolder", ["agents/support", "my..agent", "a-b_c.d/e", "", None]
+)
+def test_subfolder_accepts_a_relative_folder(settings, subfolder):
+    settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = True
+
+    assert "subfolder" not in _source_errors({**_GITHUB, "subfolder": subfolder})
+
+
+@pytest.mark.parametrize(
+    "subfolder", ["/agents", "agents/", "../agents", "agents/../x", ".", "a//b", "a b"]
+)
+def test_subfolder_refuses_an_unsafe_path(settings, subfolder):
+    settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = True
+
+    assert "subfolder" in _source_errors({**_GITHUB, "subfolder": subfolder})
