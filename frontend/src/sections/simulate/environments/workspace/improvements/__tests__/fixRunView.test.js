@@ -20,7 +20,6 @@ import {
   checkIcon,
   checkLabel,
   describeChecks,
-  flakyProtectedText,
   noSafeNumbers,
   originOf,
   outcomeLabel,
@@ -96,24 +95,48 @@ describe("labels and identity", () => {
 });
 
 describe("headline", () => {
-  it("leads with the held-back set, else the targets", () => {
+  it("is the server's words for the winner, never composed here", () => {
     expect(headline(byId("fix-ready-archive"))).toBe(
-      "Held-back pass rate 17% → 83%. 1 must-pass scenario broke.",
+      "Held-back pass rate 17% → 83%. No must-pass scenario broke (1 moved within normal noise).",
     );
     expect(headline(byId("fix-ready-no-held"))).toBe(
       "Target pass rate 33% → 100%. No must-pass scenario broke.",
     );
+    const fix = byId("fix-ready-archive");
+    const winner = winnerOf(fix);
+    winner.wording = { ...winner.wording, headline: "Said by the server." };
+    expect(headline(fix)).toBe("Said by the server.");
   });
 
-  it("counts broken must-pass scenarios, not the checks the verdict names", () => {
+  it("reads the must-pass check and each candidate's change from the server", () => {
+    const fix = byId("fix-ready-archive");
+    const winner = winnerOf(fix);
+    winner.wording = {
+      ...winner.wording,
+      must_pass: "The server's must-pass line.",
+      changes: "The server's change line.",
+    };
+    const mustPass = describeChecks(
+      winner.verdict.tiers,
+      fix.request,
+      winner.verdict,
+      winner.wording,
+    ).find((t) => t.name === "must-pass");
+    expect(mustPass.detail).toBe("The server's must-pass line.");
+    const [row] = candidateGroups(fix)[0].rows;
+    expect(row).toMatchObject({
+      changes: "The server's change line.",
+      notes: winner.summary,
+    });
+  });
+
+  // The list's read has no server wording; the page's headline is the server's.
+  it("counts broken must-pass scenarios in the list, not the checks the verdict names", () => {
     const fix = structuredClone(byId("fix-ready-archive"));
     winnerOf(fix).verdict.must_pass_regressions = [
       "on-time-cancel: escalated",
       "on-time-cancel: polite",
     ];
-    expect(headline(fix)).toBe(
-      "Held-back pass rate 17% → 83%. 1 must-pass scenario broke.",
-    );
     expect(listResult(fix).note).toBe("broke 1 must-pass");
   });
 
@@ -196,51 +219,6 @@ describe("headline", () => {
         ending(state, { code: "fix_engine_failed", message: "x" }),
       ).not.toMatch(/engine text/);
     }
-  });
-
-  it("says the protected cases a fix could not be held to by name, each once", () => {
-    const fix = (rows) => ({ report: { flaky_protected: rows } });
-    expect(flakyProtectedText(fix([]))).toBeNull();
-    // A report from before the field says nothing.
-    expect(flakyProtectedText({ report: { summary: "x" } })).toBeNull();
-    expect(
-      flakyProtectedText(
-        fix([
-          {
-            key: "s3",
-            name: "Escalate a large order",
-            sub_goal: "a",
-            passed: 2,
-            runs: 3,
-          },
-          {
-            key: "s3",
-            name: "Escalate a large order",
-            sub_goal: "b",
-            passed: 1,
-            runs: 3,
-          },
-          { key: "s9", name: null, sub_goal: "a", passed: 1, runs: 3 },
-        ]),
-      ),
-    ).toBe(
-      "2 protected cases are flaky on the current version, so this epoch wasn't held to them: “Escalate a large order”, “s9”.",
-    );
-    expect(
-      flakyProtectedText(
-        fix([
-          {
-            key: "s3",
-            name: "Escalate a large order",
-            sub_goal: "a",
-            passed: 2,
-            runs: 3,
-          },
-        ]),
-      ),
-    ).toBe(
-      "1 protected case is flaky on the current version, so this epoch wasn't held to it: “Escalate a large order”.",
-    );
   });
 
   it("says in one sentence what stopped the trials of a no-safe fix", () => {
@@ -1070,14 +1048,17 @@ describe("candidateGroups", () => {
             held_back_pass_rate: [0.17, 0.33],
           }),
         ),
-        cand(
-          2,
-          "rejected",
-          // Two scenarios, one of them named for two of its checks.
-          rejectedAt("must-pass", {
-            must_pass_regressions: ["a: polite", "a: refunded", "b: polite"],
-          }),
-        ),
+        {
+          ...cand(
+            2,
+            "rejected",
+            // Two scenarios, one of them named for two of its checks.
+            rejectedAt("must-pass", {
+              must_pass_regressions: ["a: polite", "a: refunded", "b: polite"],
+            }),
+          ),
+          wording: { must_pass: "2 must-pass scenarios broke." },
+        },
         cand(3, "rejected", rejectedAt("sandbox-fit")),
         cand(4, "rejected", null),
         cand(5, "pending", null),
@@ -1108,8 +1089,9 @@ describe("candidateGroups", () => {
       ["pending", "Did not run", false],
     ]);
     const byGroup = Object.fromEntries(groups.map((g) => [g.id, g.rows]));
+    // The server's must-pass line, never one written here.
     expect(byGroup["must-pass"][0]).toMatchObject({
-      result: "Broke 2 must-pass scenarios",
+      result: "2 must-pass scenarios broke.",
       broke: true,
     });
     expect(byGroup["held-back"][0].result).toBe(
