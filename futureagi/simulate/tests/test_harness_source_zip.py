@@ -51,3 +51,12 @@ def test_zip_refuses_conflicting_file_and_directory():
     with pytest.raises(HostedHarnessError, match="conflicting source paths"):
         with unpack_source_zip(archive, 4096, 10):
             pytest.fail("Conflicting paths accepted")
+
+
+@pytest.mark.parametrize("package", ["support_agent", "repo"])
+def test_zip_preserves_the_top_level_python_package(package):
+    archive = source_zip(
+        [(f"{package}/__init__.py", ""), (f"{package}/main.py", "from . import tools")]
+    )
+    with unpack_source_zip(archive, 4096, 10) as (_, paths, _):
+        assert paths == [f"{package}/__init__.py", f"{package}/main.py"]

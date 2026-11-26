@@ -100,8 +100,11 @@ def unpack_source_zip(upload, max_bytes, max_files):
                 paths.append(path)
             if not entries:
                 raise invalid("The ZIP contains no uploadable source files.")
-            root = paths[0].split("/")[0] + "/"
-            if all(path.startswith(root) for path in paths):
+            name = PurePosixPath(upload.name).stem
+            root = name + "/"
+            if root + "__init__.py" not in paths and all(
+                path.startswith(root) for path in paths
+            ):
                 paths = [path[len(root) :] for path in paths]
             members = set(paths)
             if len(members) != len(paths) or any(
@@ -114,7 +117,7 @@ def unpack_source_zip(upload, max_bytes, max_files):
                 File(stack.enter_context(archive.open(entry)), name=path)
                 for entry, path in zip(entries, paths, strict=True)
             ]
-            yield files, paths, PurePosixPath(upload.name).stem
+            yield files, paths, name
     except (BadZipFile, EOFError, NotImplementedError, CompressionError) as exc:
         raise invalid(
             "The ZIP could not be read. Choose a complete, unencrypted ZIP."
