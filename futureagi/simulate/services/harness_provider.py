@@ -307,9 +307,14 @@ def scope_jobs(queryset, request):
 
 
 def _scoped_job(request, pk):
-    """One job, or None, resolved under the caller's organization and workspace."""
+    """One job, or None, resolved under the caller's organization and workspace. An id that is not a UUID names no
+    job, so it answers as a missing one rather than an error."""
     organization = request_organization(request)
     if organization is None:
+        return None
+    try:
+        uuid.UUID(str(pk))
+    except ValueError:
         return None
     return (
         scope_jobs(

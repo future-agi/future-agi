@@ -236,3 +236,16 @@ def test_an_empty_path_value_is_refused_before_any_route_is_resolved(auth_client
 
     assert response.status_code == 400, response.content
     assert "Missing required path parameter: key" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_an_id_that_is_not_a_uuid_is_a_missing_job_on_rest_and_through_mcp(auth_client):
+    rest = auth_client.get("/simulate/api/harness-jobs/not-a-uuid/scenarios/")
+    tool = auth_client.post(
+        "/mcp/internal/tool-call/",
+        {"tool_name": "list_harness_scenarios", "params": {"id": "not-a-uuid"}},
+        format="json",
+    )
+
+    assert rest.status_code == 404, rest.content
+    assert tool.status_code == 404, tool.content
