@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "tool_names_sha256": "0e703e4157dca151d0d7a9706cf35dc1781b91e4645ff70d9753e72c0461577c",
-  "tool_count": 143,
+  "tool_names_sha256": "1fdecae2246dc35509bb454a2cc47b1c039a62601b6c7342c9cf8bc8f1baa021",
+  "tool_count": 144,
   "tools": [
     {
       "name": "whoami",
@@ -12021,6 +12021,53 @@
       },
       "source": {
         "operationId": "simulate_v3_call_execution_detail"
+      }
+    },
+    {
+      "name": "get_call_workers",
+      "description": "For a trial (call) of a multi-agent app, return which of the app's participants (workers) did what, read from the traces the app sent. While the traces are still being collected it returns only pending and next_read_at, so read it again then; it returns nothing when the trial handed nothing to another agent.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "call_execution_id": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "string",
+            "format": "uuid",
+            "description": "An earlier attempt's rerun snapshot id: its record as the rerun kept it; 404 when it is not this call's, state `not_kept` when it was snapshotted before records were kept."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "call_execution_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/v3/call-executions/{call_execution_id}/workers/",
+        "parameters": {
+          "path": [
+            "call_execution_id"
+          ],
+          "query": [
+            "attempt"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_v3_call_execution_workers"
       }
     },
     {

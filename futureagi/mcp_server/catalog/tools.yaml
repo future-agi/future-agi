@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 143
+expected_tool_count: 144
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -600,6 +600,10 @@ tools:
     group: simulation
     description: Return one trial (call) of a run with its transcript, tool calls, checks and the World changes it made.
     operation: {method: GET, path: "/simulate/v3/call-executions/{call_execution_id}/"}
+  - name: get_call_workers
+    group: simulation
+    description: For a trial (call) of a multi-agent app, return which of the app's participants (workers) did what, read from the traces the app sent. While the traces are still being collected it returns only pending and next_read_at, so read it again then; it returns nothing when the trial handed nothing to another agent.
+    operation: {method: GET, path: "/simulate/v3/call-executions/{call_execution_id}/workers/"}
     access: read
   # epoch: Debug failures, evidence imports and Epoch, the loop from a failing run
   # to a shipped change. `entitlement` hides a tool from organizations whose plan
