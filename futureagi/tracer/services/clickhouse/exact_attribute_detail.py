@@ -322,12 +322,15 @@ _TAIL_SQL = EXACT_ATTRIBUTE_DETAIL_SQL[
 
 _SEMI_JOIN_LATEST_SPANS_SQL = r"""
 WITH
+%(attribute_key)s AS _attribute_key,
 latest_spans AS
 (
     /*
      * Identity seed as an IN set.  The key predicate runs only inside the
      * subquery; the replay filters versions by immutable identity columns
      * only, so a later key removal or tombstone still wins in argMax.
+     * Binding attribute_key once keeps max-length escaped keys well
+     * below ClickHouse's query-size ceiling.
      */
     SELECT
         attribute_source.trace_id AS trace_id,
@@ -336,16 +339,16 @@ latest_spans AS
         argMax(
             tuple(
                 attribute_source.is_deleted,
-                mapContains(attribute_source.attrs_string, %(attribute_key)s),
-                attribute_source.attrs_string[%(attribute_key)s],
-                mapContains(attribute_source.attrs_number, %(attribute_key)s),
-                attribute_source.attrs_number[%(attribute_key)s],
-                mapContains(attribute_source.attrs_bool, %(attribute_key)s),
-                attribute_source.attrs_bool[%(attribute_key)s],
-                JSONHas(attribute_source.attributes_extra, %(attribute_key)s),
+                mapContains(attribute_source.attrs_string, _attribute_key),
+                attribute_source.attrs_string[_attribute_key],
+                mapContains(attribute_source.attrs_number, _attribute_key),
+                attribute_source.attrs_number[_attribute_key],
+                mapContains(attribute_source.attrs_bool, _attribute_key),
+                attribute_source.attrs_bool[_attribute_key],
+                JSONHas(attribute_source.attributes_extra, _attribute_key),
                 JSONExtractRaw(
                     attribute_source.attributes_extra,
-                    %(attribute_key)s
+                    _attribute_key
                 )
             ),
             attribute_source._version
@@ -370,20 +373,20 @@ latest_spans AS
             AND candidate_source.start_time < %(window_end)s
           WHERE
         (
-            indexHint(has(mapKeys(candidate_source.attrs_string), %(attribute_key)s))
-            AND mapContains(candidate_source.attrs_string, %(attribute_key)s)
+            indexHint(has(mapKeys(candidate_source.attrs_string), _attribute_key))
+            AND mapContains(candidate_source.attrs_string, _attribute_key)
         )
         OR (
-            indexHint(has(mapKeys(candidate_source.attrs_number), %(attribute_key)s))
-            AND mapContains(candidate_source.attrs_number, %(attribute_key)s)
+            indexHint(has(mapKeys(candidate_source.attrs_number), _attribute_key))
+            AND mapContains(candidate_source.attrs_number, _attribute_key)
         )
         OR (
-            indexHint(has(mapKeys(candidate_source.attrs_bool), %(attribute_key)s))
-            AND mapContains(candidate_source.attrs_bool, %(attribute_key)s)
+            indexHint(has(mapKeys(candidate_source.attrs_bool), _attribute_key))
+            AND mapContains(candidate_source.attrs_bool, _attribute_key)
         )
         OR (
             candidate_source.attributes_extra NOT IN ('', '{}', 'null')
-            AND JSONHas(candidate_source.attributes_extra, %(attribute_key)s)
+            AND JSONHas(candidate_source.attributes_extra, _attribute_key)
         )
       )
     GROUP BY

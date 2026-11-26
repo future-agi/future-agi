@@ -46,7 +46,7 @@ class _Executor:
 
 DEV_SQL_SHA256 = "e1f450175717df31002cb4bce78751013adab5cb1128c008e44fe1879580f88c"
 SEMI_JOIN_HEAD_SHA256 = (
-    "b354681626059931cd61fa5b6f3681f9e2a27f0ce35ef8fe05712ed702ea5634"
+    "07ca701078dfcad6f891f1ec6872304cd2df6c6b72461766399e1684733b262e"
 )
 _MIB = 1024 * 1024
 _SETTINGS_LANE = SimpleNamespace(
@@ -847,10 +847,27 @@ def test_semi_join_sql_reuses_dev_text_verbatim():
     assert EXACT_ATTRIBUTE_DETAIL_SEMI_JOIN_SQL == (
         head + EXACT_ATTRIBUTE_DETAIL_SQL[tail_at:]
     )
-    assert head.count(_DEV_KEY_PREDICATE) == 1
-    assert head.index(_DEV_KEY_PREDICATE) > head.index(") IN\n")
-    assert head.count(_DEV_ARGMAX_TUPLE) == 1
+    bound_key_predicate = _DEV_KEY_PREDICATE.replace(
+        "%(attribute_key)s", "_attribute_key"
+    )
+    bound_argmax_tuple = _DEV_ARGMAX_TUPLE.replace(
+        "%(attribute_key)s", "_attribute_key"
+    )
+    assert head.count("%(attribute_key)s") == 1
+    assert "%(attribute_key)s AS _attribute_key," in head
+    assert head.count(bound_key_predicate) == 1
+    assert head.index(bound_key_predicate) > head.index(") IN\n")
+    assert head.count(bound_argmax_tuple) == 1
     assert hashlib.sha256(head.encode()).hexdigest() == SEMI_JOIN_HEAD_SHA256
+
+
+def test_semi_join_sql_stays_below_64kib_for_max_escaped_attribute_key():
+    max_quote_key = "'" * 4096
+    escaped = "'" + max_quote_key.replace("'", "\\'") + "'"
+    rendered = EXACT_ATTRIBUTE_DETAIL_SEMI_JOIN_SQL.replace(
+        "%(attribute_key)s", escaped
+    )
+    assert len(rendered.encode("utf-8")) < 64 * 1024
 
 
 def test_semi_join_replay_filters_only_immutable_identity():
