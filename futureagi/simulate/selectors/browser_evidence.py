@@ -130,9 +130,11 @@ def browser_environment(call: CallExecution) -> bool:
 
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     receipt = metadata.get("hosted_harness_receipt")
+    if not isinstance(receipt, Mapping):
+        return False
     try:
         job_id = uuid.UUID(str(receipt.get("job_id")))
-    except (AttributeError, ValueError):
+    except ValueError:
         return False
     run_test = call.test_execution.run_test
     jobs = HostedHarnessJob.no_workspace_objects.filter(

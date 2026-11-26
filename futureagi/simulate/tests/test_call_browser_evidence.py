@@ -202,6 +202,10 @@ def test_a_trial_is_of_a_browser_environment_when_its_job_has_sites_at_its_pin(j
     no_receipt = _call(job, None)
     no_receipt.call_metadata.pop("hosted_harness_receipt")
     assert be.browser_environment(no_receipt) is False
+    for receipt in ("not a receipt", {"job_id": None}, {"job_id": "not-an-id"}):
+        odd = _call(job, None)
+        odd.call_metadata["hosted_harness_receipt"] = receipt
+        assert be.browser_environment(odd) is False
     # Read through the one function for a job's sites, with the job's pinned version.
     with patch.object(be, "browser_sites_at_pin", return_value=[]) as read:
         assert be.browser_environment(_call(job, None)) is False
