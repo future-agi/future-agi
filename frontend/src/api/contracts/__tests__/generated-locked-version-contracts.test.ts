@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse,
   SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse,
+  SimulateApiHarnessEnvironmentsVersionsLockPreviewResponse,
   SimulateApiHarnessEnvironmentsVersionsLockVersionResponse,
   SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse,
   SimulateApiHarnessEnvironmentsVersionsResponse,
@@ -10,7 +11,8 @@ import {
 } from "src/generated/api-contracts/api.zod";
 import type { HarnessLockRefusalApi } from "src/generated/api-contracts/api.schemas";
 
-// Bodies shaped as simulate/services/harness_versioning/read.py::list_versions sends them.
+// Bodies shaped as simulate/services/harness_versioning/read.py::list_versions and
+// locked_versions.py::lock_preview send them.
 const AT = "2026-11-25T10:00:00+00:00";
 
 // An unnumbered draft: its label, origin, hash and parent are null on the wire.
@@ -108,20 +110,16 @@ describe.each([
     SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse,
   ],
 ])("generated %s response", (_name, schema) => {
-  it.each(Object.entries(previews))(
-    "accepts a %s lock preview with its versions and locked versions",
-    (_state, lock) => {
-      const body = {
-        agent: [version],
-        environment: [version],
-        suite: [version],
-        locked_versions: [lockedVersion],
-        lock,
-      };
+  it("accepts its versions and locked versions", () => {
+    const body = {
+      agent: [version],
+      environment: [version],
+      suite: [version],
+      locked_versions: [lockedVersion],
+    };
 
-      expect(schema.parse(body)).toEqual(body);
-    },
-  );
+    expect(schema.parse(body)).toEqual(body);
+  });
 
   it("keeps a locked version's own label required", () => {
     const body = {
@@ -129,7 +127,6 @@ describe.each([
       environment: [],
       suite: [],
       locked_versions: [{ ...lockedVersion, label: null }],
-      lock: previews.ready,
     };
 
     const parsed = schema.safeParse(body);
@@ -141,13 +138,38 @@ describe.each([
   });
 });
 
+describe("generated lock preview response", () => {
+  it.each(Object.entries(previews))(
+    "accepts a %s lock preview",
+    (_state, preview) => {
+      expect(
+        SimulateApiHarnessEnvironmentsVersionsLockPreviewResponse.parse(
+          preview,
+        ),
+      ).toEqual(preview);
+    },
+  );
+
+  it("refuses a refusal without its message", () => {
+    const parsed =
+      SimulateApiHarnessEnvironmentsVersionsLockPreviewResponse.safeParse({
+        ...previews.blocked,
+        refusal: { code: "lock_too_few_test" },
+      });
+
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues.map((issue) => issue.path.join("."))).toEqual([
+      "refusal",
+    ]);
+  });
+});
+
 describe("generated drafts save response", () => {
   const versions = {
     agent: [],
     environment: [],
     suite: [],
     locked_versions: [lockedVersion],
-    lock: previews.ready,
   };
 
   it("accepts the versions it carries, locked versions included", () => {

@@ -17,21 +17,36 @@ interface PieceRow {
   source?: { repository: string; ref: string; commit_sha: string };
 }
 
-// The versions read's body, with only the fields the card reads.
+// The versions read's body, with only the fields the card reads. It carries no
+// lock preview: the card reads that from versions/lock-preview/.
 interface VersionsBody {
   agent: PieceRow[];
   environment: PieceRow[];
   suite: PieceRow[];
   locked_versions: HarnessLockedVersionApi[];
-  lock: HarnessLockPreviewApi;
 }
 
-// What the server answered for the versions read, and what each action got.
-const state: {
+// What the server answered for each read.
+interface Answer {
   versions: VersionsBody | undefined;
+  preview: HarnessLockPreviewApi | undefined;
+}
+
+// What the server answered, and what each action got.
+const state: {
+  server: Answer;
   canUnlockVersion: boolean;
   canEdit: boolean;
-} = { versions: undefined, canUnlockVersion: true, canEdit: true };
+} = {
+  server: { versions: undefined, preview: undefined },
+  canUnlockVersion: true,
+  canEdit: true,
+};
+// The env ids each read was asked for.
+const asked: { versions: string[]; preview: string[] } = {
+  versions: [],
+  preview: [],
+};
 const calls: {
   lock: VersionPair[];
   unlock: { lockedVersionId: LockedVersion["id"] }[];
@@ -46,9 +61,16 @@ vi.mock("src/api/simulate-environments/versions", async () => {
   >("src/api/simulate-environments/versions");
   return {
     ...actual,
-    useEnvironmentVersions: vi.fn(() => ({
-      data: state.versions ? actual.toVersions(state.versions) : undefined,
-    })),
+    useEnvironmentVersions: vi.fn((envId: string) => {
+      asked.versions.push(envId);
+      const body = state.server.versions;
+      return { data: body ? actual.toVersions(body) : undefined };
+    }),
+    useLockPreview: vi.fn((envId: string) => {
+      asked.preview.push(envId);
+      const body = state.server.preview;
+      return { data: body ? actual.lockFromApi(body) : undefined };
+    }),
     useLockVersion: vi.fn(() => ({
       isPending: false,
       mutate: (variables: VersionPair) => calls.lock.push(variables),
@@ -97,21 +119,23 @@ const answer = ({
 }: {
   lockedVersions?: HarnessLockedVersionApi[];
   lock?: Partial<HarnessLockPreviewApi>;
-} = {}): VersionsBody => ({
-  agent: [
-    {
-      ...piece("agent-4", "v4"),
-      source: {
-        repository: "acme/support-bot",
-        ref: "main",
-        commit_sha: "a1b2c3d4e5f6",
+} = {}): Answer => ({
+  versions: {
+    agent: [
+      {
+        ...piece("agent-4", "v4"),
+        source: {
+          repository: "acme/support-bot",
+          ref: "main",
+          commit_sha: "a1b2c3d4e5f6",
+        },
       },
-    },
-  ],
-  environment: [piece("env-3", "v3")],
-  suite: [piece("suite-5", "v5")],
-  locked_versions: lockedVersions,
-  lock: {
+    ],
+    environment: [piece("env-3", "v3")],
+    suite: [piece("suite-5", "v5")],
+    locked_versions: lockedVersions,
+  },
+  preview: {
     environment_version_id: "env-3",
     suite_version_id: "suite-5",
     proved: false,
@@ -125,11 +149,13 @@ const answer = ({
 });
 
 beforeEach(() => {
-  state.versions = answer();
+  state.server = answer();
   state.canUnlockVersion = true;
   state.canEdit = true;
   calls.lock.length = 0;
   calls.unlock.length = 0;
+  asked.versions.length = 0;
+  asked.preview.length = 0;
 });
 
 describe("LockedVersionCard", () => {
@@ -184,7 +210,7 @@ describe("LockedVersionCard", () => {
     );
 
     // The versions refresh behind the open dialog with a newer default pair.
-    state.versions = answer({
+    state.server = answer({
       lock: { environment_version_id: "env-4", suite_version_id: "suite-6" },
     });
     rerender(<LockedVersionCard envId="env" />);
@@ -200,7 +226,7 @@ describe("LockedVersionCard", () => {
   });
 
   it("says why it can't lock, in one sentence, with the fix", async () => {
-    state.versions = answer({
+    state.server = answer({
       lock: {
         can_lock: false,
         refusal: {
@@ -229,7 +255,7 @@ describe("LockedVersionCard", () => {
   });
 
   it("offers no action when the build, not the suite, is the reason", () => {
-    state.versions = answer({
+    state.server = answer({
       lock: {
         can_lock: false,
         refusal: {
@@ -262,7 +288,7 @@ describe("LockedVersionCard", () => {
   });
 
   it("shows a locked version with its splits, and an admin can unlock it", async () => {
-    state.versions = answer({
+    state.server = answer({
       lockedVersions: [LOCKED_VERSION],
       lock: { can_lock: false, proved: true },
     });
@@ -302,7 +328,7 @@ describe("LockedVersionCard", () => {
 
   it("hides Unlock from a member", () => {
     state.canUnlockVersion = false;
-    state.versions = answer({
+    state.server = answer({
       lockedVersions: [LOCKED_VERSION],
       lock: { can_lock: false },
     });
@@ -315,7 +341,7 @@ describe("LockedVersionCard", () => {
   });
 
   it("lets an admin unlock an earlier locked version the default moved past", async () => {
-    state.versions = answer({
+    state.server = answer({
       lockedVersions: [
         { ...LOCKED_VERSION, suite_version_id: "suite-4", suite_label: "v4" },
       ],
@@ -342,7 +368,7 @@ describe("LockedVersionCard", () => {
   });
 
   it("lists earlier locked versions, unlocked ones included", () => {
-    state.versions = answer({
+    state.server = answer({
       lockedVersions: [
         {
           ...LOCKED_VERSION,
@@ -365,8 +391,31 @@ describe("LockedVersionCard", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads the preview from its own read, and the history from the versions read", () => {
+    render(<LockedVersionCard envId="env" />);
+
+    expect(asked.versions).toContain("env");
+    expect(asked.preview).toContain("env");
+    // The versions body has no lock key; the splits come from the preview.
+    expect(state.server.versions).not.toHaveProperty("lock");
+    expect(
+      screen.getByText("Train 54 · Test 14 scenarios once locked."),
+    ).toBeInTheDocument();
+  });
+
   it("renders nothing before the server answers", () => {
-    state.versions = undefined;
+    state.server = { versions: undefined, preview: undefined };
+
+    const { container } = render(<LockedVersionCard envId="env" />);
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it.each([
+    ["the preview", { ...answer(), preview: undefined }],
+    ["the versions", { ...answer(), versions: undefined }],
+  ])("renders nothing while %s is still on its way", (_read, server) => {
+    state.server = server;
 
     const { container } = render(<LockedVersionCard envId="env" />);
 
