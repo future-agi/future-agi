@@ -25,6 +25,7 @@ from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
     HostedHarnessJob,
+    SimulateEvalConfig,
     TestExecution,
 )
 from simulate.pydantic_schemas.agent_fix import (
@@ -51,6 +52,7 @@ from simulate.services.harness_usage import require_harness_call_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     create_selected_harness_run,
+    fail_unscheduled,
     run_idempotency_key,
 )
 from simulate.temporal.client import start_hosted_harness_gateway_workflow
@@ -390,22 +392,9 @@ def dispatch_run(run: HostedHarnessJob) -> None:
 
 def _fail_unscheduled(run: HostedHarnessJob) -> None:
     message = "the check run could not be scheduled"
-    now = timezone.now()
     with transaction.atomic():
-        marked = HostedHarnessJob.no_workspace_objects.filter(
-            id=run.id, state=HostedHarnessJob.State.QUEUED
-        ).update(
-            state=HostedHarnessJob.State.FAILED,
-            current_stage="failed",
-            terminal_at=now,
-            failure={
-                "domain": "infrastructure",
-                "stage": "queued",
-                "code": "scheduler_unavailable",
-                "message": message,
-            },
-        )
-        if marked:
+        now = fail_unscheduled(run, message)
+        if now is not None:
             TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
                 status=TestExecution.ExecutionStatus.FAILED,
                 completed_at=now,
@@ -436,11 +425,18 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
     """Queue the platform's evals of the baseline and the winner's final check, the runs its
     warnings compare. A fix's check runs are graded only now, so a fix with no winner pays
     for none. Called inside the report's transaction: the jobs start once it commits."""
-    configs = list(runnable_eval_configs(fix_run.environment.run_test_id))
+    configs = list(
+        runnable_eval_configs(fix_run.environment.run_test_id).order_by(
+            "created_at", "id"
+        )
+    )
     if not configs:
         return
     winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)
     base, final = graded_check_runs(fix_run, winner)
+    configs = _evals_within_budget(fix_run, configs, [*base, *final])
+    if not configs:
+        return
     for run in (*base, *final):
         execution = run.test_execution
         if execution is None:
@@ -459,6 +455,34 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
                 run=str(run.id),
                 exc_info=True,
             )
+
+
+def _evals_within_budget(
+    fix_run: AgentFixRun,
+    configs: list[SimulateEvalConfig],
+    runs: list[HostedHarnessJob],
+) -> list[SimulateEvalConfig]:
+    """The evals a winner's grading may queue on ``runs`` within the fix's limit: the
+    oldest first, as many as fit at their worst case on every execution graded. Each check
+    run held the evals the environment had when it was admitted; one added since was held
+    by none, so it is graded only if what is left of the limit covers it."""
+    executions = sum(run.scenario_count for run in runs if run.test_execution_id)
+    per_eval = executions * Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL)
+    if per_eval <= 0:
+        return configs
+    budget = Decimal(str(fix_run.request["budget_usd"]))
+    # What the fix holds without any eval's reserve: the evals queued here are priced
+    # below, from this same list, so no eval is counted twice or from another read.
+    left = budget - committed_usd(fix_run, eval_count=0)
+    fitting = max(0, min(len(configs), int(left / per_eval)))
+    if fitting < len(configs):
+        logger.warning(
+            "agent_fix_grading_over_budget",
+            fix_run=str(fix_run.id),
+            graded=[str(one.id) for one in configs[:fitting]],
+            not_graded=[str(one.id) for one in configs[fitting:]],
+        )
+    return configs[:fitting]
 
 
 def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:

@@ -93,6 +93,7 @@ from simulate.services.hosted_harness import (
 from simulate.services.hosted_harness_gateway import _source_object_key
 from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.run_traces_v3 import CallUsage
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_harness_agent_versions import _environment, _passing
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _read
@@ -166,8 +167,13 @@ def temporal():
 
 @pytest.fixture
 def environment(user, workspace, storage):
-    """Backfilled to A1/E1/S1: a GitHub agent with two scenarios."""
-    return _environment(user, workspace, "fix-env", storage)
+    """Backfilled to A1/E1/S1: a GitHub agent with two scenarios, proved on that pair
+    so a run sends them."""
+    from simulate.tests.test_harness_affected_scenarios import _proved_on
+
+    built = _environment(user, workspace, "fix-env", storage)
+    _proved_on(built, built.environment_version)
+    return built
 
 
 @pytest.fixture
@@ -1521,7 +1527,7 @@ class TestCheckRunStatus:
                     "sub_goals": [{"name": "refunded", "held": None}],
                 },
                 "error",
-                "the judge decided nothing on refunded",
+                "the trial ended errored",
                 {},
             ),
         ],
@@ -2378,9 +2384,11 @@ class TestMakeDefault:
         candidate.refresh_from_db()
 
         outcome = make_candidate_default(candidate, user=user)
+        # Its pairing with the defaults validates before it moves.
+        settle_validations(environment)
 
         environment.refresh_from_db()
-        assert outcome == "activated"
+        assert outcome == "validating"
         assert environment.agent_version_id == candidate.agent_version_id
         assert make_candidate_default(candidate, user=user) == "already_default"
 
@@ -2426,7 +2434,9 @@ class TestMakeDefault:
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
             payload=payload
         )
-        assert make_candidate_default(first, user=user) == "activated"
+        # Its pairing with the defaults validates before it moves.
+        assert make_candidate_default(first, user=user) == "validating"
+        settle_validations(environment)
         retry_deferred_activations(second.agent_version_id)
         environment.refresh_from_db()
         assert environment.agent_version_id == first.agent_version_id
@@ -2441,7 +2451,9 @@ class TestMakeDefault:
         first = self._winner(source_run)
         second = self._winner(source_run)
 
-        assert make_candidate_default(first, user=user) == "activated"
+        # Its pairing with the defaults validates before it moves.
+        assert make_candidate_default(first, user=user) == "validating"
+        settle_validations(environment)
         with pytest.raises(HostedHarnessError) as refused:
             make_candidate_default(second, user=user)
 
@@ -3048,6 +3060,82 @@ class TestWinnerGrading:
         assert {
             call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
         } == {call_id: sorted([str(first.id), str(second.id)]) for call_id in graded}
+
+    def _limited(self, source_run, settings, budget_usd):
+        """A fix with a winner to grade whose limit is ``budget_usd``, and a second eval
+        added to the environment after its last check run was admitted."""
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EVAL = "0.25"
+        fix_run, candidate, runs, first = self._fix(source_run)
+        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            request={**fix_run.request, "budget_usd": budget_usd}
+        )
+        fix_run.refresh_from_db()
+        # The checks' sealed $0.03, and one eval's worst case on the baseline and the
+        # final check: what the limit was held against before the eval was added.
+        assert committed_usd(fix_run) == Decimal("0.53")
+        added = _mapped_eval(
+            source_run, name="Accuracy", template_name="accuracy_regrade"
+        )
+        graded = {
+            str(execution.call_execution_id)
+            for key in ("base", "final")
+            for execution in _executions(runs[key])
+        }
+        return fix_run, candidate, graded, first, added
+
+    def test_an_eval_added_mid_fix_is_not_graded_past_the_limit(
+        self, source_run, settings
+    ):
+        fix_run, candidate, graded, first, _added = self._limited(
+            source_run, settings, 0.6
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        # Both evals on both runs would bring the fix to $1.03 of its $0.60: the eval the
+        # checks were held for is graded, the one added after them is not.
+        queued = {
+            call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
+        }
+        assert queued == {call_id: [str(first.id)] for call_id in graded}
+        evals = {config for configs in queued.values() for config in configs}
+        priced = Decimal("0.03") + len(graded) * len(evals) * Decimal("0.25")
+        assert priced <= Decimal("0.6")
+
+    def test_an_eval_added_mid_fix_is_graded_when_the_limit_covers_it(
+        self, source_run, settings
+    ):
+        fix_run, candidate, graded, first, added = self._limited(
+            source_run, settings, 1.03
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        assert {
+            call.args[0]: sorted(call.args[1]) for call in dispatched.call_args_list
+        } == {call_id: sorted([str(first.id), str(added.id)]) for call_id in graded}
+
+    def test_grading_no_eval_fits_queues_nothing(self, source_run, settings):
+        fix_run, candidate, _graded, _first, _added = self._limited(
+            source_run, settings, 0.5
+        )
+
+        dispatched = self._won(fix_run, candidate)
+
+        dispatched.assert_not_called()
+        winner = AgentFixCandidate.no_workspace_objects.get(id=candidate.id)
+        assert winner.outcome == Outcome.WINNER
+
+    def test_what_a_fix_holds_without_its_evals_reserves(self, source_run, settings):
+        fix_run, _candidate_, _graded, _first, _added = self._limited(
+            source_run, settings, 0.6
+        )
+
+        # Two evals now on the baseline and the final check; without them, what it billed.
+        assert committed_usd(fix_run) == Decimal("1.03")
+        assert committed_usd(fix_run, eval_count=0) == Decimal("0.03")
+        assert committed_usd(fix_run, eval_count=1) == Decimal("0.53")
 
     def test_a_failed_hand_off_unstamps_every_config_of_the_calls_it_did_not_reach(
         self, source_run
@@ -4219,3 +4307,25 @@ class TestCheckRunReceipts:
             call.call_metadata.get("eval_started"),
             call.call_metadata.get("eval_completed"),
         ) == (True, True)
+
+
+def test_a_suite_private_to_a_fix_is_never_reused_as_a_saved_twin(source_run):
+    """Save and Validate reuse an active version with the same content; never one only a fix's check runs see."""
+    from simulate.models import HarnessSuiteVersion
+    from simulate.services.harness_versioning.draft_pieces import active_twin
+
+    environment = source_run.environment
+    suite = environment.suite_version
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(
+        fix_run=_fix_run(source_run)
+    )
+
+    assert (
+        active_twin(HarnessSuiteVersion, environment, suite.hash, suite.hash_kind)
+        is None
+    )
+    HarnessSuiteVersion._base_manager.filter(id=suite.id).update(fix_run=None)
+    assert (
+        active_twin(HarnessSuiteVersion, environment, suite.hash, suite.hash_kind).id
+        == suite.id
+    )
