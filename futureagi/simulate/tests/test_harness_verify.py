@@ -656,6 +656,22 @@ class TestVerifyApi:
 
         assert posted.status_code == 400
 
+    def test_a_coding_agent_may_not_run_a_split(self, api_client, environment, keys):
+        posted = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"split": "test", "trials": 1},
+            HTTP_IDEMPOTENCY_KEY="coder-split",
+        )
+
+        assert posted.status_code == 422, posted.content
+        assert posted.json()["error"] == "split_not_for_coding_agent"
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            environment=environment, split__isnull=False
+        ).exists()
+
 
 class TestVerifyRunsStayOutOfTheUsersRuns:
     @pytest.fixture

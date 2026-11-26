@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import pytest
 from django.db import connection
+from django.db.models import RestrictedError
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
@@ -12,8 +13,12 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
     HarnessEnvironmentVersion,
+    HarnessLockedVersion,
+    HarnessLockedVersionMember,
+    HarnessSuiteMember,
     HarnessSuiteValidation,
     HarnessSuiteVersion,
+    HarnessTaskSplit,
     HostedHarnessJob,
 )
 from simulate.services.harness_versioning import archives, assembly
@@ -31,6 +36,7 @@ from simulate.services.hosted_harness import (
     resolve_run_pins,
 )
 from simulate.tests.test_harness_amend_archive import NAMES, _key
+from simulate.tests.test_harness_locked_versions import _needs_production
 from simulate.tests.test_harness_versioning_api import _versioned
 from simulate.tests.test_harness_versioning_backfill import (
     _agent_version,
@@ -184,6 +190,115 @@ def _proved(environment, suite=None, keys=()):
     prove_pair(environment, environment.environment_version, suite, keys=list(keys))
 
 
+TRAIN = [_key(NAMES[0])]
+TEST = [_key(name) for name in NAMES[1:]]
+
+
+def _lock(environment, label, *, locked=True):
+    """A locked version of the environment's default pair, as a lock writes it: with
+    its roster, the default suite's scenarios of TRAIN in train and the others in
+    test."""
+    now = timezone.now()
+    locked_version = HarnessLockedVersion.no_workspace_objects.create(
+        environment=environment,
+        environment_version_id=environment.environment_version_id,
+        suite_version_id=environment.suite_version_id,
+        label=label,
+        locked_at=now,
+        unlocked_at=None if locked else now,
+        train_count=len(TRAIN),
+        test_count=len(TEST),
+    )
+    HarnessLockedVersionMember.no_workspace_objects.bulk_create(
+        [
+            HarnessLockedVersionMember(
+                locked_version=locked_version,
+                scenario_id=scenario_id,
+                split="train" if scenario_key in TRAIN else "test",
+            )
+            for scenario_id, scenario_key in HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=environment.suite_version_id
+            ).values_list("scenario_id", "scenario_key")
+        ]
+    )
+    return locked_version
+
+
+def _unlock(locked_version):
+    HarnessLockedVersion.no_workspace_objects.filter(id=locked_version.id).update(
+        unlocked_at=timezone.now()
+    )
+
+
+def _locked(user, workspace, key, storage, *, locked=True):
+    """Every scenario of NAMES in the default suite and scorable, and the default pair
+    locked as 2026.11.1: the first scenario in train, the others in test."""
+    environment = _environment(user, workspace, key, storage)
+    # A rebuild, not a user edit: the base environment already retired a key
+    # NAMES reuses, which only a user origin refuses.
+    record_authoring(environment, _authoring(names=NAMES), origin="authoring")
+    environment.refresh_from_db()
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).order_by("number")
+    )
+    assert [member.scenario_key for member in members] == [*TRAIN, *TEST]
+    for member in members:
+        HarnessSuiteMember.no_workspace_objects.filter(id=member.id).update(
+            content={**(member.content or {}), "sub_goals": [{"name": "refunded"}]}
+        )
+    locked_version = _lock(environment, "2026.11.1", locked=locked)
+    HarnessTaskSplit.no_workspace_objects.bulk_create(
+        [
+            HarnessTaskSplit(
+                scenario_id=member.scenario_id,
+                split="train" if index == 0 else "test",
+                first_locked_version=locked_version,
+            )
+            for index, member in enumerate(members)
+        ]
+    )
+    return environment, locked_version
+
+
+def _split_run(environment, split, keys=(), key="split", **kwargs):
+    run, created = create_selected_harness_run(
+        environment,
+        scenario_keys=list(keys),
+        trials=1,
+        idempotency_key=key,
+        split=split,
+        **kwargs,
+    )
+    run.refresh_from_db()
+    return run, created
+
+
+def _split_refusal(environment, split, keys=()):
+    with pytest.raises(HostedHarnessError) as caught:
+        _split_run(environment, split, keys, key="refused")
+    assert caught.value.status_code == 422
+    return caught.value
+
+
+def _rerun_saved(user, workspace, source, settings):
+    from simulate.services.harness_provider import HostedHarnessProvider
+
+    HostedHarnessJob.no_workspace_objects.filter(id=source.id).update(
+        state=HostedHarnessJob.State.COMPLETED
+    )
+    settings.HARNESS_PUBLIC_BASE_URL = "https://harness.example.test"
+    with patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"):
+        result = HostedHarnessProvider().rerun_saved(
+            str(source.id),
+            organization=user.organization,
+            workspace=workspace,
+            environment_values={},
+        )
+    return HostedHarnessJob.no_workspace_objects.get(id=result["job"]["job_id"])
+
+
 def _post_run(auth_client, environment, body, key="api", path=None):
     with patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"):
         return auth_client.post(
@@ -257,6 +372,8 @@ class TestNoPicks:
                 "label": "v1",
             },
             "suite": {"id": str(environment.suite_version_id), "label": "v2"},
+            "split": None,
+            "locked_version": None,
         }
         # Its only case is proved, so nothing is warned about the suite.
         assert body["warnings"] == []
@@ -276,6 +393,8 @@ class TestNoPicks:
             "agent": None,
             "environment": None,
             "suite": None,
+            "split": None,
+            "locked_version": None,
         }
         assert response.json()["warnings"] == []
 
@@ -1102,7 +1221,13 @@ class TestWarnings:
         settings.HARNESS_VERSIONING_ENABLED = False
 
         assert preview_run(environment) == {
-            "versions": {"agent": None, "environment": None, "suite": None},
+            "versions": {
+                "agent": None,
+                "environment": None,
+                "suite": None,
+                "split": None,
+                "locked_version": None,
+            },
             "warnings": [],
             "bundle_cached": None,
             "blocked_tools": [],
@@ -1136,6 +1261,8 @@ class TestRunPlan:
                     "label": "v1",
                 },
                 "suite": {"id": str(environment.suite_version_id), "label": "v2"},
+                "split": None,
+                "locked_version": None,
             },
             "warnings": [
                 {
@@ -1203,7 +1330,13 @@ class TestRunPlan:
 
         assert response.status_code == 200, response.content
         assert response.json() == {
-            "versions": {"agent": None, "environment": None, "suite": None},
+            "versions": {
+                "agent": None,
+                "environment": None,
+                "suite": None,
+                "split": None,
+                "locked_version": None,
+            },
             "warnings": [],
             "bundle_cached": None,
             "blocked_tools": [],
@@ -1720,3 +1853,344 @@ class TestRunPlanVerdict:
         )
 
         assert response.status_code == 400
+
+
+class TestSplitRuns:
+    def test_a_split_without_scenarios_runs_every_scenario_of_it(
+        self, user, workspace, storage
+    ):
+        environment, locked_version = _locked(user, workspace, "sp-default", storage)
+
+        run, created = _split_run(environment, "test")
+
+        assert created
+        assert run.split == "test"
+        assert run.payload["metadata"]["selected_scenario_keys"] == TEST
+        assert _pins(run) == _pins(environment)
+        assert run.locked_version_id == locked_version.id
+
+    def test_picked_scenarios_of_the_split_are_kept(self, user, workspace, storage):
+        environment, _ = _locked(user, workspace, "sp-picked", storage)
+
+        run, _ = _split_run(environment, "test", TEST[1:])
+
+        assert run.split == "test"
+        assert run.payload["metadata"]["selected_scenario_keys"] == TEST[1:]
+
+    def test_a_whole_suite_run_has_no_split(self, user, workspace, storage):
+        environment, _ = _locked(user, workspace, "sp-whole", storage)
+
+        run = _create(environment, None, keys=[*TRAIN, *TEST], key="whole")
+
+        assert (run.split, run.locked_version_id) == (None, None)
+
+    def test_a_split_scenario_production_only_now_is_left_out(
+        self, user, workspace, storage
+    ):
+        # The rule a lock counts with: a scenario the run can't play is not run.
+        environment, _ = _locked(user, workspace, "sp-prod", storage)
+        _needs_production(environment, {TEST[0]})
+
+        with patch(
+            "simulate.services.harness_versioning.locked_versions.actors_enabled",
+            return_value=True,
+        ):
+            run, _ = _split_run(environment, "test")
+
+        assert run.payload["metadata"]["selected_scenario_keys"] == TEST[1:]
+
+    def test_a_scenario_the_lock_left_out_is_not_run(self, user, workspace, storage):
+        # The lock's roster names the split, not the scenario's own split: a task
+        # the lock couldn't run at lock time keeps its split but is not in this lock.
+        environment, locked_version = _locked(user, workspace, "sp-roster", storage)
+        [left_out] = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id, scenario_key=TEST[0]
+        ).values_list("scenario_id", flat=True)
+        HarnessLockedVersionMember.no_workspace_objects.filter(
+            locked_version=locked_version, scenario_id=left_out
+        ).delete()
+
+        run, _ = _split_run(environment, "test")
+
+        assert run.payload["metadata"]["selected_scenario_keys"] == TEST[1:]
+
+    def test_a_split_needs_a_locked_version(self, user, workspace, storage):
+        environment, _ = _locked(user, workspace, "sp-unlocked", storage, locked=False)
+
+        refusal = _split_refusal(environment, "train")
+
+        assert refusal.code == "split_needs_locked_version"
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            environment=environment
+        ).exists()
+
+    def test_a_split_of_versions_never_locked_is_refused(
+        self, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "sp-none", storage)
+
+        assert _split_refusal(environment, "test").code == "split_needs_locked_version"
+
+    def test_a_split_without_versioning_is_refused(
+        self, user, workspace, storage, settings
+    ):
+        environment, _ = _locked(user, workspace, "sp-off", storage)
+        settings.HARNESS_VERSIONING_ENABLED = False
+
+        assert _split_refusal(environment, "test").code == "split_needs_locked_version"
+
+    def test_a_scenario_outside_the_split_is_refused(self, user, workspace, storage):
+        environment, _ = _locked(user, workspace, "sp-outside", storage)
+
+        refusal = _split_refusal(environment, "test", [TEST[0], *TRAIN])
+
+        assert refusal.code == "split_scenario_outside"
+        assert TRAIN[0] in refusal.message
+        assert "2026.11.1" in refusal.message
+
+    def test_no_scenarios_and_no_split_is_still_refused(self, user, workspace, storage):
+        environment, _ = _locked(user, workspace, "sp-empty", storage)
+
+        with pytest.raises(HostedHarnessError) as caught:
+            _split_run(environment, None)
+
+        assert caught.value.code == "scenario_selection_empty"
+
+    def test_a_repeat_replays_and_another_split_is_a_conflict(
+        self, user, workspace, storage
+    ):
+        environment, _ = _locked(user, workspace, "sp-idem", storage)
+        run, _ = _split_run(environment, "test", key="same")
+
+        again, created = _split_run(environment, "test", key="same")
+        with pytest.raises(HostedHarnessError) as caught:
+            _split_run(environment, None, TEST, key="same")
+
+        assert (created, again.id) == (False, run.id)
+        assert caught.value.code == "idempotency_conflict"
+
+    def test_a_rerun_keeps_the_split(self, user, workspace, storage, settings):
+        environment, locked_version = _locked(user, workspace, "sp-rerun", storage)
+        source, _ = _split_run(environment, "test")
+
+        rerun = _rerun_saved(user, workspace, source, settings)
+
+        assert rerun.split == "test"
+        assert rerun.payload["metadata"]["selected_scenario_keys"] == TEST
+        assert rerun.locked_version_id == locked_version.id
+
+    def test_a_rerun_after_a_relock_records_the_new_locked_version(
+        self, user, workspace, storage, settings
+    ):
+        environment, first = _locked(user, workspace, "sp-rerun-relock", storage)
+        source, _ = _split_run(environment, "test")
+        _unlock(first)
+        second = _lock(environment, "2026.11.2")
+
+        rerun = _rerun_saved(user, workspace, source, settings)
+
+        assert (source.locked_version_id, rerun.locked_version_id) == (
+            first.id,
+            second.id,
+        )
+
+    def test_a_rerun_onto_an_unlocked_pair_is_refused(
+        self, user, workspace, storage, settings
+    ):
+        environment, locked_version = _locked(user, workspace, "sp-rerun-off", storage)
+        source, _ = _split_run(environment, "test")
+        _unlock(locked_version)
+
+        with pytest.raises(HostedHarnessError) as caught:
+            _rerun_saved(user, workspace, source, settings)
+
+        assert caught.value.code == "split_needs_locked_version"
+
+
+class TestSplitRunKeepsItsLockedVersion:
+    """A run's locked version is RESTRICT, like the locked version's own pins."""
+
+    def test_a_locked_version_a_run_recorded_cannot_be_deleted_alone(
+        self, user, workspace, storage
+    ):
+        environment, locked_version = _locked(user, workspace, "sp-keep", storage)
+        _split_run(environment, "test")
+        _unlock(locked_version)
+
+        with pytest.raises(RestrictedError):
+            HarnessLockedVersion._base_manager.filter(id=locked_version.id).delete()
+
+    def test_the_environment_and_its_runs_can_still_be_removed(
+        self, user, workspace, storage
+    ):
+        # The removal path a whole environment takes: its runs, then itself.
+        environment, locked_version = _locked(user, workspace, "sp-remove", storage)
+        run, _ = _split_run(environment, "test")
+        _unlock(locked_version)
+
+        HostedHarnessJob._base_manager.filter(environment=environment).delete()
+        HostedHarnessJob._base_manager.filter(id=environment.id).delete()
+
+        assert not HostedHarnessJob._base_manager.filter(id=run.id).exists()
+        assert not HarnessLockedVersion._base_manager.filter(
+            id=locked_version.id
+        ).exists()
+
+
+class TestSplitApi:
+    def test_a_split_without_scenario_ids_runs_the_split(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, locked_version = _locked(user, workspace, "sp-api", storage)
+
+        response = _post_run(auth_client, environment, {"split": "test", "trials": 1})
+
+        assert response.status_code == 202, response.content
+        body = response.json()
+        assert body["scenario_count"] == len(TEST)
+        assert body["versions"]["split"] == "test"
+        assert body["versions"]["locked_version"] == {
+            "id": str(locked_version.id),
+            "label": "2026.11.1",
+            "locked": True,
+        }
+        run = HostedHarnessJob.no_workspace_objects.get(id=body["job_id"])
+        assert (run.split, run.locked_version_id) == ("test", locked_version.id)
+
+    def test_neither_scenario_ids_nor_a_split_is_refused(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, _ = _locked(user, workspace, "sp-api-empty", storage)
+
+        response = _post_run(auth_client, environment, {"trials": 1})
+
+        assert response.status_code == 400, response.content
+
+    def test_an_unknown_split_is_refused(self, auth_client, user, workspace, storage):
+        environment, _ = _locked(user, workspace, "sp-api-bad", storage)
+
+        response = _post_run(
+            auth_client, environment, {"split": "holdout", "trials": 1}
+        )
+
+        assert response.status_code == 400, response.content
+
+    def test_a_split_on_unlocked_versions_is_a_422(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, _ = _locked(
+            user, workspace, "sp-api-unlocked", storage, locked=False
+        )
+
+        response = _post_run(auth_client, environment, {"split": "train", "trials": 1})
+
+        assert response.status_code == 422, response.content
+        assert response.json()["error"] == "split_needs_locked_version"
+
+    def test_the_run_plan_previews_a_split(self, auth_client, user, workspace, storage):
+        environment, locked_version = _locked(user, workspace, "sp-plan", storage)
+
+        response = auth_client.get(
+            f"{BASE}/{environment.id}/run-plan/", {"split": "train"}
+        )
+
+        assert response.status_code == 200, response.content
+        versions = response.json()["versions"]
+        assert versions["split"] == "train"
+        assert versions["locked_version"] == {
+            "id": str(locked_version.id),
+            "label": "2026.11.1",
+            "locked": True,
+        }
+
+    def test_the_run_plan_refuses_a_split_of_unlocked_versions(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, "sp-plan-none", storage)
+
+        response = auth_client.get(
+            f"{BASE}/{environment.id}/run-plan/", {"split": "train"}
+        )
+
+        assert response.status_code == 422, response.content
+        assert response.json()["error"] == "split_needs_locked_version"
+
+
+class TestSplitLabels:
+    def test_labels_carry_the_split_and_its_locked_version(
+        self, user, workspace, storage
+    ):
+        environment, locked_version = _locked(user, workspace, "sp-labels", storage)
+        split, _ = _split_run(environment, "test", key="split")
+        whole = _create(environment, None, keys=TRAIN, key="whole")
+
+        labels = run_version_labels([split.test_execution_id, whole.test_execution_id])
+
+        held = labels[str(split.test_execution_id)]
+        assert (held["split"], held["locked_version"]) == (
+            "test",
+            {"id": str(locked_version.id), "label": "2026.11.1", "locked": True},
+        )
+        # A run of the scenarios selected ran under no locked version, locked pair
+        # or not.
+        held = labels[str(whole.test_execution_id)]
+        assert (held["split"], held["locked_version"]) == (None, None)
+
+    def test_two_locks_of_one_pair_each_name_their_own_runs(
+        self, user, workspace, storage
+    ):
+        environment, first = _locked(user, workspace, "sp-relock", storage)
+        before, _ = _split_run(environment, "test", key="before")
+        _unlock(first)
+        second = _lock(environment, "2026.11.2")
+        after, _ = _split_run(environment, "test", key="after")
+
+        labels = run_version_labels([before.test_execution_id, after.test_execution_id])
+
+        # The same environment and suite versions: only the run's own record tells
+        # the two locks apart.
+        assert _pins(before) == _pins(after)
+        assert (before.locked_version_id, after.locked_version_id) == (
+            first.id,
+            second.id,
+        )
+        assert labels[str(before.test_execution_id)]["locked_version"] == {
+            "id": str(first.id),
+            "label": "2026.11.1",
+            "locked": False,
+        }
+        assert labels[str(after.test_execution_id)]["locked_version"] == {
+            "id": str(second.id),
+            "label": "2026.11.2",
+            "locked": True,
+        }
+
+    def test_a_run_of_versions_never_locked_has_none(self, user, workspace, storage):
+        environment = _environment(user, workspace, "sp-never-locked", storage)
+        run = _create(environment, None, key="plain")
+
+        held = run_version_labels([run.test_execution_id])[str(run.test_execution_id)]
+
+        assert (held["split"], held["locked_version"]) == (None, None)
+
+    def test_the_run_list_and_header_carry_the_split_and_locked_version(
+        self, auth_client, user, workspace, storage
+    ):
+        environment, locked_version = _locked(user, workspace, "sp-label-api", storage)
+        run, _ = _split_run(environment, "test")
+
+        rows = auth_client.get(
+            f"/simulate/run-tests/{environment.run_test_id}/executions/"
+        ).json()["results"]
+        [row] = [one for one in rows if one["id"] == str(run.test_execution_id)]
+        header = auth_client.get(
+            f"/simulate/v3/test-executions/{run.test_execution_id}/calls/"
+        ).json()["execution"]
+
+        for payload in (row, header):
+            assert payload["split"] == "test"
+            assert payload["locked_version"] == {
+                "id": str(locked_version.id),
+                "label": "2026.11.1",
+                "locked": True,
+            }
