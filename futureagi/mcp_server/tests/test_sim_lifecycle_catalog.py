@@ -221,3 +221,18 @@ def test_the_scenario_list_still_takes_blank_filters(auth_client, monkeypatch):
 
     assert response.status_code == 200, response.content
     assert seen == [query]
+
+
+@pytest.mark.django_db
+def test_an_empty_path_value_is_refused_before_any_route_is_resolved(auth_client):
+    response = auth_client.post(
+        "/mcp/internal/tool-call/",
+        {
+            "tool_name": "archive_environment_scenario",
+            "params": {"id": str(uuid4()), "key": " "},
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400, response.content
+    assert "Missing required path parameter: key" in response.content.decode()

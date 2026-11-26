@@ -286,7 +286,8 @@ class DjangoAPIExecutor:
     ) -> str:
         path = path_template
         for name in path_parameters:
-            if name not in arguments or arguments[name] is None:
+            # An empty value would drop a path segment and reach another route, or none.
+            if name not in arguments or not str(arguments[name] or "").strip():
                 raise APIExecutionError(
                     f"Missing required path parameter: {name}", status_code=400
                 )
