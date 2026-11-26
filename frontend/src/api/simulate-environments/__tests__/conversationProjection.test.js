@@ -63,6 +63,20 @@ describe("projectConversation", () => {
     });
   });
 
+  it("summarizes reviewed source reads without printing source records in chat", () => {
+    const steps = projectConversation({
+      events: [
+        evt({ kind: "tool_started", function_call_id: "read", payload: { tool: "read_source" } }),
+        evt({ kind: "tool_result", function_call_id: "read", payload: { text: '{"id":"src_internal"}' } }),
+        evt({ kind: "tool_result", payload: { tool: "read_source", is_error: true, text: "src_private" } }),
+      ],
+    })[0].steps;
+    expect(steps.map((step) => step.result)).toEqual([
+      "Read reviewed source material.",
+      "Couldn’t read the reviewed source.",
+    ]);
+  });
+
   it("joins tool_started and tool_result by function_call_id, keeping is_error", () => {
     const turns = projectConversation({
       messages: [],

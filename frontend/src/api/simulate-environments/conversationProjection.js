@@ -353,9 +353,13 @@ export function projectConversation(conversation) {
           ? toolByCall.get(e.function_call_id)
           : null;
         const isError = Boolean(e.payload?.is_error);
-        const result =
-          e.payload?.text ||
+        const tool = e.payload?.tool || existing?.label;
+        const sourceRead = tool === "read_source" || tool === "read source";
+        let result = e.payload?.text ||
           (e.payload?.artifact ? `wrote ${e.payload.artifact}` : "");
+        if (sourceRead) {
+          result = isError ? "Couldn’t read the reviewed source." : "Read reviewed source material.";
+        }
         if (existing) {
           existing.state = isError ? "failed" : "completed";
           existing.result = result;
