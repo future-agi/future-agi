@@ -812,6 +812,61 @@ class TestProductionOnlyTasks:
             '"documents"' not in sql.replace(catalogue, "") for sql in version_selects
         )
 
+    @pytest.mark.parametrize(
+        ("run_refusal", "message"),
+        [
+            (
+                "These versions can't be run together yet",
+                "These versions can't be run together yet, so they can't be locked.",
+            ),
+            (
+                "These versions haven't been prepared yet and building them is"
+                " turned off",
+                "These versions haven't been prepared yet and building them is"
+                " turned off, so they can't be locked.",
+            ),
+        ],
+    )
+    def test_a_default_pair_the_run_refuses_cannot_lock(
+        self,
+        auth_client,
+        user,
+        workspace,
+        storage,
+        settings,
+        monkeypatch,
+        run_refusal,
+        message,
+    ):
+        from simulate.services.harness_versioning import locked_versions
+
+        settings.HARNESS_ACTORS_ENABLED = True
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+
+        def refuse(*_args, **_kwargs):
+            raise HostedHarnessError(
+                "version_not_runnable", run_refusal, status_code=422
+            )
+
+        # The default run would refuse its pins, so it could play no task.
+        monkeypatch.setattr(locked_versions, "resolve_run_pins", refuse)
+
+        lock = _preview(auth_client, environment)
+        response = _lock(auth_client, environment)
+
+        assert (lock["can_lock"], lock["refusal"]) == (
+            False,
+            {"code": "lock_not_ready", "message": message},
+        )
+        assert response.status_code == 409
+        assert (response.json()["error"], response.json()["message"]) == (
+            "lock_not_ready",
+            message,
+        )
+        assert not HarnessLockedVersion.no_workspace_objects.exists()
+        assert _splits(environment) == {}
+
     def test_a_suite_whose_every_task_needs_one_is_refused(
         self, auth_client, user, workspace, storage, settings
     ):
