@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement, ReactNode } from "react";
+
+interface Shown {
+  message: unknown;
+  options: {
+    variant?: string;
+    action?: (key: string) => ReactElement;
+  };
+}
 
 const access = vi.hoisted(() => ({ canUnlockVersion: true }));
 vi.mock("src/sections/simulate/environments/hooks/useSimulationAccess", () => ({
@@ -11,14 +20,16 @@ vi.mock("src/sections/simulate/environments/hooks/useSimulationAccess", () => ({
     canUnlockVersion: access.canUnlockVersion,
   }),
 }));
-const snackbars = vi.hoisted(() => []);
+const snackbars = vi.hoisted((): Shown[] => []);
 vi.mock("notistack", () => ({
-  enqueueSnackbar: vi.fn((message, options) =>
+  enqueueSnackbar: vi.fn((message: unknown, options: Shown["options"]) =>
     snackbars.push({ message, options }),
   ),
   closeSnackbar: vi.fn(),
 }));
-const unlockVersion = vi.hoisted(() => vi.fn(async () => null));
+const unlockVersion = vi.hoisted(() =>
+  vi.fn(async (..._args: unknown[]): Promise<unknown> => null),
+);
 vi.mock("src/api/simulate-environments/versions", async () => ({
   ...(await vi.importActual("src/api/simulate-environments/versions")),
   unlockVersion,
@@ -60,16 +71,16 @@ const UNLOCKED = {
   ],
 };
 
-let client;
-const refuse = (error) => {
+let client: QueryClient;
+const refuse = (error: unknown): Shown => {
   client = new QueryClient();
   const { result } = renderHook(() => useDeleteRefusal(), {
-    wrapper: ({ children }) => (
+    wrapper: ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
     ),
   });
   result.current("env-1", error);
-  return snackbars.at(-1);
+  return snackbars.at(-1) as Shown;
 };
 
 beforeEach(() => {
@@ -87,7 +98,7 @@ describe("useDeleteRefusal", () => {
       "Lock 2026.11.1 covers this version. A workspace admin or owner must unlock it first.",
     );
     expect(shown.options.variant).toBe("error");
-    render(shown.options.action("snack-1"));
+    render(shown.options.action!("snack-1"));
     await userEvent.click(
       screen.getByRole("button", { name: "Unlock versions" }),
     );
@@ -105,14 +116,14 @@ describe("useDeleteRefusal", () => {
     unlockVersion.mockResolvedValueOnce(UNLOCKED);
     const shown = refuse(LOCKED);
     client.setQueryData(lockPreviewKey("env-1"), { can_lock: false });
-    render(shown.options.action("snack-1"));
+    render(shown.options.action!("snack-1"));
 
     await userEvent.click(
       screen.getByRole("button", { name: "Unlock versions" }),
     );
 
     await waitFor(() =>
-      expect(client.getQueryState(lockPreviewKey("env-1")).isInvalidated).toBe(
+      expect(client.getQueryState(lockPreviewKey("env-1"))?.isInvalidated).toBe(
         true,
       ),
     );
