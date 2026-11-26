@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -65,8 +66,12 @@ function SourceReviewEditor({
   readingNames = [],
   onRepair,
   stale,
+  actionsEl,
 }) {
   const { id, state, revision, draft_digest: digest, preview, scope } = review;
+  // A page with its own header shows Cancel and Approve there, not at the foot.
+  const withActions = (node) =>
+    actionsEl ? createPortal(node, actionsEl) : node;
   const accept = useAcceptSourceReview(onAccepted);
   const cancel = useCancelSourceReview(onCancelled);
   const reprepare = useReprepareEnvironmentSourceReview();
@@ -476,11 +481,22 @@ function SourceReviewEditor({
                           ? "Show records"
                           : "Show text"}
                       </summary>
-                      {pin.role === "seed_records" && (
-                        <ReviewedRecords source={source} />
-                      )}
-                      {!needsIdentity && columns}
-                      {statements}
+                      {/* A long file scrolls inside its own box. */}
+                      <Stack
+                        spacing={1}
+                        sx={{
+                          mt: 1,
+                          maxHeight: 360,
+                          overflowY: "auto",
+                          pr: 1,
+                        }}
+                      >
+                        {pin.role === "seed_records" && (
+                          <ReviewedRecords source={source} />
+                        )}
+                        {!needsIdentity && columns}
+                        {statements}
+                      </Stack>
                     </Box>
                   )
                 : statements}
@@ -610,69 +626,80 @@ function SourceReviewEditor({
           {message}
         </Alert>
       ))}
-      {unfinished.includes(state) && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1}
-          sx={{
-            mt: scope.kind === "environment" ? "auto !important" : undefined,
-            position: "sticky",
-            bottom: 0,
-            zIndex: 1,
-            bgcolor: "background.paper",
-            py: 1.25,
-            borderTop: "1px solid",
-            borderColor: "divider",
-            justifyContent: "flex-end",
-          }}
-        >
-          <Button
-            variant="outlined"
-            size="small"
-            disabled={!canEdit || pending}
-            onClick={() =>
-              cancel.mutate({ ...pins, expected_draft_digest: digest || null })
+      {unfinished.includes(state) &&
+        withActions(
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={
+              actionsEl
+                ? undefined
+                : {
+                    mt:
+                      scope.kind === "environment"
+                        ? "auto !important"
+                        : undefined,
+                    position: "sticky",
+                    bottom: 0,
+                    zIndex: 1,
+                    bgcolor: "background.paper",
+                    py: 1.25,
+                    borderTop: "1px solid",
+                    borderColor: "divider",
+                    justifyContent: "flex-end",
+                  }
             }
           >
-            {scope.kind === "environment" ? "Reject" : "Cancel review"}
-          </Button>
-          {((state === "needs_repair" && hasRepairControls) ||
-            (state === "ready" && changingTable)) && (
             <Button
-              variant="contained"
+              variant="outlined"
               size="small"
-              disabled={!editable || !canRepair}
-              onClick={() => doRepair(repairBody)}
-            >
-              {changingTable || tables.length > 0
-                ? "Prepare for this table"
-                : "Prepare again"}
-            </Button>
-          )}
-          {state === "ready" && (
-            <Button
-              variant="contained"
-              size="small"
-              disabled={!editable || !canAccept}
-              onClick={doAccept}
-              startIcon={
-                accept.isPending ? (
-                  <CircularProgress size={14} color="inherit" />
-                ) : undefined
+              disabled={!canEdit || pending}
+              onClick={() =>
+                cancel.mutate({
+                  ...pins,
+                  expected_draft_digest: digest || null,
+                })
               }
             >
-              {accept.isPending
-                ? scope.kind === "environment"
-                  ? "Adding…"
-                  : "Approving…"
-                : scope.kind === "environment"
-                  ? `Add ${changeCount} ${changeCount === 1 ? "change" : "changes"}`
-                  : acceptLabel}
+              {scope.kind === "environment" ? "Reject" : "Cancel review"}
             </Button>
-          )}
-        </Stack>
-      )}
+            {((state === "needs_repair" && hasRepairControls) ||
+              (state === "ready" && changingTable)) && (
+              <Button
+                variant="contained"
+                size="small"
+                disabled={!editable || !canRepair}
+                onClick={() => doRepair(repairBody)}
+              >
+                {changingTable || tables.length > 0
+                  ? "Prepare for this table"
+                  : "Prepare again"}
+              </Button>
+            )}
+            {state === "ready" && (
+              <Button
+                variant="contained"
+                size="small"
+                disabled={!editable || !canAccept}
+                onClick={doAccept}
+                startIcon={
+                  accept.isPending ? (
+                    <CircularProgress size={14} color="inherit" />
+                  ) : undefined
+                }
+              >
+                {accept.isPending
+                  ? scope.kind === "environment"
+                    ? "Adding…"
+                    : "Approving…"
+                  : scope.kind === "environment"
+                    ? `Add ${changeCount} ${changeCount === 1 ? "change" : "changes"}`
+                    : acceptLabel}
+              </Button>
+            )}
+          </Stack>,
+        )}
     </Stack>
   );
 }
@@ -687,6 +714,7 @@ SourceReviewEditor.propTypes = {
   compact: PropTypes.bool,
   onRepair: PropTypes.func.isRequired,
   stale: PropTypes.bool,
+  actionsEl: PropTypes.object,
   defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
 };
 
@@ -763,4 +791,5 @@ SourceReviewPanel.propTypes = {
   onAccepted: PropTypes.func,
   onCancelled: PropTypes.func,
   onDismiss: PropTypes.func,
+  actionsEl: PropTypes.object,
 };

@@ -76,13 +76,15 @@ export default function LivePill({ env, building }) {
               : WORKSPACE_COPY.liveTooltip;
   // The in-flight states pulse; the rest sit still.
   const pulsing = isBuilding || isFinalizing || isCancelling;
+  // Waiting on the person, not the builder: the design's yellow chip.
+  const awaiting = isBuilding && Boolean(env?.awaitingApproval);
 
   return (
     <CustomTooltip show title={tooltip} size="small" arrow>
       <Box component="span" sx={{ display: "inline-flex", cursor: "default" }}>
         <StatusBadge
-          status={pulsing ? "building" : key}
-          role={STATUS_META[key].role}
+          status={awaiting ? "needs_review" : pulsing ? "building" : key}
+          role={awaiting ? "warning" : STATUS_META[key].role}
           label={label}
           variant="badge"
         />
@@ -97,6 +99,7 @@ LivePill.propTypes = {
     status: PropTypes.string,
     buildingLabel: PropTypes.string,
     buildingTooltip: PropTypes.string,
+    awaitingApproval: PropTypes.bool,
     designBuild: PropTypes.shape({ status: PropTypes.string }),
   }),
   building: PropTypes.bool,

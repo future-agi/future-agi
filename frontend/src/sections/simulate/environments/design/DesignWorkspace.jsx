@@ -3,6 +3,7 @@ import { Box, Stack, Typography } from "@mui/material";
 import ChatSplitPane from "../components/ChatSplitPane";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import DesignReview from "./DesignReview";
+import SourceReviewDesign from "./SourceReviewDesign";
 import { useEnvironmentSourceReview } from "src/api/simulate-environments/sourceImports";
 import { ROLES } from "../workspace/sources/sources.constants";
 import ChatMarkdown from "../buildEnvironment/console/ChatMarkdown";
@@ -150,29 +151,34 @@ export default function DesignWorkspace({
         )}
       >
         <Stack spacing={2} sx={{ p: 3, height: "100%", overflowY: "auto" }}>
-          {review ||
-            (question ? (
-              <ProposedPlan
-                key={question.message_id}
-                question={question}
-                requirements={requirements}
-                modality={modality}
-                sourceReviewId={sourceReviewId}
-                canEdit={canEdit}
-                send={chat.send}
-                busy={chat.running || chat.frozen}
-              />
-            ) : (
-              <>
-                {requirements && (
-                  <Box>
-                    <Typography variant="h6">Requested environment</Typography>
-                    <ChatMarkdown text={requirements} />
-                  </Box>
-                )}
-                {progress}
-              </>
-            ))}
+          {review ? (
+            <SourceReviewDesign
+              requirements={requirements}
+              modality={modality}
+              review={review}
+            />
+          ) : question ? (
+            <ProposedPlan
+              key={question.message_id}
+              question={question}
+              requirements={requirements}
+              modality={modality}
+              sourceReviewId={sourceReviewId}
+              canEdit={canEdit}
+              send={chat.send}
+              busy={chat.running || chat.frozen}
+            />
+          ) : (
+            <>
+              {requirements && (
+                <Box>
+                  <Typography variant="h6">Requested environment</Typography>
+                  <ChatMarkdown text={requirements} />
+                </Box>
+              )}
+              {progress}
+            </>
+          )}
         </Stack>
       </ChatSplitPane>
     </Box>

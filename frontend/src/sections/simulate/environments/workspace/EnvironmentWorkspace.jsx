@@ -421,6 +421,7 @@ export default function EnvironmentWorkspace() {
                   ...buildingEnv,
                   buildingLabel: "Awaiting approval",
                   buildingTooltip: "Review and approve to continue.",
+                  awaitingApproval: true,
                 }
               : buildingEnv
           }
