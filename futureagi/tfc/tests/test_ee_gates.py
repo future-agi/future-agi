@@ -282,3 +282,23 @@ def test_complete_voice_gate_allows_self_hosted_without_plan_check():
         assert ee_gates.voice_sim_gate_response(organization) is None
 
     check_feature.assert_not_called()
+
+
+def test_the_open_build_offers_no_configured_eval_and_skips_the_size_check(
+    monkeypatch,
+):
+    # Without ee the agent evaluator is absent: nothing reads as safe to offer, and
+    # the size check has nothing to render with (no request reaches it there).
+    import sys
+
+    from tfc.ee_gates import agent_criteria_read_context, agent_message_too_large
+
+    monkeypatch.setitem(sys.modules, "ee.evals.llm.agent_evaluator.evaluator", None)
+    monkeypatch.setitem(
+        sys.modules, "ee.evals.llm.agent_evaluator.context.budget", None
+    )
+
+    assert agent_criteria_read_context("Did {{agent_prompt}} hold?", {}) is True
+    assert (
+        agent_message_too_large("Did {{agent_prompt}} hold?", {}, "mustache") is False
+    )

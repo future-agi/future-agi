@@ -292,7 +292,9 @@ def configured_eval(key: str, template, *, modality: str) -> Definition:
         # the gate checks only for a typed question.
         raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
     keys = config.get("required_keys")
-    keys = [str(k) for k in keys] if isinstance(keys, list) else []
+    # Sorted: a save in the library rebuilds required_keys from a set, so the same
+    # keys can come back in another order, and that is the same question.
+    keys = sorted(str(k) for k in keys) if isinstance(keys, list) else []
     read: list[tuple[str, Kind]] = []
     for k in keys:
         kind = kind_for_key(k, modality)

@@ -238,9 +238,9 @@ def test_an_input_the_criteria_do_not_name_is_named_in_one_fixed_block_after_the
     assert "{{agent_prompt}}" in block and "{{tool_calls}}" in block
     assert "{{transcript}}" not in block
     assert definition.inputs == (
-        ("transcript", Kind.TRANSCRIPT),
         ("agent_prompt", Kind.AGENT_INSTRUCTIONS),
         ("tool_calls", Kind.TOOL_CALLS),
+        ("transcript", Kind.TRANSCRIPT),
     )
     assert definition.labels == ("Yes", "No")
     assert definition.model == "turing_large"
@@ -954,6 +954,8 @@ def test_criteria_that_only_look_like_context_are_still_offered():
 
     assert not agent_criteria_read_context("Did {{agent_prompt}} say call me back?", {})
     assert not agent_criteria_read_context("Rows of {{ rows }} and {{caller}}.", {})
+    # A bare {{call}} is bound to the call's context too, so it is not offered.
+    assert agent_criteria_read_context("Bare {{call}}: did {{agent_prompt}} hold?", {})
     assert agent_criteria_read_context("Ended: {{ call.ended_reason }}", {})
     assert agent_criteria_read_context("Plain.", {"trace_context": True})
 
@@ -1084,3 +1086,57 @@ def test_a_configured_eval_changed_only_where_the_digest_sees_it_is_not_graded(
     row = _rows(ask)[0]
     assert (row.state, row.cause) == (STATE.GRADING_ERROR, "question_changed")
     assert agent_model.requests == []
+
+
+# --- round 2 -------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "criteria",
+    [
+        pytest.param(OWN_CRITERIA, id="block_names_both"),
+        pytest.param(
+            OWN_CRITERIA + " Read {{agent_prompt}} and {{system_prompt}}.",
+            id="criteria_name_both",
+        ),
+    ],
+)
+def test_an_eval_whose_keys_only_came_back_in_another_order_still_launches(
+    organization, workspace, user, selection, gate_passes, queued, agent_model, criteria
+):
+    # A save in the library rebuilds required_keys from a set, so the same keys can
+    # come back in another order. That is the same question, and launches.
+    template = _agent_template(
+        organization,
+        workspace,
+        user,
+        criteria=criteria,
+        keys=("system_prompt", "agent_prompt"),
+    )
+    definition = configured_eval("c1", template, modality="voice")
+    template.config = {
+        **template.config,
+        "required_keys": ["agent_prompt", "system_prompt"],
+    }
+    template.save(update_fields=["config"])
+
+    ask = _launch(selection, organization, workspace, user, definition)
+    grade_row(str(_rows(ask)[0].id))
+
+    assert _rows(ask)[0].state == STATE.ANSWERED
+    assert len(agent_model.requests) == 1
+
+
+@pytest.mark.django_db
+def test_the_inputs_and_their_block_follow_the_keys_sorted(
+    organization, workspace, user
+):
+    template = _agent_template(
+        organization, workspace, user, keys=("transcript", "agent_prompt")
+    )
+    definition = configured_eval("c1", template, modality="voice")
+
+    assert [k for k, _ in definition.inputs] == ["agent_prompt", "transcript"]
+    block = definition.criteria[len(OWN_CRITERIA) :]
+    assert block.index("{{agent_prompt}}") < block.index("{{transcript}}")
