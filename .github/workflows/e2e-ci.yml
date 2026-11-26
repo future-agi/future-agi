@@ -111,31 +111,37 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/scripts
-      - name: The e2e-standalone label, from the event or the pull request now
+      - name: The e2e-standalone and ci:full labels, from the event or the pull request now
         id: labels
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
+          EVENT_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
           PR: ${{ github.event.pull_request.number }}
         # A label added with the pull request (gh pr create --label) arrives in a
         # separate event after "opened", and that event starts no run. So a pull
-        # request run also reads the labels the pull request carries now. This can
-        # only add the Standalone stack, never drop it; if the read fails, the
+        # request run also reads the labels the pull request carries now; a
+        # re-run then sees a label added since. This can only add the Standalone
+        # stack or the full plan, never drop them; if the read fails, the
         # event's labels stand and a warning says so.
         run: |
           set -euo pipefail
-          standalone=$EVENT_LABEL
-          if [[ $GITHUB_EVENT_NAME == pull_request && $standalone != true ]]; then
+          standalone=$EVENT_LABEL full=$EVENT_FULL
+          if [[ $GITHUB_EVENT_NAME == pull_request && ($standalone != true || $full != true) ]]; then
             if live=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/labels?per_page=100" --jq '.[].name' 2>"$RUNNER_TEMP/labels.err"); then
-              if grep -qxF e2e-standalone <<<"$live"; then
+              if [[ $standalone != true ]] && grep -qxF e2e-standalone <<<"$live"; then
                 standalone=true
                 echo "The pull request carries e2e-standalone now (added after its event): Standalone runs too."
+              fi
+              if [[ $full != true ]] && grep -qxF ci:full <<<"$live"; then
+                full=true
+                echo "The pull request carries ci:full now (added after its event): the full plan runs."
               fi
             else
               echo "::warning title=E2E stacks::Could not read the pull request's current labels, so the labels its event carried stand: $(head -c 300 "$RUNNER_TEMP/labels.err" | tr '\n' ' ')"
             fi
           fi
-          echo "standalone=$standalone" >> "$GITHUB_OUTPUT"
+          printf 'standalone=%s\nfull=%s\n' "$standalone" "$full" >> "$GITHUB_OUTPUT"
       - name: Plan from the event base and complete candidate diff
         id: filter
         env:
@@ -145,6 +151,9 @@ jobs:
           # The batch train's rollup stays full under CI_SCOPE_MODE=light.
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # A fork never gets the light plan; ci:full asks for the full one.
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          FULL_LABEL: ${{ steps.labels.outputs.full }}
           STANDALONE_LABEL: ${{ steps.labels.outputs.standalone }}
         # Bootstrap is workflow policy; never execute a candidate loader.
         run: |

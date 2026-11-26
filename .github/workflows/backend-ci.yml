@@ -90,12 +90,17 @@ jobs:
         run: python3 -I .github/scripts/test_ci_scope.py
       - name: '"CI ran on this base" verdicts on recorded API payloads'
         run: python3 -I .github/scripts/test_ci_base_gate.py
+      - name: Merge-queue full internal run gate on constructed payloads
+        run: python3 -I .github/scripts/test_queue_full_run_gate.py
       - name: Registry pull retries on a fake registry
         run: python3 -I .github/scripts/test_registry_retry.py
 
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read # the pull request's current labels (ci:full)
     outputs:
       queue_target: ${{ steps.queue.outputs.target }}
       # On a held run every suite flag is false, so no suite job runs and no
@@ -125,6 +130,27 @@ jobs:
           [[ $BASE_REF == refs/heads/* ]]
           git check-ref-format "$BASE_REF"
           printf 'target=%s\n' "${BASE_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
+      - name: The ci:full label, from the event or the pull request now
+        id: labels
+        if: github.event_name == 'pull_request' && vars.CI_SCOPE_MODE == 'light'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          PR: ${{ github.event.pull_request.number }}
+        # Read live, so a re-run after adding the label runs the full plan
+        # without a push (a push dismisses approvals). It only ever adds the
+        # full plan; if the read fails, the event's labels stand.
+        run: |
+          set -euo pipefail
+          full=$EVENT_FULL
+          if [[ $full != true ]]; then
+            if live=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/labels?per_page=100" --jq '.[].name' 2>"$RUNNER_TEMP/labels.err"); then
+              if grep -qxF ci:full <<<"$live"; then full=true; fi
+            else
+              echo "::warning title=ci:full::Could not read the pull request's current labels, so the labels its event carried stand: $(head -c 300 "$RUNNER_TEMP/labels.err" | tr '\n' ' ')"
+            fi
+          fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
       - name: Plan from the event base and complete candidate diff
         id: filter
         env:
@@ -134,6 +160,9 @@ jobs:
           # The batch train's rollup stays full under CI_SCOPE_MODE=light.
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          # A fork never gets the light plan; ci:full asks for the full one.
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          FULL_LABEL: ${{ steps.labels.outputs.full }}
           STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
         # Bootstrap is workflow policy; never execute a candidate loader.
         run: |

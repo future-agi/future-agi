@@ -6,6 +6,7 @@ on:
 permissions:
   contents: read
   actions: read # terminal parity reads job attempts and artifact digests
+  issues: read # Backend CI's planner reads a pull request's labels (a no-op here)
 
 jobs:
   backend:
@@ -15,15 +16,82 @@ jobs:
     # without forwarding repository secrets into the reusable workflow.
     uses: ./.github/workflows/backend-ci.yml
 
+  full-run-proof:
+    # Under CI_SCOPE_MODE=light a pull request run holds the backend suites,
+    # and this group runs without the private package. So every same-repo
+    # member must show a passing internal Backend CI run on its own head (a
+    # train rollup's run always is one). Forks stay exempt, as before light.
+    # See .github/scripts/queue_full_run_gate.py.
+    name: Members ran the internal suite
+    if: vars.CI_SCOPE_MODE == 'light'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # dev's tip: the group itself is unlanded code.
+          ref: ${{ github.event.merge_group.base_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: python3 -I .github/scripts/queue_full_run_gate.py
+
   backend-tests:
     # Reusable workflow checks are prefixed with the caller's job name.
     # Keep the queue's required check name identical to a direct run's.
     name: Backend Tests Pass
-    needs: backend
+    needs: [backend, full-run-proof]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - env:
           BACKEND_RESULT: ${{ needs.backend.result }}
           VERDICT: ${{ needs.backend.outputs.verdict }}
-        run: test "$BACKEND_RESULT" = success && test "$VERDICT" = success
+          # Skipped outside light mode.
+          PROOF: ${{ needs.full-run-proof.result }}
+        run: |
+          test "$BACKEND_RESULT" = success && test "$VERDICT" = success
+          test "$PROOF" = success || test "$PROOF" = skipped
+
+  breaker:
+    # Base-health breaker after each queue build, so a red base trips it even
+    # when nothing lands (pushes to dev also run it, from pr-digest.yml). Not
+    # in Backend Tests Pass's needs: it never changes the queue's verdict.
+    # The script comes from dev's tip; the group is unlanded code.
+    name: Base-health breaker
+    needs: backend
+    if: always() && github.repository == 'future-agi/future-agi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: devflow-breaker
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      issues: write # the base-red label and tracking issue
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.merge_group.base_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      # No secrets in this file (a group can hold fork code): the trip files
+      # the base-red issue here, and the hourly digest on dev carries the
+      # Slack line.
+      - env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -o pipefail
+          # The first group after this file lands still has a base without it.
+          [[ -f .github/scripts/devflow_tick.py ]] || { echo "No breaker on the base yet."; exit 0; }
+          python3 -I .github/scripts/devflow_tick.py --breaker-only | tee -a "$GITHUB_STEP_SUMMARY"

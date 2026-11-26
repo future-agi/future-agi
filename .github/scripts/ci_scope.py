@@ -24,7 +24,13 @@ SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
 # the merge group runs everything before anything lands. The batch train's
 # rollup pull request stays full: merge groups run without the private
 # package, so the rollup is the only pre-merge run of the internal suite.
+# A pull request that goes to the queue alone needs its own full run: the
+# ci:full label asks for one (read live, so a re-run picks it up), and
+# queue_full_run_gate.py fails a merge group whose same-repository member has
+# none. A fork never gets the light plan: it never has an internal run, so it
+# keeps today's full OSS run.
 LIGHT_HELD = ("backend", "metrics", "any")
+FULL_LABEL = "ci:full"
 TRAIN_AUTHOR = "futureagi-devflow-train[bot]"
 TRAIN_HEAD_PREFIX = "chore/devflow-train-"
 # The paths for which a pull request runs Update CI's ordinary jobs. It is the
@@ -261,7 +267,18 @@ def rehearsal_inputs(paths):
     return tooling, built
 
 
-def plan(event, tested, base, head, mode, standalone=False, author="", head_ref=""):
+def plan(
+    event,
+    tested,
+    base,
+    head,
+    mode,
+    standalone=False,
+    author="",
+    head_ref="",
+    fork=False,
+    full=False,
+):
     sha(tested)
     if git("rev-parse", "HEAD").decode().strip() != tested:
         raise ValueError("checkout does not match event SHA")
@@ -315,7 +332,11 @@ def plan(event, tested, base, head, mode, standalone=False, author="", head_ref=
     # Standalone proof even for metadata-only changes.
     flags["any"] |= event == "merge_group" or standalone
     rollup = author == TRAIN_AUTHOR and head_ref.startswith(TRAIN_HEAD_PREFIX)
-    light = mode == "light" and event == "pull_request" and not rollup
+    light = (
+        mode == "light"
+        and event == "pull_request"
+        and not (rollup or fork or full)
+    )
     if light:
         # The e2e-standalone label still asks for E2E on a light pull request.
         flags.update(dict.fromkeys(LIGHT_HELD, False), any=standalone)
@@ -371,6 +392,9 @@ def main():
         os.environ.get("STANDALONE_LABEL") == "true",
         os.environ.get("PR_AUTHOR", ""),
         os.environ.get("PR_HEAD_REF", ""),
+        # No head repository (a deleted fork) counts as a fork.
+        os.environ.get("PR_HEAD_REPO", "") != os.environ.get("GITHUB_REPOSITORY"),
+        os.environ.get("FULL_LABEL") == "true",
     )
     print(json.dumps(p, sort_keys=True))
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:

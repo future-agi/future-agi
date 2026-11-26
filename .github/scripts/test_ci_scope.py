@@ -570,12 +570,25 @@ class CandidateScope(unittest.TestCase):
                 result = plan("pull_request", tested, base, head, "light", author=author_, head_ref=head_ref)
                 self.assertEqual(result["mode"], "light")
 
+    def test_a_fork_or_the_ci_full_label_keeps_the_full_plan_under_light(self):
+        # A fork never has an internal run, so it keeps today's full OSS run;
+        # ci:full asks for the full run a pull request going alone needs.
+        tested, base, head = self.pull_request()
+        for kwargs in ({"fork": True}, {"full": True}):
+            with self.subTest(**kwargs):
+                result = plan("pull_request", tested, base, head, "light", **kwargs)
+                self.assertEqual(result["mode"], "full")
+                self.assertTrue(all(result["flags"][s] for s in ("backend", "metrics", "any")))
+        self.assertEqual(plan("pull_request", tested, base, head, "light")["mode"], "light")
+
     def test_the_planner_reads_the_rollup_identity_from_the_event(self):
         for name in ("backend-ci", "e2e-ci"):
             text = (SCRIPTS.parent / "workflows" / (name + ".yml")).read_text()
             with self.subTest(workflow=name):
                 self.assertIn("PR_AUTHOR: ${{ github.event.pull_request.user.login }}\n", text)
                 self.assertIn("PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}\n", text)
+                self.assertIn("PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}\n", text)
+                self.assertIn("FULL_LABEL: ${{ steps.labels.outputs.full }}\n", text)
 
     def test_diverged_pr_selects_head_diff_but_records_actual_merge_tree(self):
         self.git("checkout", "-qb", "work")
