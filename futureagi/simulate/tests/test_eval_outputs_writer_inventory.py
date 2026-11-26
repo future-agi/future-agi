@@ -652,7 +652,20 @@ GRADING_TASKS = {
     "run_new_evals_on_call_executions_task",
 }
 GRADING_ACTIVITY = "run_simulate_evaluations"
-_TASK_STARTS = {"apply_async", "delay", "s", "si", "signature"}
+# What the task and the activity run underneath, called directly.
+GRADING_BODIES = {"_run_simulate_evaluations", "_run_evaluations_standalone"}
+_TASK_STARTS = {
+    "apply_async",
+    "delay",
+    "s",
+    "si",
+    "signature",
+    "apply",
+    "run",
+    "map",
+    "starmap",
+    "chunks",
+}
 _ACTIVITY_STARTS = {"execute_activity", "start_activity"}
 
 
@@ -679,9 +692,21 @@ def _skip_existing(keywords) -> str:
 
 
 def _grading_start(call: ast.Call) -> str | None:
-    """How ``call`` starts grading, or None when it does not."""
+    """How ``call`` starts grading, or None when it does not. Not seen: a task or
+    an activity reached through another name (an alias, a variable)."""
     func = call.func
     name = _name_of(func)
+    if name in GRADING_BODIES:
+        return _skip_existing(call.keywords)
+    if name == "send_task" and call.args:
+        first = call.args[0]
+        sent = first.value if isinstance(first, ast.Constant) else None
+        if not isinstance(sent, str):
+            return None
+        task = sent.rsplit(".", 1)[-1]
+        if task == "run_new_evals_on_call_executions_task":
+            return "grades again"
+        return _skip_existing(call.keywords) if task in GRADING_TASKS else None
     if name in GRADING_TASKS:
         # Called in process.
         return (
@@ -732,7 +757,10 @@ def scan_grading_starts() -> dict[str, str]:
     found: dict[str, str] = {}
     for relative, path in source_files():
         source = path.read_text(errors="ignore")
-        if GRADING_ACTIVITY in source or any(task in source for task in GRADING_TASKS):
+        if any(
+            name in source
+            for name in (GRADING_ACTIVITY, *GRADING_TASKS, *GRADING_BODIES)
+        ):
             found.update(grading_starts_in(source, relative))
     return found
 
@@ -780,6 +808,16 @@ DISPATCHERS = {
         "skip_existing=False",
         "the job of the two filed above; it grades only the slots they set pending",
     ),
+    f"{_EXECUTOR}::_run_simulate_evaluations_task": Filed(
+        "passes skip_existing on",
+        "the grading task's own body: whoever starts the task chooses "
+        "skip_existing, and each of those is filed here",
+    ),
+    "simulate/temporal/activities/xl.py::run_simulate_evaluations.run_evaluations_sync": Filed(
+        "passes skip_existing on",
+        "the grading activity's own body: the workflow that starts the activity "
+        "chooses skip_existing, and each start is filed here",
+    ),
     f"{_EXECUTOR}::TestExecutor.monitor_test_execution": Filed(
         "skip_existing default (False); skip_existing default (False)",
         "nothing runs it: its only caller is commented out "
@@ -818,6 +856,24 @@ def twice(call):
     _run_simulate_evaluations_task.apply_async(args=(call,))
     _run_simulate_evaluations_task.apply_async(args=(call,))
 
+def other_task_starts(call, calls):
+    _run_simulate_evaluations_task.apply(args=(call,))
+    _run_simulate_evaluations_task.run(call, skip_existing=True)
+    _run_simulate_evaluations_task.map(calls)
+    _run_simulate_evaluations_task.starmap([(call,)])
+    _run_simulate_evaluations_task.chunks(calls, 10)
+
+def sent_by_name(call):
+    app.send_task(
+        "simulate.services.test_executor._run_simulate_evaluations_task",
+        args=(call,),
+        kwargs={"skip_existing": False},
+    )
+
+def underneath(executor, call):
+    executor._run_simulate_evaluations(call, skip_existing=True)
+    _run_evaluations_standalone(call)
+
 def not_grading(call):
     other_task.apply_async(args=(call,))
     workflow.execute_activity("another_activity", call)
@@ -835,6 +891,11 @@ def test_the_grading_scan_finds_every_way_to_start_grading():
         "sample.py::again": "grades again",
         "sample.py::Workflow.run": "skip_existing default (False); skip_existing=True",
         "sample.py::twice": "skip_existing default (False); skip_existing default (False)",
+        "sample.py::other_task_starts": "; ".join(
+            ["skip_existing default (False)"] * 4 + ["skip_existing=True"]
+        ),
+        "sample.py::sent_by_name": "skip_existing=False",
+        "sample.py::underneath": "skip_existing default (False); skip_existing=True",
     }
 
 
