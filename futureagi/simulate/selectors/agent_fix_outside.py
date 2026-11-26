@@ -567,13 +567,15 @@ def hidden_epoch(data: Mapping[str, Any], held_back: set[str]) -> dict[str, Any]
     field kept: the read every caller but a person's signed-in session gets."""
     request = data["request"]
     report = data.get("report")
-    # The detail read's names by key (AgentFixRunDetailSerializer); a list has none.
+    # The detail read's names by key (AgentFixRunDetailSerializer); a list has none. A
+    # variation is held back with the case it varies.
+    parents = request["variation_parents"]
     names = (
         {
             "scenario_names": {
                 key: name
                 for key, name in data["scenario_names"].items()
-                if key not in held_back
+                if key not in held_back and parents.get(key) not in held_back
             }
         }
         if "scenario_names" in data

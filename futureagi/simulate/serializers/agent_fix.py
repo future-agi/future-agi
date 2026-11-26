@@ -1,4 +1,5 @@
 import math
+from typing import Any
 from uuid import UUID
 
 from drf_yasg.utils import swagger_serializer_method
@@ -32,7 +33,11 @@ from simulate.selectors.agent_fix import (
     verdict_tiers,
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
-from simulate.selectors.agent_fix_outside import counts_as_attempt, hidden_epoch
+from simulate.selectors.agent_fix_outside import (
+    counts_as_attempt,
+    hidden_epoch,
+    hidden_verdict,
+)
 from simulate.selectors.agent_fix_wording import (
     FixNames,
     candidate_wording,
@@ -385,8 +390,19 @@ class AgentFixCandidateDetailSerializer(AgentFixCandidateSerializer):
             review=self.context.get("eval_review"),
             files=stored_files(candidate),
             names=self.context["fix_names"],
+            verdict=self._shown_verdict(candidate),
         )
         return AgentFixCandidateWordingSerializer(wording.model_dump()).data
+
+    def _shown_verdict(self, candidate: AgentFixCandidate) -> dict[str, Any] | None:
+        """The verdict its words are made from: the stored one for a read that names the
+        held-back cases (AgentFixRunSerializer), else the one hidden_epoch serves."""
+        if self.context.get("held_back_visible", False) or not candidate.verdict:
+            return None
+        request = candidate.fix_run.request or {}
+        return hidden_verdict(
+            candidate.verdict, set(request.get("held_back_scenario_keys") or [])
+        )
 
     class Meta(AgentFixCandidateSerializer.Meta):
         fields = [*AgentFixCandidateSerializer.Meta.fields, "wording"]

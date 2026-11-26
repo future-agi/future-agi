@@ -1777,6 +1777,9 @@ class TestNoHeldBackCaseInAnyRead:
         detail = reads["detail"].json()
         assert SEEN in json.dumps(detail)
         assert detail["scenario_names"] == {SEEN: _read_name(held_everywhere, SEEN)}
+        # Its candidate's words are made without the held-back case's result.
+        [wording] = [one["wording"] for one in detail["candidates"]]
+        assert wording["headline"].startswith("Target pass rate")
         options = reads["launch-options"].json()
         assert [one["key"] for one in options["scenarios"]] == [SEEN]
         assert options["suggested"]["target_scenario_keys"] == [SEEN]
@@ -1815,6 +1818,12 @@ class TestNoHeldBackCaseInAnyRead:
         assert detail["request"]["held_back_scenario_keys"] == [HELD]
         assert HELD_ONLY_SUB_GOAL in detail["request"]["failing_sub_goals"]
         assert detail["scenario_names"][HELD] == _read_name(held_everywhere, HELD)
+        # Its candidate's words name it too, and give the held-back pass rate.
+        [wording] = [one["wording"] for one in detail["candidates"]]
+        assert any(
+            _read_name(held_everywhere, HELD) in one for one in wording["caveats"]
+        )
+        assert wording["headline"].startswith("Held-back pass rate")
         assert {one["key"] for one in options["scenarios"]} == set(KEYS)
         assert set(options["suggested"]["target_scenario_keys"]) == set(KEYS)
 
