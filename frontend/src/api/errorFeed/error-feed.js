@@ -12,6 +12,12 @@ export const DEEP_ANALYSIS_STATUS = Object.freeze({
 });
 
 const KEYS = {
+  escalationSettings: (organizationId, workspaceId) => [
+    "errorFeed",
+    "escalationSettings",
+    organizationId,
+    workspaceId,
+  ],
   list: (params) => ["errorFeed", "list", params],
   stats: (params) => ["errorFeed", "stats", params],
   detail: (clusterId) => ["errorFeed", "detail", clusterId],
@@ -28,6 +34,54 @@ const KEYS = {
   ],
   linearTeams: (orgId) => ["errorFeed", "linearTeams", orgId ?? null],
   projects: ["errorFeed", "projects"],
+};
+
+const scopeHeaders = (organizationId, workspaceId) => ({
+  "X-Organization-Id": organizationId,
+  "X-Workspace-Id": workspaceId,
+});
+
+export const useErrorFeedEscalationSettings = ({
+  organizationId,
+  workspaceId,
+  enabled = true,
+}) =>
+  useQuery({
+    queryKey: KEYS.escalationSettings(organizationId, workspaceId),
+    queryFn: ({ signal }) =>
+      axios.get(endpoints.errorFeed.escalationSettings, {
+        headers: scopeHeaders(organizationId, workspaceId),
+        signal,
+      }),
+    select: (response) => response.data.result,
+    enabled: enabled && !!organizationId && !!workspaceId,
+    retry: false,
+    staleTime: 30_000,
+  });
+
+export const useUpdateErrorFeedEscalationSettings = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ organizationId, workspaceId, values, revision }) =>
+      axios.patch(
+        endpoints.errorFeed.escalationSettings,
+        { ...values, revision },
+        {
+          headers: scopeHeaders(organizationId, workspaceId),
+        },
+      ),
+    onSuccess: (response, variables) => {
+      queryClient.setQueryData(
+        KEYS.escalationSettings(
+          variables.organizationId,
+          variables.workspaceId,
+        ),
+        response,
+      );
+      queryClient.invalidateQueries({ queryKey: ["errorFeed", "list"] });
+      queryClient.invalidateQueries({ queryKey: ["errorFeed", "stats"] });
+    },
+  });
 };
 
 /**
