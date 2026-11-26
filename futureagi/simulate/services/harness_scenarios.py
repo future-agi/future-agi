@@ -632,6 +632,8 @@ def _call_actor_match(value: str) -> Q:
 
 def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
     """A scenario document's values as an identity row stores them."""
+    from simulate.services.harness_source_citations import indexed_locations
+
     noise = doc.get("background_noise")
     persona = doc.get("persona")
     return {
@@ -640,6 +642,7 @@ def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
         "use_case": str(doc.get("use_case") or "")[:255],
         "branch": str(doc.get("branch") or ""),
         "tests": str(doc.get("tests") or ""),
+        "reviewed_source_locations": indexed_locations(doc),
         "folder": str(doc.get("folder") or "")[:512],
         "persona": persona or None,
         "coverage": doc.get("coverage") or None,

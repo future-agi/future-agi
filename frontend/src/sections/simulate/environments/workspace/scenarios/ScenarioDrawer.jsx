@@ -269,6 +269,26 @@ function ScenarioSheet({ envId, row, testConditions = false, locked = false }) {
         </Stack>
       </Row>
     ),
+    row.sourceCitations?.length > 0 && (
+      <Row key="sources" label="Sources">
+        <Stack>
+          {row.sourceCitations.map(({ filename, page, row: sourceRow }) => (
+            <Typography
+              key={JSON.stringify([filename, page, sourceRow])}
+              className="sd-val"
+            >
+              {[
+                filename,
+                page && `Page ${page}`,
+                sourceRow && `Row ${sourceRow}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+          ))}
+        </Stack>
+      </Row>
+    ),
     idealOutcome && (
       <Row key="outcome" label="Ideal outcome">
         <Typography className="sd-val" sx={{ whiteSpace: "pre-line" }}>

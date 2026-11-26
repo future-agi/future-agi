@@ -3107,10 +3107,16 @@ class HostedHarnessProvider:
         targets = fault_targets(contract, rules, actor_cast)
         door = targets if door_reach(contract) else None
 
+        from simulate.services.harness_source_citations import visible_citations
+
+        citations = visible_citations(request, job, page)
+
         def row_of(one: HostedHarnessScenario) -> dict[str, Any]:
             row = scenario_row(
                 one, targets=door, fault_targets=targets, actor_cast=actor_cast
             )
+            if one.scenario_key in citations:
+                row["source_citations"] = citations[one.scenario_key]
             return _with_lifecycle(
                 row if drafted is None else {**row, "draft_change": one.draft_change},
                 lifecycle,

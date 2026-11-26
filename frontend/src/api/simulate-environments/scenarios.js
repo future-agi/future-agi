@@ -190,6 +190,7 @@ export const scenarioFromApi = (row = {}) => {
     task: row.instruction,
     expected,
     outcome: expected,
+    sourceCitations: row.source_citations,
     conversationBranch: row.branch,
     branchCategory: row.branch,
     subTasks: Array.isArray(row.sub_goals) ? row.sub_goals : [],

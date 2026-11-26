@@ -1243,8 +1243,16 @@ class HarnessScenarioLifecycleSerializer(serializers.Serializer):
     negative_controls = HarnessNegativeControlSerializer(many=True)
 
 
+class HarnessScenarioSourceCitationSerializer(serializers.Serializer):
+    filename = serializers.CharField()
+    page = serializers.IntegerField(required=False)
+    row = serializers.IntegerField(required=False)
+
+
 class HarnessScenarioRowSerializer(serializers.Serializer):
     """One authored scenario on the Scenarios list."""
+
+    source_citations = HarnessScenarioSourceCitationSerializer(many=True, required=False)
 
     id = serializers.UUIDField()
     scenario_id = serializers.UUIDField(allow_null=True)
