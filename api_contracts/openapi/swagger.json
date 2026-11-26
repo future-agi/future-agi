@@ -149406,6 +149406,1371 @@
                 }
             }
         },
+        "SecretReference": {
+            "required": [
+                "manager",
+                "key",
+                "purpose"
+            ],
+            "type": "object",
+            "properties": {
+                "manager": {
+                    "title": "Manager",
+                    "type": "string",
+                    "enum": [
+                        "platform-vault",
+                        "platform-config"
+                    ]
+                },
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "purpose": {
+                    "title": "Purpose",
+                    "type": "string",
+                    "enum": [
+                        "target_provider",
+                        "simulator_provider",
+                        "source_checkout"
+                    ]
+                }
+            }
+        },
+        "HarnessAgent": {
+            "description": "How the hosted agent is reached. Omitted for an agent connected on the Agents page: its provider, agent id and stored key are read from the version.",
+            "required": [
+                "connector"
+            ],
+            "type": "object",
+            "properties": {
+                "connector": {
+                    "title": "Connector",
+                    "type": "string",
+                    "enum": [
+                        "livekit",
+                        "vapi",
+                        "retell",
+                        "retell_chat",
+                        "phone",
+                        "auto",
+                        "hosted_agent"
+                    ]
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                        "connect_only",
+                        "environment_backed",
+                        "provider_import"
+                    ],
+                    "x-nullable": true
+                },
+                "call_direction": {
+                    "title": "Call direction",
+                    "description": "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+                    "type": "string",
+                    "enum": [
+                        "inbound",
+                        "outbound"
+                    ],
+                    "x-nullable": true
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object",
+                    "default": {}
+                },
+                "secret_refs": {
+                    "title": "Secret refs",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/SecretReference"
+                    },
+                    "default": {}
+                }
+            }
+        },
+        "HarnessReleaseAgentRequest": {
+            "required": [
+                "suite_id",
+                "agent_version_id",
+                "name",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "suite_id": {
+                    "title": "Suite id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent": {
+                    "$ref": "#/definitions/HarnessAgent"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "parallelism": {
+                    "title": "Parallelism",
+                    "description": "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+                    "type": "integer",
+                    "maximum": 8,
+                    "minimum": 1
+                },
+                "pairing": {
+                    "title": "Pairing",
+                    "description": "World tool to the agent tool it is paired with, as the person reviewed it.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "x-nullable": true
+                    }
+                },
+                "mode": {
+                    "title": "Mode",
+                    "description": "review: the builder drafts the binding and the person approves its design. run: the binding is drafted and checked without a session, then the measurable cases run.",
+                    "type": "string",
+                    "enum": [
+                        "review",
+                        "run"
+                    ],
+                    "default": "review"
+                }
+            }
+        },
+        "HarnessJobInfo": {
+            "required": [
+                "job_id",
+                "run_id",
+                "source",
+                "metadata",
+                "run_test_id",
+                "test_execution_id"
+            ],
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "runtime": {
+                    "title": "Runtime",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessJobStatus": {
+            "required": [
+                "state",
+                "stage",
+                "updated_at",
+                "attempt",
+                "completed_scenarios",
+                "failed_scenarios",
+                "total_scenarios",
+                "deadline_at",
+                "failure"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "attempt": {
+                    "title": "Attempt",
+                    "type": "integer"
+                },
+                "completed_scenarios": {
+                    "title": "Completed scenarios",
+                    "type": "integer"
+                },
+                "failed_scenarios": {
+                    "title": "Failed scenarios",
+                    "type": "integer"
+                },
+                "active_scenarios": {
+                    "title": "Active scenarios",
+                    "type": "integer"
+                },
+                "queued_scenarios": {
+                    "title": "Queued scenarios",
+                    "type": "integer"
+                },
+                "total_scenarios": {
+                    "title": "Total scenarios",
+                    "type": "integer"
+                },
+                "deadline_at": {
+                    "title": "Deadline at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cancel_requested_at": {
+                    "title": "Cancel requested at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "cancel_confirmed_at": {
+                    "title": "Cancel confirmed at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "cancel_confirmed_by": {
+                    "title": "Cancel confirmed by",
+                    "type": "string",
+                    "enum": [
+                        "sandbox_absent",
+                        "provider_call_ended",
+                        "cleanup_failed",
+                        "provider_call_open",
+                        "provider_unchecked",
+                        "unchecked_no_key",
+                        "unchecked_key_rejected",
+                        "unchecked_no_target",
+                        "unchecked_no_calls",
+                        "unchecked_too_many_calls"
+                    ],
+                    "x-nullable": true
+                },
+                "cancel_status": {
+                    "title": "Cancel status",
+                    "type": "string",
+                    "enum": [
+                        "requested",
+                        "confirmed",
+                        "unconfirmed",
+                        "cleanup_failed"
+                    ],
+                    "x-nullable": true
+                },
+                "failure": {
+                    "title": "Failure",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessJobEvent": {
+            "required": [
+                "event_id",
+                "sequence",
+                "stage",
+                "type",
+                "payload",
+                "emitted_at"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer"
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessStageOutput": {
+            "required": [
+                "id",
+                "title",
+                "summary",
+                "kind",
+                "data"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "title": "Data",
+                    "type": "object"
+                }
+            }
+        },
+        "HarnessScenario": {
+            "required": [
+                "scenario_key",
+                "scenario_id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_id": {
+                    "title": "Scenario id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "use_case": {
+                    "title": "Use case",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "call_execution_id": {
+                    "title": "Call execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessPlatform": {
+            "required": [
+                "run_test_id",
+                "test_execution_id",
+                "url"
+            ],
+            "type": "object",
+            "properties": {
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "url": {
+                    "title": "Url",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessDiagnostics": {
+            "required": [
+                "size",
+                "final",
+                "error"
+            ],
+            "type": "object",
+            "properties": {
+                "object_key": {
+                    "title": "Object key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sha256": {
+                    "title": "Sha256",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer"
+                },
+                "captured_at": {
+                    "title": "Captured at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "final": {
+                    "title": "Final",
+                    "type": "boolean"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessRuntimeRead": {
+            "type": "object",
+            "properties": {
+                "sandbox_id": {
+                    "title": "Sandbox id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "diagnostics": {
+                    "$ref": "#/definitions/HarnessDiagnostics"
+                }
+            }
+        },
+        "HarnessParallelism": {
+            "required": [
+                "requested",
+                "admitted",
+                "effective",
+                "degrade_reasons"
+            ],
+            "type": "object",
+            "properties": {
+                "requested": {
+                    "title": "Requested",
+                    "type": "integer"
+                },
+                "admitted": {
+                    "title": "Admitted",
+                    "type": "integer"
+                },
+                "effective": {
+                    "title": "Effective",
+                    "type": "integer"
+                },
+                "degrade_reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessConversationBlockingInput": {
+            "required": [
+                "message_id",
+                "kind"
+            ],
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "description": "question_requested or confirmation_requested.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "prompt": {
+                    "title": "Prompt",
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "options_only": {
+                    "title": "Options only",
+                    "description": "True when only one of its options answers it: free text is not an answer.",
+                    "type": "boolean"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessConversationMessage": {
+            "required": [
+                "message_id",
+                "sequence",
+                "role",
+                "kind",
+                "state",
+                "stage",
+                "content",
+                "payload",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant",
+                        "system"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "message",
+                        "question",
+                        "confirmation",
+                        "status"
+                    ]
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "delivered",
+                        "streaming",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reply_to": {
+                    "title": "Reply to",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationEventRead": {
+            "required": [
+                "event_id",
+                "sequence",
+                "kind",
+                "stage",
+                "payload",
+                "emitted_at"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationWindow": {
+            "required": [
+                "oldest_sequence",
+                "has_older"
+            ],
+            "type": "object",
+            "properties": {
+                "oldest_sequence": {
+                    "title": "Oldest sequence",
+                    "description": "The oldest sequence in this read; read what came before it with `before` set to it.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "has_older": {
+                    "title": "Has older",
+                    "description": "Items before `oldest_sequence` this read leaves out.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessConversationHistory": {
+            "description": "Where `messages` and `events` start, and whether older ones can be read with the history read.",
+            "required": [
+                "messages"
+            ],
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "$ref": "#/definitions/HarnessConversationWindow"
+                },
+                "events": {
+                    "$ref": "#/definitions/HarnessConversationWindow"
+                }
+            }
+        },
+        "HarnessConversationRuntime": {
+            "required": [
+                "state",
+                "warm_until",
+                "degraded",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "warm_until": {
+                    "title": "Warm until",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "degraded": {
+                    "title": "Degraded",
+                    "type": "boolean"
+                },
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessConversationRead": {
+            "required": [
+                "conversation_id",
+                "job_id",
+                "state",
+                "stage",
+                "active_invocation_id",
+                "blocking_input",
+                "messages",
+                "events",
+                "event_watermark",
+                "history",
+                "events_has_newer",
+                "runtime"
+            ],
+            "type": "object",
+            "properties": {
+                "conversation_id": {
+                    "title": "Conversation id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "active_invocation_id": {
+                    "title": "Active invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "blocking_input": {
+                    "$ref": "#/definitions/HarnessConversationBlockingInput"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationMessage"
+                    }
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationEventRead"
+                    }
+                },
+                "event_watermark": {
+                    "title": "Event watermark",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "history": {
+                    "$ref": "#/definitions/HarnessConversationHistory"
+                },
+                "events_has_newer": {
+                    "title": "Events has newer",
+                    "description": "On a read with `events_after`, whether more events past the last one here are left to read.",
+                    "type": "boolean"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/HarnessConversationRuntime"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessConsumption": {
+            "required": [
+                "text_sim_tokens",
+                "voice_sim_minutes",
+                "ai_credits",
+                "sandbox_seconds"
+            ],
+            "type": "object",
+            "properties": {
+                "text_sim_tokens": {
+                    "title": "Text sim tokens",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "voice_sim_minutes": {
+                    "title": "Voice sim minutes",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "ai_credits": {
+                    "title": "Ai credits",
+                    "type": "number",
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "sandbox_seconds": {
+                    "title": "Sandbox seconds",
+                    "type": "number",
+                    "minimum": 0
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessVersioningFlags": {
+            "required": [
+                "enabled",
+                "nudges_enabled"
+            ],
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "nudges_enabled": {
+                    "title": "Nudges enabled",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessJobRead": {
+            "required": [
+                "job",
+                "status",
+                "events",
+                "stage_outputs",
+                "scenarios",
+                "receipts",
+                "platform"
+            ],
+            "type": "object",
+            "properties": {
+                "job": {
+                    "$ref": "#/definitions/HarnessJobInfo"
+                },
+                "status": {
+                    "$ref": "#/definitions/HarnessJobStatus"
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessJobEvent"
+                    }
+                },
+                "stage_outputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessStageOutput"
+                    }
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessScenario"
+                    }
+                },
+                "receipts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "platform": {
+                    "$ref": "#/definitions/HarnessPlatform"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/HarnessRuntimeRead"
+                },
+                "parallelism": {
+                    "$ref": "#/definitions/HarnessParallelism"
+                },
+                "conversation": {
+                    "$ref": "#/definitions/HarnessConversationRead"
+                },
+                "consumption": {
+                    "$ref": "#/definitions/HarnessConsumption"
+                },
+                "usage_limit": {
+                    "title": "Usage limit",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "versioning": {
+                    "$ref": "#/definitions/HarnessVersioningFlags"
+                }
+            }
+        },
+        "HarnessAdaptationApproved": {
+            "required": [
+                "id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "The adaptation that was approved.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "HarnessReleaseFitAgent": {
+            "required": [
+                "name",
+                "version"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReleaseFitTool": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessReleaseAgentRule": {
+            "required": [
+                "id",
+                "text"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessAdaptationWorld": {
+            "required": [
+                "name",
+                "title",
+                "summary",
+                "channel",
+                "release",
+                "records",
+                "tools",
+                "rules",
+                "people"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "channel": {
+                    "title": "Channel",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "release": {
+                    "title": "Release",
+                    "description": "The release's digest.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "records": {
+                    "title": "Records",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitTool"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseAgentRule"
+                    }
+                },
+                "people": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessAdaptationCase": {
+            "required": [
+                "key",
+                "title"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReleaseFitRow": {
+            "required": [
+                "world",
+                "agent",
+                "kind"
+            ],
+            "type": "object",
+            "properties": {
+                "world": {
+                    "title": "World",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent": {
+                    "title": "Agent",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "matched",
+                        "mapped",
+                        "missing"
+                    ]
+                }
+            }
+        },
+        "HarnessReleaseFitCase": {
+            "required": [
+                "key",
+                "title"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReleaseFitResponse": {
+            "required": [
+                "agent",
+                "agent_tools",
+                "rows",
+                "platform_actions",
+                "total",
+                "unmeasured"
+            ],
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "$ref": "#/definitions/HarnessReleaseFitAgent"
+                },
+                "agent_tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitTool"
+                    }
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitRow"
+                    }
+                },
+                "platform_actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitTool"
+                    }
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "unmeasured": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitCase"
+                    }
+                }
+            }
+        },
+        "HarnessReleaseConflict": {
+            "required": [
+                "rule",
+                "policy",
+                "agent"
+            ],
+            "type": "object",
+            "properties": {
+                "rule": {
+                    "title": "Rule",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "policy": {
+                    "title": "Policy",
+                    "description": "The rule as the world states it.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent": {
+                    "title": "Agent",
+                    "description": "The agent's instruction, quoted.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReleaseConflictsResponse": {
+            "required": [
+                "checked",
+                "conflicts"
+            ],
+            "type": "object",
+            "properties": {
+                "checked": {
+                    "title": "Checked",
+                    "description": "False when the instructions couldn't be read against the rules yet.",
+                    "type": "boolean"
+                },
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseConflict"
+                    }
+                }
+            }
+        },
+        "HarnessAdaptationDesign": {
+            "required": [
+                "state",
+                "failure",
+                "composition_id",
+                "agent",
+                "world",
+                "suite",
+                "scenarios",
+                "fit",
+                "conflicts",
+                "check"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "description": "checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists.",
+                    "type": "string",
+                    "enum": [
+                        "checking",
+                        "awaiting_approval",
+                        "building",
+                        "ready",
+                        "failed"
+                    ]
+                },
+                "failure": {
+                    "title": "Failure",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "composition_id": {
+                    "title": "Composition id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "agent": {
+                    "$ref": "#/definitions/HarnessReleaseFitAgent"
+                },
+                "world": {
+                    "$ref": "#/definitions/HarnessAdaptationWorld"
+                },
+                "suite": {
+                    "title": "Suite",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessAdaptationCase"
+                    }
+                },
+                "fit": {
+                    "$ref": "#/definitions/HarnessReleaseFitResponse"
+                },
+                "conflicts": {
+                    "$ref": "#/definitions/HarnessReleaseConflictsResponse"
+                },
+                "check": {
+                    "title": "Check",
+                    "description": "What checking the mapping on every case found, once it has: the approval's data.",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
         "HarnessEnvironmentAgentRef": {
             "required": [
                 "id",
@@ -160013,1213 +161378,6 @@
                 }
             }
         },
-        "HarnessJobInfo": {
-            "required": [
-                "job_id",
-                "run_id",
-                "source",
-                "metadata",
-                "run_test_id",
-                "test_execution_id"
-            ],
-            "type": "object",
-            "properties": {
-                "job_id": {
-                    "title": "Job id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "run_id": {
-                    "title": "Run id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "source": {
-                    "title": "Source",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    }
-                },
-                "metadata": {
-                    "title": "Metadata",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object",
-                        "x-nullable": true,
-                        "x-json-value": true,
-                        "description": "Any valid JSON value."
-                    }
-                },
-                "runtime": {
-                    "title": "Runtime",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    }
-                },
-                "run_test_id": {
-                    "title": "Run test id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "test_execution_id": {
-                    "title": "Test execution id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessJobStatus": {
-            "required": [
-                "state",
-                "stage",
-                "updated_at",
-                "attempt",
-                "completed_scenarios",
-                "failed_scenarios",
-                "total_scenarios",
-                "deadline_at",
-                "failure"
-            ],
-            "type": "object",
-            "properties": {
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "updated_at": {
-                    "title": "Updated at",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "attempt": {
-                    "title": "Attempt",
-                    "type": "integer"
-                },
-                "completed_scenarios": {
-                    "title": "Completed scenarios",
-                    "type": "integer"
-                },
-                "failed_scenarios": {
-                    "title": "Failed scenarios",
-                    "type": "integer"
-                },
-                "active_scenarios": {
-                    "title": "Active scenarios",
-                    "type": "integer"
-                },
-                "queued_scenarios": {
-                    "title": "Queued scenarios",
-                    "type": "integer"
-                },
-                "total_scenarios": {
-                    "title": "Total scenarios",
-                    "type": "integer"
-                },
-                "deadline_at": {
-                    "title": "Deadline at",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "cancel_requested_at": {
-                    "title": "Cancel requested at",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "cancel_confirmed_at": {
-                    "title": "Cancel confirmed at",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "cancel_confirmed_by": {
-                    "title": "Cancel confirmed by",
-                    "type": "string",
-                    "enum": [
-                        "sandbox_absent",
-                        "provider_call_ended",
-                        "cleanup_failed",
-                        "provider_call_open",
-                        "provider_unchecked",
-                        "unchecked_no_key",
-                        "unchecked_key_rejected",
-                        "unchecked_no_target",
-                        "unchecked_no_calls",
-                        "unchecked_too_many_calls"
-                    ],
-                    "x-nullable": true
-                },
-                "cancel_status": {
-                    "title": "Cancel status",
-                    "type": "string",
-                    "enum": [
-                        "requested",
-                        "confirmed",
-                        "unconfirmed",
-                        "cleanup_failed"
-                    ],
-                    "x-nullable": true
-                },
-                "failure": {
-                    "title": "Failure",
-                    "type": "object",
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessJobEvent": {
-            "required": [
-                "event_id",
-                "sequence",
-                "stage",
-                "type",
-                "payload",
-                "emitted_at"
-            ],
-            "type": "object",
-            "properties": {
-                "event_id": {
-                    "title": "Event id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer"
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "type": {
-                    "title": "Type",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "emitted_at": {
-                    "title": "Emitted at",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "HarnessStageOutput": {
-            "required": [
-                "id",
-                "title",
-                "summary",
-                "kind",
-                "data"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "title": {
-                    "title": "Title",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "summary": {
-                    "title": "Summary",
-                    "type": "string"
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "data": {
-                    "title": "Data",
-                    "type": "object"
-                }
-            }
-        },
-        "HarnessScenario": {
-            "required": [
-                "scenario_key",
-                "scenario_id",
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "scenario_key": {
-                    "title": "Scenario key",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "scenario_id": {
-                    "title": "Scenario id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string"
-                },
-                "instruction": {
-                    "title": "Instruction",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "use_case": {
-                    "title": "Use case",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "call_execution_id": {
-                    "title": "Call execution id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessPlatform": {
-            "required": [
-                "run_test_id",
-                "test_execution_id",
-                "url"
-            ],
-            "type": "object",
-            "properties": {
-                "run_test_id": {
-                    "title": "Run test id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "test_execution_id": {
-                    "title": "Test execution id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "url": {
-                    "title": "Url",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessDiagnostics": {
-            "required": [
-                "size",
-                "final",
-                "error"
-            ],
-            "type": "object",
-            "properties": {
-                "object_key": {
-                    "title": "Object key",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "sha256": {
-                    "title": "Sha256",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "size": {
-                    "title": "Size",
-                    "type": "integer"
-                },
-                "captured_at": {
-                    "title": "Captured at",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "final": {
-                    "title": "Final",
-                    "type": "boolean"
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "string"
-                }
-            }
-        },
-        "HarnessRuntimeRead": {
-            "type": "object",
-            "properties": {
-                "sandbox_id": {
-                    "title": "Sandbox id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "diagnostics": {
-                    "$ref": "#/definitions/HarnessDiagnostics"
-                }
-            }
-        },
-        "HarnessParallelism": {
-            "required": [
-                "requested",
-                "admitted",
-                "effective",
-                "degrade_reasons"
-            ],
-            "type": "object",
-            "properties": {
-                "requested": {
-                    "title": "Requested",
-                    "type": "integer"
-                },
-                "admitted": {
-                    "title": "Admitted",
-                    "type": "integer"
-                },
-                "effective": {
-                    "title": "Effective",
-                    "type": "integer"
-                },
-                "degrade_reasons": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                }
-            }
-        },
-        "HarnessConversationBlockingInput": {
-            "required": [
-                "message_id",
-                "kind"
-            ],
-            "type": "object",
-            "properties": {
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "kind": {
-                    "title": "Kind",
-                    "description": "question_requested or confirmation_requested.",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "prompt": {
-                    "title": "Prompt",
-                    "type": "string"
-                },
-                "options": {
-                    "type": "array",
-                    "items": {
-                        "type": "object"
-                    }
-                },
-                "options_only": {
-                    "title": "Options only",
-                    "description": "True when only one of its options answers it: free text is not an answer.",
-                    "type": "boolean"
-                }
-            },
-            "x-nullable": true
-        },
-        "HarnessConversationMessage": {
-            "required": [
-                "message_id",
-                "sequence",
-                "role",
-                "kind",
-                "state",
-                "stage",
-                "content",
-                "payload",
-                "created_at"
-            ],
-            "type": "object",
-            "properties": {
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "role": {
-                    "title": "Role",
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "assistant",
-                        "system"
-                    ]
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "enum": [
-                        "message",
-                        "question",
-                        "confirmation",
-                        "status"
-                    ]
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "enum": [
-                        "queued",
-                        "delivered",
-                        "streaming",
-                        "completed",
-                        "failed"
-                    ]
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string"
-                },
-                "content": {
-                    "title": "Content",
-                    "type": "string"
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object"
-                },
-                "invocation_id": {
-                    "title": "Invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "function_call_id": {
-                    "title": "Function call id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "reply_to": {
-                    "title": "Reply to",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time"
-                }
-            }
-        },
-        "HarnessConversationEventRead": {
-            "required": [
-                "event_id",
-                "sequence",
-                "kind",
-                "stage",
-                "payload",
-                "emitted_at"
-            ],
-            "type": "object",
-            "properties": {
-                "event_id": {
-                    "title": "Event id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string"
-                },
-                "invocation_id": {
-                    "title": "Invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "function_call_id": {
-                    "title": "Function call id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object"
-                },
-                "emitted_at": {
-                    "title": "Emitted at",
-                    "type": "string",
-                    "format": "date-time"
-                }
-            }
-        },
-        "HarnessConversationWindow": {
-            "required": [
-                "oldest_sequence",
-                "has_older"
-            ],
-            "type": "object",
-            "properties": {
-                "oldest_sequence": {
-                    "title": "Oldest sequence",
-                    "description": "The oldest sequence in this read; read what came before it with `before` set to it.",
-                    "type": "integer",
-                    "x-nullable": true
-                },
-                "has_older": {
-                    "title": "Has older",
-                    "description": "Items before `oldest_sequence` this read leaves out.",
-                    "type": "boolean"
-                }
-            }
-        },
-        "HarnessConversationHistory": {
-            "description": "Where `messages` and `events` start, and whether older ones can be read with the history read.",
-            "required": [
-                "messages"
-            ],
-            "type": "object",
-            "properties": {
-                "messages": {
-                    "$ref": "#/definitions/HarnessConversationWindow"
-                },
-                "events": {
-                    "$ref": "#/definitions/HarnessConversationWindow"
-                }
-            }
-        },
-        "HarnessConversationRuntime": {
-            "required": [
-                "state",
-                "warm_until",
-                "degraded",
-                "available"
-            ],
-            "type": "object",
-            "properties": {
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "warm_until": {
-                    "title": "Warm until",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "degraded": {
-                    "title": "Degraded",
-                    "type": "boolean"
-                },
-                "available": {
-                    "title": "Available",
-                    "type": "boolean"
-                }
-            }
-        },
-        "HarnessConversationRead": {
-            "required": [
-                "conversation_id",
-                "job_id",
-                "state",
-                "stage",
-                "active_invocation_id",
-                "blocking_input",
-                "messages",
-                "events",
-                "event_watermark",
-                "history",
-                "events_has_newer",
-                "runtime"
-            ],
-            "type": "object",
-            "properties": {
-                "conversation_id": {
-                    "title": "Conversation id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "job_id": {
-                    "title": "Job id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "active_invocation_id": {
-                    "title": "Active invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "blocking_input": {
-                    "$ref": "#/definitions/HarnessConversationBlockingInput"
-                },
-                "messages": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessConversationMessage"
-                    }
-                },
-                "events": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessConversationEventRead"
-                    }
-                },
-                "event_watermark": {
-                    "title": "Event watermark",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "history": {
-                    "$ref": "#/definitions/HarnessConversationHistory"
-                },
-                "events_has_newer": {
-                    "title": "Events has newer",
-                    "description": "On a read with `events_after`, whether more events past the last one here are left to read.",
-                    "type": "boolean"
-                },
-                "runtime": {
-                    "$ref": "#/definitions/HarnessConversationRuntime"
-                }
-            },
-            "x-nullable": true
-        },
-        "HarnessConsumption": {
-            "required": [
-                "text_sim_tokens",
-                "voice_sim_minutes",
-                "ai_credits",
-                "sandbox_seconds"
-            ],
-            "type": "object",
-            "properties": {
-                "text_sim_tokens": {
-                    "title": "Text sim tokens",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "voice_sim_minutes": {
-                    "title": "Voice sim minutes",
-                    "type": "number",
-                    "minimum": 0
-                },
-                "ai_credits": {
-                    "title": "Ai credits",
-                    "type": "number",
-                    "minimum": 0,
-                    "x-nullable": true
-                },
-                "sandbox_seconds": {
-                    "title": "Sandbox seconds",
-                    "type": "number",
-                    "minimum": 0
-                }
-            },
-            "x-nullable": true
-        },
-        "HarnessVersioningFlags": {
-            "required": [
-                "enabled",
-                "nudges_enabled"
-            ],
-            "type": "object",
-            "properties": {
-                "enabled": {
-                    "title": "Enabled",
-                    "type": "boolean"
-                },
-                "nudges_enabled": {
-                    "title": "Nudges enabled",
-                    "type": "boolean"
-                }
-            }
-        },
-        "HarnessJobRead": {
-            "required": [
-                "job",
-                "status",
-                "events",
-                "stage_outputs",
-                "scenarios",
-                "receipts",
-                "platform"
-            ],
-            "type": "object",
-            "properties": {
-                "job": {
-                    "$ref": "#/definitions/HarnessJobInfo"
-                },
-                "status": {
-                    "$ref": "#/definitions/HarnessJobStatus"
-                },
-                "events": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessJobEvent"
-                    }
-                },
-                "stage_outputs": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessStageOutput"
-                    }
-                },
-                "scenarios": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessScenario"
-                    }
-                },
-                "receipts": {
-                    "type": "array",
-                    "items": {
-                        "type": "object"
-                    }
-                },
-                "platform": {
-                    "$ref": "#/definitions/HarnessPlatform"
-                },
-                "runtime": {
-                    "$ref": "#/definitions/HarnessRuntimeRead"
-                },
-                "parallelism": {
-                    "$ref": "#/definitions/HarnessParallelism"
-                },
-                "conversation": {
-                    "$ref": "#/definitions/HarnessConversationRead"
-                },
-                "consumption": {
-                    "$ref": "#/definitions/HarnessConsumption"
-                },
-                "usage_limit": {
-                    "title": "Usage limit",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "versioning": {
-                    "$ref": "#/definitions/HarnessVersioningFlags"
-                }
-            }
-        },
-        "HarnessAdaptationApproved": {
-            "required": [
-                "id"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "description": "The adaptation that was approved.",
-                    "type": "string",
-                    "format": "uuid"
-                }
-            }
-        },
-        "HarnessReleaseFitAgent": {
-            "required": [
-                "name",
-                "version"
-            ],
-            "type": "object",
-            "properties": {
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "version": {
-                    "title": "Version",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "HarnessReleaseFitTool": {
-            "required": [
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "description": {
-                    "title": "Description",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessReleaseAgentRule": {
-            "required": [
-                "id",
-                "text"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "text": {
-                    "title": "Text",
-                    "type": "string"
-                }
-            }
-        },
-        "HarnessAdaptationWorld": {
-            "required": [
-                "name",
-                "title",
-                "summary",
-                "channel",
-                "release",
-                "records",
-                "tools",
-                "rules",
-                "people"
-            ],
-            "type": "object",
-            "properties": {
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "title": {
-                    "title": "Title",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "summary": {
-                    "title": "Summary",
-                    "type": "string"
-                },
-                "channel": {
-                    "title": "Channel",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "release": {
-                    "title": "Release",
-                    "description": "The release's digest.",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "records": {
-                    "title": "Records",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "integer"
-                    }
-                },
-                "tools": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessReleaseFitTool"
-                    }
-                },
-                "rules": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessReleaseAgentRule"
-                    }
-                },
-                "people": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                }
-            }
-        },
-        "HarnessAdaptationCase": {
-            "required": [
-                "key",
-                "title"
-            ],
-            "type": "object",
-            "properties": {
-                "key": {
-                    "title": "Key",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "title": {
-                    "title": "Title",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "HarnessReleaseFitRow": {
-            "required": [
-                "world",
-                "agent",
-                "kind"
-            ],
-            "type": "object",
-            "properties": {
-                "world": {
-                    "title": "World",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "agent": {
-                    "title": "Agent",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "enum": [
-                        "matched",
-                        "mapped",
-                        "missing"
-                    ]
-                }
-            }
-        },
-        "HarnessReleaseFitCase": {
-            "required": [
-                "key",
-                "title"
-            ],
-            "type": "object",
-            "properties": {
-                "key": {
-                    "title": "Key",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "title": {
-                    "title": "Title",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "HarnessReleaseFitResponse": {
-            "required": [
-                "agent",
-                "agent_tools",
-                "rows",
-                "platform_actions",
-                "total",
-                "unmeasured"
-            ],
-            "type": "object",
-            "properties": {
-                "agent": {
-                    "$ref": "#/definitions/HarnessReleaseFitAgent"
-                },
-                "agent_tools": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessReleaseFitTool"
-                    }
-                },
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessReleaseFitRow"
-                    }
-                },
-                "platform_actions": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessReleaseFitTool"
-                    }
-                },
-                "total": {
-                    "title": "Total",
-                    "type": "integer"
-                },
-                "unmeasured": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessReleaseFitCase"
-                    }
-                }
-            }
-        },
-        "HarnessReleaseConflict": {
-            "required": [
-                "rule",
-                "policy",
-                "agent"
-            ],
-            "type": "object",
-            "properties": {
-                "rule": {
-                    "title": "Rule",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "policy": {
-                    "title": "Policy",
-                    "description": "The rule as the world states it.",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "agent": {
-                    "title": "Agent",
-                    "description": "The agent's instruction, quoted.",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "HarnessReleaseConflictsResponse": {
-            "required": [
-                "checked",
-                "conflicts"
-            ],
-            "type": "object",
-            "properties": {
-                "checked": {
-                    "title": "Checked",
-                    "description": "False when the instructions couldn't be read against the rules yet.",
-                    "type": "boolean"
-                },
-                "conflicts": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessReleaseConflict"
-                    }
-                }
-            }
-        },
-        "HarnessAdaptationDesign": {
-            "required": [
-                "state",
-                "failure",
-                "composition_id",
-                "agent",
-                "world",
-                "suite",
-                "scenarios",
-                "fit",
-                "conflicts",
-                "check"
-            ],
-            "type": "object",
-            "properties": {
-                "state": {
-                    "title": "State",
-                    "description": "checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists.",
-                    "type": "string",
-                    "enum": [
-                        "checking",
-                        "awaiting_approval",
-                        "building",
-                        "ready",
-                        "failed"
-                    ]
-                },
-                "failure": {
-                    "title": "Failure",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "composition_id": {
-                    "title": "Composition id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "agent": {
-                    "$ref": "#/definitions/HarnessReleaseFitAgent"
-                },
-                "world": {
-                    "$ref": "#/definitions/HarnessAdaptationWorld"
-                },
-                "suite": {
-                    "title": "Suite",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "scenarios": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessAdaptationCase"
-                    }
-                },
-                "fit": {
-                    "$ref": "#/definitions/HarnessReleaseFitResponse"
-                },
-                "conflicts": {
-                    "$ref": "#/definitions/HarnessReleaseConflictsResponse"
-                },
-                "check": {
-                    "title": "Check",
-                    "description": "What checking the mapping on every case found, once it has: the approval's data.",
-                    "type": "object",
-                    "x-nullable": true
-                }
-            }
-        },
         "HarnessSource": {
             "required": [
                 "kind"
@@ -161301,164 +161459,6 @@
                         "maxLength": 65536,
                         "minLength": 1
                     }
-                }
-            }
-        },
-        "SecretReference": {
-            "required": [
-                "manager",
-                "key",
-                "purpose"
-            ],
-            "type": "object",
-            "properties": {
-                "manager": {
-                    "title": "Manager",
-                    "type": "string",
-                    "enum": [
-                        "platform-vault",
-                        "platform-config"
-                    ]
-                },
-                "key": {
-                    "title": "Key",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "version": {
-                    "title": "Version",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "purpose": {
-                    "title": "Purpose",
-                    "type": "string",
-                    "enum": [
-                        "target_provider",
-                        "simulator_provider",
-                        "source_checkout"
-                    ]
-                }
-            }
-        },
-        "HarnessAgent": {
-            "description": "How the hosted agent is reached. Omitted for an agent connected on the Agents page: its provider, agent id and stored key are read from the version.",
-            "required": [
-                "connector"
-            ],
-            "type": "object",
-            "properties": {
-                "connector": {
-                    "title": "Connector",
-                    "type": "string",
-                    "enum": [
-                        "livekit",
-                        "vapi",
-                        "retell",
-                        "retell_chat",
-                        "phone",
-                        "auto",
-                        "hosted_agent"
-                    ]
-                },
-                "mode": {
-                    "title": "Mode",
-                    "type": "string",
-                    "enum": [
-                        "connect_only",
-                        "environment_backed",
-                        "provider_import"
-                    ],
-                    "x-nullable": true
-                },
-                "call_direction": {
-                    "title": "Call direction",
-                    "description": "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
-                    "type": "string",
-                    "enum": [
-                        "inbound",
-                        "outbound"
-                    ],
-                    "x-nullable": true
-                },
-                "config": {
-                    "title": "Config",
-                    "type": "object",
-                    "default": {}
-                },
-                "secret_refs": {
-                    "title": "Secret refs",
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/SecretReference"
-                    },
-                    "default": {}
-                }
-            }
-        },
-        "HarnessReleaseAgentRequest": {
-            "required": [
-                "suite_id",
-                "agent_version_id",
-                "name",
-                "idempotency_key"
-            ],
-            "type": "object",
-            "properties": {
-                "suite_id": {
-                    "title": "Suite id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "agent_version_id": {
-                    "title": "Agent version id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "agent": {
-                    "$ref": "#/definitions/HarnessAgent"
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "idempotency_key": {
-                    "title": "Idempotency key",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "parallelism": {
-                    "title": "Parallelism",
-                    "description": "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
-                    "type": "integer",
-                    "maximum": 8,
-                    "minimum": 1
-                },
-                "pairing": {
-                    "title": "Pairing",
-                    "description": "World tool to the agent tool it is paired with, as the person reviewed it.",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "minLength": 1,
-                        "x-nullable": true
-                    }
-                },
-                "mode": {
-                    "title": "Mode",
-                    "description": "review: the builder drafts the binding and the person approves its design. run: the binding is drafted and checked without a session, then the measurable cases run.",
-                    "type": "string",
-                    "enum": [
-                        "review",
-                        "run"
-                    ],
-                    "default": "review"
                 }
             }
         },
