@@ -189,7 +189,11 @@ class TestSettleCustomization:
                 digest="sha256:" + "c" * 64,
                 name=job.payload["metadata"]["design"]["name"],
                 object_key="releases/copy",
-                manifest={"derived_from": f"release:{retail.environment.digest}"},
+                manifest={
+                    "provenance": {
+                        "derived_from": f"release:{retail.environment.digest}"
+                    }
+                },
                 tools=retail.environment.tools,
                 policy={},
             )
@@ -242,7 +246,7 @@ class TestSettleCustomization:
                 digest="sha256:" + "e" * 63 + "f",
                 name="elsewhere",
                 object_key="releases/elsewhere",
-                manifest={"derived_from": "release:sha256:" + "0" * 64},
+                manifest={"provenance": {"derived_from": "release:sha256:" + "0" * 64}},
                 tools=[],
                 policy={},
             )

@@ -388,10 +388,17 @@ def list_releases(organization) -> list[dict[str, Any]]:
     return results
 
 
+def _lineage(environment: HarnessEnvironmentRelease) -> str:
+    """The `release:<digest>` a sealed copy names as its source: ALK seals it under the
+    manifest's provenance."""
+    provenance = (environment.manifest or {}).get("provenance") or {}
+    return str(provenance.get("derived_from") or "")
+
+
 def _derived_from(organization, environment: HarnessEnvironmentRelease):
     """The ready environment a copy was made from, as its sealed manifest names it; None for
     one that is no copy, or whose source this organization can't see."""
-    reference = str(environment.manifest.get("derived_from") or "")
+    reference = _lineage(environment)
     if not reference.startswith("release:"):
         return None
     source = _visible(
@@ -2117,9 +2124,7 @@ def _customized(
     environment, suite = register_release(
         output / "environment", output / "suite", organization=job.organization
     )
-    if environment.manifest.get("derived_from") != (
-        f"release:{source.get('environment_digest')}"
-    ):
+    if _lineage(environment) != f"release:{source.get('environment_digest')}":
         raise _error(
             "customization_lineage_invalid",
             "the sealed copy does not name the ready environment it was made from",
