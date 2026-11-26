@@ -789,9 +789,10 @@ def build_simulation_context_map(call_execution, agent_version):
     return ctx, subjects
 
 
-def _run_single_evaluation(eval_config, call_execution, transcript_data):
+def _run_single_evaluation(eval_config, call_execution, transcript_data) -> bool:
     """
-    Run a single SimulateEvalConfig evaluation.
+    Run a single SimulateEvalConfig evaluation. Returns whether it was graded:
+    False when an input was empty, so it was stored as missing.
 
     Replicates TestExecutor._run_single_simulate_evaluation() logic.
     """
@@ -1129,6 +1130,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             eval_config_id=str(eval_config.id),
             fields=list(missing.fields),
         )
+        return False
     except Exception as e:
         logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 
@@ -1150,6 +1152,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         eval_config.status = StatusType.FAILED.value
         eval_config.save()
         raise
+    return True
 
 
 def _check_eval_completion(call_execution, eval_config_ids=None, run_test=None):
@@ -1365,9 +1368,12 @@ def _run_evaluations_standalone(
                     TestExecution.ExecutionStatus.CANCELLED,
                     TestExecution.ExecutionStatus.CANCELLING,
                 ]:
-                    _run_single_evaluation(eval_config, call_execution, transcript_data)
+                    graded = _run_single_evaluation(
+                        eval_config, call_execution, transcript_data
+                    )
                     logger.info(
-                        f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
+                        f"{'Successfully ran' if graded else 'Skipped (input missing)'} "
+                        f"evaluation {eval_config.name} ({eval_config.id}) "
                         f"on call execution {call_execution.id}"
                     )
             except EvaluationDenied as denial:

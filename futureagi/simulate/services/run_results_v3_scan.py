@@ -555,7 +555,7 @@ class _Judge:
         self._natives = _Memo()
 
     def _entry(self, text: str) -> Any:
-        """One entry from its ``[status, output, output_type, source]`` text."""
+        """One entry from its JSON array text, one value per ``_ENTRY_KEYS``."""
         if (entry := self._parsed.get(text, MISSING)) is MISSING:
             values = _loads(text)
             # Absent keys read as JSON null here; no rule below tells them apart.

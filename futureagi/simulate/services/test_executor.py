@@ -4496,11 +4496,12 @@ class TestExecutor:
                             continue
                         extra = {"harness_run": True} if harness_run else {}
                         mark_eval_progress(call_execution)
-                        self._run_single_simulate_evaluation(
+                        graded = self._run_single_simulate_evaluation(
                             eval_config, call_execution, transcript_data, **extra
                         )
                         logger.info(
-                            f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
+                            f"{'Successfully ran' if graded else 'Skipped (input missing)'} "
+                            f"evaluation {eval_config.name} ({eval_config.id}) "
                             f"on call execution {call_execution.id}"
                         )
                 except EvaluationDenied as denial:
@@ -5053,9 +5054,10 @@ class TestExecutor:
         call_execution: CallExecution,
         transcript_data,
         harness_run=False,
-    ):
+    ) -> bool:
         """
-        Run a single SimulateEvalConfig evaluation
+        Run a single SimulateEvalConfig evaluation. Returns whether it was
+        graded: False when an input was empty, so it was stored as missing.
 
         Args:
             eval_config: SimulateEvalConfig instance
@@ -5445,6 +5447,7 @@ class TestExecutor:
                 eval_config_id=str(eval_config.id),
                 fields=list(missing.fields),
             )
+            return False
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 
@@ -5469,6 +5472,7 @@ class TestExecutor:
             eval_config.status = StatusType.FAILED.value
             eval_config.save(update_fields=["status", "updated_at"])
             raise
+        return True
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):
         """
