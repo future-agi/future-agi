@@ -47,14 +47,14 @@ def get_or_create_default_workspace(organization, created_by):
             )
         return workspace, True
     except IntegrityError:
-        workspace = Workspace.objects.filter(
+        winner = Workspace.objects.filter(
             organization=organization, is_default=True, is_active=True
         ).first()
-        if workspace is None:
+        if winner is None:
             raise
         logger.info(
             "default_workspace_created_concurrently",
             organization_id=str(organization.id),
-            workspace_id=str(workspace.id),
+            workspace_id=str(winner.id),
         )
-        return workspace, False
+        return winner, False
