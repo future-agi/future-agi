@@ -19,6 +19,14 @@ PIN_INPUTS = {
     b"futureagi/code-executor/requirements.sandbox.txt",
 }
 SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
+# CI_SCOPE_MODE=light: a pull request runs no backend, Metrics or E2E suite.
+# Lint, types, contracts, frontend, update safety and Update CI still run, and
+# the merge group runs everything before anything lands. The batch train's
+# rollup pull request stays full: merge groups run without the private
+# package, so the rollup is the only pre-merge run of the internal suite.
+LIGHT_HELD = ("backend", "metrics", "any")
+TRAIN_AUTHOR = "futureagi-devflow-train[bot]"
+TRAIN_HEAD_PREFIX = "chore/devflow-train-"
 # The paths for which a pull request runs Update CI's ordinary jobs. It is the
 # workflow's push path list (test_ci_scope.py keeps the two equal). Pull
 # requests start the workflow on dev's list, this list without the host-update
@@ -253,7 +261,7 @@ def rehearsal_inputs(paths):
     return tooling, built
 
 
-def plan(event, tested, base, head, mode, standalone=False):
+def plan(event, tested, base, head, mode, standalone=False, author="", head_ref=""):
     sha(tested)
     if git("rev-parse", "HEAD").decode().strip() != tested:
         raise ValueError("checkout does not match event SHA")
@@ -306,6 +314,11 @@ def plan(event, tested, base, head, mode, standalone=False):
     # Group member labels are not available here. A group may carry a forced
     # Standalone proof even for metadata-only changes.
     flags["any"] |= event == "merge_group" or standalone
+    rollup = author == TRAIN_AUTHOR and head_ref.startswith(TRAIN_HEAD_PREFIX)
+    light = mode == "light" and event == "pull_request" and not rollup
+    if light:
+        # The e2e-standalone label still asks for E2E on a light pull request.
+        flags.update(dict.fromkeys(LIGHT_HELD, False), any=standalone)
     if event == "pull_request" and paths is not None:
         # What the workflow's path filter decided before; unknown impact runs.
         flags["ordinary_update"] = flags["ordinary_update"] and update_ci_relevant(
@@ -330,12 +343,14 @@ def plan(event, tested, base, head, mode, standalone=False):
         "tested_tree": tree,
         "path_count": None if paths is None else len(paths),
         "policy_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "mode": "qualified" if active else "full",
+        "mode": "light" if light else "qualified" if active else "full",
         "proposed": proposed,
         "forced_standalone": standalone or event == "merge_group",
         "flags": flags,
         "reason": (
-            "full control"
+            "light pull request plan"
+            if light
+            else "full control"
             if not candidate
             else "impact unknown"
             if paths is None
@@ -354,6 +369,8 @@ def main():
         os.environ["HEAD_SHA"],
         os.environ.get("CI_SCOPE_MODE", ""),
         os.environ.get("STANDALONE_LABEL") == "true",
+        os.environ.get("PR_AUTHOR", ""),
+        os.environ.get("PR_HEAD_REF", ""),
     )
     print(json.dumps(p, sort_keys=True))
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:

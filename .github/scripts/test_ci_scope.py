@@ -521,6 +521,62 @@ class CandidateScope(unittest.TestCase):
         ):
             self.assertTrue(all(self.group()["flags"].values()))
 
+    def pull_request(self, path="futureagi/app.py"):
+        """(tested, base, head) for a PR that changes path, merged onto dev."""
+        self.git("checkout", "-qb", "work")
+        self.write(path)
+        head = self.commit()
+        self.git("checkout", "-q", "dev")
+        self.write("new-root/input")
+        base = self.commit()
+        self.git("merge", "-q", "--no-ff", "work", "-m", "event merge")
+        return self.git("rev-parse", "HEAD"), base, head
+
+    def test_a_light_pull_request_holds_only_the_backend_and_e2e_suites(self):
+        tested, base, head = self.pull_request()
+        result = plan("pull_request", tested, base, head, "light")
+        self.assertEqual((result["mode"], result["reason"]), ("light", "light pull request plan"))
+        for suite in ("backend", "metrics", "any"):
+            self.assertFalse(result["flags"][suite], suite)
+        # Update CI, update safety and the pin check keep their own plan.
+        full = plan("pull_request", tested, base, head, "")["flags"]
+        for kept in ("collector", "ordinary_update", "update_safety", "executor_base", "tooling", "built", "python"):
+            self.assertEqual(result["flags"][kept], full[kept], kept)
+        self.assertTrue(full["backend"] and full["any"])
+        # The e2e-standalone label still asks for E2E.
+        labelled = plan("pull_request", tested, base, head, "light", standalone=True)
+        self.assertEqual((labelled["flags"]["any"], labelled["flags"]["backend"]), (True, False))
+
+    def test_the_merge_group_is_always_full(self):
+        # Whatever CI_SCOPE_MODE says, a light plan never reaches the queue.
+        self.write("futureagi/app.py")
+        self.commit()
+        for mode in ("", "light", "qualified", "unknown"):
+            with self.subTest(mode=mode):
+                result = self.group(mode)
+                self.assertNotEqual(result["mode"], "light")
+                for suite in scope["SUITES"]:
+                    self.assertTrue(result["flags"][suite], suite)
+
+    def test_the_train_rollup_pull_request_stays_full_under_light(self):
+        tested, base, head = self.pull_request()
+        author, prefix = scope["TRAIN_AUTHOR"], scope["TRAIN_HEAD_PREFIX"]
+        rollup = plan("pull_request", tested, base, head, "light", author=author, head_ref=prefix + "42")
+        self.assertEqual(rollup["mode"], "full")
+        self.assertTrue(all(rollup["flags"][suite] for suite in ("backend", "metrics", "any")))
+        # Both signals are needed: either one alone is an ordinary light PR.
+        for author_, head_ref in ((author, "feat/x"), ("someone", prefix + "42"), ("", "")):
+            with self.subTest(author=author_, head_ref=head_ref):
+                result = plan("pull_request", tested, base, head, "light", author=author_, head_ref=head_ref)
+                self.assertEqual(result["mode"], "light")
+
+    def test_the_planner_reads_the_rollup_identity_from_the_event(self):
+        for name in ("backend-ci", "e2e-ci"):
+            text = (SCRIPTS.parent / "workflows" / (name + ".yml")).read_text()
+            with self.subTest(workflow=name):
+                self.assertIn("PR_AUTHOR: ${{ github.event.pull_request.user.login }}\n", text)
+                self.assertIn("PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}\n", text)
+
     def test_diverged_pr_selects_head_diff_but_records_actual_merge_tree(self):
         self.git("checkout", "-qb", "work")
         self.write(".git-blame-ignore-revs")
