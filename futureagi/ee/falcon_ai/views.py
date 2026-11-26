@@ -61,6 +61,20 @@ def _storage_configuration_error(setting, error):
     )
 
 
+def _storage_unavailable(error):
+    """The storage service refused or could not be reached; nothing was saved.
+
+    Log only the error's type: storage errors can carry request URLs and
+    resource names, and a traceback adds nothing to an outage.
+    """
+    logger.warning("falcon_upload_storage_unavailable", error_type=type(error).__name__)
+    return _gm.custom_error_response(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "File upload failed because file storage is unavailable. Try again later.",
+        code="storage_unavailable",
+    )
+
+
 class StreamStatusView(APIView):
     """Check if there is an active or recent agent stream for a conversation."""
 
@@ -447,69 +461,43 @@ class FileUploadView(APIView):
             if file_head.startswith(sig) and content_type not in safe_binary_types:
                 return _gm.bad_request("File type not allowed")
 
-        from minio import Minio
+        from minio.error import MinioException
+        from urllib3.exceptions import HTTPError as StorageTransportError
 
-        from tfc.utils.storage_client import (
-            _parse_endpoint,
-            public_base_url,
-            storage_http_client,
-        )
+        from tfc.utils import storage_client
 
-        # Keep Falcon's legacy endpoint/credential overrides, but share the
-        # storage client's parser so bare host:port is not mistaken for a scheme.
-        # An empty MINIO_ENDPOINT falls through to S3_ENDPOINT_URL.
-        endpoint_setting = (
-            "MINIO_ENDPOINT" if os.getenv("MINIO_ENDPOINT") else "S3_ENDPOINT_URL"
-        )
+        # The app's shared storage client: STORAGE_BACKEND picks S3, GCS (HMAC
+        # keys) or a self-hosted MinIO, with the proxy-aware transport.
         try:
-            minio_endpoint, scheme_hint = _parse_endpoint(
-                os.getenv(endpoint_setting, "minio:9000")
+            client = storage_client.get_storage_client()
+        except ValueError as error:
+            return _storage_configuration_error(
+                "S3_ENDPOINT" if os.getenv("S3_ENDPOINT") else "S3_ENDPOINT_URL",
+                error,
             )
-        except ValueError as error:
-            return _storage_configuration_error(endpoint_setting, error)
-        # Validate the public endpoint too, before writing any object or row.
+        # Build the URL before writing any object or row, so a bad MINIO_URL
+        # fails the upload first.
+        if storage_client.STORAGE_BACKEND == "minio":
+            # Self-hosted keeps Falcon's URL form: MINIO_URL, path prefix kept.
+            try:
+                storage_base_url = storage_client.public_base_url(MINIO_URL)
+            except ValueError as error:
+                return _storage_configuration_error("MINIO_URL", error)
+            storage_url = f"{storage_base_url}/{UPLOAD_BUCKET_NAME}/{object_key}"
+        else:
+            storage_url = storage_client.get_object_url(UPLOAD_BUCKET_NAME, object_key)
+
         try:
-            storage_base_url = public_base_url(MINIO_URL)
-        except ValueError as error:
-            return _storage_configuration_error("MINIO_URL", error)
-        secure = (
-            scheme_hint if scheme_hint is not None else "amazonaws" in minio_endpoint
-        )
-
-        access_key = (
-            os.getenv("MINIO_ROOT_USER")
-            or os.getenv("S3_ACCESS_KEY")
-            or os.getenv("AWS_ACCESS_KEY_ID", "")
-        )
-        secret_key = (
-            os.getenv("MINIO_ROOT_PASSWORD")
-            or os.getenv("S3_SECRET_KEY")
-            or os.getenv("AWS_SECRET_ACCESS_KEY", "")
-        )
-
-        minio_client = Minio(
-            minio_endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=secure,
-            # The app storage's transport, so uploads honour HTTP(S)_PROXY
-            # and NO_PROXY as well.
-            http_client=storage_http_client(),
-        )
-
-        # Ensure bucket exists
-        if not minio_client.bucket_exists(UPLOAD_BUCKET_NAME):
-            minio_client.make_bucket(UPLOAD_BUCKET_NAME)
-
-        minio_client.put_object(
-            UPLOAD_BUCKET_NAME,
-            object_key,
-            io.BytesIO(file_bytes),
-            len(file_bytes),
-            content_type=content_type,
-        )
-
-        storage_url = f"{storage_base_url}/{UPLOAD_BUCKET_NAME}/{object_key}"
+            storage_client.ensure_bucket(client, UPLOAD_BUCKET_NAME)
+            client.put_object(
+                UPLOAD_BUCKET_NAME,
+                object_key,
+                io.BytesIO(file_bytes),
+                len(file_bytes),
+                content_type=content_type,
+            )
+        except (MinioException, StorageTransportError) as error:
+            return _storage_unavailable(error)
 
         # Extract text content for LLM context
         text_content = ""

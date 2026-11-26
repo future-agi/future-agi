@@ -76,6 +76,7 @@ flows/knowledge-base/file-download.spec.ts	binding scopeActors,browser,request	1
 flows/knowledge-base/file-download.spec.ts	send request.get `${E2E.apiUrl}${path}`	3	reviewed first-hop expression
 flows/observe/ask-jev-composer.spec.ts	factory req=request	1	collector
 flows/observe/ask-jev-run.spec.ts	factory req=request	1	collector
+flows/observe/bulk-add-to-dataset.spec.ts	factory req=request	1	collector
 flows/observe/catalog-history-live-parity.spec.ts	binding actor,page,request,probe,lifecycle:h5	1	backendRequestContext
 flows/observe/catalog-history-live-parity.spec.ts	send request.get endpoints.collectorUrl + '/v1/traces'	1	reviewed first-hop expression
 flows/observe/catalog-history-live-parity.spec.ts	send request.get endpoints.healthUrl	1	reviewed first-hop expression

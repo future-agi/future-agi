@@ -14,11 +14,16 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES, TRIAL_STATE_KEY
+from simulate.constants.hosted_harness import (
+    SCENARIO_FAILURE_CODES,
+    SCENARIO_KEY,
+    TRIAL_STATE_KEY,
+)
 from simulate.models import (
     AgentDefinition,
     CallExecution,
     CallTranscript,
+    HarnessSuiteValidation,
     HostedHarnessArtifact,
     HostedHarnessAttempt,
     HostedHarnessEvent,
@@ -591,6 +596,13 @@ def ingest_manifest(
             body=_json_ready(body),
         )
         attempt.manifest_acked = True
+        if attempt.cleanup_verified_at is not None:
+            # The sandbox is verified gone and cleanup already decided from the results in
+            # then: the Run settled, or its retry was narrowed to the calls without one. A
+            # manifest arriving after that is kept on record and reopens neither, nor does
+            # it mark the missing calls skipped.
+            attempt.save(update_fields=["manifest_acked", "updated_at"])
+            return manifest, True
         attempt.state = HostedHarnessAttempt.State.CLEANING_UP
         attempt.save(update_fields=["manifest_acked", "state", "updated_at"])
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
@@ -971,9 +983,18 @@ def _apply_receipt_to_call(
     else:
         recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
-    metadata["harness_evaluations"] = _receipt_evaluations(body)
-    metadata["harness_outcome_status"] = receipt_outcome_status(body)
-    coverage = _receipt_evaluation_coverage(body)
+    # Checks the case's proof never verified on these versions are graded unmeasured; the receipt stays as sealed.
+    # The case this call ran, stored once for every reader (a receipt's `scenario_key` names the execution).
+    metadata[SCENARIO_KEY] = metadata.get(SCENARIO_KEY) or case_key(allocation)
+    unverified = unverified_checks(job, metadata[SCENARIO_KEY])
+    if unverified:
+        metadata[UNVERIFIED_KEY] = unverified
+    else:
+        metadata.pop(UNVERIFIED_KEY, None)
+    graded = graded_receipt(body, unverified)
+    metadata["harness_evaluations"] = _receipt_evaluations(graded)
+    metadata["harness_outcome_status"] = receipt_outcome_status(graded)
+    coverage = _receipt_evaluation_coverage(graded)
     metadata["harness_eval_coverage"] = coverage
     if coverage["complete"]:
         metadata["harness_grading_status"] = "completed"
@@ -1313,6 +1334,112 @@ def sub_goal_result(goal: dict[str, Any]) -> str | None:
     if not isinstance(goal.get("held"), bool):
         return None
     return "pass" if goal["held"] else "fail"
+
+
+# The checks of a trial's case its proof never verified on the run's versions, kept on the call (`unverified_checks`).
+UNVERIFIED_KEY = "harness_unverified_checks"
+UNVERIFIED_REASON = "This check was never verified for this scenario, so it does not count against the agent."
+
+
+def case_key(allocation: Any) -> str:
+    """The scenario key of the case a call ran: its execution's source scenario, else its registration's. A receipt's
+    `scenario_key` names the execution (a trial's own key), never the case."""
+    source = getattr(allocation, "source_scenario", None)
+    return str(source.scenario_key if source is not None else allocation.scenario_key)
+
+
+def unverified_checks(job: HostedHarnessJob, scenario_key: str) -> list[str]:
+    """The checks the case's proof on the run's suite and environment versions could not verify (its `excused`, which a
+    step it could only assume would have decided): the run's agent version's own entry when it has one, else the
+    case's entry; none without a proof. A proof plays the reference, not the agent, so another version's still says
+    which checks it could verify."""
+    from simulate.services.harness_starting_records import scenario_token
+    from simulate.services.harness_versioning.versions import OTHER_AGENTS
+
+    if not (job.suite_version_id and job.environment_version_id):
+        return []
+    proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version_id=job.suite_version_id,
+            environment_version_id=job.environment_version_id,
+        )
+        .values_list("proofs", flat=True)
+        .first()
+    ) or {}
+    token = scenario_token(scenario_key)
+    entry = next(
+        (one for key, one in proofs.items() if scenario_token(key) == token), None
+    )
+    if not isinstance(entry, dict):
+        return []
+    own = (entry.get(OTHER_AGENTS) or {}).get(str(job.agent_version_id))
+    entry = own if isinstance(own, dict) else entry
+    return sorted(str(one) for one in entry.get("excused") or [])
+
+
+def graded_sub_goals(sub_goals: list[Any], unverified: list[str]) -> list[Any]:
+    """The sub-goals with each task check the proof never verified read unmeasured, whether it held or not: what the
+    proof never showed passes right behaviour and fails wrong behaviour is never the agent's pass or failure."""
+    return [
+        (
+            {**goal, "held": None, "verdict": "unmeasured", "reason": UNVERIFIED_REASON}
+            if isinstance(goal, dict)
+            and goal.get("name") in unverified
+            and not is_worker_subject(goal.get("subject"))
+            and sub_goal_result(goal) in SUB_GOAL_PASSED
+            else goal
+        )
+        for goal in sub_goals
+    ]
+
+
+def graded_receipt(body: dict[str, Any], unverified: list[str]) -> dict[str, Any]:
+    """The receipt as graded: each task check the proof never verified reads unmeasured, and a trial with one is never
+    passed: it fails only on a verified check or an evaluation that failed, else it has no score. A trial that ended on
+    a failure of the agent's keeps its status; one that ended on a failure of ours (any other domain) is errored, never
+    the agent's failure."""
+    if not unverified:
+        return body
+    sub_goals = graded_sub_goals(body.get("sub_goals") or [], unverified)
+    status = body.get("status")
+    failure = body.get("failure") if isinstance(body.get("failure"), dict) else None
+    found = body.get("call")
+    call: dict[str, Any] = found if isinstance(found, dict) else {}
+    if status in ("passed", "failed") and sub_goals != list(
+        body.get("sub_goals") or []
+    ):
+        if call.get("duplicate_commits"):
+            # The world applied a write twice after the agent's answer was lost: the agent's failure.
+            status = "failed"
+        elif failure is not None:
+            status = status if failure.get("domain") == "agent" else "errored"
+        else:
+            failing = any(
+                isinstance(one, dict)
+                and not is_worker_subject(one.get("subject"))
+                and sub_goal_result(one) == "fail"
+                for one in sub_goals
+            ) or any(
+                isinstance(one, dict)
+                and one.get("passed") is False
+                and not one.get("grading_error")
+                for one in body.get("evaluations") or []
+            )
+            status = "failed" if failing else "no_score"
+    return {**body, "sub_goals": sub_goals, "status": status}
+
+
+def graded_call_receipt(metadata: Any) -> Any:
+    """A call's stored receipt as graded (`graded_receipt`), from the unverified checks kept beside it."""
+    receipt = (
+        metadata.get("hosted_harness_receipt") if isinstance(metadata, dict) else None
+    )
+    unverified = metadata.get(UNVERIFIED_KEY) if isinstance(metadata, dict) else None
+    return (
+        graded_receipt(receipt, unverified)
+        if isinstance(receipt, dict) and unverified
+        else receipt
+    )
 
 
 def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
+from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
@@ -29,6 +31,24 @@ class HostedHarnessJob(BaseModel):
         COMPLETED = "completed", "Completed"
         FAILED = "failed", "Failed"
         CANCELED = "canceled", "Canceled"
+
+    class CancelConfirmation(models.TextChoices):
+        SANDBOX_ABSENT = "sandbox_absent", "Sandbox absent"
+        PROVIDER_CALL_ENDED = "provider_call_ended", "Provider call ended"
+        CLEANUP_FAILED = "cleanup_failed", "Cleanup failed"
+        PROVIDER_CALL_OPEN = "provider_call_open", "Provider call still open"
+        PROVIDER_UNCHECKED = "provider_unchecked", "Provider calls not checked"
+        UNCHECKED_NO_KEY = "unchecked_no_key", "Not checked: no provider key"
+        UNCHECKED_KEY_REJECTED = (
+            "unchecked_key_rejected",
+            "Not checked: provider rejected the key",
+        )
+        UNCHECKED_NO_TARGET = "unchecked_no_target", "Not checked: no provider agent ID"
+        UNCHECKED_NO_CALLS = "unchecked_no_calls", "Not checked: no calls listed"
+        UNCHECKED_TOO_MANY_CALLS = (
+            "unchecked_too_many_calls",
+            "Not checked: more calls than one page",
+        )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -73,6 +93,10 @@ class HostedHarnessJob(BaseModel):
     deadline_at = models.DateTimeField()
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
+    cancel_confirmed_at = models.DateTimeField(null=True, blank=True)
+    cancel_confirmed_by = models.CharField(
+        max_length=32, choices=CancelConfirmation.choices, blank=True, default=""
+    )
     terminal_at = models.DateTimeField(null=True, blank=True)
     content_updated_at = models.DateTimeField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
@@ -151,6 +175,8 @@ class HostedHarnessJob(BaseModel):
     fix_cost_usd = models.DecimalField(
         max_digits=10, decimal_places=4, null=True, blank=True
     )
+    # A run's capability report as it was computed when the run was created, kept so the run's view never moves.
+    capability_snapshot = models.JSONField(null=True, blank=True)
     # What the platform's evals of a fix's check run billed, in US dollars, added as each
     # one bills. They run after the run's usage is sealed, so they are kept apart.
     # db_default too: a build from before this column inserts jobs without it.
@@ -272,6 +298,10 @@ class HostedHarnessAttempt(BaseModel):
 
 
 class HostedHarnessScenario(BaseModel):
+    # Set only on the unsaved rows a draft lists, never stored: the change the draft makes and what the case cites.
+    draft_change: str | None
+    draft_sources: list[Any]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     job = models.ForeignKey(
         HostedHarnessJob,
@@ -322,6 +352,21 @@ class HostedHarnessScenario(BaseModel):
     keywords = models.JSONField(null=True, blank=True)
     background_noise = models.CharField(max_length=64, blank=True, default="")
     max_turns = models.PositiveIntegerField(null=True, blank=True)
+    # Archived: out of future selection, identity, runs and evidence kept; restore puts it back.
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    archive_reason = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
+    archived_content = models.JSONField(null=True, blank=True)
+    # The document's sources, plus each file source's stored resolution and matched digest.
+    sources = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_scenario"
@@ -332,6 +377,9 @@ class HostedHarnessScenario(BaseModel):
         ]
         indexes = [
             models.Index(fields=["job", "number"], name="idx_harness_scenario_order"),
+            models.Index(
+                fields=["job", "archived_at"], name="idx_harness_scenario_archived"
+            ),
             GinIndex(fields=["persona"], name="idx_harness_scenario_persona"),
             GinIndex(fields=["coverage"], name="idx_harness_scenario_coverage"),
             GinIndex(fields=["keywords"], name="idx_harness_scenario_keywords"),

@@ -430,3 +430,19 @@ def test_a_chat_agent_with_sites_is_not_refused(
         job = _job(_post(client, workspace, body))
 
     assert job.agent_version_id == production.id
+
+
+def test_preflight_leaves_a_version_it_cannot_look_up_to_the_build(
+    client,
+    workspace,
+    gates,
+    agent,
+    production,  # noqa: F811
+):
+    # A version id that is not one can't be looked up, so the pair check has no version to read.
+    body = _creation(agent, agent_version_id="not-a-version")
+
+    with _reads_as_browser(production):
+        response = _preflight_report(client, workspace, body)
+
+    assert response.status_code == 200, response.content

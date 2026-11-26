@@ -4,11 +4,11 @@ import hashlib
 import json
 import secrets
 import uuid
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.conf import settings
@@ -60,6 +60,9 @@ from tracer.services.observability_switch import (
     refusal_body,
     set_agent_observability,
 )
+
+if TYPE_CHECKING:
+    from simulate.services.harness_readiness.selection import RunSelection
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
@@ -125,6 +128,42 @@ class HostedHarnessError(Exception):
         if self.status_code == 429 and retry_after:
             return {"Retry-After": str(int(retry_after))}
         return {}
+
+
+class NothingToLaunch(HostedHarnessError):
+    """register_attempt registered no attempt; ``attempt`` is the one a launch hands back
+    for the workflow to poll instead."""
+
+    def __init__(self, attempt: HostedHarnessAttempt, code: str, message: str) -> None:
+        super().__init__(code, message, status_code=409)
+        self.attempt = attempt
+
+
+class RetryAlreadyDelivered(NothingToLaunch):
+    """A retry found, when it registered, that every call it was to run had delivered its
+    result since cleanup. The Run was settled from the attempt that delivered them, and
+    no attempt is registered, so nothing runs or is charged again."""
+
+    def __init__(self, attempt: HostedHarnessAttempt) -> None:
+        super().__init__(
+            attempt,
+            "retry_already_delivered",
+            "every call the retry was to run already delivered its result",
+        )
+
+
+class AlreadyLaunched(NothingToLaunch):
+    """A launch found the job already settled, or its current attempt's guest already
+    started: an earlier launch of the same step did that work, as when the workflow
+    replays a launch whose response was lost. Registering again would run and charge
+    those calls a second time."""
+
+    def __init__(self, attempt: HostedHarnessAttempt) -> None:
+        super().__init__(
+            attempt,
+            "attempt_already_launched",
+            "the job's current attempt was already launched",
+        )
 
 
 @dataclass(frozen=True)
@@ -319,6 +358,7 @@ RUN_DROPPED_METADATA = (
     "default_pair_sealed",
     "conversation_checkpoints",
     "draft_saves",
+    "draft_validation",
     "evidence_adds",
     "observability_refusal",
 )
@@ -337,6 +377,7 @@ def create_selected_harness_run(
     parallelism: int | None = None,
     verify: bool = False,
     coding_agent_key_id: str | None = None,
+    for_agent_fix: bool = False,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
@@ -392,6 +433,48 @@ def create_selected_harness_run(
             f"selected scenarios × trials must not exceed {max_executions}",
             status_code=400,
         )
+    # Before the lock: reading the evidence may download an archive. When it cannot be
+    # read, a repeated request is still answered with its run before refusing.
+    unreadable: HostedHarnessError | None = None
+    try:
+        planned = _readiness_plan(
+            environment,
+            rerun_of=rerun_of,
+            picks=picks,
+            fix_run=fix_run,
+            scenario_keys=scenario_keys,
+            trials=trials,
+            for_agent_fix=for_agent_fix,
+        )
+    except HostedHarnessError as exc:
+        if exc.code != "readiness_unavailable":
+            raise
+        planned, unreadable = None, exc
+    # Before the lock as well: the validation job it starts, and its dispatch, must commit
+    # although the 409 it raises would roll the run's transaction back.
+    released: set[str] = set()
+    # A request whose key already made a run is answered, or refused, under the lock below.
+    repeated = HostedHarnessJob.no_workspace_objects.filter(
+        organization_id=environment.organization_id,
+        idempotency_key=run_idempotency_key(
+            environment,
+            f"coding-agent:{coding_agent_key_id}:{idempotency_key}"
+            if coding_agent_key_id is not None
+            else idempotency_key,
+        ),
+    ).exists()
+    if planned is not None and not repeated:
+        early = resolve_run_pins(
+            environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
+        )
+        if early is not None:
+            from simulate.services.harness_versioning.validation import (
+                require_pair_runnable,
+            )
+
+            # A failed or validating pairing is refused before any validation starts.
+            require_pair_runnable(environment, early)
+        released = _validate_unproved_pair(environment, planned, early, scenario_keys)
 
     with transaction.atomic():
         try:
@@ -438,6 +521,18 @@ def create_selected_harness_run(
             )
             if replayed is not None:
                 return replayed, False
+        if unreadable is not None:
+            raise unreadable
+        if resolved is not None:
+            from simulate.services.harness_versioning.validation import (
+                require_pair_runnable,
+            )
+
+            # Before the pins are made: making them resets a failed bundle.
+            require_pair_runnable(environment, resolved)
+        run_keys = _held_back_checked(
+            environment, planned, resolved, scenario_keys, released=released
+        )
         pins = _pinned_versions(environment, resolved)
         if pins is None:
             registrations = list(
@@ -491,13 +586,15 @@ def create_selected_harness_run(
                 status_code=400,
             )
         if pins is not None and pins.assembles:
-            _refuse_ungradable(pins, scenario_keys)
+            # A case readiness holds back (certification dropped it) is not sent, so it
+            # is not refused either.
+            _refuse_ungradable(pins, run_keys)
         from simulate.services.harness_tool_reach import refuse_production_only
 
-        refuse_production_only(environment, pins, scenario_keys)
+        refuse_production_only(environment, pins, run_keys)
 
         manifest: list[dict[str, Any]] = []
-        for scenario_key in scenario_keys:
+        for scenario_key in run_keys:
             registration = by_key[scenario_key]
             for trial_index in range(1, trials + 1):
                 execution_key = uuid.uuid5(
@@ -574,10 +671,14 @@ def create_selected_harness_run(
                 "scenario_edits": (
                     _scenario_edits(environment, registrations)
                     if pins is None
-                    else _member_scenario_edits(pins, scenario_keys)
+                    else _member_scenario_edits(pins, run_keys)
                 ),
             }
         )
+        if planned is not None and planned.plan is not None:
+            child_metadata["readiness_selection"] = _released_view(
+                planned.plan.view, planned.plan.held, released
+            )
         if pins is not None:
             child_metadata["version_pins"] = pins.as_metadata()
             if pins.assembly is not None:
@@ -601,7 +702,7 @@ def create_selected_harness_run(
             run_test=environment.run_test,
             status=TestExecution.ExecutionStatus.PENDING,
             started_at=timezone.now(),
-            total_scenarios=len(scenario_keys),
+            total_scenarios=len(run_keys),
             trials=trials,
             scenario_ids=scenario_ids,
             total_calls=len(manifest),
@@ -677,7 +778,29 @@ def create_selected_harness_run(
             child.environment_version = pins.environment_version
             child.suite_version = pins.suite_version
             child.assembled_bundle = pins.assembled_bundle
-            pin_fields = [
+            if planned is not None and planned.plan is not None:
+                # The report the selection was decided from, not one read after this
+                # run changed its inputs.
+                child.capability_snapshot = planned.plan.report
+                pin_fields = ["capability_snapshot"]
+            else:
+                from simulate.services.harness_readiness import store_run_snapshot
+
+                # Once committed: reading the evidence may download an archive, which
+                # never happens under the environment's lock.
+                transaction.on_commit(
+                    partial(
+                        store_run_snapshot,
+                        child.id,
+                        environment,
+                        agent_version=pins.agent_version,
+                        environment_version=pins.environment_version,
+                        suite_version=pins.suite_version,
+                        runtime=pins.runtime,
+                        bundle=pins.assembled_bundle,
+                    )
+                )
+            pin_fields += [
                 "agent_version",
                 "environment_version",
                 "suite_version",
@@ -854,6 +977,314 @@ def _replayable(bundle: Any) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class _ReadinessPlan:
+    """The cases readiness holds back from a run, for the pins it was read with;
+    ``plan`` is ``None`` when readiness refused the selection (the run refuses it too)."""
+
+    pins: tuple[Any, Any, Any]
+    plan: Any
+
+
+def _pin_tuple(resolved: ResolvedPins | None) -> tuple[Any, Any, Any] | None:
+    return None if resolved is None else _pins(resolved)
+
+
+def _pins(resolved: ResolvedPins) -> tuple[Any, Any, Any]:
+    return (
+        resolved.agent_version_id,
+        getattr(resolved.environment_version, "id", None),
+        getattr(resolved.suite_version, "id", None),
+    )
+
+
+def _readiness_plan(
+    environment: HostedHarnessJob,
+    *,
+    rerun_of: HostedHarnessJob | None,
+    picks: VersionPicks | None,
+    fix_run: Any = None,
+    scenario_keys: list[str],
+    trials: int,
+    for_agent_fix: bool = False,
+) -> _ReadinessPlan | None:
+    """Which requested cases this run's pairing holds back; ``None`` when runs are not
+    pinned to versions or the selection is refused (the run refuses it too).
+
+    Raises:
+        HostedHarnessError: 503 ``readiness_unavailable`` (retryable) when readiness
+            cannot be read: a new run never goes out unchecked. Re-running calls of a
+            finished run (``rerun_calls_in_run``) reuses that run's pairing and its check.
+    """
+    from simulate.services.harness_readiness import Pairing, select_for_run
+
+    # The pins the run itself resolves: a fix's check run may pick the suite version private to it.
+    resolved = resolve_run_pins(
+        environment, rerun_of=rerun_of, picks=picks, fix_run=fix_run
+    )
+    if resolved is None:
+        return None
+    pairing = Pairing(
+        environment=environment,
+        agent_version=resolved.agent_version,
+        environment_version=resolved.environment_version,
+        suite_version=resolved.suite_version,
+        runtime=resolved.runtime,
+    )
+    try:
+        plan = select_for_run(
+            pairing,
+            keys=scenario_keys,
+            trials=trials,
+            # An agent fix's own runs measure the cases it wrote for the fix; readiness still gates them.
+            lifecycle_gate=fix_run is None and not for_agent_fix,
+        )
+    except HostedHarnessError as exc:
+        if exc.status_code != 400:
+            raise
+        return _ReadinessPlan(pins=_pins(resolved), plan=None)
+    except Exception as exc:
+        logger.exception(
+            "harness_run_readiness_unavailable", environment_id=str(environment.id)
+        )
+        raise HostedHarnessError(
+            "readiness_unavailable",
+            "Couldn't read this pairing's readiness, so no run was created."
+            " Try again in a moment.",
+            status_code=503,
+            retryable=True,
+        ) from exc
+    return _ReadinessPlan(pins=_pins(resolved), plan=plan)
+
+
+def _validate_unproved_pair(
+    environment: HostedHarnessJob,
+    planned: _ReadinessPlan | None,
+    resolved: ResolvedPins | None,
+    scenario_keys: list[str],
+) -> set[str]:
+    """A pairing with no proofs on its versions: start a validation that proves it and ask
+    for the run again, rather than refusing every case. Returns the keys to run unvalidated
+    when the check cannot run here.
+
+    Raises:
+        HostedHarnessError: 409 ``pair_validating`` once the validation is started.
+    """
+    from simulate.models import HarnessAssembledBundle
+    from simulate.services.harness_versioning import assembly, validation
+
+    if (
+        resolved is None
+        or resolved.runtime is None
+        or planned is None
+        or planned.plan is None
+    ):
+        return set()
+    # The run preview shows this same decision.
+    step = planned.plan.view["next"]
+    if step == "run_unvalidated":
+        return set(scenario_keys)
+    if step != "validate_first":
+        return set()
+    key = resolved.assembly_key or assembly.bundle_key(
+        resolved.runtime, resolved.environment_version, resolved.suite_version
+    )
+    bundle = HarnessAssembledBundle._base_manager.filter(
+        job_id=environment.id, assembly_key=key
+    ).first()
+    ready = bundle is not None and bundle.state == HarnessAssembledBundle.State.READY
+    started = validation.start_validation(
+        environment,
+        resolved.agent_version,
+        resolved.environment_version,
+        resolved.suite_version,
+        purpose="prove" if ready else "save",
+    )
+    if started is None:
+        return set()
+    if started.state == validation.CHECK_UNAVAILABLE:
+        # As where validation cannot run: the cases run unvalidated and certify in the run's sandbox.
+        return set(scenario_keys)
+    if started.job is None:
+        return set()
+    deadline = validation.check_deadline(started.job)
+    retry_after = max(60, int((deadline - timezone.now()).total_seconds()))
+    raise HostedHarnessError(
+        "pair_validating",
+        "These versions are being validated. Run them again when it ends, at the latest in "
+        f"{-(-retry_after // 60)} minutes.",
+        status_code=409,
+        retryable=True,
+        details={
+            "retry_after": retry_after,
+            "check": {
+                "job_id": str(started.job.id),
+                "deadline_at": deadline.isoformat(),
+            },
+        },
+    )
+
+
+def _released_view(
+    view: RunSelection, held: frozenset[str], released: set[str]
+) -> RunSelection:
+    """The run's selection view once cases held only for validation are released because
+    validation cannot run here: they run, and the view says validation was not enforced."""
+    freed = set(held) & set(released)
+    if not freed:
+        return view
+    from simulate.services.harness_readiness.selection import NOT_VALIDATED_ROW
+
+    still = [key for key in view["held_back"]["keys"] if key not in freed]
+    by = dict(view["held_back"]["by"])
+    left = by.pop(NOT_VALIDATED_ROW, 0) - len(freed)
+    if left > 0:
+        by[NOT_VALIDATED_ROW] = left
+    reasons = dict(view["reasons"])
+    if NOT_VALIDATED_ROW not in by:
+        reasons.pop(NOT_VALIDATED_ROW, None)
+    count = view["held_back"]["count"] - len(freed)
+    released_view: RunSelection = {
+        **view,
+        "running": view["requested"] - count,
+        "held_back": {
+            **view["held_back"],
+            "count": count,
+            "keys": still,
+            "by": by,
+            "by_key": {
+                key: row
+                for key, row in view["held_back"].get("by_key", {}).items()
+                if key not in freed
+            },
+        },
+        "reasons": reasons,
+        "validation": "not_enforced",
+    }
+    released_view["held_back"].pop("reason_by_key", None)
+    if own := {
+        key: text
+        for key, text in view["held_back"].get("reason_by_key", {}).items()
+        if key not in freed
+    }:
+        released_view["held_back"]["reason_by_key"] = own
+    return released_view
+
+
+def _held_back_checked(
+    environment: HostedHarnessJob,
+    planned: _ReadinessPlan | None,
+    resolved: ResolvedPins | None,
+    scenario_keys: list[str],
+    *,
+    released: frozenset[str] | set[str] = frozenset(),
+) -> list[str]:
+    """The requested keys the run sends: all but the ones readiness holds back.
+
+    Raises:
+        HostedHarnessError: 409 ``environment_not_ready`` when the pins or the evidence
+            moved since readiness was read; 409 ``all_cases_blocked`` when every case
+            is held back.
+    """
+    if planned is None and resolved is None:
+        return list(scenario_keys)
+    # Pins that appeared or moved after readiness was read were never checked.
+    if planned is None or resolved is None or planned.pins != _pin_tuple(resolved):
+        raise _readiness_moved()
+    if planned.plan is None:
+        return list(scenario_keys)
+    if planned.plan.revision != _evidence_revision(environment, resolved):
+        raise _readiness_moved()
+    held = set(planned.plan.held) - set(released)
+    if held and all(key in held for key in scenario_keys):
+        from simulate.services.harness_readiness import CATALOGUE
+        from simulate.services.harness_readiness.selection import (
+            LIFECYCLE_LABELS,
+            NOT_VALIDATED_ROW,
+        )
+
+        labels = {one.id: one.label for one in CATALOGUE}
+        labels["scenario_dropped"] = "Certification"
+        labels.update(LIFECYCLE_LABELS)
+        labels["worker_limits"] = "Worker limits"
+        labels.update(
+            {
+                f"worker:{one['worker_id']}": one["name"]
+                for one in planned.plan.report["workers"]
+            }
+        )
+        reasons = planned.plan.view["reasons"]
+        named = "; ".join(
+            f"{labels.get(row, row)}: {reason}" for row, reason in reasons.items()
+        )
+        unvalidated = NOT_VALIDATED_ROW in reasons
+        raise HostedHarnessError(
+            "all_cases_blocked",
+            "No run was created: every selected case is held back"
+            + (f" ({named})" if named else "")
+            + ". Fix it, or select cases it does not hold back."
+            + (" Validate scenarios to run them." if unvalidated else ""),
+            status_code=409,
+            details={
+                "selection": planned.plan.view,
+                **({"action": "validate_scenarios"} if unvalidated else {}),
+            },
+        )
+    return [key for key in scenario_keys if key not in held]
+
+
+def _readiness_moved() -> HostedHarnessError:
+    return HostedHarnessError(
+        "environment_not_ready",
+        "environment changed while submitting this Run; submit it again",
+        status_code=409,
+        retryable=True,
+    )
+
+
+def _evidence_revision(environment: HostedHarnessJob, resolved: ResolvedPins) -> str:
+    from simulate.services.harness_readiness import Pairing, evidence_revision
+
+    return evidence_revision(
+        Pairing(
+            environment=environment,
+            agent_version=resolved.agent_version,
+            environment_version=resolved.environment_version,
+            suite_version=resolved.suite_version,
+            runtime=resolved.runtime,
+        )
+    )
+
+
+def all_run_keys(
+    environment: HostedHarnessJob,
+    *,
+    picks: VersionPicks | None = None,
+    hidden: Iterable[str] = (),
+) -> list[str]:
+    """Every scenario a run of these picks can select, in suite order.
+
+    The pinned suite version's members, or the environment's registered scenarios
+    without versioning; ``hidden`` ones (a coding agent's held-back cases) are left
+    out. A run given these keys is planned, checked and created exactly as one given
+    them by name.
+    """
+    from simulate.models import HarnessSuiteMember
+
+    resolved = resolve_run_pins(environment, rerun_of=None, picks=picks, fix_run=None)
+    if resolved is not None:
+        keys = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=resolved.suite_version
+        ).order_by("number", "scenario_key")
+    else:
+        keys = HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment
+        ).order_by("created_at", "id")
+    left_out = set(hidden)
+    ordered = dict.fromkeys(keys.values_list("scenario_key", flat=True))
+    return [key for key in ordered if key not in left_out]
+
+
 def resolve_run_pins(
     environment: HostedHarnessJob,
     *,
@@ -885,7 +1316,7 @@ def resolve_run_pins(
                 details={"piece": None},
             )
         return None
-    defaults = _pin_ids(environment)
+    defaults = pin_ids(environment)
     source, loaded, kept = environment, None, None
     if (
         rerun_of is not None
@@ -896,7 +1327,7 @@ def resolve_run_pins(
         loaded = _load_pins(environment, rerun_of)
         _, environment_version, suite_version, runtime = loaded
         kept = _source_bundle(environment, rerun_of)
-        if _pin_ids(rerun_of) == defaults or (
+        if pin_ids(rerun_of) == defaults or (
             runtime is not None
             and (
                 certify_enabled()
@@ -917,7 +1348,7 @@ def resolve_run_pins(
                 environment_id=str(environment.id),
                 rerun_of=str(rerun_of.id),
             )
-    ids = _pin_ids(source)
+    ids = pin_ids(source)
     if chosen:
         _check_picks(environment, picks, defaults, fix_run=fix_run)
         picked = tuple(
@@ -926,7 +1357,7 @@ def resolve_run_pins(
         if picked != ids:
             ids, loaded = picked, None
     if loaded is None:
-        loaded = _load_ids(environment, ids)
+        loaded = load_ids(environment, ids)
     agent_version, environment_version, suite_version, runtime = loaded
     from simulate.services.browser_sites import (
         browser_sites_at_pin,
@@ -940,7 +1371,7 @@ def resolve_run_pins(
         browser_sites_at_pin(environment.payload, environment_version),
     )
     # A rerun of its source's very pins replays the bundle its source ran.
-    if source is not rerun_of or ids != _pin_ids(rerun_of) or runtime is None:
+    if source is not rerun_of or ids != pin_ids(rerun_of) or runtime is None:
         kept = None
     cached = (
         (
@@ -1049,7 +1480,7 @@ def _unpinned_agent_version(environment: HostedHarnessJob) -> Any:
     )
 
 
-def _not_pickable(piece: str) -> HostedHarnessError:
+def not_pickable(piece: str) -> HostedHarnessError:
     # Every refused pick of a piece reads the same, so its reason is not revealed.
     return HostedHarnessError(
         "version_not_pickable",
@@ -1062,27 +1493,10 @@ def _not_pickable(piece: str) -> HostedHarnessError:
 def agent_version_pickable(environment: HostedHarnessJob, agent_id: Any) -> bool:
     """A live version of the environment's agent, in its workspace, whose check
     passed, or a legacy or pre-versioning one."""
-    from simulate.models import AgentVersion, HarnessAgentVersionRuntime
-    from simulate.services.harness_agent_versions import lineage_version_ids
-    from simulate.services.harness_versioning.read import (
-        _agent_definition_id,
-        in_workspace,
-    )
+    from simulate.models import HarnessAgentVersionRuntime
+    from simulate.services.harness_versioning.read import agent_in_lineage
 
-    definition_id = _agent_definition_id(environment)
-    if (
-        definition_id is None
-        or not AgentVersion.no_workspace_objects.filter(
-            in_workspace(environment),
-            id=agent_id,
-            organization_id=environment.organization_id,
-            agent_definition_id=definition_id,
-        ).exists()
-    ):
-        return False
-    # An agent environments share: only this environment's own versions.
-    allowed = lineage_version_ids(environment, definition_id)
-    if allowed is not None and str(agent_id) not in allowed:
+    if not agent_in_lineage(environment, agent_id):
         return False
     status = (
         HarnessAgentVersionRuntime.no_workspace_objects.filter(
@@ -1097,6 +1511,33 @@ def agent_version_pickable(environment: HostedHarnessJob, agent_id: Any) -> bool
     )
 
 
+def require_active_pick(
+    environment: HostedHarnessJob,
+    piece: str,
+    pick: Any,
+    default: Any,
+    *,
+    run: bool = False,
+    fix_run: Any = None,
+) -> None:
+    """Refuse an environment or suite version pick that is not one of this environment's active versions. The
+    default is always pickable; for a ``run``, a suite version private to a fix only by that fix's check runs."""
+    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+    from simulate.models.harness_versioning import VersionStatus
+
+    if not pick or str(pick) == str(default):
+        return
+    model = HarnessEnvironmentVersion if piece == "environment" else HarnessSuiteVersion
+    versions = model.no_workspace_objects.filter(
+        job=environment, id=pick, status=VersionStatus.ACTIVE
+    )
+    if run and piece == "suite" and pick != getattr(fix_run, "suite_version_id", None):
+        # The model is HarnessSuiteVersion here; mypy checks both models.
+        versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
+    if not versions.exists():
+        raise not_pickable(piece)
+
+
 def _check_picks(
     environment: HostedHarnessJob,
     picks: VersionPicks,
@@ -1109,24 +1550,15 @@ def _check_picks(
     A pick of the default is the default, so a dialog that sends it back always runs. A
     suite version private to a fix is the pick of that fix's check runs alone.
     """
-    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
-    from simulate.models.harness_versioning import VersionStatus
     from simulate.services.harness_agent_versions import require_agent_pick
 
     agent_id, environment_id, suite_id = picks.ids()
-    for piece, model, pick, default in (
-        ("environment", HarnessEnvironmentVersion, environment_id, defaults[1]),
-        ("suite", HarnessSuiteVersion, suite_id, defaults[2]),
-    ):
-        if pick and pick != default:
-            versions = model.no_workspace_objects.filter(
-                job=environment, id=pick, status=VersionStatus.ACTIVE
-            )
-            if piece == "suite" and pick != getattr(fix_run, "suite_version_id", None):
-                # The model is HarnessSuiteVersion here; mypy checks both models.
-                versions = versions.filter(fix_run__isnull=True)  # type: ignore[misc]
-            if not versions.exists():
-                raise _not_pickable(piece)
+    require_active_pick(
+        environment, "environment", environment_id, defaults[1], run=True
+    )
+    require_active_pick(
+        environment, "suite", suite_id, defaults[2], run=True, fix_run=fix_run
+    )
     if not agent_id or agent_id == defaults[0]:
         return
     require_agent_pick(
@@ -1149,8 +1581,8 @@ def job_pins(
 
     if job.environment_version_id is None or job.suite_version_id is None:
         return None
-    ids = _pin_ids(job)
-    agent_version, environment_version, suite_version, runtime = _load_ids(
+    ids = pin_ids(job)
+    agent_version, environment_version, suite_version, runtime = load_ids(
         environment, ids
     )
     recorded = ((job.payload or {}).get("metadata") or {}).get("assembly") or {}
@@ -1165,7 +1597,7 @@ def job_pins(
         runtime=runtime,
         agent_version_id=ids[0],
         defaults=(
-            defaults if isinstance(defaults, bool) else ids == _pin_ids(environment)
+            defaults if isinstance(defaults, bool) else ids == pin_ids(environment)
         ),
         cached=(
             cached
@@ -1196,7 +1628,7 @@ def _replayed_run(
         resolved.agent_version_id,
         getattr(resolved.agent_version, "id", None),
     )
-    if not same_agent or _pin_ids(existing)[1:] != (
+    if not same_agent or pin_ids(existing)[1:] != (
         resolved.environment_version.id,
         resolved.suite_version.id,
     ):
@@ -1262,7 +1694,7 @@ def _pinned_versions(
     )
 
 
-def _pin_ids(job: HostedHarnessJob) -> tuple[Any, Any, Any]:
+def pin_ids(job: HostedHarnessJob) -> tuple[Any, Any, Any]:
     return (job.agent_version_id, job.environment_version_id, job.suite_version_id)
 
 
@@ -1271,10 +1703,10 @@ def _load_pins(
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions ``source`` is pinned to, and the agent's
     side row."""
-    return _load_ids(environment, _pin_ids(source))
+    return load_ids(environment, pin_ids(source))
 
 
-def _load_ids(
+def load_ids(
     environment: HostedHarnessJob, ids: tuple[Any, Any, Any]
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions of these ids, and the agent's side
@@ -1332,21 +1764,16 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
         for goal in (pins.environment_version.documents or {}).get("sub_goals") or []
         if isinstance(goal, dict) and goal.get("name")
     }
-    if not catalogue:
-        return
-    ungradable = []
-    for key in scenario_keys:
-        sub_goals = (
-            (pins.members[key].content or {}) if key in pins.members else {}
-        ).get("sub_goals")
-        if not isinstance(sub_goals, list):
-            continue
-        names = {
-            str(goal.get("name") if isinstance(goal, dict) else goal)
-            for goal in sub_goals
-        }
-        if not names & catalogue:
-            ungradable.append(key)
+    ungradable = [
+        key
+        for key in scenario_keys
+        if grades_nothing(
+            ((pins.members[key].content or {}) if key in pins.members else {}).get(
+                "sub_goals"
+            ),
+            catalogue,
+        )
+    ]
     if ungradable:
         raise HostedHarnessError(
             "scenario_ungradable",
@@ -1355,6 +1782,19 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
             + " no sub-goal of this environment version, so the run cannot score it",
             status_code=422,
         )
+
+
+def grades_nothing(sub_goals: Any, catalogue: Collection[str]) -> bool:
+    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
+    cannot score it. A scenario without the field predates sub-goals and an empty
+    catalogue grades anything: neither is refused."""
+    if not catalogue or not isinstance(sub_goals, list):
+        return False
+    names = {
+        str(goal.get("name") if isinstance(goal, Mapping) else goal)
+        for goal in sub_goals
+    }
+    return not names & set(catalogue)
 
 
 def _member_registrations(
@@ -1615,6 +2055,8 @@ def rerun_calls_in_run(
         job.terminal_at = None
         job.cancel_requested_at = None
         job.cancel_reason = None
+        job.cancel_confirmed_at = None
+        job.cancel_confirmed_by = ""
         job.save(
             update_fields=[
                 "payload",
@@ -1624,6 +2066,8 @@ def rerun_calls_in_run(
                 "terminal_at",
                 "cancel_requested_at",
                 "cancel_reason",
+                "cancel_confirmed_at",
+                "cancel_confirmed_by",
                 "updated_at",
             ]
         )
@@ -1768,13 +2212,17 @@ def keep_delivered_attempt(attempt: HostedHarnessAttempt) -> bool:
 
     A failure the platform recorded earlier (an unreachable sandbox whose delete was still in
     progress, before the last result landed) does not describe the Run kept here, so it is
-    cleared.
+    cleared. When that failure replaced a completed ending the guest sent, the guest's
+    ending is restored.
     """
     if attempt.terminal_stage == "canceled":
         return False
     if attempt.terminal_event_received:
-        if attempt.terminal_stage != "completed":
+        if attempt.terminal_stage != "completed" and not _replaced_guest_completion(
+            attempt
+        ):
             return False
+        attempt.terminal_stage = "completed"
         logger.warning(
             "hosted_run_kept_with_every_result_in",
             attempt_id=str(attempt.id),
@@ -1802,6 +2250,59 @@ def keep_delivered_attempt(attempt: HostedHarnessAttempt) -> bool:
     return True
 
 
+# The failures the platform records when it loses an attempt: the sandbox went away or
+# stopped answering, the guest crashed, or its ending or manifest never arrived. None of
+# them describes a Run whose every call delivered its result.
+PLATFORM_LOSS_CODES = frozenset(
+    {
+        "sandbox_disappeared",
+        "sandbox_unreachable",
+        "guest_crashed",
+        "evidence_undeliverable",
+        "terminal_delivery_incomplete",
+    }
+)
+
+
+def fail_lost_attempt(attempt: HostedHarnessAttempt, failure: dict[str, Any]) -> None:
+    """Put the platform's failure for a lost attempt on ``attempt``; the caller saves it.
+
+    A completed ending the guest already sent is remembered in the failure, so that if
+    the missing results land after all, keep_delivered_attempt gives the guest its
+    ending back instead of leaving a finished Run failed. A loss recorded over an earlier
+    one that remembers it keeps remembering it, as when the sandbox is still unreachable
+    on the next poll while its delete is in progress.
+    """
+    if (
+        attempt.terminal_event_received and attempt.terminal_stage == "completed"
+    ) or _replaced_guest_completion(attempt):
+        failure = {
+            **failure,
+            "details": {**(failure.get("details") or {}), "guest_stage": "completed"},
+        }
+    attempt.terminal_stage = "failed"
+    attempt.terminal_failure = failure
+    attempt.state = HostedHarnessAttempt.State.FAILED
+
+
+def _replaced_guest_completion(attempt: HostedHarnessAttempt) -> bool:
+    failure = attempt.terminal_failure
+    return (
+        isinstance(failure, dict)
+        and failure.get("code") in PLATFORM_LOSS_CODES
+        and (failure.get("details") or {}).get("guest_stage") == "completed"
+    )
+
+
+def _lost_by_platform(attempt: HostedHarnessAttempt) -> bool:
+    failure = attempt.terminal_failure
+    return (
+        isinstance(failure, dict)
+        and failure.get("code") in PLATFORM_LOSS_CODES
+        and platform_set_failure(attempt) is None
+    )
+
+
 def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
 
@@ -1816,6 +2317,22 @@ def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
     ]
     metadata["execution_manifest"] = manifest
     return {**dispatch_payload, "scenario_count": len(manifest), "metadata": metadata}
+
+
+def scope_dispatch_to_registered(
+    dispatch_payload: dict[str, Any], job: HostedHarnessJob
+) -> dict[str, Any]:
+    """Narrow a dispatch document built before its attempt registered to the executions
+    the job chose at registration, where a retry drops the calls whose results landed
+    after cleanup."""
+    chosen = (job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS)
+    if not chosen:
+        return dispatch_payload
+    metadata = {
+        **(dispatch_payload.get("metadata") or {}),
+        RERUN_EXECUTION_KEYS: chosen,
+    }
+    return scope_dispatch_to_rerun({**dispatch_payload, "metadata": metadata})
 
 
 def _apply_parallelism_admission(
@@ -1951,6 +2468,163 @@ def _check_subfolder_echo(
 
 
 def register_attempt(
+    job_id: uuid.UUID | str,
+    *,
+    endpoint_base_url: str,
+    provider_ref: str | None = None,
+    snapshot_name: str | None = None,
+    snapshot_digest: str | None = None,
+    resume_launched: bool = False,
+) -> AttemptCapability:
+    """Register a job's next attempt. A retry reads its calls here, under the job's lock,
+    not only at cleanup: a result that landed in between takes its call out, and when
+    none is left the Run is settled and RetryAlreadyDelivered is raised.
+
+    With ``resume_launched`` (the gateway's launch), a job that is settled, or whose
+    current attempt's guest has started, gets no new attempt: AlreadyLaunched hands
+    that attempt back, so a launch replayed after its response was lost does not run
+    and charge the same calls again.
+    """
+    with transaction.atomic():
+        # The locks are held until the attempt is registered, so no result of the
+        # previous attempt lands between this read and the new attempt superseding it.
+        job, current = _lock_job_and_current_attempt(job_id)
+        launched = attempt_already_launched(job, current) if resume_launched else None
+        if launched is not None:
+            not_registered: NothingToLaunch = AlreadyLaunched(launched)
+        else:
+            delivered = _settle_delivered_retry(job, current)
+            if delivered is None:
+                return _register_attempt(
+                    job_id,
+                    endpoint_base_url=endpoint_base_url,
+                    provider_ref=provider_ref,
+                    snapshot_name=snapshot_name,
+                    snapshot_digest=snapshot_digest,
+                )
+            not_registered = RetryAlreadyDelivered(delivered)
+    raise not_registered
+
+
+def _lock_job_and_current_attempt(
+    job_id: uuid.UUID | str,
+) -> tuple[HostedHarnessJob, HostedHarnessAttempt | None]:
+    """Lock a job and its current attempt in the order receipts, events, manifests and
+    cleanup take them: the attempt joined with its job, in one statement. Taking the job
+    first here would wait on them in the opposite order."""
+    while True:
+        number = (
+            HostedHarnessJob.no_workspace_objects.filter(id=job_id)
+            .values_list("current_attempt_number", flat=True)
+            .get()
+        )
+        if not number:
+            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job_id
+            )
+            if not job.current_attempt_number:
+                return job, None
+            continue
+        current = (
+            HostedHarnessAttempt.no_workspace_objects.select_for_update()
+            .select_related("job")
+            .get(job_id=job_id, attempt_number=number)
+        )
+        # Registration moves the number only under these locks; re-read if one did.
+        if current.job.current_attempt_number == number:
+            return current.job, current
+
+
+# The job states a launch registers from: a new or re-run job, and a retry.
+_AWAITING_LAUNCH = frozenset(
+    {
+        HostedHarnessJob.State.RECEIVED,
+        HostedHarnessJob.State.QUEUED,
+        HostedHarnessJob.State.RETRY_WAIT,
+    }
+)
+# An attempt whose guest a launch started and whose sandbox is not yet cleaned up.
+_GUEST_STARTED = frozenset(
+    {
+        HostedHarnessAttempt.State.RUNNING,
+        HostedHarnessAttempt.State.FINALIZING,
+        HostedHarnessAttempt.State.CLEANING_UP,
+    }
+)
+
+
+def attempt_already_launched(
+    job: HostedHarnessJob, current: HostedHarnessAttempt | None
+) -> HostedHarnessAttempt | None:
+    """The attempt a launch of ``job`` hands back instead of registering one, or None when
+    the job is waiting for a launch.
+
+    A settled job keeps the attempt it ended with. A job whose current attempt's guest
+    was started has been launched already. An attempt that never got as far as its
+    guest (the launch died before the entrypoint ran) ran nothing, and is replaced as
+    before.
+    """
+    if current is None or job.state in _AWAITING_LAUNCH:
+        return None
+    if job.state in _TERMINAL_STATES:
+        return current
+    if current.state in _GUEST_STARTED and current.cleanup_verified_at is None:
+        return current
+    return None
+
+
+def launched_attempt(job_id: uuid.UUID | str) -> HostedHarnessAttempt | None:
+    """attempt_already_launched read without locks, so a launch that has nothing to do
+    stops before it acquires source or writes to the job. Registration decides again
+    under the locks."""
+    job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
+    current = (
+        HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job, attempt_number=job.current_attempt_number
+        ).first()
+        if job.current_attempt_number
+        else None
+    )
+    launched = attempt_already_launched(job, current)
+    if launched is not None:
+        launched.job = job
+    return launched
+
+
+def _settle_delivered_retry(
+    job: HostedHarnessJob, previous: HostedHarnessAttempt | None
+) -> HostedHarnessAttempt | None:
+    """For a retry of the locked job, narrow it to the calls still without a result.
+
+    Returns the previous attempt when every call it was retried for has delivered its
+    result since cleanup: the job is then ended as record_cleanup ends one whose results
+    are all in, and nothing is left to run.
+    """
+    if previous is None or job.state != HostedHarnessJob.State.RETRY_WAIT:
+        return None
+    missing = executions_without_result(job, previous.attempt_number)
+    if missing != []:
+        if missing:
+            _narrow_retry_scope(job, missing)
+            job.save(update_fields=["payload", "updated_at"])
+        return None
+    keep_delivered_attempt(previous)
+    # Its sandbox was verified gone at cleanup, so whatever its ending (a guest's own
+    # failed or canceled one landing late included) the attempt is over, not finalizing.
+    if previous.state != HostedHarnessAttempt.State.SUPERSEDED:
+        previous.state = _attempt_terminal_state(previous)
+        previous.save(update_fields=["state", "updated_at"])
+    _settle_job(job, previous, timezone.now())
+    logger.info(
+        "hosted_retry_settled_with_every_result_in",
+        job_id=str(job.id),
+        attempt_id=str(previous.id),
+    )
+    previous.job = job
+    return previous
+
+
+def _register_attempt(
     job_id: uuid.UUID | str,
     *,
     endpoint_base_url: str,
@@ -2121,6 +2795,10 @@ _TERMINAL_STATES = frozenset(
 
 
 DELETE_CANCEL_REASON = "environment_deleted"
+# How a pair check (harness_versioning.validation) stops its own job: a newer default
+# move replaced the one it was checking for, or it ran past its deadline.
+SUPERSEDED_MOVE_CANCEL_REASON = "superseded_move"
+CHECK_TIMED_OUT_CANCEL_REASON = "validation_timed_out"
 
 
 def delete_environment(job: HostedHarnessJob) -> None:
@@ -2217,6 +2895,8 @@ def validate_cancellation_reason(reason: str) -> None:
         "ttl_exceeded",
         DELETE_CANCEL_REASON,
         "fix_ended",
+        SUPERSEDED_MOVE_CANCEL_REASON,
+        CHECK_TIMED_OUT_CANCEL_REASON,
     }:
         raise HostedHarnessError(
             "invalid_cancellation_reason",
@@ -2239,6 +2919,8 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             return locked
         locked.cancel_requested_at = timezone.now()
         locked.cancel_reason = reason
+        locked.cancel_confirmed_at = None
+        locked.cancel_confirmed_by = ""
         locked.state = HostedHarnessJob.State.CLEANING_UP
         # State and stage are both part of the public read model. Leaving the
         # previous authoring stage here makes a successful cancel request look
@@ -2248,6 +2930,8 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             update_fields=[
                 "cancel_requested_at",
                 "cancel_reason",
+                "cancel_confirmed_at",
+                "cancel_confirmed_by",
                 "state",
                 "current_stage",
                 "updated_at",
@@ -3143,17 +3827,14 @@ def record_cleanup(
         )
         if attempt.attempt_number < job.current_attempt_number:
             return job
-        missing = (
-            executions_without_result(job, attempt.attempt_number)
-            if retry_pending
-            else None
-        )
+        missing = executions_without_result(job, attempt.attempt_number)
         # With every call's result in, a relaunch would only run them and charge them
         # again: the attempt ends here instead. A last result can land while the sandbox is
         # deleted, after the platform recorded its own failure; the Run is then kept as the
-        # gateway keeps one, under this lock, so it does not end failed.
+        # gateway keeps one, under this lock, so it does not end failed. That holds on the
+        # last attempt the budget allows too, where nothing is left to retry.
         if (
-            retry_pending
+            (retry_pending or _lost_by_platform(attempt))
             and missing == []
             and keep_delivered_attempt(attempt)
             and attempt.state != HostedHarnessAttempt.State.SUPERSEDED
@@ -3164,90 +3845,102 @@ def record_cleanup(
             # Whatever ended the attempt, the retry runs only the calls it left without
             # a result, as an in-run re-run runs only its chosen calls. With no result
             # in, it runs the same calls again. A build retries whole.
-            scope = (job.payload.get("metadata") or {}).get(
-                RERUN_EXECUTION_KEYS
-            ) or HostedHarnessExecution.no_workspace_objects.filter(
-                job=job
-            ).values_list("execution_key", flat=True)
-            if missing and len(missing) < len(scope):
-                job.payload = {
-                    **job.payload,
-                    "metadata": {
-                        **(job.payload.get("metadata") or {}),
-                        RERUN_EXECUTION_KEYS: missing,
-                    },
-                }
+            _narrow_retry_scope(job, missing)
             job.state = HostedHarnessJob.State.RETRY_WAIT
             job.save(update_fields=["state", "payload", "updated_at"])
             return job
-        snapshot_missing = (
-            job.environment_id is None
-            and job.test_execution_id is None
-            and attempt.terminal_stage == "completed"
-            and (
-                not job.run_test_id
-                or not (job.payload.get("metadata") or {}).get("authoring_object_key")
-                or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
-                != job.scenario_count
-            )
-        )
-        if snapshot_missing:
-            job.state = HostedHarnessJob.State.FAILED
-        elif attempt.terminal_stage == "completed":
-            job.state = HostedHarnessJob.State.COMPLETED
-        elif attempt.terminal_stage == "canceled":
-            job.state = HostedHarnessJob.State.CANCELED
-        else:
-            job.state = HostedHarnessJob.State.FAILED
-        # Cleanup is an intermediate lifecycle stage. Once absence has been verified, expose the
-        # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
-        job.current_stage = (
-            HostedHarnessJob.State.FAILED
-            if snapshot_missing
-            else attempt.terminal_stage or job.state
-        )
-        job.terminal_at = now
-        job.failure = (
-            {
-                "domain": "platform_sync",
-                "stage": "validating_scenarios",
-                "code": "authoring_snapshot_missing",
-                "message": "Validated scenarios or their durable bundle are missing",
-            }
-            if snapshot_missing
-            else attempt.terminal_failure
-        )
-        job.content_updated_at = now
-        job.save(
-            update_fields=[
-                "state",
-                "terminal_at",
-                "current_stage",
-                "failure",
-                "content_updated_at",
-                "updated_at",
-                *finish_deferred_delete(job),
-            ]
-        )
-        if (
-            job.environment_id is None
-            and job.test_execution_id is None
-            and job.state == HostedHarnessJob.State.COMPLETED
-        ):
-            from simulate.services.harness_versioning.nudges import schedule_reconcile
-            from simulate.services.harness_versioning.rebuild import (
-                schedule_deferred_activations,
-            )
-
-            schedule_reconcile(job.id)
-            schedule_deferred_activations(job.id)
-        if job.state == HostedHarnessJob.State.COMPLETED:
-            built_job_id, built_attempt_id = str(job.id), str(attempt.id)
-            transaction.on_commit(
-                lambda: _ask_builder_to_check(built_job_id, built_attempt_id)
-            )
-        project_terminal_job_onto_run(job, now)
+        _settle_job(job, attempt, now)
         return job
+
+
+def _narrow_retry_scope(job: HostedHarnessJob, missing: list[str] | None) -> None:
+    """Narrow a retry to the calls left without a result; the caller saves the payload."""
+    scope = (job.payload.get("metadata") or {}).get(
+        RERUN_EXECUTION_KEYS
+    ) or HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
+        "execution_key", flat=True
+    )
+    if missing and len(missing) < len(scope):
+        job.payload = {
+            **job.payload,
+            "metadata": {
+                **(job.payload.get("metadata") or {}),
+                RERUN_EXECUTION_KEYS: missing,
+            },
+        }
+
+
+def _settle_job(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, now: datetime
+) -> None:
+    """End the locked job with the ending of its last attempt."""
+    snapshot_missing = (
+        job.environment_id is None
+        and job.test_execution_id is None
+        and attempt.terminal_stage == "completed"
+        and (
+            not job.run_test_id
+            or not (job.payload.get("metadata") or {}).get("authoring_object_key")
+            or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
+            != job.scenario_count
+        )
+    )
+    if snapshot_missing:
+        job.state = HostedHarnessJob.State.FAILED
+    elif attempt.terminal_stage == "completed":
+        job.state = HostedHarnessJob.State.COMPLETED
+    elif attempt.terminal_stage == "canceled":
+        job.state = HostedHarnessJob.State.CANCELED
+    else:
+        job.state = HostedHarnessJob.State.FAILED
+    # Cleanup is an intermediate lifecycle stage. Once absence has been verified, expose the
+    # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
+    job.current_stage = (
+        HostedHarnessJob.State.FAILED
+        if snapshot_missing
+        else attempt.terminal_stage or job.state
+    )
+    job.terminal_at = now
+    job.failure = (
+        {
+            "domain": "platform_sync",
+            "stage": "validating_scenarios",
+            "code": "authoring_snapshot_missing",
+            "message": "Validated scenarios or their durable bundle are missing",
+        }
+        if snapshot_missing
+        else attempt.terminal_failure
+    )
+    job.content_updated_at = now
+    job.save(
+        update_fields=[
+            "state",
+            "terminal_at",
+            "current_stage",
+            "failure",
+            "content_updated_at",
+            "updated_at",
+            *finish_deferred_delete(job),
+        ]
+    )
+    if (
+        job.environment_id is None
+        and job.test_execution_id is None
+        and job.state == HostedHarnessJob.State.COMPLETED
+    ):
+        from simulate.services.harness_versioning.nudges import schedule_reconcile
+        from simulate.services.harness_versioning.rebuild import (
+            schedule_deferred_activations,
+        )
+
+        schedule_reconcile(job.id)
+        schedule_deferred_activations(job.id)
+    if job.state == HostedHarnessJob.State.COMPLETED:
+        built_job_id, built_attempt_id = str(job.id), str(attempt.id)
+        transaction.on_commit(
+            lambda: _ask_builder_to_check(built_job_id, built_attempt_id)
+        )
+    project_terminal_job_onto_run(job, now)
 
 
 def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
@@ -3271,14 +3964,37 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
         logger.exception("builder_check_request_failed", job_id=job_id)
 
 
+def fail_unscheduled(job: HostedHarnessJob, message: str) -> datetime | None:
+    """Fail a queued job whose workflow could not be started; returns when, or ``None``
+    once the job had moved on."""
+    now = timezone.now()
+    marked = HostedHarnessJob.no_workspace_objects.filter(
+        id=job.id, state=HostedHarnessJob.State.QUEUED
+    ).update(
+        state=HostedHarnessJob.State.FAILED,
+        current_stage="failed",
+        terminal_at=now,
+        failure={
+            "domain": "infrastructure",
+            "stage": "queued",
+            "code": "scheduler_unavailable",
+            "message": message,
+        },
+    )
+    return now if marked else None
+
+
 def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
-    """Move a terminal job's Run, and the calls it left open, to their end states."""
+    """Move a terminal job's Run, and the calls it left open, to their end states; a
+    validation job's validation ends on commit."""
     from simulate.selectors.held_back import (
         coding_agent_failure_message,
         has_plain_words,
         person_failure_message,
     )
+    from simulate.services.harness_versioning.validation import on_terminal
 
+    on_terminal(job)
     if not job.test_execution_id:
         return
     failure = job.failure or {}

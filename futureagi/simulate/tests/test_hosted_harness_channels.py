@@ -520,6 +520,8 @@ def test_recovered_media_fills_only_missing_unambiguous_kinds():
 
 def test_receipt_projects_actual_call_end_time_and_duration():
     registration = MagicMock()
+    # A run pinned to no suite and environment version: no proof to read.
+    registration.job.suite_version_id = registration.job.environment_version_id = None
     call = registration.call_execution
     call.call_metadata = {}
     call.error_message = "chat_target_failed: old attempt could not connect"
@@ -569,6 +571,8 @@ def test_a_receipt_with_no_call_data_still_ends_the_call_so_its_worker_read_is_d
     """A failed or stopped trial whose receipt carries no call: its end is recorded, so `/workers/` answers pending
     until its read has run, never "no workers"."""
     registration = MagicMock()
+    # A run pinned to no suite and environment version: no proof to read.
+    registration.job.suite_version_id = registration.job.environment_version_id = None
     call = registration.call_execution
     call.call_metadata = {}
     call.completed_at = None
@@ -2001,6 +2005,84 @@ def test_a_screenshot_is_kept_at_the_levels_that_keep_recordings(
         assert response.status_code == 422, response.content
         assert response.json()["error"] == "artifact_level_forbidden"
         assert not HostedHarnessArtifact.no_workspace_objects.filter(job=job).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("retry_pending", [False, True], ids=["settled", "retry-wait"])
+def test_a_manifest_after_cleanup_reopens_nothing(organization, retry_pending):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key=f"late-manifest-{retry_pending}"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    entries, _storage = _upload_required_artifacts(
+        client, capability, _headers(capability)
+    )
+    terminal_payload = {
+        "stage": "completed",
+        "reason": None,
+        "failure": None,
+        "scenario_counts": {"passed": 0, "failed": 0, "errored": 0, "skipped": 1},
+    }
+    response = client.post(
+        f"{BASE}/{capability.attempt.id}/events/",
+        {
+            "schema_version": "futureagi.harness-event.v1",
+            "events": [
+                {
+                    "event_id": f"terminal-late-manifest-{retry_pending}",
+                    "job_id": str(job.id),
+                    "attempt_id": str(capability.attempt.id),
+                    "attempt_number": 1,
+                    "sequence": 1,
+                    "emitted_at": datetime.now(UTC).isoformat(),
+                    "stage": "completed",
+                    "type": "terminal",
+                    "payload": terminal_payload,
+                    "digest": canonical_digest(terminal_payload),
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert response.status_code == 200
+    # The sandbox is verified gone before the manifest arrives: cleanup settles the job
+    # or parks it for its retry, and the workflow moves on.
+    ended = record_cleanup(
+        capability.attempt.id,
+        provider_ref="",
+        verified_absent=True,
+        retry_pending=retry_pending,
+    )
+    capability.attempt.refresh_from_db()
+    attempt_state = capability.attempt.state
+
+    manifest = {
+        "schema_version": "futureagi.harness-manifest.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "entries": entries,
+        "complete": True,
+    }
+    manifest["digest"] = canonical_digest(manifest)
+    response = client.post(
+        f"{BASE}/{capability.attempt.id}/artifacts/manifest/",
+        manifest,
+        format="json",
+        **_headers(capability),
+    )
+
+    # The manifest is kept on record, and neither the job nor the attempt goes back to
+    # cleaning up.
+    assert response.status_code == 200
+    capability.attempt.refresh_from_db()
+    assert capability.attempt.manifest_acked is True
+    assert capability.attempt.state == attempt_state
+    job.refresh_from_db()
+    assert job.state == ended.state
+    assert job.state != HostedHarnessJob.State.CLEANING_UP
 
 
 @pytest.mark.django_db
