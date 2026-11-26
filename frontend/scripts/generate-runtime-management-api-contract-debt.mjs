@@ -347,4 +347,10 @@ function main() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) main();
+// realpath: a symlinked script path must still run main(), or --check would pass
+// without checking.
+if (
+  process.argv[1] &&
+  fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
+)
+  main();
