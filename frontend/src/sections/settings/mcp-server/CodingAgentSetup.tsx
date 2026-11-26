@@ -4,7 +4,13 @@ import CodeBlock from "src/components/code-block";
 import Section from "src/components/section";
 import { useCodingAgentAttemptsEnabled } from "src/api/simulate-environments/codingAgent";
 
-const STEPS = [
+interface SetupStep {
+  title: string;
+  body?: string;
+  code?: string;
+}
+
+const STEPS: SetupStep[] = [
   {
     title: "1. Add the MCP server to your coding agent",
     body: "Follow Connect Your IDE above. Claude Code, Cursor and Codex each have their own steps.",
