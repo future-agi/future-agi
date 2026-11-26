@@ -8,7 +8,10 @@ the Actions and git history, decides three things and says them in one
 Slack message:
 
 - Breaker: the same job failed on merge-queue builds of >= 3 different pull
-  requests inside the window. The base is probably red: an open issue with
+  requests inside the window, or on the newest dev push run. Groups are
+  cumulative, so a failure that an entry ahead in its group explains (that
+  entry failed the job, or a later build without it passed) is not counted.
+  The base is probably red: an open issue with
   the base-red label per failing job, plus a Slack line. The batch train
   pauses while any such issue is open. The breaker closes its own issue when
   the job no longer trips and a later queue build of its workflow passed.
@@ -78,7 +81,11 @@ NOT_BASE_SIGNALS = frozenset({
 BREAKER_LABEL = "base-red"
 BREAKER_TITLE = "Base looks red: "
 VARIABLE_NAME = "APPROVAL_MODE_TIGHT"
-QUEUE_BRANCH = re.compile(r"^gh-readonly-queue/[^/]+/pr-(\d+)-")
+# The suffix is the group's base: dev's tip, or the head of the entry ahead.
+QUEUE_BRANCH = re.compile(r"^gh-readonly-queue/[^/]+/pr-(\d+)-([0-9a-f]{40})?")
+# Dev push runs of the queue's suites, and the prefix that names their jobs
+# the way the queue does (the queue calls backend-ci.yml as "backend").
+DEV_PUSH_WORKFLOWS = {"backend-ci.yml": "backend / ", "e2e-ci.yml": ""}
 FIX_REF = re.compile(
     r"\b(?:fix(?:es|ed)?|follow[- ]?ups?(?:\s+(?:to|of|for))?|revert(?:s|ed)?)\s+"
     r"(?:pr\s*)?#(\d+)",
@@ -136,8 +143,10 @@ def wants_jobs(run: dict, now: datetime, breaker_only: bool) -> bool:
     return not breaker_only and now - parse_ts(run["created_at"]) <= WAIT_WINDOW
 
 
-def queue_failures(runs: list[dict], jobs_by_run: dict[int, list[dict]]) -> list[dict]:
-    """{job, pr, at, workflow} per completed failed job, whether or not its run is done."""
+def queue_failures(runs: list[dict], jobs_by_run: dict[int, list[dict]], prefix: str = "", dev: bool = False) -> list[dict]:
+    """{job, pr, at, workflow, run} per completed failed job, whether or not its
+    run is done. `prefix` names a dev push run's jobs as the queue names them;
+    `dev` marks the failures of the dev push run."""
     out = []
     for r in runs:
         for j in jobs_by_run.get(r["id"], []):
@@ -147,26 +156,89 @@ def queue_failures(runs: list[dict], jobs_by_run: dict[int, list[dict]]) -> list
                 and j["name"] not in NOT_BASE_SIGNALS
             ):
                 out.append({
-                    "job": j["name"], "pr": pr_number(r), "workflow": r.get("path"),
-                    "at": j.get("completed_at") or r["updated_at"],
+                    "job": prefix + j["name"], "pr": None if dev else pr_number(r), "workflow": r.get("path"),
+                    "at": j.get("completed_at") or r["updated_at"], "run": r["id"], **({"dev": True} if dev else {}),
                 })
     return out
 
 
+def queue_base(run: dict) -> str | None:
+    match = QUEUE_BRANCH.match(run.get("head_branch") or "")
+    return match.group(2) if match else None
+
+
+def ahead(run: dict, by_head: dict) -> list[dict]:
+    """The same workflow's runs of the entries ahead of this group, nearest first.
+    A group is built on the head of the entry ahead, so the chain follows bases."""
+    out, base = [], queue_base(run)
+    while (run.get("path"), base) in by_head and len(out) < len(by_head):
+        prev = by_head[(run.get("path"), base)]
+        out.append(prev)
+        base = queue_base(prev)
+    return out
+
+
+def job_passed(run: dict, job: str, jobs_by_run: dict[int, list[dict]]) -> bool:
+    return run.get("conclusion") == "success" or any(
+        j["name"] == job and j.get("conclusion") == "success" for j in jobs_by_run.get(run["id"], [])
+    )
+
+
+def independent(failures: list[dict], runs: list[dict], jobs_by_run: dict[int, list[dict]]) -> list[dict]:
+    """The failures a defect ahead in the same group does not explain.
+
+    Queue groups are cumulative, so one bad entry at the front fails every
+    group behind it. A failure on PR X's group is dropped when an entry ahead
+    in that group failed the same job (it is evicted for it), or when a later
+    build of X's group without one of those entries passed the job. Dev push
+    failures are the base itself and always stay.
+    """
+    by_id = {r["id"]: r for r in runs}
+    by_head = {(r.get("path"), r.get("head_sha")): r for r in runs if r.get("head_sha")}
+    failed = {(f["run"], f["job"]) for f in failures if "run" in f}
+    out = []
+    for f in failures:
+        run = by_id.get(f.get("run"))
+        if f.get("dev") or run is None:
+            out.append(f)
+            continue
+        front = ahead(run, by_head)
+        if any((r["id"], f["job"]) in failed for r in front):
+            continue
+        prs = {pr_number(r) for r in front}
+        rebuilt = [
+            r for r in runs
+            if pr_number(r) == f["pr"] and r.get("path") == run.get("path")
+            and r["created_at"] > run["created_at"]
+            and prs - {pr_number(a) for a in ahead(r, by_head)}
+        ]
+        if prs and any(job_passed(r, f["job"], jobs_by_run) for r in rebuilt):
+            continue
+        out.append(f)
+    return out
+
+
 def detect_breaker(failures: list[dict], now: datetime) -> list[dict]:
-    """failures: {job, pr, at} per failed job on a merge-queue run.
+    """failures: {job, pr, at} per failed job on a merge-queue run, and
+    {job, dev: True, at} per failed job on the newest dev push run.
 
     Returns one entry per job name failing for >= BREAKER_MIN_PRS different
-    pull requests inside the window, worst first.
+    pull requests inside the window, or on the dev push run (then "dev" is
+    True), worst first. Give it independent() failures.
     """
     prs_by_job: dict[str, set[int]] = defaultdict(set)
+    dev_jobs = set()
     for f in failures:
-        if f["pr"] is not None and now - parse_ts(f["at"]) <= BREAKER_WINDOW:
+        if now - parse_ts(f["at"]) > BREAKER_WINDOW:
+            continue
+        if f.get("dev"):
+            dev_jobs.add(f["job"])
+        elif f["pr"] is not None:
             prs_by_job[f["job"]].add(f["pr"])
     tripped = [
-        {"job": job, "prs": sorted(prs)}
-        for job, prs in prs_by_job.items()
-        if len(prs) >= BREAKER_MIN_PRS
+        {"job": job, "prs": sorted(prs_by_job[job]), **({"dev": True} if job in dev_jobs else {})}
+        for job in set(prs_by_job) | dev_jobs
+        if job in dev_jobs or len(prs_by_job[job]) >= BREAKER_MIN_PRS
     ]
     return sorted(tripped, key=lambda t: (-len(t["prs"]), t["job"]))
 
@@ -438,6 +510,23 @@ def collect_queue(api: Api, now: datetime, breaker_only: bool):
     return runs, queue_failures(runs, jobs_by_run), jobs_by_run
 
 
+def collect_dev(api: Api) -> tuple[list[dict], list[dict]]:
+    """(runs, failures) of the newest finished dev push run of each queue suite.
+    Only the newest counts: a later green push run clears a dev trip."""
+    runs, failures = [], []
+    for wf, prefix in DEV_PUSH_WORKFLOWS.items():
+        listing = api.get(f"/actions/workflows/{wf}/runs?event=push&branch=dev&status=completed&per_page=20")
+        done = [r for r in listing.get("workflow_runs") or [] if r.get("conclusion") in ("success", "failure")]
+        if not done:
+            continue
+        newest = max(done, key=lambda r: r["created_at"])
+        runs.append(newest)
+        if newest["conclusion"] == "failure":
+            jobs = {newest["id"]: api.get_all(f"/actions/runs/{newest['id']}/jobs?filter=latest&per_page=100", "jobs")}
+            failures += queue_failures([newest], jobs, prefix, dev=True)
+    return runs, failures
+
+
 def pr_details(api: Api, numbers: list[int]) -> dict[int, dict]:
     """{pr: {"body", "engine"}} in batches of 25 per GraphQL query."""
     owner, name = api.repo.split("/")
@@ -508,10 +597,10 @@ def signal_breaker(api: Api, breaker: list[dict], issues: list[dict]) -> list[di
     except urllib.error.HTTPError:
         pass  # label exists
     for b in new:
-        prs = ", ".join(f"#{n}" for n in b["prs"])
         api.call("POST", f"/repos/{api.repo}/issues", {
             "title": BREAKER_TITLE + b["job"], "labels": [BREAKER_LABEL],
-            "body": f"`{b['job']}` failed on merge-queue builds of {len(b['prs'])} different PRs in the last 2 hours: {prs}.\n"
+            "body": f"`{b['job']}` failed in the last 2 hours on {trip_where(b)}. "
+                    "Groups behind a failing entry are not counted.\n"
                     "Likely a base problem, not the PRs. The batch train pauses while this issue is open. "
                     "The breaker closes it when the job stops tripping and a later queue build passes; "
                     "close it yourself once the base is green.",
@@ -527,9 +616,13 @@ def close_resolved(api: Api, resolved: list[dict]) -> None:
         api.call("PATCH", f"/repos/{api.repo}/issues/{r['number']}", {"state": "closed", "state_reason": "completed"})
 
 
+def trip_where(b: dict) -> str:
+    where = [f"{len(b['prs'])} independent merge-queue PRs ({', '.join(f'#{n}' for n in b['prs'])})"] if b["prs"] else []
+    return " and ".join(where + (["the newest dev push run"] if b.get("dev") else []))
+
+
 def breaker_line(b: dict) -> str:
-    prs = ", ".join(f"#{n}" for n in b["prs"])
-    return f":rotating_light: base looks red: `{b['job']}` failed on {len(b['prs'])} PRs in the queue ({prs})"
+    return f":rotating_light: base looks red: `{b['job']}` failed on {trip_where(b)}"
 
 
 def set_variable(api: Api, token: str, value: str) -> None:
@@ -547,11 +640,13 @@ def post_slack(url: str, text: str) -> None:
     urllib.request.urlopen(req, timeout=30).read()
 
 
-def run_breaker(api: Api, now: datetime, runs, failures, dry: bool) -> tuple[list[dict], list[dict]]:
+def run_breaker(api: Api, now: datetime, runs, failures, jobs_by_run, dry: bool) -> tuple[list[dict], list[dict]]:
     """(tripped, new trips). Files new trips and closes resolved ones unless dry."""
-    breaker = detect_breaker(failures, now)
+    dev_runs, dev_failures = collect_dev(api)
+    breaker = detect_breaker(independent(failures, runs, jobs_by_run) + dev_failures, now)
     issues = open_breaker_issues(api)
-    resolved = resolved_trips(issues, breaker, failures, runs)
+    # Every failure, cascades too, dates the last bad build; a green dev push counts as green.
+    resolved = resolved_trips(issues, breaker, failures + dev_failures, runs + dev_runs)
     for r in resolved:
         print(f"base health: {r['job']} recovered (queue build {r['run']} passed)")
     if dry:
@@ -569,7 +664,7 @@ def main(argv: list[str]) -> int:
     runs, failures, jobs_by_run = collect_queue(api, now, breaker_only)
     # Every push and every queue build: a new trip is filed once (the open
     # issue is the dedupe), and only that is posted.
-    breaker, new = run_breaker(api, now, runs, failures, dry)
+    breaker, new = run_breaker(api, now, runs, failures, jobs_by_run, dry)
     if breaker_only:
         print("\n".join(breaker_line(b) for b in breaker) or "base health: no trip")
         if new and os.environ.get("SLACK_WEBHOOK_URL"):

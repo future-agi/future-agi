@@ -44,6 +44,79 @@ class Breaker(unittest.TestCase):
         self.assertIsNone(t.pr_number({"head_branch": "feat/x"}))
 
 
+DEV_TIP = "d" * 40
+SHARD = "backend / pytest shard 3"
+
+
+def group(run_id, pr, head, base=DEV_TIP, created="2026-11-26T11:00:00Z", conclusion="failure"):
+    """One backend merge-queue run of PR `pr`, built on `base`."""
+    return {"id": run_id, "head_sha": head, "head_branch": f"gh-readonly-queue/dev/pr-{pr}-{base}",
+            "path": ".github/workflows/backend-queue-ci.yml", "created_at": created,
+            "updated_at": created, "status": "completed", "conclusion": conclusion}
+
+
+def shard_failed(at="2026-11-26T11:30:00Z"):
+    return [{"name": SHARD, "status": "completed", "conclusion": "failure", "completed_at": at}]
+
+
+class Cascade(unittest.TestCase):
+    """Queue groups are cumulative: count a failure once, on the entry that caused it."""
+
+    def trips(self, runs, jobs, dev=()):
+        return t.detect_breaker(t.independent(t.queue_failures(runs, jobs), runs, jobs) + list(dev), NOW)
+
+    def test_one_front_defect_with_two_entries_behind_does_not_trip(self):
+        # Red before: three PRs failed the shard, so the breaker tripped.
+        runs = [group(1, 10, "1" * 40), group(2, 11, "2" * 40, base="1" * 40), group(3, 12, "3" * 40, base="2" * 40)]
+        jobs = {r["id"]: shard_failed() for r in runs}
+        self.assertEqual(len(t.detect_breaker(t.queue_failures(runs, jobs), NOW)), 1)
+        self.assertEqual(self.trips(runs, jobs), [])
+        self.assertEqual([f["pr"] for f in t.independent(t.queue_failures(runs, jobs), runs, jobs)], [10])
+
+    def test_a_rebuild_without_the_front_entry_that_passed_drops_the_failure(self):
+        # The front entry failed another job; its follower failed the shard,
+        # then passed it once rebuilt on dev.
+        runs = [
+            group(1, 10, "1" * 40),
+            group(2, 11, "2" * 40, base="1" * 40),
+            group(3, 11, "4" * 40, created="2026-11-26T11:40:00Z", conclusion="success"),
+        ]
+        jobs = {1: [{"name": "other", "status": "completed", "conclusion": "failure", "completed_at": "2026-11-26T11:20:00Z"}],
+                2: shard_failed()}
+        self.assertEqual([f["pr"] for f in t.independent(t.queue_failures(runs, jobs), runs, jobs)], [10])
+
+    def test_the_same_shard_on_three_independent_groups_trips(self):
+        # Sequential evictions: each PR fails the shard at the front of its own group.
+        runs = [group(1, 10, "1" * 40), group(2, 11, "2" * 40, created="2026-11-26T11:10:00Z"),
+                group(3, 12, "3" * 40, created="2026-11-26T11:20:00Z")]
+        jobs = {r["id"]: shard_failed() for r in runs}
+        self.assertEqual(self.trips(runs, jobs), [{"job": SHARD, "prs": [10, 11, 12]}])
+
+    def test_the_dev_push_run_trips_by_itself(self):
+        dev_run = {"id": 50, "path": ".github/workflows/backend-ci.yml", "conclusion": "failure",
+                   "created_at": "2026-11-26T11:00:00Z", "updated_at": "2026-11-26T11:30:00Z"}
+        dev = t.queue_failures([dev_run], {50: [{"name": "pytest shard 3", "status": "completed",
+                                                 "conclusion": "failure", "completed_at": "2026-11-26T11:30:00Z"},
+                                                {"name": "Backend Tests Pass", "status": "completed",
+                                                 "conclusion": "failure", "completed_at": "2026-11-26T11:31:00Z"}]},
+                               "backend / ", dev=True)
+        self.assertEqual([f["job"] for f in dev], [SHARD])
+        self.assertEqual(self.trips([], {}, dev), [{"job": SHARD, "prs": [], "dev": True}])
+        # A cascade alone still does not trip, and the dev run joins it.
+        runs = [group(1, 10, "1" * 40), group(2, 11, "2" * 40, base="1" * 40)]
+        jobs = {r["id"]: shard_failed() for r in runs}
+        self.assertEqual(self.trips(runs, jobs, dev), [{"job": SHARD, "prs": [10], "dev": True}])
+        self.assertIn("the newest dev push run", t.breaker_line(self.trips(runs, jobs, dev)[0]))
+
+    def test_only_the_newest_finished_dev_push_run_counts(self):
+        older = {"id": 1, "conclusion": "failure", "created_at": "2026-11-26T10:00:00Z", "updated_at": "2026-11-26T10:30:00Z", "path": "b"}
+        newer = dict(older, id=2, conclusion="success", created_at="2026-11-26T11:00:00Z")
+        cancelled = dict(older, id=3, conclusion="cancelled", created_at="2026-11-26T11:30:00Z")
+        api = FakeApi({"/repos/o/r/actions/workflows/": ("workflow_runs", [older, newer, cancelled], None)}, size=10)
+        runs, failures = t.collect_dev(api)
+        self.assertEqual(([r["id"] for r in runs], failures), ([2, 2], []))
+
+
 class Escape(unittest.TestCase):
     def history(self, extra):
         base = [commit(i, f"feat: thing (#{1000 + i})") for i in range(300, 0, -1)]
