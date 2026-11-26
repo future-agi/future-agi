@@ -5768,12 +5768,15 @@ def _authoring_document(monkeypatch, events=None):
 
 def _chat_document(monkeypatch, events=None):
     job = _unbound_job()
+    monkeypatch.setattr(
+        "simulate.services.harness_reviewed_builds.has_chat_sources", lambda _job: False
+    )
     client = _Daytona() if events is None else _OrderedDaytona(events)
     client.sandbox.fs = _StoppingFilesystem()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
     monkeypatch.setattr(f"{_GATEWAY}.load_workspace_archive", lambda _c: None)
-    monkeypatch.setattr(f"{_GATEWAY}._authoring_archive_for", lambda _j: None)
+    monkeypatch.setattr(f"{_GATEWAY}.chat_workspace_for", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         f"{_GATEWAY}.HostedSourceAcquirer.acquire", lambda *_: (b"source", None)
     )

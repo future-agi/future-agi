@@ -31,6 +31,43 @@ VIEWER_REFUSALS = [
     ("post", f"{JOBS}secret-values/", "add or change secrets"),
     ("post", f"{JOBS}secret-files/", "add or change secrets"),
     ("post", JOBS, "create an environment"),
+    ("post", "/simulate/api/harness-environment-designs/", "create environment design"),
+    (
+        "post",
+        "/simulate/api/harness-environment-designs/documents/",
+        "upload environment design documents",
+    ),
+    (
+        "post",
+        f"/simulate/api/harness-environment-designs/{ID}/continue/",
+        "continue environment design",
+    ),
+    ("post", "/simulate/api/harness-source-reviews/", "prepare environment sources"),
+    (
+        "post",
+        f"/simulate/api/harness-source-reviews/{ID}/accept/",
+        "accept environment sources",
+    ),
+    (
+        "post",
+        f"/simulate/api/harness-source-reviews/{ID}/cancel/",
+        "cancel environment source review",
+    ),
+    (
+        "post",
+        f"/simulate/api/harness-source-reviews/{ID}/reprepare/",
+        "repair environment source review",
+    ),
+    (
+        "post",
+        f"/simulate/api/harness-source-reviews/{ID}/scenario-generation/",
+        "retry environment source scenario generation",
+    ),
+    (
+        "post",
+        f"{ENVIRONMENT}sources/uploads/prepare/",
+        "prepare environment source uploads",
+    ),
     ("post", f"{JOBS}{ID}/cancel/", "cancel a build"),
     ("post", f"{JOBS}{ID}/conversation/messages/", "send messages to the builder"),
     ("patch", ENVIRONMENT, "edit an environment"),
