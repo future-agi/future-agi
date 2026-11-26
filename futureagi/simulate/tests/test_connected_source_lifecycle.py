@@ -170,11 +170,6 @@ def test_each_connector_parks_and_recovers_approved_inputs(
     _ask_harness_to_build(job, SimpleNamespace(id="test"), "http://callback")
     assert payload["test_focus"] in messages[0]["content"]
     assert "test_focus" not in guest_job_document(job.payload)["metadata"]
-    material = builds.launch_material(job)
-    assert material.receipt["review_id"] == parked["id"] and material.documents[0][
-        "id"
-    ] == str(document.id)
-    assert "build_source_pin" not in guest_job_document(job.payload)["metadata"]
     pin = builds.expected_pin(job)
     raw = json.dumps(pin).encode()
     case = {
@@ -270,6 +265,18 @@ def test_each_connector_parks_and_recovers_approved_inputs(
 
     monkeypatch.setattr(harness_sources, "execute_source_request", trusted_scenarios)
     job.name = "Customer support control"
+    material = builds.launch_material(job)
+    assert material.receipt["review_id"] == parked["id"] and material.documents[0][
+        "id"
+    ] == str(document.id)
+    assert "build_source_pin" not in guest_job_document(job.payload)["metadata"]
+    assert material.assigned_cases == [
+        {k: v for k, v in case.items() if k != "proof_digest"}
+    ]
+    assert "build_case_assignment" not in reviews.get_review(req, parked["id"])
+    assert builds.launch_material(job) == material
+    assert len(trusted_requests) == 1
+    assert trusted_requests[0]["distinct_source_cases"]
     assert builds.check_archive(job, _archive(files)) == pin
     assert builds.chat_launch_material(job, _archive(files)) == material
     owned_review = builds.chat_review(job, _archive(files))
@@ -291,16 +298,21 @@ def test_each_connector_parks_and_recovers_approved_inputs(
             **files,
             "sources/manifest.json": json.dumps(
                 {
+                    "snapshot_digest": owned_review.snapshot_digest,
                     "private_snapshot_digests": [
                         "sha256:" + owned_review.accepted_artifact_digest
-                    ]
+                    ],
                 }
             ).encode(),
         }
-        assert builds.chat_launch_material(job, _archive(environment_files)) == material
+        assert (
+            builds.chat_launch_material(job, _archive(environment_files)).receipt
+            == material.receipt
+        )
     finally:
         owned_review.owner_kind = owned_review.Owner.BUILD_JOB
         owned_review.save(update_fields=["owner_kind"])
+    assert trusted_requests[-1]["validate_bundle_only"] is True
     assert trusted_requests[-1]["operation"] == "generate_scenarios"
     assert trusted_requests[-1]["bundle_manifest"] == manifest
     task = job.payload["metadata"].get("agent_name") or "the connected agent"

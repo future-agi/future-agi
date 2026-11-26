@@ -41,6 +41,8 @@ class HarnessSourceReview(models.Model):
     accepted_artifact_digest = models.CharField(max_length=64, blank=True)
     snapshot_digest = models.CharField(max_length=71, blank=True)
     receipt = models.JSONField(null=True)
+    # Controller-only case projections fixed on the first hosted dispatch.
+    build_case_assignment = models.JSONField(null=True, editable=False)
 
     class Meta:
         constraints = [

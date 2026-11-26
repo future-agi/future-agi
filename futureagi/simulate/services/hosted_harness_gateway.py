@@ -6356,6 +6356,7 @@ _SERVER_ONLY_METADATA = (
     "source_review_id",
     "source_review_basis",
     "source_review_receipt",
+    "assigned_source_cases",
 )
 
 

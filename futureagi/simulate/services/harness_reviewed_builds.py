@@ -74,12 +74,14 @@ class ReviewedLaunch:
     snapshot: bytes
     receipt: dict
     documents: list
+    assigned_cases: list | None = None
 
     def stage(self, sandbox, shared):
         raw = {
             **shared,
             "metadata": {
                 **shared["metadata"],
+                "assigned_source_cases": self.assigned_cases,
                 "source_review_documents": self.documents,
                 "source_review_receipt": self.receipt,
             },
@@ -116,7 +118,10 @@ def launch_material(job):
         allow_duplicate_names=True,
     )
     return ReviewedLaunch(
-        snapshot, receipt, [serialize_document(one) for one in documents]
+        snapshot,
+        receipt,
+        [serialize_document(one) for one in documents],
+        _build_assignment(job, snapshot, pin),
     )
 
 
@@ -132,7 +137,7 @@ def has_chat_sources(job):
     )
 
 
-def chat_review(job, workspace):
+def chat_review(job, workspace, *, include_snapshot=False):
     """Resolve the accepted review for the restored files, which may postdate the build."""
     owner = job.environment or job
     metadata = owner.payload.get("metadata") or {}
@@ -179,9 +184,14 @@ def chat_review(job, workspace):
         snapshot_digest=pin["digest"],
         receipt__snapshot_id=pin["id"],
     ).first()
-    if review is not None and sealed_pin == pin:
-        return review
     from simulate.services.harness_source_reviews import accepted_source_snapshot
+
+    if review is not None and sealed_pin == pin:
+        if include_snapshot:
+            return review, *accepted_source_snapshot(
+                review.id, owner=owner, owner_kind=review.owner_kind
+            )
+        return review
 
     # A draft can carry an accepted import before its updated bundle is sealed.
     # Existing-environment receipts expose an aggregate, while the ALK pin
@@ -197,30 +207,28 @@ def chat_review(job, workspace):
     for review in reviews.filter(
         owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
         accepted_artifact_digest__in=artifacts,
+        snapshot_digest=manifest.get("snapshot_digest"),
     ):
-        _, receipt = accepted_source_snapshot(
+        snapshot, receipt = accepted_source_snapshot(
             review.id, owner=owner, owner_kind=review.owner_kind
         )
         if (receipt["snapshot_id"], receipt["snapshot_digest"]) == (
             pin["id"],
             pin["digest"],
         ):
-            return review
+            return (review, snapshot, receipt) if include_snapshot else review
     raise invalid
 
 
 def chat_launch_material(job, workspace):
     from simulate.services.harness_designs import _documents, serialize_document
-    from simulate.services.harness_source_reviews import accepted_source_snapshot
 
     if not has_chat_sources(job):
         return None
-    review = chat_review(job, workspace)
-    if review is None:
+    selected = chat_review(job, workspace, include_snapshot=True)
+    if selected is None:
         return None
-    snapshot, receipt = accepted_source_snapshot(
-        review.id, owner=review.owner, owner_kind=review.owner_kind
-    )
+    review, snapshot, receipt = selected
     document_ids = [
         binding["origin"]["document_id"]
         for binding in receipt["bindings"]
@@ -232,11 +240,124 @@ def chat_launch_material(job, workspace):
         workspace_id=review.workspace_id,
         allow_duplicate_names=True,
     )
-    return ReviewedLaunch(snapshot, receipt, [serialize_document(one) for one in documents])
+    cases = None
+    if (
+        review.owner_kind == HarnessSourceReview.Owner.BUILD_JOB
+        and review.build_case_assignment is not None
+    ):
+        cases = _read_assignment(
+            review.build_case_assignment, review.owner, expected_pin(review.owner)
+        )
+    return ReviewedLaunch(
+        snapshot, receipt, [serialize_document(one) for one in documents], cases
+    )
+
+
+def _case_digest(case):
+    body = json.dumps(
+        case, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
+    return "sha256:" + hashlib.sha256(body.encode()).hexdigest()
+
+
+def _assignment_context(job, pin):
+    return {
+        "job_id": str(job.id),
+        "review_id": str(job.payload["metadata"]["source_review_id"]),
+        "source": pin,
+        "requested_count": job.scenario_count,
+        "task": "Test the behavior of "
+        + (job.payload["metadata"].get("agent_name") or "the connected agent"),
+    }
+
+
+def _read_assignment(assignment, job, pin):
+    if assignment["context"] != _assignment_context(job, pin):
+        raise _invalid("assigned source case inputs changed")
+    return assignment["cases"]
+
+
+def _build_assignment(job, snapshot, pin):
+    from simulate.services import harness_sources as sources
+
+    rows = HarnessSourceReview.objects.filter(
+        id=job.payload["metadata"]["source_review_id"],
+        owner=job,
+        organization_id=job.organization_id,
+        workspace_id=job.workspace_id,
+        owner_kind=HarnessSourceReview.Owner.BUILD_JOB,
+        state=HarnessSourceReview.State.ACCEPTED,
+        snapshot_digest=pin["digest"],
+    )
+    current = rows.values_list("build_case_assignment", flat=True).get()
+    if current is None:
+        result = _generate(job, snapshot, pin, distinct_source_cases=True)
+        cases = []
+        allowed = {
+            "id",
+            "category",
+            "purpose",
+            "starting_facts",
+            "policy_reference",
+            "citations",
+        }
+        for item in result["scenarios"]:
+            case = item["source_case"]
+            public = {key: case[key] for key in allowed}
+            if case.get("proof_digest") != _case_digest(public):
+                raise _invalid("assigned source case digest changed")
+            cases.append(public)
+        if len(cases) > job.scenario_count or len(
+            {case["id"] for case in cases}
+        ) != len(cases):
+            raise _invalid("invalid assigned source case count")
+        current = {"context": _assignment_context(job, pin), "cases": cases}
+        if len(sources._canonical(current)) > sources.MAX_SELECTION_BYTES:
+            raise _invalid("assigned source cases exceed the source selection limit")
+        if not rows.filter(build_case_assignment__isnull=True).update(
+            build_case_assignment=current
+        ):
+            current = rows.values_list("build_case_assignment", flat=True).get()
+    return _read_assignment(current, job, pin)
+
+
+def _generate(job, snapshot, pin, **options):
+    from simulate.services import harness_sources as sources
+
+    task = _assignment_context(job, pin)["task"]
+    try:
+        result = sources._alk_result(
+            sources.execute_source_request(
+                {
+                    "version": sources.REQUEST_VERSION,
+                    "operation": "generate_scenarios",
+                    "snapshot": json.loads(snapshot),
+                    "environment_requirements": {"task": task},
+                    "requested_count": job.scenario_count,
+                    **options,
+                }
+            )
+        )
+    except HostedHarnessError as exc:
+        if exc.retryable:
+            raise
+        raise _invalid(f"scenario generation failed with {exc.code}") from None
+    if (
+        (result.get("snapshot_id"), result.get("snapshot_digest"))
+        != (pin["id"], pin["digest"])
+        or result.get("simulation_schema_digest") != pin["schema_digest"]
+        or (
+            options.get("bundle_manifest")
+            and result.get("bundle_digest") != options["bundle_manifest"].get("digest")
+        )
+    ):
+        raise _invalid(
+            "scenario generation returned different source or bundle digests"
+        )
+    return result
 
 
 def _trusted_scenarios(job, manifest, pin):
-    from simulate.services import harness_sources as sources
     from simulate.services.harness_source_reviews import accepted_source_snapshot
 
     metadata = job.payload["metadata"]
@@ -250,33 +371,22 @@ def _trusted_scenarios(job, manifest, pin):
         pin["digest"],
     ):
         raise _invalid()
-    task = metadata.get("agent_name") or "the connected agent"
-    try:
-        result = sources._alk_result(
-            sources.execute_source_request(
-                {
-                    "version": sources.REQUEST_VERSION,
-                    "operation": "generate_scenarios",
-                    "snapshot": json.loads(snapshot),
-                    "environment_requirements": {
-                        "task": f"Test the behavior of {task}"
-                    },
-                    "requested_count": job.scenario_count,
-                    "bundle_manifest": manifest,
-                }
-            )
+    review = HarnessSourceReview.objects.get(
+        id=receipt["review_id"],
+        owner=job,
+        state=HarnessSourceReview.State.ACCEPTED,
+    )
+    if review.build_case_assignment is not None:
+        cases = _read_assignment(review.build_case_assignment, job, pin)
+        _generate(
+            job, snapshot, pin, bundle_manifest=manifest, validate_bundle_only=True
         )
-    except HostedHarnessError as exc:
-        if exc.retryable:
-            raise
-        raise _invalid(f"scenario generation failed with {exc.code}") from None
-    if (
-        (result.get("snapshot_id"), result.get("snapshot_digest"))
-        != (pin["id"], pin["digest"])
-        or result.get("simulation_schema_digest") != pin["schema_digest"]
-        or result.get("bundle_digest") != manifest.get("digest")
-    ):
-        raise _invalid("scenario generation returned different source or bundle digests")
+        return [
+            {"source_case": {**case, "proof_digest": _case_digest(case)}}
+            for case in cases
+        ]
+    # A worker dispatched before case assignments existed has no trusted historical projection.
+    result = _generate(job, snapshot, pin, bundle_manifest=manifest)
     expected = result.get("scenarios")
     if not isinstance(expected, list) or len(expected) != job.scenario_count:
         raise _invalid("scenario generation returned the wrong scenario count")

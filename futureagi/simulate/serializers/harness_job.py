@@ -682,6 +682,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             "source_review_basis",
             "accepted_source_review",
             "source_review_receipt",
+            "assigned_source_cases",
             "design_source_selection",
             "design_source_pin",
             "build_source_selection",
