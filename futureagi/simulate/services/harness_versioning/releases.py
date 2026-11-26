@@ -30,10 +30,13 @@ from simulate.models.harness_versioning import (
     TaskSplit,
 )
 from simulate.models.hosted_harness import HostedHarnessJob
-from simulate.selectors.agent_fix import sub_goal_names
 from simulate.services.harness_versioning.drafts import require_no_rebuild
 from simulate.services.harness_versioning.versions import _conflict, _lock_environment
-from simulate.services.hosted_harness import HostedHarnessError, sub_goal_catalogue
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    grades_nothing,
+    sub_goal_catalogue,
+)
 from tfc.constants.levels import Level
 from tfc.permissions.utils import get_effective_workspace_level
 
@@ -47,11 +50,6 @@ MIN_TEST_TASKS = 4
 
 # How many unlocked releases a versions read lists. Locked ones are always listed.
 UNLOCKED_HISTORY = 20
-
-# What N counts in the test target. N counts runnable tasks; unrunnable tasks get no
-# split. True would count every task of the suite in N, and still split none of the
-# unrunnable ones.
-TARGET_COUNTS_UNSCORABLE = False
 
 
 @dataclass(frozen=True)
@@ -92,18 +90,13 @@ class SuiteTasks:
     """A suite version's tasks as one environment version scores them."""
 
     scorable: list[Task]
-    # Every member, scored or not.
-    size: int
 
 
 def _scorable(sub_goals: Any, catalogue: frozenset[str]) -> bool:
-    """Whether a run of the pair can score a task: it names a sub-goal the environment
-    version grades. A version without a catalogue predates it, and its runs grade every
-    named sub-goal, as ``_refuse_ungradable`` does."""
-    if not isinstance(sub_goals, list):
-        return False
-    names = set(sub_goal_names(sub_goals))
-    return bool(names & catalogue) if catalogue else bool(names)
+    """Whether a run of the pair plays and scores a task: the run's own rule. A task
+    without a ``sub_goals`` list predates sub-goals, and a version without a catalogue
+    grades anything; the run refuses neither."""
+    return not grades_nothing(sub_goals, catalogue)
 
 
 def scorable_tasks(
@@ -121,13 +114,12 @@ def scorable_tasks(
     ).values_list(
         "scenario_id", "scenario_key", "content__use_case", "content__sub_goals"
     )
-    size = 0
-    tasks = []
-    for scenario_id, key, use_case, sub_goals in members:
-        size += 1
-        if _scorable(sub_goals, catalogue):
-            tasks.append(Task(scenario_id, key, _category(use_case)))
-    return SuiteTasks(scorable=tasks, size=size)
+    tasks = [
+        Task(scenario_id, key, _category(use_case))
+        for scenario_id, key, use_case, sub_goals in members
+        if _scorable(sub_goals, catalogue)
+    ]
+    return SuiteTasks(scorable=tasks)
 
 
 def _seats(
@@ -140,7 +132,8 @@ def _seats(
     """New test seats for each category: the seats ``target`` leaves after the test
     tasks the categories already have.
 
-    A category with no test task yet gets a seat first, larger ones first. Then each
+    A category with no test task yet gets a seat first, larger ones first, and the
+    pooled single-task group last. Then each
     seat goes to the category furthest below its share of the target, counting the
     test tasks it already has. ``room`` caps a category, so it keeps a train task.
     """
@@ -150,7 +143,7 @@ def _seats(
     seats = dict.fromkeys(sizes, 0)
     uncovered = sorted(
         (name for name in sizes if not kept_test[name] and room[name] > 0),
-        key=lambda name: (-sizes[name], _order(seed, name)),
+        key=lambda name: (name == "", -sizes[name], _order(seed, name)),
     )
     for name in uncovered[:budget]:
         seats[name] = 1
@@ -175,8 +168,6 @@ def plan_splits(
     tasks: Iterable[Task],
     assigned: Mapping[UUID, str],
     seed: str,
-    *,
-    suite_size: int | None = None,
 ) -> SplitPlan:
     """The split of every task: the one it already has, or a new one.
 
@@ -184,8 +175,8 @@ def plan_splits(
     towards it, so new tasks take only the seats left, and no task ever moves. New
     tasks take their category's seats in a stable hash order of ``seed`` and the key.
     Nobody picks them. A category with one task, or with none named, shares one group
-    with the others like it. ``suite_size`` counts the suite's unscorable tasks too,
-    for ``TARGET_COUNTS_UNSCORABLE``.
+    with the others like it. N counts runnable tasks only; unrunnable tasks get no
+    split.
     """
     tasks = list(tasks)
     named: dict[str, int] = defaultdict(int)
@@ -195,11 +186,7 @@ def plan_splits(
     by_group: dict[str, list[Task]] = defaultdict(list)
     for task in tasks:
         by_group[group[task.category]].append(task)
-    target = target_test_size(
-        suite_size
-        if TARGET_COUNTS_UNSCORABLE and suite_size is not None
-        else len(tasks)
-    )
+    target = target_test_size(len(tasks))
     kept_test: dict[str, int] = {}
     room: dict[str, int] = {}
     new: dict[str, list[Task]] = {}
@@ -308,7 +295,6 @@ def _plan_lock(
         suite.scorable,
         _assigned(suite.scorable),
         str(job.id),
-        suite_size=suite.size,
     )
     if plan.test < MIN_TEST_TASKS:
         raise HostedHarnessError(
