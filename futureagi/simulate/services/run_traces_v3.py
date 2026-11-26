@@ -28,7 +28,8 @@ CALL_MARK_KEY = "fi.simulator.call_execution_id"
 # The sandbox stamps a call some of whose model calls it could not measure.
 UNMEASURED_KEY = "fi.simulation.instrumentation"
 # Where a sender reports what a span cost, as the collector reads them (fi-collector
-# adapter.go). It prices a span from its tokens only when none of them holds a number.
+# adapter.go userCost). It prices a span from its tokens only when none of them holds
+# a number.
 REPORTED_COST_KEYS = (
     *AttributeAliases.COST_TOTAL,
     *AttributeAliases.COST_INPUT,
@@ -37,8 +38,12 @@ REPORTED_COST_KEYS = (
     "gen_ai.usage.input_cost",
     "gen_ai.usage.output_cost",
 )
-# The collector marks a cost it could not know "unknown", reported keys or not.
+# How the collector priced a copy: "provider_reported", "estimated" or "unknown". It
+# marks only a profiled producer's or a non-additive span (converter.go trackCost);
+# the other copies carry no marker, and their cost keys say whether a cost was reported.
 COST_KIND_KEY = "fi.cost.kind"
+# The whitespace Go's strings.TrimSpace trims from a cost text, ASCII only.
+_COST_TEXT_SPACE = " \\t\\n\\v\\f\\r"
 READ_TIMEOUT_MS = 2000
 MAX_TRACES = 200
 TRACED_AGENT_KIND = "source"
@@ -156,25 +161,47 @@ def _job_scope_params(source: RunTracesSource) -> dict[str, Any]:
     }
 
 
-# A trace belongs to the call named on its earliest span that names one.
-_CALL_OF_TRACE = (
-    f"argMinIf({cols.ATTRS_STRING}['{CALL_MARK_KEY}'], start_time, "
-    f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')) AS call_execution_id"
-)
+def _span_call_columns() -> str:
+    """A span's call, over its copies, the same in the list and in usage: whether a copy
+    names one, the greater id when two copies name two, and when its marked copies
+    start. An unmarked copy's start is not the mark's."""
+    marked = f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')"
+    return (
+        f"max({marked}) AS names_call, "
+        f"max({cols.ATTRS_STRING}['{CALL_MARK_KEY}']) AS span_call, "
+        f"minIf(start_time, {marked}) AS marked_start"
+    )
+
+
+def _trace_call_sql(start: str) -> str:
+    """A trace's call: the call of its earliest marked span, the lesser id on a tie."""
+    return f"argMinIf(span_call, ({start}, span_call), names_call)"
 
 
 def run_traces_sql() -> str:
     is_root = "parent_span_id = ''"
-    return (
+    # A span's copies are read as one span first, so its call is the one usage reads.
+    spans = (
         "SELECT trace_id, "
-        f"countIf({is_root}) > 0 AS has_root, "
-        f"argMinIf(name, start_time, {is_root}) AS root_name, "
-        f"minIf(start_time, {is_root}) AS root_start_time, "
-        f"argMinIf(status, start_time, {is_root}) AS root_status, "
-        f"argMinIf(latency_ms, start_time, {is_root}) AS root_latency_ms, "
-        f"{_CALL_OF_TRACE} "
+        f"countIf({is_root}) > 0 AS is_root, "
+        f"minIf(start_time, {is_root}) AS root_start, "
+        f"argMinIf(name, start_time, {is_root}) AS span_name, "
+        f"argMinIf(status, start_time, {is_root}) AS span_status, "
+        f"argMinIf(latency_ms, start_time, {is_root}) AS span_latency_ms, "
+        f"{_span_call_columns()} "
         "FROM spans FINAL "
         f"{_job_scope_sql()}"
+        "GROUP BY trace_id, id"
+    )
+    return (
+        "SELECT trace_id, "
+        "countIf(is_root) > 0 AS has_root, "
+        "argMinIf(span_name, root_start, is_root) AS root_name, "
+        "minIf(root_start, is_root) AS root_start_time, "
+        "argMinIf(span_status, root_start, is_root) AS root_status, "
+        "argMinIf(span_latency_ms, root_start, is_root) AS root_latency_ms, "
+        f"{_trace_call_sql('marked_start')} AS call_execution_id "
+        f"FROM ({spans}) "
         "GROUP BY trace_id "
         "HAVING call_execution_id = %(call_execution_id)s "
         "ORDER BY has_root ASC, root_start_time DESC, trace_id "
@@ -197,18 +224,33 @@ def _price_sql(value: str) -> str:
     return f"(isFinite({value}) AND {value} >= 0)"
 
 
+def _cost_kind_sql() -> str:
+    return f"{cols.ATTRS_STRING}['{COST_KIND_KEY}']"
+
+
 def _reported_cost_sql() -> str:
-    """Whether a span row's cost is a price its sender reported, a zero too: a cost
-    key holds a price, the collector did not mark the cost unknown, and the cost the
-    collector made of the keys is a price too. A negative or infinite report is none."""
+    """Whether a span row's cost is a price its sender reported, a zero too. The cost
+    column holds what the collector made of the report (adapter.go userCost: the
+    total, else input plus output), and it must be a price.
+
+    The collector's marker decides when the copy has one (converter.go trackCost).
+    A copy without one was reported when a cost key holds a number as the collector
+    reads it (adapter.go firstNumber: a number, or text with its whitespace trimmed),
+    and every such key is a price: a negative side summed into a zero is none."""
     attrs, numbers = cols.ATTRS_STRING, cols.ATTRS_NUMBER
     keys = ", ".join(f"'{key}'" for key in REPORTED_COST_KEYS)
-    text = _price_sql("ifNull(toFloat64OrNull(value), nan)")
+    text = f"toFloat64OrNull(trimBoth(value, '{_COST_TEXT_SPACE}'))"
+    values = (
+        f"arrayConcat(mapValues(mapFilter((key, value) -> key IN ({keys}), {numbers})), "
+        "arrayMap(value -> assumeNotNull(value), arrayFilter(value -> isNotNull(value), "
+        f"arrayMap(value -> {text}, mapValues(mapFilter((key, value) -> key IN ({keys}), "
+        f"{attrs}))))))"
+    )
     return (
-        f"({attrs}['{COST_KIND_KEY}'] != 'unknown' AND {_price_sql('cost')} AND ("
-        f"arrayExists((key, value) -> key IN ({keys}) AND {_price_sql('value')}, "
-        f"mapKeys({numbers}), mapValues({numbers})) OR arrayExists((key, value) -> "
-        f"key IN ({keys}) AND {text}, mapKeys({attrs}), mapValues({attrs}))))"
+        f"({_price_sql('cost')} AND multiIf("
+        f"{_cost_kind_sql()} = 'provider_reported', true, "
+        f"{_cost_kind_sql()} IN ('estimated', 'unknown'), false, "
+        f"notEmpty({values}) AND arrayAll(value -> {_price_sql('value')}, {values})))"
     )
 
 
@@ -224,17 +266,15 @@ def run_usage_sql() -> str:
     alone."""
     attrs = cols.ATTRS_STRING
     reported = _reported_cost_sql()
-    # The collector's own estimate counts only when it is a price too.
-    estimated = _price_sql("cost")
+    # The collector's own estimate counts only when it is a price too, and not beside
+    # an unknown marker.
+    estimated = f"({_cost_kind_sql()} != 'unknown' AND {_price_sql('cost')})"
     # The request model a copy names, else the model column, for an instrumentor that
     # names its model in another convention.
     model = f"if({cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
     spans = (
         "SELECT trace_id, "
-        f"max(mapContains({attrs}, '{CALL_MARK_KEY}')) AS names_call, "
-        # Copies that name two calls cannot both be right: the greater id, every read.
-        f"max({attrs}['{CALL_MARK_KEY}']) AS span_call, "
-        "min(start_time) AS span_start, "
+        f"{_span_call_columns()}, "
         "max(observation_type = 'llm') AS is_llm, "
         "max(observation_type IN ('llm', 'embedding')) AS is_billed, "
         f"max({attrs}['{UNMEASURED_KEY}'] = 'partial') AS is_partial, "
@@ -246,7 +286,10 @@ def run_usage_sql() -> str:
         f"max({reported}) AS span_reported, "
         f"if(span_reported, maxIf(cost, {reported}), maxIf(cost, {estimated})) "
         "AS span_cost, "
-        "span_reported OR span_cost > 0 AS span_priced "
+        # A zero is a price when reported, or when the collector marked it its estimate
+        # (a catalogued free model); an unmarked default zero is none.
+        f"span_reported OR span_cost > 0 OR max({_cost_kind_sql()} = 'estimated' AND "
+        f"{_price_sql('cost')}) AS span_priced "
         "FROM spans FINAL "
         f"{_job_scope_sql()}"
         "GROUP BY trace_id, id"
@@ -257,13 +300,13 @@ def run_usage_sql() -> str:
         "groupUniqArrayArray(unpriced_models), sum(partial) "
         "FROM ("
         "SELECT if(names_call, span_call, "
-        "argMinIf(span_call, first_start, names_call) "
+        f"{_trace_call_sql('first_start')} "
         "OVER (PARTITION BY trace_id)) AS call_execution_id, "
         "models, llm_spans, billed_spans, cost, unpriced, unpriced_models, partial "
         "FROM ("
         # Summed by trace and named call first: finding a trace's call sorts its rows,
         # and these are far fewer than its spans.
-        "SELECT trace_id, names_call, span_call, min(span_start) AS first_start, "
+        "SELECT trace_id, names_call, span_call, min(marked_start) AS first_start, "
         "groupUniqArrayArray(llm_models) AS models, "
         "countIf(is_llm) AS llm_spans, "
         "countIf(is_billed) AS billed_spans, "

@@ -5,6 +5,7 @@ column, the job mark in the resource attributes and the call mark on the spans a
 the ones the collector writes.
 """
 
+import json
 import math
 import os
 import uuid
@@ -84,6 +85,7 @@ def spans(ch_database, table):
         at=START + timedelta(minutes=5),
         extra=None,
         numbers=None,
+        overflow=None,
         span_id=None,
         service="",
     ):
@@ -105,6 +107,7 @@ def spans(ch_database, table):
                         **(extra or {}),
                     },
                     numbers or {},
+                    json.dumps(overflow or {}),
                     {"fi": {"simulation": {"job_id": job}}},
                     1,
                 ]
@@ -120,6 +123,7 @@ def spans(ch_database, table):
                 "cost",
                 "attrs_string",
                 "attrs_number",
+                "attributes_extra",
                 "resource_attrs",
                 "_version",
             ],
@@ -363,12 +367,20 @@ def test_a_cost_its_sender_reported_outranks_the_other_copy_s_estimate(
     spans, monkeypatch
 ):
     _traced(monkeypatch)
-    free, paid = str(uuid.uuid4()), str(uuid.uuid4())
+    free, paid, padded, padded_free, input_free, output_free = (
+        str(uuid.uuid4()) for _ in range(6)
+    )
     # The collector prices a span from its tokens unless its sender reported a cost,
-    # as a number or as text. A reported zero is a price: the call was free.
+    # as a number or as text. A reported zero is a price: the call was free. Text is
+    # read as the collector reads it, its surrounding whitespace trimmed (adapter.go
+    # firstNumber), and one side alone is the whole report.
     for call, estimate, reported in (
         (free, 0.015, {"cost": 0.0, "numbers": {"gen_ai.cost.total": 0.0}}),
         (paid, 0.015, {"cost": 0.01, "extra": {"llm.cost.total": "0.01"}}),
+        (padded, 0.015, {"cost": 0.01, "extra": {"llm.cost.total": " 0.01 "}}),
+        (padded_free, 0.015, {"cost": 0.0, "extra": {"llm.cost.total": "\t0\n"}}),
+        (input_free, 0.015, {"cost": 0.0, "numbers": {"gen_ai.cost.input": 0.0}}),
+        (output_free, 0.015, {"cost": 0.0, "extra": {"llm.cost.completion": "0"}}),
     ):
         trace, span_id = str(uuid.uuid4()), str(uuid.uuid4())
         spans(trace, call=call)
@@ -380,6 +392,10 @@ def test_a_cost_its_sender_reported_outranks_the_other_copy_s_estimate(
     assert {call: one.cost_usd for call, one in usage.items()} == {
         free: 0.0,
         paid: pytest.approx(0.01),
+        padded: pytest.approx(0.01),
+        padded_free: 0.0,
+        input_free: 0.0,
+        output_free: 0.0,
     }
 
 
@@ -423,14 +439,73 @@ def test_a_cost_its_sender_reported_outranks_the_other_copy_s_estimate(
             ["m2"],
             id="a_cost_the_collector_marked_unknown",
         ),
-        # A report that is no price: the collector writes it to the cost column as it
-        # is, so nothing priced the call.
+        # Only a profiled producer's copy carries the collector's marker (converter.go
+        # trackCost). The marker decides before any cost key is read.
+        pytest.param(
+            {"extra": {run_traces_v3.COST_KIND_KEY: "estimated"}},
+            pytest.approx(0.01),
+            [],
+            id="a_free_model_the_collector_priced_from_its_tokens",
+        ),
+        pytest.param(
+            {
+                "extra": {
+                    run_traces_v3.COST_KIND_KEY: "provider_reported",
+                    "llm.cost.total": "0x0",
+                }
+            },
+            pytest.approx(0.01),
+            [],
+            id="a_report_the_collector_read_and_marked",
+        ),
+        # An estimate beside an unknown marker is no price either.
+        pytest.param(
+            {"cost": 0.02, "extra": {run_traces_v3.COST_KIND_KEY: "unknown"}},
+            None,
+            ["m2"],
+            id="an_estimate_marked_unknown",
+        ),
+        # A report that is no price: the collector writes a negative to the cost column
+        # as it is, so nothing priced the call.
         pytest.param(NEGATIVE_REPORT, None, ["m2"], id="a_negative_number"),
         pytest.param(
             {"cost": -0.01, "extra": {"llm.cost.total": "-0.01"}},
             None,
             ["m2"],
             id="a_negative_text",
+        ),
+        # The collector sums the sides into a zero (adapter.go userCost), but one side
+        # is no price, so neither is the sum.
+        pytest.param(
+            {
+                "cost": 0.0,
+                "numbers": {"gen_ai.cost.input": -0.01, "gen_ai.cost.output": 0.01},
+            },
+            None,
+            ["m2"],
+            id="a_negative_part_beside_a_valid_part",
+        ),
+        # A NaN or infinite number goes to attributes_extra (adapter.go Split), where
+        # the collector reads no cost: the sides it did read are the report.
+        pytest.param(
+            {
+                "numbers": {"gen_ai.cost.input": 0.0, "gen_ai.cost.output": 0.0},
+                "overflow": {"gen_ai.cost.total": "NaN"},
+            },
+            pytest.approx(0.01),
+            [],
+            id="a_nan_total_the_collector_set_aside",
+        ),
+        # The collector cannot write a NaN or infinite cost: such text parses to one,
+        # and its row then fails to encode. These rows stand for another writer's.
+        pytest.param(
+            {
+                "extra": {"llm.cost.total": "nan"},
+                "numbers": {"gen_ai.cost.input": 0.0},
+            },
+            None,
+            ["m2"],
+            id="a_nan_text_total_beside_a_valid_part",
         ),
         pytest.param(
             {"cost": math.inf, "extra": {"llm.cost.total": "inf"}},
@@ -496,6 +571,61 @@ def test_a_span_exported_twice_counts_for_the_call_either_copy_names(
         first: CallUsage(models=["m3"], llm_spans=1, cost_usd=pytest.approx(0.03)),
         second: CallUsage(models=["m2"], llm_spans=1, cost_usd=pytest.approx(0.02)),
     }
+
+
+def _owner_case(spans, trace, low, high, case):
+    """Seeds a trace whose call the copies of its marked spans could disagree on, and
+    returns the call it belongs to. An unmarked LLM sibling, m9, counts for it."""
+    at = {n: START + timedelta(minutes=n) for n in range(1, 5)}
+    span_id = str(uuid.uuid4())
+    if case in ("conflicting_marks_same_start", "conflicting_marks_swapped"):
+        # Copies that name two calls: the greater id, whichever exporter sent it.
+        swapped = case == "conflicting_marks_swapped"
+        one, other = (high, low) if swapped else (low, high)
+        spans(trace, span_id=span_id, service="agent", call=one, at=at[1])
+        spans(trace, span_id=span_id, service="omega", call=other, at=at[1])
+        return high
+    if case == "conflicting_marks_skewed_starts":
+        # The lesser id's copy starts first; the span is still the greater id's.
+        spans(trace, span_id=span_id, service="agent", call=low, at=at[1])
+        spans(trace, span_id=span_id, service="omega", call=high, at=at[2])
+        return high
+    # unmarked_copy_starts_first: a span is as early as its marked copy, so the
+    # unmarked copy's earlier start does not make its call the trace's.
+    spans(trace, span_id=span_id, service="agent", at=at[1])
+    spans(trace, span_id=span_id, service="omega", call=low, at=at[4])
+    spans(trace, call=high, at=at[2])
+    return high
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "case",
+    [
+        "conflicting_marks_same_start",
+        "conflicting_marks_swapped",
+        "conflicting_marks_skewed_starts",
+        "unmarked_copy_starts_first",
+    ],
+)
+def test_usage_and_the_trace_list_name_the_same_call(spans, monkeypatch, case):
+    _traced(monkeypatch)
+    low, high = sorted(str(uuid.uuid4()) for _ in range(2))
+    trace = str(uuid.uuid4())
+    owner = _owner_case(spans, trace, low, high, case)
+    spans(trace, kind="llm", model="m9", cost=0.02, at=START + timedelta(minutes=5))
+    source = run_traces_v3.run_traces_source(None)
+
+    for _ in range(3):
+        usage = run_traces_v3.run_usage(SimpleNamespace())
+        listed = {
+            call
+            for call in (low, high)
+            for one in run_traces_v3.read_run_traces(source, call_execution_id=call)
+            if one.trace_id == trace
+        }
+        assert {call for call, one in usage.items() if "m9" in one.models} == {owner}
+        assert listed == {owner}
 
 
 @pytest.mark.integration
