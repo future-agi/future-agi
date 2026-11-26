@@ -11,13 +11,27 @@ import {
 
 const COPIED_MS = 2000;
 
+// A failed read as the app's axios rejects it (the body spread plus statusCode), or
+// an axios-style one with a response.
+interface ReadError {
+  response?: { status?: number };
+  statusCode?: number;
+}
+
+export interface CopyForCodingAgent {
+  copy: () => Promise<void>;
+  copied: boolean;
+  busy: boolean;
+}
+
 const setupUrl = () =>
   `${window.location.origin}${paths.dashboard.settings.mcpServer}`;
 
-const statusOf = (error) => error?.response?.status ?? error?.statusCode;
+const statusOf = (error: ReadError | null | undefined) =>
+  error?.response?.status ?? error?.statusCode;
 
-function readFailure(error) {
-  if (statusOf(error) === 404) {
+function readFailure(error: unknown): string {
+  if (statusOf(error as ReadError | null | undefined) === 404) {
     return "Future AGI has no brief for this run. The run may have been deleted. Reload the page and try again.";
   }
   return (
@@ -30,10 +44,12 @@ function readFailure(error) {
 // attempt submitted from the CLI changes how many are left), copies the setup and
 // the brief's instructions as one prompt, and says so. A blocked brief copies nothing
 // and shows the platform's reason.
-export default function useCopyForCodingAgent(sourceRunId) {
+export default function useCopyForCodingAgent(
+  sourceRunId: string | null | undefined,
+): CopyForCodingAgent {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
-  const timer = useRef(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => () => clearTimeout(timer.current), []);
 
   const copy = async () => {
