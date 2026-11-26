@@ -275,7 +275,10 @@ def configured_eval(key: str, template, *, modality: str) -> Definition:
         or getattr(template, "multi_choice", False)
         or not labels
         or any(label not in (template.choice_scores or {}) for label in labels)
+        or _is_decision_model(template.model)
     ):
+        # A decision model is billed per answer and keyed per organisation, which
+        # the gate checks only for a typed question.
         raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
     keys = config.get("required_keys")
     keys = [str(k) for k in keys] if isinstance(keys, list) else []
@@ -316,6 +319,13 @@ def configured_eval(key: str, template, *, modality: str) -> Definition:
         eval_template_id=str(template.id),
         own_criteria=own,
     )
+
+
+def _is_decision_model(model: Any) -> bool:
+    from evaluations.decision_models import get_decision_model
+    from tfc.ee_gates import is_jev_model
+
+    return bool(is_jev_model(model)) or get_decision_model(model) is not None
 
 
 def _names(criteria: str, key: str) -> bool:
@@ -893,7 +903,7 @@ def _grade(row) -> dict[str, Any]:
     template = EvalTemplate.no_workspace_objects.filter(
         id=question["eval_template_id"], deleted=False
     ).first()
-    if template is None or not _as_launched(template, question):
+    if template is None or not _as_launched(template, question, row.organization_id):
         # The template is in the org's library, so it can be edited or deleted
         # while the ask runs. The question is graded only as it was launched.
         return {
@@ -961,14 +971,17 @@ def _grade(row) -> dict[str, Any]:
     }
 
 
-def _as_launched(template, question: Mapping[str, Any]) -> bool:
+def _as_launched(template, question: Mapping[str, Any], organization_id) -> bool:
     """Whether the template still asks what the launch saved: its instructions,
     model, answer labels and current version."""
     from model_hub.models.evals_metric import EvalTemplateVersion
 
     current = EvalTemplateVersion.objects.get_default(template)
     return (
-        _own_criteria(template)[0] == question.get("own_criteria", question["criteria"])
+        # A system template, or the ask's own organisation's.
+        template.organization_id in (None, organization_id)
+        and _own_criteria(template)[0]
+        == question.get("own_criteria", question["criteria"])
         and template.model == question["model"]
         and list(_labels_of(template)) == list(question["labels"])
         and (None if current is None else current.version_number)

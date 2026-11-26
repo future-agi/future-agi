@@ -71,6 +71,8 @@ def _agent_template(
     output="choices",
     choice_scores=None,
     prompt_messages=None,
+    model="turing_large",
+    versioned=True,
 ):
     """A configured eval, saved with its first version as the product saves one."""
     choice_scores = {"Yes": 1.0, "No": 0.0} if choice_scores is None else choice_scores
@@ -91,9 +93,11 @@ def _agent_template(
         criteria=criteria,
         choices=list(choice_scores),
         choice_scores=choice_scores,
-        model="turing_large",
+        model=model,
         visible_ui=True,
     )
+    if not versioned:
+        return template
     EvalTemplateVersion.objects.create_version(
         eval_template=template,
         prompt_messages=(
@@ -103,7 +107,7 @@ def _agent_template(
         ),
         config_snapshot=config,
         criteria=criteria,
-        model="turing_large",
+        model=model,
         user=user,
         organization=organization,
         workspace=workspace,
@@ -265,6 +269,9 @@ def test_criteria_that_name_every_input_are_sent_as_they_are(
         ({"keys": ("no_such_key",)}, "eval_not_offered"),
         ({"keys": ()}, "eval_not_offered"),
         ({"criteria": ""}, "eval_not_offered"),
+        # A decision model is billed per answer and keyed per organisation; a
+        # configured eval is gated as a platform eval, so one on it isn't offered.
+        ({"model": "jev-latest"}, "eval_not_offered"),
     ],
 )
 def test_an_eval_the_step_cannot_send_whole_and_read_back_is_not_offered(
@@ -512,3 +519,164 @@ def test_the_gate_checks_usage_for_an_eval_priced_by_use_and_reads_no_decision_k
             answers=2,
         )
     assert stopped.value.code == "usage_limit"
+
+
+# --- the rows of the scenario matrix the paths above don't cover --------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("gone", ["deleted", "another_organization"])
+def test_an_eval_deleted_or_of_another_organisation_is_refused_at_launch_and_nothing_is_written(
+    organization, workspace, user, selection, gate_passes, queued, gone
+):
+    from accounts.models.organization import Organization
+
+    template = _agent_template(organization, workspace, user)
+    definition = configured_eval("c1", template, modality="voice")
+    if gone == "deleted":
+        EvalTemplate.no_workspace_objects.filter(id=template.id).update(deleted=True)
+    else:
+        other = Organization.objects.create(name="Someone else")
+        EvalTemplate.no_workspace_objects.filter(id=template.id).update(
+            organization=other
+        )
+
+    with pytest.raises(LaunchRefused) as refused:
+        _launch(selection, organization, workspace, user, definition)
+
+    assert refused.value.code == "not_found"
+    assert not SimulateEvalResult.objects.filter(organization=organization).exists()
+    queued.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_an_eval_edited_between_being_chosen_and_the_launch_is_refused(
+    organization, workspace, user, selection, gate_passes, queued
+):
+    template = _agent_template(organization, workspace, user)
+    definition = configured_eval("c1", template, modality="voice")
+    template.config = {**template.config, "rule_prompt": "Something else entirely."}
+    template.save(update_fields=["config"])
+
+    with pytest.raises(LaunchRefused) as refused:
+        _launch(selection, organization, workspace, user, definition)
+
+    assert refused.value.code == "question_changed"
+    assert not SimulateEvalResult.objects.filter(organization=organization).exists()
+    queued.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_an_eval_with_no_version_is_graded_on_its_own_criteria(
+    organization, workspace, user, selection, gate_passes, queued, agent_model
+):
+    template = _agent_template(organization, workspace, user, versioned=False)
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        configured_eval("c1", template, modality="voice"),
+    )
+
+    grade_row(str(_rows(ask)[0].id))
+
+    assert ask.questions[0]["template_version"] is None
+    assert _rows(ask)[0].state == STATE.ANSWERED
+
+
+@pytest.mark.django_db
+def test_an_agent_evaluator_failure_is_a_grading_error_never_a_fail(
+    organization, workspace, user, selection, gate_passes, queued, agent_model
+):
+    template = _agent_template(organization, workspace, user)
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        configured_eval("c1", template, modality="voice"),
+    )
+    agent_model.answer = "Not one of the labels"
+
+    grade_row(str(_rows(ask)[0].id))
+
+    row = _rows(ask)[0]
+    assert row.state == STATE.GRADING_ERROR
+    assert row.label is None and row.score is None
+
+
+@pytest.mark.django_db
+def test_a_usage_check_that_cannot_answer_refuses_the_launch(
+    organization, workspace, user
+):
+    configured = configured_eval(
+        "c1", _agent_template(organization, workspace, user), modality="voice"
+    ).as_question()
+
+    with (
+        patch(
+            "ee.usage.services.metering.check_usage",
+            side_effect=RuntimeError("billing is down"),
+        ),
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        launch_gate(
+            organization=organization,
+            workspace_id=workspace.id,
+            questions=[configured],
+            answers=2,
+        )
+
+    assert refused.value.code == "credit_check_unavailable"
+
+
+@pytest.mark.django_db
+def test_a_capability_check_that_fails_refuses_the_launch(
+    organization, workspace, user
+):
+    configured = configured_eval(
+        "c1", _agent_template(organization, workspace, user), modality="voice"
+    ).as_question()
+
+    with (
+        patch("tfc.capabilities.service.is_configured", return_value=True),
+        patch(
+            "tfc.capabilities.service.check", side_effect=RuntimeError("unreachable")
+        ),
+        patch("simulate.services.ask_selection._usage_check") as usage,
+        pytest.raises(LaunchRefused) as refused,
+    ):
+        launch_gate(
+            organization=organization,
+            workspace_id=workspace.id,
+            questions=[configured],
+            answers=2,
+        )
+
+    assert refused.value.code == "ENTITLEMENT_DENIED"
+    usage.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_an_eval_moved_to_another_organisation_after_launch_is_not_graded(
+    organization, workspace, user, selection, gate_passes, queued, agent_model
+):
+    from accounts.models.organization import Organization
+
+    template = _agent_template(organization, workspace, user)
+    ask = _launch(
+        selection,
+        organization,
+        workspace,
+        user,
+        configured_eval("c1", template, modality="voice"),
+    )
+    other = Organization.objects.create(name="Someone else")
+    EvalTemplate.no_workspace_objects.filter(id=template.id).update(organization=other)
+
+    grade_row(str(_rows(ask)[0].id))
+
+    row = _rows(ask)[0]
+    assert (row.state, row.cause) == (STATE.GRADING_ERROR, "question_changed")
+    assert agent_model.requests == []
