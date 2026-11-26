@@ -707,3 +707,17 @@ def test_a_file_named_as_the_browser_s_own_is_read_and_never_taken_for_the_world
     assert shown["blocked_source"] == "file"
     state = call.call_metadata[TRIAL_STATE_KEY]
     assert end_state_artifact(call, call.call_metadata, state) is None
+
+
+@pytest.mark.django_db
+def test_a_door_trial_whose_browser_refusals_could_not_be_read_says_so_never_none(job, store):
+    # The kit's sealed record holds none of the browser's refusals when their one source could not be read, and says
+    # so on the agent's entry: the Browser tab says the list could not be read, never that nothing was refused.
+    end = _file(job, store, _no_door_file(_browser(), blocked=[]))
+    call = _call(job, end, recorded=True)
+    call.call_metadata[TRIAL_STATE_KEY]["state_changes"] = [
+        {"who": "agent", "attempted": 1, "blocked": [], "browser_blocked_unreadable": True}
+    ]
+    assert be.browser_evidence(call)["blocked_source"] == "unreadable"
+    call.call_metadata[TRIAL_STATE_KEY]["state_changes"] = [{"who": "agent", "attempted": 1, "blocked": []}]
+    assert be.browser_evidence(call)["blocked_source"] == "record"
