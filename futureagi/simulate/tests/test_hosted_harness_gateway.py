@@ -3962,12 +3962,17 @@ def _run_calls(
     ``interrupted`` ends errored in that failure domain."""
     interrupted = interrupted or {}
     now = timezone.now().isoformat()
+    # A guest's report extends its previous one, so calls can land in more than one go.
+    reported = (
+        HostedHarnessAttempt.no_workspace_objects.get(id=attempt.id).usage_report or {}
+    ).get("records", [])
     record_harness_usage(
         attempt,
         {
             "schema_version": "futureagi.harness-usage.v1",
             "operation": "report",
-            "records": [
+            "records": reported
+            + [
                 {
                     "id": str(uuid.uuid4()),
                     "action": "text_call",
@@ -4282,13 +4287,21 @@ def test_a_late_result_after_a_failed_poll_keeps_the_run_without_that_failure(
 
 @pytest.mark.django_db
 @override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("attempts", [2, 1], ids=["retry-left", "retry-spent"])
 @pytest.mark.parametrize("lands", [True, False], ids=["last-lands", "still-missing"])
 @pytest.mark.parametrize("code", sorted(_LOSSES))
 def test_a_result_landing_while_the_sandbox_is_deleted_keeps_the_run(
-    organization, monkeypatch, code, lands
+    organization, monkeypatch, code, lands, attempts
 ):
     attempt = _delivered_run(
-        organization, f"run-lands-during-delete-{code}-{lands}", receipts=1
+        organization, f"run-lands-during-delete-{code}-{lands}-{attempts}", receipts=1
+    )
+    payload = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id).payload
+    HostedHarnessJob.no_workspace_objects.filter(id=attempt.job_id).update(
+        payload={
+            **payload,
+            "retry": {**payload["retry"], "max_infrastructure_attempts": attempts},
+        }
     )
     gateway = _lost_by(monkeypatch, code)
 
@@ -4320,14 +4333,18 @@ def test_a_result_landing_while_the_sandbox_is_deleted_keeps_the_run(
 
     attempt.refresh_from_db()
     if lands:
+        # On the last attempt the budget allows too: every result is in.
         assert job.state == HostedHarnessJob.State.COMPLETED
         assert job.failure is None
         assert attempt.terminal_failure is None
         assert attempt.state == HostedHarnessAttempt.State.COMPLETED
-    else:
+    elif attempts > 1:
         # A result is still missing: the platform's failure stands and only that call runs.
         assert job.state == HostedHarnessJob.State.RETRY_WAIT
         assert _dispatched(job) == ["scenario-2:0"]
+    else:
+        assert job.state == HostedHarnessJob.State.FAILED
+        assert job.failure["code"] == code
 
 
 @pytest.mark.django_db
@@ -4431,6 +4448,494 @@ def test_a_loss_after_the_guest_reported_its_own_failure_relaunches_nothing(
     # would only run and charge them again.
     assert job.state == HostedHarnessJob.State.FAILED
     assert job.failure["code"] == code
+
+
+@pytest.mark.django_db
+def test_a_result_landing_after_cleanup_keeps_its_call_out_of_the_retry(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-lands-after-cleanup", receipts=0)
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    # Cleanup found no result in, so the retry was to run both calls.
+    assert _dispatched(first.job) == ["scenario-1:0", "scenario-2:0"]
+    # The first call's result lands after cleanup, before the retry registers.
+    _run_calls(first, {"scenario-1:0": 100})
+
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+
+    # The retry runs only the call still without a result.
+    assert _dispatched(second.job) == ["scenario-2:0"]
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+    job = gateway.reconcile_completed(second)
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    # Each call is charged once: 100 for the first, 10 for the second.
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+def test_a_retry_whose_last_result_lands_after_cleanup_runs_nothing(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-last-lands-after-cleanup", receipts=0)
+    _run_calls(first, {"scenario-1:0": 100})
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    assert _dispatched(first.job) == ["scenario-2:0"]
+    # The one call the retry was for delivers its result after cleanup.
+    _run_calls(first, {"scenario-2:0": 50})
+
+    with pytest.raises(HostedHarnessError) as raised:
+        register_attempt(
+            first.job_id,
+            endpoint_base_url="https://platform.example",
+            provider_ref="sandbox-2",
+        )
+
+    assert raised.value.code == "retry_already_delivered"
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    # Nothing is registered or run again: the Run ends with the attempt that delivered
+    # every result, and each call is charged once.
+    assert job.attempts.count() == 1
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    first.refresh_from_db()
+    assert first.state == HostedHarnessAttempt.State.COMPLETED
+    assert first.terminal_failure is None
+    assert harness_consumption(job)["text_sim_tokens"] == 150
+    # The workflow polls the attempt launch hands back and reads the ended Run.
+    assert gateway.reconcile_completed(first).state == HostedHarnessJob.State.COMPLETED
+
+
+def _relaunch(monkeypatch, gateway, first, *, lands: dict[str, int]):
+    """Launch the retry of ``first``'s job, with the results in ``lands`` arriving from
+    ``first`` while launch acquires the source, after cleanup and before registration."""
+    client = _Daytona()
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    for name, value in (
+        ("_authoring_archive_for", lambda _job: None),
+        ("_platform_simulator_material", lambda: {}),
+        ("_resolved_egress_domains", lambda *_args: {"platform.example"}),
+    ):
+        monkeypatch.setattr(f"simulate.services.hosted_harness_gateway.{name}", value)
+
+    def acquire(*_args):
+        _run_calls(first, lands)
+        return b"source", None
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        acquire,
+    )
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    launched = gateway.launch(job, endpoint_base_url="https://platform.example")
+    return launched, client
+
+
+@pytest.mark.django_db
+def test_a_retry_launch_sends_only_the_calls_still_without_a_result(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-launch-after-cleanup", receipts=0)
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+
+    second, client = _relaunch(monkeypatch, gateway, first, lands={"scenario-1:0": 100})
+
+    assert second.attempt_number == 2
+    document = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    assert [
+        entry["execution_key"] for entry in document["metadata"]["execution_manifest"]
+    ] == ["scenario-2:0"]
+    assert document["scenario_count"] == 1
+
+
+@pytest.mark.django_db
+def test_a_retry_launch_with_every_result_in_launches_nothing(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-launch-all-in", receipts=0)
+    _run_calls(first, {"scenario-1:0": 100})
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+
+    launched, client = _relaunch(
+        monkeypatch, gateway, first, lands={"scenario-2:0": 50}
+    )
+
+    # Launch hands back the attempt that delivered every result, and no sandbox exists.
+    assert launched.id == first.id
+    assert client.params is None
+    job = gateway.reconcile_completed(launched)
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.attempts.count() == 1
+    assert harness_consumption(job)["text_sim_tokens"] == 150
+
+
+@pytest.mark.django_db
+def test_a_replayed_launch_after_the_retry_settled_launches_nothing(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-replayed-settled-launch", receipts=0)
+    _run_calls(first, {"scenario-1:0": 100})
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    launched, client = _relaunch(
+        monkeypatch, gateway, first, lands={"scenario-2:0": 50}
+    )
+    assert launched.id == first.id
+    settled = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    assert settled.state == HostedHarnessJob.State.COMPLETED
+
+    # The launch's response is lost, and the workflow runs the launch again.
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        lambda *_args: (b"source", None),
+    )
+    replayed = gateway.launch(
+        HostedHarnessJob.no_workspace_objects.get(id=first.job_id),
+        endpoint_base_url="https://platform.example",
+    )
+
+    # It hands back the attempt the Run ended with: nothing is registered, launched or
+    # charged again, and the ended Run is left as it was.
+    assert replayed.id == first.id
+    assert client.params is None
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    assert job.attempts.count() == 1
+    assert (job.state, job.current_stage, job.terminal_at, job.payload) == (
+        settled.state,
+        settled.current_stage,
+        settled.terminal_at,
+        settled.payload,
+    )
+    assert harness_consumption(job)["text_sim_tokens"] == 150
+    assert gateway.reconcile_completed(replayed).state == (
+        HostedHarnessJob.State.COMPLETED
+    )
+
+
+@pytest.mark.django_db
+def test_a_replayed_launch_hands_back_the_attempt_it_started(organization, monkeypatch):
+    first = _delivered_run(organization, "run-replayed-started-launch", receipts=0)
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second, client = _relaunch(monkeypatch, gateway, first, lands={"scenario-1:0": 100})
+    assert second.attempt_number == 2
+    assert second.state == HostedHarnessAttempt.State.RUNNING
+    client.params = None
+
+    # The launch's response is lost while the retry's guest runs, and the workflow runs
+    # the launch again.
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        lambda *_args: (b"source", None),
+    )
+    replayed = gateway.launch(
+        HostedHarnessJob.no_workspace_objects.get(id=first.job_id),
+        endpoint_base_url="https://platform.example",
+    )
+
+    # The running retry is handed back, not superseded by a third attempt.
+    assert replayed.id == second.id
+    assert client.params is None
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    assert job.current_attempt_number == 2
+    assert job.attempts.count() == 2
+    second.refresh_from_db()
+    assert second.state == HostedHarnessAttempt.State.RUNNING
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("stage", ["failed", "canceled"])
+def test_a_late_guest_ending_settled_at_registration_leaves_the_attempt_ended(
+    organization, monkeypatch, stage
+):
+    first = _delivered_run(organization, f"run-late-{stage}-ending", receipts=0)
+    _run_calls(first, {"scenario-1:0": 100})
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    # After cleanup, the guest's own ending lands, then the last result.
+    _deliver_terminal(first, stage)
+    _run_calls(first, {"scenario-2:0": 50})
+
+    with pytest.raises(HostedHarnessError) as raised:
+        register_attempt(
+            first.job_id,
+            endpoint_base_url="https://platform.example",
+            provider_ref="sandbox-2",
+        )
+
+    assert raised.value.code == "retry_already_delivered"
+    ended = {
+        "failed": HostedHarnessAttempt.State.FAILED,
+        "canceled": HostedHarnessAttempt.State.CANCELED,
+    }[stage]
+    first.refresh_from_db()
+    # The guest's ending is its own, and the attempt is over, not left finalizing.
+    assert first.terminal_stage == stage
+    assert first.state == ended
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    assert job.state == ended
+    assert job.attempts.count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_last_result_racing_the_retry_registration_settles_one_way(
+    organization, monkeypatch
+):
+    """A receipt and a registration lock the same attempt and job; whichever goes
+    first, the other sees what it did. (The two can't be forced into the narrow window
+    inside one locking statement, so this checks the outcome, not the lock order.)"""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from django.db import close_old_connections
+
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_usage.schedule_usage_seal", lambda _id: True
+    )
+    first = _delivered_run(organization, "run-race-registration", receipts=0)
+    _run_calls(first, {"scenario-1:0": 100})
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    barrier = Barrier(2)
+
+    def race(step, done: str) -> str:
+        close_old_connections()
+        try:
+            barrier.wait(timeout=10)
+            try:
+                step()
+            except HostedHarnessError as exc:
+                return exc.code
+            return done
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        landed = pool.submit(
+            race, lambda: _run_calls(first, {"scenario-2:0": 50}), "landed"
+        )
+        registered = pool.submit(
+            race,
+            lambda: register_attempt(
+                first.job_id,
+                endpoint_base_url="https://platform.example",
+                provider_ref="sandbox-2",
+            ),
+            "registered",
+        )
+        outcome = (landed.result(timeout=60), registered.result(timeout=60))
+
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    if outcome[1] == "retry_already_delivered":
+        # The result landed first: the Run ends with it, and nothing runs again.
+        assert outcome[0] == "landed"
+        assert job.state == HostedHarnessJob.State.COMPLETED
+        assert job.attempts.count() == 1
+    else:
+        # The retry registered first: the late result of the superseded attempt is
+        # refused, and the retry runs that call.
+        assert outcome == ("attempt_superseded", "registered")
+        assert job.current_attempt_number == 2
+        assert _dispatched(job) == ["scenario-2:0"]
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("lands", [True, False], ids=["last-lands", "still-missing"])
+def test_a_later_poll_keeps_a_completed_ending_the_guest_already_sent(
+    organization, monkeypatch, lands
+):
+    attempt = _delivered_run(organization, f"run-kept-ending-{lands}", receipts=1)
+    gateway = _lost_by(monkeypatch, "sandbox_unreachable")
+    # Poll 1: the guest is running and sends its completed ending.
+    monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": None})
+    _deliver_terminal(attempt, "completed")
+    assert gateway.reconcile_completed(attempt) is None
+
+    # Poll 2: the sandbox is unreachable with a result still missing, and its delete is
+    # still in progress.
+    def unreachable(_attempt):
+        raise SandboxProviderError("toolbox unavailable", status_code=502)
+
+    def delete_in_progress(_attempt, **_kwargs):
+        raise SandboxConflictError("sandbox state change in progress", status_code=409)
+
+    monkeypatch.setattr(gateway, "inspect", unreachable)
+    monkeypatch.setattr(gateway, "_delete_and_record", delete_in_progress)
+    assert gateway.reconcile_completed(attempt) is None
+    if lands:
+        _receive(
+            attempt,
+            HostedHarnessExecution.no_workspace_objects.get(
+                job_id=attempt.job_id, execution_key="scenario-2:0"
+            ),
+        )
+
+    # Poll 3: the sandbox is gone.
+    def gone(_attempt):
+        raise SandboxNotFoundError("sandbox not found", status_code=404)
+
+    monkeypatch.setattr(gateway, "inspect", gone)
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    if lands:
+        # Every result is in: the guest's own completed ending is the Run's, with no failure.
+        assert job.state == HostedHarnessJob.State.COMPLETED
+        assert job.failure is None
+        assert attempt.terminal_failure is None
+        assert (attempt.terminal_event_received, attempt.terminal_stage) == (
+            True,
+            "completed",
+        )
+        assert job.attempts.count() == 1
+    else:
+        # A result never arrived: the platform's failure stands.
+        assert job.state == HostedHarnessJob.State.FAILED
+        assert job.failure["code"] == "sandbox_unreachable"
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("ending", ["gone", "deleted"])
+def test_a_completed_ending_outlasts_two_unreachable_polls_before_the_last_result(
+    organization, monkeypatch, ending
+):
+    attempt = _delivered_run(organization, f"run-two-unreachable-{ending}", receipts=1)
+    gateway = _lost_by(monkeypatch, "sandbox_unreachable")
+    deleted = gateway._delete_and_record
+    _deliver_terminal(attempt, "completed")
+
+    def delete_in_progress(_attempt, **_kwargs):
+        raise SandboxConflictError("sandbox state change in progress", status_code=409)
+
+    monkeypatch.setattr(gateway, "_delete_and_record", delete_in_progress)
+    # Two polls, 15 s apart, find the sandbox unreachable with a result still missing and
+    # its delete still in progress.
+    assert gateway.reconcile_completed(attempt) is None
+    assert gateway.reconcile_completed(attempt) is None
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "sandbox_unreachable"
+    assert attempt.terminal_failure["details"]["guest_stage"] == "completed"
+
+    _receive(
+        attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=attempt.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    # The next poll finds the sandbox gone, or still unreachable with its delete verified.
+    if ending == "gone":
+
+        def gone(_attempt):
+            raise SandboxNotFoundError("sandbox not found", status_code=404)
+
+        monkeypatch.setattr(gateway, "inspect", gone)
+    else:
+        monkeypatch.setattr(gateway, "_delete_and_record", deleted)
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # Every result is in: the guest's own completed ending is the Run's, with no failure.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert attempt.terminal_failure is None
+    assert (attempt.terminal_event_received, attempt.terminal_stage) == (
+        True,
+        "completed",
+    )
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert job.attempts.count() == 1
+
+
+@pytest.mark.django_db
+def test_a_poll_replayed_after_a_late_ending_and_result_reads_them(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "run-replayed-poll", receipts=1)
+    payload = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id).payload
+    # The last attempt the budget allows.
+    HostedHarnessJob.no_workspace_objects.filter(id=attempt.job_id).update(
+        payload={
+            **payload,
+            "retry": {**payload["retry"], "max_infrastructure_attempts": 1},
+        }
+    )
+    gateway = _lost_by(monkeypatch, "sandbox_disappeared")
+    assert gateway.reconcile_completed(attempt).state == HostedHarnessJob.State.FAILED
+
+    # The guest's completed ending and its last result land after cleanup, and the poll's
+    # response was lost, so the workflow polls the attempt again.
+    _receive(
+        attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=attempt.job_id, execution_key="scenario-2:0"
+        ),
+    )
+    _deliver_terminal(attempt, "completed")
+    job = gateway.reconcile_completed(attempt)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", ["sandbox_disappeared", "sandbox_unreachable"])
+def test_a_guest_failure_landing_while_the_provider_is_asked_stays_failed(
+    organization, monkeypatch, code
+):
+    attempt = _delivered_run(
+        organization, f"run-failed-during-inspect-{code}", receipts=2
+    )
+    gateway = _lost_by(monkeypatch, code)
+    loss = _LOSSES[code]
+
+    def inspect(_attempt):
+        # The guest's failed ending lands while the provider call is in flight.
+        _deliver_terminal(attempt, "failed")
+        raise loss
+
+    monkeypatch.setattr(gateway, "inspect", inspect)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert attempt.terminal_stage == "failed"
+    assert attempt.terminal_reason != "terminal_event_lost"
+    assert job.attempts.count() == 1
 
 
 @pytest.mark.django_db

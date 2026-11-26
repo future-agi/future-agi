@@ -203,15 +203,15 @@ func (p *Provider) releaseSemaphore() {
 // ChatRouteDrops reports drops only for an otherwise valid Gemini attempt.
 func (p *Provider) ChatRouteDrops(req *models.ChatCompletionRequest) (models.ChatRoute, []string) {
 	drops := models.GeminiOmittedParams(req)
-	if len(drops) == 0 || RejectUnsupportedTools(req.Tools) != nil || validateToolPolicy(req) != nil {
+	if len(drops) == 0 || rejectUnsupportedTools(req.Tools, false) != nil || validateToolPolicy(req) != nil {
 		return models.RouteGemini, nil
 	}
 	return models.RouteGemini, drops
 }
 
 func logToolPolicyDrops(req *models.ChatCompletionRequest) {
-	if drops := models.GeminiOmittedParams(req); len(drops) != 0 {
-		slog.Warn("gemini drops unenforceable tool settings", "parameters", drops)
+	if drops, names := models.GeminiToolPolicyWarning(req); len(drops) != 0 {
+		slog.Warn("gemini drops unenforceable tool settings", "parameters", drops, "tool_names", names)
 	}
 }
 

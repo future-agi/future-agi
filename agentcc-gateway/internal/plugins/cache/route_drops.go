@@ -72,6 +72,9 @@ func restoreCarriage(rc *models.RequestContext, resp *models.ChatCompletionRespo
 		drops = models.ResponsesOmittedParams(rc.Request)
 	case `"gemini"`:
 		rc.ChatRoute = models.RouteGemini
+		// The provider uses this same helper to apply the request's
+		// allowed_tools selection. Recompute rather than storing the miss's
+		// warnings: parallel_tool_calls is not part of the cache key.
 		drops = models.GeminiOmittedParams(rc.Request)
 	default:
 		return &served
