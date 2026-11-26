@@ -131,6 +131,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
           CI_SCOPE_MODE: ${{ vars.CI_SCOPE_MODE }}
+          # The batch train's rollup stays full under CI_SCOPE_MODE=light.
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
         # Bootstrap is workflow policy; never execute a candidate loader.
         run: |
