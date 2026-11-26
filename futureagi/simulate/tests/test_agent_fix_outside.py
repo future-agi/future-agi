@@ -1716,7 +1716,11 @@ def held_everywhere(both_failing):
         },
     )
     # The run that checked the candidate on the held-back case: its calls are that case's.
-    _check(attempt, label="c1-held-back", keys=(HELD,))
+    # A check run starts only while its Epoch runs; the attempt then ends as it was.
+    _check(_running(attempt), label="c1-held-back", keys=(HELD,))
+    AgentFixRun.no_workspace_objects.filter(id=attempt.id).update(
+        state=State.NO_IMPROVEMENT, finished_at=timezone.now()
+    )
     attempt.refresh_from_db()
     return attempt
 

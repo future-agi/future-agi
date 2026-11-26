@@ -145,7 +145,7 @@ export function attemptVerdict(ids: Ids): Json {
     step: 'done',
     ending: 'no_improvement',
     failure: null,
-    summary: 'No candidate passed every tier.',
+    summary: '',
     tiers: [
       tier('static', 'passed', ENGINE_STATIC_DETAIL),
       tier('target', 'passed', ENGINE_TARGET_DETAIL),
