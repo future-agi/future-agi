@@ -122,7 +122,7 @@ def verdict_review(
         "findings": [],
     }
     if tier_check is not None:
-        body["tier_check"] = {"tier": tier_check, "engine": "x", "input": "diff"}
+        body["tier_check"] = {"tier": tier_check, "engine": "x", "input": "diff-only"}
     return {
         "state": "COMMENTED",
         "authorAssociation": assoc,
@@ -676,6 +676,13 @@ class Verdicts(unittest.TestCase):
             train.exclusion(view(node), cfg(), {}), "no review verdict on this head"
         )
 
+    def test_the_json_block_must_come_after_the_marker(self):
+        good = verdict_review(sha(1))["body"]
+        block = good[len(train.VERDICT_MARKER) :]
+        self.assertIsNotNone(train.parse_verdict(good))
+        self.assertIsNone(train.parse_verdict(f"{block}\n{train.VERDICT_MARKER}"))
+        self.assertIsNone(train.parse_verdict(block), "no marker at all")
+
     def test_newest_trusted_wins(self):
         old = verdict_review(sha(1), tier="high", when="2026-11-26T10:00:00Z")
         new = verdict_review(sha(1), tier="low", when="2026-11-26T11:00:00Z")
@@ -937,7 +944,11 @@ class Exclusions(unittest.TestCase):
     def test_contract_3_ordinal_max(self):
         def tier(a, b):
             return train.final_tier(
-                {"tier": a, "tier_check": {"tier": b}, "needs_person": False}
+                {
+                    "tier": a,
+                    "tier_check": {"tier": b, "input": "diff-only"},
+                    "needs_person": False,
+                }
             )
 
         self.assertEqual(tier("low", "medium"), "medium")
@@ -945,6 +956,25 @@ class Exclusions(unittest.TestCase):
         self.assertEqual(tier("medium", "high"), "high")
         self.assertEqual(tier("high", "medium"), "high")
         self.assertEqual(tier("low", "low"), "low")
+
+    def test_a_tier_check_that_is_not_diff_only_counts_as_high(self):
+        # The approval job's rule: only a judgement of the diff alone votes.
+        for check in (
+            {"tier": "low", "input": "diff"},
+            {"tier": "low"},
+            {"tier": "low", "input": "Diff-only"},
+        ):
+            with self.subTest(check=check):
+                self.assertEqual(
+                    train.final_tier(
+                        {"tier": "low", "tier_check": check, "needs_person": False}
+                    ),
+                    "high",
+                )
+        review = verdict_review(sha(1))
+        review["body"] = review["body"].replace('"diff-only"', '"diff"')
+        node = self.with_verdict(review)
+        self.assertEqual(self.reason(node), "review tier high: goes alone")
 
     def test_missing_or_stale_verdict(self):
         stale = self.with_verdict(verdict_review(sha(42)))
@@ -1235,6 +1265,28 @@ class Plan(unittest.TestCase):
     def test_idle_is_not_busy(self):
         self.assertFalse(train.plan(data(), REQUIRED, cfg())["busy"])
 
+    def test_a_member_waiting_only_on_running_checks_keeps_the_loop_awake(self):
+        def member(*states):
+            node = pr_node(1)
+            node["_check_runs"] = [
+                run(r["context"], conclusion, status)
+                for r, (status, conclusion) in zip(REQUIRED, states)
+            ]
+            return node
+
+        done, running = ("COMPLETED", "SUCCESS"), ("IN_PROGRESS", None)
+        failed = ("COMPLETED", "FAILURE")
+        for states, busy in (
+            ((done, running, running), True),
+            ((done, done, running), True),
+            ((done, failed, running), False),
+            ((done, done), False),  # Python Lint Pass missing: no run started
+        ):
+            with self.subTest(states=states):
+                result = train.plan(data([member(*states)]), REQUIRED, cfg())
+                self.assertIn("required checks not green", result["excluded"][1])
+                self.assertEqual(result["busy"], busy)
+
     def test_open_rollup_reserves_and_uses_a_slot(self):
         prs = [pr_node(n) for n in (1, 2, 3)]
         out = train.plan(
@@ -1274,6 +1326,23 @@ class Plan(unittest.TestCase):
             data([high, pr_node(2)], [rollup_node(70, self.MEMBERS)]), REQUIRED, cfg()
         )
         self.assertEqual(out["rollup_actions"][0]["drop"], [1])
+
+    def test_a_member_whose_approval_was_withdrawn_is_stale(self):
+        dismissed = pr_node(1)
+        dismissed["reviews"]["nodes"][0]["state"] = "DISMISSED"
+        dismissed["reviewDecision"] = "REVIEW_REQUIRED"
+        changes = pr_node(1, reviewDecision="CHANGES_REQUESTED")
+        for name, node in (("dismissed", dismissed), ("changes requested", changes)):
+            with self.subTest(name):
+                out = train.plan(
+                    data([node, pr_node(2)], [rollup_node(70, self.MEMBERS)]),
+                    REQUIRED,
+                    cfg(),
+                )
+                self.assertEqual(
+                    out["rollup_actions"][0],
+                    {"action": "rebuild", "drop": [1], "rollup": 70},
+                )
 
     def test_pushed_rollup_is_never_reapproved(self):
         moved = rollup_node(70, self.MEMBERS)
@@ -1575,6 +1644,66 @@ class Liveness(unittest.TestCase):
         minter.revoke()
         self.assertEqual(made[-1].token, "ghs_2")
         self.assertEqual(made[-1].calls, [("DELETE", "installation/token", None)])
+
+    def test_a_live_crash_posts_one_slack_line_only_when_the_heartbeat_is_live(self):
+        import os
+        from unittest import mock
+
+        env = {
+            "REPO": "o/r",
+            "GH_TOKEN": "t",
+            "SLACK_WEBHOOK_URL": "https://hooks.example/x",
+            "GITHUB_SERVER_URL": "https://github.com",
+            "GITHUB_REPOSITORY": "o/r",
+            "GITHUB_RUN_ID": "77",
+        }
+        cases = (
+            (["tick", "--mode", "live"], {"DEVFLOW_HEARTBEAT": "live"}, 1),
+            (["tick", "--mode", "live"], {}, 0),
+            (["tick", "--mode", "live"], {"DEVFLOW_HEARTBEAT": "dry"}, 0),
+            (["tick"], {"DEVFLOW_HEARTBEAT": "live"}, 0),  # dark mode
+        )
+        for argv, extra, posts in cases:
+            with (
+                self.subTest(argv=argv, env=extra),
+                mock.patch.dict(os.environ, {**env, **extra}, clear=True),
+                mock.patch.object(
+                    train, "GitHub", side_effect=ValueError("bad policy file")
+                ),
+                mock.patch.object(train, "post_slack") as post,
+            ):
+                with self.assertRaisesRegex(ValueError, "bad policy file"):
+                    train.main(argv)
+                self.assertEqual(post.call_count, posts)
+                if posts:
+                    url, text = post.call_args.args
+                    self.assertEqual(url, "https://hooks.example/x")
+                    self.assertEqual(len(text.splitlines()), 1)
+                    self.assertIn("ValueError: bad policy file", text)
+                    self.assertIn("https://github.com/o/r/actions/runs/77", text)
+
+        def down(url, text):
+            raise OSError("slack is down")
+
+        with (
+            mock.patch.dict(
+                os.environ, {**env, "DEVFLOW_HEARTBEAT": "live"}, clear=True
+            ),
+            mock.patch.object(
+                train, "GitHub", side_effect=ValueError("bad policy file")
+            ),
+            mock.patch.object(train, "post_slack", down),
+            self.assertRaisesRegex(ValueError, "bad policy file"),
+        ):
+            train.main(["tick", "--mode", "live"])
+
+    def test_the_live_job_passes_the_heartbeat_and_the_webhook(self):
+        text = (SCRIPTS.parent / "workflows" / "devflow-train.yml").read_text()
+        live = text.split("\n  live:\n", 1)[1]
+        self.assertIn("SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}", live)
+        self.assertIn("DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}", live)
+        plan = text.split("\n  plan:\n", 1)[1].split("\n  live:\n", 1)[0]
+        self.assertNotIn("SLACK_WEBHOOK_URL", plan, "a pull request run gets no secret")
 
     def test_workflow_loops_past_the_token_hour_from_dev_only(self):
         text = (SCRIPTS.parent / "workflows" / "devflow-train.yml").read_text()
