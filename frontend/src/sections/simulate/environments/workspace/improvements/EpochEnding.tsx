@@ -1,7 +1,20 @@
-import PropTypes from "prop-types";
+import type { ReactNode } from "react";
 import { Box, Stack, Typography } from "@mui/material";
 
 import StatusBadge from "src/components/status-badge";
+
+interface EpochEndingProps {
+  // "Epoch 5 · Stopped": the badge.
+  label: string;
+  // Red only when a must-pass scenario broke.
+  danger?: boolean;
+  sentence: ReactNode;
+  // "Spent 1,234 credits before it stopped."
+  spent?: string;
+  // The ending's one primary button, or nothing when there is no way on.
+  primary?: ReactNode;
+  children?: ReactNode;
+}
 
 // The design's EpochEnding: how an epoch that shipped nothing ended, in one
 // layout for every ending. The status word (neutral; red only when a must-pass
@@ -14,7 +27,7 @@ export default function EpochEnding({
   spent,
   primary,
   children,
-}) {
+}: EpochEndingProps) {
   return (
     <Box
       data-testid="epoch-ending"
@@ -69,16 +82,3 @@ export default function EpochEnding({
     </Box>
   );
 }
-
-EpochEnding.propTypes = {
-  // "Epoch 5 · Stopped": the badge.
-  label: PropTypes.string.isRequired,
-  // Red only when a must-pass scenario broke.
-  danger: PropTypes.bool,
-  sentence: PropTypes.node.isRequired,
-  // "Spent 1,234 credits before it stopped."
-  spent: PropTypes.string,
-  // The ending's one primary button, or nothing when there is no way on.
-  primary: PropTypes.node,
-  children: PropTypes.node,
-};
