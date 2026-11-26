@@ -876,8 +876,9 @@ def test_semi_join_replay_filters_only_immutable_identity():
     replay = head[head.index("FROM spans AS attribute_source") : head.index(") IN\n")]
     for banned in ("mapContains", "JSONHas", "has(mapKeys", "is_deleted"):
         assert banned not in replay
+    sql_no_comments = re.sub(r"/\*.*?\*/", "", sql, flags=re.S)
     for banned in ("INNER JOIN", "UNION", "DISTINCT"):
-        assert banned not in sql
+        assert banned not in sql_no_comments
     assert "project_id" not in head[head.rindex("GROUP BY") :]
     for consumer in (
         "FROM latest_spans",

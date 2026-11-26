@@ -4236,9 +4236,9 @@ def test_no_postgres_row_names_a_hidden_project_after_a_simulated_run(
     record_property,
 ):
     from django.apps import apps
+
     from simulate.models.run_test import RunTest
     from simulate.models.test_execution import CallExecution, TestExecution
-
     from tracer.models.project import Project
     from tracer.services.simulation_project import ensure_simulation_project
 
