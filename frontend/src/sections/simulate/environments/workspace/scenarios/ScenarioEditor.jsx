@@ -10,9 +10,12 @@ import {
   Slider,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
 } from "@mui/material";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
+import StatusBadge from "src/components/status-badge/StatusBadge";
+import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import {
   focusBuilderChat,
@@ -50,7 +53,9 @@ export default function ScenarioEditor({
   noiseOptions = [],
   levelLabels = {},
   env,
+  privateFields = [],
 }) {
+  const isPrivate = (field) => privateFields.includes(field);
   const [saveError, setSaveError] = useState("");
   // The server's problems with the test conditions, each naming the fault (`index`) and its field.
   const [faultProblems, setFaultProblems] = useState([]);
@@ -255,6 +260,35 @@ export default function ScenarioEditor({
     onClose();
   };
 
+  // Both sit under How it's marked when only the grader reads them.
+  const testsField = (
+    <TextField
+      size="small"
+      label="Passes when"
+      multiline
+      minRows={2}
+      value={draft.tests || ""}
+      disabled={!canEdit("tests")}
+      onChange={(e) => set("tests")(e.target.value)}
+      helperText={
+        canEdit("tests")
+          ? "What a pass looks like. Evals grade against this."
+          : READ_ONLY_HINT
+      }
+    />
+  );
+  const subGoalsField = (
+    <TextField
+      size="small"
+      label="Sub-goals"
+      multiline
+      minRows={3}
+      value={draft.subGoalsText || ""}
+      disabled
+      helperText={READ_ONLY_HINT}
+    />
+  );
+
   return (
     <SideDrawer open={open} onClose={onClose} width={620}>
       <Stack sx={{ height: "100%" }}>
@@ -310,33 +344,26 @@ export default function ScenarioEditor({
             disabled
             helperText={READ_ONLY_HINT}
           />
-          <TextField
-            size="small"
-            label="Passes when"
-            multiline
-            minRows={2}
-            value={draft.tests || ""}
-            disabled={!canEdit("tests")}
-            onChange={(e) => set("tests")(e.target.value)}
-            helperText={
-              canEdit("tests")
-                ? "What a pass looks like. Evals grade against this."
-                : READ_ONLY_HINT
-            }
-          />
-          <TextField
-            size="small"
-            label="Sub-goals"
-            multiline
-            minRows={3}
-            value={draft.subGoalsText || ""}
-            disabled
-            helperText={READ_ONLY_HINT}
-          />
+          {!isPrivate("tests") && testsField}
+          {!isPrivate("sub_goals") && subGoalsField}
+          {(isPrivate("tests") || isPrivate("sub_goals")) && (
+            <>
+              <SectionHeader
+                title={EDITOR_COPY.markedSection}
+                tag={EDITOR_COPY.gradingOnly}
+                tagHint={EDITOR_COPY.gradingOnlyHint}
+                tagIcon="solar:lock-keyhole-linear"
+              />
+              {isPrivate("tests") && testsField}
+              {isPrivate("sub_goals") && subGoalsField}
+            </>
+          )}
 
           <SectionHeader
             title={EDITOR_COPY.personaSection}
             hint="Who is on the other end of the run."
+            tag={EDITOR_COPY.simulatedPeopleSee}
+            tagHint={EDITOR_COPY.simulatedPeopleSeeHint}
           />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <TextField
@@ -413,6 +440,9 @@ export default function ScenarioEditor({
               <SectionHeader
                 title={TEST_CONDITIONS_COPY.heading}
                 hint={canEdit("faults") ? REPROOF_HINT : READ_ONLY_HINT}
+                tag={isPrivate("faults") ? EDITOR_COPY.gradingOnly : undefined}
+                tagHint={EDITOR_COPY.gradingOnlyHint}
+                tagIcon="solar:lock-keyhole-linear"
               />
               <TestConditionsEditor
                 faults={draft.faults || []}
@@ -557,6 +587,8 @@ export default function ScenarioEditor({
 }
 
 ScenarioEditor.propTypes = {
+  // The scenario fields only the grader reads (the list's `private_fields`).
+  privateFields: PropTypes.arrayOf(PropTypes.string),
   open: PropTypes.bool,
   onClose: PropTypes.func,
   row: SCENARIO_SHAPE,
@@ -635,18 +667,46 @@ PersonaField.propTypes = {
   multiple: PropTypes.bool,
 };
 
-function SectionHeader({ title, hint }) {
+function SectionHeader({ title, hint, tag, tagHint, tagIcon }) {
   return (
     <Box>
-      <Typography
-        sx={{
-          typography: "m3",
-          fontWeight: "fontWeightMedium",
-          color: "text.primary",
-        }}
-      >
-        {title}
-      </Typography>
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Typography
+          sx={{
+            typography: "m3",
+            fontWeight: "fontWeightMedium",
+            color: "text.primary",
+          }}
+        >
+          {title}
+        </Typography>
+        {tag && (
+          <Tooltip arrow title={tagHint || ""}>
+            <Stack
+              component="span"
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+            >
+              {tagIcon && (
+                <Iconify
+                  icon={tagIcon}
+                  width={12}
+                  sx={{ color: "text.secondary" }}
+                />
+              )}
+              <StatusBadge
+                status="audience"
+                role="neutral"
+                variant="badge"
+                label={tag}
+                size="sm"
+                dot={false}
+              />
+            </Stack>
+          </Tooltip>
+        )}
+      </Stack>
       {hint && (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {hint}
@@ -655,4 +715,10 @@ function SectionHeader({ title, hint }) {
     </Box>
   );
 }
-SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
+SectionHeader.propTypes = {
+  title: PropTypes.string,
+  hint: PropTypes.string,
+  tag: PropTypes.string,
+  tagHint: PropTypes.string,
+  tagIcon: PropTypes.string,
+};

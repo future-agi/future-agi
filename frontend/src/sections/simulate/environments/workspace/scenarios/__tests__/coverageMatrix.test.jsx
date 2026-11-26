@@ -88,4 +88,45 @@ describe("CoverageMatrix", () => {
     expect(screen.queryByText(/0 scenarios/)).toBeNull();
     expect(screen.queryByText("0%")).toBeNull();
   });
+
+  const openWith = (workflows, versioned = true) => {
+    useScenarioCoverage.mockReturnValue({
+      data: { ...coverageSample, workflows },
+    });
+    render(
+      <CoverageMatrix
+        jobId="job-1"
+        search=""
+        filters={{}}
+        versioned={versioned}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Coverage/ }));
+  };
+
+  it("shows each use case's proof, marking what's missing", () => {
+    openWith([
+      {
+        workflow: "Refunds",
+        success: 2,
+        refusal: 0,
+        wrong_result: 1,
+        missing: ["refusal"],
+      },
+    ]);
+    const row = screen.getByRole("row", { name: /Refunds/ });
+    expect(row).toHaveTextContent("2");
+    expect(row).toHaveTextContent("Missing");
+    expect(row).toHaveTextContent("1");
+  });
+
+  it("says why the proof is empty", () => {
+    openWith([]);
+    expect(screen.getByText(/Nothing to count yet/)).toBeInTheDocument();
+  });
+
+  it("leaves the proof out when the environment has no versioning", () => {
+    openWith([], false);
+    expect(screen.queryByText("Proof per use case")).toBeNull();
+  });
 });

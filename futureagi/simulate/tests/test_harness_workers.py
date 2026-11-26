@@ -3156,6 +3156,50 @@ def test_a_worker_seen_only_through_its_tool_calls_gets_no_invented_end_state():
     assert {one["id"]: one.get("state") for one in late}["refund"] == "deadline_passed"
 
 
+@pytest.mark.parametrize(
+    "code, refused, shown",
+    [
+        ("world_rule", True, "world_rule"),
+        ("door_failed", False, None),
+        ("upstream_unreachable", False, None),
+    ],
+)
+def test_only_a_call_the_world_refused_carries_its_refusal_code_in_the_timeline(
+    code, refused, shown
+):
+    from simulate.services.harness_worker_events import recorded_timeline
+
+    row = {
+        "name": "get_order",
+        "ok": False,
+        "refused": refused,
+        "at": 1.0,
+        "worker_id": "order_lookup",
+        "error": "it did not go through",
+        "refusal_code": code,
+    }
+    sealed_event = {
+        "type": "tool_call",
+        "id": "ev-1",
+        "worker_id": "order_lookup",
+        "relationship": "unknown",
+        "at": 1.0,
+        "status": "error",
+    }
+    from_rows = worker_timeline([], DECLARED, run_key=RUN, traced_calls=[row])
+    from_events = recorded_timeline(
+        [],
+        DECLARED,
+        run_key=RUN,
+        traced_calls=[{**row, "worker_events": [sealed_event]}],
+    )
+
+    # A failure of ours is never shown as the world refusing the call.
+    for timeline in (from_rows, from_events):
+        [event] = [one for one in timeline["events"] if one["tool"] == "get_order"]
+        assert event.get("refusal_code") == shown
+
+
 def test_a_worker_refused_past_its_deadline_by_its_own_calls_ends_past_its_deadline():
     from simulate.services.harness_workers import worker_states
 

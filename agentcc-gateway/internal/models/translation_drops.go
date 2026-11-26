@@ -63,25 +63,51 @@ func (t Tool) HasNonDirectCallerPolicy() bool {
 
 // GeminiOmittedParams names unenforceable restrictions, never caller values.
 func GeminiOmittedParams(req *ChatCompletionRequest) []string {
+	params, _ := GeminiToolPolicyWarning(req)
+	return params
+}
+
+// GeminiToolPolicyWarning returns only setting keys and affected function names,
+// never the declarations, schema, or caller policy values.
+func GeminiToolPolicyWarning(req *ChatCompletionRequest) (params, names []string) {
 	if req == nil {
-		return nil
+		return nil, nil
 	}
-	var params []string
-	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(req.Tools) > 0 {
+	tools := req.Tools
+	allowed, err := ParseAllowedToolsChoice(req.ToolChoice)
+	if err != nil {
+		return nil, nil
+	}
+	if allowed != nil {
+		tools, err = allowed.Filter(tools)
+		if err != nil {
+			return nil, nil
+		}
+	}
+	var parallel, callers bool
+	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(tools) > 0 {
 		var choice string
 		_ = json.Unmarshal(req.ToolChoice, &choice)
 		// NONE already permits zero calls, satisfying the restriction.
 		if choice != "none" {
+			parallel = true
 			params = append(params, "parallel_tool_calls")
 		}
 	}
-	for _, tool := range req.Tools {
-		if tool.IsFunction() && tool.HasNonDirectCallerPolicy() {
-			params = append(params, "allowed_callers")
-			break
+	for _, tool := range tools {
+		if !tool.IsFunction() {
+			continue
 		}
+		restricted := tool.HasNonDirectCallerPolicy()
+		if parallel || restricted {
+			names = append(names, tool.Function.Name)
+		}
+		callers = callers || restricted
 	}
-	return params
+	if callers {
+		params = append(params, "allowed_callers")
+	}
+	return params, names
 }
 
 // RouteNotes formats fresh provider parameter names for the ingress dialect:

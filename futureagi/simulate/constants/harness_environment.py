@@ -19,3 +19,18 @@ RUN_KIND_SIMULATE = "simulate"
 # Whether the Actors tab shows: edited, listed read-only, or (null) not at all.
 ActorsTab = Literal["edit", "list"]
 ACTORS_TABS: tuple[ActorsTab, ...] = ("edit", "list")
+
+
+# Why a worker row reads as it does, first rule first (`workers.worker_boundaries`).
+WORKER_REASON_CODES = (
+    "evidence_unreadable",
+    "worker_channel_bypassed",
+    "sealed_before_worker_limits",
+    "tool_service_not_fronted",
+    "in_process_unbound",
+    "no_tool_service",
+    "in_process_door",
+    "shared_binding",
+    "held_at_world_cooperative",
+    "worker_not_sealed",
+)

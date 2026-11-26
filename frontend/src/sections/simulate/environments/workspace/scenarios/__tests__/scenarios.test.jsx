@@ -56,6 +56,11 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
       columns: [],
       cells: [],
     })),
+    // The Validate buttons read the running validation on a versioned suite.
+    getRunningScenarioValidation: vi.fn(async () => ({
+      job_id: null,
+      to_prove: 0,
+    })),
   };
 });
 const { listScenarios, amendScenarios } = await import(
@@ -169,11 +174,23 @@ describe("ScenariosStep", () => {
       within(panel).getByRole("combobox", { name: "Group by" }),
     ).toBeInTheDocument();
     expect(within(panel).queryByRole("option")).toBeNull();
-    fireEvent.click(within(panel).getByRole("tab", { name: "Large" }));
-    expect(within(panel).getByRole("tab", { name: "Large" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    // Every setting changes the row, however short its texts are.
+    const rowHeight = () =>
+      getComputedStyle(document.querySelector("tbody tr[aria-label^='Open ']"))
+        .height;
+    expect(rowHeight()).toBe("48px");
+    for (const [name, height] of [
+      ["Medium", "80px"],
+      ["Large", "100px"],
+      ["Extra large", "150px"],
+    ]) {
+      fireEvent.click(within(panel).getByRole("tab", { name }));
+      expect(within(panel).getByRole("tab", { name })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(rowHeight()).toBe(height);
+    }
     closeDisplay();
   });
 
@@ -643,5 +660,93 @@ describe("groupKeyOf fallbacks", () => {
       id: "subgoal:none",
       label: "No sub-goals",
     });
+  });
+});
+
+describe("ScenariosStep lifecycle", () => {
+  const COUNTS = {
+    draft: 4,
+    validated: 0,
+    active: 6,
+    kept_as_written: 0,
+    archived: 0,
+    proved: 6,
+    not_proved: 4,
+    legacy_without_control: 0,
+  };
+
+  it("reaches archived scenarios from the counts line, even when every one is archived, and back", async () => {
+    listScenarios.mockImplementation((jobId, params) => ({
+      ...queryScenarioFixture(
+        params.lifecycle === "archived"
+          ? { limit: params.limit, page: 1 }
+          : { ...params, search: "no-such-scenario" },
+        SERVER_ROWS,
+      ),
+      lifecycle_counts: { ...COUNTS, active: 0, draft: 0, archived: 10 },
+    }));
+    renderStep();
+    const archived = await screen.findByRole("button", { name: "10 archived" });
+    expect(archived).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(archived);
+    await waitFor(() =>
+      expect(listScenarios).toHaveBeenCalledWith(
+        "job-test",
+        expect.objectContaining({ lifecycle: "archived" }),
+      ),
+    );
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+    expect(archived).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Filter (1)" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    fireEvent.click(archived);
+    expect(archived).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("shows the counts line and asks the list for one state, empty when none match", async () => {
+    listScenarios.mockImplementation((jobId, params) => {
+      if (params.lifecycle === "source_changed") {
+        return {
+          ...queryScenarioFixture(
+            { ...params, search: "no-such-scenario" },
+            SERVER_ROWS,
+          ),
+          lifecycle_counts: COUNTS,
+        };
+      }
+      return {
+        ...queryScenarioFixture(params, SERVER_ROWS),
+        lifecycle_counts: COUNTS,
+      };
+    });
+    renderStep();
+    expect(
+      await screen.findByText("6 proved · 0 kept as written · 4 not proved"),
+    ).toBeInTheDocument();
+
+    // State sits inside Filter: one pick, "Is" only, as the list takes it.
+    fireEvent.click(screen.getByRole("button", { name: /^Filter/ }));
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[0]);
+    fireEvent.click(screen.getByRole("option", { name: "State" }));
+    fireEvent.mouseDown(screen.getAllByRole("combobox")[1]);
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Is",
+    ]);
+    fireEvent.click(screen.getByRole("option", { name: "Is" }));
+    fireEvent.click(screen.getByText(/^Select value/));
+    fireEvent.click(screen.getByText("Source changed"));
+
+    await waitFor(() =>
+      expect(listScenarios).toHaveBeenLastCalledWith(
+        "job-test",
+        expect.objectContaining({ lifecycle: "source_changed" }),
+      ),
+    );
+    expect(
+      await screen.findByText("No scenarios match your filters."),
+    ).toBeInTheDocument();
   });
 });
