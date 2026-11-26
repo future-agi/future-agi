@@ -5,6 +5,7 @@ column, the job mark in the resource attributes and the call mark on the spans a
 the ones the collector writes.
 """
 
+import math
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -128,6 +129,10 @@ def spans(ch_database, table):
         yield add
     finally:
         writer.close()
+
+
+# A sender's negative cost, which the collector writes to the cost column as it is.
+NEGATIVE_REPORT = {"cost": -0.01, "numbers": {"gen_ai.cost.total": -0.01}}
 
 
 def _traced(monkeypatch):
@@ -310,6 +315,33 @@ def test_a_span_exported_twice_counts_once_by_its_request_model(spans, monkeypat
             CallUsage(models=["m1", "m2"], llm_spans=1, cost_usd=pytest.approx(0.02)),
             id="two_names_two_reported_costs",
         ),
+        # A negative report is no price, so it never outranks the other copy.
+        pytest.param(
+            {"service": "agent", "kind": "llm", "model": "m1", **NEGATIVE_REPORT},
+            {"service": "omega", "kind": "llm", "model": "m1"},
+            CallUsage(
+                models=["m1"], llm_spans=1, cost_usd=None, unpriced_models=["m1"]
+            ),
+            id="a_negative_reported_cost_and_no_price",
+        ),
+        pytest.param(
+            {"service": "agent", "kind": "llm", "model": "m1", **NEGATIVE_REPORT},
+            {
+                "service": "omega",
+                "kind": "llm",
+                "model": "m1",
+                "cost": 0.02,
+                "numbers": {"gen_ai.cost.total": 0.02},
+            },
+            CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(0.02)),
+            id="a_negative_and_a_valid_reported_cost",
+        ),
+        pytest.param(
+            {"service": "agent", "kind": "llm", "model": "m1", **NEGATIVE_REPORT},
+            {"service": "omega", "kind": "llm", "model": "m1", "cost": 0.015},
+            CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(0.015)),
+            id="a_negative_reported_cost_and_an_estimate",
+        ),
     ],
 )
 def test_a_span_exported_twice_keeps_what_either_copy_says(
@@ -391,6 +423,43 @@ def test_a_cost_its_sender_reported_outranks_the_other_copy_s_estimate(
             ["m2"],
             id="a_cost_the_collector_marked_unknown",
         ),
+        # A report that is no price: the collector writes it to the cost column as it
+        # is, so nothing priced the call.
+        pytest.param(NEGATIVE_REPORT, None, ["m2"], id="a_negative_number"),
+        pytest.param(
+            {"cost": -0.01, "extra": {"llm.cost.total": "-0.01"}},
+            None,
+            ["m2"],
+            id="a_negative_text",
+        ),
+        pytest.param(
+            {"cost": math.inf, "extra": {"llm.cost.total": "inf"}},
+            None,
+            ["m2"],
+            id="an_infinite_text",
+        ),
+        pytest.param(
+            {"cost": math.nan, "extra": {"llm.cost.total": "nan"}},
+            None,
+            ["m2"],
+            id="a_nan_text",
+        ),
+        pytest.param(
+            {"cost": math.nan, "numbers": {"gen_ai.cost.total": math.nan}},
+            None,
+            ["m2"],
+            id="a_nan_number",
+        ),
+        # The total wins over a valid input cost, so the cost column is negative.
+        pytest.param(
+            {
+                "cost": -0.01,
+                "numbers": {"gen_ai.cost.total": -0.01, "gen_ai.cost.input": 0.005},
+            },
+            None,
+            ["m2"],
+            id="a_negative_total_beside_a_valid_part",
+        ),
     ],
 )
 def test_a_free_model_call_leaves_its_call_s_cost_known(
@@ -420,9 +489,12 @@ def test_a_span_exported_twice_counts_for_the_call_either_copy_names(
     # Only one exporter stamps the call, and the other copy is the priced one.
     spans(trace, span_id=span_id, service="agent", kind="llm", model="m2", cost=0.02)
     spans(trace, span_id=span_id, service="omega", kind="llm", model="m2", call=second)
+    # A sibling span that no copy marks counts for the trace's call.
+    spans(trace, kind="llm", model="m3", cost=0.03)
 
     assert run_traces_v3.run_usage(SimpleNamespace()) == {
-        second: CallUsage(models=["m2"], llm_spans=1, cost_usd=pytest.approx(0.02))
+        first: CallUsage(models=["m3"], llm_spans=1, cost_usd=pytest.approx(0.03)),
+        second: CallUsage(models=["m2"], llm_spans=1, cost_usd=pytest.approx(0.02)),
     }
 
 

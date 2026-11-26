@@ -192,16 +192,23 @@ def run_traces_params(
     }
 
 
+def _price_sql(value: str) -> str:
+    """Whether a value is a price: a finite number, zero or more."""
+    return f"(isFinite({value}) AND {value} >= 0)"
+
+
 def _reported_cost_sql() -> str:
-    """Whether a span row's cost is one its sender reported, a zero too: a cost key
-    holds a number, and the collector did not mark the cost unknown."""
+    """Whether a span row's cost is a price its sender reported, a zero too: a cost
+    key holds a price, the collector did not mark the cost unknown, and the cost the
+    collector made of the keys is a price too. A negative or infinite report is none."""
     attrs, numbers = cols.ATTRS_STRING, cols.ATTRS_NUMBER
     keys = ", ".join(f"'{key}'" for key in REPORTED_COST_KEYS)
+    text = _price_sql("ifNull(toFloat64OrNull(value), nan)")
     return (
-        f"({attrs}['{COST_KIND_KEY}'] != 'unknown' AND ("
-        f"hasAny(mapKeys({numbers}), [{keys}]) OR arrayExists((key, value) -> "
-        f"key IN ({keys}) AND toFloat64OrNull(value) IS NOT NULL, "
-        f"mapKeys({attrs}), mapValues({attrs}))))"
+        f"({attrs}['{COST_KIND_KEY}'] != 'unknown' AND {_price_sql('cost')} AND ("
+        f"arrayExists((key, value) -> key IN ({keys}) AND {_price_sql('value')}, "
+        f"mapKeys({numbers}), mapValues({numbers})) OR arrayExists((key, value) -> "
+        f"key IN ({keys}) AND {text}, mapKeys({attrs}), mapValues({attrs}))))"
     )
 
 
@@ -217,6 +224,8 @@ def run_usage_sql() -> str:
     alone."""
     attrs = cols.ATTRS_STRING
     reported = _reported_cost_sql()
+    # The collector's own estimate counts only when it is a price too.
+    estimated = _price_sql("cost")
     # The request model a copy names, else the model column, for an instrumentor that
     # names its model in another convention.
     model = f"if({cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
@@ -233,9 +242,10 @@ def run_usage_sql() -> str:
         "AS llm_models, "
         f"groupUniqArrayIf({model}, observation_type IN ('llm', 'embedding') "
         f"AND {model} != '') AS billed_models, "
-        # A cost the sender reported, a zero too, before one the collector estimated.
+        # A price the sender reported, a zero too, before one the collector estimated.
         f"max({reported}) AS span_reported, "
-        f"if(span_reported, maxIf(cost, {reported}), max(cost)) AS span_cost, "
+        f"if(span_reported, maxIf(cost, {reported}), maxIf(cost, {estimated})) "
+        "AS span_cost, "
         "span_reported OR span_cost > 0 AS span_priced "
         "FROM spans FINAL "
         f"{_job_scope_sql()}"
@@ -275,7 +285,7 @@ def run_usage(execution: TestExecution) -> dict[str, CallUsage] | None:
     embedding span, and that the sandbox did not flag partial, is missing. None when the run's agent is not traced, so none of its
     calls can be seen. A span with no price leaves its call's cost unknown: it may be an
     unpriced model, and an unpriced model is not free. A cost its sender reported is a
-    price, a zero too. A call the sandbox could not wholly
+    price, a zero too, when it is a finite number and not negative. A call the sandbox could not wholly
     measure (a span stamped partial) reads unknown too: some of its model calls sent no
     span."""
     source = run_traces_source(execution)
