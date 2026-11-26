@@ -21362,7 +21362,7 @@ export interface HarnessEnvironmentRenameApi {
 
 export interface HarnessReleaseRefusalApi {
   /**
-   * release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_admin_only, release_not_found, release_locked, version_conflict, rebuild_running or versioning_disabled.
+   * release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_locked, version_conflict or rebuild_running.
    * @minLength 1
    */
   error: string;

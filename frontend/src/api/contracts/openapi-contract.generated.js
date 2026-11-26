@@ -73557,7 +73557,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         error: {
           title: "Error",
           description:
-            "release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_admin_only, release_not_found, release_locked, version_conflict, rebuild_running or versioning_disabled.",
+            "release_not_ready, release_already_locked, release_too_few_test, release_too_few_train, release_locked, version_conflict or rebuild_running.",
           type: "string",
           minLength: 1,
         },
