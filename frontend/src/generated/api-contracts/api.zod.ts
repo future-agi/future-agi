@@ -47793,7 +47793,7 @@ export const SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
       releases: zod.array(
         zod.object({
           id: zod.string().uuid(),
-          label: zod.string().min(1).nullable(),
+          label: zod.string().min(1),
           environment_version_id: zod.string().uuid(),
           environment_label: zod.union([zod.string().min(1), zod.null()]),
           suite_version_id: zod.string().uuid(),
@@ -51749,7 +51749,7 @@ export const SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionRespo
     releases: zod.array(
       zod.object({
         id: zod.string().uuid(),
-        label: zod.string().min(1).nullable(),
+        label: zod.string().min(1),
         environment_version_id: zod.string().uuid(),
         environment_label: zod.union([zod.string().min(1), zod.null()]),
         suite_version_id: zod.string().uuid(),
@@ -52721,7 +52721,7 @@ export const SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse =
     releases: zod.array(
       zod.object({
         id: zod.string().uuid(),
-        label: zod.string().min(1).nullable(),
+        label: zod.string().min(1),
         environment_version_id: zod.string().uuid(),
         environment_label: zod.union([zod.string().min(1), zod.null()]),
         suite_version_id: zod.string().uuid(),

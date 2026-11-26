@@ -143,7 +143,7 @@ const NULLABLE_REFS = {
   ...HARNESS_RELEASE_NULLABLE_REFS,
 };
 
-function isAgentFixIssueSchema(name) {
+function hasNullableFields(name) {
   return (
     name.startsWith("AgentFixIssue") ||
     name in NULLABLE_REFS ||
@@ -158,9 +158,9 @@ function isAgentFixIssueSchema(name) {
 // sent as null are the ones NULLABLE_REFS names.
 function withNullableFields(name, schema) {
   const fields = NULLABLE_REFS[name] || [];
-  if (!isAgentFixIssueSchema(name) && !fields.length) return schema;
+  if (!hasNullableFields(name) && !fields.length) return schema;
   const { "x-nullable": _definitionNullable, ...definition } = schema;
-  const properties = isAgentFixIssueSchema(name)
+  const properties = hasNullableFields(name)
     ? Object.fromEntries(
         Object.entries(definition.properties || {}).map(([key, property]) => {
           const { "x-nullable": nullable, ...rest } = property;
@@ -179,7 +179,7 @@ function withNullableFields(name, schema) {
     }
     properties[field] = { anyOf: [properties[field], { type: "null" }] };
   }
-  return { ...(isAgentFixIssueSchema(name) ? definition : schema), properties };
+  return { ...(hasNullableFields(name) ? definition : schema), properties };
 }
 
 // The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
@@ -1398,12 +1398,11 @@ export type ${jsonAlias} = JsonValueApi;`,
         );
       }
     }
-    // A release always has a label: undo the version rows' label rewrite on it.
-    for (const response of [
-      "SimulateApiHarnessEnvironmentsVersionsResponse",
-      "SimulateApiHarnessEnvironmentsVersionsLockReleaseResponse",
-      "SimulateApiHarnessEnvironmentsVersionsUnlockReleaseResponse",
-    ]) {
+    // A release always has a label: undo the version rows' label rewrite on it, in
+    // every versions response that carries releases (the drafts read carries none).
+    for (const response of VERSIONS_RESPONSES.filter(
+      (name) => name !== "SimulateApiHarnessEnvironmentsDraftsResponse",
+    )) {
       zod = assertReplaceRegexInNamedBlock(
         zod,
         `export const ${response} =`,
