@@ -13,6 +13,7 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import WorkspaceMembership
 from simulate.models import (
     HarnessEnvironmentVersion,
+    HarnessNudge,
     HarnessRelease,
     HarnessSuiteMember,
     HarnessSuiteVersion,
@@ -502,6 +503,26 @@ class TestLock:
 
         assert response.status_code == 409
         assert response.json()["error"] == "release_not_ready"
+
+    def test_the_preview_refuses_while_a_rebuild_runs(
+        self, auth_client, user, workspace, storage
+    ):
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        HarnessNudge.no_workspace_objects.create(
+            job=environment,
+            organization_id=environment.organization_id,
+            target="environment",
+            state="running",
+        )
+
+        lock = auth_client.get(f"{BASE}/{environment.id}/versions/").json()["lock"]
+        response = _lock(auth_client, environment)
+
+        # The preview offers no lock the write would refuse.
+        assert (lock["can_lock"], lock["refusal"]["code"]) == (False, "rebuild_running")
+        assert response.status_code == 409
+        assert response.json()["error"] == "rebuild_running"
 
     def test_a_second_lock_after_growth_keeps_old_splits(
         self, auth_client, user, workspace, storage
