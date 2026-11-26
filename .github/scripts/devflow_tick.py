@@ -13,6 +13,10 @@ Slack message:
   flake until it repeats). Groups are
   cumulative, so a failure that an entry ahead in its group explains (that
   entry failed the job, or a later build without it passed) is not counted.
+  The batch train's rollups go red on their own pull request runs before
+  the queue sees them, so those reds count as queue pull requests too. A
+  rollup stands for its members: failures whose members overlap (one bad
+  member across nested rollups, or in the queue alone) count once.
   The base is probably red: an open issue with
   the base-red label per failing job, plus a Slack line. The batch train
   pauses while any such issue is open. The breaker closes its own issue when
@@ -104,6 +108,12 @@ DEV_PUSH_WORKFLOWS = {"backend-ci.yml": "backend / ", "e2e-ci.yml": ""}
 # Pages of dev push runs read to find the two newest finished ones: a burst of
 # cancelled runs (a push cancels the run before it) can fill the first page.
 DEV_PUSH_PAGES = 5
+# The batch train's rollup pull requests (devflow_train.py). Only the train
+# App's own count: author, branch and manifest, never the label alone.
+TRAIN_ROLLUP_LABEL = "devflow:rollup"
+TRAIN_BRANCH = "chore/devflow-train-"
+TRAIN_MARKER = "<!-- devflow-train:v1 -->"
+TRAIN_LOGIN = "futureagi-devflow-train[bot]"
 FIX_REF = re.compile(
     r"\b(?:fix(?:es|ed)?|follow[- ]?ups?(?:\s+(?:to|of|for))?|revert(?:s|ed)?)\s+"
     r"(?:pr\s*)?#(\d+)",
@@ -256,8 +266,10 @@ def detect_breaker(failures: list[dict], now: datetime) -> list[dict]:
     run and also on the run before it ("dev": 2) or on one queue pull request
     ("dev": 1). One red dev run alone is a flake until it repeats. The run
     before the newest counts at any age. Give it independent() failures.
+    A failure with `members` (a rollup's) counts only where its members
+    overlap no other counted failure's (see disjoint_prs).
     """
-    prs_by_job: dict[str, set[int]] = defaultdict(set)
+    groups: dict[str, list[tuple[int, frozenset]]] = defaultdict(list)
     dev_jobs, prior_jobs = set(), set()
     for f in failures:
         if f.get("prior"):
@@ -267,15 +279,69 @@ def detect_breaker(failures: list[dict], now: datetime) -> list[dict]:
         elif f.get("dev"):
             dev_jobs.add(f["job"])
         elif f["pr"] is not None:
-            prs_by_job[f["job"]].add(f["pr"])
+            groups[f["job"]].append((f["pr"], frozenset(f.get("members") or (f["pr"],))))
     tripped = []
-    for job in set(prs_by_job) | dev_jobs:
+    for job in set(groups) | dev_jobs:
         dev = 2 if job in prior_jobs else 1
-        if job in dev_jobs and (dev == 2 or prs_by_job[job]):
-            tripped.append({"job": job, "prs": sorted(prs_by_job[job]), "dev": dev})
-        elif len(prs_by_job[job]) >= BREAKER_MIN_PRS:
-            tripped.append({"job": job, "prs": sorted(prs_by_job[job])})
+        prs = disjoint_prs(groups[job])
+        if job in dev_jobs and (dev == 2 or prs):
+            tripped.append({"job": job, "prs": prs, "dev": dev})
+        elif len(prs) >= BREAKER_MIN_PRS:
+            tripped.append({"job": job, "prs": prs})
     return sorted(tripped, key=lambda t: (-len(t["prs"]), t["job"]))
+
+
+def disjoint_prs(groups: list[tuple[int, frozenset]]) -> list[int]:
+    """The pull requests of failures whose member sets share no pull request,
+    smallest first: rollups split around one bad member count once, and so
+    does a member that also failed alone."""
+    seen: set[int] = set()
+    out: set[int] = set()
+    for pr, members in sorted(groups, key=lambda g: (len(g[1]), g[0])):
+        if pr not in out and not members & seen:
+            seen |= members
+            out.add(pr)
+    return sorted(out)
+
+
+def bot(login: str | None) -> str:
+    """REST says 'name[bot]', GraphQL and variables may say 'name'."""
+    return (login or "").lower().removesuffix("[bot]")
+
+
+def rollup_members(issues: list[dict], login: str) -> dict[str, dict]:
+    """{built head sha: {pr, branch, members}} of the train App's rollup pull
+    requests, from the manifest in each body."""
+    out = {}
+    for issue in issues:
+        body = issue.get("body") or ""
+        if "pull_request" not in issue or bot((issue.get("user") or {}).get("login")) != bot(login):
+            continue
+        match = JSON_BLOCK.search(body.split(TRAIN_MARKER, 1)[1]) if TRAIN_MARKER in body else None
+        try:
+            manifest = json.loads(match.group(1)) if match else {}
+            members = sorted({int(m["pr"]) for m in manifest.get("members") or []})
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if manifest.get("head_sha") and members:
+            out[manifest["head_sha"]] = {
+                "pr": issue["number"], "branch": TRAIN_BRANCH + str(manifest.get("id")), "members": members,
+            }
+    return out
+
+
+def rollup_failures(runs: list[dict], jobs_by_run: dict[int, list[dict]], rollups: dict[str, dict]) -> list[dict]:
+    """queue_failures() of the rollups' own pull request runs, named as the
+    queue names its jobs, each with its rollup's number and members."""
+    out = []
+    for r in runs:
+        rollup = rollups.get(r.get("head_sha"))
+        if not rollup or r.get("head_branch") != rollup["branch"]:
+            continue
+        prefix = DEV_PUSH_WORKFLOWS.get(os.path.basename(r.get("path") or ""), "")
+        for f in queue_failures([r], jobs_by_run, prefix):
+            out.append({**f, "pr": rollup["pr"], "members": rollup["members"]})
+    return out
 
 
 def resolved_trips(issues: list[dict], tripped: list[dict], failures: list[dict], runs: list[dict]) -> list[dict]:
@@ -715,6 +781,29 @@ def collect_queue(api: Api, now: datetime, breaker_only: bool):
     return runs, queue_failures(runs, jobs_by_run), jobs_by_run
 
 
+def collect_rollups(api: Api, now: datetime, login: str) -> tuple[list[dict], dict[int, list[int]]]:
+    """(failures, {rollup: members}) of the train's rollup pull request runs in
+    the breaker window. Closed rollups count: the train closes a red one
+    within a tick. A failed read is logged and counts nothing, so the queue's
+    own trips are still filed."""
+    try:
+        since = iso(now - STATS_WINDOW)  # a rollup lives at most one train loop
+        issues = api.get_all(
+            f"/issues?labels={urllib.parse.quote(TRAIN_ROLLUP_LABEL)}&state=all&since={since}&per_page=100"
+        )
+        rollups = rollup_members(issues, login)
+        runs, jobs_by_run = [], {}
+        for wf in DEV_PUSH_WORKFLOWS if rollups else ():
+            for r in list_runs(api, wf, now - BREAKER_WINDOW, now, event="pull_request"):
+                if r.get("head_sha") in rollups and wants_jobs(r, now, breaker_only=True):
+                    runs.append(r)
+                    jobs_by_run[r["id"]] = api.get_all(f"/actions/runs/{r['id']}/jobs?filter=latest&per_page=100", "jobs")
+    except (OSError, http.client.HTTPException, ValueError, KeyError) as err:
+        print(f"::warning::rollup runs not read: {err}")
+        return [], {}
+    return rollup_failures(runs, jobs_by_run, rollups), {v["pr"]: v["members"] for v in rollups.values()}
+
+
 def collect_dev(api: Api) -> tuple[list[dict], list[dict]]:
     """(runs, failures) of the two newest finished dev push runs of each queue
     suite; runs holds only the newest. A green newest run clears a dev trip,
@@ -836,7 +925,7 @@ def close_resolved(api: Api, resolved: list[dict]) -> None:
 
 
 def trip_where(b: dict) -> str:
-    where = [f"{len(b['prs'])} independent merge-queue PRs ({', '.join(f'#{n}' for n in b['prs'])})"] if b["prs"] else []
+    where = [f"{len(b['prs'])} independent merge-queue or rollup PRs ({', '.join(f'#{n}' for n in b['prs'])})"] if b["prs"] else []
     dev = {1: ["the newest dev push run"], 2: ["the two newest dev push runs"]}.get(b.get("dev"), [])
     return " and ".join(where + dev)
 
@@ -863,10 +952,15 @@ def post_slack(url: str, text: str) -> None:
 def run_breaker(api: Api, now: datetime, runs, failures, jobs_by_run, dry: bool) -> tuple[list[dict], list[dict]]:
     """(tripped, new trips). Files new trips and closes resolved ones unless dry."""
     dev_runs, dev_failures = collect_dev(api)
-    breaker = detect_breaker(independent(failures, runs, jobs_by_run) + dev_failures, now)
+    rollup_fails, members = collect_rollups(api, now, os.environ.get("DEVFLOW_TRAIN_LOGIN") or TRAIN_LOGIN)
+    for f in failures:
+        # A rollup in the queue stands for its members, as its own runs do.
+        if f.get("pr") in members:
+            f["members"] = members[f["pr"]]
+    breaker = detect_breaker(independent(failures, runs, jobs_by_run) + rollup_fails + dev_failures, now)
     issues = open_breaker_issues(api)
     # Every failure, cascades too, dates the last bad build; a green dev push counts as green.
-    resolved = resolved_trips(issues, breaker, failures + dev_failures, runs + dev_runs)
+    resolved = resolved_trips(issues, breaker, failures + rollup_fails + dev_failures, runs + dev_runs)
     for r in resolved:
         print(f"base health: {r['job']} recovered (queue build {r['run']} passed)")
     if dry:

@@ -81,6 +81,7 @@ jobs:
       contents: read
       actions: read
       issues: write # the base-red label and tracking issue
+      pull-requests: read # the train's rollups, whose own runs count
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +96,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
+          DEVFLOW_TRAIN_LOGIN: ${{ vars.DEVFLOW_TRAIN_LOGIN }}
         run: |
           set -o pipefail
           # The first group after this file lands still has a base without it.

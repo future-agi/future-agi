@@ -4,6 +4,7 @@ import json
 import pathlib
 import sys
 import unittest
+import urllib.error
 import urllib.parse
 from datetime import UTC, datetime, timedelta, timezone
 
@@ -374,6 +375,157 @@ class Paging(unittest.TestCase):
     def test_landings_are_paged(self):
         api = FakeApi({"/repos/o/r/commits": (None, [{"sha": str(i)} for i in range(5)], None)})
         self.assertEqual(len(api.get_all("/commits?sha=dev&per_page=100")), 5)
+
+
+TRAIN_APP = "futureagi-devflow-train[bot]"
+
+
+def rollup_issue(number, members, login=TRAIN_APP):
+    """A rollup pull request as the issues listing returns it."""
+    manifest = {"schema": "devflow-train/v1", "id": f"r{number}", "head_sha": f"{number:040x}",
+                "members": [{"pr": n, "head_sha": f"{n:040x}"} for n in members]}
+    return {"number": number, "pull_request": {}, "user": {"login": login, "type": "Bot"},
+            "body": f"Batch train rollup.\n\n{t.TRAIN_MARKER}\n```json\n{json.dumps(manifest)}\n```"}
+
+
+def rollup_run(run_id, number, wf="backend-ci.yml", conclusion="failure", branch=None):
+    """The pull_request run of rollup #number on its built head."""
+    at = "2026-11-26T11:30:00Z"
+    return {"id": run_id, "head_sha": f"{number:040x}", "head_branch": branch or f"{t.TRAIN_BRANCH}r{number}",
+            "path": f".github/workflows/{wf}", "created_at": at, "updated_at": at,
+            "status": "completed", "conclusion": conclusion}
+
+
+def pr_shard_failed():
+    """A rollup PR run's jobs: backend-ci.yml names its shard without the queue's prefix."""
+    return [{"name": "pytest shard 3", "status": "completed", "conclusion": "failure",
+             "completed_at": "2026-11-26T11:30:00Z"},
+            {"name": "Backend Tests Pass", "status": "completed", "conclusion": "failure",
+             "completed_at": "2026-11-26T11:30:00Z"}]
+
+
+class RollupRuns(unittest.TestCase):
+    """Rollups go red on their own PR runs before the queue sees them, so the
+    breaker counts those reds too: under the cascade rules, one bad member
+    counts once however many rollups held it."""
+
+    def failures(self, issues, runs):
+        jobs = {r["id"]: pr_shard_failed() for r in runs}
+        return t.rollup_failures(runs, jobs, t.rollup_members(issues, TRAIN_APP))
+
+    def test_three_rollups_red_on_the_same_job_with_disjoint_members_trip(self):
+        issues = [rollup_issue(80, [1, 2]), rollup_issue(81, [3]), rollup_issue(82, [4, 5])]
+        fails = self.failures(issues, [rollup_run(1, 80), rollup_run(2, 81), rollup_run(3, 82)])
+        self.assertEqual({f["job"] for f in fails}, {SHARD}, "named as the queue names it; no aggregate")
+        self.assertEqual(t.detect_breaker(fails, NOW), [{"job": SHARD, "prs": [80, 81, 82]}])
+        self.assertEqual(t.detect_breaker(fails[:2], NOW), [], "two are not enough")
+
+    def test_one_bad_member_across_nested_rollups_does_not_trip(self):
+        # #1 is bad: rollup 80 split into 81 and then 83; each went red.
+        issues = [rollup_issue(80, [1, 2, 3, 4]), rollup_issue(81, [1, 2]), rollup_issue(83, [1])]
+        fails = self.failures(issues, [rollup_run(1, 80), rollup_run(2, 81), rollup_run(3, 83)])
+        self.assertEqual(len(fails), 3)
+        self.assertEqual(t.detect_breaker(fails, NOW), [])
+        # Its rollup red in the queue too: the same members, still one.
+        queue = [dict(fail(SHARD, 81), members=[1, 2])]
+        self.assertEqual(t.detect_breaker(fails + queue, NOW), [])
+
+    def test_two_queue_reds_and_one_rollup_red_trip(self):
+        # The chaos run: dev was red, only 2 queue builds failed, and the
+        # rollups went red on their own PR runs first.
+        queue = [fail(SHARD, 10), fail(SHARD, 11)]
+        fails = self.failures([rollup_issue(81, [3])], [rollup_run(1, 81)])
+        self.assertEqual(t.detect_breaker(queue, NOW), [])
+        self.assertEqual(t.detect_breaker(queue + fails, NOW), [{"job": SHARD, "prs": [10, 11, 81]}])
+        # A member that the queue also tested alone is the same signal.
+        alone = [fail(SHARD, 10), fail(SHARD, 3)]
+        self.assertEqual(t.detect_breaker(alone + fails, NOW), [])
+
+    def test_a_red_dev_push_run_and_one_rollup_red_trip(self):
+        dev = Cascade().dev_failures()
+        fails = self.failures([rollup_issue(81, [3])], [rollup_run(1, 81)])
+        self.assertEqual(t.detect_breaker(dev + fails, NOW), [{"job": SHARD, "prs": [81], "dev": 1}])
+
+    def test_only_the_train_apps_own_rollups_count(self):
+        runs = [rollup_run(1, 80), rollup_run(2, 81), rollup_run(3, 82)]
+        for name, issues, rs in (
+            ("another author", [rollup_issue(n, [n - 79], login="someone") for n in (80, 81, 82)], runs),
+            ("an issue, not a pull request",
+             [{k: v for k, v in rollup_issue(n, [n - 79]).items() if k != "pull_request"} for n in (80, 81, 82)], runs),
+            ("another branch", [rollup_issue(n, [n - 79]) for n in (80, 81, 82)],
+             [rollup_run(i, n, branch="feat/x") for i, n in ((1, 80), (2, 81), (3, 82))]),
+            ("no manifest", [{**rollup_issue(n, [n - 79]), "body": "chore(train)"} for n in (80, 81, 82)], runs),
+        ):
+            with self.subTest(name):
+                self.assertEqual(self.failures(issues, rs), [])
+
+    def test_collect_rollups_reads_the_window_and_fails_open(self):
+        issues = [rollup_issue(80, [1]), rollup_issue(81, [2]), rollup_issue(82, [3])]
+        lists = {
+            "/repos/o/r/issues": (None, issues, None),
+            "/repos/o/r/actions/workflows/backend-ci.yml/runs": (
+                "workflow_runs", [rollup_run(1, 80), rollup_run(2, 81), rollup_run(3, 82),
+                                  rollup_run(4, 99), rollup_run(5, 82, conclusion="success")], None),
+            "/repos/o/r/actions/workflows/e2e-ci.yml/runs": ("workflow_runs", [], None),
+        }
+        lists.update({f"/repos/o/r/actions/runs/{i}/jobs": ("jobs", pr_shard_failed(), None) for i in (1, 2, 3)})
+        api = FakeApi(lists, size=100)
+        fails, members = t.collect_rollups(api, NOW, TRAIN_APP)
+        self.assertEqual(sorted(f["pr"] for f in fails), [80, 81, 82])
+        self.assertEqual(members, {80: [1], 81: [2], 82: [3]})
+        listing = next(c for c in api.calls if "/issues" in c)
+        self.assertIn("labels=devflow%3Arollup", listing)
+        self.assertIn("state=all", listing, "a red rollup is closed within a tick")
+        self.assertFalse(any("/runs/4/" in c or "/runs/5/" in c for c in api.calls), "not a rollup; green")
+        from unittest import mock
+
+        class Down(FakeApi):
+            def request(self, method, url, body=None, token=None):
+                raise urllib.error.URLError("down")
+
+        # The queue's breaker step must still file its own trips.
+        with mock.patch("builtins.print"):
+            self.assertEqual(t.collect_rollups(Down({}), NOW, TRAIN_APP), ([], {}))
+
+    def test_run_breaker_adds_rollup_reds_and_gives_queued_rollups_their_members(self):
+        from unittest import mock
+
+        rollup = self.failures([rollup_issue(81, [3])], [rollup_run(1, 81)])
+        for queue, want in (
+            ([fail(SHARD, 10), fail(SHARD, 11)], [{"job": SHARD, "prs": [10, 11, 81]}]),
+            # #81 red in the queue too: the same members, so one signal.
+            ([fail(SHARD, 10), fail(SHARD, 81)], []),
+        ):
+            with (
+                self.subTest(queue=[f["pr"] for f in queue]),
+                mock.patch.object(t, "collect_dev", return_value=([], [])),
+                mock.patch.object(t, "collect_rollups", return_value=(rollup, {81: [3]})),
+                mock.patch.object(t, "open_breaker_issues", return_value=[]),
+            ):
+                tripped, _ = t.run_breaker(None, NOW, [], queue, {}, dry=True)
+                self.assertEqual(tripped, want)
+
+    def test_the_breaker_reads_rollups_and_the_train_login_everywhere(self):
+        root = pathlib.Path(__file__).parents[1] / "workflows"
+        digest = (root / "pr-digest.yml").read_text().split("\n  tick:\n", 1)[1].split("\n  tick-tests:\n", 1)[0]
+        queue = (root / "backend-queue-ci.yml").read_text().split("\n  breaker:\n", 1)[1]
+        for name, text, steps in (("pr-digest", digest, 2), ("backend-queue-ci", queue, 1)):
+            with self.subTest(workflow=name):
+                self.assertEqual(text.count("DEVFLOW_TRAIN_LOGIN: ${{ vars.DEVFLOW_TRAIN_LOGIN }}"), steps)
+                self.assertIn("pull-requests: read", text, "the issues listing returns the rollups")
+
+    def test_the_rollup_shape_matches_the_train(self):
+        import devflow_train as train
+
+        self.assertEqual(t.TRAIN_MARKER, train.MANIFEST_MARKER)
+        self.assertEqual(t.TRAIN_BRANCH, train.BRANCH_PREFIX)
+        self.assertEqual(t.TRAIN_ROLLUP_LABEL, train.ROLLUP_LABEL)
+        self.assertEqual(t.bot(t.TRAIN_LOGIN), train.bot_login(train.Config().train_login).lower())
+        built = train.new_manifest(f"{9:040x}", [{"number": 3, "head_sha": f"{3:040x}", "branch": "b", "title": "t"}])
+        built["head_sha"] = f"{81:040x}"
+        issue = {"number": 81, "pull_request": {}, "user": {"login": TRAIN_APP}, "body": train.render_manifest(built)}
+        self.assertEqual(t.rollup_members([issue], TRAIN_APP),
+                         {f"{81:040x}": {"pr": 81, "branch": train.BRANCH_PREFIX + built["id"], "members": [3]}})
 
 
 class Liveness(unittest.TestCase):

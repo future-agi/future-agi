@@ -85,6 +85,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           # Issues and Slack posts only when "live"; otherwise the summary only.
           DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
+          DEVFLOW_TRAIN_LOGIN: ${{ vars.DEVFLOW_TRAIN_LOGIN }}
         run: python3 -I .github/scripts/devflow_tick.py --breaker-only | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/checkout@v4
@@ -100,6 +101,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
+          DEVFLOW_TRAIN_LOGIN: ${{ vars.DEVFLOW_TRAIN_LOGIN }}
           # Optional. A token with the Variables permission lets the tick set
           # APPROVAL_MODE_TIGHT; without it the tick only warns. The current
           # value is the hysteresis state (on above 2%, off below 1.5%).
