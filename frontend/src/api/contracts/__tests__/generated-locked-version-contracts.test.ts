@@ -8,6 +8,7 @@ import {
   SimulateApiHarnessEnvironmentsVersionsResponse,
   SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse,
 } from "src/generated/api-contracts/api.zod";
+import type { HarnessLockRefusalApi } from "src/generated/api-contracts/api.schemas";
 
 // Bodies shaped as simulate/services/harness_versioning/read.py::list_versions sends them.
 const AT = "2026-11-25T10:00:00+00:00";
@@ -169,5 +170,20 @@ describe("generated drafts save response", () => {
     expect(() =>
       SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse.parse(body),
     ).toThrow();
+  });
+});
+
+describe("generated lock refusal", () => {
+  it("types a nullable field of the refusal as null, as the server may send it", () => {
+    // The type-check holds this: a refusal outside the nullable list types piece
+    // as a string only.
+    const refusal: HarnessLockRefusalApi = {
+      error: "version_conflict",
+      message: "The default suite version moved.",
+      retryable: false,
+      piece: null,
+    };
+
+    expect(refusal.piece).toBeNull();
   });
 });
