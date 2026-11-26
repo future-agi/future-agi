@@ -1269,6 +1269,70 @@ class RedHandling(unittest.TestCase):
             "without the file nothing is infra",
         )
 
+    # A real job log: the step header echoes the script (here one that names
+    # the rate-limit signature), then the step's output follows.
+    ECHO = (
+        "2026-11-26T16:55:22.4700000Z ##[group]Run set -eu\n"
+        '2026-11-26T16:55:22.4769612Z \x1b[36;1m    red "Error response from daemon: toomanyrequests: rate limit"\x1b[0m\n'
+        "2026-11-26T16:55:22.4800000Z shell: /usr/bin/bash -e {0}\n"
+        "2026-11-26T16:55:22.4843742Z ##[endgroup]\n"
+    )
+
+    def logs_of(self, text):
+        """failed_job_logs over one failed suite job whose log is `text`."""
+
+        class OneJob(train.GitHub):
+            def call(self, method, path, body=None, ok=(200, 201, 204)):
+                return {
+                    "jobs": [
+                        {"id": 1, "name": "Backend suite", "conclusion": "failure"},
+                        {
+                            "id": 2,
+                            "name": "Backend Tests Pass",
+                            "conclusion": "failure",
+                        },
+                    ]
+                }
+
+            def request(self, method, path, body=None, raw=False):
+                return 200, text
+
+        return OneJob("t", "o/r").failed_job_logs([{"id": 9}], REQUIRED)
+
+    def test_echoed_script_is_not_infra(self):
+        sigs = train.parse_signatures(self.SIGNATURES)
+        log = self.ECHO + (
+            "2026-11-26T16:58:42.5093011Z fullfail/ present: the full suite is red\n"
+            "2026-11-26T16:58:42.5108015Z ##[error]Process completed with exit code 1.\n"
+        )
+        self.assertEqual(
+            train.classify_failure(self.logs_of(log), sigs),
+            "red",
+            "a signature in the echoed step script is source, not output",
+        )
+
+    def test_infra_output_after_an_echo_is_infra(self):
+        sigs = train.parse_signatures(self.SIGNATURES)
+        log = self.ECHO + (
+            "2026-11-26T16:58:42.5093011Z Error response from daemon: toomanyrequests: rate limit\n"
+            "2026-11-26T16:58:42.5108015Z ##[error]Process completed with exit code 1.\n"
+        )
+        self.assertEqual(train.classify_failure(self.logs_of(log), sigs), "infra")
+
+    def test_infra_inside_another_group_is_kept(self):
+        sigs = train.parse_signatures(self.SIGNATURES)
+        log = (
+            "2026-11-26T16:55:20.1000000Z ##[group]Fetching the repository\n"
+            "2026-11-26T16:55:50.1000000Z Error: net/http: TLS handshake timeout\n"
+            "2026-11-26T16:55:50.2000000Z ##[endgroup]\n"
+            "2026-11-26T16:55:50.3000000Z ##[error]The process '/usr/bin/git' failed with exit code 128\n"
+        )
+        self.assertEqual(
+            train.classify_failure(self.logs_of(log), sigs),
+            "infra",
+            "only the echoed Run header is dropped; a tool's own group is output",
+        )
+
     def test_signature_lines(self):
         sigs = {name: rx for name, _, rx in train.parse_signatures(self.SIGNATURES)}
         spanning = "unexpected status from GET\nsomething else 429 x"
