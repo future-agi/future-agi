@@ -412,7 +412,7 @@ const spanSystemFilter = {
   },
 };
 
-async function applyMixedFiltersAndOpenQueue(user) {
+async function applyMixedFilters(user) {
   await user.click(screen.getByRole("button", { name: /mixed catalog/i }));
   await user.click(screen.getByRole("button", { name: /eval-only/i }));
   await user.click(screen.getByRole("button", { name: /toggle errors/i }));
@@ -434,7 +434,10 @@ async function applyMixedFiltersAndOpenQueue(user) {
     expect(state).toHaveAttribute("data-show-errors", "true");
     expect(state).toHaveAttribute("data-show-non-annotated", "true");
   });
+}
 
+async function applyMixedFiltersAndOpenQueue(user) {
+  await applyMixedFilters(user);
   await user.click(screen.getByRole("button", { name: /add selected rows/i }));
   await user.click(await screen.findByText("Manager Queue"));
 }
@@ -468,6 +471,66 @@ describe("LLMTracingView header select-all annotation queue contract", () => {
     };
     harness.traceStore.reset();
     harness.spanStore.reset();
+  });
+
+  // Under select-all, Add to dataset must carry the same filters the
+  // grid sends for its list, or the server falls back to the whole project.
+  it("hands Add to dataset the trace grid's filters under select-all", async () => {
+    const user = userEvent.setup();
+    await renderView();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Header select all traces",
+      }),
+    );
+    await applyMixedFilters(user);
+
+    await waitFor(() => {
+      expect(harness.addDatasetProps).toEqual(
+        expect.objectContaining({
+          currentTab: "trace",
+          selectAll: true,
+          selectedTraces: ["trace-excluded"],
+          selectAllFilters: [
+            traceSystemFilter,
+            FILTER_FOR_HAS_EVAL,
+            ...mixedCatalogFilters,
+            FILTER_FOR_ERRORS,
+            FILTER_FOR_NON_ANNOTATED,
+          ],
+        }),
+      );
+    });
+  });
+
+  it("hands Add to dataset the span grid's filters under select-all", async () => {
+    harness.selectedTab = "spans";
+    const user = userEvent.setup();
+    await renderView();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Header select all spans",
+      }),
+    );
+    await applyMixedFilters(user);
+
+    await waitFor(() => {
+      expect(harness.addDatasetProps).toEqual(
+        expect.objectContaining({
+          currentTab: "spans",
+          selectAll: true,
+          selectAllFilters: [
+            spanSystemFilter,
+            FILTER_FOR_HAS_EVAL,
+            ...mixedCatalogFilters,
+            FILTER_FOR_ERRORS,
+            FILTER_FOR_NON_ANNOTATED,
+          ],
+        }),
+      );
+    });
   });
 
   it("enables only the visible compare grid", async () => {

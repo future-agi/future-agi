@@ -38,6 +38,7 @@ from accounts.models.auth_token import (
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
+from accounts.services.default_workspace import get_or_create_default_workspace
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.levels import Level
 from tfc.ee_gating import is_oss
@@ -770,37 +771,14 @@ class APIKeyAuthentication(BaseAuthentication):
         if org_level is None:
             return None
         try:
-            default_workspace = Workspace.objects.get(
-                organization=organization, is_default=True, is_active=True
+            # A concurrent first login may create it between our read and
+            # insert; the helper then returns that workspace instead.
+            default_workspace, _created = get_or_create_default_workspace(
+                organization, created_by=user
             )
-        except Workspace.DoesNotExist:
-            try:
-                default_workspace = Workspace.objects.create(
-                    name="Default Workspace",
-                    organization=organization,
-                    is_default=True,
-                    is_active=True,
-                    created_by=user,
-                )
-            except IntegrityError as e:
-                if "unique_default_workspace_per_org" in str(e):
-                    try:
-                        default_workspace = Workspace.objects.get(
-                            organization=organization,
-                            is_default=True,
-                            is_active=True,
-                        )
-                    except Workspace.DoesNotExist:
-                        logger.error(
-                            f"Failed to get default workspace after creation conflict: {e}"
-                        )
-                        return None
-                else:
-                    logger.error(f"Failed to create default workspace: {e}")
-                    return None
-            except Exception as e:
-                logger.error(f"Failed to create default workspace: {e}")
-                return None
+        except Exception as e:  # noqa: BLE001 - auth falls back to no workspace
+            logger.error(f"Failed to create default workspace: {e}")
+            return None
 
         # Ensure the user has a workspace membership so that subsequent
         # _user_has_workspace_access checks pass.

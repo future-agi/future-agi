@@ -116,6 +116,7 @@ describe("AddNewDataset", () => {
     expect(payload.mapping_config).toEqual([
       { col_name: "input.text", data_type: "text", span_field: "input.text" },
     ]);
+    expect(payload).not.toHaveProperty("filters");
     await vi.waitFor(() => expect(snackbarSpy).toHaveBeenCalledTimes(1));
     const [message, options] = snackbarSpy.mock.lastCall;
     expect(options.variant).toBe("info");
@@ -123,6 +124,52 @@ describe("AddNewDataset", () => {
     expect(
       screen.getByText(/Rows are still being added in the background/),
     ).toBeInTheDocument();
+  });
+
+  it("sends the grid filters with select-all", async () => {
+    POST.mockResolvedValueOnce({
+      data: {
+        result: { status: "processing", dataset_id: "ds-1" },
+      },
+    });
+    const gridFilters = [
+      {
+        column_id: "created_at",
+        filter_config: {
+          filter_type: "datetime",
+          filter_op: "between",
+          filter_value: [
+            "2026-11-01T00:00:00.000Z",
+            "2026-11-08T00:00:00.000Z",
+          ],
+        },
+      },
+    ];
+
+    renderComponent({
+      selectAll: true,
+      currentTab: "spans",
+      selectedTraces: [],
+      selectedSpans: ["deselected-span"],
+      selectAllFilters: gridFilters,
+    });
+    const user = userEvent.setup();
+    await user.type(
+      screen.getByPlaceholderText("Enter new dataset name"),
+      "filtered-dataset",
+    );
+    await user.click(screen.getByRole("button", { name: /add to dataset/i }));
+
+    await vi.waitFor(() => {
+      expect(POST).toHaveBeenCalledTimes(1);
+    });
+    const [, payload] = POST.mock.lastCall;
+    expect(payload).toMatchObject({
+      select_all: true,
+      span_ids: ["deselected-span"],
+      filters: gridFilters,
+    });
+    expect(payload).not.toHaveProperty("trace_ids");
   });
 
   // ── onSuccess handler: toast variants ────────────────────────────────────

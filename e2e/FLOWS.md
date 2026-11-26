@@ -1099,6 +1099,31 @@
 - the in-document link moves the preview to its page and the external link opens in a new tab
 - a section link scrolls its destination position to the top of the preview, on its own page or another
 
+### DATA-E2E-005 — a missing dataset or deleted Observe project link shows a recovery page that returns to its list
+
+**Goal:** A user who opens a link to a dataset that does not exist, or to an Observe project that was deleted, sees that it is unavailable and goes back to the list instead of waiting on a loading page.
+
+**Spec:** `flows/datasets/unavailable-links.spec.ts:61`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a dataset link whose id matches no dataset
+2. read the "doesn't exist or you don't have access" message and click Back to datasets
+3. land on the dataset list
+4. create two Observe projects through the API and open one of them
+5. delete that project through the API (the Observe list's delete request) and reopen its link
+6. read the same message for the project and click Back to Observe
+7. land on the Observe list, which shows the other project and not the deleted one
+
+**Backend state verified:**
+
+- no Postgres model_hub_dataset row exists for the opened dataset id, and the browser's own dataset read is refused as not found (404, or 400 with the exact missing-dataset message)
+- the deleted project keeps its Postgres tracer_project row in the actor organization, marked deleted, while the other project stays live
+- the browser's project read answers 200 before the delete and is refused as not found after it (404, or 400 with the exact missing-project message)
+- the Observe list read after Back to Observe includes the live project and not the deleted one
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
@@ -3126,6 +3151,31 @@
 - the status line says 3 traces answered and the counts read 2 Yes · 1 No
 - the traces table shows exactly the three seeded traces, each with the same answer as the rows API
 
+### OBS-E2E-071 — select-all add to a new dataset keeps the grid filter, time window and deselections
+
+**Goal:** A developer filters the trace list, narrows the time window, selects all but one trace and gets a new dataset holding exactly those traces
+
+**Spec:** `flows/observe/bulk-add-to-dataset.spec.ts:74`
+
+**Tags:** —
+
+**User steps:**
+
+1. send three matching traces now, one non-matching trace now and two matching traces ten days ago
+2. open the project's trace list and widen the date range to Past 30D
+3. filter by the shared trace name and see all five matching traces
+4. narrow the date range to Past 7D and see only the three recent ones
+5. select all with the header checkbox, then untick one row
+6. Actions → Move to dataset → Add to a new dataset with the default mapping
+7. filter by a trace name that matches nothing, select all and try to add to another new dataset
+
+**Backend state verified:**
+
+- all twelve seeded spans present in CH `spans` (FINAL) under the auto-created project
+- the new dataset has exactly the grid count minus one rows in PG model_hub_row
+- the dataset's `id` cells in PG model_hub_cell are exactly the root spans of the two still-selected recent traces: no unticked, non-matching or out-of-window trace
+- the no-match add is refused with a 400 and the "No rows match the selection." toast, and no dataset of that name exists in PG model_hub_dataset
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -3226,7 +3276,7 @@
 
 **Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
 
-**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+**Spec:** `flows/settings/api-key-expiry.spec.ts:34`
 
 **Tags:** —
 

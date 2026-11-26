@@ -1361,7 +1361,11 @@ class AttributeReadSelector:
         except Exception as exc:
             if not is_read_budget_error(exc):
                 raise
-            logger.warning("attribute_retained_window_metadata_budget_exceeded")
+            # The class only: driver messages can echo SQL and server detail.
+            logger.warning(
+                "attribute_retained_window_metadata_budget_exceeded",
+                error_class=type(exc).__name__,
+            )
             return ATTRIBUTE_READ_FALLBACK_RETAINED_START
         if len(rows) != 1:
             raise IncompleteLatestStateReplay(
