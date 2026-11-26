@@ -13,7 +13,16 @@ const ROLE_FALLBACK = {
 
 // Design system: renders through the shared StatusBadge and the one status map,
 // so an environment's status looks like every other status in the product.
-export default function StatusPill({ status, progress }) {
+export default function StatusPill({ status, progress, awaitingApproval }) {
+  if (awaitingApproval && status === ENV_STATUS.BUILDING) {
+    return (
+      <StatusBadge
+        status="needs_review"
+        label="Awaiting approval"
+        role="warning"
+      />
+    );
+  }
   const meta = STATUS_META[status] || STATUS_META.not_run;
   const detail =
     status === ENV_STATUS.BUILDING && progress
@@ -34,6 +43,7 @@ export default function StatusPill({ status, progress }) {
 
 StatusPill.propTypes = {
   status: PropTypes.string,
+  awaitingApproval: PropTypes.bool,
   progress: PropTypes.shape({
     done: PropTypes.number,
     total: PropTypes.number,

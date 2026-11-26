@@ -33,6 +33,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
         <StatusPill
           status={getValue()}
           progress={row?.original?.buildProgress}
+          awaitingApproval={row?.original?.awaitingApproval}
         />
       ),
     },

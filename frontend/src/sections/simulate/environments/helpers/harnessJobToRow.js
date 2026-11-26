@@ -135,6 +135,8 @@ export function harnessEnvToRow(item) {
     // rather than defaulted — inventing "building"/"chat" for a missing value
     // would hide a real data gap. `agent_type` is one of two modalities.
     status: envStatusFor(item?.stage, item?.status),
+    // Still building, but waiting on the person to approve its sources.
+    awaitingApproval: item?.stage === "awaiting_source_review",
     agentType: ENV_AGENT_TYPE[item?.agent_type],
     updatedAt: item?.last_updated ?? item?.created_at ?? null,
     description: item?.description ?? null,
