@@ -17,7 +17,6 @@ from simulate.services import ask_engine
 from simulate.services.ask_selection import (
     FrozenSelection,
     LaunchRefused,
-    Question,
     SelectionKind,
     check_before_launch,
     freeze_selection,
@@ -68,9 +67,9 @@ def check_run_ask(
 ) -> dict[str, Any]:
     """The check's counts and cost, with ``refusal`` saying why the launch would
     be refused now (or None). A refusal about the selection itself is raised."""
-    questions = [
-        Question(one.name, one.kinds, one.decision_model) for one in definitions
-    ]
+    # The same questions and gate as the launch (ask_engine.launch_ask), so the
+    # check never says yes to what the launch would refuse.
+    questions = [definition.as_question() for definition in definitions]
     shown = check_before_launch(
         selection,
         questions,
@@ -83,6 +82,11 @@ def check_run_ask(
             workspace_id=selection.workspace_id,
             questions=questions,
             answers=shown["answers"],
+            priced_answers=sum(
+                one["ready"]
+                for question, one in zip(questions, shown["questions"], strict=True)
+                if not question.priced_by_use
+            ),
         )
         refusal = None
     except LaunchRefused as refused:
