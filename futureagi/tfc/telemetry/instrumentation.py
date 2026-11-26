@@ -172,13 +172,20 @@ def instrument_mistralai() -> bool:
 
 def instrument_litellm() -> bool:
     """Instrument LiteLLM for unified LLM provider tracing (100+ providers)."""
-    return _instrument_library(
+    instrumented = _instrument_library(
         "litellm",
         "traceai_litellm",
         "LiteLLMInstrumentor",
         use_tracer_provider=True,
         via="traceai",
     )
+    if instrumented:
+        # Older traceai-litellm stream wrappers raise IndexError on chunks
+        # with no choices (e.g. Azure's prompt-filter chunk); let those through.
+        from .traceai_litellm_compat import patch_traceai_litellm_stream_wrappers
+
+        patch_traceai_litellm_stream_wrappers()
+    return instrumented
 
 
 # =============================================================================

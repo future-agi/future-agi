@@ -1780,7 +1780,14 @@ class TestAdditionalCoverage:
         "pending" means nobody has asked since the run last changed, so a
         script waiting on it would wait forever; the answer says so."""
         test_execution.eval_explanation_summary_status = summary_status
-        test_execution.save(update_fields=["eval_explanation_summary_status"])
+        # A job that is alive: asked for just now.
+        test_execution.eval_explanation_summary_last_updated = timezone.now()
+        test_execution.save(
+            update_fields=[
+                "eval_explanation_summary_status",
+                "eval_explanation_summary_last_updated",
+            ]
+        )
         with (
             patch(
                 "sdk.views.analytics._get_eval_configs_with_template"
@@ -1803,6 +1810,28 @@ class TestAdditionalCoverage:
         result = response.json()["result"]
         assert result["eval_explanation_summary_status"] == summary_status
         assert result["eval_explanation_summary_requested"] is requested
+
+    def test_a_script_can_ask_for_the_summary_with_its_api_keys(
+        self, sdk_client, test_execution
+    ):
+        """No SDK method starts the summary; a script with the SDK's API keys
+        asks for it through the same refresh route the app's button calls."""
+        test_execution.eval_explanation_summary_status = "pending"
+        test_execution.save(update_fields=["eval_explanation_summary_status"])
+        with patch(
+            "simulate.tasks.eval_summary_tasks.run_eval_summary_task.apply_async"
+        ) as queued:
+            response = sdk_client.post(
+                f"/simulate/test-executions/{test_execution.id}"
+                "/eval-explanation-summary/refresh/",
+                {},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        queued.assert_called_once_with(args=(str(test_execution.id),))
+        test_execution.refresh_from_db()
+        assert test_execution.eval_explanation_summary_status == "running"
 
     def test_pagination_page_2_returns_different_data(
         self, sdk_client, run_test, scenario, db

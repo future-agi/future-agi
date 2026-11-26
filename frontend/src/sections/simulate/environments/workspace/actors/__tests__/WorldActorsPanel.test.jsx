@@ -11,6 +11,7 @@ import { CLEAN, cast, typedActor } from "./castFixtures";
 
 const mutate = vi.fn();
 const acceptMutate = vi.fn();
+const roleMutate = vi.fn();
 const resetEdit = vi.fn();
 const refetch = vi.fn();
 let editState;
@@ -22,6 +23,11 @@ let asked;
 // Save tests use the real hooks over a mocked axios; the rest use these stand-ins.
 let realHooks = false;
 let viewState;
+
+let canEdit;
+vi.mock("src/sections/simulate/environments/hooks/useSimulationAccess", () => ({
+  default: () => ({ canEdit, canRun: canEdit }),
+}));
 
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
@@ -58,6 +64,10 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       realHooks
         ? real.useAcceptUnresolved(...args)
         : { mutate: acceptMutate, reset: vi.fn(), isPending: false },
+    useSetFileRole: (...args) =>
+      realHooks
+        ? real.useSetFileRole(...args)
+        : { mutate: roleMutate, reset: vi.fn(), isPending: false },
     useUploadEnvironmentFile: (...args) =>
       realHooks
         ? real.useUploadEnvironmentFile(...args)
@@ -435,6 +445,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
 
 describe("WorldActorsPanel", () => {
   beforeEach(() => {
+    canEdit = true;
     mutate.mockReset();
     resetEdit.mockReset();
     refetch.mockReset();
@@ -444,6 +455,53 @@ describe("WorldActorsPanel", () => {
     viewState = null;
     answer = CLEAN;
     asked = undefined;
+  });
+
+  it("lists every attached file with its role, evaluator-only ones too, and changes a role at the cast's revision", () => {
+    roleMutate.mockReset();
+    actorsData = cast([MANAGER], {
+      revision: 5,
+      knowledge_sources: {
+        files: ["knowledge/refunds.md"],
+        records: [],
+        roles: {
+          "knowledge/refunds.md": "policy",
+          "knowledge/answer-key.md": "evaluator_only",
+        },
+      },
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    const card = within(screen.getByTestId("file-roles"));
+    expect(card.getByLabelText("answer-key.md")).toHaveTextContent(
+      "Evaluator only",
+    );
+    fireEvent.mouseDown(card.getByLabelText("refunds.md"));
+    fireEvent.click(screen.getByRole("option", { name: "Seed records" }));
+    expect(roleMutate).toHaveBeenCalledWith({
+      path: "knowledge/refunds.md",
+      role: "seed_records",
+      revision: 5,
+    });
+  });
+
+  it("shows a viewer each file's role without letting them change it", () => {
+    canEdit = false;
+    actorsData = cast([MANAGER], {
+      knowledge_sources: {
+        files: ["knowledge/refunds.md"],
+        records: [],
+        roles: { "knowledge/refunds.md": "policy" },
+      },
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    const card = within(screen.getByTestId("file-roles"));
+    expect(card.getByLabelText("refunds.md")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(
+      card.getByText("You don't have permission to edit this environment."),
+    ).toBeInTheDocument();
   });
 
   it("shows a skeleton while loading, with no count and nothing to add yet", () => {

@@ -233,6 +233,55 @@ def _refuse_empty_summary(*, template, mappings, **_):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("writer", ["native", "activity"])
+def test_the_refusal_reaches_both_writers_through_the_real_evaluator(
+    writer, eval_config, call_execution
+):
+    """The refusal passes through ``run_eval_func``'s own error handler on
+    its way to the writer. Only billing and the engine below the input check
+    are stubbed here: if that handler ever wrapped or converted the error,
+    the writers would store an evaluator error again, and this fails."""
+    from unittest.mock import MagicMock
+
+    engine = MagicMock()
+    engine.run.side_effect = AssertionError("the engine ran on an empty input")
+    with (
+        patch(
+            "model_hub.views.utils.evals.EvaluationRunner._create_eval_instance",
+            return_value=engine,
+        ),
+        patch("model_hub.views.utils.evals.log_and_deduct_cost_for_api_request", None),
+        patch(
+            "ee.usage.services.metering.check_usage",
+            return_value=MagicMock(allowed=True),
+        ),
+        patch("simulate.services.test_executor.close_old_connections", lambda: None),
+        patch("simulate.temporal.activities.xl.close_old_connections", lambda: None),
+    ):
+        if writer == "native":
+            from simulate.services.test_executor import TestExecutor
+
+            graded = TestExecutor()._run_single_simulate_evaluation(
+                eval_config, call_execution, dict(TRANSCRIPT_DATA)
+            )
+        else:
+            from simulate.temporal.activities.xl import _run_single_evaluation
+
+            graded = _run_single_evaluation(
+                eval_config, call_execution, dict(TRANSCRIPT_DATA)
+            )
+
+    # The callers log a graded eval only; the skip is logged by the grader.
+    assert graded is False
+    engine.run.assert_not_called()
+    call_execution.refresh_from_db()
+    stored = call_execution.eval_outputs[str(eval_config.id)]
+    assert stored["status"] == "skipped"
+    assert stored["reason_code"] == INPUT_MISSING
+    assert stored["missing_fields"] == ["summary"]
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("writer", [_native, _activity], ids=["native", "activity"])
 def test_an_empty_input_is_stored_as_missing_not_as_an_error(
     writer, eval_config, call_execution

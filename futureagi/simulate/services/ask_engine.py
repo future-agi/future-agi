@@ -41,6 +41,7 @@ from typing import Any
 
 import structlog
 from django.db import connection, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.views.utils.evals import run_eval_func
@@ -88,12 +89,16 @@ GRADING_THREADS = MAX_GRADING_AT_ONCE_PER_ORG
 GRADING_GIVE_UP = timedelta(minutes=30)
 # How long a grading waits for a free place under the organisation's limit.
 BUSY_WAIT_SECONDS = 2
+# The wait doubles while the organisation stays at its limit, up to this.
+MAX_BUSY_WAIT_SECONDS = 30
 # The job's own ceiling: at most 200 calls x 5 questions, 4 at a time.
 RUN_TIME_LIMIT_SECONDS = 6 * 60 * 60
 # After this long since a launch, no job is still working on its ask.
 SETTLE_AFTER = timedelta(seconds=RUN_TIME_LIMIT_SECONDS) + GRADING_GIVE_UP
+SETTLE_MARGIN = timedelta(minutes=5)
 # The source the evaluator's log row and usage name.
 EVAL_SOURCE = "simulate_ask"
+ROW_ID_KEY = "simulate_ask_result_id"
 
 # How a kind is named above its value in a typed question's criteria.
 KIND_LABELS = {
@@ -379,6 +384,28 @@ def question_version(definition: Definition, template_id: str, version: int) -> 
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 
+# Every template field the library's update view can change in place, without a new
+# version, that decides how a row is graded. Name, description and tags do not.
+_GRADED_TEMPLATE_FIELDS = (
+    "config",
+    "model",
+    "choices",
+    "choice_scores",
+    "multi_choice",
+    "eval_type",
+    "pass_threshold",
+    "output_type_normalized",
+    "criteria",
+)
+
+
+def template_digest(template) -> str:
+    """A hash of what the template grades with, as it is stored now."""
+    graded = {name: getattr(template, name) for name in _GRADED_TEMPLATE_FIELDS}
+    encoded = json.dumps(graded, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
 # --- the template, saved as Instant Eval saves one --------------------------------------
 
 
@@ -539,6 +566,14 @@ def launch_ask(
     definitions = list(definitions)
     if len({definition.key for definition in definitions}) != len(definitions):
         raise LaunchRefused("questions", "Each question needs its own key.")
+    longest = (
+        getattr(SimulateEvalResult._meta.get_field("question_key"), "max_length", None)
+        or 255
+    )
+    if any(len(definition.key) > longest for definition in definitions):
+        raise LaunchRefused(
+            "questions", f"A question's key is at most {longest} characters."
+        )
     checked = [definition.as_question() for definition in definitions]
     shown = check_before_launch(
         selection, checked, organization=organization, workspace_id=workspace_id
@@ -574,11 +609,14 @@ def launch_ask(
                     user=asked_by,
                     at=at + timedelta(seconds=index),
                 )
+            # Read back as stored, so a grading compares like with like.
+            template.refresh_from_db()
             questions.append(
                 {
                     **definition.as_json(),
                     "eval_template_id": str(template.id),
                     "template_version": version,
+                    "template_digest": template_digest(template),
                     "version": question_version(definition, str(template.id), version),
                 }
             )
@@ -639,21 +677,39 @@ def _configured_template(definition: Definition, organization):
 
 
 def _queue(ask_id) -> None:
+    _queue_settle(ask_id)
     try:
         started = run_ask.apply_async(
             args=(str(ask_id),), task_id=f"simulate-ask-{ask_id}"
         )
     except Exception:
         logger.exception("simulate_ask_queue_refused", ask_id=str(ask_id))
-        now = timezone.now()
-        _results().filter(ask_id=ask_id, state=RESULT.PENDING).update(
+        # A start whose response was lost may still have started the job: a row it
+        # claimed is left to it, and the later settle closes what it leaves.
+        _results().filter(
+            ask_id=ask_id, state=RESULT.PENDING, claimed_at__isnull=True
+        ).update(
             state=RESULT.INFRASTRUCTURE_ERROR,
             cause="queue_refused",
-            finished_at=now,
+            finished_at=timezone.now(),
         )
-        _asks().filter(id=ask_id).update(status=SimulateAsk.Status.FINISHED)
+        _finish(ask_id)
         return
     _asks().filter(id=ask_id).update(engine_run_id=str(getattr(started, "id", "")))
+
+
+def _queue_settle(ask_id) -> None:
+    """Settle the ask once no delivery of its job can still be working: after the
+    job's time limit and the give-up time for its last claims."""
+    try:
+        settle_ask_later.apply_async(
+            args=(str(ask_id),),
+            task_id=f"simulate-ask-settle-{ask_id}",
+            start_delay=SETTLE_AFTER + SETTLE_MARGIN,
+        )
+    except Exception:
+        # A reader settles the ask too; nothing is lost but the timing.
+        logger.exception("simulate_ask_settle_queue_refused", ask_id=str(ask_id))
 
 
 # --- the job ------------------------------------------------------------------------
@@ -661,42 +717,46 @@ def _queue(ask_id) -> None:
 
 @temporal_activity(
     time_limit=RUN_TIME_LIMIT_SECONDS,
-    max_retries=0,
+    # A worker restart (a deploy) delivers the job again: the claim makes that
+    # safe, and the new delivery grades only the rows nobody took.
+    max_retries=2,
     queue="tasks_l",
 )
 def run_ask(ask_id: str) -> None:
     """Grade every row of one ask nobody has taken, then close the ask. A row whose
     worker died is closed as an infrastructure error and not run again."""
-    pending = list(
-        _results()
-        .filter(ask_id=ask_id, state=RESULT.PENDING, claimed_at__isnull=True)
-        .order_by("created_at", "id")
-        .values_list("id", flat=True)
-    )
-    deadline = time.monotonic() + RUN_TIME_LIMIT_SECONDS - 300
-    if GRADING_THREADS <= 1:
-        for row_id in pending:
-            _grade_when_free(str(row_id), deadline)
-    else:
-        from concurrent.futures import ThreadPoolExecutor
+    try:
+        pending = list(
+            _results()
+            .filter(ask_id=ask_id, state=RESULT.PENDING, claimed_at__isnull=True)
+            .order_by("created_at", "id")
+            .values_list("id", flat=True)
+        )
+        deadline = time.monotonic() + RUN_TIME_LIMIT_SECONDS - 300
+        if GRADING_THREADS <= 1:
+            for row_id in pending:
+                _grade_one(str(row_id), deadline)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
 
-        with ThreadPoolExecutor(max_workers=GRADING_THREADS) as pool:
-            list(
-                pool.map(
-                    lambda row_id: _in_thread(_grade_when_free, str(row_id), deadline),
-                    pending,
+            with ThreadPoolExecutor(max_workers=GRADING_THREADS) as pool:
+                list(
+                    pool.map(
+                        lambda row_id: _in_thread(_grade_one, str(row_id), deadline),
+                        pending,
+                    )
                 )
-            )
-    # Rows still waiting for a free place when the job's time ran out are not
-    # run by anyone; claimed rows of a second delivery are left to it.
-    _results().filter(
-        ask_id=ask_id, state=RESULT.PENDING, claimed_at__isnull=True
-    ).update(
-        state=RESULT.INFRASTRUCTURE_ERROR,
-        cause="not_run",
-        finished_at=timezone.now(),
-    )
-    settle_ask(ask_id)
+    finally:
+        # Rows still waiting for a free place when the job's time ran out are not
+        # run by anyone; claimed rows of another delivery are left to it.
+        _results().filter(
+            ask_id=ask_id, state=RESULT.PENDING, claimed_at__isnull=True
+        ).update(
+            state=RESULT.INFRASTRUCTURE_ERROR,
+            cause="not_run",
+            finished_at=timezone.now(),
+        )
+        settle_ask(ask_id)
 
 
 def settle_ask(ask_id) -> None:
@@ -718,33 +778,84 @@ def settle_ask(ask_id) -> None:
     _finish(ask_id)
 
 
+@temporal_activity(time_limit=600, max_retries=3, queue="tasks_s")
+def settle_ask_later(ask_id: str) -> None:
+    """``settle_ask``, queued at launch to run after every delivery of the job is
+    over, so an ask whose job died is closed without waiting for a reader."""
+    settle_ask(ask_id)
+
+
 def _in_thread(work, *args):
-    from django.db import close_old_connections
+    from django.db import close_old_connections, connections
 
     close_old_connections()
     try:
         return work(*args)
     finally:
-        close_old_connections()
+        # The pool's threads end with the job: release their connections now.
+        connections.close_all()
+
+
+def _grade_one(row_id: str, deadline: float) -> str:
+    """One row, isolated: a failure here is logged and leaves the others running;
+    the job's close and settle still run."""
+    try:
+        return _grade_when_free(row_id, deadline)
+    except Exception:  # noqa: BLE001 - logged; one row must not end the job
+        logger.exception("simulate_ask_row_failed", row_id=row_id)
+        return "failed"
 
 
 def _grade_when_free(row_id: str, deadline: float) -> str:
+    wait = BUSY_WAIT_SECONDS
     while True:
+        if time.monotonic() >= deadline:
+            # Past the job's time, nothing more is graded or charged.
+            return "not_run"
         outcome = grade_row(row_id)
-        if outcome != "busy" or time.monotonic() >= deadline:
+        if outcome != "busy":
             return outcome
-        time.sleep(BUSY_WAIT_SECONDS)
+        time.sleep(wait)
+        wait = min(wait * 2, MAX_BUSY_WAIT_SECONDS)
 
 
 def _close_dead(ask_id) -> None:
-    _results().filter(
+    """A claim older than the give-up time lost its worker. Its row is closed, and
+    names the evaluator's log row when the evaluator had been called."""
+    dead = _results().filter(
         ask_id=ask_id,
         state=RESULT.PENDING,
         claimed_at__lt=timezone.now() - GRADING_GIVE_UP,
-    ).update(
-        state=RESULT.INFRASTRUCTURE_ERROR,
-        cause="worker_died",
-        finished_at=timezone.now(),
+    )
+    for row_id, organization_id, claimed in dead.values_list(
+        "id", "organization_id", "claimed_at"
+    ):
+        _results().filter(id=row_id, state=RESULT.PENDING, claimed_at=claimed).update(
+            state=RESULT.INFRASTRUCTURE_ERROR,
+            cause="worker_died",
+            evaluator_log_id=_logged_call(row_id, organization_id),
+            finished_at=timezone.now(),
+        )
+
+
+def _logged_call(row_id, organization_id):
+    """The evaluator's log row for this grading, if the evaluator was called: the
+    grading passes the row's id in the config the log row keeps."""
+    from django.apps import apps
+
+    try:
+        log_model = apps.get_model("usage", "APICallLog")
+    except LookupError:
+        return None
+    # The log row keeps its config as JSON text; the row id is a UUID.
+    return (
+        log_model.objects.filter(
+            organization_id=organization_id,
+            source=EVAL_SOURCE,
+            config__icontains=str(row_id),
+        )
+        .values_list("log_id", flat=True)
+        .first()
     )
 
 
@@ -916,7 +1027,12 @@ def _grade(row) -> dict[str, Any]:
     if _too_large(question["model"], template, values, question["criteria"]):
         return {"state": RESULT.UNMEASURED, "cause": "too_large", "evidence": evidence}
     organization = row.ask.organization
-    run_config: dict[str, Any] = {"run_config": {"model": question["model"]}}
+    # The row's id travels into the evaluator's log row, so a row closed as a dead
+    # worker's can still name the call that was charged.
+    run_config: dict[str, Any] = {
+        "run_config": {"model": question["model"]},
+        ROW_ID_KEY: str(row.id),
+    }
     if question["criteria"] != question.get("own_criteria", question["criteria"]):
         # A configured eval's block: sent with this grading, not saved on the
         # template. The evaluator reads a rule prompt it is given over the
@@ -972,18 +1088,20 @@ def _grade(row) -> dict[str, Any]:
 
 
 def _as_launched(template, question: Mapping[str, Any], organization_id) -> bool:
-    """Whether the template still asks what the launch saved: its instructions,
-    model, answer labels and current version."""
+    """Whether the template still grades what the launch saved: every field the
+    library can change in place, and its current version."""
     from model_hub.models.evals_metric import EvalTemplateVersion
 
     current = EvalTemplateVersion.objects.get_default(template)
     return (
         # A system template, or the ask's own organisation's.
         template.organization_id in (None, organization_id)
+        # The criteria may be held by the current version, outside the digest.
         and _own_criteria(template)[0]
         == question.get("own_criteria", question["criteria"])
         and template.model == question["model"]
         and list(_labels_of(template)) == list(question["labels"])
+        and template_digest(template) == question.get("template_digest")
         and (None if current is None else current.version_number)
         == question["template_version"]
     )
@@ -1160,8 +1278,13 @@ def _write(row, claimed, **fields) -> None:
         .update(**fields, finished_at=timezone.now())
     )
     if not written:
-        # Closed as a dead worker's row meanwhile; that row stands.
+        # Closed as a dead worker's row meanwhile; that row stands, but it names
+        # the evaluator's log row, since this grading was charged.
         logger.warning("simulate_ask_result_already_closed", row_id=str(row.id))
+        if fields.get("evaluator_log_id"):
+            _results().filter(id=row.id, evaluator_log_id__isnull=True).update(
+                evaluator_log_id=fields["evaluator_log_id"]
+            )
 
 
 def _stop(row, claimed, cause: str) -> None:
@@ -1184,12 +1307,21 @@ def _stop(row, claimed, cause: str) -> None:
 
 
 def result_counts(ask: SimulateAsk) -> dict[str, dict[str, Any]]:
-    """For each question: requested, the six counts, pending, and the rate with its
+    """For each question: requested, the six counts, pending, the calls gone since
+    (a call, run or run test deleted: its rows are left out), and the rate with its
     denominator (answers only; errors and unmeasured are never in it)."""
-    rows = _results().filter(ask=ask).values_list("question_key", "state", "label")
+    rows = _results().filter(ask=ask)
+    deleted = (
+        Q(call_execution__deleted=True)
+        | Q(call_execution__test_execution__deleted=True)
+        | Q(call_execution__test_execution__run_test__deleted=True)
+    )
+    gone = Counter(rows.filter(deleted).values_list("question_key", flat=True))
     by_question: dict[str, Counter] = {}
     labels: dict[str, Counter] = {}
-    for key, state, label in rows:
+    for key, state, label in rows.exclude(deleted).values_list(
+        "question_key", "state", "label"
+    ):
         by_question.setdefault(key, Counter())[state] += 1
         if state == RESULT.ANSWERED and label is not None:
             labels.setdefault(key, Counter())[label] += 1
@@ -1202,6 +1334,7 @@ def result_counts(ask: SimulateAsk) -> dict[str, dict[str, Any]]:
             "requested": requested,
             **{state.value: seen.get(state.value, 0) for state in COUNTED_STATES},
             "pending": seen.get(RESULT.PENDING.value, 0),
+            "calls_gone": gone.get(key, 0),
             "rate": {
                 "answered": seen.get(RESULT.ANSWERED.value, 0),
                 "labels": dict(labels.get(key, Counter())),

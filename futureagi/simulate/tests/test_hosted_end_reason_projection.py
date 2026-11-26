@@ -7,6 +7,9 @@ import pytest
 from simulate.models import CallExecution
 from simulate.services import alk_simulate_ingestion, hosted_harness_ingestion
 
+# A run job pinned to no suite and environment version: no proof to read.
+_UNPINNED_JOB = SimpleNamespace(suite_version_id=None, environment_version_id=None)
+
 
 @pytest.fixture
 def projected_call(monkeypatch):
@@ -60,7 +63,7 @@ def apply_receipt(call, *, stop_reason=None, provider_reason=None, no_call=False
         "call": call_data,
     }
     hosted_harness_ingestion._apply_receipt_to_call(
-        SimpleNamespace(call_execution=call, job=SimpleNamespace(), scenario_key="s"),
+        SimpleNamespace(call_execution=call, job=_UNPINNED_JOB, scenario_key="s"),
         body,
     )
     return body
@@ -112,7 +115,7 @@ def test_replacement_receipt_clears_prior_provider_and_harness_end_reason(
 
 def _apply_ungraded_receipt(call, failure):
     hosted_harness_ingestion._apply_receipt_to_call(
-        SimpleNamespace(call_execution=call, job=SimpleNamespace(), scenario_key="s"),
+        SimpleNamespace(call_execution=call, job=_UNPINNED_JOB, scenario_key="s"),
         {
             "digest": "ungraded",
             "status": "errored" if failure else "failed",
@@ -160,7 +163,7 @@ def test_a_completed_trial_with_missing_verdicts_is_a_grading_failure(
 def test_a_grading_failure_names_the_sub_goals_that_were_not_measured(projected_call):
     hosted_harness_ingestion._apply_receipt_to_call(
         SimpleNamespace(
-            call_execution=projected_call, job=SimpleNamespace(), scenario_key="s"
+            call_execution=projected_call, job=_UNPINNED_JOB, scenario_key="s"
         ),
         {
             "digest": "partly-measured",
@@ -176,3 +179,39 @@ def test_a_grading_failure_names_the_sub_goals_that_were_not_measured(projected_
     )
     message = projected_call.call_metadata["harness_grading_error"]
     assert "(1/3 executed, 1 not measured)" in message
+
+
+def test_a_trial_s_unverified_checks_are_looked_up_by_its_case_never_by_its_execution_key(
+    projected_call, monkeypatch
+):
+    asked = []
+
+    def unverified(job, scenario_key, checks=None):
+        asked.append(scenario_key)
+        return ["applied"] if scenario_key == "live-manager-negotiates-discount" else []
+
+    monkeypatch.setattr(hosted_harness_ingestion, "unverified_checks", unverified)
+    # The receipt names the trial's own hashed execution key; the case is the execution's source scenario.
+    execution = SimpleNamespace(
+        call_execution=projected_call,
+        job=_UNPINNED_JOB,
+        execution_key="c68f6735ada85331aaf372a2245c6899",
+        source_scenario=SimpleNamespace(
+            scenario_key="live-manager-negotiates-discount"
+        ),
+    )
+
+    hosted_harness_ingestion._apply_receipt_to_call(
+        execution,
+        {
+            "digest": "unverified",
+            "scenario_key": "c68f6735ada85331aaf372a2245c6899",
+            "status": "failed",
+            "call": None,
+            "sub_goals": [{"name": "applied", "held": False, "verdict": "fail"}],
+            "failure": None,
+        },
+    )
+
+    assert asked == ["live-manager-negotiates-discount"]
+    assert projected_call.call_metadata["harness_outcome_status"] == "no_score"

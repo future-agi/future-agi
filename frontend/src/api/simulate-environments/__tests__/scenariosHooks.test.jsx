@@ -10,12 +10,18 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
     scenarioCoverage: vi.fn(),
+    getRunningScenarioValidation: vi.fn(),
+    restoreScenario: vi.fn(),
   };
 });
 
-const { listScenarios, amendScenarios, scenarioCoverage } = await import(
-  "src/api/simulate-environments/scenarios"
-);
+const {
+  listScenarios,
+  amendScenarios,
+  scenarioCoverage,
+  getRunningScenarioValidation,
+  restoreScenario,
+} = await import("src/api/simulate-environments/scenarios");
 const { queryScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -25,7 +31,10 @@ const {
   useAmendScenarios,
   useScenarioCoverage,
   harnessScenarioCoverageKey,
+  useRunningScenarioValidation,
+  useArchiveScenario,
 } = await import("../scenariosHooks");
+const { draftsKey } = await import("../versions");
 
 const wrapper = ({ children }) => {
   const client = new QueryClient({
@@ -205,4 +214,59 @@ describe("useScenarioCoverage", () => {
     expect(result.current.fetchStatus).toBe("idle");
     expect(scenarioCoverage).not.toHaveBeenCalled();
   });
+});
+
+describe("useRunningScenarioValidation", () => {
+  it("reads the scenarios and the run plan again once the running validation ends", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const own = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    own.propTypes = { children: PropTypes.node };
+    getRunningScenarioValidation.mockResolvedValueOnce({ job_id: "val-1" });
+    const { result } = renderHook(() => useRunningScenarioValidation("env-1"), {
+      wrapper: own,
+    });
+    await waitFor(() => expect(result.current.data?.job_id).toBe("val-1"));
+    expect(invalidate).not.toHaveBeenCalled();
+
+    getRunningScenarioValidation.mockResolvedValueOnce({});
+    await result.current.refetch();
+    await waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: expect.arrayContaining(["run-plan"]),
+      }),
+    );
+  });
+});
+
+describe("useArchiveScenario", () => {
+  it.each([
+    [false, true],
+    [true, false],
+  ])(
+    "reads the unsaved changes again only when a restore lands there (live %s)",
+    async (live, refreshed) => {
+      const client = new QueryClient();
+      const invalidate = vi.spyOn(client, "invalidateQueries");
+      const own = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      own.propTypes = { children: PropTypes.node };
+      restoreScenario.mockResolvedValue({ live, lifecycle: {} });
+      const { result } = renderHook(() => useArchiveScenario("env-1"), {
+        wrapper: own,
+      });
+      await result.current.mutateAsync({ key: "k1", restore: true });
+      const keys = invalidate.mock.calls.map(([one]) => one.queryKey);
+      expect(
+        keys.some(
+          (key) => JSON.stringify(key) === JSON.stringify(draftsKey("env-1")),
+        ),
+      ).toBe(refreshed);
+    },
+  );
 });
