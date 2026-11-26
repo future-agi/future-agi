@@ -790,6 +790,31 @@ class TestProductionOnlyTasks:
             blocked
         )
 
+    def test_a_backfilled_key_still_meets_its_production_only_tool(
+        self, auth_client, user, workspace, storage, settings
+    ):
+        settings.HARNESS_ACTORS_ENABLED = True
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        blocked = {f"s{index}" for index in range(5)}
+        _needs_production(environment, blocked)
+        # Their rows were backfilled under other keys: the suite documents still key
+        # them by name, as the backfill paired them.
+        for index in range(5):
+            HostedHarnessScenario.all_objects.filter(
+                job=environment, scenario_key=f"s{index}"
+            ).update(scenario_key=f"legacy-{index}")
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=environment.suite_version_id, scenario_key=f"s{index}"
+            ).update(scenario_key=f"legacy-{index}")
+
+        lock = _preview(auth_client, environment)
+        response = _lock(auth_client, environment)
+
+        assert (lock["train"], lock["test"]) == (15 - target_test_size(15), 5)
+        assert response.status_code == 200, response.content
+        assert set(_splits(environment)) == {f"s{index}" for index in range(5, 20)}
+
     def test_with_actors_off_every_task_splits_and_the_preview_stays_off_documents(
         self, auth_client, user, workspace, storage, settings
     ):
