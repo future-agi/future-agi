@@ -65,8 +65,78 @@ test('OBS-E2E-070: reconcile scoped spans and skill-version cohorts', { tag:['@f
   const rows = (await res.json()).result.table as {span_id:string;trace_id:string}[];
   expect(rows.map(row=>row.span_id).sort()).toEqual((await read()).map(row=>row.id));
   expect(rows.some(row=>row.trace_id===other)).toBe(false);
+  type CohortRequestBody = { projection?: unknown; project_id?: unknown; from?: unknown; to?: unknown;
+    filters?: Array<{ column_id?: unknown; group?: unknown; filter_config?: { col_type?: unknown; filter_type?: unknown; filter_op?: unknown; filter_value?: unknown; }; }>; };
+  type CohortObservation = | { observed: false } | { observed: true; status: number; complete: boolean; traces: number | null };
+  const cohortObservation = page.waitForResponse((response) => {
+    if (response.request().method() !== 'POST') return false;
+    let pathname: string;
+    let body: CohortRequestBody;
+    try {
+      pathname = new URL(response.url()).pathname;
+      body = response.request().postDataJSON() as CohortRequestBody;
+    } catch {
+      return false;
+    }
+    const hasVersion = body.filters?.some((entry) =>
+      entry.column_id === 'skill.version_id'
+      && entry.filter_config?.col_type === 'SKILL'
+      && entry.filter_config?.filter_type === 'text'
+      && entry.filter_config?.filter_op === 'equals'
+      && entry.filter_config?.filter_value === s.refund.version.id
+      && (entry.group ?? 0) === 0,
+    ) ?? false;
+    if (
+      !pathname.endsWith('/tracer/trace/skill-projection/')
+      || body.projection !== 'cohort'
+      || body.project_id !== project.id
+      || typeof body.from !== 'string'
+      || typeof body.to !== 'string'
+    ) return false;
+    const from = Date.parse(body.from);
+    const to = Date.parse(body.to);
+    return Number.isFinite(from) && Number.isFinite(to) && from < to && hasVersion;
+  }, {timeout: 0}).then(async (response): Promise<CohortObservation> => {
+    const status = response.status();
+    if (status !== 200) return {observed: true, status, complete: false, traces: null};
+    const completionError = await response.finished().catch(() => new Error('incomplete'));
+    if (completionError) return {observed: true, status, complete: false, traces: null};
+    try {
+      const payload = await response.json() as {result?: {summary?: {traces?: unknown}}};
+      const value = payload?.result?.summary?.traces;
+      const traces = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+      return {observed: true, status, complete: true, traces};
+    } catch {
+      return {observed: true, status, complete: false, traces: null};
+    }
+  }).catch((): CohortObservation => ({observed: false}));
+
   expect(await list(page,project.id,versionFilter)).toEqual([t]);
-  await expect(page.getByRole('region',{name:'Traces matching these filters'})).toContainText(/Traces\s*1/);
+  // Keep API evidence and the original UI check within one configured expect
+  // deadline. The response is observed passively before navigation; it is not
+  // reissued, and a slow API cannot give the locator a fresh timeout.
+  const uiDeadline = Date.now() + 10_000; // playwright.config.ts expect.timeout
+  const remainingMs = () => Math.max(1, uiDeadline - Date.now());
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const observationByDeadline = Promise.race([cohortObservation,
+      new Promise<null>((resolve) => { deadlineTimer = setTimeout(() => resolve(null), remainingMs()); })]);
+    const region = page.getByRole('region',{name:'Traces matching these filters'});
+    const tracesMetric = region.getByText('Traces',{exact:true}).locator('..');
+    const [apiResult, uiResult] = await Promise.allSettled([observationByDeadline,
+      expect(tracesMetric).toHaveText('Traces1',{timeout:remainingMs()})]);
+    if (apiResult.status === 'rejected') throw new Error('OBS-E2E-070 cohort response observation failed');
+    const api = apiResult.value;
+    expect(api?.observed, 'OBS-E2E-070 matching cohort POST was observed').toBe(true);
+    if (!api?.observed) throw new Error('OBS-E2E-070 matching cohort POST was not observed');
+    expect(api.status, 'OBS-E2E-070 cohort response status').toBe(200);
+    expect(api.complete, 'OBS-E2E-070 cohort response completed').toBe(true);
+    expect(typeof api.traces, 'OBS-E2E-070 cohort summary count is numeric').toBe('number');
+    expect(api.traces, 'OBS-E2E-070 cohort summary trace count').toBe(1);
+    if (uiResult.status === 'rejected') throw uiResult.reason;
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+  }
   const split = page.getByLabel('Split by skill version',{exact:true});
   if (!await split.isVisible()) {
     await page.getByTestId('graph-metric-picker-trigger').first().click();
