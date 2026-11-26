@@ -219,8 +219,8 @@ export const cast = (actors, extra = {}) => ({
   actor_models: [],
   has_caller: actors.some((one) => one.side === "caller"),
   side_defaults: { caller: { channel: "audio_mix" }, world: { channel: null } },
-  // What a new actor starts as, before its side and way of joining.
-  new_actor: typedActor({ id: "", name: "", side: null, when_label: "" }),
+  // What a new actor starts as; the server reads an empty record as in the world.
+  new_actor: typedActor({ id: "", name: "", side: "world", when_label: "" }),
   trigger_fields: TRIGGER_FIELDS,
   record_max_chars: 65536,
   limit_fields: LIMIT_FIELDS,

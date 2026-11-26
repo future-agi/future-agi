@@ -120,7 +120,7 @@ export default function ActorsSkeleton({ locked = false }) {
       </Typography>
       <GroupSkeleton
         title={C.title}
-        about={C.everyoneAbout}
+        about={C.inThisEnvironment}
         locked={locked}
         addWidth={140}
       >

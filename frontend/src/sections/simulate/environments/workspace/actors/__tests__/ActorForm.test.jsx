@@ -73,14 +73,12 @@ describe("ActorForm", () => {
     ).toBeInTheDocument();
   });
 
-  it("titles a new actor's form Add actor, with the side it is added on", () => {
+  it("titles a new actor's form Add actor, added to the draft", () => {
     verdict = CLEAN;
     renderForm(newActor("caller"));
     expect(screen.getByText("Add actor")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "On the caller's side · added to this environment's draft",
-      ),
+      screen.getByText("Added to this environment's draft"),
     ).toBeInTheDocument();
   });
 

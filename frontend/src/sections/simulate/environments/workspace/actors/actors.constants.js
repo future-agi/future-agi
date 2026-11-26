@@ -72,20 +72,8 @@ export const ACTORS_COPY = {
     unsaved: "Unsaved changes: saved with the environment's other changes",
     offline:
       "No connection: your change is kept and saves once you are back online",
-    everyoneAbout:
-      "Everyone the agent deals with who is not the agent: the caller, people with them, and people and systems in the world. Any actor can speak in the conversation, act through the world's actions, or both.",
+    inThisEnvironment: "In this environment",
     add: "Add actor",
-    sides: {
-      caller: {
-        label: "On the caller's side",
-        note: "Someone nearby, who takes the phone, or a second person in the chat",
-      },
-      world: {
-        label: "In the world",
-        note: "A manager who approves, a teammate on Slack, another company's system",
-      },
-    },
-    emptySide: "No one here yet.",
     edit: "Edit",
     editNamed: (name) => `Edit ${name}`,
     remove: "Remove",
@@ -127,7 +115,7 @@ export const ACTORS_COPY = {
     },
     form: {
       createTitle: "Add actor",
-      createSubtitle: (side) => `${side} · added to this environment's draft`,
+      createSubtitle: "Added to this environment's draft",
       moreDetails: "More details",
       lessDetails: "Hide more details",
       moreDetailsHelp:

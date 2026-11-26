@@ -13,7 +13,6 @@ export default function ActorFormHeader({
   conflict,
 }) {
   const existing = Boolean(actor.id);
-  const sideLabel = C.sides[actor.side]?.label;
   return (
     <>
       <Box
@@ -30,9 +29,9 @@ export default function ActorFormHeader({
         <Typography noWrap sx={{ typography: "s1", fontWeight: 600 }}>
           {existing ? F.editTitle(actor.name || actor.id) : F.createTitle}
         </Typography>
-        {!existing && sideLabel && (
+        {!existing && (
           <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {F.createSubtitle(sideLabel)}
+            {F.createSubtitle}
           </Typography>
         )}
       </Box>

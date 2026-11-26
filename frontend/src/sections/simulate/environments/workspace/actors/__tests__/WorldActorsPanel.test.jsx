@@ -130,10 +130,8 @@ const choose = (label, option) => {
   fireEvent.mouseDown(screen.getByLabelText(label));
   fireEvent.click(screen.getByRole("option", { name: option }));
 };
-const addActor = (side = "In the world") => {
+const addActor = () =>
   fireEvent.click(screen.getByRole("button", { name: "Add actor" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(side) }));
-};
 const saveButton = () => screen.getByRole("button", { name: "Save to draft" });
 const sent = (call = 0) => mutate.mock.calls[call][0];
 
@@ -545,7 +543,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("Add actor")).toBeInTheDocument();
   });
 
-  it("groups the cast by side, the caller's side first, each with its count, in the cast's order", () => {
+  it("lists the whole cast in one list, in the cast's order, under In this environment", () => {
     actorsData = cast([
       typedActor({ id: "caller", name: "Dana", side: "caller" }),
       typedActor({
@@ -558,68 +556,22 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByText("Actors (3)")).toBeInTheDocument();
-    const callerSide = screen.getByTestId("actors-side-caller");
-    const world = screen.getByTestId("actors-side-world");
-    expect(
-      callerSide.compareDocumentPosition(world) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      within(callerSide).getByText("On the caller's side"),
-    ).toBeInTheDocument();
-    expect(within(callerSide).getByText("2")).toBeInTheDocument();
-    const names = within(callerSide)
+    expect(screen.getByText("In this environment")).toBeInTheDocument();
+    expect(screen.queryByTestId(/^actors-side-/)).toBeNull();
+    expect(screen.queryByText("On the caller's side")).toBeNull();
+    const names = screen
       .getAllByRole("button", { name: /^Edit / })
       .map((one) => one.getAttribute("aria-label"));
-    expect(names).toEqual(["Edit Dana", "Edit Jordan Taylor"]);
-    expect(within(world).getByText("In the world")).toBeInTheDocument();
-    expect(within(world).getByText("1")).toBeInTheDocument();
-    expect(within(world).getByText(/Priya Raman/)).toBeInTheDocument();
+    expect(names).toEqual(["Edit Dana", "Edit Jordan Taylor", "Edit Priya Raman"]);
   });
 
-  it("says when a side has no one yet", () => {
-    render(<WorldActorsPanel envId="env-1" />);
-    expect(
-      within(screen.getByTestId("actors-side-caller")).getByText(
-        "No one here yet.",
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it("starts an actor added on the caller's side on that side's default way of joining, and sends it", () => {
+  it("adds an actor from the cast's new_actor with one Add actor button", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    addActor("On the caller's side");
+    addActor();
+    expect(screen.queryByRole("menu")).toBeNull();
     expect(
-      screen.getByLabelText("How they join the conversation"),
-    ).toHaveTextContent("Heard nearby");
-    fireEvent.change(screen.getByLabelText("Name"), {
-      target: { value: "Jordan" },
-    });
-    fireEvent.click(saveButton());
-    expect(sent().changes).toMatchObject({
-      side: "caller",
-      channel: "audio_mix",
-    });
-  });
-
-  it("asks which side before adding, and adds the actor on that side", () => {
-    actorsData = cast([]);
-    render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Add actor" }));
-    const menu = screen.getByRole("menu");
-    expect(
-      within(menu).getByText(
-        "Someone nearby, who takes the phone, or a second person in the chat",
-      ),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      within(menu).getByRole("menuitem", { name: /On the caller's side/ }),
-    );
-    expect(
-      screen.getByText(
-        "On the caller's side · added to this environment's draft",
-      ),
+      screen.getByText("Added to this environment's draft"),
     ).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Jordan" },
@@ -627,8 +579,9 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(saveButton());
     expect(sent()).toMatchObject({
       op: "create",
-      changes: { side: "caller", name: "Jordan" },
+      changes: { side: "world", name: "Jordan" },
     });
+    expect(sent().changes).not.toHaveProperty("channel");
   });
 
   it("lists each actor with what it may do, when it comes in and its fallback, as the cast states them", () => {
@@ -1048,7 +1001,7 @@ describe("WorldActorsPanel", () => {
   it("adds an actor who speaks with a channel and its loudness, and every other field too", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    addActor("On the caller's side");
+    addActor();
     expect(
       screen.getByLabelText("World actions they may take (optional)"),
     ).toBeInTheDocument();
@@ -1071,7 +1024,7 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(saveButton());
     expect(sent().id).toBe("colleague");
     expect(sent().changes).toEqual({
-      side: "caller",
+      side: "world",
       name: "Jordan",
       channel: "audio_mix",
       loudness_ratio: 0.5,
@@ -1083,7 +1036,7 @@ describe("WorldActorsPanel", () => {
   it("offers loudness only on a channel the cast says has one", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
-    addActor("On the caller's side");
+    addActor();
     choose("How they join the conversation", "Takes the phone");
     expect(screen.queryByText(/Automatic: each call picks/)).toBeNull();
   });
@@ -1667,6 +1620,25 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByLabelText("Role (optional)")).toHaveValue(
       "sales manager",
     );
+  });
+
+  it("offers Add actor for a point no actor owns, opening the form straight away", () => {
+    actorsData = cast([MANAGER], {
+      unresolved: [
+        {
+          policy: "Refunds above $500 need finance",
+          why: "no actor owns the finance decision",
+          actor: null,
+        },
+      ],
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    const block = screen.getByTestId("needs-decision");
+    fireEvent.click(within(block).getByRole("button", { name: "Add actor" }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(
+      screen.getByText("Added to this environment's draft"),
+    ).toBeInTheDocument();
   });
 
   it("shows no decision block when nothing is waiting", () => {
