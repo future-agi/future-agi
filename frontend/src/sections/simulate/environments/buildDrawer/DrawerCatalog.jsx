@@ -322,10 +322,8 @@ export default function DrawerCatalog({
           <BuildFromCode onOpen={() => onPick(FROM_CODE_ITEM)} />
         </Box>
       )}
-      {SHOW_PREBUILT_WORLDS ? (
+      {SHOW_PREBUILT_WORLDS && (
         <PrebuiltSection onPick={onPick} onBrowse={onBrowseWorlds} />
-      ) : (
-        <SaasSandboxRow disabled onOpen={() => onPick(SANDBOX_ITEM)} />
       )}
       <ConnectSection
         onPick={onPick}
