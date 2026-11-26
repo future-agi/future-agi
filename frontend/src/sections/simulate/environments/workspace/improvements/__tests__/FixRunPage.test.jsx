@@ -300,7 +300,8 @@ describe("FixRunPage", () => {
       ...fix,
       failure: {
         code: "fix_variations_timeout",
-        message: "writing and checking variations of the failing cases took over 10 minutes",
+        message:
+          "writing and checking variations of the failing cases took over 10 minutes",
       },
       retryable: true,
     }));
@@ -310,7 +311,7 @@ describe("FixRunPage", () => {
         "This epoch stopped because of a problem on our side, not your agent. Nothing changed. Retry it.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Retry Epoch 2" })).toBeEnabled();
   });
 
   it("offers no Stop and no stage on a finished fix", async () => {

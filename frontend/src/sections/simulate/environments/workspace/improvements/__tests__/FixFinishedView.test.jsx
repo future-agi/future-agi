@@ -365,9 +365,16 @@ describe("FixVerdict", () => {
 describe("finished trial presentation", () => {
   function showTrials(fix) {
     renderUi(
-      <FixFinishedView fix={fix} tab="trials" onTab={vi.fn()} renderTab={() => null} />,
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
     );
-    const plot = screen.getByRole("img", { name: "Target pass rate per candidate" });
+    const plot = screen.getByRole("img", {
+      name: "Target pass rate per candidate",
+    });
     return within(plot.parentElement.parentElement);
   }
 
@@ -379,7 +386,7 @@ describe("finished trial presentation", () => {
     expect(chart.queryByText(/best so far|winner/i)).toBeNull();
   });
 
-  it("explains rejections in product words without displaying engine text", () => {
+  it("explains rejections in product words without displaying engine text", async () => {
     const fix = fixOf("fix-no-improvement");
     const [first, second] = fix.candidates;
     first.verdict = {
@@ -388,17 +395,31 @@ describe("finished trial presentation", () => {
     };
     second.verdict.reason = "INTERNAL_VERDICT_B";
     showTrials(fix);
-    const firstRow = within(screen.getByTestId("trial-1"));
-    const secondRow = within(screen.getByTestId("trial-2"));
+    // Rejected groups start folded: open both, so the rows are on the page.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("candidate-group-rejected"));
+    await user.click(screen.getByTestId("candidate-group-target"));
+    const firstRow = within(screen.getByTestId("candidate-1"));
+    const secondRow = within(screen.getByTestId("candidate-2"));
     expect(firstRow.queryByText(first.verdict.reason)).not.toBeInTheDocument();
-    expect(secondRow.queryByText(second.verdict.reason)).not.toBeInTheDocument();
-    expect(firstRow.getByText("No failed check was recorded.")).toBeVisible();
-    expect(secondRow.getByText("This candidate didn't improve the target scenarios.")).toBeVisible();
+    expect(
+      secondRow.queryByText(second.verdict.reason),
+    ).not.toBeInTheDocument();
+    // Replaces "No failed check was recorded.": a verdict with no checks keeps its numbers.
+    expect(
+      firstRow.getByText("Rejected. Target scenarios 0% → 90%."),
+    ).toBeVisible();
+    expect(screen.getByTestId("candidate-group-target")).toHaveTextContent(
+      "Didn't improve the target scenarios",
+    );
+    expect(secondRow.getByText("0% → 0%, not a clear gain.")).toBeVisible();
   });
 
   it("leads with the kept candidate even when a rejected candidate scored higher", () => {
     const fix = fixOf("fix-ready-archive");
-    fix.candidates.find((c) => c.outcome === "rejected").verdict.target_pass_rate = [0, 1];
+    fix.candidates.find(
+      (c) => c.outcome === "rejected",
+    ).verdict.target_pass_rate = [0, 1];
     const kept = fix.candidates.find((c) => c.outcome === "winner");
     kept.verdict.target_pass_rate = [0.1, 0.7];
     const chart = showTrials(fix);
