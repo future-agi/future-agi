@@ -5,14 +5,19 @@ column, the job mark in the resource attributes and the call mark on the spans a
 the ones the collector writes.
 """
 
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from django.conf import settings as django_settings
 
-from conftest import _ch_test_native_client, _ch_test_owned_database
-from simulate.selectors.agent_fix import models_called
+from conftest import (
+    _ch_test_native_client,
+    _ch_test_owned_database,
+    _open_ch_test_http_client,
+)
 from simulate.services import run_traces_v3
 from simulate.services.run_traces_v3 import CallUsage, RunTracesSource
 from tracer.services.clickhouse.v2 import get_v2_config
@@ -31,61 +36,98 @@ def ch_database():
 
 
 class _NativeRead:
-    """The application client's read, on a native client of the scratch database."""
+    """The application client's read, on a native client of the scratch database,
+    under the timeout the caller asked for and the application's read threads."""
 
     def __init__(self, client):
         self._client = client
 
     def execute_read(self, query, params=None, timeout_ms=None, settings=None):
-        return self._client.execute(query, params), [], 0.0
+        read = {
+            "max_execution_time": timeout_ms / 1000,
+            "max_threads": django_settings.CLICKHOUSE_APPLICATION_READ_DEFAULT_THREADS,
+        }
+        return self._client.execute(query, params, settings=read), [], 0.0
 
 
 @pytest.fixture
-def spans(ch_database, monkeypatch):
-    """A fresh copy of ``spans`` that the run reader reads; ``add`` writes one span."""
+def table(ch_database, monkeypatch):
+    """A native client on a fresh copy of ``spans`` that the run reader reads."""
     with _ch_test_native_client(database=ch_database) as client:
         client.execute(f"CREATE TABLE spans AS {get_v2_config()['database']}.spans")
         monkeypatch.setattr(
             run_traces_v3, "get_clickhouse_client", lambda: _NativeRead(client)
         )
-
-        def add(
-            trace,
-            *,
-            call=None,
-            kind="chain",
-            model="",
-            model_column=None,
-            cost=0.0,
-            project=PROJECT,
-            job=JOB,
-            at=START + timedelta(minutes=5),
-            extra=None,
-            span_id=None,
-            service="",
-        ):
-            attrs = {
-                **({"fi.simulator.call_execution_id": call} if call else {}),
-                **({"gen_ai.request.model": model} if model else {}),
-                **(extra or {}),
-            }
-            column = model_column or ""
-            pairs = ", ".join(f"'{key}', '{value}'" for key, value in attrs.items())
-            client.execute(
-                "INSERT INTO spans (project_id, observation_type, service_name,"
-                " start_time, trace_id, id, model, cost, attrs_string, resource_attrs,"
-                " created_at, updated_at, _version) VALUES"
-                f" ('{project}', '{kind}', '{service}',"
-                f" '{at:%Y-%m-%d %H:%M:%S}', '{trace}', '{span_id or uuid.uuid4()}',"
-                f" '{column}', {cost}, map({pairs}),"
-                f""" '{{"fi": {{"simulation": {{"job_id": "{job}"}}}}}}',"""
-                " now64(), now64(), 1)"
-            )
-
         try:
-            yield add
+            yield client
         finally:
             client.execute("DROP TABLE IF EXISTS spans SYNC")
+
+
+@pytest.fixture
+def spans(ch_database, table):
+    """Writes one span as a typed row, over HTTP: the native client cannot write the
+    table's JSON columns."""
+    writer = _open_ch_test_http_client(database=ch_database)
+
+    def add(
+        trace,
+        *,
+        call=None,
+        kind="chain",
+        model="",
+        model_column=None,
+        cost=0.0,
+        project=PROJECT,
+        job=JOB,
+        at=START + timedelta(minutes=5),
+        extra=None,
+        numbers=None,
+        span_id=None,
+        service="",
+    ):
+        writer.insert(
+            "spans",
+            [
+                [
+                    project,
+                    kind,
+                    service,
+                    at,
+                    trace,
+                    span_id or str(uuid.uuid4()),
+                    model_column or "",
+                    cost,
+                    {
+                        **({run_traces_v3.CALL_MARK_KEY: call} if call else {}),
+                        **({"gen_ai.request.model": model} if model else {}),
+                        **(extra or {}),
+                    },
+                    numbers or {},
+                    {"fi": {"simulation": {"job_id": job}}},
+                    1,
+                ]
+            ],
+            column_names=[
+                "project_id",
+                "observation_type",
+                "service_name",
+                "start_time",
+                "trace_id",
+                "id",
+                "model",
+                "cost",
+                "attrs_string",
+                "attrs_number",
+                "resource_attrs",
+                "_version",
+            ],
+        )
+
+    try:
+        yield add
+    finally:
+        writer.close()
 
 
 def _traced(monkeypatch):
@@ -180,16 +222,14 @@ def test_a_span_counts_for_the_call_it_names_before_its_trace_s(spans, monkeypat
 
 
 @pytest.mark.integration
-def test_a_span_exported_twice_counts_once_by_its_priced_copy_s_model(
-    spans, monkeypatch
-):
+def test_a_span_exported_twice_counts_once_by_its_request_model(spans, monkeypatch):
     _traced(monkeypatch)
     call, trace = str(uuid.uuid4()), str(uuid.uuid4())
     spans(trace, call=call)
     # A runtime with two exporters sends each model call twice under two service
     # names, which the table keeps apart. Both name the request model with the
     # runtime's own provider id; only the Future AGI copy names the bare model, and
-    # only it is priced.
+    # only it is priced. The span keeps the name both copies had on their own.
     for cost in (0.01, 0.02):
         span_id = str(uuid.uuid4())
         spans(
@@ -215,24 +255,249 @@ def test_a_span_exported_twice_counts_once_by_its_priced_copy_s_model(
 
     assert usage == {
         call: CallUsage(
-            models=["gpt-4o-mini"], llm_spans=2, cost_usd=pytest.approx(0.03)
+            models=["gateway:gpt-4o-mini"], llm_spans=2, cost_usd=pytest.approx(0.03)
         )
     }
-    # The lock compares these names, so a lock on gpt-4o-mini accepts the run.
-    assert models_called(usage) == ["gpt-4o-mini"]
 
 
 @pytest.mark.integration
-def test_a_span_that_names_only_its_request_model_is_counted_by_it(spans, monkeypatch):
+@pytest.mark.parametrize(
+    ("one", "other", "merged"),
+    [
+        pytest.param(
+            {"service": "agent", "kind": "llm", "model": "m1"},
+            {"service": "omega", "cost": 0.01},
+            CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(0.01)),
+            id="only_the_unpriced_copy_is_a_model_call",
+        ),
+        pytest.param(
+            {"service": "agent", "kind": "llm", "cost": 0.01},
+            {"service": "omega", "kind": "llm", "model": "m1"},
+            CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(0.01)),
+            id="the_price_on_one_copy_the_model_on_the_other",
+        ),
+        # Nothing ranks these two, so a read that kept one row could keep either.
+        pytest.param(
+            {"service": "agent", "kind": "llm"},
+            {"service": "agent", "model_column": "m1"},
+            CallUsage(
+                models=["m1"], llm_spans=1, cost_usd=None, unpriced_models=["m1"]
+            ),
+            id="one_service_two_kinds",
+        ),
+        pytest.param(
+            {"service": "agent", "kind": "llm", "model": "m1", "cost": 0.01},
+            {"service": "omega", "extra": {run_traces_v3.UNMEASURED_KEY: "partial"}},
+            CallUsage(models=["m1"], llm_spans=1, cost_usd=None, partial=True),
+            id="the_priced_copy_and_the_partial_marker",
+        ),
+        # Two copies that each name a model and report a cost: the greater of each,
+        # every read.
+        pytest.param(
+            {
+                "service": "agent",
+                "kind": "llm",
+                "model": "m1",
+                "cost": 0.01,
+                "numbers": {"gen_ai.cost.total": 0.01},
+            },
+            {
+                "service": "omega",
+                "kind": "llm",
+                "model": "m2",
+                "cost": 0.02,
+                "numbers": {"gen_ai.cost.total": 0.02},
+            },
+            CallUsage(models=["m2"], llm_spans=1, cost_usd=pytest.approx(0.02)),
+            id="two_names_two_reported_costs",
+        ),
+    ],
+)
+def test_a_span_exported_twice_keeps_what_either_copy_says(
+    spans, monkeypatch, one, other, merged
+):
+    _traced(monkeypatch)
+    call, trace, span_id = (str(uuid.uuid4()) for _ in range(3))
+    spans(trace, call=call)
+    spans(trace, span_id=span_id, **one)
+    spans(trace, span_id=span_id, **other)
+
+    reads = [run_traces_v3.run_usage(SimpleNamespace()) for _ in range(3)]
+
+    assert reads == [{call: merged}] * 3
+
+
+@pytest.mark.integration
+def test_a_cost_its_sender_reported_outranks_the_other_copy_s_estimate(
+    spans, monkeypatch
+):
+    _traced(monkeypatch)
+    free, paid = str(uuid.uuid4()), str(uuid.uuid4())
+    # The collector prices a span from its tokens unless its sender reported a cost,
+    # as a number or as text. A reported zero is a price: the call was free.
+    for call, estimate, reported in (
+        (free, 0.015, {"cost": 0.0, "numbers": {"gen_ai.cost.total": 0.0}}),
+        (paid, 0.015, {"cost": 0.01, "extra": {"llm.cost.total": "0.01"}}),
+    ):
+        trace, span_id = str(uuid.uuid4()), str(uuid.uuid4())
+        spans(trace, call=call)
+        spans(trace, span_id=span_id, service="agent", kind="llm", cost=estimate)
+        spans(trace, span_id=span_id, service="omega", kind="llm", **reported)
+
+    usage = run_traces_v3.run_usage(SimpleNamespace())
+
+    assert {call: one.cost_usd for call, one in usage.items()} == {
+        free: 0.0,
+        paid: pytest.approx(0.01),
+    }
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("zero", "cost_usd", "unpriced_models"),
+    [
+        pytest.param(
+            {"numbers": {"gen_ai.cost.total": 0.0}},
+            pytest.approx(0.01),
+            [],
+            id="reported_as_a_number",
+        ),
+        pytest.param(
+            {"extra": {"llm.cost.total": "0"}},
+            pytest.approx(0.01),
+            [],
+            id="reported_as_text",
+        ),
+        pytest.param(
+            {"numbers": {"gen_ai.usage.total_cost": 0.0}},
+            pytest.approx(0.01),
+            [],
+            id="billed_by_its_sender",
+        ),
+        # The table's default zero: nothing priced the call.
+        pytest.param({}, None, ["m2"], id="no_cost_reported"),
+        # The collector priced it from its tokens instead, or found no price.
+        pytest.param(
+            {"extra": {"llm.cost.total": "n/a"}},
+            None,
+            ["m2"],
+            id="a_cost_that_is_no_number",
+        ),
+        pytest.param(
+            {
+                "numbers": {"gen_ai.cost.total": 0.0},
+                "extra": {run_traces_v3.COST_KIND_KEY: "unknown"},
+            },
+            None,
+            ["m2"],
+            id="a_cost_the_collector_marked_unknown",
+        ),
+    ],
+)
+def test_a_free_model_call_leaves_its_call_s_cost_known(
+    spans, monkeypatch, zero, cost_usd, unpriced_models
+):
+    _traced(monkeypatch)
+    call, trace = str(uuid.uuid4()), str(uuid.uuid4())
+    spans(trace, call=call)
+    spans(trace, kind="llm", model="m1", cost=0.01)
+    spans(trace, kind="llm", model="m2", **zero)
+
+    usage = run_traces_v3.run_usage(SimpleNamespace())
+
+    assert (usage[call].cost_usd, usage[call].unpriced_models) == (
+        cost_usd,
+        unpriced_models,
+    )
+
+
+@pytest.mark.integration
+def test_a_span_exported_twice_counts_for_the_call_either_copy_names(
+    spans, monkeypatch
+):
+    _traced(monkeypatch)
+    first, second, trace, span_id = (str(uuid.uuid4()) for _ in range(4))
+    spans(trace, call=first, at=START + timedelta(minutes=1))
+    # Only one exporter stamps the call, and the other copy is the priced one.
+    spans(trace, span_id=span_id, service="agent", kind="llm", model="m2", cost=0.02)
+    spans(trace, span_id=span_id, service="omega", kind="llm", model="m2", call=second)
+
+    assert run_traces_v3.run_usage(SimpleNamespace()) == {
+        second: CallUsage(models=["m2"], llm_spans=1, cost_usd=pytest.approx(0.02))
+    }
+
+
+@pytest.mark.integration
+def test_one_span_id_in_two_traces_is_two_spans(spans, monkeypatch):
+    _traced(monkeypatch)
+    costs = {str(uuid.uuid4()): 0.01, str(uuid.uuid4()): 0.02}
+    for call, cost in costs.items():
+        trace = str(uuid.uuid4())
+        spans(trace, call=call)
+        for service in ("agent", "omega"):
+            spans(
+                trace,
+                span_id="00f067aa0ba902b7",
+                service=service,
+                kind="llm",
+                model="m1",
+                cost=cost,
+            )
+
+    assert run_traces_v3.run_usage(SimpleNamespace()) == {
+        call: CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(cost))
+        for call, cost in costs.items()
+    }
+
+
+@pytest.mark.integration
+def test_a_span_s_request_model_outranks_its_model_column(spans, monkeypatch):
     _traced(monkeypatch)
     call, trace = str(uuid.uuid4()), str(uuid.uuid4())
     # A plain OpenTelemetry instrumentor names no llm.model_name.
     spans(trace, call=call)
-    spans(trace, kind="llm", model="gpt-4o", model_column="gpt-4o", cost=0.01)
+    spans(trace, kind="llm", model="gpt-4o", model_column="column-alias", cost=0.01)
 
     usage = run_traces_v3.run_usage(SimpleNamespace())
 
     assert usage[call].models == ["gpt-4o"]
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("one", "other", "model"),
+    [
+        pytest.param({"model": "m2"}, {"model": "m1"}, "m2", id="two_request_models"),
+        # A request model on any copy outranks a model column, as on one copy.
+        pytest.param(
+            {"model_column": "zz-column"},
+            {"model": "m1", "model_column": "gateway:m1"},
+            "m1",
+            id="a_request_model_and_a_model_column",
+        ),
+        pytest.param(
+            {"model_column": "m2"}, {"model_column": "m1"}, "m2", id="two_columns"
+        ),
+    ],
+)
+def test_a_span_whose_copies_name_two_models_reads_by_one_of_them(
+    spans, monkeypatch, one, other, model
+):
+    _traced(monkeypatch)
+    calls = {}
+    # Each copy under each service name: the name never hangs on which one is which.
+    for agent, omega in ((one, other), (other, one)):
+        call, trace, span_id = (str(uuid.uuid4()) for _ in range(3))
+        spans(trace, call=call)
+        spans(trace, span_id=span_id, service="agent", kind="llm", cost=0.01, **agent)
+        spans(trace, span_id=span_id, service="omega", kind="llm", cost=0.01, **omega)
+        calls[call] = CallUsage(
+            models=[model], llm_spans=1, cost_usd=pytest.approx(0.01)
+        )
+
+    reads = [run_traces_v3.run_usage(SimpleNamespace()) for _ in range(3)]
+
+    assert reads == [calls] * 3
 
 
 @pytest.mark.integration
@@ -267,3 +532,88 @@ def test_an_untraced_agent_s_run_reads_nothing(monkeypatch):
     )
 
     assert run_traces_v3.run_usage(SimpleNamespace()) is None
+
+
+SPANS_PER_TRACE, TRACES_PER_CALL, INSERTS = 20, 10, 8
+
+
+def _write_large_run(client, logical_spans):
+    """A run whose every span two exporters sent: each trace is a root that names its
+    call and model calls, as the priced copy an instrumentor named and an unpriced one."""
+    per_insert = logical_spans // INSERTS
+    # A run's spans arrive in many inserts; unmerged parts are what a read meets.
+    client.execute("SYSTEM STOP MERGES spans")
+    for service, model, cost, named in (
+        ("agent", "gpt-4o-mini", 0.0001, "gpt-4o-mini"),
+        ("omega", "gateway:gpt-4o-mini", 0, ""),
+    ):
+        for insert in range(INSERTS):
+            client.execute(
+                "INSERT INTO spans (project_id, observation_type, service_name,"
+                " start_time, trace_id, id, model, cost, attrs_string, attrs_number,"
+                " resource_attrs, _version) "
+                "SELECT %(project)s, if(is_root, 'chain', 'llm'), %(service)s,"
+                " %(start)s + toIntervalMillisecond(number),"
+                " UUIDNumToString(sipHash128(trace)), lower(hex(sipHash64(number))),"
+                " if(is_root, '', %(model)s), if(is_root, 0, %(cost)s),"
+                " mapConcat(if(is_root, map(%(mark)s, UUIDNumToString(sipHash128("
+                "'call', intDiv(trace, %(traces_per_call)s)))), mapFilter("
+                "(key, value) -> value != '', map('llm.model_name', %(named)s,"
+                " 'gen_ai.request.model', 'gateway:gpt-4o-mini'))),"
+                " map('gen_ai.system', 'openai', 'gen_ai.operation.name', 'chat',"
+                " 'gen_ai.response.id', toString(number), 'gen_ai.response.model',"
+                " 'gpt-4o-mini-2024-07-18', 'gen_ai.response.finish_reason', 'stop',"
+                " 'session.id', toString(trace), 'fi.span.kind', 'LLM',"
+                " 'server.address', 'gateway.internal')),"
+                " map('gen_ai.usage.input_tokens', 1200., 'gen_ai.usage.output_tokens',"
+                " 300., 'gen_ai.request.temperature', 0.2, 'server.port', 443.),"
+                " %(resource)s::JSON, 1 "
+                "FROM (SELECT number, intDiv(number, %(spans_per_trace)s) AS trace,"
+                " number %% %(spans_per_trace)s = 0 AS is_root"
+                " FROM numbers(%(first)s, %(count)s))",
+                {
+                    "project": PROJECT,
+                    "service": service,
+                    "start": START,
+                    "model": model,
+                    "named": named,
+                    "cost": cost,
+                    "mark": run_traces_v3.CALL_MARK_KEY,
+                    "traces_per_call": TRACES_PER_CALL,
+                    "spans_per_trace": SPANS_PER_TRACE,
+                    "resource": f'{{"fi": {{"simulation": {{"job_id": "{JOB}"}}}}}}',
+                    "first": insert * per_insert,
+                    "count": per_insert,
+                },
+            )
+
+
+@pytest.mark.benchmark
+@pytest.mark.skipif(
+    not os.environ.get("RUN_USAGE_BENCH_SPANS"),
+    reason="set RUN_USAGE_BENCH_SPANS to time a large run's usage read",
+)
+def test_a_large_run_s_usage_reads_within_its_timeout(table, monkeypatch):
+    """Opt-in twice over, as a seed this large must never run in an ordinary suite:
+
+    RUN_USAGE_BENCH_SPANS=1280000 pytest simulate/tests/test_run_usage.py -m benchmark
+    """
+    _traced(monkeypatch)
+    logical_spans = int(os.environ["RUN_USAGE_BENCH_SPANS"])
+    _write_large_run(table, logical_spans)
+    traces = logical_spans // SPANS_PER_TRACE
+
+    # The read fails when it outlasts the timeout its caller gives it.
+    usage = run_traces_v3.run_usage(SimpleNamespace())
+
+    llm_spans = TRACES_PER_CALL * (SPANS_PER_TRACE - 1)
+    assert len(usage) == traces // TRACES_PER_CALL
+    assert all(
+        one
+        == CallUsage(
+            models=["gateway:gpt-4o-mini"],
+            llm_spans=llm_spans,
+            cost_usd=pytest.approx(llm_spans * 0.0001),
+        )
+        for one in usage.values()
+    )

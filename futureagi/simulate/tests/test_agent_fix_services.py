@@ -63,7 +63,6 @@ from simulate.selectors.agent_fix import (
     launch_blocker,
     launch_options,
     limited_validation,
-    model_key,
     ran_at,
     verdict_tiers,
     with_spend,
@@ -1351,17 +1350,6 @@ def test_the_engine_may_call_every_model_in_its_profile(model):
     """The proxy refuses any model that is not listed, so a fix would die on its first call
     to one, or on the very call that needs a backup."""
     assert model in django_settings.AGENT_FIX_ENGINE_MODELS
-
-
-def test_the_lock_drops_a_vendor_path_but_keeps_a_model_s_own_tag():
-    # A self-hosted "name:tag" is the model's own id: two tags are two models.
-    assert [
-        model_key(name) for name in ("llama3:8b", "mistral:latest", "openai/gpt-4o")
-    ] == [
-        "llama3:8b",
-        "mistral:latest",
-        "gpt-4o",
-    ]
 
 
 def test_a_check_run_s_evals_have_a_source_of_their_own(source_run):
