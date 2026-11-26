@@ -1288,6 +1288,41 @@ class HarnessRestoredCaseSerializer(serializers.Serializer):
     )
 
 
+class HarnessScenarioListQuerySerializer(serializers.Serializer):
+    """The scenario list's query. Filters on a scenario field (FIELD=VALUE, FIELD_not=VALUE) are read as given."""
+
+    page = serializers.IntegerField(min_value=1, required=False)
+    limit = serializers.IntegerField(
+        min_value=1, required=False, help_text="Scenarios per page."
+    )
+    search = serializers.CharField(
+        required=False, allow_blank=True, help_text="Every word must match."
+    )
+    ordering = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="number, name or use_case; prefix - to reverse.",
+    )
+    group_by = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="goal (the default), sub_goal, accent, age, attack or task; empty for a flat list.",
+    )
+    lifecycle = serializers.CharField(
+        required=False,
+        help_text="Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written.",
+    )
+    agent_version_id = serializers.CharField(
+        required=False, help_text="Absent: the environment's default."
+    )
+    environment_version_id = serializers.CharField(
+        required=False, help_text="Absent: the environment's default."
+    )
+    suite_version_id = serializers.CharField(
+        required=False, help_text="Absent: the environment's default."
+    )
+
+
 class HarnessScenarioListResponseSerializer(serializers.Serializer):
     """One page of an environment's authored scenarios, with what the list filters and groups by."""
 

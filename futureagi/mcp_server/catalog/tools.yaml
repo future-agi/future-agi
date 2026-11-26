@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 144
+expected_tool_count: 159
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -600,10 +600,92 @@ tools:
     group: simulation
     description: Return one trial (call) of a run with its transcript, tool calls, checks and the World changes it made.
     operation: {method: GET, path: "/simulate/v3/call-executions/{call_execution_id}/"}
+    access: read
   - name: get_call_workers
     group: simulation
     description: For a trial (call) of a multi-agent app, return which of the app's participants (workers) did what, read from the traces the app sent. While the traces are still being collected it returns only pending and next_read_at, so read it again then; it returns nothing when the trial handed nothing to another agent.
     operation: {method: GET, path: "/simulate/v3/call-executions/{call_execution_id}/workers/"}
+    access: read
+  # simulation environments: scenario checks and lifecycle (draft, validated,
+  # active, archived), versions, and the run readiness of a version pairing.
+  - name: list_harness_scenarios
+    group: simulation
+    description: List one page of an environment's scenarios with the lifecycle of each (draft, validated, active, archived, source changed, kept as written) and how many are in each state. The id is the environment's ID. lifecycle keeps one state; group_by defaults to goal, so pass an empty group_by for a flat list.
+    operation: {method: GET, path: "/simulate/api/harness-jobs/{id}/scenarios/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
+  - name: list_environment_versions
+    group: simulation
+    description: List an environment's saved agent, environment and suite versions, and which of each is the default.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/versions/"}
+    access: read
+  - name: get_environment_source_changes
+    group: simulation
+    description: Return the rules and files an environment version changed that scenarios cite, with the scenarios citing each, so a person can recheck them.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/"}
+    access: read
+  - name: validate_environment_scenarios
+    group: simulation
+    description: Prove an environment's scenarios again for a pairing of agent, environment and suite versions (absent ones are the defaults), all of them or only keys. Each proof runs in a build sandbox, so it may incur usage charges. Returns a job_id while it runs; poll get_scenario_validation.
+    operation: {method: POST, path: "/simulate/api/harness-environments/{id}/scenarios/validate/"}
+    access: write
+    open_world: true
+  - name: get_scenario_validation
+    group: simulation
+    description: Return where one scenario validation (job_id from validate_environment_scenarios) got to, and whether it recorded its proofs.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/scenarios/validate/"}
+    access: read
+  - name: get_running_scenario_validation
+    group: simulation
+    description: Return the validation still running for the environment's default versions, if any, and how many scenarios a validation of those not yet proved would prove.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/scenarios/validate/running/"}
+    access: read
+  - name: archive_environment_scenario
+    group: simulation
+    description: Take one scenario (key) out of future runs, with an optional reason. Its identity, runs and evidence are kept, and restore_environment_scenario brings it back.
+    operation: {method: POST, path: "/simulate/api/harness-environments/{id}/scenarios/{key}/archive/"}
+    access: write
+  - name: restore_environment_scenario
+    group: simulation
+    description: Bring an archived scenario (key) back, at once when the saved suite still holds it, otherwise as a draft to save.
+    operation: {method: POST, path: "/simulate/api/harness-environments/{id}/scenarios/{key}/restore/"}
+    access: write
+  - name: get_scenario_records
+    group: simulation
+    description: Return the seeded rows of one table (table) of the world, to pick a real record for a scenario (key) whose starting record is missing. Writes nothing.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/scenarios/{key}/records/"}
+    access: read
+  - name: list_scenario_revisions
+    group: simulation
+    description: List each distinct content of one scenario (key) across the environment's saved suite versions, newest first.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/"}
+    access: read
+  - name: get_environment_readiness
+    group: simulation
+    description: Return the run readiness of a pairing of agent, environment and suite versions (absent ones are the defaults), computed now, with its blockers and the selected scenarios it holds back. keys narrows the selection; trials is the trial count planned. Writes nothing.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/capabilities/"}
+    access: read
+  - name: get_environment_readiness_for_scenarios
+    group: simulation
+    description: Return the same run readiness report as get_environment_readiness for a selection of scenarios too long for a query string (scenario_ids, more than 200 keys). Writes nothing.
+    operation: {method: POST, path: "/simulate/api/harness-environments/{id}/capabilities/"}
+    access: read
+  - name: list_environment_readiness_cases
+    group: simulation
+    description: List one page, by scenario number, of the selected scenarios in one readiness bucket (eligible, blocked, stale or untested) or held back by one readiness row. Pass the previous page's next as cursor. Writes nothing.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/capabilities/cases/"}
+    access: read
+  - name: recheck_environment_readiness
+    group: simulation
+    description: Validate a pairing of versions again (absent ones are the defaults) without a run; moves no default. A pairing that is not yet certified runs its check in a build sandbox, so it may incur usage charges. Read the result with get_environment_readiness.
+    operation: {method: POST, path: "/simulate/api/harness-environments/{id}/capabilities/recheck/"}
+    access: write
+    open_world: true
+  - name: list_certified_pairings
+    group: simulation
+    description: List the version pairings certified on an environment, newest first, with the exact agent, environment and suite versions of each.
+    operation: {method: GET, path: "/simulate/api/harness-environments/{id}/capabilities/history/"}
     access: read
   # epoch: Debug failures, evidence imports and Epoch, the loop from a failing run
   # to a shipped change. `entitlement` hides a tool from organizations whose plan

@@ -49324,6 +49324,50 @@ export const SimulateApiHarnessJobsConversationConversationHistoryKind = {
   events: "events",
 } as const;
 
+export type SimulateApiHarnessJobsScenariosParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * Scenarios per page.
+   * @minimum 1
+   */
+  limit?: number;
+  /**
+   * Every word must match.
+   */
+  search?: string;
+  /**
+   * number, name or use_case; prefix - to reverse.
+   */
+  ordering?: string;
+  /**
+   * goal (the default), sub_goal, accent, age, attack or task; empty for a flat list.
+   */
+  group_by?: string;
+  /**
+   * Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written.
+   * @minLength 1
+   */
+  lifecycle?: string;
+  /**
+   * Absent: the environment's default.
+   * @minLength 1
+   */
+  agent_version_id?: string;
+  /**
+   * Absent: the environment's default.
+   * @minLength 1
+   */
+  environment_version_id?: string;
+  /**
+   * Absent: the environment's default.
+   * @minLength 1
+   */
+  suite_version_id?: string;
+};
+
 export type SimulateApiHarnessConversationsCommandsParams = {
   /**
    * @minimum 0

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "tool_names_sha256": "1fdecae2246dc35509bb454a2cc47b1c039a62601b6c7342c9cf8bc8f1baa021",
-  "tool_count": 144,
+  "tool_names_sha256": "5ad2957e82f68283058c41474668d17185d549ad9ecc33de85140b85d36d5bdd",
+  "tool_count": 159,
   "tools": [
     {
       "name": "whoami",
@@ -12068,6 +12068,963 @@
       },
       "source": {
         "operationId": "simulate_v3_call_execution_workers"
+      }
+    },
+    {
+      "name": "list_harness_scenarios",
+      "description": "List one page of an environment's scenarios with the lifecycle of each (draft, validated, active, archived, source changed, kept as written) and how many are in each state. The id is the environment's ID. lifecycle keeps one state; group_by defaults to goal, so pass an empty group_by for a flat list.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Scenarios per page.",
+            "maximum": 100
+          },
+          "search": {
+            "type": "string",
+            "description": "Every word must match."
+          },
+          "ordering": {
+            "type": "string",
+            "description": "number, name or use_case; prefix - to reverse."
+          },
+          "group_by": {
+            "type": "string",
+            "description": "goal (the default), sub_goal, accent, age, attack or task; empty for a flat list."
+          },
+          "lifecycle": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Only scenarios in this state: draft, validated, active, archived, source_changed or kept_as_written."
+          },
+          "agent_version_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Absent: the environment's default."
+          },
+          "environment_version_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Absent: the environment's default."
+          },
+          "suite_version_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Absent: the environment's default."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-jobs/{id}/scenarios/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "page",
+            "limit",
+            "search",
+            "ordering",
+            "group_by",
+            "lifecycle",
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-jobs_scenarios"
+      }
+    },
+    {
+      "name": "list_environment_versions",
+      "description": "List an environment's saved agent, environment and suite versions, and which of each is the default.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/versions/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_versions"
+      }
+    },
+    {
+      "name": "get_environment_source_changes",
+      "description": "Return the rules and files an environment version changed that scenarios cite, with the scenarios citing each, so a person can recheck them.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "version_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "version_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/",
+        "parameters": {
+          "path": [
+            "id",
+            "version_id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_source_changes"
+      }
+    },
+    {
+      "name": "validate_environment_scenarios",
+      "description": "Prove an environment's scenarios again for a pairing of agent, environment and suite versions (absent ones are the defaults), all of them or only keys. Each proof runs in a build sandbox, so it may incur usage charges. Returns a job_id while it runs; poll get_scenario_validation.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "anyOf": [
+              {
+                "title": "Agent version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment_version_id": {
+            "anyOf": [
+              {
+                "title": "Environment version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suite_version_id": {
+            "anyOf": [
+              {
+                "title": "Suite version id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "if_fresh": {
+            "title": "If fresh",
+            "description": "Answer ready without a new job when the newest proving finished after the pair's last change.",
+            "type": "boolean",
+            "default": false
+          },
+          "keys": {
+            "description": "Prove only these scenario keys; the other cases keep their proofs.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            },
+            "maxItems": 50
+          },
+          "reprove_all": {
+            "title": "Reprove all",
+            "description": "Prove every case again. Without it, only the cases with no proof of their own on these versions for this agent version are proved, so a validation the window stopped carries on.",
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/validate/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "if_fresh",
+            "keys",
+            "reprove_all"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_validate_scenarios"
+      }
+    },
+    {
+      "name": "get_scenario_validation",
+      "description": "Return where one scenario validation (job_id from validate_environment_scenarios) got to, and whether it recorded its proofs.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "job_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/validate/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "job_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_validation_status"
+      }
+    },
+    {
+      "name": "get_running_scenario_validation",
+      "description": "Return the validation still running for the environment's default versions, if any, and how many scenarios a validation of those not yet proved would prove.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/validate/running/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_running_validation"
+      }
+    },
+    {
+      "name": "archive_environment_scenario",
+      "description": "Take one scenario (key) out of future runs, with an optional reason. Its identity, runs and evidence are kept, and restore_environment_scenario brings it back.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string",
+            "default": "",
+            "maxLength": 255
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/{key}/archive/",
+        "parameters": {
+          "path": [
+            "id",
+            "key"
+          ],
+          "query": [],
+          "body": [
+            "reason"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_archive_scenario"
+      }
+    },
+    {
+      "name": "restore_environment_scenario",
+      "description": "Bring an archived scenario (key) back, at once when the saved suite still holds it, otherwise as a draft to save.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/{key}/restore/",
+        "parameters": {
+          "path": [
+            "id",
+            "key"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_restore_scenario"
+      }
+    },
+    {
+      "name": "get_scenario_records",
+      "description": "Return the seeded rows of one table (table) of the world, to pick a real record for a scenario (key) whose starting record is missing. Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "table": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key",
+          "table"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/{key}/records/",
+        "parameters": {
+          "path": [
+            "id",
+            "key"
+          ],
+          "query": [
+            "table"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_scenario_records"
+      }
+    },
+    {
+      "name": "list_scenario_revisions",
+      "description": "List each distinct content of one scenario (key) across the environment's saved suite versions, newest first.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "key"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/scenarios/{key}/revisions/",
+        "parameters": {
+          "path": [
+            "id",
+            "key"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_scenario_revisions"
+      }
+    },
+    {
+      "name": "get_environment_readiness",
+      "description": "Return the run readiness of a pairing of agent, environment and suite versions (absent ones are the defaults), computed now, with its blockers and the selected scenarios it holds back. keys narrows the selection; trials is the trial count planned. Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keys": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 255,
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scenario keys; more than 200 go in the POST body as scenario_ids."
+          },
+          "trials": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "keys",
+            "trials"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_capabilities"
+      }
+    },
+    {
+      "name": "get_environment_readiness_for_scenarios",
+      "description": "Return the same run readiness report as get_environment_readiness for a selection of scenarios too long for a query string (scenario_ids, more than 200 keys). Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "title": "Agent version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "title": "Environment version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "title": "Suite version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "scenario_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255,
+              "minLength": 1
+            },
+            "maxItems": 1000
+          },
+          "trials": {
+            "title": "Trials",
+            "type": "integer",
+            "default": 1,
+            "maximum": 20,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "scenario_ids"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "scenario_ids",
+            "trials"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_select_capabilities"
+      }
+    },
+    {
+      "name": "list_environment_readiness_cases",
+      "description": "List one page, by scenario number, of the selected scenarios in one readiness bucket (eligible, blocked, stale or untested) or held back by one readiness row. Pass the previous page's next as cursor. Writes nothing.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "keys": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 255,
+                  "minLength": 1
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Scenario keys; more than 200 go in the POST body as scenario_ids."
+          },
+          "trials": {
+            "type": "integer",
+            "default": 1,
+            "minimum": 1,
+            "maximum": 20
+          },
+          "bucket": {
+            "type": "string",
+            "enum": [
+              "eligible",
+              "blocked",
+              "stale",
+              "untested"
+            ]
+          },
+          "row": {
+            "type": "string",
+            "enum": [
+              "start",
+              "message",
+              "continuity",
+              "streaming",
+              "tool_discovery",
+              "tool_routing",
+              "state",
+              "audio",
+              "files",
+              "browser",
+              "children",
+              "hidden_material",
+              "reset",
+              "resume",
+              "cancel",
+              "cost"
+            ]
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The previous page's next: the number it ended on."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/cases/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id",
+            "keys",
+            "trials",
+            "bucket",
+            "row",
+            "cursor"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_capability_cases"
+      }
+    },
+    {
+      "name": "recheck_environment_readiness",
+      "description": "Validate a pairing of versions again (absent ones are the defaults) without a run; moves no default. A pairing that is not yet certified runs its check in a build sandbox, so it may incur usage charges. Read the result with get_environment_readiness.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agent_version_id": {
+            "title": "Agent version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "environment_version_id": {
+            "title": "Environment version id",
+            "type": "string",
+            "format": "uuid"
+          },
+          "suite_version_id": {
+            "title": "Suite version id",
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "request": {
+        "method": "POST",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/recheck/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": [
+            "agent_version_id",
+            "environment_version_id",
+            "suite_version_id"
+          ]
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_capabilities_recheck_capabilities"
+      }
+    },
+    {
+      "name": "list_certified_pairings",
+      "description": "List the version pairings certified on an environment, newest first, with the exact agent, environment and suite versions of each.",
+      "group": "simulation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "cursor": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The previous page's next."
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/harness-environments/{id}/capabilities/history/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [
+            "cursor"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_harness-environments_capability_history"
       }
     },
     {
