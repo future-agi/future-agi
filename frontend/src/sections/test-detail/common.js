@@ -949,40 +949,44 @@ export const getCompareBaselineTooltipTitle = (status) => {
 };
 
 /**
- * Refetches the run's KPIs once the run stops making calls, so Debug failures
- * judges a finished run by its final connected count, not the last in-run
- * snapshot that stays cached for five minutes.
+ * Reads the run's KPIs once more after the grid sees the run finish, so Debug
+ * failures judges a finished run by its final connected count, not by a
+ * snapshot taken while the run was still making calls.
+ *
+ * A KPI read still in flight may have been sampled before the run finished,
+ * and React Query would hand a new read that answer, so it is cancelled first.
+ * The promise resolves when the new read succeeds, and rejects when it fails
+ * or a later call cancels it.
  *
  * The `["test-execution-detail", executionId]` prefix invalidation is the
  * refresh the grid made before Debug failures read KPIs, kept as it was. It
  * matches no query on the run page: the grid's pages are under
  * `"test-execution-detail-list"`, the KPIs key puts `"KPIS"` second, and only
  * the dataset summary's CriticalIssues reads that exact key.
- *
- * Pass `cancelInFlightKpis` when the page saw the run finish: a first KPI read
- * still in flight then began before the run finished, and React Query would
- * hand the invalidation that read's answer instead of reading again.
  */
-export const invalidateSettledRun = async (
-  queryClient,
-  executionId,
-  { cancelInFlightKpis = false } = {},
-) => {
-  const kpisKey = kpisQueryOptions(executionId).queryKey;
+export const readFinalRunKpis = async (queryClient, executionId) => {
+  const kpis = kpisQueryOptions(executionId);
   queryClient.invalidateQueries({
     queryKey: ["test-execution-detail", executionId],
   });
-  if (cancelInFlightKpis) {
-    await queryClient.cancelQueries({ queryKey: kpisKey });
-  }
-  await queryClient.invalidateQueries({ queryKey: kpisKey });
+  await queryClient.cancelQueries({ queryKey: kpis.queryKey });
+  await queryClient.fetchQuery({ ...kpis, staleTime: 0 });
 };
 
 export const useFixMyAgentBlocked = (executionId) => {
   const { data: kpis, isPending } = useKpis(executionId);
-  const { status } = useTestExecutionStore();
+  const { status, statusExecutionId, finalKpisExecutionId } =
+    useTestExecutionStore();
 
-  if (isPending || status === null) {
+  // Checking: the grid has not read this execution's status yet, or the run
+  // has finished and its final KPI read has not succeeded yet.
+  if (
+    isPending ||
+    status === null ||
+    statusExecutionId !== executionId ||
+    (FINISHED_RUN_STATUSES.includes(status) &&
+      finalKpisExecutionId !== executionId)
+  ) {
     return {
       disabled: true,
       reason: "",

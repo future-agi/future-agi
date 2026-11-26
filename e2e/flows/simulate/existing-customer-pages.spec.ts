@@ -73,7 +73,19 @@ async function stubFinishedRun(page: Page, run: FinishedRun) {
       },
     }),
   );
+  // GET /simulate/test-executions/<id>/optimiser-analysis/ (TestExecutionOptimiserAnalysisView):
+  // the one read the Debug failures drawer makes when it opens (SuggestionsPage.jsx). This is
+  // get_latest_optimiser_result's answer for a run with no analysis yet
+  // (simulate/utils/agent_optimiser.py), in the success_response envelope.
+  await page.route(endsWith(`/simulate/test-executions/${run.executionId}/optimiser-analysis/`), (route) =>
+    route.fulfill({ json: { status: true, result: { response: null, status: 'completed' } } }),
+  );
 }
+
+// The Debug failures drawer's header subtitle (FixMyAgentHeader.jsx) and its text for a run
+// with no analysis yet (FixMyAgentSections.jsx).
+const DRAWER_SUBTITLE = 'The top issues in this run, and how to fix them.';
+const DRAWER_NO_ANALYSIS = 'There are no suggestions yet, click the refresh button to get suggestions';
 
 async function openFinishedRun(page: Page, run: FinishedRun) {
   await stubFinishedRun(page, run);
@@ -94,17 +106,19 @@ test('SIM-E2E-002: an org from before the Simulate cutoff keeps Scenarios and Ru
       + 'and can debug the failures of a finished Run Simulation run once it has 15 connected calls',
     steps: ['read the Simulate menu', 'open Scenarios and Run Simulation from the menu',
             'open a finished Run Simulation run with 14 connected calls and point at Debug failures',
-            'open a finished Run Simulation run with 15 connected calls and 14 completed calls'],
+            'open a finished Run Simulation run with 15 connected calls and 14 completed calls',
+            'click Debug failures'],
     backendChecks: ["user-info for the actor's org reports restrict_simulate_to_environments: false"],
     browserChecks: ['the Simulate menu is exactly Environment, Scenarios, Run Simulation',
                     'each of those two items opens its page by URL and title, never /404',
                     'at 14 connected calls Debug failures is disabled, and its tooltip reads exactly '
                       + '"You need at least 15 connected calls to debug failures."',
-                    'at 15 connected calls and 14 completed calls Debug failures is enabled'],
+                    'at 15 connected calls and 14 completed calls Debug failures is enabled',
+                    'clicking it opens the Debug failures drawer, with its subtitle and its no-analysis-yet text'],
   }),
 }, async ({ page, actor }, testInfo) => {
-  // 6 browser actions × 60s, plus 60s headroom.
-  test.setTimeout(420_000);
+  // 7 browser actions × 60s, plus 60s headroom.
+  test.setTimeout(480_000);
   await testInfo.attach('existing-customer', { contentType: 'application/json', body: JSON.stringify({ email: actor.email, organizationId: actor.organizationId, workspaceId: actor.workspaceId }) });
   const belowMinimum: FinishedRun = { testId: randomUUID(), executionId: randomUUID(), connectedCalls: MIN_CONNECTED_CALLS - 1 };
   const atMinimum: FinishedRun = { testId: randomUUID(), executionId: randomUUID(), connectedCalls: MIN_CONNECTED_CALLS };
@@ -151,5 +165,16 @@ test('SIM-E2E-002: an org from before the Simulate cutoff keeps Scenarios and Ru
   await test.step('ui: a finished run with 15 connected calls opens Debug failures', async () => {
     await openFinishedRun(page, atMinimum);
     await expect(debugFailures).toBeEnabled({ timeout: UI_READY });
+  }, { timeout: UI_READY });
+
+  await test.step('ui: clicking the enabled Debug failures opens its drawer', async () => {
+    const analysisRead = page.waitForResponse(
+      (r) => new URL(r.url()).pathname.endsWith(`/simulate/test-executions/${atMinimum.executionId}/optimiser-analysis/`),
+      { timeout: UI_READY },
+    );
+    await debugFailures.click();
+    await analysisRead;
+    await expect(page.getByText(DRAWER_SUBTITLE, { exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByText(DRAWER_NO_ANALYSIS, { exact: true })).toBeVisible({ timeout: UI_READY });
   }, { timeout: UI_READY });
 });

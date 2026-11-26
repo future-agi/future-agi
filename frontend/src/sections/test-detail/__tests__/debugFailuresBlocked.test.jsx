@@ -14,7 +14,12 @@ const BLOCKED_REASON =
 
 const run = (status, kpis) => {
   mockKpis.current = kpis;
-  useTestExecutionStore.setState({ status });
+  // The grid read this status for e1, and e1's final KPIs once it finished.
+  useTestExecutionStore.setState({
+    status,
+    statusExecutionId: "e1",
+    finalKpisExecutionId: "e1",
+  });
   return renderHook(() => useFixMyAgentBlocked("e1")).result.current;
 };
 
@@ -86,5 +91,38 @@ describe("Debug failures on a finished run", () => {
       disabled: false,
       reason: "",
     });
+  });
+});
+
+describe("Debug failures while it checks", () => {
+  const CHECKING = { disabled: true, reason: "" };
+  const decide = (store) => {
+    mockKpis.current = {
+      agent_type: "voice",
+      total_calls: 20,
+      connected_calls: 15,
+    };
+    useTestExecutionStore.setState(store);
+    return renderHook(() => useFixMyAgentBlocked("e1")).result.current;
+  };
+
+  it("waits for a status read for the execution on screen", () => {
+    expect(
+      decide({
+        status: "completed",
+        statusExecutionId: "e0",
+        finalKpisExecutionId: "e0",
+      }),
+    ).toEqual(CHECKING);
+  });
+
+  it("waits for the final KPI read of a finished run", () => {
+    expect(
+      decide({
+        status: "completed",
+        statusExecutionId: "e1",
+        finalKpisExecutionId: null,
+      }),
+    ).toEqual(CHECKING);
   });
 });

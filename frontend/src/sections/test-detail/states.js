@@ -114,9 +114,24 @@ export const useTestDetailStoreShallow = (fun) =>
 export const useTestDetailSearchStoreShallow = (fun) =>
   useTestDetailStore(useShallow(fun));
 
-export const useTestExecutionStore = create((set) => ({
+// The run status the call grid last read, and the execution it read it for.
+// `finalKpisExecutionId` is the execution whose KPIs were read after the grid
+// saw it finish; until then Debug failures has no final count to judge.
+const EMPTY_EXECUTION_STATE = {
   status: null,
-  setStatus: (status) => set({ status }),
+  statusExecutionId: null,
+  finalKpisExecutionId: null,
+};
+
+export const useTestExecutionStore = create((set) => ({
+  ...EMPTY_EXECUTION_STATE,
+  setStatus: (executionId, status) =>
+    set({ status, statusExecutionId: executionId }),
+  setFinalKpisExecutionId: (executionId) =>
+    set({ finalKpisExecutionId: executionId }),
+  // A newly opened execution has no status and no final count yet.
+  openExecution: (executionId) =>
+    set({ ...EMPTY_EXECUTION_STATE, statusExecutionId: executionId }),
 }));
 
 export const resetState = () => {
@@ -130,5 +145,5 @@ export const resetState = () => {
   useTestDetailStore.setState({
     search: "",
   });
-  useTestExecutionStore.setState({ status: null });
+  useTestExecutionStore.setState(EMPTY_EXECUTION_STATE);
 };
