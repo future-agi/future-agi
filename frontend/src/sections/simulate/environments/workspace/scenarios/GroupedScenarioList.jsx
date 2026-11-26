@@ -34,11 +34,11 @@ const onKeyActivate = (fn) => (e) => {
 // The grouped body: each use-case section as a collapsible block with a sticky
 // header. The per-row edit pencil opens the editor through onEdit; remove works
 // through onRemove.
-export default function GroupedScenarioList({ groups, env, onEdit, onRemove, onHideGroup, selection, locked = false, lockTooltip = LOCK_TOOLTIP, isValidating }) {
+export default function GroupedScenarioList({ groups, env, onEdit, onRemove, onHideGroup, selection, locked = false, editLocked = locked, lockTooltip = LOCK_TOOLTIP, isValidating }) {
   return (
     <Box>
       {groups.map((g) => (
-        <CollapsibleGroup key={g.id} group={g} env={env} onEdit={onEdit} onRemove={onRemove} onHideGroup={onHideGroup} selection={selection} locked={locked} lockTooltip={lockTooltip} isValidating={isValidating} />
+        <CollapsibleGroup key={g.id} group={g} env={env} onEdit={onEdit} onRemove={onRemove} onHideGroup={onHideGroup} selection={selection} locked={locked} editLocked={editLocked} lockTooltip={lockTooltip} isValidating={isValidating} />
       ))}
     </Box>
   );
@@ -53,12 +53,13 @@ GroupedScenarioList.propTypes = {
   // in the design; supplying this adds them, matching the table.
   selection: PropTypes.object,
   locked: PropTypes.bool,
+  editLocked: PropTypes.bool,
   lockTooltip: PropTypes.string,
   // (row) => whether a running validation is proving it.
   isValidating: PropTypes.func,
 };
 
-function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection, locked = false, lockTooltip = LOCK_TOOLTIP, isValidating }) {
+function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection, locked = false, editLocked = locked, lockTooltip = LOCK_TOOLTIP, isValidating }) {
   const [open, setOpen] = useState(true);
 
   // Selection is opt-in and drops out entirely on a locked template, mirroring
@@ -172,11 +173,11 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                     mark={<LifecycleMark lifecycle={s.lifecycle} validating={Boolean(isValidating?.(s))} />}
                   />
                 </Box>
-                <Tooltip arrow title={locked ? lockTooltip : SCENARIOS_COPY.editLabel}>
+                <Tooltip arrow title={editLocked ? lockTooltip : SCENARIOS_COPY.editLabel}>
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, flexShrink: 0 }}>
                     <IconButton
                       size="small"
-                      disabled={locked}
+                      disabled={editLocked}
                       aria-label={SCENARIOS_COPY.editLabel}
                       onClick={() => onEdit?.(s)}
                     >
@@ -184,11 +185,11 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                     </IconButton>
                   </Box>
                 </Tooltip>
-                <Tooltip arrow title={locked ? lockTooltip : removeTitle(s)}>
+                <Tooltip arrow title={editLocked ? lockTooltip : removeTitle(s)}>
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, mr: 1.5, flexShrink: 0 }}>
                     <IconButton
                       size="small"
-                      disabled={locked || isArchived(s)}
+                      disabled={editLocked || isArchived(s)}
                       aria-label={SCENARIOS_COPY.removeLabel}
                       onClick={() => onRemove(s.id)}
                     >
@@ -212,6 +213,7 @@ CollapsibleGroup.propTypes = {
   onHideGroup: PropTypes.func,
   selection: PropTypes.object,
   locked: PropTypes.bool,
+  editLocked: PropTypes.bool,
   lockTooltip: PropTypes.string,
   // (row) => whether a running validation is proving it.
   isValidating: PropTypes.func,

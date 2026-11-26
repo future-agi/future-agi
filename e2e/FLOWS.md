@@ -3549,7 +3549,7 @@
 
 **Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links
 
-**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:32`
 
 **Tags:** —
 
@@ -3560,10 +3560,10 @@
 3. open the old Simulator Agent link
 4. open the old Personas link
 5. open the Personas tab
-6. open the Prebuilt template links
+6. open the Prebuilt list
 7. read the Simulate menu
 8. open the old Agent Definition link
-9. open the Scenarios, Run Simulation and Agent Definition links directly
+9. open the Scenarios, Run Simulation, Agent Definition and template id links directly
 
 **Browser observations:**
 
@@ -3572,16 +3572,16 @@
 - simulator-agent lands on Environments
 - personas lands on the Environments Personas tab
 - the Personas tab is selected and shows the persona search
-- both template URLs stay on their URL and open their page by title
+- the Prebuilt list stays on its URL and opens its page by title
 - agent-definitions lands on Connected agents
 - the Simulate menu is exactly Environment
-- /dashboard/simulate/scenarios, /test and /agent-definitions/<id> land on /404
+- /dashboard/simulate/scenarios, /test, /agent-definitions/<id> and environments/templates/<id> land on /404
 
 ### SIM-E2E-002 — an org from before the Simulate cutoff keeps Scenarios and Run Simulation
 
-**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu
+**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu, and can debug the failures of a finished Run Simulation run once it has 15 connected calls
 
-**Spec:** `flows/simulate/existing-customer-pages.spec.ts:22`
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:89`
 
 **Tags:** —
 
@@ -3589,6 +3589,8 @@
 
 1. read the Simulate menu
 2. open Scenarios and Run Simulation from the menu
+3. open a finished Run Simulation run with 14 connected calls and point at Debug failures
+4. open a finished Run Simulation run with 15 connected calls and 14 completed calls
 
 **Backend state verified:**
 
@@ -3598,6 +3600,8 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+- at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."
+- at 15 connected calls and 14 completed calls Debug failures is enabled
 
 ### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
 
