@@ -1,12 +1,12 @@
 import PropTypes from "prop-types";
 import { Box, Typography } from "@mui/material";
 
+import CandidatesTable from "./CandidatesTable";
 import FixSteps from "./FixSteps";
 import TrialChart from "./TrialChart";
-import TrialsTable from "./TrialsTable";
 
 // Screen 2: a running fix. Everything here comes from the one read the page
-// polls; nothing is estimated.
+// polls; nothing is estimated. Its candidates read as they will once it ends.
 export default function FixRunningView({ fix, runTestId }) {
   const trials = fix.candidates || [];
   const max = fix.plan?.max_candidates;
@@ -21,7 +21,8 @@ export default function FixRunningView({ fix, runTestId }) {
               ? `Candidates (${trials.length} of up to ${max})`
               : `Candidates (${trials.length})`}
           </Typography>
-          <TrialsTable fix={fix} />
+          {/* Another epoch starts from its own folds, never this one's. */}
+          <CandidatesTable key={fix.id} fix={fix} />
         </>
       )}
     </Box>

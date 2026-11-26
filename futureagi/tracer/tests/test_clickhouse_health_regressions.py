@@ -284,6 +284,44 @@ def test_health_reads_clamp_and_restore_native_ping_timeout(fails):
 
 
 @pytest.mark.unit
+def test_health_read_accepts_retained_deadline_and_never_extends_budget():
+    from tracer.services.clickhouse.health_client import HealthCheckClient
+
+    connection = SimpleNamespace(
+        sync_request_timeout=5,
+        send_receive_timeout=300,
+        connect_timeout=10,
+        socket=Mock(),
+        receive_packet=Mock(),
+        ping=Mock(return_value=True),
+    )
+    driver = Mock(connection=connection)
+    driver.execute.return_value = ([(1,)], [])
+    started = monotonic()
+
+    # A retained deadline already in the past exhausts the budget at once.
+    with pytest.raises(TimeoutError):
+        HealthCheckClient._execute_native_read_with_remaining_timeout(
+            driver,
+            "SELECT 1",
+            {},
+            query_settings=None,
+            started_at=started,
+            timeout_ms=1000,
+            retained_until=started - 1,
+        )
+    # A later retained deadline leaves the health budget in charge.
+    assert HealthCheckClient._execute_native_read_with_remaining_timeout(
+        driver,
+        "SELECT 1",
+        {},
+        query_settings=None,
+        started_at=monotonic(),
+        timeout_ms=1000,
+        retained_until=monotonic() + 3600,
+    ) == ([(1,)], [])
+
+
 def test_health_progress_packets_share_one_deadline(monkeypatch):
     from tracer.services.clickhouse import health_client
 

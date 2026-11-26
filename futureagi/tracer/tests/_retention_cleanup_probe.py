@@ -67,7 +67,8 @@ class CleanupProbe:
         if "AND canonical_session_id NOT IN (SELECT unit_id FROM (" in sql:
             role = "dependencies"
         elif (
-            "AND (notEmpty(session_id) OR notEmpty(user_id)) AND session_id NOT IN ("
+            " AS span_owner_revisions " in sql
+            and "AND (notEmpty(session_id) OR notEmpty(user_id)) AND session_id NOT IN ("
             in sql
         ):
             role = "fields"
