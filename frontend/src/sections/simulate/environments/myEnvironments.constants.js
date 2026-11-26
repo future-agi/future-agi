@@ -66,9 +66,11 @@ export const DELETE_DIALOG_COPY = {
 };
 
 // A delete refused while a version is locked: an admin can unlock it from there.
+// ``pair`` names the unlocked versions, as LOCK_COPY does; null when unknown.
 export const DELETE_REFUSAL_COPY = {
-  unlock: (label) => `Unlock version ${label}`,
-  unlocked: (label) => `Version ${label} is unlocked.`,
+  unlock: "Unlock versions",
+  unlocked: (label, pair) =>
+    pair ? `Unlocked ${pair} (lock ${label}).` : `Unlocked lock ${label}.`,
 };
 
 // A field the list API doesn't send at all (not even as null). Cells draw a

@@ -3,10 +3,12 @@ import { closeSnackbar, enqueueSnackbar } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   environmentVersionsKey,
+  lockPreviewKey,
   unlockVersion,
 } from "src/api/simulate-environments/versions";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { DELETE_REFUSAL_COPY } from "../myEnvironments.constants";
+import { lockPair } from "../workspace/overview/overview.constants";
 import useSimulationAccess from "./useSimulationAccess";
 
 // The locked version a refused delete names, when the refusal is one. Both its id
@@ -31,6 +33,7 @@ export default function useDeleteRefusal() {
       unlockVersion(envId, lockedVersionId),
     onSuccess: (data, { envId }) => {
       if (data) queryClient.setQueryData(environmentVersionsKey(envId), data);
+      queryClient.invalidateQueries({ queryKey: lockPreviewKey(envId) });
     },
   });
 
@@ -41,10 +44,19 @@ export default function useDeleteRefusal() {
       unlock.mutate(
         { envId, lockedVersionId: lockedVersion.id },
         {
-          onSuccess: () =>
-            enqueueSnackbar(DELETE_REFUSAL_COPY.unlocked(lockedVersion.label), {
-              variant: "success",
-            }),
+          onSuccess: (data) => {
+            // The answer's history names the pair the lock covered.
+            const unlocked = (data?.locked_versions || []).find(
+              (one) => one.id === lockedVersion.id,
+            );
+            const pair = unlocked
+              ? lockPair(unlocked.environment_label, unlocked.suite_label)
+              : null;
+            enqueueSnackbar(
+              DELETE_REFUSAL_COPY.unlocked(lockedVersion.label, pair),
+              { variant: "success" },
+            );
+          },
           onError: (failure) =>
             enqueueSnackbar(errorMessage(failure), { variant: "error" }),
         },
@@ -55,7 +67,7 @@ export default function useDeleteRefusal() {
       ...(lockedVersion && {
         action: (key) => (
           <Button size="small" color="inherit" onClick={() => onUnlock(key)}>
-            {DELETE_REFUSAL_COPY.unlock(lockedVersion.label)}
+            {DELETE_REFUSAL_COPY.unlock}
           </Button>
         ),
       }),

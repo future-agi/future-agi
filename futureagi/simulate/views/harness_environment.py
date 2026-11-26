@@ -427,7 +427,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         )
         return Response(version_reads.list_versions(moved))
 
-    @viewer_denied("lock a version")
+    @viewer_denied("lock versions")
     @validated_request(
         request_serializer=HarnessLockVersionSerializer,
         responses={
@@ -456,9 +456,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         )
         return Response(version_reads.list_versions(locked))
 
-    @viewer_denied(
-        "unlock a version", advice="Ask a workspace admin or owner to unlock it."
-    )
+    @viewer_denied("unlock versions", advice="Ask a workspace admin or owner.")
     @validated_request(
         request_serializer=HarnessUnlockVersionSerializer,
         responses={

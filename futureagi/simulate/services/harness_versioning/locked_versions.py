@@ -265,24 +265,32 @@ def _assigned(tasks: list[Task]) -> dict[UUID, str]:
 def _locked_version(
     environment_version_id: UUID, suite_version_id: UUID
 ) -> HarnessLockedVersion | None:
-    return HarnessLockedVersion.no_workspace_objects.filter(
-        environment_version_id=environment_version_id,
-        suite_version_id=suite_version_id,
-        unlocked_at__isnull=True,
-    ).first()
+    return (
+        HarnessLockedVersion.no_workspace_objects.filter(
+            environment_version_id=environment_version_id,
+            suite_version_id=suite_version_id,
+            unlocked_at__isnull=True,
+        )
+        # The pair's labels for its refusal; a version row's documents stay unread.
+        .annotate(
+            environment_number=F("environment_version__version_number"),
+            suite_number=F("suite_version__version_number"),
+        )
+        .first()
+    )
 
 
 def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
     """What locking the default pair would give, or the reason it can't be locked. The
     lock and its preview both plan here, so a lock never disagrees with its preview."""
     from simulate.services.harness_agent_versions import _busy
-    from simulate.services.harness_versioning.read import require_versioning
+    from simulate.services.harness_versioning.read import _label, require_versioning
 
     require_versioning()
     if job.environment_version_id is None or job.suite_version_id is None:
         raise HostedHarnessError(
             "lock_not_ready",
-            "Build this environment before you lock a version.",
+            "Build this environment before you lock it.",
             status_code=409,
         )
     if _busy(job):
@@ -298,7 +306,9 @@ def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
     if current is not None:
         raise HostedHarnessError(
             "version_already_locked",
-            f"These versions are already locked as {current.label}.",
+            f"Lock {current.label} already covers "
+            f"environment {_label(current.environment_number)}, "
+            f"scenarios {_label(current.suite_number)}.",
             status_code=409,
         )
     tasks = scorable_tasks(
@@ -394,7 +404,7 @@ def require_unlock_admin(environment: HostedHarnessJob, user: User) -> None:
     if level is None or level < Level.WORKSPACE_ADMIN:
         raise HostedHarnessError(
             "unlock_admin_only",
-            "Only a workspace admin or owner can unlock a version.",
+            "Only a workspace admin or owner can unlock versions.",
             status_code=403,
         )
 
@@ -414,7 +424,7 @@ def unlock_version(
         if locked_version is None:
             raise HostedHarnessError(
                 "locked_version_not_found",
-                "This locked version doesn't exist.",
+                "This lock doesn't exist.",
                 status_code=404,
             )
         if locked_version.unlocked_at is None:
@@ -444,7 +454,8 @@ def require_no_locked_version(environment: HostedHarnessJob) -> None:
     if locked_version is not None:
         raise HostedHarnessError(
             "version_locked",
-            f"A workspace admin or owner must unlock version {locked_version.label} first.",
+            f"Lock {locked_version.label} covers this version. A workspace admin or "
+            "owner must unlock it first.",
             status_code=409,
             # What an admin's Unlock in the refusal names and sends.
             details={

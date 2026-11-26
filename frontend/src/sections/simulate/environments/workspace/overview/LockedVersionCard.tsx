@@ -14,7 +14,7 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import SectionCard from "../../components/SectionCard";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
-import { LOCK_COPY, versionLine } from "./overview.constants";
+import { LOCK_COPY, lockPair, versionLine } from "./overview.constants";
 
 /*
   An environment's locked version, after Vel's design: the default environment and
@@ -55,8 +55,12 @@ interface LockPreview extends VersionPair {
   testTarget: number | null;
 }
 
-// What the open confirmation acts on: the pair it opened with, or a locked version.
-type Confirm = { lock: VersionPair } | { unlock: LockedVersion } | null;
+// What the open confirmation acts on: the pair it opened with, and its name, or a
+// locked version.
+type Confirm =
+  | { lock: VersionPair; pair: string }
+  | { unlock: LockedVersion }
+  | null;
 
 interface LockedVersionCardProps {
   envId: string;
@@ -129,6 +133,10 @@ export default function LockedVersionCard({
   const earlier = lockedVersions.filter(
     (lockedVersion) => lockedVersion !== current,
   );
+  // The pair the title names: the locked one, else the default a lock would freeze.
+  const pair = current
+    ? lockPair(current.environmentLabel, current.suiteLabel)
+    : lockPair(defaults?.environment?.label, defaults?.suite?.label);
   // A locked card has no badge: its title already says Locked.
   const status = current
     ? null
@@ -137,10 +145,10 @@ export default function LockedVersionCard({
       : { label: LOCK_COPY.status.blocked, role: "warning" };
   const line = current
     ? LOCK_COPY.lockedLine(
+        current.label,
         shortDate(current.lockedAt),
         current.train,
         current.test,
-        current.environmentLabel,
       )
     : lock.canLock
       ? LOCK_COPY.readyLine(lock.train, lock.test)
@@ -162,7 +170,7 @@ export default function LockedVersionCard({
     );
   };
   const needsScenarios = ADD_SCENARIOS_FOR.includes(lock.refusal?.code ?? "");
-  const confirmLock = confirm && "lock" in confirm ? confirm.lock : null;
+  const confirmLock = confirm && "lock" in confirm ? confirm : null;
   const confirmUnlock = confirm && "unlock" in confirm ? confirm.unlock : null;
 
   const cell = { typography: "s1", py: 1, px: 1.5 };
@@ -176,7 +184,7 @@ export default function LockedVersionCard({
 
   return (
     <SectionCard
-      title={LOCK_COPY.title(current?.label)}
+      title={LOCK_COPY.title(pair, Boolean(current))}
       subtitle={current ? LOCK_COPY.subtitleLocked : LOCK_COPY.subtitleOpen}
       action={
         status && (
@@ -305,6 +313,7 @@ export default function LockedVersionCard({
                           environmentVersionId: lock.environmentVersionId,
                           suiteVersionId: lock.suiteVersionId,
                         },
+                        pair,
                       })
                     }
                     startIcon={
@@ -339,7 +348,10 @@ export default function LockedVersionCard({
               <Typography
                 sx={{ typography: "s3", color: "text.secondary", flex: 1 }}
               >
-                {LOCK_COPY.earlierLine(lockedVersion)}
+                {LOCK_COPY.earlierLine(
+                  lockedVersion,
+                  shortDate(lockedVersion.lockedAt),
+                )}
               </Typography>
               {!lockedVersion.unlockedAt && canUnlockVersion && (
                 <UnlockButton
@@ -357,14 +369,14 @@ export default function LockedVersionCard({
           open
           onClose={() => setConfirm(null)}
           PaperProps={{ sx: { maxWidth: 480 } }}
-          title={LOCK_COPY.lockTitle}
+          title={LOCK_COPY.lockTitle(confirmLock.pair)}
           content={LOCK_COPY.lockBody}
           action={
             <Button
               size="small"
               variant="contained"
               color="primary"
-              onClick={() => onLock(confirmLock)}
+              onClick={() => onLock(confirmLock.lock)}
             >
               {LOCK_COPY.lockAction}
             </Button>
@@ -376,8 +388,10 @@ export default function LockedVersionCard({
           open
           onClose={() => setConfirm(null)}
           PaperProps={{ sx: { maxWidth: 480 } }}
-          title={LOCK_COPY.unlockTitle(confirmUnlock.label)}
-          content={LOCK_COPY.unlockBody}
+          title={LOCK_COPY.unlockTitle(
+            lockPair(confirmUnlock.environmentLabel, confirmUnlock.suiteLabel),
+          )}
+          content={LOCK_COPY.unlockBody(confirmUnlock.label)}
           action={
             <Button
               size="small"
