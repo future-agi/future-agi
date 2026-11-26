@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from django.conf import settings
 from django.db.models import (
@@ -34,6 +34,11 @@ from simulate.services.harness_versioning.versions import (
     with_actor_digests,
 )
 from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.locked_versions import (
+        LockedVersionItem,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -518,7 +523,16 @@ def agent_version_item(job: HostedHarnessJob, version: AgentVersion) -> dict[str
     )
 
 
-def list_versions(job: HostedHarnessJob) -> dict[str, Any]:
+class VersionsRead(TypedDict):
+    """Every version of an environment's three pieces, newest first, and its locks."""
+
+    agent: list[dict[str, Any]]
+    environment: list[dict[str, Any]]
+    suite: list[dict[str, Any]]
+    locked_versions: list[LockedVersionItem]
+
+
+def list_versions(job: HostedHarnessJob) -> VersionsRead:
     environments = _newest_first(
         HarnessEnvironmentVersion.no_workspace_objects.filter(job=job)
         .select_related("created_by")
