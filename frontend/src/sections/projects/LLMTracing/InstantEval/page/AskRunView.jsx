@@ -138,8 +138,8 @@ function StatusLine({ run, unit, creating }) {
   else if (run.status === "stalled")
     // Its workflow went before it picked its rows: Resume picks them.
     text = run.summary?.preparing
-      ? `This run stopped before it picked the ${run.total.toLocaleString()} ${noun(run.total)} to read`
-      : `This run stopped before finishing: ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered`;
+      ? `This run was interrupted before it picked the ${run.total.toLocaleString()} ${noun(run.total)} to read`
+      : `This run was interrupted before finishing: ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered`;
   else if (run.status === "failed")
     text = !answersSaved
       ? "Failed before answering"
@@ -165,7 +165,8 @@ function StatusLine({ run, unit, creating }) {
       run.summary.waiting_s / 60,
     )} min · ${settled.toLocaleString()} of ${run.total.toLocaleString()} answered`;
   else if (run.status === "cancelled")
-    text = `Cancelled · ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered`;
+    // Stopped by the user from Stop; a run the system cut off is Interrupted.
+    text = `Stopped · ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered`;
   else
     text = [
       questions > 1
@@ -285,9 +286,9 @@ function QuestionTabLabel({ label }) {
 
 QuestionTabLabel.propTypes = { label: PropTypes.string.isRequired };
 
-// Pause, resume, cancel and retry the failed rows of a run. A cancelled run
-// is over: it is asked again (Run again), not resumed or retried, so Cancel
-// asks first (`onCancel`); Pause is instant.
+// Pause, resume, stop and retry the failed rows of a run. A stopped run is
+// over: it is asked again (Run again), not resumed or retried, so Stop asks
+// first (`onCancel`); Pause is instant.
 function RunControls({ run, onControl, onCancel, busy, retryElsewhere }) {
   const live = run.status === "running" || run.status === "preparing";
   const cancelled = run.status === "cancelled";
@@ -735,7 +736,7 @@ export default function AskRunView({
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [confirmMore, setConfirmMore] = useState(null);
-  // Cancel asks first: a cancelled run can't be resumed.
+  // Stop asks first: a stopped run can't be resumed.
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [handing, setHanding] = useState(false);
   // Why a hand-off of the selection was refused: {label, message}, shown
@@ -755,7 +756,7 @@ export default function AskRunView({
   const question =
     questions.find((item) => item.configId === focus.configId) || questions[0];
   const live = run.status === "running" || run.status === "preparing";
-  // While Cancel asks, the answers it says are kept are counted again from
+  // While Stop asks, the answers it says are kept are counted again from
   // the moment it opens and every 2 s: they land in bursts, and a busy
   // server's summary is otherwise read only every 5 or 10 s.
   const askingCancel = confirmCancel && (live || run.status === "pausing");
@@ -1455,7 +1456,7 @@ export default function AskRunView({
             {runAgainConfirm.credits != null
               ? ` That is ${creditWords(runAgainConfirm.credits)}.`
               : ""}{" "}
-            You can pause or cancel it while it runs.
+            You can pause or stop it while it runs.
           </Alert>
         )}
 
