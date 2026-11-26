@@ -217,9 +217,9 @@ export const worldTables = (env) => (env?.seed?.tables || []).filter((t) => !isH
 // The locked-version card: lock the default versions so scores on them stay comparable.
 export const LOCK_COPY = {
   title: (label) => (label ? `Locked version ${label}` : "Lock a version"),
-  subtitleLocked:
-    "Frozen so scores stay comparable. Edits make a new, unlocked version.",
-  subtitleOpen: "Lock these versions so scores on them stay comparable.",
+  subtitleLocked: "Frozen: edits make a new, unlocked version.",
+  subtitleOpen:
+    "Lock these versions to freeze their scenarios, splits and scorer environment.",
   status: { ready: "Ready", blocked: "Can't lock yet" },
   head: { check: "Check", proves: "What it proves", result: "Result" },
   reference: {
@@ -231,14 +231,14 @@ export const LOCK_COPY = {
   lockedLine: (at, train, test, environmentLabel) =>
     `Locked ${at} · Train ${train} · Test ${test} scenarios · scorer environment ${environmentLabel}`,
   readyLine: (train, test) =>
-    `Train ${train} · Test ${test} scenarios once locked. Lock to freeze scenarios, splits and the scorer.`,
+    `Train ${train} · Test ${test} scenarios once locked. Lock to freeze scenarios, splits and the scorer environment.`,
   lock: "Lock this version",
   addScenarios: "Add scenarios",
   viewer: "You don't have permission to lock versions.",
   unlock: "Unlock",
   lockTitle: "Lock this version?",
   lockBody:
-    "Its scenarios, train and test splits and scorer freeze, so every score on it stays comparable. Each scenario keeps its split in every later locked version. Edits make a new, unlocked version.",
+    "Its scenarios, their train and test splits and the scorer environment freeze. Each scenario keeps its split in every later locked version. Edits make a new, unlocked version.",
   lockAction: "Lock version",
   unlockTitle: (label) => `Unlock version ${label}?`,
   unlockBody:
