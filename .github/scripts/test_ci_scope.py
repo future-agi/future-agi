@@ -240,6 +240,55 @@ class UpdateCiAdmission(unittest.TestCase):
                 job,
             )
 
+    def test_every_compose_launcher_step_fails_without_an_executable_plugin(self):
+        # Runs each step's script as Actions does with no shell set (bash -e),
+        # with docker, systemctl, uname and crontab stubbed. A failing first
+        # command of a non-final && list does not stop bash -e, so a missing
+        # or non-executable plugin must still fail the step.
+        steps = [
+            textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - ", 1)[0])
+            for step in self.WORKFLOW.split("\n      - name: Explicit native ")[1:]
+        ]
+        self.assertEqual(len(steps), 3)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            stubs = {
+                "docker": 'case "$*" in *--format*) printf "%s" "$PLUGIN";; esac',
+                "systemctl": "exit 0",
+                "crontab": "exit 0",
+                "uname": "echo x86_64",
+            }
+            for name, body in stubs.items():
+                (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+                (bin_dir / name).chmod(0o755)
+            ok = root / "compose-ok"
+            ok.write_text("#!/bin/sh\n")
+            ok.chmod(0o755)
+            plain = root / "compose-plain"
+            plain.write_text("")
+            for index, script in enumerate(steps):
+                for plugin, passes in ((ok, True), (plain, False), (root / "missing", False), ("", False)):
+                    with self.subTest(step=index, plugin=str(plugin)):
+                        home = Path(tempfile.mkdtemp(dir=temp))
+                        github_path = home / "github_path"
+                        github_path.write_text("")
+                        run = subprocess.run(
+                            ["bash", "--noprofile", "--norc", "-e", "-c", script],
+                            env={
+                                "PATH": f"{bin_dir}:/usr/bin:/bin",
+                                "HOME": str(home),
+                                "PLUGIN": str(plugin),
+                                "GITHUB_PATH": str(github_path),
+                            },
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
+                        self.assertEqual(run.returncode == 0, passes, run.stdout + run.stderr)
+                        self.assertEqual(bool(github_path.read_text()), passes)
+
 
 class RehearsalInputs(unittest.TestCase):
     """Which changed paths start the two Real update rehearsals."""
