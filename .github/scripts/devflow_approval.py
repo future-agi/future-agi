@@ -7,7 +7,9 @@ and then does one of three things:
 
 - approve: the bot approves the head commit and adds devflow:train, so the
   batch train may take it.
-- needs-human: the bot adds the needs-human label and does not approve.
+- needs-human: the bot adds the needs-human label and does not approve. A
+  high tier is one reason: the reviewer, the verdict's diff-only tier_check
+  or the deterministic risk scan of the changed files says high.
 - wait: nothing yet (no trusted review on this head, or the verdict is not pass).
 
 In `observe` mode it only writes the decision to the job summary: no
@@ -28,6 +30,8 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
+import urllib.parse
 
 REVIEW_MARKER = "<!-- devflow-review:v1 -->"
 ASSIGN_MARKER = re.compile(r"<!--\s*devflow-assigned:v1\b([^>]*)-->")
@@ -40,6 +44,46 @@ STOP_LABEL = "needs-human"
 TRAIN_LABEL = "devflow:train"
 BASE = "dev"
 MODES = ("devflow", "observe")
+# The deterministic risk scan reads only the pull request's changed files, no
+# model: destructive Django operations and ClickHouse statements in a
+# migration's added lines, and any change to a manifest's dependency tables.
+DJANGO_MIGRATION = re.compile(r"(^|/)migrations/(?!__init__\.py$)[^/]+\.py$")
+DJANGO_RISK = re.compile(r"\b(RemoveField|DeleteModel|RenameField|RenameModel|RunSQL|RunPython)\b")
+CLICKHOUSE_MIGRATION = re.compile(
+    r"^futureagi/tracer/services/clickhouse/(?:v2/)?(?:schema|oss_cdc_migrations)/[^/]+\.sql$"
+)
+CLICKHOUSE_RISK = re.compile(
+    r"\b(DROP|RENAME|TRUNCATE)\b|\bALTER\s+TABLE\b[^;]*?\b(DELETE|UPDATE)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+SQL_COMMENT = re.compile(r"--[^\n]*")
+# Dependency tables per manifest, as dotted keys.
+PYPROJECT_TABLES = (
+    "build-system.requires",
+    "project.dependencies",
+    "project.optional-dependencies",
+    "dependency-groups",
+    "tool.uv.dev-dependencies",
+    "tool.uv.constraint-dependencies",
+    "tool.uv.override-dependencies",
+    "tool.uv.sources",
+    "tool.uv.index",
+    "tool.poetry.dependencies",
+    "tool.poetry.dev-dependencies",
+    "tool.poetry.group",
+)
+PACKAGE_TABLES = (
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "overrides",
+    "resolutions",
+)
+MANIFESTS = ("pyproject.toml", "package.json", "go.mod")
+GO_DIRECTIVE = re.compile(r"^(require|replace)\b\s*(\()?\s*(.*)$")
+# The pull request files listing stops at this many files.
+FILES_CAP = 3000
 
 
 def lower(value) -> str:
@@ -82,6 +126,111 @@ def bot_approved(reviews: list, head: str) -> bool:
     )
 
 
+def added_lines(patch: str) -> str:
+    return "\n".join(
+        line[1:]
+        for line in patch.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+
+
+def dotted(data, key: str):
+    for part in key.split("."):
+        if not isinstance(data, dict):
+            return None
+        data = data.get(part)
+    return data
+
+
+def go_directives(text: str) -> set:
+    """Every require and replace entry of a go.mod, one string per entry."""
+    out, block = set(), None
+    for raw in text.splitlines():
+        line = raw.split("//", 1)[0].strip()
+        if block:
+            if line == ")":
+                block = None
+            elif line:
+                out.add(f"{block} {line}")
+            continue
+        match = GO_DIRECTIVE.match(line)
+        if match and match.group(2):
+            block = match.group(1)
+        elif match and match.group(3):
+            out.add(f"{match.group(1)} {match.group(3)}")
+    return out
+
+
+def manifest_changes(path: str, old: str, new: str) -> list:
+    """The dependency tables that differ between two versions of a manifest
+    ("" is a missing file). Raise ValueError when a version does not parse."""
+    name = path.rsplit("/", 1)[-1]
+    if name == "go.mod":
+        return ["require/replace"] if go_directives(old) != go_directives(new) else []
+    if name == "package.json":
+        tables = PACKAGE_TABLES
+
+        def load(text):
+            return json.loads(text) if text.strip() else {}
+
+    else:
+        tables, load = PYPROJECT_TABLES, tomllib.loads
+    try:
+        before, after = load(old), load(new)
+    except ValueError as err:  # JSONDecodeError and TOMLDecodeError are ValueErrors
+        raise ValueError(f"does not parse: {err}") from err
+    return [key for key in tables if dotted(before, key) != dotted(after, key)]
+
+
+def risk_scan(files: list, read) -> list:
+    """Hits of the deterministic risk scan over pulls/{n}/files items.
+
+    `read(path, side)` returns a file's text on side "base" (the merge base)
+    or "head", or None when the file cannot be read. A file the scan cannot
+    read is a hit, and so is a deleted or renamed migration.
+    """
+    hits = []
+    if len(files) >= FILES_CAP:
+        hits.append(f"{len(files)} files, the most the listing returns")
+    for item in files:
+        path, status = item.get("filename") or "", item.get("status")
+        clickhouse = bool(CLICKHOUSE_MIGRATION.match(path))
+        if clickhouse or DJANGO_MIGRATION.search(path):
+            if status == "removed":
+                hits.append(f"{path} is deleted")
+                continue
+            if status == "renamed":
+                hits.append(f"{path} is renamed from {item.get('previous_filename')}")
+            # The listing leaves out the patch of a large diff: scan the whole file.
+            text = added_lines(item["patch"]) if item.get("patch") else read(path, "head")
+            if text is None:
+                hits.append(f"{path} could not be read")
+                continue
+            if clickhouse:
+                found = {
+                    (m.group(1) or f"ALTER TABLE ... {m.group(2)}").upper()
+                    for m in CLICKHOUSE_RISK.finditer(SQL_COMMENT.sub("", text))
+                }
+            else:
+                found = set(DJANGO_RISK.findall(text))
+            if found:
+                hits.append(f"{path} adds {', '.join(sorted(found))}")
+        elif path.rsplit("/", 1)[-1] in MANIFESTS:
+            old = "" if status == "added" else read(item.get("previous_filename") or path, "base")
+            new = "" if status == "removed" else read(path, "head")
+            if old is None or new is None:
+                hits.append(f"{path} could not be read")
+                continue
+            try:
+                tables = manifest_changes(path, old, new)
+            except ValueError as err:
+                hits.append(f"{path} {err}")
+                continue
+            if tables:
+                hits.append(f"{path} changes {', '.join(tables)}")
+    return hits
+
+
 def decide(
     pr: dict,
     reviews: list,
@@ -89,6 +238,7 @@ def decide(
     permissions: dict,
     tight: bool = False,
     observe: bool = False,
+    scan: list = (),
 ) -> dict:
     """Return {"action": "skip"|"wait"|"needs-human"|"approve", "reasons": [...], "head": sha}.
 
@@ -97,6 +247,12 @@ def decide(
     `tight` (APPROVAL_MODE_TIGHT is "1") sends every passing review to a person.
     `observe` decides on every head, even one the bot already approved (the
     admin rule still approves in that mode), so the decisions can be compared.
+    `scan` is risk_scan()'s hits on the pull request's files.
+
+    The tier has three votes, and one high vote makes it high: the reviewer's
+    `tier`, the verdict's `tier_check` (a separate judgement of the diff
+    alone; a missing one counts as high) and the scan. A decision on a
+    passing review also returns the three votes.
     """
     head = (pr.get("head") or {}).get("sha") or ""
     author = (pr.get("user") or {}).get("login") or ""
@@ -150,10 +306,28 @@ def decide(
 
     # A passing review on the head. From here the bot either approves or asks a person.
     reasons = []
-    if verdict.get("tier") != "low":
+    check = verdict.get("tier_check")
+    check = check if isinstance(check, dict) else {}
+    diff_only = check.get("input") == "diff-only"
+    votes = {
+        "reviewer": verdict.get("tier"),
+        "tier_check": check.get("tier") if diff_only else None,
+        "scan": "high" if scan else "low",
+    }
+    if votes["reviewer"] != "low":
         reasons.append(
             f"tier is {verdict.get('tier')!r}: {verdict.get('tier_reason') or 'no reason given'}"
         )
+    if not check:
+        reasons.append("tier_check is missing, so it counts as high")
+    elif not diff_only:
+        reasons.append(f"tier_check input is {check.get('input')!r}, not 'diff-only', so it counts as high")
+    elif votes["tier_check"] != "low":
+        reasons.append(
+            f"tier_check tier is {votes['tier_check']!r} (engine {check.get('engine') or 'unknown'})"
+        )
+    if scan:
+        reasons.append("scan: " + "; ".join(scan))
     if verdict.get("needs_person") is not False:
         reasons.append("the review asks for a person (needs_person is not false)")
     if permissions.get(lower(author)) not in WRITE:
@@ -161,8 +335,8 @@ def decide(
     if tight:
         reasons.append("APPROVAL_MODE_TIGHT is 1: a person approves every pull request")
     if reasons:
-        return out("needs-human", *reasons)
-    return out("approve", f"passing low-tier review by {reviewer} on the head")
+        return {**out("needs-human", *reasons), "votes": votes}
+    return {**out("approve", f"passing low-tier review by {reviewer} on the head"), "votes": votes}
 
 
 def train_labels(pr: dict) -> list:
@@ -204,6 +378,42 @@ def permission(repo: str, login: str) -> str:
         raise
 
 
+def read_file(repo: str, path: str, ref: str):
+    """A file's text at a commit; None when it is absent there (404)."""
+    try:
+        return gh(
+            "api",
+            "-H",
+            "Accept: application/vnd.github.raw",
+            f"repos/{repo}/contents/{urllib.parse.quote(path)}?ref={ref}",
+        )
+    except subprocess.CalledProcessError as err:
+        if "HTTP 404" in (err.stderr or ""):
+            return None
+        raise
+
+
+def scan_pr(repo: str, number: int, pr: dict) -> list:
+    """risk_scan() on the pull request's files, read live. The base side is the
+    merge base, which is what the files listing compares against."""
+    files = gh_list(f"repos/{repo}/pulls/{number}/files?per_page=100")
+    head, merge_base = pr["head"]["sha"], {}
+
+    def read(path, side):
+        if side == "head":
+            return read_file(repo, path, head)
+        if "sha" not in merge_base:
+            merge_base["sha"] = gh(
+                "api",
+                f"repos/{repo}/compare/{pr['base']['sha']}...{head}",
+                "--jq",
+                ".merge_base_commit.sha",
+            ).strip()
+        return read_file(repo, path, merge_base["sha"])
+
+    return risk_scan(files, read)
+
+
 def add_labels(repo: str, number: int, labels: list) -> None:
     args = ["api", "-X", "POST", f"repos/{repo}/issues/{number}/labels"]
     for label in labels:
@@ -229,7 +439,7 @@ def main(argv=None) -> int:
         }
         permissions = {lower(login): permission(repo, login) for login in logins}
         tight = os.environ.get("APPROVAL_MODE_TIGHT") == "1"
-        result = decide(pr, reviews, comments, permissions, tight, observe)
+        result = decide(pr, reviews, comments, permissions, tight, observe, scan_pr(repo, number, pr))
         print(json.dumps(result, indent=2))
         summary = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary:
@@ -237,6 +447,9 @@ def main(argv=None) -> int:
                 prefix = "observe (no action taken): " if observe else ""
                 fh.write(f"{prefix}**{result['action']}** on `{result['head'][:12]}`\n\n")
                 fh.writelines(f"- {reason}\n" for reason in result["reasons"])
+                if "votes" in result:
+                    votes = ", ".join(f"{k} {v!r}" for k, v in result["votes"].items())
+                    fh.write(f"\nTier votes: {votes}\n")
         if observe or args.dry_run or result["action"] in ("skip", "wait"):
             return 0
         if result["action"] == "needs-human":

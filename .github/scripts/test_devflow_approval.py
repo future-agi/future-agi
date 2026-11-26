@@ -3,12 +3,14 @@
 
 import copy
 import json
+import os
 import re
 import subprocess
 import sys
 import tempfile
 import textwrap
 import unittest
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -17,6 +19,7 @@ import devflow_approval as da  # noqa: E402
 REPO = "org/repo"
 HEAD = "a" * 40
 OLD = "b" * 40
+MERGE_BASE = "c" * 40
 CODEOWNERS = Path(__file__).resolve().parent.parent / "CODEOWNERS"
 FLOOR_TEAM = "@future-agi/internal-all-write"
 
@@ -33,6 +36,7 @@ def review_body(**overrides):
         "reviewer": "rev",
         "findings": [],
         "engine": "unknown keys are ignored",
+        "tier_check": {"tier": "low", "engine": "second-model", "input": "diff-only"},
     }
     verdict.update(overrides)
     return (
@@ -75,12 +79,16 @@ class Case:
             "draft": False,
             "user": {"login": "author"},
             "head": {"sha": HEAD, "repo": {"full_name": REPO}},
-            "base": {"ref": "dev", "repo": {"full_name": REPO}},
+            "base": {"ref": "dev", "sha": OLD, "repo": {"full_name": REPO}},
             "labels": [{"name": "devflow:reviewed"}],
         }
         self.reviews = [review()]
         self.comments = [marker()]
         self.permissions = {"author": "write", "rev": "write"}
+        self.scan = []
+        # For main(): the pulls/{n}/files items and {(path, sha): text}.
+        self.files = []
+        self.texts = {}
 
     def decide(self, tight=False, observe=False):
         return da.decide(
@@ -90,6 +98,7 @@ class Case:
             self.permissions,
             tight,
             observe,
+            self.scan,
         )
 
 
@@ -322,8 +331,19 @@ def run_main(mode, case, author_permission="write"):
         if args[:2] == ("api", f"repos/{REPO}/pulls/1"):
             return json.dumps(case.pr)
         if "--paginate" in args:
-            items = case.reviews if args[2].endswith("/reviews?per_page=100") else case.comments
+            items = {
+                "/reviews?per_page=100": case.reviews,
+                "/files?per_page=100": case.files,
+            }.get(args[2][args[2].rindex("/"):], case.comments)
             return "\n".join(json.dumps(item) for item in items)
+        if "/compare/" in args[1]:
+            return MERGE_BASE + "\n"
+        if "/contents/" in args[-1]:
+            path, ref = args[-1].split("/contents/", 1)[1].split("?ref=")
+            text = case.texts.get((urllib.parse.unquote(path), ref))
+            if text is None:
+                raise subprocess.CalledProcessError(1, ["gh"], stderr="gh: Not Found (HTTP 404)")
+            return text
         if args[1].endswith("/collaborators/author/permission"):
             return author_permission + "\n"
         return "write\n"
@@ -425,6 +445,188 @@ class ObserveModeTests(unittest.TestCase):
         self.assertEqual((code, decision["action"]), (0, "approve"))
         self.assertIn("event=APPROVE", writes[0])
         self.assertEqual(writes[1][-1], "labels[]=devflow:train")
+
+
+class TierVoteTests(unittest.TestCase):
+    """Three votes: the reviewer's tier, the diff-only tier_check, the scan."""
+
+    def decide(self, scan=(), **verdict):
+        case = Case()
+        case.reviews = [review(**verdict)]
+        case.scan = list(scan)
+        return case.decide()
+
+    def test_three_low_votes_approve_and_are_reported(self):
+        result = self.decide()
+        self.assertEqual(result["action"], "approve")
+        self.assertEqual(result["votes"], {"reviewer": "low", "tier_check": "low", "scan": "low"})
+
+    def test_a_missing_tier_check_counts_as_high(self):
+        for value in (None, "low", {}):
+            with self.subTest(tier_check=value):
+                result = self.decide(tier_check=value)
+                self.assertEqual(result["action"], "needs-human")
+                self.assertIn("tier_check is missing, so it counts as high", result["reasons"])
+
+    def test_a_high_tier_check_alone_needs_a_human(self):
+        result = self.decide(tier_check={"tier": "high", "engine": "e2", "input": "diff-only"})
+        self.assertEqual(result["action"], "needs-human")
+        self.assertEqual(result["votes"]["tier_check"], "high")
+        self.assertEqual(result["reasons"], ["tier_check tier is 'high' (engine e2)"])
+
+    def test_a_tier_check_that_saw_more_than_the_diff_counts_as_high(self):
+        result = self.decide(tier_check={"tier": "low", "engine": "e2", "input": "diff+review"})
+        self.assertEqual(result["action"], "needs-human")
+        self.assertIsNone(result["votes"]["tier_check"])
+
+    def test_a_scan_hit_alone_needs_a_human(self):
+        result = self.decide(scan=["a/migrations/0002_x.py adds RemoveField"])
+        self.assertEqual(result["action"], "needs-human")
+        self.assertEqual(result["votes"]["scan"], "high")
+        self.assertEqual(result["reasons"], ["scan: a/migrations/0002_x.py adds RemoveField"])
+
+    def test_observe_logs_all_three_votes(self):
+        case = Case()
+        case.reviews = [review(tier="high", tier_check={"tier": "low", "input": "diff-only"})]
+        case.files = [{"filename": "go.mod", "status": "modified", "patch": "+require x v1"}]
+        case.texts = {("go.mod", MERGE_BASE): "module m\n", ("go.mod", HEAD): "module m\nrequire x v1\n"}
+        with tempfile.TemporaryDirectory() as tmp:
+            summary = Path(tmp) / "summary"
+            os.environ["GITHUB_STEP_SUMMARY"] = str(summary)
+            try:
+                _, _, decision = run_main("observe", case)
+            finally:
+                del os.environ["GITHUB_STEP_SUMMARY"]
+            text = summary.read_text()
+        self.assertEqual(decision["votes"], {"reviewer": "high", "tier_check": "low", "scan": "high"})
+        self.assertIn("Tier votes: reviewer 'high', tier_check 'low', scan 'high'", text)
+        self.assertIn("scan: go.mod changes require/replace", text)
+
+
+def scan(*files, base=None, head=None):
+    texts = {"base": base or {}, "head": head or {}}
+    return da.risk_scan(list(files), lambda path, side: texts[side].get(path))
+
+
+def patch(*lines):
+    return "@@ -1,0 +1,9 @@\n" + "\n".join(lines)
+
+
+MIGRATION = "futureagi/tracer/migrations/0121_x.py"
+CH = "futureagi/tracer/services/clickhouse/v2/schema/039_x.sql"
+
+
+class RiskScanTests(unittest.TestCase):
+    def test_destructive_django_operations_hit(self):
+        for op in ("RemoveField", "DeleteModel", "RenameField", "RenameModel", "RunSQL", "RunPython"):
+            with self.subTest(op=op):
+                hits = scan({"filename": MIGRATION, "status": "added", "patch": patch(f"+        migrations.{op}(")})
+                self.assertEqual(hits, [f"{MIGRATION} adds {op}"])
+
+    def test_an_additive_migration_is_low(self):
+        body = patch("+        migrations.AddField(", "+            model_name='span',", " # RunPython stays")
+        self.assertEqual(scan({"filename": MIGRATION, "status": "added", "patch": body}), [])
+
+    def test_only_added_lines_count(self):
+        body = patch("-        migrations.RunPython(noop),", "+        migrations.AddField(")
+        self.assertEqual(scan({"filename": MIGRATION, "status": "modified", "patch": body}), [])
+
+    def test_a_migration_without_a_patch_is_read_whole(self):
+        item = {"filename": MIGRATION, "status": "added"}
+        self.assertEqual(scan(item, head={MIGRATION: "migrations.RunSQL('x')"}), [f"{MIGRATION} adds RunSQL"])
+        self.assertEqual(scan(item), [f"{MIGRATION} could not be read"])
+
+    def test_deleted_or_renamed_migrations_hit(self):
+        self.assertEqual(scan({"filename": MIGRATION, "status": "removed"}), [f"{MIGRATION} is deleted"])
+        hits = scan(
+            {"filename": MIGRATION, "status": "renamed", "previous_filename": "a/migrations/0001.py"},
+            head={MIGRATION: "migrations.AddField("},
+        )
+        self.assertEqual(hits, [f"{MIGRATION} is renamed from a/migrations/0001.py"])
+
+    def test_clickhouse_destructive_statements_hit(self):
+        for sql, what in [
+            ("+DROP TABLE IF EXISTS spans;", "DROP"),
+            ("+ALTER TABLE spans RENAME COLUMN a TO b;", "RENAME"),
+            ("+ALTER TABLE spans\n+    DELETE WHERE x = 1;", "ALTER TABLE ... DELETE"),
+            ("+alter table spans update x = 1 where y;", "ALTER TABLE ... UPDATE"),
+            ("+TRUNCATE TABLE spans;", "TRUNCATE"),
+        ]:
+            with self.subTest(sql=sql):
+                self.assertEqual(scan({"filename": CH, "status": "added", "patch": patch(sql)}), [f"{CH} adds {what}"])
+
+    def test_additive_clickhouse_and_comments_are_low(self):
+        body = patch("+-- never DROP this table", "+ALTER TABLE spans ADD COLUMN IF NOT EXISTS x String;")
+        self.assertEqual(scan({"filename": CH, "status": "added", "patch": body}), [])
+        # Not a migration directory.
+        self.assertEqual(scan({"filename": "futureagi/scripts/x.sql", "status": "added", "patch": patch("+DROP TABLE x;")}), [])
+
+    def test_package_json_dependency_changes_hit(self):
+        old = json.dumps({"scripts": {"a": "x"}, "dependencies": {"react": "18.3.1"}})
+        new = json.dumps({"scripts": {"a": "x"}, "dependencies": {"react": "19.0.0"}, "devDependencies": {"x": "1"}})
+        hits = scan({"filename": "frontend/package.json", "status": "modified", "patch": "+"},
+                    base={"frontend/package.json": old}, head={"frontend/package.json": new})
+        self.assertEqual(hits, ["frontend/package.json changes dependencies, devDependencies"])
+
+    def test_a_scripts_only_package_json_change_is_low(self):
+        old = json.dumps({"scripts": {"a": "x"}, "dependencies": {"react": "18.3.1"}})
+        new = json.dumps({"scripts": {"a": "y", "b": "z"}, "dependencies": {"react": "18.3.1"}})
+        hits = scan({"filename": "frontend/package.json", "status": "modified", "patch": "+"},
+                    base={"frontend/package.json": old}, head={"frontend/package.json": new})
+        self.assertEqual(hits, [])
+
+    def test_pyproject_dependency_tables(self):
+        old = '[project]\nname = "x"\ndependencies = ["a==1"]\n[tool.ruff]\nline-length = 88\n'
+        lint = old.replace("88", "100")
+        dep = old.replace("a==1", "a==2") + '[dependency-groups]\ndev = ["pytest"]\n'
+        path = "futureagi/pyproject.toml"
+        item = {"filename": path, "status": "modified", "patch": "+"}
+        self.assertEqual(scan(item, base={path: old}, head={path: lint}), [])
+        self.assertEqual(
+            scan(item, base={path: old}, head={path: dep}),
+            [f"{path} changes project.dependencies, dependency-groups"],
+        )
+        (broken,) = scan(item, base={path: old}, head={path: "[project"})
+        self.assertTrue(broken.startswith(f"{path} does not parse: "), broken)
+
+    def test_go_mod_require_blocks(self):
+        old = "module m\n\ngo 1.22\n\nrequire (\n\ta v1.0.0\n\tb v1.0.0 // indirect\n)\n"
+        item = {"filename": "agentcc-gateway/go.mod", "status": "modified", "patch": "+"}
+        go = old.replace("go 1.22", "go 1.23")
+        bump = old.replace("a v1.0.0", "a v1.1.0")
+        single = old + "require c v0.1.0\n"
+        base = {"agentcc-gateway/go.mod": old}
+        self.assertEqual(scan(item, base=base, head={"agentcc-gateway/go.mod": go}), [])
+        for new in (bump, single, old + "replace a => ../a\n"):
+            with self.subTest(new=new):
+                self.assertEqual(scan(item, base=base, head={"agentcc-gateway/go.mod": new}),
+                                 ["agentcc-gateway/go.mod changes require/replace"])
+
+    def test_added_and_removed_manifests(self):
+        new = json.dumps({"dependencies": {"x": "1"}})
+        self.assertEqual(scan({"filename": "e2e/package.json", "status": "added"}, head={"e2e/package.json": new}),
+                         ["e2e/package.json changes dependencies"])
+        self.assertEqual(scan({"filename": "e2e/package.json", "status": "added"}, head={"e2e/package.json": "{}"}), [])
+        self.assertEqual(scan({"filename": "e2e/package.json", "status": "removed"}, base={"e2e/package.json": new}),
+                         ["e2e/package.json changes dependencies"])
+
+    def test_an_unread_listing_is_a_hit(self):
+        files = [{"filename": f"docs/{i}.md", "status": "added"} for i in range(da.FILES_CAP)]
+        self.assertEqual(scan(*files), [f"{da.FILES_CAP} files, the most the listing returns"])
+
+    def test_main_scans_against_the_merge_base(self):
+        case = Case()
+        case.files = [{"filename": "frontend/package.json", "status": "modified", "patch": "+"}]
+        case.texts = {
+            ("frontend/package.json", MERGE_BASE): '{"dependencies": {"a": "1"}}',
+            ("frontend/package.json", HEAD): '{"dependencies": {"a": "2"}}',
+        }
+        code, calls, decision = run_main("dry", case)
+        self.assertEqual((code, decision["action"]), (0, "needs-human"))
+        self.assertIn(f"repos/{REPO}/compare/{OLD}...{HEAD}", [c[1] for c in calls])
+        self.assertIn("scan: frontend/package.json changes dependencies", decision["reasons"])
+        case.texts[("frontend/package.json", HEAD)] = case.texts[("frontend/package.json", MERGE_BASE)]
+        self.assertEqual(run_main("dry", case)[2]["action"], "approve")
 
 
 def codeowners_regex(pattern: str):
