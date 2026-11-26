@@ -289,6 +289,19 @@ def _build_virtual_gateway(status="healthy", health=None):
     return data
 
 
+def _normalize_circuit_state(value):
+    """Canonicalise a gateway circuit-breaker state for comparisons.
+
+    The Go gateway reports ``"half-open"`` (hyphen); older payloads and other
+    callers may use ``"half_open"``, ``"HALF-OPEN"`` or ``"half open"``. All
+    of those map to ``"half_open"``. Only used for comparisons; the response
+    keeps the gateway's own (lower-cased) value.
+    """
+    if not isinstance(value, str):
+        return ""
+    return "_".join(value.strip().lower().replace("-", " ").replace("_", " ").split())
+
+
 class AgentccGatewayViewSet(ViewSet):
     """
     Stateless proxy to the Go gateway (configured via env vars).
@@ -1466,9 +1479,10 @@ class AgentccGatewayViewSet(ViewSet):
                 pstats = provider_stats.get(pid, {})
                 healthy = gw_data.get("healthy", True)
                 circuit_state = (gw_data.get("circuit_state") or "n/a").lower()
-                if not healthy or circuit_state == "open":
+                circuit_kind = _normalize_circuit_state(circuit_state)
+                if not healthy or circuit_kind == "open":
                     status = "unhealthy"
-                elif circuit_state == "half_open":
+                elif circuit_kind == "half_open":
                     status = "degraded"
                 else:
                     status = "healthy"

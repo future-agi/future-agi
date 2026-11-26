@@ -1,6 +1,7 @@
 import concurrent.futures
 import hashlib
 import json
+import math
 import uuid
 from collections import defaultdict
 from dataclasses import replace
@@ -613,6 +614,15 @@ def _build_eval_metric_entry(
         return (100.0 if output_bool else 0.0), "bool"
 
     return None, None
+
+
+def _matches_resolved_project(span, project_id):
+    if "project_id" not in span:
+        return True
+    try:
+        return uuid.UUID(str(span["project_id"])) == project_id
+    except ValueError:
+        return False
 
 
 def _get_request_organization(request):
@@ -1630,6 +1640,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     id=observation_span["project"],
                     organization=_get_request_organization(self.request),
                 )
+                if observation_span["project"].trace_type == "observe":
+                    if not _matches_resolved_project(
+                        observation_span, observation_span["project"].pk
+                    ):
+                        return self._gm.bad_request("project_id must match project")
+                    observation_span.pop("project_id", None)
                 if observation_span.get("project_version"):
                     observation_span["project_version"] = ProjectVersion.objects.get(
                         _project_workspace_scope_q(self.request),
@@ -1644,6 +1660,23 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     project__organization=_get_request_organization(self.request),
                 )
 
+                # A sender's Observe cost, including zero, takes precedence over an estimate.
+                if (
+                    observation_span["project"].trace_type == "observe"
+                    and observation_span.get("cost") is not None
+                ):
+                    reported_cost_input = observation_span["cost"]
+                    if isinstance(reported_cost_input, bool):
+                        return self._gm.bad_request("cost must be a finite number")
+                    try:
+                        reported_cost = float(reported_cost_input)
+                    except (TypeError, ValueError, OverflowError):
+                        return self._gm.bad_request("cost must be a finite number")
+                    if not math.isfinite(reported_cost):
+                        return self._gm.bad_request("cost must be a finite number")
+                    observation_span["cost"] = reported_cost
+                    continue
+
                 prompt_tokens = observation_span.get("prompt_tokens") or 0
                 completion_tokens = observation_span.get("completion_tokens") or 0
                 model = observation_span.get("model")
@@ -1651,6 +1684,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     model=model,
+                    project_type=observation_span["project"].trace_type,
                     organization_id=(
                         getattr(request, "organization", None)
                         or request.user.organization
@@ -4220,15 +4254,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         output_metadata = row.get("output_metadata")
         if not output_metadata or not isinstance(output_metadata, dict):
             output_metadata = {}
+        localization = self._observe_localization_payload(
+            row.get("id"), output_metadata, _get_request_organization(self.request)
+        )
 
         # Handle error case — consistent with retrieve() and _retrieve_clickhouse()
         if row.get("error") or row.get("output_str") == "ERROR":
             return self._gm.success_response(
                 {
-                    "error_analysis": output_metadata.get("error_analysis"),
-                    "selected_input_key": output_metadata.get("selected_input_key"),
-                    "input_data": output_metadata.get("input_data"),
-                    "input_types": output_metadata.get("input_types"),
+                    **localization,
                     "score": None,
                     "explanation": row.get("error_message"),
                     "error": True,
@@ -4252,14 +4286,52 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response(
             {
-                "error_analysis": output_metadata.get("error_analysis"),
-                "selected_input_key": output_metadata.get("selected_input_key"),
-                "input_data": output_metadata.get("input_data"),
-                "input_types": output_metadata.get("input_types"),
+                **localization,
                 "score": evaluation_result,
                 "explanation": evaluation_explanation,
             }
         )
+
+    @staticmethod
+    def _observe_localization_payload(eval_logger_id, output_metadata, organization):
+        """Localization fields for one span eval result.
+
+        The result's ``output_metadata`` carries a finished analysis once CDC
+        has copied the worker's write to ClickHouse; the localization task
+        carries its status and the failure or skip reason, which never reach
+        ``output_metadata``. A completed task also fills the analysis while
+        ClickHouse still lags behind the write.
+        """
+        from model_hub.selectors.error_localizer import (
+            get_observe_error_localizer_state,
+        )
+
+        payload = {
+            "error_analysis": output_metadata.get("error_analysis"),
+            "selected_input_key": output_metadata.get("selected_input_key"),
+            "input_data": output_metadata.get("input_data"),
+            "input_types": output_metadata.get("input_types"),
+            "error_localizer_status": None,
+            "error_localizer_message": None,
+        }
+        state = get_observe_error_localizer_state(
+            eval_logger_id, organization=organization
+        )
+        if state is None:
+            return payload
+        status_value = state.get("error_localizer_status")
+        payload["error_localizer_status"] = status_value
+        if status_value in ("failed", "skipped", "completed"):
+            payload["error_localizer_message"] = state.get("error_localizer_message")
+        if status_value == "completed" and not payload["error_analysis"]:
+            for key in (
+                "error_analysis",
+                "selected_input_key",
+                "input_data",
+                "input_types",
+            ):
+                payload[key] = state.get(key)
+        return payload
 
     @validated_request(
         responses={

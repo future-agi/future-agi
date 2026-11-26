@@ -1,5 +1,6 @@
 """Response bodies of routes excluded from body capture are not copied onto OTel spans."""
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,11 +16,13 @@ from tfc.telemetry.middleware import (
 ROUTED_PREFIXES = [
     prefix.replace("*", "6f1c2a9e") for prefix in SENSITIVE_BODY_PATH_PREFIXES
 ]
+# The Langfuse-compatible ingestion endpoint, routed without a trailing slash.
+LANGFUSE_INGESTION = "/api/public/ingestion"
 # Original routes plus one path under every configured excluded prefix, so a
 # prefix added later is covered for responses as well as requests.
 EXCLUDED_PATHS = sorted(
-    {"/saml2_auth/complete/", "/telemetry/register/"}
-    | {prefix + "example/" for prefix in ROUTED_PREFIXES}
+    {"/saml2_auth/complete/", "/telemetry/register/", LANGFUSE_INGESTION}
+    | {prefix.rstrip("/") + "/example/" for prefix in ROUTED_PREFIXES}
 )
 
 
@@ -85,7 +88,8 @@ def test_ordinary_response_obeys_capture_flags(
 
 @pytest.mark.parametrize(
     "path",
-    ["/saml2_auth/stream/"] + [p + "stream/" for p in ROUTED_PREFIXES],
+    ["/saml2_auth/stream/", LANGFUSE_INGESTION]
+    + [p.rstrip("/") + "/stream/" for p in ROUTED_PREFIXES],
 )
 def test_excluded_route_streaming_response_not_consumed(settings, path):
     settings.OTEL_CAPTURE_RESPONSE_BODY = True
@@ -98,3 +102,27 @@ def test_excluded_route_streaming_response_not_consumed(settings, path):
     )
     assert "http.response.body" not in _attributes(span)
     assert list(response.streaming_content) == [b"SYNTHETIC_STREAM_CAPABILITY"]
+
+
+@pytest.mark.parametrize(
+    "path,captured", [(LANGFUSE_INGESTION, False), ("/tracer/example/", True)]
+)
+def test_a_langfuse_ingestion_request_body_is_not_captured(settings, path, captured):
+    """The live endpoint itself: its batch carries the raw trace input and output.
+    An ordinary path, as a control, still has its body captured."""
+    settings.OTEL_CAPTURE_REQUEST_BODY = True
+    marker = "SYNTHETIC_TRACE_INPUT"
+    request = RequestFactory().post(
+        path,
+        data=json.dumps(
+            {"batch": [{"type": "trace-create", "body": {"input": marker}}]}
+        ),
+        content_type="application/json",
+    )
+    request.user = MagicMock(is_authenticated=False)
+    span = MagicMock()
+    OTelContextMiddleware(lambda req: None)._capture_request(span, request)
+    attributes = _attributes(span)
+    assert attributes["http.route"] == path
+    assert ("http.request.body" in attributes) is captured
+    assert (marker in str(attributes)) is captured

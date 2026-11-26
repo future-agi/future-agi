@@ -22,6 +22,7 @@ import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
+  useDebugAnalysis,
   useRunDetail,
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
@@ -37,7 +38,11 @@ import {
 } from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
+import ViewerLock from "../../../components/ViewerLock";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import StatusChip from "../StatusChip";
+import { stopLiveLineOf, stopNoteOf, stopTipOf } from "../runStop";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
@@ -60,7 +65,9 @@ import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
+import RunReport from "./RunReport";
 import useCallListNavigation from "./useCallListNavigation";
+import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
 
 /**
@@ -102,7 +109,7 @@ export default function RunDetail({
   // The open call, where it was opened from ("table", "analytics" or "link")
   // and, after a prev/next step, the table page it sits on so the table can
   // follow. Mirrored in `?rowId=`.
-  const { openCall, showCall } = useOpenCallParam({
+  const { openCall, showCall, openById } = useOpenCallParam({
     executionId,
     tableQuery,
     tableShown: tab === "tasks",
@@ -124,11 +131,13 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  const openTask = callNav.openRow ?? openCall?.task ?? null;
   // The All Evaluations drawer and the table's eval column menus share one
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
   const evalRun = useRunEvalActions({ envId: env?.id, executionId });
   const rerunInRun = useRerunCallsInRun(executionId);
+  const access = useSimulationAccess();
 
   // The past self-improvement (optimization) runs for this execution — REAL,
   // scoped by test_execution_id. The Trials tab only appears once at least one
@@ -174,13 +183,21 @@ export default function RunDetail({
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
-  // A finished run whose failures include cases an evidence import added offers
-  // Run Epoch on them; the launch form reads the same cached options.
+  const stopNotice = stopNoticeOf(identity, live);
+  // The header launches from failing cases without opening the diagnosis drawer.
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
+  const headerLaunchOpen = fixLaunching && !!fixTargets;
+  const diagnosis = useDebugAnalysis(headerLaunchOpen ? executionId : null);
   const epoch = epochTargets(fixOptions);
-  const improvable = epoch.imported;
+  const importedCount = epoch.imported.length;
+  const canOfferEpoch =
+    fixAllowed &&
+    identity &&
+    !live &&
+    !fixRun &&
+    fixOptions?.scenarios?.some((one) => one.failing_sub_goals?.length);
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
@@ -310,7 +327,9 @@ export default function RunDetail({
                 environmentVersion={identity.environmentVersion}
               />
             )}
-            {status && <StatusChip status={status} />}
+            {status && (
+              <StatusChip status={status} tip={stopTipOf(identity?.stop)} />
+            )}
             {!fixRun && (
               <StopRunControl
                 executionId={executionId}
@@ -346,99 +365,182 @@ export default function RunDetail({
 
         {/* A backed run opens its evals, to grade again or add to; a
             client-only env keeps its store picker. */}
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={() =>
-            backed ? setAllEvalsOpen(true) : setAddingEvals(true)
-          }
-          // A re-grade reads as running, but its evals stay reachable so the
-          // drawer can say why they are locked until grading finishes.
-          disabled={live && executionStatus !== "evaluating"}
-          startIcon={
-            <Iconify
-              icon={
-                backed ? "solar:play-circle-linear" : "solar:add-circle-linear"
-              }
-              width={15}
-            />
-          }
+        <ViewerLock
+          locked={!backed && !access.canEdit}
+          title={WORKSPACE_COPY.viewer.evals}
         >
-          {backed ? "Run evals" : "Add evals"}
-        </Button>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={exportResults}
-          disabled={live || exporting}
-          startIcon={
-            <Iconify icon="solar:download-minimalistic-linear" width={15} />
-          }
-        >
-          {exporting ? "Exporting…" : "Export"}
-        </Button>
-        {resumeState?.resumable && (
           <Button
             variant="outlined"
             size="small"
-            disabled={live || resume.isPending}
-            startIcon={<Iconify icon="solar:play-linear" width={15} />}
-            onClick={() => resume.mutate()}
-          >
-            {resume.isPending ? "Resuming…" : "Resume"}
-          </Button>
-        )}
-        {hasTickableCalls === false && !fixRun && (
-          <Button
-            variant="outlined"
-            size="small"
-            disabled={live || runStarting}
-            startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
             onClick={() =>
-              onStartRun?.(
-                identity?.scenarioIds || undefined,
-                identity?.trials || 1,
-                rerunOptions,
-              )
+              backed ? setAllEvalsOpen(true) : setAddingEvals(true)
+            }
+            // A re-grade reads as running, but its evals stay reachable so the
+            // drawer can say why they are locked until grading finishes.
+            disabled={
+              (!backed && !access.canEdit) ||
+              (live && executionStatus !== "evaluating")
+            }
+            startIcon={
+              <Iconify
+                icon={
+                  backed
+                    ? "solar:play-circle-linear"
+                    : "solar:add-circle-linear"
+                }
+                width={15}
+              />
             }
           >
-            Run again
+            {backed ? "Run evals" : "Add evals"}
           </Button>
-        )}
-        {improvable.length > 0 && (
-          <Tooltip
-            describeChild
-            title={`Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
+        </ViewerLock>
+        <ViewerLock
+          locked={!access.canEdit}
+          title={WORKSPACE_COPY.viewer.export}
+        >
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={exportResults}
+            disabled={!access.canEdit || live || exporting}
+            startIcon={
+              <Iconify icon="solar:download-minimalistic-linear" width={15} />
+            }
           >
+            {exporting ? "Exporting…" : "Export"}
+          </Button>
+        </ViewerLock>
+        {resumeState?.resumable && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
             <Button
               variant="outlined"
               size="small"
-              onClick={() => {
-                setFixTargets(epoch);
-                setFixLaunching(true);
-              }}
-              startIcon={
-                <Iconify icon="solar:magic-stick-3-linear" width={15} />
+              disabled={!access.canRun || live || resume.isPending}
+              startIcon={<Iconify icon="solar:play-linear" width={15} />}
+              onClick={() => resume.mutate()}
+            >
+              {resume.isPending ? "Resuming…" : "Resume"}
+            </Button>
+          </ViewerLock>
+        )}
+        {hasTickableCalls === false && !fixRun && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!access.canRun || live || runStarting}
+              startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
+              onClick={() =>
+                onStartRun?.(
+                  identity?.scenarioIds || undefined,
+                  identity?.trials || 1,
+                  rerunOptions,
+                )
               }
             >
-              Run Epoch
+              Run again
             </Button>
-          </Tooltip>
+          </ViewerLock>
+        )}
+        {canOfferEpoch && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Tooltip
+              describeChild
+              title={
+                !access.canRun
+                  ? ""
+                  : importedCount
+                    ? `Starts an epoch from the ${importedCount} failing scenario${importedCount === 1 ? "" : "s"} that came from imported evidence.`
+                    : "Start from this run’s failing scenarios without requesting a diagnosis."
+              }
+            >
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={!access.canRun}
+                onClick={() => {
+                  setFixTargets({
+                    keys: importedCount ? epoch.keys : undefined,
+                    note: importedCount
+                      ? epochTargetsNote(epoch)
+                      : undefined,
+                  });
+                  setFixLaunching(true);
+                }}
+                startIcon={
+                  <Iconify icon="solar:magic-stick-3-linear" width={15} />
+                }
+              >
+                Run Epoch
+              </Button>
+            </Tooltip>
+          </ViewerLock>
         )}
         {!fixRun && (
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() => setDebugging(true)}
-            disabled={live}
-            startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-          >
-            Debug failures
-          </Button>
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => setDebugging(true)}
+              disabled={!access.canRun || live}
+              startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            >
+              Debug failures
+            </Button>
+          </ViewerLock>
         )}
       </Stack>
       {creditBanner}
+
+      {stopNotice?.live && (
+        <Typography
+          data-testid="run-stop-notice"
+          sx={{
+            mx: 2,
+            mt: 1.5,
+            px: 1.5,
+            py: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            typography: "s2",
+            color: "text.secondary",
+            flexShrink: 0,
+          }}
+        >
+          {stopNotice.body}
+        </Typography>
+      )}
+      {stopNotice && !stopNotice.live && (
+        <Alert
+          data-testid="run-stop-notice"
+          severity={stopNotice.bad ? "warning" : "info"}
+          icon={
+            <Iconify
+              icon={
+                stopNotice.bad
+                  ? "solar:danger-triangle-linear"
+                  : "solar:stop-circle-linear"
+              }
+              width={16}
+            />
+          }
+          sx={{
+            mx: 2,
+            mt: 1.5,
+            flexShrink: 0,
+          }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {stopNotice.title}
+          </Typography>
+          <Typography sx={{ typography: "s2", mt: 0.25 }}>
+            {stopNotice.body}
+          </Typography>
+        </Alert>
+      )}
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <Box sx={{ p: 2 }}>
@@ -466,6 +568,7 @@ export default function RunDetail({
               />
             )}
             <Tab value="analytics" label="Analytics" />
+            {env?.composition && <Tab value="report" label="Report" />}
           </CustomTabs>
 
           {tab === "tasks" && (
@@ -505,13 +608,15 @@ export default function RunDetail({
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
-                live
-                  ? "Wait for this run to finish before re-running calls"
-                  : runStarting
-                    ? "Starting the run…"
-                    : rerunInRun.isPending
-                      ? "Starting the re-run…"
-                      : null
+                !access.canRun
+                  ? WORKSPACE_COPY.viewer.run
+                  : live
+                    ? "Wait for this run to finish before re-running calls"
+                    : runStarting
+                      ? "Starting the run…"
+                      : rerunInRun.isPending
+                        ? "Starting the re-run…"
+                        : null
               }
             />
           )}
@@ -550,6 +655,10 @@ export default function RunDetail({
               }
               onOpenCalls={openCallsWith}
             />
+          )}
+
+          {tab === "report" && env?.composition && (
+            <RunReport env={env} executionId={executionId} live={live} />
           )}
         </Box>
       </Box>
@@ -604,7 +713,18 @@ export default function RunDetail({
       )}
 
       <CallDrawer
-        task={openCall?.task ?? null}
+        task={openTask}
+        trials={trialsOf(callNav.rows, openTask)}
+        onPickTrial={(id) => {
+          const row = callNav.rows.find((one) => one.id === id);
+          if (row)
+            showCall({
+              task: row,
+              source: openCall?.source ?? "table",
+              page: openCall?.page ?? null,
+            });
+        }}
+        onOpenTrial={openById}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}
@@ -637,7 +757,11 @@ export default function RunDetail({
           envId={env.id}
           sourceRunId={executionId}
           initialTargets={fixTargets?.keys}
-          initialNote={fixTargets ? epochTargetsNote(fixTargets) : ""}
+          initialNote={fixTargets?.note}
+          diagnosisUnavailable={
+            headerLaunchOpen && !diagnosis.isLoading && !diagnosis.loadError &&
+            diagnosis.analysis.status !== "completed"
+          }
         />
       )}
 
@@ -664,6 +788,8 @@ RunDetail.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    // Present on a composition: its runs have a report (environment-releases.md §7.7).
+    composition: PropTypes.object,
   }).isRequired,
   // Client store state — only read for a non-backed env, to drive the
   // fixture-only `AddEvalsDrawer` fallback the same way it always has.
@@ -683,3 +809,17 @@ RunDetail.propTypes = {
   runStarting: PropTypes.bool,
   creditBanner: PropTypes.node,
 };
+
+function stopNoticeOf(identity, live) {
+  const stop = identity?.stop;
+  if (!stop) return null;
+  const voice = Boolean(identity?.voice);
+  if (live) return { live: true, body: stopLiveLineOf(stop, { voice }) };
+  const note = stopNoteOf(stop, { voice });
+  return note
+    ? {
+        ...note,
+        bad: ["unconfirmed", "cleanup_failed"].includes(stop.status),
+      }
+    : null;
+}

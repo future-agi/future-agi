@@ -129,10 +129,15 @@ const useChatMetrics = (data) => {
     const transcript = Array.isArray(data?.transcript) ? data.transcript : [];
     const nonSystem = transcript.filter((t) => t.speaker_role !== "system");
 
+    // A turn is one exchange: count the agent's replies, not every row, so a
+    // user/assistant pair counts once (the backend's chat turn_count meaning).
+    const agentReplies = nonSystem.filter(
+      (t) => (t?.role ?? t?.speaker_role) === "assistant",
+    ).length;
     const turnCount =
       data?.turn_count ??
       data?.turnCount ??
-      (nonSystem.length > 0 ? nonSystem.length : null);
+      (nonSystem.length > 0 ? agentReplies : null);
 
     // Tokens — try aggregates first, fall back to summing per-turn values.
     const pickTokenSum = (keys) => {

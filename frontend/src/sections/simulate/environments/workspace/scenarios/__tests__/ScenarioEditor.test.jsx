@@ -179,6 +179,27 @@ describe("ScenarioEditor test conditions", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
+  it("hides the test conditions where the server takes none and the scenario has none", () => {
+    render(
+      <ScenarioEditor
+        open
+        row={ROW}
+        env={ENV}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        scenarioEditing={{
+          ...EDITING,
+          editable_fields: ["tests"],
+          rework_fields: [],
+        }}
+      />,
+    );
+    expect(
+      screen.queryByText("Hidden · test conditions"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("test-conditions")).not.toBeInTheDocument();
+  });
+
   it("names an added fault by its tool, with the route under it", () => {
     openEditor();
     fireEvent.click(
@@ -609,5 +630,28 @@ describe("ScenarioEditor test conditions", () => {
     const still = screen.getByText("Delay in seconds: At most 30");
     expect(still.parentElement).toHaveTextContent("second: Times out");
     expect(screen.queryByText("This tool cannot be held")).toBeNull();
+  });
+});
+
+describe("ScenarioEditor grading-only fields", () => {
+  it("groups only the fields the environment keeps for grading under one badge", () => {
+    render(
+      <ScenarioEditor
+        open
+        row={ROW}
+        env={ENV}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        scenarioEditing={EDITING}
+        privateFields={["tests", "negative_controls"]}
+      />,
+    );
+    expect(screen.getAllByText("Grading only")).toHaveLength(1);
+    const marked = screen.getByText("How it's marked");
+    const after = (field) =>
+      marked.compareDocumentPosition(screen.getByLabelText(field)) &
+      Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(after("Passes when")).toBeTruthy();
+    expect(after("Sub-goals")).toBeFalsy();
   });
 });

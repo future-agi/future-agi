@@ -30,11 +30,14 @@ import {
   SubTasksCell,
   TruncTooltip,
   UnsavedMark,
+  LifecycleMark,
 } from "./ScenarioTableCells";
 import {
   ROW_HEIGHTS,
   SCENARIOS_COPY,
+  isArchived,
   isUnsavedAddition,
+  removeTitle,
   unsavedCheckboxProps,
 } from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
@@ -143,7 +146,10 @@ export default function ScenarioTable({
   pageIds,
   onTogglePage,
   locked = false,
+  editLocked = locked,
+  lockTooltip = LOCK_TOOLTIP,
   rowHeight = "Short",
+  isValidating,
 }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
   const [widths, setWidths] = useState(readWidths);
@@ -471,7 +477,7 @@ export default function ScenarioTable({
                       : undefined
                   }
                   sx={{
-                    height: ROW_HEIGHT.twoLine,
+                    height: limits.height,
                     ...(onOpen && {
                       cursor: "pointer",
                       "&:focus-visible": {
@@ -535,6 +541,10 @@ export default function ScenarioTable({
                         </Tooltip>
                       )}
                       <UnsavedMark row={row} />
+                      <LifecycleMark
+                        lifecycle={row.lifecycle}
+                        validating={Boolean(isValidating?.(row))}
+                      />
                     </Stack>
                     <TruncTooltip title={row.summary || row.title}>
                       <Typography
@@ -599,12 +609,12 @@ export default function ScenarioTable({
                   >
                     <Tooltip
                       arrow
-                      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.editLabel}
+                      title={editLocked ? lockTooltip : SCENARIOS_COPY.editLabel}
                     >
                       <Box component="span" sx={{ display: "inline-flex" }}>
                         <IconButton
                           size="small"
-                          disabled={locked}
+                          disabled={editLocked}
                           aria-label={SCENARIOS_COPY.editLabel}
                           onClick={() => onEdit?.(row)}
                         >
@@ -618,19 +628,23 @@ export default function ScenarioTable({
                     </Tooltip>
                     <Tooltip
                       arrow
-                      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.removeLabel}
+                      title={editLocked ? lockTooltip : removeTitle(row)}
                     >
                       <Box component="span" sx={{ display: "inline-flex" }}>
                         <IconButton
                           size="small"
-                          disabled={locked}
+                          disabled={editLocked || isArchived(row)}
                           aria-label={SCENARIOS_COPY.removeLabel}
                           onClick={() => onRemove(row.id)}
                         >
                           <Iconify
                             icon="solar:trash-bin-trash-linear"
                             width={15}
-                            sx={{ color: "text.subtitle" }}
+                            sx={{
+                              color: isArchived(row)
+                                ? "action.disabled"
+                                : "text.subtitle",
+                            }}
                           />
                         </IconButton>
                       </Box>
@@ -662,5 +676,9 @@ ScenarioTable.propTypes = {
   pageIds: PropTypes.arrayOf(PropTypes.string),
   onTogglePage: PropTypes.func,
   locked: PropTypes.bool,
+  editLocked: PropTypes.bool,
+  lockTooltip: PropTypes.string,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
+  // (row) => whether a running validation is proving it.
+  isValidating: PropTypes.func,
 };

@@ -11,7 +11,7 @@ import {
   canRunHeader,
   stageOutputsToWorld,
   harnessEnvironmentQuery,
-  harnessJobQuery,
+  useHarnessJob,
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
@@ -21,12 +21,15 @@ import {
   refreshAfterRunStart,
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
-import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 import { environmentVersionsKey } from "src/api/simulate-environments/versions";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
+import {
+  resolveScenarioSelection,
+  runnableScenarioKey,
+} from "src/api/simulate-environments/scenarioSelection";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
 import { BUILD_STATUS } from "../myEnvironments.constants";
@@ -36,19 +39,25 @@ import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
 import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
+import ReviewTheDesign from "./adaptation/ReviewTheDesign";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
+import AgentMoveBanner from "./AgentMoveBanner";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
+import ReviewChangesDrawer from "./drafts/ReviewChangesDrawer";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
 import { inlineRunError } from "./run/runErrors";
-import useWorkspaceTab from "./helpers/useWorkspaceTab";
+import useWorkspaceTab, {
+  AGENT_VERSIONS_PARAM,
+} from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
+import useSimulationAccess from "../hooks/useSimulationAccess";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -106,8 +115,18 @@ export default function EnvironmentWorkspace() {
   // The scenario count comes from the detail, not the client store
   // (seeded once, so it would stay at the first set of scenarios).
   const backedScenarioCount = backed
-    ? evalDetailQuery.data?.overview?.scenario_count ?? undefined
+    ? (evalDetailQuery.data?.overview?.scenario_count ?? undefined)
     : undefined;
+  // On a composition, a run of everything is the scenarios the agent can be scored on: the rest
+  // need a tool no agent tool reaches, so running them costs a conversation and scores nothing.
+  const unscorable = new Set(
+    (evalDetailQuery.data?.composition?.alignment?.unscorable || []).map(
+      (item) => item.scenario_key,
+    ),
+  );
+  // A composition (a released environment bound to an agent) rides on `env` so the
+  // alignment tab, the run picker and the run report can read it without a second fetch.
+  const composition = (backed && evalDetailQuery.data?.composition) || null;
   // While the job is still deriving, the harness bootstrap is only a placeholder
   // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
   // any) — and useEnvState seeds byEnv once, so seeding it now would freeze that
@@ -128,24 +147,34 @@ export default function EnvironmentWorkspace() {
     clearError: clearCreditError,
   } = useCreditExhaustion({ feature: "hosted_harness" });
   const chat = useWorkspaceChat(env, { source });
+  const { canRun: roleCanRun, canEdit: roleCanEdit } = useSimulationAccess();
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
   // { ids, trials, initialPicks, seed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
+  // The review of the unsaved changes, opened from the unsaved-changes bar.
+  const [reviewOpen, setReviewOpen] = useState(false);
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
     // the changed `picks` are sent.
     mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
-      // Run-all reads the keys from the server list: the bootstrap
-      // `envState.scenarios` is seeded once and keeps a key an amend dropped.
+      // Run-all names no scenarios, so a suite past 1,000 can start; a composition
+      // with unscorable cases names the rest instead.
       const scenarioIds =
-        ids === undefined ? await listAllScenarioKeys(env.id) : ids;
+        ids === undefined && unscorable.size
+          ? (
+              await resolveScenarioSelection(env.id, {
+                mode: "all",
+                pick: runnableScenarioKey,
+              })
+            ).filter((key) => key && !unscorable.has(key))
+          : ids;
       const selection = JSON.stringify([
         env.id,
-        scenarioIds,
+        scenarioIds ?? null,
         trials || 1,
         resolved?.agent ?? picks?.agent ?? null,
         resolved?.environment ?? picks?.environment ?? null,
@@ -218,6 +247,10 @@ export default function EnvironmentWorkspace() {
       initialPicks={runDialog.initialPicks}
       initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
+      onOpenAgentVersions={() => {
+        setRunDialog(null);
+        setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" });
+      }}
       onSubmit={(picks, ids, resolved, seed) =>
         runMutation.mutate({
           ids,
@@ -248,8 +281,19 @@ export default function EnvironmentWorkspace() {
   // neutral skeleton before.
   const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
+  const jobQuery = useHarnessJob(envId, { enabled: backed });
   const usageLimit = jobQuery.data?.usage_limit;
+  // An adaptation is followed here as a job; once it finishes, the environment is the
+  // composition it made, so the page moves there (the job itself has no details to load).
+  const compositionId =
+    jobQuery.data?.job?.metadata?.adaptation_result?.composition_id;
+  useEffect(() => {
+    if (compositionId && compositionId !== envId) {
+      navigate(paths.dashboard.simulate.environments.detail(compositionId), {
+        replace: true,
+      });
+    }
+  }, [compositionId, envId, navigate]);
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {
     if (usageLimit) {
@@ -281,6 +325,15 @@ export default function EnvironmentWorkspace() {
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
   const improvementMatch = useMatch(IMPROVEMENT_PATTERN);
+
+  // Adapt to my agent opens its design at once, before the job has anything else to show;
+  // nothing is built until it's approved, so the build stage never shows.
+  if (
+    jobQuery.data?.job?.metadata?.adaptation?.mode === "review" &&
+    !compositionId
+  ) {
+    return <ReviewTheDesign jobId={envId} job={jobQuery.data} chat={chat} />;
+  }
 
   if (notFound) {
     return (
@@ -437,7 +490,7 @@ export default function EnvironmentWorkspace() {
         <Suspense fallback={<LoadingScreen />}>
           <Outlet
             context={{
-              env,
+              env: composition ? { ...env, composition } : env,
               envState,
               backed,
               onStartRun: startRun,
@@ -466,13 +519,17 @@ export default function EnvironmentWorkspace() {
 
   // A backed env's run gate reads the server scenario count, not the seeded
   // client list, which keeps the count from first load.
-  const runnable = canRunHeader(
-    source,
-    env,
-    backedScenarioCount != null
-      ? !!envState.agent && backedScenarioCount > 0
-      : canRun,
-  );
+  const runnable =
+    roleCanRun &&
+    canRunHeader(
+      source,
+      env,
+      backedScenarioCount != null
+        ? !!envState.agent && backedScenarioCount > 0
+        : canRun,
+    );
+  const runReason = (reason) =>
+    roleCanRun ? reason : WORKSPACE_COPY.viewer.run;
 
   // A scenario selection on the Scenarios tab owns the primary Run — the header
   // yields its Run/Repeats while one is active ("one primary at a time").
@@ -500,8 +557,15 @@ export default function EnvironmentWorkspace() {
   // rename shows
   // everywhere the moment it lands, not only in the Settings field.
   const backedName = evalDetailQuery.data?.overview?.name;
+  const renamed = Boolean(env && backed && backedName);
   const displayEnv =
-    env && backed && backedName ? { ...env, name: backedName } : env;
+    renamed || composition
+      ? {
+          ...env,
+          ...(renamed ? { name: backedName } : {}),
+          ...(composition ? { composition } : {}),
+        }
+      : env;
 
   // Overview summary tiles need the detail's real counts: the job poll (which
   // drives
@@ -575,37 +639,47 @@ export default function EnvironmentWorkspace() {
         env={displayEnv}
         envState={envState}
         canRun={runnable && !runMutation.isPending && !detailBlock}
-        runBlockedReason={
+        runBlockedReason={runReason(
           detailBlock ||
-          blockedReason(
-            envState,
-            env,
-            backed,
-            runMutation.isPending,
-            backedScenarioCount,
-          )
-        }
+            blockedReason(
+              envState,
+              env,
+              backed,
+              runMutation.isPending,
+              backedScenarioCount,
+            ),
+        )}
         locked={locked}
         backed={source === "harness"}
         onFork={onFork}
         onStartRun={startRun}
         selectionActive={selectionActive}
-        scenarioCount={backedScenarioCount}
+        scenarioCount={
+          backedScenarioCount != null
+            ? Math.max(0, backedScenarioCount - unscorable.size)
+            : undefined
+        }
       />
       {creditBanner}
       {refusalLine}
 
       <SystemBanners env={env} />
       {!detailLoading && !detailFailed && (
-        <VersionBar env={env} envState={envState} />
+        <>
+          <VersionBar env={env} envState={envState} />
+          <AgentMoveBanner
+            env={env}
+            onOpenAgentVersions={() =>
+              setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" })
+            }
+          />
+        </>
       )}
       <DraftBar
         env={env}
         busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
         rebuilding={chat.rebuildHold}
-        onViewChanges={(piece, id) =>
-          setTab("versions", { version: `${piece}:${id}` })
-        }
+        onReview={() => setReviewOpen(true)}
       />
 
       {/* A template-seeded env is read-only until forked — the banner states the
@@ -671,19 +745,31 @@ export default function EnvironmentWorkspace() {
               overviewWorld={overviewWorld}
               graphData={graphData}
               onStartRun={startRun}
+              runDialogOpen={Boolean(runDialog)}
               canRun={runnable && !runMutation.isPending}
-              runBlockedReason={blockedReason(
-                envState,
-                env,
-                backed,
-                runMutation.isPending,
-                backedScenarioCount,
+              runBlockedReason={runReason(
+                blockedReason(
+                  envState,
+                  env,
+                  backed,
+                  runMutation.isPending,
+                  backedScenarioCount,
+                ),
               )}
             />
           )}
         </ChatSplitPane>
       </Box>
       {runDialogEl}
+      <ReviewChangesDrawer
+        open={reviewOpen}
+        env={env}
+        canEdit={!locked && roleCanEdit}
+        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
+        rebuilding={chat.rebuildHold}
+        onClose={() => setReviewOpen(false)}
+        onOpenTab={setTab}
+      />
     </Box>
   );
 }

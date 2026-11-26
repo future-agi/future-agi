@@ -1,6 +1,7 @@
 """Held-back cases and verify: what a coding agent may read and run, and the counts it
 gets back when it verifies an agent version on the cases it never saw."""
 
+import dataclasses
 import json
 import uuid
 from types import SimpleNamespace
@@ -14,12 +15,23 @@ from accounts.models import OrgApiKey
 from simulate.models import (
     CallExecution,
     HarnessSuiteMember,
+    HarnessSuiteValidation,
     HarnessSuiteVersion,
     HostedHarnessJob,
 )
 from simulate.models import TestExecution as Execution
 from simulate.models.harness_versioning import VersionStatus
-from simulate.selectors.held_back import held_back, verify_run, version_verify
+from simulate.selectors.held_back import (
+    CAUSE_WORDS,
+    START_TIMEOUT_LINE,
+    coding_agent_failure_message,
+    failure_cause,
+    has_plain_words,
+    held_back,
+    person_failure_message,
+    verify_run,
+    version_verify,
+)
 from simulate.selectors.runs import user_environment_runs, user_executions, user_runs
 from simulate.services.harness_environment import annotate_for_list, environment_row
 from simulate.services.harness_verify import (
@@ -36,7 +48,10 @@ from simulate.services.hosted_harness import (
     create_selected_harness_run,
     project_terminal_job_onto_run,
 )
-from simulate.services.hosted_harness_gateway import RUNTIME_VALIDATION_FAILED
+from simulate.services.hosted_harness_gateway import (
+    FAILURE_CAUSES,
+    RUNTIME_VALIDATION_FAILED,
+)
 from simulate.services.run_compare import wilson_interval
 from simulate.tests.test_agent_fix_services import (
     KEYS,
@@ -46,6 +61,7 @@ from simulate.tests.test_agent_fix_services import (
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     environment as environment,
 )
+from simulate.tests.test_harness_affected_scenarios import _proved_on
 from simulate.tests.test_harness_agent_versions import _environment
 from simulate.tests.test_harness_amend_archive import NAMES, _key
 from simulate.tests.test_harness_run_compare import _done
@@ -58,6 +74,17 @@ from simulate.tests.test_harness_versioning_record import _authoring
 pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/harness-environments"
+# A certify start timeout as the guest recorded it, from a run before failures carried a cause.
+_START_TIMEOUT = "depends_on/depends_on_timeout (agent): agent: started_check did not pass within 180.0s"
+
+
+def _cause_read(cause: str) -> str:
+    """How a cause reads: a named one's words with its code last, unknown's words alone."""
+    if cause == "unknown":
+        return CAUSE_WORDS[cause]
+    return f"{CAUSE_WORDS[cause]} (cause: {cause})"
+
+
 VERIFY_FIELDS = {
     "state",
     "passed",
@@ -328,8 +355,16 @@ class TestWhenTheSuiteChanges:
         HarnessSuiteVersion.no_workspace_objects.filter(id=old_suite).update(
             status=VersionStatus.DISCARDED
         )
+        candidate = _second_agent(environment)
+        # The new suite proved, with no other agent version recorded on its validation.
+        _proved_on(
+            environment, environment.environment_version, environment.suite_version
+        )
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version_id=environment.suite_version_id
+        ).update(job=None)
 
-        run = _verify(environment, _second_agent(environment))
+        run = _verify(environment, candidate)
 
         assert run.suite_version_id == environment.suite_version_id
         assert KEYS[1] in run.payload["metadata"]["selected_scenario_keys"]
@@ -479,6 +514,29 @@ class TestVerify:
             _verify(environment, _second_agent(environment))
 
         assert refused.value.code == "held_back_empty"
+
+
+def test_a_held_back_trial_failed_only_by_a_check_its_proof_never_verified_is_not_counted_failed(
+    environment,
+):
+    from simulate.selectors.held_back import verify_result
+    from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY
+
+    run = _verify(environment, _second_agent(environment))
+    executions = list(_executions(run).order_by("trial_index"))
+    key = executions[0].source_scenario.scenario_key
+    _receipt(executions[0].call_execution, key, {"refunded": True})
+    unverified = executions[1].call_execution
+    _receipt(unverified, key, {"refunded": False})
+    unverified.call_metadata = {
+        **unverified.call_metadata,
+        UNVERIFIED_KEY: ["refunded"],
+    }
+    unverified.save(update_fields=["call_metadata"])
+
+    result = verify_result(run)
+
+    assert (result["passed"], result["failed"], result["total"]) == (1, 0, 2)
 
 
 class TestVerifyApi:
@@ -987,10 +1045,187 @@ class TestWhatACodingAgentReads:
             "code": "authoring_runtime_validation_failed",
             "message": RUNTIME_VALIDATION_FAILED,
         }
-        assert person.json()["status"]["failure"] == failure
+        assert person.json()["status"]["failure"] == {
+            **failure,
+            "person_message": RUNTIME_VALIDATION_FAILED,
+        }
         assert (
             coder[job_path].json()["status"]["state"] == HostedHarnessJob.State.FAILED
         )
+
+    @pytest.mark.parametrize(
+        "stored,read",
+        [
+            ("agent_exited_before_ready", "agent_exited_before_ready"),
+            ("chat_target_timeout", "chat_target_timeout"),
+            ("dependency_not_ready_in_time", "dependency_not_ready_in_time"),
+            ("unknown", "unknown"),
+            # A guest that wrote free text in the cause: the key reads none of it.
+            ("RuntimeError: {hidden} said hi", "unknown"),
+        ],
+    )
+    def test_a_failed_run_names_its_cause_only_from_the_closed_set(
+        self, api_client, environment, keys, stored, read
+    ):
+        chosen = ensure_held_back(environment)
+        hidden = chosen.scenario_keys[0]
+        shown = [
+            key for key in _suite_keys(environment) if key not in chosen.scenario_keys
+        ]
+        created = _as(
+            api_client,
+            keys.coder,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": shown, "trials": 1},
+            HTTP_IDEMPOTENCY_KEY=f"coder-cause-{len(stored)}",
+        )
+        assert created.status_code == 202, created.content
+        run = HostedHarnessJob.no_workspace_objects.get(id=created.json()["job_id"])
+        run.state = HostedHarnessJob.State.FAILED
+        run.failure = {
+            "domain": "environment",
+            "stage": "validating_environment",
+            "code": "authoring_runtime_validation_failed",
+            "message": f"{RUNTIME_VALIDATION_FAILED}: RuntimeError: {hidden} said hi",
+            "cause": stored.format(hidden=hidden),
+        }
+        run.save(update_fields=["state", "failure", "updated_at"])
+        project_terminal_job_onto_run(run, timezone.now())
+        execution = created.json()["test_execution_id"]
+        call = CallExecution.objects.filter(test_execution_id=execution).first()
+        job_path = f"/simulate/api/harness-jobs/{run.id}/"
+        call_path = f"/simulate/v3/call-executions/{call.id}/"
+
+        job = _as(api_client, keys.coder, "get", job_path)
+        call_read = _as(api_client, keys.coder, "get", call_path)
+
+        message = _cause_read(read)
+        assert job.json()["status"]["failure"] == {
+            "domain": "environment",
+            "stage": "validating_environment",
+            "code": "authoring_runtime_validation_failed",
+            "cause": read,
+            "message": message,
+        }
+        assert message in json.dumps(call_read.json(), ensure_ascii=False)
+        for response in (job, call_read):
+            assert hidden not in json.dumps(response.json())
+
+    @pytest.mark.parametrize(
+        "cause,detail,read",
+        [
+            (
+                "agent_exited_before_ready",
+                "agent: exited early",
+                "agent_exited_before_ready",
+            ),
+            (None, "agent: exited early", None),
+            # The cause decides, never the message: a start timeout recorded without a cause,
+            # or as unknown, is not read as the agent's slow start.
+            (None, _START_TIMEOUT, None),
+            ("unknown", _START_TIMEOUT, "unknown"),
+            # A process the agent depends on was not ready: its own cause, not the agent's.
+            (
+                "dependency_not_ready_in_time",
+                _START_TIMEOUT,
+                "dependency_not_ready_in_time",
+            ),
+            # Exit 78 with no recorded cause: the unknown words, not the guest's message.
+            ("unknown", "agent: exited early", "unknown"),
+        ],
+    )
+    def test_a_person_s_calls_read_a_named_cause_in_plain_words(
+        self, api_client, environment, keys, cause, detail, read
+    ):
+        created = _as(
+            api_client,
+            keys.user,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": _suite_keys(environment)[:2], "trials": 1},
+            HTTP_IDEMPOTENCY_KEY=f"person-cause-{cause}-{read}-{len(detail)}",
+        )
+        assert created.status_code == 202, created.content
+        raw = f"{RUNTIME_VALIDATION_FAILED}: ProcessRuntimeError: {detail}"
+        run = HostedHarnessJob.no_workspace_objects.get(id=created.json()["job_id"])
+        run.state = HostedHarnessJob.State.FAILED
+        run.failure = {
+            "domain": "environment",
+            "stage": "validating_environment",
+            "code": "authoring_runtime_validation_failed",
+            "message": raw,
+            **({"cause": cause} if cause else {}),
+        }
+        run.save(update_fields=["state", "failure", "updated_at"])
+
+        project_terminal_job_onto_run(run, timezone.now())
+
+        reasons = set(
+            CallExecution.objects.filter(
+                test_execution_id=created.json()["test_execution_id"]
+            ).values_list("ended_reason", flat=True)
+        )
+        # With a cause every call says it plainly, then what the person's agent printed: it is
+        # their own run, and it names which crash it was. Without one, the stored message as before.
+        assert reasons == (
+            {f"{_cause_read(read)} ProcessRuntimeError: {detail}"} if read else {raw}
+        )
+        job = _as(api_client, keys.user, "get", f"/simulate/api/harness-jobs/{run.id}/")
+        assert job.status_code == 200, job.content
+        assert reasons == {job.json()["status"]["failure"]["person_message"]}
+        run.refresh_from_db()
+        assert run.failure["message"] == raw
+
+    @pytest.mark.parametrize(
+        "code,expected",
+        [
+            ("depends_on_timeout", START_TIMEOUT_LINE),
+            (
+                "sandbox_launch_failed",
+                "Stopped — an issue occurred while running this. Run it again; "
+                "it doesn't count against the agent.",
+            ),
+        ],
+    )
+    def test_a_person_reads_the_same_infrastructure_failure_on_the_job_and_calls(
+        self, api_client, environment, keys, code, expected
+    ):
+        created = _as(
+            api_client,
+            keys.user,
+            "post",
+            f"{BASE}/{environment.id}/run/",
+            {"scenario_ids": _suite_keys(environment)[:2], "trials": 1},
+            HTTP_IDEMPOTENCY_KEY="person-run-start-timeout",
+        )
+        assert created.status_code == 202, created.content
+        # The run path records the closed code and no cause; the message ends with what the
+        # process printed.
+        raw = f"{_START_TIMEOUT}\n--- output ---\nlistening soon"
+        run = HostedHarnessJob.no_workspace_objects.get(id=created.json()["job_id"])
+        run.state = HostedHarnessJob.State.FAILED
+        run.failure = {
+            "domain": "infrastructure",
+            "stage": "running",
+            "code": code,
+            "message": raw,
+        }
+        run.save(update_fields=["state", "failure", "updated_at"])
+
+        project_terminal_job_onto_run(run, timezone.now())
+
+        reasons = set(
+            CallExecution.objects.filter(
+                test_execution_id=created.json()["test_execution_id"]
+            ).values_list("ended_reason", flat=True)
+        )
+        assert reasons == {expected}
+        job = _as(api_client, keys.user, "get", f"/simulate/api/harness-jobs/{run.id}/")
+        assert job.status_code == 200, job.content
+        assert reasons == {job.json()["status"]["failure"]["person_message"]}
+        run.refresh_from_db()
+        assert run.failure["message"] == raw
 
     def test_its_result_rows_name_each_failure_s_domain_and_code(
         self, api_client, environment, keys
@@ -1047,6 +1282,153 @@ class TestWhatACodingAgentReads:
 
         environment.refresh_from_db()
         assert held_back(environment) is None
+
+
+def test_a_coding_agent_starting_a_run_reads_no_readiness_selection(
+    api_client, environment, keys
+):
+    chosen = ensure_held_back(environment)
+    hidden = chosen.scenario_keys[0]
+    shown = [key for key in _suite_keys(environment) if key not in chosen.scenario_keys]
+
+    created = _as(
+        api_client,
+        keys.coder,
+        "post",
+        f"{BASE}/{environment.id}/run/",
+        {"scenario_ids": shown, "trials": 1},
+        HTTP_IDEMPOTENCY_KEY="coder-selection",
+    )
+
+    assert created.status_code == 202, created.content
+    assert created.json()["selection"] is None
+    assert hidden not in created.content.decode()
+
+
+def test_a_coding_agent_s_verify_refused_by_readiness_names_no_case(
+    api_client, environment, keys, monkeypatch
+):
+    from simulate.services import harness_readiness
+
+    chosen = ensure_held_back(environment)
+    candidate = _second_agent(environment)
+    real = harness_readiness.select_for_run
+
+    def every_case_held(pairing, *, keys, trials, **options):
+        # Readiness holding back every case the verify sends (a Blocked start row, or
+        # a production-only tool every held-back case uses); the 409 is the PR's own.
+        plan = real(pairing, keys=keys, trials=trials, **options)
+        view = {
+            **plan.view,
+            "running": 0,
+            "held_back": {
+                "count": len(keys),
+                "keys": list(keys),
+                "truncated": False,
+                "by": {"start": len(keys)},
+            },
+            "reasons": {"start": "The agent did not start in the test sandbox"},
+        }
+        return dataclasses.replace(plan, view=view, held=frozenset(keys))
+
+    monkeypatch.setattr(harness_readiness, "select_for_run", every_case_held)
+
+    refused = _as(
+        api_client,
+        keys.coder,
+        "post",
+        f"{BASE}/{environment.id}/verify/",
+        {"agent_version_id": str(candidate.id), "trials": 1},
+    )
+
+    assert refused.status_code == 409, refused.content
+    assert refused.json()["error"] == "all_cases_blocked"
+    assert "selection" not in refused.json()
+    assert not any(key in refused.content.decode() for key in chosen.scenario_keys)
+
+
+def test_a_coding_agent_reads_each_cause_in_plain_words_beside_its_code():
+    """The words a coding agent reads; the code stays at the end for a program to match."""
+    failure = {
+        "code": "authoring_runtime_validation_failed",
+        "cause": "agent_exited_before_ready",
+    }
+
+    # With a cause, only its words and its code: the run's label is not repeated before them.
+    assert coding_agent_failure_message(failure) == (
+        "Didn't start — the agent exited before it was ready. Fix the crash on startup, "
+        "then push a new agent version. (cause: agent_exited_before_ready)"
+    )
+    assert coding_agent_failure_message(
+        {**failure, "cause": "agent_not_ready_in_time"}
+    ) == (
+        "Didn't start in time — the agent wasn't ready within the limit. "
+        "Run it again; if it repeats, make it start or listen sooner. "
+        "(cause: agent_not_ready_in_time)"
+    )
+    # A process the agent depends on was not ready: its own words, which never blame the agent.
+    assert coding_agent_failure_message(
+        {**failure, "cause": "dependency_not_ready_in_time"}
+    ) == (
+        "Didn't start in time — a service this run needs wasn't ready within the limit. "
+        "Run it again. (cause: dependency_not_ready_in_time)"
+    )
+    # Exit 78 with no recorded cause: words only, with a next step and no code.
+    assert coding_agent_failure_message({**failure, "cause": "unknown"}) == (
+        "We couldn't run this agent version in its environment, and the run recorded no "
+        "cause. Run it again; if it repeats, start the agent on your own machine and check "
+        "that it comes up."
+    )
+    # Without one, the fixed label for its code.
+    assert (
+        coding_agent_failure_message({"code": "authoring_runtime_validation_failed"})
+        == "We couldn't run this agent version in its environment"
+    )
+    # The cause decides, never the message, which can carry what the guest printed: an exit-78
+    # start timeout recorded as unknown, as an invalid value or with no cause stays so.
+    start_timeout = {
+        "code": "authoring_runtime_validation_failed",
+        "message": f"{RUNTIME_VALIDATION_FAILED}: ProcessRuntimeError: {_START_TIMEOUT}",
+    }
+    assert failure_cause({**start_timeout, "cause": "unknown"}) == "unknown"
+    assert failure_cause({**start_timeout, "cause": "depends_on_timeout"}) == "unknown"
+    assert failure_cause(start_timeout) is None
+    assert not has_plain_words(start_timeout)
+    # A run's start timeout, recorded by its closed code without a cause, reads as one: it names
+    # no process and never says it doesn't count against the agent.
+    run_timeout = {
+        "code": "depends_on_timeout",
+        "domain": "infrastructure",
+        "message": _START_TIMEOUT,
+    }
+    assert failure_cause(run_timeout) is None
+    assert has_plain_words(run_timeout)
+    assert coding_agent_failure_message(run_timeout) == (
+        "Stopped — a service this run needs didn't start in time. Run it again."
+    )
+    # A person's own run: the words, then what their agent printed after the run's label. A
+    # message that is only the label adds nothing, and a failure without a cause reads its words.
+    crash = {
+        **failure,
+        "cause": "unknown",
+        "message": f"{RUNTIME_VALIDATION_FAILED}: ModuleNotFoundError: No module named 'x'",
+    }
+    assert person_failure_message(crash) == (
+        f"{CAUSE_WORDS['unknown']} ModuleNotFoundError: No module named 'x'"
+    )
+    assert (
+        person_failure_message({**crash, "message": RUNTIME_VALIDATION_FAILED})
+        == CAUSE_WORDS["unknown"]
+    )
+    assert person_failure_message(run_timeout) == START_TIMEOUT_LINE
+    # A named cause wins over the code, and a failure with neither has none.
+    assert (
+        failure_cause({**start_timeout, "cause": "chat_target_timeout"})
+        == "chat_target_timeout"
+    )
+    assert failure_cause({"code": "authoring_runtime_validation_failed"}) is None
+    # Every value the cause can take, unknown included, has words.
+    assert set(CAUSE_WORDS) == {*FAILURE_CAUSES, "unknown"}
 
 
 class TestActorRoutesRefuseACodingAgent:

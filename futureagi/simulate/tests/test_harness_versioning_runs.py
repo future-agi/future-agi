@@ -446,11 +446,12 @@ class TestPins:
 
         assert run.agent_version_id is None
         assert run.suite_version_id == environment.suite_version_id
-        assert [
+        # Read once for readiness before the lock and once for the pins under it.
+        assert {
             (log["environment_id"], log["agent_version_id"])
             for log in logs
             if log["event"] == "harness_run_agent_pin_missing"
-        ] == [(str(environment.id), str(environment.agent_version_id))]
+        } == {(str(environment.id), str(environment.agent_version_id))}
 
 
 class TestManifest:
@@ -674,6 +675,9 @@ class TestManifest:
         from simulate.services.harness_provider import HostedHarnessProvider
 
         environment = _versioned(user, workspace, key, storage)
+        from simulate.tests.harness_validation import prove_every_pair
+
+        prove_every_pair(environment)
         source = _run(environment, [_key(NAMES[1])])
         HostedHarnessJob.no_workspace_objects.filter(id=source.id).update(
             state=HostedHarnessJob.State.COMPLETED

@@ -9,6 +9,7 @@ from mcp_server.models.connection import MCPConnection
 from mcp_server.models.session import MCPSession
 from mcp_server.models.tool_config import MCPToolGroupConfig
 from mcp_server.models.usage import MCPUsageRecord
+from tfc.ee_gating import FeatureUnavailable, check_ee_feature
 
 logger = structlog.get_logger(__name__)
 
@@ -85,6 +86,19 @@ def get_enabled_tools(connection):
 
     enabled_groups = config.enabled_groups
     disabled_tools = set(config.disabled_tools or [])
+    entitled = {}
+
+    def has_entitlement(feature):
+        # The same check the tool's REST view makes, so a tool the plan lacks
+        # is neither listed nor callable. A denial, including an entitlement
+        # service that cannot answer, hides the tool.
+        if feature not in entitled:
+            try:
+                check_ee_feature(feature, org_id=str(connection.organization_id))
+                entitled[feature] = True
+            except FeatureUnavailable:
+                entitled[feature] = False
+        return entitled[feature]
 
     enabled_tool_names = set()
     for tool in registry.list_all():
@@ -92,6 +106,7 @@ def get_enabled_tools(connection):
             tool.group in enabled_groups
             and tool.name not in disabled_tools
             and tool.is_available()
+            and (tool.entitlement is None or has_entitlement(tool.entitlement))
         ):
             enabled_tool_names.add(tool.name)
 

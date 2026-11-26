@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from typing import Optional
 
-from temporalio.worker import ResourceBasedSlotConfig, Worker, WorkerTuner
+from temporalio.worker import ResourceBasedSlotConfig, Worker, WorkerConfig, WorkerTuner
 
 from tfc.temporal import TEMPORAL_HOST, TEMPORAL_NAMESPACE, get_queue_name
 from tfc.temporal.common.client import get_client
@@ -152,7 +152,7 @@ async def run_worker(
     )
 
     # Base worker configuration
-    worker_kwargs = {
+    worker_kwargs: WorkerConfig = {
         "client": client,
         "task_queue": task_queue,
         "workflows": workflows,

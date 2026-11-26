@@ -1,6 +1,15 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import { useLocation } from "react-router-dom";
+import {
+  Box,
+  Button,
+  IconButton,
+  Link,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
@@ -12,8 +21,15 @@ import {
   useStopFixRun,
 } from "src/api/simulate-environments/fixRuns";
 
+import EpochMoreMenu from "./EpochMoreMenu";
 import FixStatusChip from "./FixStatusChip";
-import { STEP_LABEL, fixName, formatCredits, identityLine } from "./fixRunView";
+import {
+  fixName,
+  formatCredits,
+  identityLine,
+  originOf,
+  stageLabel,
+} from "./fixRunView";
 
 const STOPPABLE = new Set(["queued", "running"]);
 
@@ -88,7 +104,37 @@ function StopControl({ fix }) {
 }
 StopControl.propTypes = { fix: PropTypes.object.isRequired };
 
-export default function FixHeader({ fix, envId, actions }) {
+// Where the origin line links: the Error Feed issue, or the run the epoch started from.
+function originHref(fix, kind, envId, runTestId) {
+  if (kind === "issue")
+    return paths.dashboard.errorFeed.detail(fix.issue.cluster_id);
+  if (kind === "run" && runTestId)
+    return paths.dashboard.simulate.environments.execution(
+      envId,
+      runTestId,
+      fix.source_run_id,
+    );
+  return null;
+}
+
+// The design's epoch header (ImprovementRunsView): the environment, then the epoch,
+// and below it the versions and where it came from, in words. Everything comes from
+// the epoch's own read, so a reload or a shared link keeps it.
+export default function FixHeader({ fix, runTestId, actions }) {
+  // The epoch's own environment, so the crumbs and the name it shows agree.
+  const envId = fix.environment_id;
+  const location = useLocation();
+  const { issue } = fix;
+  const issueHref = issue
+    ? paths.dashboard.errorFeed.detail(issue.cluster_id)
+    : null;
+  const epochsHref = paths.dashboard.simulate.environments.workspaceTab(
+    envId,
+    "improvements",
+  );
+  const origin = originOf(fix);
+  const originLink = originHref(fix, origin.kind, envId, runTestId);
+  const quiet = { typography: "s3", color: "text.subtitle" };
   return (
     <Stack
       direction="row"
@@ -105,11 +151,8 @@ export default function FixHeader({ fix, envId, actions }) {
       <IconButton
         size="small"
         component={RouterLink}
-        href={paths.dashboard.simulate.environments.workspaceTab(
-          envId,
-          "improvements",
-        )}
-        aria-label="Back to epochs"
+        href={issueHref || epochsHref}
+        aria-label={issue ? "Back to the issue" : "Back to epochs"}
       >
         <Iconify
           icon="solar:alt-arrow-left-linear"
@@ -119,25 +162,82 @@ export default function FixHeader({ fix, envId, actions }) {
       </IconButton>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography noWrap sx={{ typography: "m3", fontWeight: 600 }}>
+          {/* The design's crumbs: the environment, then its Epochs tab. */}
+          {fix.environment?.name && (
+            <Typography
+              noWrap
+              sx={{ typography: "m3", color: "text.secondary", minWidth: 0 }}
+            >
+              <Link
+                component={RouterLink}
+                href={paths.dashboard.simulate.environments.detail(envId)}
+                color="inherit"
+                underline="hover"
+                data-testid="epoch-environment-crumb"
+              >
+                {fix.environment.name}
+              </Link>
+              {" /"}
+            </Typography>
+          )}
+          <Typography
+            noWrap
+            sx={{ typography: "m3", color: "text.secondary", flexShrink: 0 }}
+          >
+            <Link
+              component={RouterLink}
+              href={epochsHref}
+              color="inherit"
+              underline="hover"
+              data-testid="epoch-epochs-crumb"
+            >
+              Epochs
+            </Link>
+            {" /"}
+          </Typography>
+          <Typography
+            noWrap
+            sx={{ typography: "m3", fontWeight: 600, flexShrink: 0 }}
+          >
             {fixName(fix)}
           </Typography>
           <FixStatusChip state={fix.state} />
-          {STEP_LABEL[fix.step] && STOPPABLE.has(fix.state) && (
+          {/* Queued and Stopping are the status itself; a running epoch says its stage. */}
+          {fix.state === "running" && stageLabel(fix) && (
             <Typography
               noWrap
+              data-testid="epoch-stage"
               sx={{ typography: "s3", color: "text.tertiary" }}
             >
-              {STEP_LABEL[fix.step]}
+              {stageLabel(fix)}
             </Typography>
           )}
         </Stack>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-          {identityLine(fix)}
+        <Typography noWrap sx={quiet}>
+          {`${identityLine(fix)} · `}
+          {originLink ? (
+            <Tooltip arrow describeChild title={origin.label}>
+              <Link
+                component={RouterLink}
+                href={originLink}
+                state={{ backTo: location.pathname }}
+                color="inherit"
+                underline="hover"
+                data-testid="epoch-origin"
+              >
+                {origin.label}
+              </Link>
+            </Tooltip>
+          ) : (
+            <Box component="span" data-testid="epoch-origin">
+              {origin.label}
+            </Box>
+          )}
         </Typography>
       </Box>
       <Stack direction="row" spacing={1} alignItems="center">
         <StopControl fix={fix} />
+        <EpochMoreMenu fix={fix} />
         {actions}
       </Stack>
     </Stack>
@@ -146,6 +246,7 @@ export default function FixHeader({ fix, envId, actions }) {
 
 FixHeader.propTypes = {
   fix: PropTypes.object.isRequired,
-  envId: PropTypes.string.isRequired,
+  // The environment's run list id: a run's page needs it.
+  runTestId: PropTypes.string,
   actions: PropTypes.node,
 };

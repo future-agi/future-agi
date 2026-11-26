@@ -443,7 +443,9 @@ const EvalDetailPage = () => {
       // Load version config into the form
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
+      // Description and tags belong to the eval, not to a version snapshot.
       setTags(getEvalTags(evalData));
+      setDescription(evalData?.description || "");
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);

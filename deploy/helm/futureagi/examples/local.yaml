@@ -6,7 +6,8 @@
 #   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
 #     -n futureagi --create-namespace -f local.yaml --timeout 20m
 #
-# Then open http://localhost:3000; SDKs use FI_BASE_URL=http://localhost:4318.
+# Then open http://localhost:3000; SDKs use FI_BASE_URL=http://localhost:8000
+# and FI_TRACES_URL=http://localhost:4318.
 #
 # Docker Desktop, OrbStack and Rancher Desktop publish LoadBalancer Services on
 # localhost, and k3s's ServiceLB on the node's address (localhost on the node

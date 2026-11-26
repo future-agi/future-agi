@@ -238,9 +238,9 @@ def test_native_sparse_latest_and_cross_property_pages(
     target = subject(filters, workspace)
     calls, visible, cursor = [], [], {}
 
-    def record(sql, params):
+    def record(sql, params, **kwargs):
         calls.append((sql, params))
-        return population(sql, params)
+        return population(sql, params, **kwargs)
 
     while True:
         page = _engine_population_page(record, target, filters, page_size=2, **cursor)

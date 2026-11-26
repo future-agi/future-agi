@@ -18,3 +18,11 @@ export const rateTone = (rate) =>
     : rate >= 50
       ? "text.primary"
       : "status.danger.fg";
+
+export const syncedText = (checkedAt) =>
+  checkedAt ? `Synced ${ago(checkedAt)}` : "Not synced yet";
+
+export function syncTooltip(intervalSeconds) {
+  const minutes = Math.round(intervalSeconds / 60);
+  return `New commits arrive on push; we also check GitHub every ${minutes} minutes. Sync checks now.`;
+}

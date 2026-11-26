@@ -14,6 +14,7 @@ import { SnackbarProvider } from "notistack";
 
 import {
   fixtureFixRun,
+  fixturePatch,
   resetFixRunFixtures,
   updateFixtureFixRun,
 } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
@@ -45,6 +46,14 @@ vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
   };
 });
 
+// jsdom cannot save a file or reach the clipboard: record what would be.
+const saved = vi.hoisted(() => ({
+  download: vi.fn(),
+  copy: vi.fn(async () => true),
+}));
+vi.mock("../downloadText", () => ({ downloadText: saved.download }));
+vi.mock("src/utils/copyToClipboard", () => ({ copyToClipboard: saved.copy }));
+
 const { default: FixRunPage } = await import("../FixRunPage");
 
 const fixOf = (id) => ({
@@ -52,7 +61,7 @@ const fixOf = (id) => ({
   environment_id: "env-1",
 });
 
-function renderPage(fixId) {
+function renderPage(fixId, { runTestId } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -60,7 +69,7 @@ function renderPage(fixId) {
     <QueryClientProvider client={client}>
       <SnackbarProvider>
         <MemoryRouter>
-          <FixRunPage envId="env-1" fixId={fixId} />
+          <FixRunPage fixId={fixId} runTestId={runTestId} />
         </MemoryRouter>
       </SnackbarProvider>
     </QueryClientProvider>,
@@ -78,25 +87,231 @@ describe("FixRunPage", () => {
     resetFixRunFixtures();
     hooks.fixRun = null;
     hooks.stop = null;
+    saved.download.mockClear();
+    saved.copy.mockClear();
+  });
+
+  async function openMore(user, fixId) {
+    renderPage(fixId);
+    await user.click(
+      await screen.findByRole("button", { name: "More actions" }),
+    );
+    return screen.findByRole("menu");
+  }
+
+  it("copies the epoch's ID from the ⋯ menu without printing it", async () => {
+    const user = userEvent.setup();
+    const menu = await openMore(user, "fix-ready-archive");
+    expect(screen.queryByText("fix-ready-archive")).toBeNull();
+    await user.click(
+      within(menu).getByRole("menuitem", { name: /Copy epoch ID/ }),
+    );
+    expect(saved.copy).toHaveBeenCalledWith("fix-ready-archive");
+    expect(await screen.findByText("Epoch ID copied")).toBeInTheDocument();
+  });
+
+  it("exports the epoch's own read as a JSON file", async () => {
+    const user = userEvent.setup();
+    const menu = await openMore(user, "fix-ready-archive");
+    await user.click(
+      within(menu).getByRole("menuitem", { name: /Export epoch/ }),
+    );
+    expect(saved.download).toHaveBeenCalledTimes(1);
+    const [name, text, type] = saved.download.mock.calls[0];
+    expect(name).toBe("epoch-10.json");
+    expect(type).toBe("application/json");
+    expect(JSON.parse(text)).toMatchObject({
+      id: "fix-ready-archive",
+      number: 10,
+    });
+  });
+
+  it("downloads the winner's patch from the ⋯ menu", async () => {
+    const user = userEvent.setup();
+    const menu = await openMore(user, "fix-ready-archive");
+    await user.click(
+      within(menu).getByRole("menuitem", { name: /Download patch/ }),
+    );
+    await waitFor(() =>
+      expect(saved.download).toHaveBeenCalledWith(
+        "fix-fix-ready-archive-attempt-3.patch",
+        fixturePatch("fix-ready-archive-c3"),
+      ),
+    );
+  });
+
+  it("disables Download patch on an epoch with no winner", async () => {
+    const user = userEvent.setup();
+    const menu = await openMore(user, "fix-no-improvement");
+    expect(
+      within(menu).getByRole("menuitem", { name: /Download patch/ }),
+    ).toHaveAttribute("aria-disabled", "true");
   });
 
   it("heads a running fix with its name, state and stage", async () => {
     renderPage("fix-search");
     expect(await screen.findByText("Epoch 13")).toBeInTheDocument();
-    expect(screen.getByText("Running")).toBeInTheDocument();
-    // The step in words, never the engine's own stage name.
-    expect(screen.getByText("Searching")).toBeInTheDocument();
+    // The header's status, beside its stage; the candidates table says Running too.
+    expect(
+      within(screen.getByTestId("epoch-stage").parentElement).getByText(
+        "Running",
+      ),
+    ).toBeInTheDocument();
+    // The stage in the design's words, never the engine's own stage name.
+    expect(screen.getByTestId("epoch-stage")).toHaveTextContent("Proposing");
+    expect(screen.queryByText("Searching")).toBeNull();
     expect(screen.queryByText("Screen · attempt 2")).toBeNull();
   });
 
-  it("goes back to the Epochs tab", async () => {
+  it("says a search with no diagnosis yet is diagnosing, and shows the causes once it has them", async () => {
+    const fix = fixOf("fix-unknown-identity");
+    hooks.fixRun = { fix, isLoading: false, error: null };
+    const { unmount } = renderPage("fix-unknown-identity");
+    expect(screen.getByTestId("epoch-stage")).toHaveTextContent("Diagnosing");
+    expect(screen.getByTestId("step-diagnose")).toHaveAttribute(
+      "data-state",
+      "now",
+    );
+    unmount();
+
+    hooks.fixRun = {
+      fix: {
+        ...fix,
+        diagnosis: { causes: ["the instructions never ask it to escalate"] },
+      },
+      isLoading: false,
+      error: null,
+    };
+    renderPage("fix-unknown-identity");
+    expect(screen.getByTestId("epoch-stage")).toHaveTextContent("Proposing");
+    expect(screen.getByTestId("step-diagnose")).toHaveTextContent(
+      "Starts from its diagnosis: The instructions never ask it to escalate.",
+    );
+  });
+
+  it("shows no stage beside Queued", async () => {
+    renderPage("fix-queued");
+    expect(await screen.findByText("Epoch 15")).toBeInTheDocument();
+    expect(screen.queryByTestId("epoch-stage")).toBeNull();
+    expect(
+      within(screen.getByTestId("step-reproduce")).getByText("Queued"),
+    ).toBeInTheDocument();
+  });
+
+  it("goes back to the Epochs tab of the epoch's own environment", async () => {
+    // The fake API reads the fixture's environment, env-fixture.
     renderPage("fix-search");
     expect(
       await screen.findByRole("link", { name: "Back to epochs" }),
     ).toHaveAttribute(
       "href",
+      "/dashboard/simulate/environments/env-fixture?tab=improvements",
+    );
+  });
+
+  const ISSUE = {
+    job_id: "job-1",
+    cluster_id: "S-1A2B3C4D",
+    project_id: "proj-1",
+    title: "Refund quoted twice",
+  };
+  const pin = (over) => {
+    hooks.fixRun = {
+      fix: { ...fixOf("fix-search"), ...over },
+      isLoading: false,
+      error: null,
+    };
+  };
+
+  it("crumbs the environment, then its Epochs tab, then the epoch", () => {
+    pin({ from_issue: true, issue: ISSUE });
+    renderPage("fix-search");
+    const crumb = screen.getByTestId("epoch-environment-crumb");
+    expect(crumb).toHaveTextContent("new env");
+    expect(crumb).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1",
+    );
+    const epochs = screen.getByTestId("epoch-epochs-crumb");
+    expect(epochs).toHaveTextContent("Epochs");
+    expect(epochs).toHaveAttribute(
+      "href",
       "/dashboard/simulate/environments/env-1?tab=improvements",
     );
+    expect(screen.getByText("Epoch 13")).toBeInTheDocument();
+    // The issue's id is never the breadcrumb.
+    expect(screen.queryByText(/S-1A2B3C4D/)).toBeNull();
+    // Nor is the environment named twice.
+    expect(screen.getAllByText(/new env/)).toHaveLength(1);
+  });
+
+  it("crumbs the epoch's own environment, the one it names", () => {
+    pin({ environment_id: "env-2" });
+    renderPage("fix-search");
+    expect(screen.getByTestId("epoch-environment-crumb")).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-2",
+    );
+    expect(screen.getByTestId("epoch-epochs-crumb")).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-2?tab=improvements",
+    );
+  });
+
+  it("links an issue's epoch to its issue by title", () => {
+    pin({ from_issue: true, issue: ISSUE });
+    renderPage("fix-search");
+    const origin = screen.getByTestId("epoch-origin");
+    expect(origin).toHaveTextContent("From issue: Refund quoted twice");
+    expect(origin).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
+    expect(
+      screen.getByRole("link", { name: "Back to the issue" }),
+    ).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
+  });
+
+  it("links a run's epoch to the run it started from", () => {
+    pin({ from_issue: false, issue: null });
+    renderPage("fix-search", { runTestId: "rt-env" });
+    const origin = screen.getByTestId("epoch-origin");
+    expect(origin).toHaveTextContent("From run: Run 1");
+    expect(origin).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/runs/rt-env/te-source-run-1",
+    );
+  });
+
+  it.each([
+    [{ from_issue: true, issue: null }, "From a deleted issue"],
+    [
+      { from_issue: false, issue: null, source_run_id: null },
+      "From a deleted run",
+    ],
+  ])("says a deleted origin in plain words, with no link", (over, label) => {
+    pin(over);
+    renderPage("fix-search");
+    const origin = screen.getByTestId("epoch-origin");
+    expect(origin).toHaveTextContent(label);
+    expect(origin.tagName).not.toBe("A");
+    expect(within(origin).queryByRole("link")).toBeNull();
+  });
+
+  it("offers a retry instead of blaming the agent when variations time out", async () => {
+    updateFixtureFixRun("fix-failed", (fix) => ({
+      ...fix,
+      failure: {
+        code: "fix_variations_timeout",
+        message:
+          "writing and checking variations of the failing cases took over 10 minutes",
+      },
+      retryable: true,
+    }));
+    renderPage("fix-failed");
+    expect(
+      await screen.findByText(
+        "This epoch stopped because of a problem on our side, not your agent. Nothing changed. Retry it.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry Epoch 2" })).toBeEnabled();
   });
 
   it("offers no Stop and no stage on a finished fix", async () => {

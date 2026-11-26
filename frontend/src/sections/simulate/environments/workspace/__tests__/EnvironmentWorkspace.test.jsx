@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { flushSync } from "react-dom";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  queryScenarioFixture,
+  SAMPLE_ROWS,
+} from "src/api/simulate-environments/_fixtures/scenariosFixtures";
 import userEvent from "@testing-library/user-event";
 import { clearScenarioSelection } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
@@ -314,6 +319,44 @@ describe("EnvironmentWorkspace route shell", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(screen.queryByText("Environment not found")).toBeNull();
+  });
+
+  it("offers a composition's repeats on the scenarios its run of everything covers", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-done\/$/.test(url)
+        ? Promise.resolve({
+            data: {
+              ...DETAIL_NOT_AUTHORED,
+              overview: {
+                ...DETAIL_NOT_AUTHORED.overview,
+                status: "completed",
+                agent_type: "chat",
+                scenario_count: 8,
+                run: { run_test_id: "rt1", test_execution_id: "ex1" },
+              },
+              composition: {
+                alignment: {
+                  unscorable: [
+                    { scenario_key: "reply", reason: "no tool" },
+                    { scenario_key: "draft", reason: "no tool" },
+                  ],
+                },
+              },
+            },
+          })
+        : base(url),
+    );
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    await userEvent.click(
+      await screen.findByText(/^Repeats:/, {}, { timeout: 8000 }),
+    );
+    expect(
+      screen.getByText(/6 scenarios × 1 repeat = 6 runs/),
+    ).toBeInTheDocument();
   });
 
   it("offers a retry instead of half-filled tabs when the environment detail fails", async () => {
@@ -706,6 +749,66 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.queryByText(/verify_identity/)).toBeNull();
   });
 
+  it("keeps checked scenarios available after cancelling the run dialog", async () => {
+    const rows = SAMPLE_ROWS.slice(0, 3);
+    getHarnessJob.mockResolvedValue({
+      ...COMPLETED_JOB,
+      scenarios: rows,
+      versioning: { enabled: true },
+    });
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation(async (url, config) => {
+      if (url.endsWith("/scenarios/")) {
+        return { data: queryScenarioFixture(config.params, rows) };
+      }
+      if (url.endsWith("/versions/")) {
+        return { data: { agent: [], environment: [], suite: [] } };
+      }
+      if (url.endsWith("/run-plan/")) {
+        return {
+          data: {
+            runnable: true,
+            warnings: [],
+            blocked_tools: [],
+            held_back: 0,
+          },
+        };
+      }
+      return base(url, config);
+    });
+    const user = userEvent.setup();
+    renderWorkspace("/dashboard/simulate/environments/job-done?tab=scenarios");
+
+    const table = await screen.findByRole("table");
+    const [, first, second] = within(table).getAllByRole("checkbox");
+    await user.click(first);
+    await user.click(second);
+    const runSelection = () =>
+      screen.getByText("Run simulation (2)", { selector: "button" });
+    await user.click(runSelection());
+
+    const dialog = within(
+      await screen.findByRole("dialog", { name: "Run simulation" }),
+    );
+    expect(await dialog.findByText("Runs 2 selected scenarios.")).toBeVisible();
+    await user.click(dialog.getByRole("button", { name: "Edit" }));
+    // Browsers can commit Cancel's update at the portal (body) before the
+    // same click reaches the document. jsdom otherwise batches past that point.
+    document.body.addEventListener("click", () => flushSync(() => {}), {
+      once: true,
+    });
+    await user.click(dialog.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(first).toBeChecked();
+    expect(second).toBeChecked();
+    expect(runSelection()).toBeEnabled();
+
+    await user.click(screen.getByText("Done Environment", { selector: "p" }));
+    expect(first).not.toBeChecked();
+    expect(second).not.toBeChecked();
+  });
+
   it("hosts the build experience in place for a still-building job", async () => {
     getHarnessJob.mockResolvedValue(BUILDING_JOB);
 
@@ -736,6 +839,7 @@ describe("EnvironmentWorkspace route shell", () => {
           stage: "understanding_agent",
           code: "sandbox_launch_failed",
           message: "Sandbox launch failed",
+          person_message: "The build can be retried now.",
         },
       },
     });
@@ -744,11 +848,11 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // The header pill reads Failed (not Building) — but the build layout (chat +
     // pipeline) stays, with the pipeline showing the failure rather than a
-    // dead-end error page.
+    // dead-end error page. An infrastructure failure reads as ours, not the agent's.
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(screen.queryByText("Building")).toBeNull();
     expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
-    expect(screen.getByText("Sandbox launch failed")).toBeInTheDocument();
+    expect(screen.getByText("The build can be retried now.")).toBeInTheDocument();
   });
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {
@@ -910,7 +1014,9 @@ describe("EnvironmentWorkspace unsaved changes", () => {
         Object.assign(new Error("Not found"), { statusCode: 404 }),
       );
     });
-  const saveButton = () => screen.findByRole("button", { name: "Save" });
+  // Saving starts from the bar's Review and save, which the holds grey out.
+  const saveButton = () =>
+    screen.findByRole("button", { name: "Review and save" });
 
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -931,15 +1037,15 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     expect(await saveButton()).toBeEnabled();
   });
 
-  it("opens the draft in the Versions tab from the bar", async () => {
+  it("opens the review of the changes from the bar", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
-      await screen.findByRole("button", { name: "View changes" }),
+      await screen.findByRole("button", { name: "Review and save" }),
     );
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "/dashboard/simulate/environments/job-done?tab=versions&version=environment%3Aed",
-    );
+    expect(
+      await screen.findByRole("dialog", { name: "Review changes" }),
+    ).toBeInTheDocument();
   });
 
   it("shows no bar without drafts", async () => {

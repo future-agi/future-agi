@@ -1,5 +1,6 @@
 """Nudges: raised after an agent or environment default moves, listed, and skipped."""
 
+import contextlib
 import copy
 import json
 import logging
@@ -15,6 +16,7 @@ from simulate.models import (
 )
 from simulate.services.harness_versioning import nudges
 from simulate.tasks import harness_nudges as nudge_tasks
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_harness_agent_versions import (
     _a1,
     _create,
@@ -92,6 +94,7 @@ def _activated(user, workspace, storage, key, django_capture_on_commit_callbacks
     a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": NEW_VALUE})
     with django_capture_on_commit_callbacks(execute=True):
         assert _preflight(a2).status == "passed"
+        settle_validations(environment)
     environment.refresh_from_db()
     assert environment.agent_version_id == a2.id
     return environment, a1, a2
@@ -319,6 +322,7 @@ class TestRaise:
         a1 = _a1(environment)
         a2 = _create(a1, environment, secret_values={"OPENAI_API_KEY": "val-a2-value"})
         assert _preflight(a2).status == "passed"
+        settle_validations()
         a3 = _create(a2, environment, secret_values={"OPENAI_API_KEY": "val-a3-value"})
         move_default(environment, "agent", a1.id, expected_default_id=a2.id)
 
@@ -1087,6 +1091,7 @@ class TestRaise:
             django_capture_on_commit_callbacks(execute=True),
         ):
             assert _preflight(a2).status == "passed"
+            settle_validations()
             move_default(environment, "agent", a1.id, expected_default_id=a2.id)
 
         assert "harness_nudge_schedule_failed" in caplog.text
@@ -1396,15 +1401,20 @@ def _gh_file(name, status="modified", patch_text="@@ -1,1 +1,1 @@\n-a\n+b\n", **
     }
 
 
+@contextlib.contextmanager
 def _compares(*bodies):
     from simulate.services import harness_github
     from simulate.services.harness_github import GitHubResponse
 
-    return patch.object(
-        harness_github,
-        "github_get",
-        side_effect=[GitHubResponse("ok", body) for body in bodies],
-    )
+    with (
+        patch.object(harness_github, "_workspace_installation", return_value=None),
+        patch.object(
+            harness_github,
+            "github_get",
+            side_effect=[GitHubResponse("ok", body) for body in bodies],
+        ) as github_get,
+    ):
+        yield github_get
 
 
 class TestFacts:
@@ -1549,11 +1559,20 @@ class TestFacts:
         assert github_get.call_count == 0
         assert facts["files_unavailable"] == "private_repository"
 
-    def test_rate_limits_errors_and_the_shared_cache(self, clean_cache, settings):
+    def test_rate_limits_errors_and_the_shared_cache(
+        self, clean_cache, settings, monkeypatch
+    ):
         import requests
         from django.core.cache import cache
 
         from simulate.services import harness_github
+
+        settings.GITHUB_APP_FALLBACK_INSTALLATION_ID = "test-installation"
+        monkeypatch.setattr(
+            "integrations.services.github_app.fallback_read_token",
+            lambda: "test-token",
+        )
+        monkeypatch.setattr(harness_github, "_workspace_installation", lambda *a: None)
 
         def response(status_code, body=None, headers=None):
             found = SimpleNamespace(
@@ -1566,7 +1585,9 @@ class TestFacts:
         with patch.object(harness_github.requests, "get", side_effect=[limited]):
             facts = _facts(_runtime(), _github())
         assert facts["files_unavailable"] == "rate_limited"
-        assert cache.get(harness_github.RATE_RESET_KEY) is not None
+        assert harness_github.waiting_until(
+            harness_github.ReadCredential("test-token", "test-installation")
+        )
 
         with patch.object(harness_github.requests, "get") as get:
             facts = _facts(_runtime(), _github())
@@ -1586,16 +1607,16 @@ class TestFacts:
             second = _facts(_runtime(), _github())
         assert get.call_count == 1
         assert first["changed_files"] == second["changed_files"]
-        assert get.call_args.kwargs["headers"].get("Authorization") is None
+        assert get.call_args.kwargs["headers"]["Authorization"] == "Bearer test-token"
 
-        # An organization past its share of the hour's comparisons reads rate_limited.
         cache.clear()
-        settings.HARNESS_GITHUB_COMPARE_SHARE = 1
-        with patch.object(harness_github.requests, "get", return_value=ok) as get:
-            assert _facts(_runtime(), _github())["files_unavailable"] is None
+        monkeypatch.setattr(
+            "integrations.services.github_app.fallback_read_token", lambda: None
+        )
+        with patch.object(harness_github.requests, "get") as get:
             facts = _facts(_runtime(), _github(new_sha="c" * 40))
-        assert get.call_count == 1
-        assert facts["files_unavailable"] == "rate_limited"
+        assert get.call_count == 0
+        assert facts["files_unavailable"] == "github_error"
 
     def test_an_upload_is_compared_by_member(self, storage):
         import io

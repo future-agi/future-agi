@@ -327,7 +327,7 @@ export default function EvidenceCaseCard({
 
 EvidenceCaseCard.propTypes = {
   item: PropTypes.object.isRequired,
-  kind: PropTypes.oneOf(["session", "call", "transcript", "dataset"]),
+  kind: PropTypes.oneOf(["session", "call", "trace", "transcript", "dataset"]),
   simulated: PropTypes.bool,
   production: PropTypes.bool,
   observeHref: PropTypes.string,

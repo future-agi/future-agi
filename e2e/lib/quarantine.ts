@@ -26,7 +26,10 @@ export function grepInvertPattern(): RegExp | undefined {
       console.warn(`quarantine: failed to read/parse ${FILE}: ${(err as Error).message}`);
       entries = [];
     }
-    const today = new Date().toISOString().slice(0, 10);
+    // CI pins one date for a whole run (E2E_QUARANTINE_TODAY), so an entry that
+    // expires today is in or out for every shard and for the report job alike.
+    const today = process.env.E2E_QUARANTINE_TODAY || new Date().toISOString().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) throw new Error(`quarantine: E2E_QUARANTINE_TODAY must be YYYY-MM-DD, got "${today}"`);
     const active = entries.filter(e => e.expires >= today);   // expired entries run again (and fail loudly)
     if (active.length) patterns.push(...active.map(e => escape(e.id)));
   }

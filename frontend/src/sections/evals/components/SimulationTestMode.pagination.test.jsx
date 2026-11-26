@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,13 +22,10 @@ vi.mock("src/utils/axios", async () => {
   };
 });
 
-vi.mock("./useMapToVariable", () => ({
-  useMapToVariable: () => ({
-    renderRowMapAction: () => null,
-    mapMenu: null,
-    rowHoverSx: {},
-  }),
+vi.mock("src/components/tooltip", () => ({
+  default: ({ children }) => children,
 }));
+vi.mock("src/components/snackbar", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("../hooks/useCompositeEval", () => ({
   useExecuteCompositeEval: () => ({ mutateAsync: vi.fn() }),
   useExecuteCompositeEvalAdhoc: () => ({ mutateAsync: vi.fn() }),
@@ -257,6 +255,234 @@ describe("SimulationTestMode exact snapshot pagination", () => {
   const otherId = "4202acbe-7de9-4a00-a338-cc1003cf5a22";
   const columnName = "Expected reply";
 
+  async function goToSecondCall() {
+    fireEvent.click(screen.getByRole("button", { name: "Load more calls" }));
+    const counter = await screen.findByText("Call 1 · 2 of 2 loaded");
+    const [, nextCall] = within(counter.parentElement).getAllByRole("button");
+    fireEvent.click(nextCall);
+    expect(await screen.findByText("Call 2 · 2 of 2 loaded")).toBeVisible();
+  }
+
+  it("keeps the selected scenario column UUID for save while the next call loads", async () => {
+    const original = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation((url, config) => {
+      if (url === endpoints.runTests.callExecutionDetail("call-1")) {
+        return Promise.resolve({
+          data: {
+            ...call("call-1"),
+            scenario_columns: {
+              [columnName]: {
+                column_name: columnName,
+                dataset_column_id: selectedId,
+                value: "first reply",
+              },
+            },
+          },
+        });
+      }
+      if (url === endpoints.runTests.callExecutionDetail("call-2")) {
+        return new Promise(() => {});
+      }
+      return original(url, config);
+    });
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        variables={["output"]}
+        onReadyChange={ready}
+      />,
+    );
+    fireEvent.mouseDown(await screen.findByPlaceholderText("Search field..."));
+    fireEvent.click(
+      await screen.findByRole("option", {
+        name: `scenario.columns.${columnName}`,
+      }),
+    );
+    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+
+    await goToSecondCall();
+    expect(
+      await screen.findByPlaceholderText("Loading columns..."),
+    ).toBeDisabled();
+    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+  });
+
+  const dottedPath = "scenario.columns.profile.name";
+
+  function mockDottedScenarioColumns({ firstMissing = false } = {}) {
+    const literal = {
+      "profile.name": {
+        column_name: "profile.name",
+        dataset_column_id: selectedId,
+        value: "Literal name",
+      },
+    };
+    const columnsByCall = {
+      "call-1": firstMissing ? {} : literal,
+      "call-2": firstMissing
+        ? literal
+        : {
+            profile: {
+              column_name: "profile",
+              dataset_column_id: otherId,
+              value: { name: "Nested name" },
+            },
+          },
+    };
+    const original = mocks.get.getMockImplementation();
+    mocks.get.mockImplementation((url, config) => {
+      for (const [id, columns] of Object.entries(columnsByCall)) {
+        if (url === endpoints.runTests.callExecutionDetail(id)) {
+          return Promise.resolve({
+            data: { ...call(id), scenario_columns: columns },
+          });
+        }
+      }
+      return original(url, config);
+    });
+  }
+
+  it("does not reuse a dotted column's UUID for a new nested field selection on the next call", async () => {
+    mockDottedScenarioColumns();
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        variables={["first", "second"]}
+        onReadyChange={ready}
+      />,
+    );
+
+    await screen.findByText('"Literal name"');
+    fireEvent.mouseDown(screen.getAllByPlaceholderText("Search field...")[0]);
+    fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
+    expect(ready).toHaveBeenLastCalledWith(false, { first: selectedId });
+
+    await goToSecondCall();
+    await screen.findByText('"Nested name"');
+    fireEvent.mouseDown(screen.getAllByPlaceholderText("Search field...")[1]);
+    fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
+    expect(ready).toHaveBeenLastCalledWith(
+      true,
+      expect.objectContaining({
+        second: "scenario_columns.profile.value.name",
+      }),
+    );
+  });
+
+  it.each(["row action", "dropdown"])(
+    "saves the nested field after a same-path reassignment through the %s",
+    async (control) => {
+      mockDottedScenarioColumns();
+      const ready = vi.fn();
+      render(
+        <SimulationTestMode
+          initialRunTestId="run-1"
+          variables={["first"]}
+          onReadyChange={ready}
+        />,
+      );
+
+      await screen.findByText('"Literal name"');
+      fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+      fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
+      expect(ready).toHaveBeenLastCalledWith(true, { first: selectedId });
+
+      await goToSecondCall();
+      const nestedName = await screen.findByText('"Nested name"');
+      expect(ready).toHaveBeenLastCalledWith(true, { first: selectedId });
+      if (control === "row action") {
+        const row = nestedName.parentElement.parentElement;
+        fireEvent.click(
+          within(row).getByRole("button", { name: "Map to first" }),
+        );
+      } else {
+        fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+        fireEvent.click(
+          await screen.findByRole("option", { name: dottedPath }),
+        );
+      }
+      expect(ready).toHaveBeenLastCalledWith(true, {
+        first: "scenario_columns.profile.value.name",
+      });
+    },
+  );
+
+  it("keeps the nested save key when navigating back to a literal column with the same path", async () => {
+    mockDottedScenarioColumns();
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        variables={["first"]}
+        onReadyChange={ready}
+      />,
+    );
+
+    await screen.findByText('"Literal name"');
+    await goToSecondCall();
+    await screen.findByText('"Nested name"');
+    fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+    fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
+    const nestedMapping = { first: "scenario_columns.profile.value.name" };
+    expect(ready).toHaveBeenLastCalledWith(true, nestedMapping);
+
+    const counter = screen.getByText("Call 2 · 2 of 2 loaded");
+    const [previousCall] = within(counter.parentElement).getAllByRole("button");
+    fireEvent.click(previousCall);
+    await screen.findByText('"Literal name"');
+    expect(ready).toHaveBeenLastCalledWith(true, nestedMapping);
+  });
+
+  it("resolves a seeded field when it first appears on a later call", async () => {
+    mockDottedScenarioColumns({ firstMissing: true });
+    const ready = vi.fn();
+    render(
+      <SimulationTestMode
+        initialRunTestId="run-1"
+        initialMapping={{ first: dottedPath }}
+        variables={["first"]}
+        onReadyChange={ready}
+      />,
+    );
+
+    await screen.findByPlaceholderText("Search field...");
+    await goToSecondCall();
+    await screen.findByText('"Literal name"');
+    expect(ready).toHaveBeenLastCalledWith(true, { first: selectedId });
+  });
+
+  it("does not test a nested value in place of a saved literal UUID", async () => {
+    mockDottedScenarioColumns();
+    mocks.post.mockResolvedValue({ data: { status: true, result: {} } });
+    const ref = React.createRef();
+    const onTestResult = vi.fn();
+    render(
+      <SimulationTestMode
+        ref={ref}
+        templateId="test-template"
+        initialRunTestId="run-1"
+        variables={["first"]}
+        onTestResult={onTestResult}
+      />,
+    );
+
+    await screen.findByText('"Literal name"');
+    fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
+    fireEvent.click(await screen.findByRole("option", { name: dottedPath }));
+    await goToSecondCall();
+    await screen.findByText('"Nested name"');
+    act(() => ref.current.runTest());
+    await waitFor(() =>
+      expect(onTestResult).toHaveBeenCalledWith(
+        false,
+        "The mapped field for first is not available on this call.",
+      ),
+    );
+    expect(mocks.post).not.toHaveBeenCalled();
+  });
+
   function mockEmptyFirstExecution(scenarioColumns = {}) {
     const original = mocks.get.getMockImplementation();
     mocks.get.mockImplementation((url, config) => {
@@ -279,7 +505,14 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     });
   }
 
-  async function runWithEmptyPreviewMapping(scenarioColumns) {
+  async function runWithEmptyPreviewMapping(
+    scenarioColumns,
+    {
+      sourceColumns = [{ id: selectedId, name: columnName }],
+      optionName = columnName,
+      savedKey = selectedId,
+    } = {},
+  ) {
     mockEmptyFirstExecution(scenarioColumns);
     mocks.post.mockResolvedValue({ data: { status: true, result: {} } });
     const ref = React.createRef();
@@ -291,15 +524,15 @@ describe("SimulationTestMode exact snapshot pagination", () => {
         templateId="test-template"
         initialRunTestId="run-1"
         variables={["output"]}
-        sourceColumns={[{ id: selectedId, name: columnName }]}
+        sourceColumns={sourceColumns}
         onReadyChange={ready}
         onTestResult={onTestResult}
       />,
     );
     await screen.findByText("No calls in this simulation");
     fireEvent.mouseDown(screen.getByPlaceholderText("Search field..."));
-    fireEvent.click(await screen.findByRole("option", { name: columnName }));
-    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+    fireEvent.click(await screen.findByRole("option", { name: optionName }));
+    expect(ready).toHaveBeenLastCalledWith(true, { output: savedKey });
 
     fireEvent.click(screen.getByRole("button", { name: "Load more runs" }));
     fireEvent.mouseDown(await screen.findByText(/Run 1 — completed/));
@@ -307,8 +540,31 @@ describe("SimulationTestMode exact snapshot pagination", () => {
     await screen.findByText('"Populated preview"');
     act(() => ref.current.runTest());
     await waitFor(() => expect(onTestResult).toHaveBeenCalled());
-    expect(ready).toHaveBeenLastCalledWith(true, { output: selectedId });
+    expect(ready).toHaveBeenLastCalledWith(true, { output: savedKey });
+    return onTestResult;
   }
+
+  it("runs Test Evaluation with the live path of a declared built-in field", async () => {
+    const field = "call.assistant_chat_transcript";
+    const onTestResult = await runWithEmptyPreviewMapping(undefined, {
+      sourceColumns: [
+        { field, headerName: field, dataType: "text" },
+        { id: selectedId, name: columnName },
+      ],
+      optionName: field,
+      savedKey: field,
+    });
+    expect(onTestResult).toHaveBeenLastCalledWith(true, {});
+    expect(mocks.post).toHaveBeenCalledWith(
+      endpoints.develop.eval.evalPlayground,
+      expect.objectContaining({
+        call_id: "call-3",
+        config: expect.objectContaining({
+          mapping: { output: "Populated preview" },
+        }),
+      }),
+    );
+  });
 
   it("runs Test Evaluation with the live value of the UUID selected before any calls", async () => {
     await runWithEmptyPreviewMapping({

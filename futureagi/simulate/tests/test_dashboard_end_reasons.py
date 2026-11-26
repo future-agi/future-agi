@@ -30,6 +30,7 @@ from simulate.services.run_dashboard_v3 import END_REASONS
         ("customer-ended-call", "Caller hung up"),
         ("conversation_silence_timeout", "Silence timeout"),
         ("conversation_timeout", "Time or turn limit"),
+        ("transfer-cancelled", "Error"),
         ("some-new-provider-reason", "Unrecognised"),
     ],
 )

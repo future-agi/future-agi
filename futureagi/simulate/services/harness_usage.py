@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import logging
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid5
 
+from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
+from django.db.models import FloatField, Sum
+from django.db.models.expressions import RawSQL
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -74,7 +78,8 @@ def _require_harness_action(organization_id: str, action: str) -> None:
 
 def usage_limit_error(exc: Exception) -> HostedHarnessError | None:
     """A usage refusal as a hosted harness error, for a caller that reads only that shape:
-    the fix engine tells the organization's plan limit apart from the fix's own budget."""
+    the fix engine tells the organization's plan limit apart from the fix's own budget.
+    """
     if is_oss():
         return None
     from ee.usage.exceptions import UsageLimitExceeded
@@ -215,9 +220,11 @@ def _billable_records(
 ):
     cached = getattr(attempt, "_prefetched_objects_cache", {}).get("result_receipts")
     receipts = {
-        receipt.execution.execution_key
-        if receipt.execution_id
-        else receipt.scenario.scenario_key: receipt
+        (
+            receipt.execution.execution_key
+            if receipt.execution_id
+            else receipt.scenario.scenario_key
+        ): receipt
         for receipt in (
             cached
             if cached is not None
@@ -489,6 +496,148 @@ def _emit_authoring_records(
         )
 
 
+_READING_PURPOSES = frozenset({"agent", "scan"})
+
+
+def _reading_records(spend: dict) -> list[dict]:
+    records = [
+        record
+        for item in spend.get("stages") or []
+        if isinstance(item, dict) and (record := _authoring_stage_record(item))
+    ]
+    stages = [record["stage"] for record in records]
+    if len(set(stages)) != len(stages):
+        raise HostedHarnessError(
+            "reading_usage_invalid", "Each reading stage must be reported once."
+        )
+    return records
+
+
+def _log_uncharged_reading(
+    *, subject_id, run_id, purpose, spend: dict, check_id=None
+) -> None:
+    """One line per reading while charging is off: what it would have been charged."""
+    try:
+        stages = [
+            {
+                "stage": record["stage"],
+                "model": record["model"],
+                "tokens_in": record["tokens_in"],
+                "tokens_cached": record["tokens_cached"],
+                "tokens_out": record["tokens_out"],
+                "cost_usd": record["cost_usd"],
+                "credits": record["credits"],
+            }
+            for record in _reading_records(spend)
+        ]
+        unpriced = ""
+    except HostedHarnessError as exc:
+        stages, unpriced = [], exc.code
+    logger.info(
+        "agent_reading_not_charged subject_id=%s purpose=%s run_id=%s check_id=%s "
+        "unpriced=%s stages=%s",
+        subject_id,
+        purpose,
+        run_id,
+        check_id or "",
+        unpriced,
+        json.dumps(stages, cls=DjangoJSONEncoder),
+    )
+
+
+def _reading_event_id(subject_id, purpose: str, check_id, stage: str) -> str:
+    """One charge per stage of one check of a subject: the same on every retry of a
+    step inside the check, new when a new check starts. An agent's reading always
+    has one: the background reading that stores a document passes its own workflow
+    run, and a reading called outside a check takes a new id. Only a scan, which has
+    none, names its subject alone."""
+    name = (
+        f"reading:{purpose}:check:{check_id}:{stage}"
+        if check_id
+        else f"reading:{purpose}:{stage}"
+    )
+    return str(uuid5(UUID(str(subject_id)), name))
+
+
+def record_agent_reading_usage(
+    *,
+    organization_id,
+    workspace_id,
+    subject_id,
+    run_id,
+    purpose: str,
+    spend: dict,
+    check_id: str | None = None,
+) -> dict | None:
+    """Price the model stages of one reading of an agent (``purpose`` "agent", the
+    subject its agent version) or one scan for agents ("scan", the subject its scan),
+    and bill them like a build's authoring. Returns the priced report, or None when
+    nothing was billed.
+
+    Nothing is billed while HARNESS_AGENT_READING_CHARGE_ENABLED is off; one log
+    line says what would have been. Each stage's charge is keyed by the subject, the
+    purpose, the check (``check_id``, fixed when the check starts) and the stage,
+    never the run: a retried step, which reads again under a new run id inside the
+    same check, adds none, and a new check of the same version is its own charge.
+    Without a check (a scan), every attempt at the subject's reading is one charge."""
+    if purpose not in _READING_PURPOSES:
+        raise ValueError(f"unknown reading purpose {purpose!r}")
+    if is_oss() or not isinstance(spend, dict):
+        return None
+    if not settings.HARNESS_AGENT_READING_CHARGE_ENABLED:
+        _log_uncharged_reading(
+            subject_id=subject_id,
+            run_id=run_id,
+            purpose=purpose,
+            spend=spend,
+            check_id=check_id,
+        )
+        return None
+    records = _reading_records(spend)
+    if not records:
+        return None
+    report = {
+        "schema_version": "futureagi.harness-authoring-usage.v1",
+        "records": records,
+    }
+    from ee.usage.schemas.event_types import BillingEventType
+    from ee.usage.schemas.events import UsageEvent
+    from ee.usage.services.emitter import emit
+
+    for item in records:
+        if not item["credits"]:
+            continue
+        emit(
+            UsageEvent(
+                event_id=_reading_event_id(
+                    subject_id, purpose, check_id, item["stage"]
+                ),
+                org_id=str(organization_id),
+                event_type=BillingEventType.HARNESS_AUTHORING,
+                amount=item["credits"],
+                timestamp=timezone.now(),
+                properties={
+                    "source": "agent_reading",
+                    "source_id": str(subject_id),
+                    "reading_run_id": str(run_id),
+                    "reading_check_id": str(check_id or ""),
+                    "reading_purpose": purpose,
+                    "workspace_id": str(workspace_id or ""),
+                    "phase": "reading",
+                    "authoring_stage": item["stage"],
+                    "model": item["model"],
+                    "input_tokens": item["tokens_in"],
+                    "output_tokens": item["tokens_out"],
+                    "cached_input_tokens": item["tokens_cached"],
+                    "raw_cost_usd": item["cost_usd"],
+                    "pricing_source": item["pricing_source"],
+                    "complete": spend.get("complete"),
+                },
+            )
+        )
+    return report
+
+
 def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
     current = HostedHarnessAttempt.no_workspace_objects.get(id=attempt.id)
     job = HostedHarnessJob.all_objects.only("payload").get(id=current.job_id)
@@ -684,7 +833,28 @@ def price_fix_check_run(job_id) -> None:
     )
 
 
-def harness_consumption(job: HostedHarnessJob) -> dict | None:
+def builder_turn_credit_totals(job_ids: list[UUID]) -> dict[UUID, float]:
+    # Expand the frozen records in Postgres; only one total per job leaves the DB.
+    record_sum = RawSQL(
+        "(SELECT COALESCE(SUM((record->>'credits')::numeric), 0) "
+        "FROM jsonb_array_elements(report->'records') AS record)",
+        (),
+        output_field=FloatField(),
+    )
+    return dict(
+        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
+            job_id__in=job_ids, report__isnull=False
+        )
+        .order_by()
+        .values("job_id")
+        .annotate(total=Sum(record_sum))
+        .values_list("job_id", "total")
+    )
+
+
+def harness_consumption(
+    job: HostedHarnessJob, *, turn_totals: dict[UUID, float] | None = None
+) -> dict | None:
     metadata = job.payload.get("metadata") or {}
     legacy_reports = metadata.get(_REPORT_KEY) or {}
     legacy_authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
@@ -731,21 +901,23 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
     }
     # Builder turns after a build, each billed on its own outside any attempt: a selected
     # run's chat turn is billed too, so it is counted too.
-    turn_reports = list(
-        HostedHarnessBuilderTurnUsage.no_workspace_objects.filter(
-            job_id=job.id, report__isnull=False
-        ).values_list("report", flat=True)
-    )
+    if turn_totals is None:
+        turn_totals = builder_turn_credit_totals([job.id])
+    turn_credits = turn_totals.get(job.id)
     if (
         not reports
         and not authoring_reports
         and not runtimes
         and not authoring_spend
-        and not turn_reports
+        and turn_credits is None
     ):
         return None
 
-    consumption = {"text_sim_tokens": 0, "voice_sim_minutes": 0, "ai_credits": 0}
+    consumption: dict[str, Any] = {
+        "text_sim_tokens": 0,
+        "voice_sim_minutes": 0,
+        "ai_credits": 0,
+    }
     for attempt_id, report in reports.items():
         attempt = attempts[attempt_id]
         for item in _billable_records(attempt, report):
@@ -755,11 +927,12 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
                 else "voice_sim_minutes"
             )
             consumption[dimension] += item["amount"]
-    consumption["ai_credits"] = sum(
+    authored_credits: float = sum(
         record["credits"]
-        for report in [*authoring_reports.values(), *turn_reports]
+        for report in authoring_reports.values()
         for record in report["records"]
     )
+    consumption["ai_credits"] = (turn_credits or 0) + authored_credits
     authoring_estimate_unavailable = False
     if authoring_spend and not is_oss():
         try:

@@ -1,144 +1,90 @@
-<!--
-╔═════════════════════════════════════════════════════════════════════════════╗
-║  MARKETING NOTES FOR IMAGE ASSETS                                           ║
-║                                                                             ║
-║  All images below live under .github/assets/. Specs + intent are inlined   ║
-║  above each <img> tag as HTML comments. Total asset budget < 12 MB.         ║
-║  Use PNG for static screenshots, GIF only where called out. Ship light +    ║
-║  dark variants via <picture> for any image that contains a UI screenshot    ║
-║  (GitHub dark-mode users will see the dark file).                           ║
-╚═════════════════════════════════════════════════════════════════════════════╝
--->
-
 <div align="center">
 
-<!--
-  [MARKETING] logo-banner.png / logo-banner-dark.png
-  What:    Full wordmark "Future AGI" + single-line tagline "AI Agents
-           hallucinate. Fix it faster." — centered, brand colors.
-  Size:    1600 × 400, PNG, transparent background.
-  Variants: light + dark; swap via <picture>.
--->
 <a href="https://futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=logo">
-  <img alt="Future AGI — make AI agents reliable" src="frontend/public/assets/readme/Logo.png" width="100%">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+    <img alt="Future AGI" src=".github/assets/logo-light.svg" width="300">
+  </picture>
 </a>
 
-# AI Agents hallucinate. Fix it faster.
+# The infrastructure for self-improving AI agents
 
-**The open-source platform for shipping self-improving AI agents.** Evaluations, tracing, simulations, guardrails, gateway, optimization. Everything runs on one platform and one feedback loop, from first prototype to live deployment.
+Future AGI turns an agent's traces, evaluations and simulations into improvements to the agent, and is open source and self-hostable.
 
 <p>
-  <a href="https://github.com/future-agi/future-agi/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="Apache 2.0 License"></a>
-  <a href="https://github.com/future-agi/future-agi/releases/latest"><img src="https://img.shields.io/github/v/release/future-agi/future-agi?style=flat-square&label=release&color=3fb950" alt="Latest release"></a>
-  <a href="https://github.com/future-agi/future-agi/pulse"><img src="https://img.shields.io/github/commit-activity/m/future-agi/future-agi?style=flat-square&label=commit%20activity&color=3fb950" alt="Commit activity"></a>
-  <a href="#-quickstart"><img src="https://img.shields.io/badge/docker-self--host%20ready-0db7ed?style=flat-square" alt="Docker self-host ready"></a>
-  <a href="https://discord.com/invite/cBnWkd7T9v"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-4b5563?style=flat-square" alt="Apache 2.0 license"></a>
+  <a href="https://github.com/future-agi/future-agi/releases/latest"><img src="https://img.shields.io/github/v/release/future-agi/future-agi?style=flat-square&label=release&color=4b5563" alt="Latest release"></a>
+  <a href="https://hub.docker.com/r/futureagi/standalone"><img src="https://img.shields.io/docker/pulls/futureagi/standalone?style=flat-square&logo=docker&logoColor=white&label=docker%20pulls&color=4b5563" alt="Docker pulls"></a>
+  <a href="https://pypi.org/project/fi-instrumentation-otel/"><img src="https://img.shields.io/pypi/dm/fi-instrumentation-otel?style=flat-square&logo=python&logoColor=white&label=pypi&color=4b5563" alt="fi-instrumentation-otel downloads on PyPI"></a>
+  <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/dm/@traceai/fi-core?style=flat-square&logo=npm&logoColor=white&label=npm&color=4b5563" alt="@traceai/fi-core downloads on npm"></a>
   <br>
-  <a href="https://pypi.org/project/agent-learning-kit/"><img src="https://img.shields.io/pypi/v/agent-learning-kit?style=flat-square&label=pypi%20agent-learning-kit" alt="PyPI agent-learning-kit"></a>
-  <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm%20%40traceai%2Ffi-core" alt="npm @traceai/fi-core"></a>
-  <a href="https://pypi.org/project/agentcc/"><img src="https://img.shields.io/pypi/v/agentcc?style=flat-square&label=pypi%20agentcc" alt="PyPI agentcc"></a>
-  <a href="https://pypi.org/project/agent-learning-kit/"><img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python 3.10+"></a>
+  <a href="https://discord.com/invite/cBnWkd7T9v"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Chat on Discord"></a>
+  <a href="https://x.com/FutureAGI_"><img src="https://img.shields.io/badge/follow-%40FutureAGI__-000000?style=flat-square&logo=x&logoColor=white" alt="Follow on X"></a>
+  <a href="https://www.linkedin.com/company/futureagi/"><img src="https://img.shields.io/badge/follow-LinkedIn-0a66c2?style=flat-square&logo=linkedin&logoColor=white" alt="Follow on LinkedIn"></a>
+  <a href="https://github.com/future-agi/future-agi/pulse"><img src="https://img.shields.io/github/commit-activity/m/future-agi/future-agi?style=flat-square&label=commits&color=4b5563" alt="Commits last month"></a>
+  <a href="https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aclosed"><img src="https://img.shields.io/github/issues-search/future-agi/future-agi?query=is%3Aissue%20is%3Aclosed&style=flat-square&label=issues%20closed&color=4b5563" alt="Issues closed"></a>
 </p>
 
 <p>
-  <a href="https://app.futureagi.com/auth/jwt/register?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_cta_cloud"><b>Try Cloud (Free)</b></a> ·
-  <a href="#-quickstart"><b>Self-Host</b></a> ·
-  <a href="https://discord.com/invite/cBnWkd7T9v"><b>Support</b></a>
+  <a href="https://app.futureagi.com/auth/jwt/register?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_cta_cloud"><b>Start on Cloud (free)</b></a> ·
+  <a href="#-quickstart"><b>Self-host</b></a> ·
+  <a href="https://docs.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_docs"><b>Docs</b></a> ·
+  <a href="https://discord.com/invite/cBnWkd7T9v"><b>Discord</b></a>
+</p>
+
+<p>
+  <b>SDKs:</b>
+  <a href="https://github.com/future-agi/traceAI#python">Python</a> ·
+  <a href="https://github.com/future-agi/traceAI#typescript--javascript">TypeScript</a> ·
+  <a href="https://github.com/future-agi/traceAI#java">Java</a> ·
+  <a href="https://github.com/future-agi/traceAI#go">Go</a> ·
+  <a href="https://github.com/future-agi/traceAI#c">C#</a> ·
+  <a href="https://github.com/future-agi/futureagi-sdk">Platform SDK</a> ·
+  <a href="https://github.com/future-agi/agent-command-center-sdk">Gateway SDK</a>
 </p>
 
 <p>
   <sub>
-    <a href="https://docs.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_docs">Docs</a> ·
-    <a href="https://futureagi.com/blog?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=header_blog">Blogs</a> ·
-    <a href="https://github.com/future-agi/future-agi/issues/new/choose">Report a Bug</a>
+    <b>English</b> ·
+    <a href="docs/readme/README.zh-CN.md">简体中文</a> ·
+    <a href="docs/readme/README.ja.md">日本語</a> ·
+    <a href="docs/readme/README.ko.md">한국어</a> ·
+    <a href="docs/readme/README.es.md">Español</a> ·
+    <a href="docs/readme/README.pt-BR.md">Português</a> ·
+    <a href="docs/readme/README.fr.md">Français</a> ·
+    <a href="docs/readme/README.de.md">Deutsch</a>
   </sub>
 </p>
 
+<a href="https://www.youtube.com/watch?v=6keOTAOUUWI"><img alt="Watch the Future AGI demo on YouTube" src="frontend/public/assets/readme/demo-6keOTAOUUWI-v4.png" width="100%"></a>
+
 </div>
 
----
+## How it works
 
-<!--
-  [MARKETING] hero-demo (YouTube)
-  Video: https://www.youtube.com/watch?v=6keOTAOUUWI
-  GitHub's markdown sanitizer strips <iframe>/<video> but leaves the raw tag
-  text behind, so an embed renders as a wall of markup on the repo page. We
-  use the video's still frame with a YouTube play button on it, linked to the
-  video. The asset filename carries the video ID on purpose: GitHub's image
-  CDN caches by URL path, so reusing a filename serves the old picture for
-  hours. New video => new ID => new filename => renders immediately.
--->
-<div align="center">
-  <a href="https://www.youtube.com/watch?v=6keOTAOUUWI">
-    <img alt="Watch the demo — trace an agent, run evals, simulate, and guardrail on one platform" src="frontend/public/assets/readme/demo-6keOTAOUUWI-v4.png" width="100%">
-  </a>
-</div>
+A better model helps every agent. But a model alone doesn't know which of last week's answers were wrong, can't test a fix before your users see it, and can't tell whether the fix broke something else. Future AGI does that work for you, in a loop around your agent.
 
----
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme/system-dark.png">
+  <img alt="The self-improving loop around your agent, from v1 to v2. Real users and production traffic feed Trace, which records every real run step by step. Evaluate scores each run with the reason it passed or failed. Simulate replays the failures with simulated users in a test world. Improve: Epoch tries fixes as full runs and keeps the winner; a fix that breaks a passing case is rejected and a fix that did not help is dropped. The winning fix goes to Ship and protect, where you approve the change and the gateway guards it in production. The next round starts on new runs." src=".github/assets/readme/system-light.png" width="100%">
+</picture>
 
-## Why Future AGI?
+1. **[Trace](#trace-and-monitor)** every run of your agent, step by step.<br><sub>Tracing · Sessions and users · Live evals · Instant eval · Dashboards · Alerts · Error Feed · Insights</sub>
+2. **[Evaluate](#evaluate-and-label)** each run and see why it passed or failed.<br><sub>Agent, LLM and code evals · Jev · Composite evals · Datasets · Experiments · Annotations · Evals in CI</sub>
+3. **[Simulate](#simulate-and-test)** realistic users against your agent in a test world built around it.<br><sub>Environments · Scenarios and personas · Text and voice · Scenarios from real traffic · Debug failures</sub>
+4. **[Improve](#improve)** the agent: find a change that fixes the failures and prove it before it ships.<br><sub>Epoch · Prompt optimization</sub>
+5. **[Protect](#gateway-and-guardrails)** live traffic with a gateway and guardrails. New runs are traced, and the loop starts again.<br><sub>One API for every model · Routing and fallbacks · Guardrails · Caching · Keys and budgets · Logs and analytics · Shadow experiments · MCP and A2A</sub>
 
-Most AI agents fail in production, and teams end up stitching together evals, observability, and guardrails that never close the loop.
-Future AGI collapses all of it into one platform and one feedback loop. Simulate edge cases before launch, evaluate what happens in production, protect users in real time, and turn every trace into signal for the next version.
-The result: agents that don't just get monitored, they self-improve.
+Around the loop, **[Build](#build)** gives you Prompts, Agent Playground, Knowledge bases, Falcon AI, an MCP server and team workspaces. Start with any one part. They all work on the same traces, datasets and evals, so you can add the next one when you need it.
 
-<table>
-<tr>
-<td width="33%" valign="top">
-
-###  All-in-one
-No more stitching Langfuse + Braintrust + Helicone + Guardrails AI + a custom simulator. One platform covers the lifecycle: **simulate → evaluate → protect → monitor → optimize**, with data flowing back as a loop.
-
-</td>
-<td width="33%" valign="top">
-
-###  Open & self-hostable
-Apache 2.0 core. Every evaluator, every prompt, every trace is inspectable — **no black-box scoring**. Self-host for data sovereignty or use our managed Cloud. Drop in your own stack at any layer via OTel / OpenAI-compatible HTTP.
-
-</td>
-<td width="33%" valign="top">
-
-###  Built for production
-Go-based gateway with weighted routing and inline guardrails. OpenTelemetry-native traces. 50+ framework instrumentors. [Run the gateway microbenchmarks](./agentcc-gateway/README.md#-benchmarks) on your own hardware.
-
-</td>
-</tr>
-</table>
-
----
-
-<!-- Kept so links to the old heading (#-quickstart-60-seconds) still land here. -->
+<a id="-quickstart"></a>
 <a id="-quickstart-60-seconds"></a>
 
-## 🚀 Quickstart
+<a id="get-started"></a>
 
-**You need** Docker Desktop or Docker Engine with Compose v2.24 or newer, and
-for the default Standalone setup **2 vCPUs and 4 GB of memory** given to Docker.
+## Get started
 
-<table width="100%">
-<tr>
-<th width="50%">Future AGI Cloud</th>
-<th width="50%">Self Host Future AGI</th>
-</tr>
-<tr valign="top">
-<td width="50%">
-
-No installation required, get started immediately.
-
-<div align="center">
-  <a href="https://app.futureagi.com/auth/jwt/register?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=quickstart_cloud_button" target="_blank">
-    <img alt="Create an account" src="https://img.shields.io/badge/Create%20an%20account-6D5AE8?style=for-the-badge">
-  </a>
-</div>
-
-Generous free-tier, no credit card required.
-
-<sub>SOC 2 Type II · HIPAA · data stays in your region.</sub>
-
-</td>
-<td width="50%">
-
-**One command, full stack. Published images, no source build.**
+**1. Get your keys.** [Create a free Cloud account](https://app.futureagi.com/auth/jwt/register?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=quickstart_cloud), or run it on your machine with Docker (Compose v2.24+, 2 vCPUs and 4 GB for Docker):
 
 ```bash
 git clone https://github.com/future-agi/future-agi.git
@@ -146,477 +92,304 @@ cd future-agi
 ./bin/install          # Windows (PowerShell): .\bin\install.ps1
 ```
 
-</td>
-</tr>
-</table>
+The installer writes this install's secrets to `.env`, pulls the images (about 800 MB) and waits until everything is up; the first boot takes a few minutes. Then open <http://localhost:3000> and create your account.
 
-The installer checks your machine, writes this install's secrets to `.env`,
-downloads the images (about 800 MB) and waits until everything answers. The
-first boot sets up the database and takes a few minutes; <http://localhost:3000>
-shows its progress meanwhile.
+In either case, open **Keys** in the sidebar, select **Add API Key**, and copy the API key and secret key before you close the dialog.
 
-**2. Sign in and create your keys**
-
-Open <http://localhost:3000>, create your account (or sign in with the one the
-installer made), then open **Keys** in the sidebar. Select **Add API Key** and
-copy the new API key and secret key from the creation dialog before closing it.
-
-**3. Send your first trace**
+**2. Install the SDK and set your keys.**
 
 ```bash
-pip install fi-instrumentation-otel
-export FI_API_KEY="<your API key>" FI_SECRET_KEY="<your secret key>" FI_BASE_URL="http://localhost:4318"
+pip install -U fi-instrumentation-otel traceai-openai openai
+export FI_API_KEY="<your API key>" FI_SECRET_KEY="<your secret key>" FI_PROJECT_NAME="my-agent"
+export OPENAI_API_KEY="<your OpenAI key>"
+# Self-hosted only: send traces to your install's collector
+export FI_BASE_URL="http://localhost:4318"
 ```
 
+**3. Run your app with auto-tracing.** Your code needs no tracing imports. Start it through `fi-instrument`, and the libraries it uses are traced when their traceAI package is installed:
+
 ```python
-from fi_instrumentation import register
-from fi_instrumentation.fi_types import ProjectType
+# app.py: plain OpenAI code, nothing added
+from openai import OpenAI
 
-tracer_provider = register(project_name="my-first-project", project_type=ProjectType.OBSERVE)
-with tracer_provider.get_tracer("quickstart").start_as_current_span("hello-future-agi") as span:
-    span.set_attribute("input.value", "Hello, Future AGI")
-tracer_provider.force_flush()
-```
-
-Open **Tracing** in the sidebar: `my-first-project` holds your first span.
-`http://localhost:4318` is this install's trace collector; it listens on this
-machine only.
-
-| | **Standalone** (default) | **Distributed** (at scale) |
-| --- | --- | --- |
-| Install | `./bin/install` | `./bin/install --distributed` |
-| Runs | one app container, Postgres, ClickHouse | one container per service, PeerDB, Kafka |
-| Docker resources | 2 vCPUs, 4 GB | 4+ vCPUs, 12–16 GB |
-| Kubernetes | | [Helm chart](deploy/helm/futureagi): about 4 CPUs and 8 GiB free for an evaluation |
-
-Choose before you add data: there is no supported way to move a Standalone
-install's data to Distributed or Helm later
-([Switching](INSTALLATION.md#switching-between-standalone-and-distributed)).
-
-- **Configure:** every variable in `.env` is described in
-  [the configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference). Nothing is required for a
-  local install; add LLM provider keys, a public URL or email when you need them.
-- **Manage:** if enrolled in automatic updates, complete the
-  [safe handoff to manual operations](deploy/update/README.md#safe-handoff-to-manual-operations)
-  before stopping or uninstalling. Removing containers during backup or recovery
-  destroys identities the updater needs, even when volumes are kept. Use the
-  [enrolled Docker context for diagnostics](deploy/update/README.md#status-on-the-host-and-in-the-app)
-  and for subsequent manual commands. Otherwise, or after that handoff: `docker compose logs -f app` (Distributed:
-  `backend`); stop with `docker compose down` or `./bin/uninstall` (both keep your
-  data); remove everything, data included, with `./bin/uninstall --purge`.
-- **Upgrade:** use the [manual upgrade path](INSTALLATION.md#upgrading) for
-  `:latest` or pinned versions; rerunning the installer preserves pins. Supported
-  base Standalone installs can instead [opt in once to automatic updates](INSTALLATION.md#automatic-updates-opt-in).
-  Automatic apply requires published, signed proof for the exact transition;
-  leave the enrolled checkout unchanged (see the [operator guide](deploy/update/README.md#automatic-updates-standalone)).
-- **Develop:** on a branch other than `main`, add `--from-source` to build the
-  images from your checkout; `./bin/dev` runs it with hot reload
-  ([Local development](https://docs.futureagi.com/docs/self-hosting/development)).
-- **More:** the [self-hosting guide](https://docs.futureagi.com/docs/self-hosting),
-  [INSTALLATION.md](INSTALLATION.md) (every option and troubleshooting) and
-  [deploy/README.md](deploy/README.md) (production).
-
-
-### Instrument your first agent
-
-Swap the hand-made span for an instrumentor to trace a real app, here OpenAI
-(`pip install traceai-openai`). Against your own install, keep the `FI_*`
-variables from step 3 set.
-
-<table width="100%">
-<tr>
-<td width="50%">
-
-**Python**
-```python
-from fi_instrumentation import register
-from traceai_openai import OpenAIInstrumentor
-
-register(project_name="my-agent")
-OpenAIInstrumentor().instrument()
-
-# Your existing OpenAI code is now traced.
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": query}],
+response = OpenAI().chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Plan a three-step onboarding email."}],
 )
+print(response.choices[0].message.content)
 ```
 
-</td>
-<td width="50%">
-
-**TypeScript**
-```typescript
-import { register } from "@traceai/fi-core";
-import { OpenAIInstrumentation } from "@traceai/openai";
-
-register({ projectName: "my-agent" });
-new OpenAIInstrumentation().instrument();
-
-// Your existing OpenAI code is now traced.
-const response = await openai.chat.completions.create({
-  model: "gpt-4o",
-  messages: [{ role: "user", content: query }],
-});
+```bash
+fi-instrument python app.py      # also works with uvicorn, celery and other commands
 ```
 
-</td>
-</tr>
-</table>
+Open **Tracing** in the sidebar and select `my-agent` to see the call with its input, output, tokens and timing. Next: [score it with an eval](https://docs.futureagi.com/docs/evaluation?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=quickstart_next) or [build a test environment](https://docs.futureagi.com/docs/environments?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=quickstart_next) for your agent.
 
-<sub> [Full docs →](https://docs.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=architecture)  ·  [Cookbooks →](https://docs.futureagi.com/docs/cookbook?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=architecture)  ·  [API reference →](https://docs.futureagi.com/docs/api?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=architecture)</sub>
+<details>
+<summary><b>Prefer one line in code?</b></summary>
 
----
+```python
+import fi_instrumentation
 
-## Core features
+fi_instrumentation.init(project_name="my-agent")
+# ...your app code; installed traceAI integrations are traced from here
+```
 
-Six pillars. Each one replaces a tool you probably have.
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### 🧪 Simulate
-Thousands of multi-turn conversations against realistic personas, adversarial inputs, and edge cases. Text **and voice** (LiveKit, VAPI, Retell, Pipecat).
-
-<sub>[Docs →](https://docs.futureagi.com/docs/simulation?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_simulation)</sub>
-
-</td>
-<td width="33%" valign="top">
-
-### 📊 Evaluate
-50+ metrics under one `evaluate()` call: groundedness, hallucination, tool-use correctness, PII, tone, custom rubrics. **LLM-as-judge + heuristic + ML.**
-
-<sub>[Docs →](https://docs.futureagi.com/docs/evaluation?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_evaluation)</sub>
-
-</td>
-<td width="33%" valign="top">
-
-### 🛡️ Protect
-18 built-in scanners (PII, jailbreak, injection, …) + 15 vendor adapters (Lakera, Presidio, Llama Guard, …). Inline in gateway or standalone SDK.
-
-<sub>[Docs →](https://docs.futureagi.com/docs/protect?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_protect)</sub>
-
-</td>
-</tr>
-<tr>
-<td width="33%" valign="top">
-
-### 👁️ Monitor
-OpenTelemetry-native tracing across 50+ frameworks (LangChain, LlamaIndex, CrewAI, DSPy…). Span graphs, latency, token cost, live dashboards. Zero-config.
-
-<sub>[Docs →](https://docs.futureagi.com/docs/observe?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_observe)</sub>
-
-</td>
-<td width="33%" valign="top">
-
-### 🎛️ Agent Command Center
-OpenAI-compatible gateway. 100+ providers, 15 routing strategies, semantic caching, virtual keys, MCP, A2A.
-
-<sub>[Docs →](https://docs.futureagi.com/docs/command-center?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_command_center) · [Benchmarks →](./agentcc-gateway/README.md#-benchmarks)</sub>
-
-</td>
-<td width="33%" valign="top">
-
-### 🔁 Optimize
-Six prompt-optimization algorithms (GEPA, PromptWizard, ProTeGi, Bayesian, Meta-Prompt, Random). Production traces feed back as training data.
-
-<sub>[Docs →](https://docs.futureagi.com/docs/optimization?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=feature_optimization)</sub>
-
-</td>
-</tr>
-</table>
-
----
-
-##  Deployment options
-
-<!--
-  [MARKETING] deploy-buttons.png  (optional — can stay as inline shields)
-  What:    A horizontal row of one-click-deploy badges: Docker · Render ·
-           Railway · Fly · AWS Marketplace (coming soon).
-  Size:    1400 × 120, PNG — OR keep as inline <a><img></a> badges below.
--->
-<!--
-<p align="center">
-  <a href="https://render.com/deploy"><img src="https://img.shields.io/badge/deploy%20on-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white" alt="Deploy on Render"></a>
-  <a href="https://fly.io/docs/launch/"><img src="https://img.shields.io/badge/deploy%20on-Fly-7A3CEF?style=for-the-badge&logo=flydotio&logoColor=white" alt="Deploy on Fly"></a>
-  <a href="#-quickstart"><img src="https://img.shields.io/badge/docker%20compose-up%20-d-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose"></a>
-</p>
--->
-| Target | Status | Notes |
-|---|:---:|---|
-|  Docker Compose: Standalone | ✅ | `./bin/install`: one app container next to Postgres and ClickHouse, for a laptop or a single VM |
-|  Docker Compose: Distributed | ✅ | `./bin/install --distributed`: one container per service, for scale on one host |
-|  Production Compose overlay | ✅ | `./deploy/setup.sh` on the Distributed setup: `--skip-up` writes `deploy/.env.production` (generating only the secrets you do not supply; you give every image version), then, once the databases are initialized, `--confirm-initialized` pulls the images and starts the stack ([deploy/README.md](deploy/README.md)) |
-|  Kubernetes / Helm | ✅ | Distributed on Kubernetes: `helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z`, one signed chart for the open-source and Enterprise editions ([chart README](deploy/helm/futureagi/README.md)) |
-|  AWS / GCP / Azure | ✅ | Docker Compose on a VM, or the Helm chart on a Kubernetes 1.27+ cluster |
-|  AWS Marketplace | ⏳ | Coming soon |
-|  Air-gapped / on-prem | ✅ | Mirror the images, set `FUTURE_AGI_TELEMETRY_DISABLED=true` and block outbound traffic ([Telemetry](#telemetry)); on Helm, set `global.airgap=true` and mirror the images the release lists ([chart README](deploy/helm/futureagi/README.md#enterprise)); [contact sales](mailto:sales@futureagi.com) for support |
-
-Every image, tag and size: [Container images](https://docs.futureagi.com/docs/self-hosting/images). Every setting:
-[Configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference).
-
----
-
-##  Architecture
-
-Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces, **OpenAI-compatible HTTP** for the gateway, **Postgres / ClickHouse SQL** for storage. Drop in your own stack at any layer.
-
-<!--
-  [MARKETING] architecture.svg  (already exists — leave as-is unless re-designing)
-  What:    4-band system diagram: client layer → edge (traceAI + gateway)
-           → platform (simulate · eval · monitor · optimize) → data layer.
-  Size:    ~1400w, vector SVG (existing file 1200×760 in dark palette).
--->
-<!-- <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture.svg">
-  <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, Temporal" src=".github/assets/architecture.svg" width="100%">
-</picture> -->
-
-**Runtime:** Python 3.11+ (Django 5.1 + Channels) · Go 1.25+ (gateway), 1.24+ (trace collector) · React 18 + Vite · Node 22.18+.
-**Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state, live updates) · Temporal (jobs).
-
-<details><summary>Component breakdown (per-package)</summary>
-
-| Layer | Component | Code |
-|---|---|---|
-|  Edge | **traceAI** — OpenTelemetry instrumentation | [`future-agi/traceAI`](https://github.com/future-agi/traceAI) |
-|  Edge | **Agent Command Center** — OpenAI-compatible proxy | [`agentcc-gateway/`](./agentcc-gateway) |
-|  Platform | **tracer** — OTLP ingest, span graph | [`futureagi/tracer/`](./futureagi/tracer) |
-|  Platform | **agentic_eval** — 50+ metrics, LLM-as-judge | [`futureagi/agentic_eval/`](./futureagi/agentic_eval) |
-|  Platform | **simulate** — persona-driven scenario generation | [`futureagi/simulate/`](./futureagi/simulate) |
-|  Platform | **model_hub** — LLM routing, embeddings, datasets | [`futureagi/model_hub/`](./futureagi/model_hub) |
-|  Platform | **accounts · usage · integrations** — auth, orgs, metering, connectors | [`futureagi/accounts/`](./futureagi/accounts) |
-|  Data | **PostgreSQL** · **ClickHouse** · **Redis** · **Temporal** | — |
+Or keep your exact start command and set `FI_AUTO_INSTRUMENT=true`. Most integrations switch on by themselves; a few, such as Strands and Temporal, need one setup call. See [zero-code tracing for Python](https://github.com/future-agi/traceAI/blob/main/docs/python/auto-instrumentation.md) for the full list, privacy settings and `fi-instrument doctor`.
 
 </details>
 
----
+<details>
+<summary><b>TypeScript</b></summary>
 
-##  SDKs & integrations
+```bash
+npm install "@traceai/fi-core@^1.4.0" @traceai/openai openai
+```
 
-Future AGI is an **open-source ecosystem** — each SDK is independently usable, independently packaged, Apache/MIT-licensed.
+With Node.js 22.23.4 or later, save as `trace.mts` and run `node trace.mts`:
 
-### Client libraries
+```typescript
+import OpenAI from "openai";
+import { register, ProjectType } from "@traceai/fi-core";
+import { OpenAIInstrumentation } from "@traceai/openai";
 
-| Repo | Install | Languages | Purpose |
+const provider = register({ projectName: "my-agent", projectType: ProjectType.OBSERVE });
+const instrumentation = new OpenAIInstrumentation();
+instrumentation.setTracerProvider(provider);
+instrumentation.manuallyInstrument(OpenAI);
+
+const response = await new OpenAI().chat.completions.create({
+  model: "gpt-4o-mini",
+  messages: [{ role: "user", content: "Plan a three-step onboarding email." }],
+});
+console.log(response.choices[0].message.content);
+await provider.shutdown(); // send the trace before the script exits
+```
+
+</details>
+
+## What's inside
+
+<a id="trace-and-monitor"></a>
+
+### Trace and monitor
+
+See what your agent did, what it cost, and where it went wrong.
+
+- **[Tracing](https://docs.futureagi.com/docs/observe?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_tracing)**: every LLM call, tool call and agent step, with inputs, outputs, tokens, cost and latency, and a graph of the path your agent took. Built on OpenTelemetry, with ready-made instrumentation for 50+ frameworks, and voice calls with their recordings.
+- **[Sessions and users](https://docs.futureagi.com/docs/observe/features/users?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_users)**: group traces into conversations, and see every trace and metric for one end user.
+- **[Evals on live traffic](https://docs.futureagi.com/docs/observe/features/evals?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_live_evals)**: score production traces automatically as they arrive, on every span or a sample.
+- **[Instant eval](https://docs.futureagi.com/docs/observe/features/instant-eval?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_instant_eval)**\*: ask Jev a yes/no or category question about the traces, sessions or users in any view, like "did the assistant resolve the request?", without building an eval first.
+- **[Dashboards](https://docs.futureagi.com/docs/observe/features/dashboard?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_dashboards)**: build and share charts of error rate, latency, tokens, cost and eval scores.
+- **[Alerts](https://docs.futureagi.com/docs/observe/features/alerts?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_alerts)**: get an email or Slack message when a metric or eval score crosses a threshold.
+- **[Error Feed](https://docs.futureagi.com/docs/error-feed?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_error_feed)**\*: groups failing traces into issues, explains the likely cause, and suggests a fix.
+- **[Insights](https://docs.futureagi.com/docs/observe/features/insights?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_insights)**\*: reports that sort traces, sessions or users into categories, measure how often each happens, and explain the findings with linked examples.
+
+<img alt="Animated: opening a trace of a LangGraph ride-booking agent, zooming into its step tree, then into the model call where the tool reports the driver is en route and the agent tells the rider the truth" src=".github/assets/readme/trace.gif" width="100%">
+
+<a id="evaluate-and-label"></a>
+
+### Evaluate and label
+
+Know whether each answer was right, and why. An eval can be as cheap as a regex or as thorough as an agent that checks every claim.
+
+| Eval type | How it decides | Reach for it when |
+|---|---|---|
+| **Agent as a judge** | An evaluator agent works through the run in several steps, looks things up, and then gives a verdict and its reason. | The check needs investigation: a long multi-step agent run, or claims that must be looked up. |
+| **LLM as a judge** | A model reads the output against your criteria in one pass and returns a verdict with its reason. | Quality you can describe in words: faithfulness, tone, safety, instruction following, your own rules. |
+| **Code** | Your Python or JavaScript runs in a sandbox. Same input, same result, no model call. | The answer is computable: valid JSON, a regex, BLEU or ROUGE, similarity, your business logic. |
+
+**Agent as a judge** is built for agents, so it judges the way a careful reviewer would:
+
+- **No variable mapping.** Write `{{trace}}`, `{{span}}`, `{{session}}`, `{{row}}` or `{{call}}` in your rule, in plain words, and the judge receives that whole object. No columns to wire up.
+- **It reads the whole run.** The judge walks the trace tree span by span to find the step that went wrong, instead of seeing one input and one output.
+- **It checks facts while it judges.** Turn on [web search, your knowledge bases, or your own tools over MCP](https://docs.futureagi.com/docs/evaluation/guides/advanced-usage?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_agent_tools), so a claim is checked against your docs, your database or the web.
+- **[Choose how much context it gets](https://docs.futureagi.com/docs/evaluation/guides/advanced-usage?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_data_injection)**: the mapped fields, the dataset row, the span, the whole trace, the whole session, or a call's transcript and recording.
+- **Long runs fit.** Very long traces and conversations are compacted to fit the judge's context, and images and audio are kept intact.
+- **Pick the depth.** *Quick* answers in one pass, *Agent* investigates in several steps, and *Auto* balances the two. Choose a short, long or custom write-up of the reason.
+- Runs on your OpenAI, Anthropic, Bedrock or Vertex AI key, or on Future AGI's managed models.
+
+- **[130+ built-in evals](https://docs.futureagi.com/docs/evaluation/builtin?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_builtin_evals)**, including hallucination, groundedness, tool use, task completion, PII, toxicity, tone and JSON validity, or [write your own](https://docs.futureagi.com/docs/evaluation/guides/custom-evals?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_custom_evals) in plain language or code.
+- **[Pick the judge](https://docs.futureagi.com/docs/evaluation/concepts/evaluator-models?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_judges)**: Jev, TypeSafe's decision model, for typed verdicts (pass/fail, one category, or a score on your rubric) with probabilities, through your TypeSafe or OpenRouter key; Future AGI's Turing models\* for text, image and audio; or your own model from OpenAI, Bedrock, Vertex AI, Azure or any endpoint.
+- **[Composite evals](https://docs.futureagi.com/docs/evaluation/concepts/composite-evals?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_composite)**: combine several evals, with weights, into one score and one threshold, for example faithful *and* on-tone *and* complete.
+- **[Error localization](https://docs.futureagi.com/docs/evaluation/concepts/error-localization?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_error_localization)**: when an eval fails, it tells you which input caused it.
+- **[Feedback](https://docs.futureagi.com/docs/evaluation/concepts/feedback?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_feedback)**: correct a result and rescore, so evals converge on what your team means by correct.
+- **Run them anywhere**: on datasets, on live traces, on every simulated call, [in CI on every pull request](https://docs.futureagi.com/docs/evaluation/guides/cicd?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_cicd), or as guardrails in the gateway.
+- **[Datasets](https://docs.futureagi.com/docs/dataset?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_datasets)**: tables of test cases from files, production traces, Hugging Face, the SDK or generated data. Prompts and evals run on the rows and write their results back as new columns.
+- **[Experiments](https://docs.futureagi.com/docs/dataset/guides/run-an-experiment?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_experiments)**: run several prompt, agent and model combinations on the same dataset, compare them side by side, and pick the winner.
+- **[Annotations](https://docs.futureagi.com/docs/annotations?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_annotations)**: queues where people review outputs, with labels, assignments, agreement between reviewers, and export back to a dataset.
+
+<img alt="Animated: writing an eval rule in plain words, testing it on a transcript where the agent claimed success after a failed tool call, the LLM judge failing it with a written reason, then the same check with Jev returning Fail with probability 0.04" src=".github/assets/readme/evals.gif" width="100%">
+
+<a id="simulate-and-test"></a>
+
+### Simulate and test
+
+Try every change against realistic users before your real users meet it. A transcript can read like a pass while the agent got it wrong, so every test call is checked against what actually changed.
+
+1. **[Connect your agent](https://docs.futureagi.com/docs/environments/guides/build-an-environment?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_connect)**: a code repository, an upload, or an agent running on Vapi, Retell AI, LiveKit or a phone number.
+2. **It reads your agent** and writes down what it's for, the tools it calls, the rules it must keep and the jobs it handles. Ask it questions or steer it in plain words.
+3. **It builds a test world around your agent**: a test copy of everything its tools touch, seeded with the records each scenario needs, so a tool call in a test really changes something. Never your live data.
+4. **[Simulated users play the scenarios](https://docs.futureagi.com/docs/environments/concepts/scenarios-and-trials?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_scenarios)**, in text or voice, each with a persona: name, age, personality, language and accent. Run each scenario several times to catch answers that only fail sometimes.
+5. **[Every call is graded](https://docs.futureagi.com/docs/environments/guides/read-run-results?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_results)** goal by goal against the world, plus any evals you add. An agent that says "your booking is cancelled" while the booking is still active fails.
+6. **[Debug failures](https://docs.futureagi.com/docs/environments/guides/debug-failures?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_debug)** reads the whole run and explains what went wrong, goal by goal. From there, one click starts [Epoch](#improve).
+
+What the test world can hold:
+
+- **Every kind of tool.** Built-in functions, HTTP APIs and MCP servers all answer from the test world, so the agent behaves exactly as it does in production.
+- **The apps your agent works in**, such as a mailbox, a Slack workspace or a calendar, simulated with realistic content.
+- **The databases it needs.** If your agent's code expects Postgres, MySQL, ClickHouse, MongoDB, Redis, Qdrant, RabbitMQ, NATS or MinIO, the builder provides it.
+- **More than one participant.** Multi-player scenarios put several simulated people or agents in the same conversation.
+- **Scale.** Up to 1,000 scenarios per build, several worlds running in parallel, and up to 20 repeats per scenario.
+
+Turn [production sessions, calls, transcripts or dataset rows](https://docs.futureagi.com/docs/environments/guides/import-evidence?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_import) into scenarios, so the cases that went wrong last week become tests that run on every change.
+
+<img alt="Animated: a simulation run with Debug failures naming each goal the agent broke, then Run Epoch, then an Epoch ready for review with held-back pass rate from 0% to 75% and four candidates" src=".github/assets/readme/simulate.gif" width="100%">
+
+<a id="improve"></a>
+
+### Improve
+
+Find a change that fixes the failures, and prove it before it ships.
+
+- **[Epoch](https://docs.futureagi.com/docs/environments/guides/run-epoch?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_epoch)**\*: starts from a failing run and searches for a version of your agent that fixes the failing cases without breaking the passing ones. You decide what it may change (instructions, tools, settings or code) and its limits on cost and reply time. It proves the result on cases it never saw while searching. You read the diff and decide whether to ship it.
+- **[Prompt optimization](https://docs.futureagi.com/docs/optimization?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_optimization)**: improve a prompt on a dataset with GEPA, ProTeGi, PromptWizard, Bayesian search, meta-prompting or random search, and compare every trial with a diff.
+
+<a id="gateway-and-guardrails"></a>
+
+### Gateway and guardrails
+
+Call any model through one endpoint, and check every request on the way.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme/gateway-dark.png">
+  <img alt="Your app points an OpenAI-compatible client at Agent Command Center. On every request the gateway checks the key, budget and rate limit, runs guardrails on the request, checks the cache, routes to a provider, runs guardrails on the response, and logs and traces it. When OpenAI times out, the request falls back to Anthropic; Gemini, Bedrock and your own vLLM are also available." src=".github/assets/readme/gateway-light.png" width="100%">
+</picture>
+
+- **[One API for every model](https://docs.futureagi.com/docs/command-center?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_gateway)**: an OpenAI-compatible endpoint, written in Go. Native support for OpenAI, Anthropic, Gemini, Bedrock, Azure OpenAI and Cohere, plus any OpenAI-compatible provider, including models you host yourself.
+- **[Routing and fallbacks](https://docs.futureagi.com/docs/command-center/features/routing?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_routing)**: round-robin, weighted, lowest-latency, lowest-cost, adaptive or fastest-response routing, with retries, failover and circuit breakers.
+- **[Guardrails](https://docs.futureagi.com/docs/command-center/features/guardrails?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_guardrails)**: built-in scanners check requests and responses for PII, prompt injection, leaked secrets, unsafe tool use and more. Add Future AGI's Protect models\* or plug in 15 vendors such as Lakera, Presidio and Llama Guard. Try rules in a playground first.
+- **[Caching](https://docs.futureagi.com/docs/command-center/features/caching?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_caching)**: exact and semantic caching, in memory, Redis or object storage.
+- **[Keys, budgets and rate limits](https://docs.futureagi.com/docs/command-center/features/rate-limiting?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_limits)**: separate keys for each app or team, with spend budgets and rate limits.
+- **[Logs and analytics](https://docs.futureagi.com/docs/command-center/features/cost-tracking?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_cost)**: every request logged with its cost, tokens, latency and your own properties, plus analytics, monitoring, sessions and webhooks.
+- **[Shadow experiments](https://docs.futureagi.com/docs/command-center/features/shadow-experiments?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_shadow)**: copy a share of live traffic to another model and compare cost, latency and quality before you switch.
+- **[MCP and A2A](https://docs.futureagi.com/docs/command-center/features/mcp-a2a?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_mcp)**: send your agents' tool calls and agent-to-agent traffic through the same gateway.
+
+<a id="build"></a>
+
+### Build
+
+- **[Prompts](https://docs.futureagi.com/docs/prompt?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_prompts)**: write prompt templates, version them, run them against real data and models, and watch them in production.
+- **[Agent Playground](https://docs.futureagi.com/docs/agent-playground?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_agent_playground)**: build a multi-step agent from prompt and agent nodes on a canvas, run it, and read what each step produced.
+- **[Knowledge bases](https://docs.futureagi.com/docs/knowledge-base?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_knowledge_base)**: upload your documents so prompts and evals can read from them.
+- **[Falcon AI](https://docs.futureagi.com/docs/falcon-ai?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_falcon)**\*: an agent inside the dashboard. Ask in plain language, for example "why did this trace fail?" or "build a dataset from these production traces", and it does the work.
+- **[MCP server](https://docs.futureagi.com/docs/falcon-ai/guides/use-the-mcp-server?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=module_mcp_server)**: use Future AGI from your editor or coding agent, for example to find and fix failing traces without leaving it.
+- **Workspaces and access**: separate workspaces, members and roles for each team, with audit logs and SCIM for larger organizations.
+
+<sub>\* Needs Future AGI Cloud, or an Enterprise license key on a self-hosted install. See [Open source and your data](#open-source-and-your-data).</sub>
+
+## Works with your stack
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/readme/integrations-dark.png">
+  <img alt="Integrations: agent frameworks (LangChain, LangGraph, LlamaIndex, CrewAI, OpenAI Agents SDK, Claude Agent SDK, Google ADK, PydanticAI, DSPy, Haystack, Mastra, Vercel AI SDK, smolagents, AutoGen, Instructor, LiteLLM), model providers (OpenAI, Anthropic, Gemini, Bedrock, Azure OpenAI, Mistral, Groq, OpenRouter, Ollama, vLLM, Hugging Face, xAI, DeepSeek, Together, Fireworks, Cohere), voice and retrieval (LiveKit, Pipecat, ElevenLabs, Qdrant, Milvus, MongoDB, Redis, pgvector), and standards and tools (OpenTelemetry, MCP, Agent2Agent, n8n, Guardrails AI, Elasticsearch, watsonx)." src=".github/assets/readme/integrations-light.png" width="100%">
+</picture>
+
+Future AGI uses open interfaces, so you keep the framework and models you already have: OpenTelemetry for traces, an OpenAI-compatible API for the gateway, and SQL on Postgres and ClickHouse for storage.
+
+| Integration | Languages | How it connects |
+|---|---|---|
+| [OpenTelemetry](https://docs.futureagi.com/docs/observe?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=int_otel) | Any | Send OTLP traces from your app or collector. |
+| [Auto-tracing](https://github.com/future-agi/traceAI/blob/main/docs/python/auto-instrumentation.md) | Python | Start your app with `fi-instrument`. Most libraries with a traceAI package are traced with no code changes; a few need one setup call. |
+| [traceAI SDKs](https://github.com/future-agi/traceAI) | Python, TypeScript, Java, Go, C# | Instrumentors in Python and TypeScript, client wrappers in Java, middleware in Go, and spans in C#. |
+| LangChain and LangGraph | Python, TypeScript | `traceai-langchain` or `@traceai/langchain` |
+| OpenAI and OpenAI Agents SDK | Python, TypeScript | `traceai-openai`, `traceai-openai-agents` |
+| Anthropic and Claude Agent SDK | Python, TypeScript | `traceai-anthropic`, `traceai-claude-agent-sdk` |
+| LlamaIndex | Python, TypeScript | `traceai-llamaindex` or `@traceai/llamaindex` |
+| CrewAI, AutoGen, DSPy, PydanticAI, Google ADK | Python | One traceAI package each |
+| Vercel AI SDK, Mastra | TypeScript | `@traceai/vercel`, `@traceai/mastra` |
+| [Agent Command Center](https://docs.futureagi.com/docs/command-center?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=int_gateway) | Any OpenAI-compatible client | Point your client's base URL at the gateway. |
+| [MCP server](https://docs.futureagi.com/docs/falcon-ai/guides/use-the-mcp-server?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=int_mcp) | Any MCP client | Use Future AGI from your editor or coding agent. |
+| Vapi, Retell AI, LiveKit | Voice agents | Test them in Simulate where they run. |
+| LiveKit, Pipecat | Python | Trace voice pipelines with `traceai-livekit` and `traceai-pipecat`. |
+
+Also supported: Pinecone, Weaviate, Chroma, LanceDB, Agno, Strands, Semantic Kernel, BeeAI, Cerebras, Vertex AI, SageMaker and more in [traceAI](https://github.com/future-agi/traceAI).
+
+<details>
+<summary><b>SDKs</b></summary>
+
+| Package | Install | What it is |
+|---|---|---|
+| [traceAI](https://github.com/future-agi/traceAI) | `pip install fi-instrumentation-otel` · `npm i @traceai/fi-core` | OpenTelemetry tracing for AI frameworks, with zero-code auto-tracing for Python |
+| [futureagi](https://github.com/future-agi/futureagi-sdk) | `pip install futureagi` | Platform SDK: datasets, prompts, knowledge bases, evals |
+| [agent-learning-kit](https://github.com/future-agi/agent-learning-kit) | `pip install agent-learning-kit` | Local testing, simulation and optimization for agents |
+| [agentcc](https://github.com/future-agi/agent-command-center-sdk) | `pip install agentcc` · `npm i @agentcc/client` | Client SDKs for the gateway |
+
+</details>
+
+[All integrations →](https://docs.futureagi.com/docs/integrations?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=integrations_catalog)
+
+## Self-host
+
+| | **Standalone** (default) | **Distributed** | **Kubernetes** |
 |---|---|---|---|
-| [**traceAI**](https://github.com/future-agi/traceAI) | `pip install fi-instrumentation-otel`<br>`npm i @traceai/fi-core` | Python · TS · Java · C# | **Zero-config OTel tracing** for 50+ AI frameworks |
-| [**agent-learning-kit**](https://github.com/future-agi/agent-learning-kit) | `pip install agent-learning-kit` | Python · TS | **Local-first testing, simulation, red teaming, and optimization** for AI agents |
-| [**futureagi**](https://github.com/future-agi/futureagi-sdk) | `pip install futureagi` | Python | Platform SDK — datasets, prompts, KB, experiments |
-| [**agentcc**](https://github.com/future-agi/agent-command-center-sdk) | `pip install agentcc`<br>`npm i @agentcc/client` | Python · TS (+ LangChain · LlamaIndex · React · Vercel) | Gateway client SDKs |
+| Install | `./bin/install` | `./bin/install --distributed` | [Helm chart](deploy/helm/futureagi) |
+| Runs | one app container, Postgres, ClickHouse | one container per service, PeerDB, Kafka | the Distributed setup on Kubernetes 1.27+ |
+| Resources | 2 vCPUs, 4 GB | 4+ vCPUs, 12–16 GB | about 4 CPUs and 8 GiB to try it |
 
-### Integrations
+**Choose before you add data:** there is no supported way to move a Standalone install's data to Distributed or Helm later ([Switching](INSTALLATION.md#switching-between-standalone-and-distributed)). If an install is enrolled in automatic updates, complete the [safe handoff to manual operations](deploy/update/README.md#safe-handoff-to-manual-operations) before you stop or uninstall it.
 
-<!--
-  [MARKETING] integrations-grid.png
-  What:    5×4 logo grid, grayscale. Rows roughly: LLM providers,
-           frameworks, voice platforms, vector DBs, tools.
-           Contents (keep grayscale — colored logos look like an ad):
-             LLM:       OpenAI · Anthropic · Google · AWS Bedrock · Azure
-             Framework: LangChain · LlamaIndex · CrewAI · AutoGen · DSPy
-             Voice:     LiveKit · VAPI · Retell · Pipecat · Deepgram
-             Vector:    Pinecone · Qdrant · Weaviate · Chroma · Milvus
-             Tools:     OpenTelemetry · Vercel · MCP · A2A · HuggingFace
-  Size:    1600 × 800, PNG — OR keep the current 6-row markdown table
-           below as fallback.
--->
-<!--
-<div align="center">
-  <img alt="Future AGI integrations — 100+ LLM providers, 50+ frameworks, every major vector DB and voice platform" src=".github/assets/integrations-grid.png" width="100%">
-</div>
--->
-| | |
-|---|---|
-| **LLM providers (100+)** | OpenAI · Anthropic · Google Gemini · Vertex AI · AWS Bedrock · Azure OpenAI · Mistral · Groq · Cohere · Together · Perplexity · OpenRouter · Fireworks · xAI · Replicate · HuggingFace · + self-hosted **Ollama · vLLM · LM Studio · TGI · Llamafile** |
-| **Agent frameworks** | LangChain · LangGraph · LlamaIndex · CrewAI · AutoGen · Phidata · PydanticAI · Claude SDK · LiteLLM · Haystack · DSPy · Instructor · Smol-agents |
-| **Voice platforms** | VAPI · Retell · LiveKit · Pipecat |
-| **Vector DBs** | Pinecone · Weaviate · Chroma · Milvus · Qdrant · pgvector |
-| **Tools & infra** | Vercel AI SDK · n8n · MongoDB · MCP · A2A · Guardrails AI · Langfuse · HuggingFace Smol-agents |
+Every option, upgrades, air-gapped installs and troubleshooting: [INSTALLATION.md](INSTALLATION.md), [deploy/README.md](deploy/README.md) and the [self-hosting guide](https://docs.futureagi.com/docs/self-hosting?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=self_host).
 
-<sub> [Full integrations catalog →](https://docs.futureagi.com/docs/integrations?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=integrations_catalog)</sub>
+<a id="open-source-and-your-data"></a>
 
----
+## Open source and your data
 
-##  How Future AGI compares
+The core is Apache 2.0. Code in directories named `ee/` is under the [Future AGI Enterprise License](LICENSE-EE). On a self-hosted install, Error Feed, Insights, Instant eval, the Turing and Protect models and Epoch need an Enterprise license key that lists them, and Falcon AI needs an Enterprise plan; the [Enterprise Edition reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference#enterprise-edition) has the details. Jev evals work in every edition with your own TypeSafe or OpenRouter key. See also [NOTICE](NOTICE).
 
-<table width="100%">
-<thead>
-<tr>
-<th width="25%"></th>
-<th width="15%" align="center"><b>Future&nbsp;AGI</b></th>
-<th width="15%" align="center">Langfuse</th>
-<th width="15%" align="center">Phoenix</th>
-<th width="15%" align="center">Braintrust</th>
-<th width="15%" align="center">Helicone</th>
-</tr>
-</thead>
-<tbody>
-<tr><td>Open source</td><td align="center">✅<br><sub>Apache 2.0</sub></td><td align="center">✅<br><sub>MIT</sub></td><td align="center">✅<br><sub>Elastic v2</sub></td><td align="center">❌</td><td align="center">✅<br><sub>Apache 2.0</sub></td></tr>
-<tr><td>Self-host</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">❌</td><td align="center">✅</td></tr>
-<tr><td>LLM tracing (OpenTelemetry)</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">⚠️<br><sub>via OpenLLMetry</sub></td></tr>
-<tr><td>Evaluation suites</td><td align="center">✅<br><sub>50+ metrics</sub></td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">⚠️<br><sub>Limited</sub></td></tr>
-<tr><td><b>Agent simulation</b></td><td align="center">✅</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td></tr>
-<tr><td><b>Voice agent eval</b></td><td align="center">✅</td><td align="center">❌</td><td align="center">⚠️<br><sub>Cookbook</sub></td><td align="center">❌</td><td align="center">❌</td></tr>
-<tr><td><b>LLM gateway built in</b></td><td align="center">✅<br><sub>100+ providers</sub></td><td align="center">❌</td><td align="center">❌</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td><b>Guardrails built in</b></td><td align="center">✅<br><sub>18 + 15 adapters</sub></td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td></tr>
-<tr><td><b>Prompt optimization</b></td><td align="center">✅<br><sub>6 algorithms</sub></td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td><td align="center">❌</td></tr>
-<tr><td>Prompt management</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td>Datasets & experiments</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td><td align="center">✅</td></tr>
-<tr><td>No-code eval builder</td><td align="center">✅</td><td align="center">⚠️</td><td align="center">⚠️</td><td align="center">⚠️</td><td align="center">⚠️</td></tr>
-</tbody>
-</table>
+<a id="telemetry"></a>
 
-<sub>Based on publicly-documented features as of April 2026. Corrections welcome — open a PR.</sub>
+### Telemetry
 
----
+Self-hosted installs send deployment telemetry, **on by default**: one registration that includes the **email addresses and email domains of the install's owner, admin and staff accounts**, then usage counts on a schedule. **No traces, prompts, completions, datasets or API keys, ever.** To opt out, install with `./bin/install --no-telemetry` or set `FUTURE_AGI_TELEMETRY_DISABLED=true` in `.env` (`config.telemetry=false` on Helm). An opted-out install still sends one registration without email addresses; block `api.futureagi.com` to send nothing. [Telemetry and outbound connections](https://docs.futureagi.com/docs/self-hosting/configuration/telemetry) lists the exact payloads and every outbound connection.
 
-## Built for every kind of agent
+## Support
 
-<!--
-  [MARKETING] use-cases-band.png  (optional — lightweight)
-  What:    Seven small tile icons in a horizontal band: headset (support),
-           phone (voice), briefcase (internal), magnifier (RAG),
-           robot (autonomous), mouse pointer (CUA), code (coding).
-  Size:    1600 × 200, PNG — OR keep as emoji bullets below.
--->
+Finding an answer:
 
-- **Customer Support:** Ship support AI that customers actually trust
-- **Voice Agents:** Test, evaluate, and improve voice AI end-to-end
-- **Internal Tools:** AI copilots your whole org can rely on
-- **RAG & Search:** Every answer grounded, every citation verified
-- **Autonomous Agents:** Multi-step agents you can actually trust in production
-- **Computer-Use Agents (CUA):** Agents that click with confidence
-- **Coding Agents:** AI that writes code you can actually ship
+- The [documentation](https://docs.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=support_docs) covers every feature, with guides and cookbooks. Suggest edits to the docs on GitHub.
+- The [FAQ](https://docs.futureagi.com/docs/faq?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=support_faq) answers the most common questions.
+- The [MCP server](https://docs.futureagi.com/docs/falcon-ai/guides/use-the-mcp-server?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=support_mcp) lets your editor or coding agent look things up in your workspace.
 
----
+Support channels:
 
-##  Roadmap
+- **Ask a question** in [GitHub Discussions](https://github.com/orgs/future-agi/discussions) or on [Discord](https://discord.com/invite/cBnWkd7T9v). Include code, screenshots and versions so we can help faster.
+- **Report a bug** or **request a feature** with the [issue templates](https://github.com/future-agi/future-agi/issues/new/choose).
+- **Cloud account or billing:** email [support@futureagi.com](mailto:support@futureagi.com).
+- **Security:** report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+- **Service status:** [status.futureagi.com](https://status.futureagi.com).
 
-[**Vote on the public roadmap →**](https://futureagi.com/roadmap?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer_roadmap)  ·  [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions/categories/roadmap)  ·  [**Releases**](https://github.com/future-agi/future-agi/releases)  ·  [**Changelog**](https://docs.futureagi.com/docs/release-notes?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer_roadmap)
+## Contributing
 
-<table>
-<tr>
-<th width="25%"> Recently shipped</th>
-<th width="25%"> In progress</th>
-<th width="25%"> Coming up</th>
-<th width="25%"> Exploring</th>
-</tr>
-<tr valign="top">
-<td>
+Contributions are welcome:
 
-- [x] Prompt optimization engine
-- [x] Taxonomy-based Feed Clustering
-- [x] Agent Runs in Dataset Experiments
-- [x] Simulate from Production Calls
-- [x] LiveKit Configuration via UI
-- [x] System Metric Filtering for Voice
-- [x] Agent Playground
-- [x] Dashboards
-- [x] Access platform via MCP
-- [x] Annotation Queues
-- [x] Command Center
-- [x] Open source Future AGI stack
-- [x] Eval Explanation Output Size Control 
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) to set up a development environment, then pick a [`good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+- Comment on [issues](https://github.com/future-agi/future-agi/issues), and share ideas in [Discussions](https://github.com/orgs/future-agi/discussions).
+- See what's next on the [public roadmap](https://futureagi.com/roadmap?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=roadmap), in [releases](https://github.com/future-agi/future-agi/releases) and in the [changelog](CHANGELOG.md).
 
+Follow along on [X](https://x.com/FutureAGI_), [LinkedIn](https://www.linkedin.com/company/futureagi/), [YouTube](https://www.youtube.com/@Future_AGI) and the [blog](https://futureagi.com/blog?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=community).
 
-</td>
-<td>
+## Star history
 
-- [ ] Agent Changelog & Diff View
-- [ ] Smart Queue Assignment
-- [ ] Essential Node Library for Agent Builder
-- [ ] Full Execution Tracing for Agents
-- [ ] Multi-modal Support for Agents
-
-</td>
-<td>
-
-- [ ] Agent Changelog & Diff View
-- [ ] Smart Queue Assignment
-
-</td>
-<td>
-
-- [ ] Import agents to Agent Playground
-- [ ] Simulating CUA agents
-- [ ] Simulating Coding agents
-- [ ] Scheduled Simulations
-
-</td>
-</tr>
-</table>
-
----
-
-## 🤝 Contributing
-
-We love contributions — bug fixes, new evaluators, framework integrations, docs, examples, anything.
-
-1.  [Browse `good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-2.  Read the [Contributing Guide](CONTRIBUTING.md)
-3.  Say hi on [Discord](https://discord.com/invite/cBnWkd7T9v) or [Discussions](https://github.com/orgs/future-agi/discussions)
-4.  Sign the CLA on your first PR (automatic bot)
-
-<!--
-  [MARKETING] contributors-wall.png  — SKIP UNTIL 50+ CONTRIBUTORS.
-  Stub is intentionally left out. Revisit once contrib count justifies
-  an avatar wall (contrib.rocks auto-generates when enabled).
--->
-
----
-
-## 🌍 Community & support
-
-| | |
-|---|---|
-| 💬 [**Discord**](https://discord.com/invite/cBnWkd7T9v) | Real-time help from the team and community |
-| 🗨️ [**GitHub Discussions**](https://github.com/orgs/future-agi/discussions) | Ideas, questions, roadmap input |
-| 🐦 [**Twitter / X**](https://x.com/FutureAGI_) | Release announcements |
-| 📝 [**Blog**](https://futureagi.com/blog?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=blog_section) | Engineering & research posts |
-| 📺 [**YouTube**](https://www.youtube.com/@Future_AGI) | Walkthroughs & demos |
-| 📊 [**Status**](https://status.futureagi.com) | Cloud uptime + incident history |
-| 📧 **support@futureagi.com** | Cloud account / billing |
-| 🔐 **security@futureagi.com** | Private vulnerability disclosure (24h ack on weekdays — see [SECURITY.md](SECURITY.md)) |
-
----
-
-##  Telemetry
-
-Self-hosted Future AGI sends deployment telemetry, **on by default**, so we can count installs and size release testing: one registration with the **email addresses and email domains of the install's owner, admin and staff/superuser accounts**, then usage counts on a schedule. **No trace data, no prompts, no completions, no datasets, no API keys**, ever.
-
-To opt out, install with `./bin/install --no-telemetry`, or set `FUTURE_AGI_TELEMETRY_DISABLED=true` in `.env` (`deploy/.env.production` for the production overlay, `config.telemetry=false` for Helm) and run `docker compose up -d`. Opting out still sends one registration, without email addresses; block `api.futureagi.com` to send nothing. Everything else that could leave your install (HubSpot, Slack, Mixpanel, PostHog, reCAPTCHA, Sentry, Mailgun) is **off until you set its key**.
-
-[Telemetry and outbound connections](https://docs.futureagi.com/docs/self-hosting/configuration/telemetry) has the exact payloads, what the opt-out still sends, every setting, and every outbound connection, with what an install that allows no outbound traffic must also set.
-
----
-
-## ⭐ Star history
-
-<a href="https://star-history.com/#future-agi/future-agi">
+<a href="https://star-history.com/#future-agi/future-agi&Date">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=future-agi/future-agi&type=Date&theme=dark">
-    <img alt="Star history" src="https://api.star-history.com/svg?repos=future-agi/future-agi&type=Date">
+    <img alt="Star history of future-agi/future-agi" src="https://api.star-history.com/svg?repos=future-agi/future-agi&type=Date" width="100%">
   </picture>
 </a>
 
----
-
-## 📄 License
-
-Future AGI is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-**You own your evaluation logic and your data.** Inspect every evaluator, every prompt, every trace — no black-box scoring, no vendor lock-in.
-
----
-
 <div align="center">
 
-**Built with ❤️ by the Future AGI team and [contributors worldwide](https://github.com/future-agi/future-agi/graphs/contributors).**
-
-If Future AGI helps you ship better AI, a ⭐ helps more teams find us.
-
-[🌐 futureagi.com](https://futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer) · [📖 docs.futureagi.com](https://docs.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer) · [☁️ app.futureagi.com](https://app.futureagi.com?utm_source=github&utm_medium=readme&utm_campaign=oss_repo&utm_content=footer) · [📊 status.futureagi.com](https://status.futureagi.com)
+If Future AGI helps your agent get better, a ⭐ helps other developers find it.
 
 </div>

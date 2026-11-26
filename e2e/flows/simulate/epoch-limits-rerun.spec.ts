@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Page, Route } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
+import { fetchRoute } from '../../lib/backend-request';
 import { flowAnnotation } from '../../lib/flow-meta';
 import { exactPath } from '../../lib/url';
-
 // The isolated E2E stack has no Enterprise license (fix_my_agent is
 // requires_license), no builder and no simulation runner, so it cannot hold a
 // finished epoch. Stub only the Epoch responses here, as FEED-E2E-001 and
@@ -45,7 +45,7 @@ const COST = { baseline: 0.0096, candidate: 0.0139, allowed: 0.012, limit: null 
 
 // What the screens say: noSafeHeadline and partDetail in
 // frontend/src/sections/simulate/environments/workspace/improvements/fixRunView.js.
-const ENDING = 'No safe improvement: the only candidate went over the cost or latency limit.';
+const ENDING = 'The only candidate went over the reply-time or cost limit.';
 const LATENCY_LINE = 'Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s.';
 const COST_LINE = 'Over the limit: $0.0139 against $0.0096 on the current version, allowed up to $0.012.';
 const COST_LIMIT = '0.01';
@@ -177,7 +177,7 @@ async function stubEpochApi(page: Page, ids: { ended: string; next: string; sour
 
   // The real capabilities, with only fix_my_agent switched on.
   await page.route(endsWith('/api/capabilities/'), async (route: Route) => {
-    const response = await route.fetch();
+    const response = await fetchRoute(route);
     const json = await response.json();
     json.features = { ...json.features, fix_my_agent: { ...json.features?.fix_my_agent, allowed: true } };
     await route.fulfill({ response, json });
@@ -211,7 +211,7 @@ test('SIM-E2E-008: an epoch that found no safe improvement shows why and starts 
     steps: ['open the finished epoch', 'read its ending', 'open How it was decided', 'press Run a new epoch',
             'read the model lock', 'type a cost limit of 0.01', 'press Run Epoch', 'read the new epoch\'s page'],
     browserChecks: [
-      'the ending reads "No safe improvement: the only candidate went over the cost or latency limit."',
+      'the ending reads "The only candidate went over the reply-time or cost limit."',
       'the rejected candidate\'s Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too',
       'the launch form asks launch-options for the epoch\'s own run and locks the model its spans named, gpt-4o-mini',
       'the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit',

@@ -52,6 +52,29 @@
 - The UI displays the exact ordered graph set returned by the authorized list request at supported page sizes.
 - Above-cap graph requests return at most 100 rows, metadata reflects the cap, and following next_page returns the complete seeded ID set once.
 
+### AGENT-E2E-003 — connecting an agent from a folder asks only for the keys its code reads, then Connect enables
+
+**Goal:** A developer connects an agent from a folder, and the check asks only for the keys the agent's code reads before Connect enables
+
+**Spec:** `flows/agents/connect-folder-preflight.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Agents › New agent › Upload a folder
+2. choose the agent folder and wait for the upload
+3. find agents and pick the one found
+4. name it and run preflight
+5. see preflight pass without asking for a key the code only mentions in a comment
+6. connect the agent and land on its page
+
+**Backend state verified:**
+
+- the preflight response the page received is ready to submit and does not name the commented key
+- the scan of the uploaded folder reached found in PG simulate_agent_scan, scoped to the actor org
+- exactly one PG simulate_agent_definition row has the minted name in the actor org after Connect
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
@@ -229,6 +252,55 @@
 - correction preserves Score IDs and appends exactly the previous typed value/history timestamp
 - public soft deletion excludes retained predicates without changing source spans
 - sibling project, owner B organization and owner A explicit other workspace cannot read target Scores/catalog/results
+
+### ANNOT-E2E-005 — queue members drill into disagreements and recover from unavailable items
+
+**Goal:** A queue member opens the exact disagreed item in the appropriate workspace and can recover when that item is unavailable
+
+**Spec:** `flows/annotations/agreement-drilldown.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed synthetic dataset rows, numeric labels and four non-admin queue roles through public APIs
+2. read zero, three and twenty-five disagreements; open the exact capped list with five more
+3. use keyboard open, traversal, Escape and Enter to inspect the exact item in each role
+4. read a long label in light and dark without horizontal overflow
+5. open an unassigned and a deleted item, read a persistent explanation and return to the queue
+6. resolve disagreements, then remove a label and delete its synthetic scores; reconnect after each real stale interval and see the popup close
+
+**Backend state verified:**
+
+- four non-admin viewer_roles and real agreement responses match the seeded 0/3/25 conflicts and capped item sets
+- each role opens the exact source row and permitted score authors in review or annotate mode
+- unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery
+- score corrections resolve disagreements; label removal retains historical agreement until all 54 synthetic label scores are deleted, then refetch closes the already-open popup
+
+### ANNOT-E2E-007 — queue managers widen item data columns while selection and actions stay fixed
+
+**Goal:** A queue manager widens the data columns of a queue's item list to read them, while the selection and row-action columns stay fixed and selecting an item or backing out of removal leaves the queue item and its source row untouched
+
+**Spec:** `flows/annotations/queue-items-column-resize.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a numeric label, a one-row synthetic dataset with a minted cell, an active manual queue and one dataset-row item through public APIs
+2. open the queue item list at 1440x900 and wait for the seeded row
+3. see resize handles on Preview and Source but not on selection or Actions, which measure 44 and 60 px
+4. drag the Preview and Source header edges wider; column order and the fixed columns stay unchanged
+5. tick and untick the seeded row and see Remove Selected (1) appear and go
+6. open Remove item on the row, cancel the dialog and still see the row with 1 of 1 items
+7. reload and see the seeded row still listed
+
+**Backend state verified:**
+
+- PG model_hub_queueitem row is unchanged after select, remove-cancel and reload: not deleted, same queue, dataset row, status and updated_at
+- PG model_hub_row and model_hub_cell keep the seeded order, minted value, deleted=false and updated_at
+- items API the grid calls returns exactly the seeded item with its dataset_row preview, and the grid Preview cell reads that exact text
+- the browser sends no DELETE for the item and no POST to items/bulk-remove/
 
 ## auth
 
@@ -879,6 +951,58 @@
 - the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
 - chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
 
+### DASH-E2E-017 — a saved custom-formula metric persists a correct value, renders on a dashboard and records an alert
+
+**Goal:** Save a custom-formula conversation metric, read its settled value on the Overview, freeze it as a snapshot, and see that snapshot render on a dashboard and record a threshold alert. The Add to dashboard and Create alert menu items are disabled in the product, so the widget and monitor are created through the API the product used.
+
+**Spec:** `flows/dashboards/derived-metric.spec.ts:99`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two minted conversations, each a root and a child span with numeric resolved/escalated outcomes, aged an hour so their 15-minute bucket is closed
+2. create the metric through New metric: name, project, Custom formula over conversations, two span-attribute inputs and the formula; Save metric validates, creates and queues the first calculation
+3. give this project a 5-minute settle and a 60-second cadence (the defaults are 30 minutes and 900 seconds, and no API sets them), see a publication report the window as not final while the conversations are open, then wait for them to settle (5 minutes after their last arrival) and the next refresh to publish them
+4. reload the metric page and read the Overview value on the default 7-day window and on a Custom window around the seeded bucket
+5. create a static below-threshold monitor through POST /tracer/user-alerts/, then Save snapshot on the Custom window
+6. create a dashboard with a metric widget pinned to the snapshot through the dashboard and widget APIs, then open it in the browser
+7. wait for the 60-second alert check to record the monitor alert for the snapshot window
+
+**Backend state verified:**
+
+- The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.
+- Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.
+- While the conversations are open the KPI API reports the Custom window as partial; the test first observes a final value no earlier than the last arrival plus the settle time, less 5 seconds of clock tolerance: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
+- The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.
+- The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.
+- The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.
+
+### DASH-E2E-018 — rapid date presets query only the final range, custom Done and Refresh apply at once
+
+**Goal:** A user flicking through date presets sees each chip highlight as they click, while the widgets load only the range they land on; a custom range applies as soon as they press Done, and Refresh still brings the widgets to a completed result.
+
+**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed 3 traces into a minted project and a dashboard with trace_count and span_count widgets stored at 7D
+2. open the dashboard on the Default chip and wait for both widgets to load
+3. click Today, 7D and 30D back to back
+4. see the 30D chip highlighted, then both widgets load the 30-day range with the seeded totals
+5. open Custom, type today's date as Start Date and End Date and press Done
+6. click Refresh with the custom range applied and wait for it to finish
+
+**Backend state verified:**
+
+- the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click
+- each completed, exact 30D response spans the expected start and end and contains 3 traces or 6 spans
+- custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done
+- the custom-range responses are complete and exact with the seeded totals
+- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
@@ -975,6 +1099,31 @@
 - the in-document link moves the preview to its page and the external link opens in a new tab
 - a section link scrolls its destination position to the top of the preview, on its own page or another
 
+### DATA-E2E-005 — a missing dataset or deleted Observe project link shows a recovery page that returns to its list
+
+**Goal:** A user who opens a link to a dataset that does not exist, or to an Observe project that was deleted, sees that it is unavailable and goes back to the list instead of waiting on a loading page.
+
+**Spec:** `flows/datasets/unavailable-links.spec.ts:61`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a dataset link whose id matches no dataset
+2. read the "doesn't exist or you don't have access" message and click Back to datasets
+3. land on the dataset list
+4. create two Observe projects through the API and open one of them
+5. delete that project through the API (the Observe list's delete request) and reopen its link
+6. read the same message for the project and click Back to Observe
+7. land on the Observe list, which shows the other project and not the deleted one
+
+**Backend state verified:**
+
+- no Postgres model_hub_dataset row exists for the opened dataset id, and the browser's own dataset read is refused as not found (404, or 400 with the exact missing-dataset message)
+- the deleted project keeps its Postgres tracer_project row in the actor organization, marked deleted, while the other project stays live
+- the browser's project read answers 200 before the delete and is refused as not found after it (404, or 400 with the exact missing-project message)
+- the Observe list read after Back to Observe includes the live project and not the deleted one
+
 ## error-feed
 
 ### ERR-E2E-001 — connect Slack and notify only for matching Error Feed issues
@@ -1041,11 +1190,11 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
-### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV and its analysis as Markdown
 
-**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)
+**Goal:** A developer downloads an issue's traces and its stored analysis from the issue page, and uploads the traces file unchanged as a dataset (detail and overview responses stubbed)
 
-**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:36`
 
 **Tags:** —
 
@@ -1053,8 +1202,12 @@
 
 1. open the issue page
 2. click Export
-3. save the downloaded CSV
-4. upload the downloaded CSV using the Add Dataset form
+3. choose Traces
+4. save the downloaded CSV
+5. click Export
+6. choose Analysis
+7. save the downloaded Markdown
+8. upload the downloaded CSV using the Add Dataset form
 
 **Backend state verified:**
 
@@ -1063,8 +1216,9 @@
 
 **Browser observations:**
 
-- the export requests the issue overview once, with rep_limit=200
+- the traces export requests the issue overview once, with rep_limit=200, and the analysis export once more, with rep_limit=10
 - the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the analysis is named error-feed-<issue>-analysis.md, holds the stubbed likely cause, suggested change and wrong-if under their headings, and samples exactly the two stubbed traces
 - the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
 - the snackbar reports exactly the exported trace count
 - the uploaded dataset's grid shows exactly the exported trace ids
@@ -1083,7 +1237,7 @@
 2. read the issue on Overview
 3. pick another trace in Traces affected
 4. open a trace from the Traces tab
-5. open the Trends and Fix tabs
+5. open the Trends and Root cause tabs
 6. open a restricted share link while signed out
 
 **Browser observations:**
@@ -1092,7 +1246,240 @@
 - the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
 - picking a trace reads the sidebar through the share token for exactly that trace
 - opening a trace reads it through the share token and shows its spans
+- Root cause shows the saved analysis and the eval issue's explanation from the share
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
+
+### ERR-E2E-006 — a developer runs an Epoch from an Error Feed issue and follows it from the issue
+
+**Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
+
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:131`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the issue
+2. press Run Epoch
+3. pick the environment
+4. read the plan and swap one trace
+5. press Draft scenarios
+6. untick one drafted scenario
+7. press Run Epoch in the review
+8. read the status strip
+9. reload once the epoch is ready
+10. read the header action
+11. press View Epoch 3
+12. reload the epoch page
+13. open the issue list and hover the epoch icon
+
+**Browser observations:**
+
+- the plan is read only after Run Epoch, first with the issue and project, then with the picked environment, and the picker lists only the code agent's environment
+- the create POST body is exactly the issue, project, environment and the picks after the swap
+- the run POST body is exactly the kept scenario and the review's launch rows at their defaults
+- the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
+- the epoch page's breadcrumb is the environment linking to the environment, then Epochs linking to its Epochs tab, the header reads "From issue: <title>" linking to the issue, and both survive a reload
+- the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
+
+### ESC-E2E-001 — New issues require evidence before showing Escalating
+
+**Goal:** An engineer sees a newly detected issue start in review before growth is confirmed
+
+**Spec:** `flows/error-feed/creation-defaults.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish singleton and large initial scanner, F6 and evaluation clusters
+2. inspect each new issue and its filter results before confirmation
+3. check its original occurrence timestamps
+
+**Backend state verified:**
+
+- PG stores the exact source memberships with system ownership, For review and revision zero
+- collector timestamps remain original completion times
+- detail/list/status-filter APIs and the browser show those exact issues For review
+
+### ESC-E2E-002 — Confirm sustained growth and recover a quiet issue without new findings
+
+**Goal:** An engineer sees sustained growth escalate and a quiet issue return to review
+
+**Spec:** `flows/error-feed/automatic-escalation-recovery.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish baseline findings, then attach a burst through collector and fenced publishers
+2. inspect review before confirmation
+3. advance four normal boundaries through Temporal
+4. inspect escalation and evidence
+5. publish nothing further and advance quiet recovery
+6. inspect review
+
+**Backend state verified:**
+
+- PG has exactly one status revision at entry and one at recovery, including duplicate checks
+- frozen baseline, counts, thresholds and boundary timestamps equal the independently seeded windows
+- detail/list/status-filter/statistics APIs and UI agree with each persisted transition
+
+### ESC-E2E-003 — Preserve user-selected statuses and F6 attachment protection
+
+**Goal:** An engineer keeps any chosen status while automatic trend checks and new findings run
+
+**Spec:** `flows/error-feed/manual-status-protection.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish qualifying findings
+2. select all four statuses through detail controls, including the current value
+3. use the bulk status action
+4. advance growth and quiet boundaries
+5. attempt an F6 attachment and inspect rejection
+
+**Backend state verified:**
+
+- PG manual ownership, actor, status revision and F6 protection persist for all selections
+- real publisher rejects attachment to the protected issue without adding its finding
+- Feed APIs and UI retain each chosen status after both automatic cycles
+
+### ESC-E2E-004 — Configure and restore workspace escalation thresholds
+
+**Goal:** An administrator saves thresholds and can cancel, retry, or restore defaults safely
+
+**Spec:** `flows/error-feed/escalation-settings.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. inspect defaults
+2. reject invalid thresholds
+3. save eight valid values
+4. cancel edits and a reset
+5. retain and retry a failed save
+6. save a reset
+
+**Backend state verified:**
+
+- scoped settings API equals each saved policy
+- PG policy has all eight values, one revision per changed save, and the updating user
+- canceled and failed saves do not mutate the policy
+
+### ESC-E2E-005 — Share workspace settings across projects and enforce scope permissions
+
+**Goal:** An administrator configures one workspace while other workspaces and read-only users stay isolated
+
+**Spec:** `flows/error-feed/escalation-settings-scope.spec.ts:10`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two uniquely named projects in workspace A
+2. save A settings
+3. inspect settings under each project filter
+4. inspect sibling and foreign workspace defaults
+5. inspect member and viewer read-only controls
+6. attempt forbidden and foreign-scope saves
+
+**Backend state verified:**
+
+- collector traces and PG projects belong to workspace A
+- PG and scoped settings API contain one saved A policy and unchanged defaults in other workspaces
+- unauthorized PATCHes return 403 and do not change policy values or revision
+
+### ESC-E2E-006 — Apply saved thresholds without arrivals and preserve manual choices
+
+**Goal:** An administrator changes thresholds and automatic decisions update after fresh confirmation
+
+**Spec:** `flows/error-feed/settings-reevaluation.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. prepare a system escalation, candidate, review issue and manually controlled issue
+2. save workspace thresholds
+3. publish no new findings
+4. advance four eligible boundaries
+5. inspect policy revision, frozen incident baseline and preserved manual choice
+
+**Backend state verified:**
+
+- PG settings save does not itself transition any issue
+- new policy revision resets candidate confirmation and preserves the active baseline after history ages out
+- only qualifying system-owned issues change after full confirmation; API and UI show those exact decisions
+
+### ESC-E2E-007 — Evaluate current findings after merge, split, removal and supersession
+
+**Goal:** An engineer sees decisions follow current evidence when issues are regrouped or reinvestigated
+
+**Spec:** `flows/error-feed/membership-revisions.spec.ts:7`
+
+**Tags:** —
+
+**User steps:**
+
+1. publish and confirm two small issues with a real workspace policy
+2. merge through fenced reconciliation
+3. confirm the surviving issue
+4. split and remove through reconciliation
+5. replace a source report
+6. inspect surviving issues and original occurrence times
+
+**Backend state verified:**
+
+- PG current memberships match exact source finding IDs and keep original timestamps
+- structural changes request fresh confirmation and retired issues stop evaluation
+- source supersession removes obsolete findings; list APIs and UI contain only current surviving issues
+
+### ESC-E2E-008 — Resolve concurrent settings edits without losing another save
+
+**Goal:** An administrator reloads a conflicting edit and explicitly reapplies their changes
+
+**Spec:** `flows/error-feed/settings-conflicts.spec.ts:6`
+
+**Tags:** —
+
+**User steps:**
+
+1. open two sessions at one revision
+2. save in the first session
+3. see a conflict with retained draft in the second
+4. reload and explicitly save a new edit
+
+**Backend state verified:**
+
+- real stale PATCH returns 409 and leaves stored values and revision unchanged
+- scoped API and PG policy equal the last successful edit, with exactly two revision increments
+
+### ESC-E2E-009 — Pick a sensitivity preset instead of typing thresholds
+
+**Goal:** An administrator picks a sensitivity preset instead of typing eight thresholds, and exactly that preset is saved for the workspace
+
+**Spec:** `flows/error-feed/escalation-presets.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. open settings on Balanced with the defaults
+2. pick Calm and see its eight values
+3. save and reopen on Calm
+4. fine-tune one value, see Custom and Edited, save
+5. reopen, pick Balanced, save
+
+**Backend state verified:**
+
+- PG policy holds Calm's eight values, revision +1 and the updating user
+- scoped settings API returns Calm's values
+- a fine-tuned save stores Calm with only min_findings changed, revision +2
+- picking Balanced stores the server defaults in PG and the API, revision +3
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
@@ -1166,7 +1553,7 @@
 
 **Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly
 
-**Spec:** `flows/evals/catalog-result-types.spec.ts:137`
+**Spec:** `flows/evals/catalog-result-types.spec.ts:139`
 
 **Tags:** —
 
@@ -1491,11 +1878,11 @@
 - the previous entry is retired (deleted = true), not left live beside the new one
 - the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
 
-### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+### EVAL-E2E-016 — shipped link evaluators give correct format verdicts without network requests
 
-**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+**Goal:** Run the shipped link evaluators on well-formed links and ordinary prose using format-only validation without contacting any destination
 
-**Spec:** `flows/evals/link-destinations.spec.ts:16`
+**Spec:** `flows/evals/link-destinations.spec.ts:15`
 
 **Tags:** —
 
@@ -1503,15 +1890,15 @@
 
 1. resolve the two shipped system template IDs without rewriting their code
 2. open each system evaluator in the browser
-3. submit approved links, link-free prose and refused destinations in the Custom playground
-4. read exact verdicts and explanations
-5. inspect the exact request set on the owned canary
+3. submit well-formed links including formerly denied, private-host and redirecting destinations, plus link-free prose in the Custom playground
+4. read exact verdicts and explanations for all 16 evaluator and input combinations
+5. require empty browser and Temporal canary journals after every submission
 
 **Backend state verified:**
 
 - both shipped templates retain their system identity and text input contract
-- browser-submitted playground responses match the exact verdict and explanation matrix
-- the owned canary records only approved HEAD requests and never receives refused destinations
+- browser-submitted playground responses match the exact offline verdict and explanation matrix
+- both complete canary journals record zero destination requests in every case
 
 ### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
 
@@ -1695,6 +2082,75 @@
 - Prompt Injection invalid drafts make no policy write; correction preserves exact HIGH sensitivity, supported category, unknown metadata and intended key in API, PostgreSQL, pushed config and reopened JSON, with a safe uncached echo
 - an unreachable Content Moderation count retains the draft without writing; correcting it to 3 preserves the existing policy, key and metadata in API, PostgreSQL, pushed config and reopened JSON
 - an active alias collision including a disabled duplicate returns 400 without a row; inactive API save and UI activation refusal preserve both raw checks, and inactive UI save retains their exact options in API and PostgreSQL
+
+### GW-E2E-020 — named providers save their native API format
+
+**Goal:** A user changes named providers without saving a connection under the previous provider’s protocol
+
+**Spec:** `flows/gateway/provider-format.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Add Provider and switch from OpenAI to Anthropic, Google and Azure in turn
+2. see the selected native API format, with no incompatible choices
+3. save each provider with a synthetic endpoint, key and unique manually entered model
+4. reopen each saved provider and see the same API format
+5. switch from Anthropic back to OpenAI, then to Custom and choose a format explicitly
+
+**Backend state verified:**
+
+- the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
+
+### GW-E2E-023 — request logs tell an unpriced request apart from a free and a priced one
+
+**Goal:** Someone reading the gateway Request Logs can tell a request whose model has no price apart from a request that really cost $0 and from a priced one, in the table and in the request drawer
+
+**Spec:** `flows/gateway/unpriced-request-cost.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision an organization of the test's own, an org provider on the managed mock listing an unpriced, a zero-priced and gpt-4o-mini model, an org config pricing only the zero model at 0, and an org API key
+2. wait for the gateway to hold the pushed org config
+3. send one real chat completion per model with the org key
+4. open Request Logs and read the Cost cell of each of the three rows
+5. hover the Unpriced chip and read its tooltip
+6. open each request's drawer and read its Cost
+
+**Backend state verified:**
+
+- the gateway answers all three completions with HTTP 200, a request id and the requested model
+- PG agentcc_request_log holds exactly the three request ids: unpriced cost 0 with cost_source unpriced, free cost 0 with no cost_source, gpt-4o-mini cost above 0 with cost_source catalogue, all status 200
+- the request-logs list and detail endpoints return the same three request IDs, costs and cost sources as the stored rows
+- the table shows Unpriced with the explanatory tooltip only for the unpriced row, $0.00 for the free row and the formatted API cost for gpt-4o-mini
+- each request drawer shows the same Cost as its table row
+
+### GW-E2E-024 — Add/Edit Provider saves only the models the user picked or typed
+
+**Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
+
+**Spec:** `flows/gateway/provider-model-selection.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway providers and start adding a custom provider with a base URL and API key
+2. pick one listed model, hover another listed model and click away
+3. type a model ID with surrounding spaces and click away
+4. add the provider
+5. edit the provider, hover a selected and an unselected listed model and click away
+6. type another model ID and press Save Changes directly
+7. reopen the provider and see exactly the picked and typed models
+
+**Backend state verified:**
+
+- the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200
+- the gateway config API returns the added provider with models exactly [listedA, typedOne]
+- the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree
 
 ## knowledge-base
 
@@ -1972,7 +2428,7 @@
 
 **Goal:** A user opens a voice call whose recording cannot be fetched and learns that, instead of watching a spinner forever
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:100`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:108`
 
 **Tags:** —
 
@@ -1992,7 +2448,7 @@
 
 **Goal:** A user opens a voice call that has no recording at all and sees a plain explanation
 
-**Spec:** `flows/observe/voice-recording-error.spec.ts:153`
+**Spec:** `flows/observe/voice-recording-error.spec.ts:161`
 
 **Tags:** —
 
@@ -2033,7 +2489,7 @@
 
 **Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end
 
-**Spec:** `flows/observe/list-pagination.spec.ts:220`
+**Spec:** `flows/observe/list-pagination.spec.ts:193`
 
 **Tags:** —
 
@@ -2056,7 +2512,7 @@
 
 **Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation
 
-**Spec:** `flows/observe/list-pagination.spec.ts:446`
+**Spec:** `flows/observe/list-pagination.spec.ts:419`
 
 **Tags:** —
 
@@ -2076,7 +2532,7 @@
 
 **Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1
 
-**Spec:** `flows/observe/list-pagination.spec.ts:538`
+**Spec:** `flows/observe/list-pagination.spec.ts:511`
 
 **Tags:** —
 
@@ -2095,7 +2551,7 @@
 
 **Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists
 
-**Spec:** `flows/observe/list-pagination.spec.ts:592`
+**Spec:** `flows/observe/list-pagination.spec.ts:565`
 
 **Tags:** —
 
@@ -2115,7 +2571,7 @@
 
 **Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it
 
-**Spec:** `flows/observe/list-pagination.spec.ts:671`
+**Spec:** `flows/observe/list-pagination.spec.ts:644`
 
 **Tags:** —
 
@@ -2123,8 +2579,8 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10 (Next enabled)
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. capture the Next label's DOM node and watch the pager subtree for ~1.5s
+3. capture the Next label's DOM node and observe it while alternating row heights for ~1.5s
+4. verify each row-height change re-renders the pager ancestor (INT-06)
 5. confirm the node is never removed from the DOM and stays connected
 
 **Backend state verified:**
@@ -2135,7 +2591,7 @@
 
 **Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render
 
-**Spec:** `flows/observe/list-pagination.spec.ts:737`
+**Spec:** `flows/observe/list-pagination.spec.ts:698`
 
 **Tags:** —
 
@@ -2143,10 +2599,10 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. install capture-phase pointer/click counters on the pager root
-5. press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1
-6. repeat the same dwell-click on Back
+3. install capture-phase pointer/click counters on the pager root
+4. hold Next down while changing row heights and verifying the ancestor re-renders, then release
+5. confirm the page advanced with one press, release and click
+6. repeat the same dwell-click on Back and confirm the pager returns to page 1
 
 **Backend state verified:**
 
@@ -2156,7 +2612,7 @@
 
 **Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position
 
-**Spec:** `flows/observe/list-pagination.spec.ts:806`
+**Spec:** `flows/observe/list-pagination.spec.ts:761`
 
 **Tags:** —
 
@@ -2196,7 +2652,7 @@
 
 **Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced
 
-**Spec:** `flows/observe/list-pagination.spec.ts:846`
+**Spec:** `flows/observe/list-pagination.spec.ts:801`
 
 **Tags:** —
 
@@ -2216,7 +2672,7 @@
 
 **Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on
 
-**Spec:** `flows/observe/list-pagination.spec.ts:933`
+**Spec:** `flows/observe/list-pagination.spec.ts:888`
 
 **Tags:** —
 
@@ -2812,6 +3268,113 @@
 - the example API encodes the exact project name into one quoted Python literal
 - the visible Users setup code equals the exact example API result
 
+### OBS-E2E-063 — choose Sessions for a new Insights report while the session check is still loading
+
+**Goal:** Start a new Insights report on Sessions, even when I pick Sessions before the page has finished checking that the project has sessions (the report is started, its contents are not claimed: a run cannot finish in the E2E stack)
+
+**Spec:** `flows/observe/insights-new-report.spec.ts:47`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed three traces with session.id in two sessions in a minted project
+2. open the project's Traces view and choose Find patterns (a New report on Traces), then the rail's New report (a fresh form)
+3. hold the form's sessions check (the real request is delayed, then continued; nothing is stubbed)
+4. click the already-selected Sessions unit
+5. see the estimate go out for sessions and Run report become enabled while the check is still held
+6. release the check and click Run report
+
+**Backend state verified:**
+
+- ClickHouse spans FINAL holds every seeded span with its trace_session_id: one session per label, two in all
+- POST /tracer/insights/estimate/ was sent with unit sessions before the held sessions check was released, and counted the two sessions
+- POST /tracer/insights/runs/ returns a run_id and config_id, and PG holds exactly one insights config (unit sessions) and one run for the actor org and project
+
+### OBS-E2E-064 — Ask Jev stays in reach as example questions are added, and the cost confirm has one primary action
+
+**Goal:** Write a question for Jev, add example questions without losing the Ask button, confirm the read, and start the run
+
+**Spec:** `flows/observe/ask-jev-composer.spec.ts:123`
+
+**Tags:** —
+
+**User steps:**
+
+1. send 4 traces to a new Observe project
+2. save the org TypeSafe key through the endpoint AI Providers uses
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question, with the count held back
+4. open Past questions, switch to the horizontal nav layout and narrow the window 40 px at a time, then restore the window, Past questions and the vertical layout
+5. type a question and add two example questions from Try one
+6. click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back
+7. click Ask Jev again and click Start
+
+**Backend state verified:**
+
+- POST /tracer/instant-eval/estimate/ answers rows_to_read 4 and needs_confirm true for the project's traces
+- no POST /tracer/instant-eval/start/ is sent from Enter on the confirm's focused Back
+- POST /tracer/instant-eval/start/ is sent confirmed for 4 rows and returns a task_id, and PG holds its tracer_eval_task and tracer_instant_eval_run for the actor org with rows_requested 4
+
+**Browser observations:**
+
+- Question 1 stays at the same height on the page while the count is held back and after the size cards land
+- with Past questions open on the horizontal nav layout, narrowing the window 40 px at a time from 1280 px to 600 px (until the composer is under 220 px), the size card stays inside its pane, the size block never overflows, and the pane does not scroll sideways while the composer has 240 px
+- the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it
+- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus
+- Enter on the focused Back closes the confirm and gives Ask Jev focus again
+
+### OBS-E2E-065 — Ask Jev reads every trace and shows each answer
+
+**Goal:** Ask Jev a yes/no question about my traces and see every trace answered, with the counts adding up
+
+**Spec:** `flows/observe/ask-jev-run.spec.ts:57`
+
+**Tags:** —
+
+**User steps:**
+
+1. send 3 traces to a new Observe project, one whose output the mock answers No
+2. save the org TypeSafe key through the endpoint AI Providers uses
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question
+4. type a yes/no question and click Ask Jev, which starts at once under the confirm size
+5. watch the run finish: its status line says every trace was answered
+6. read the run's traces table
+
+**Backend state verified:**
+
+- GET /tracer/instant-eval/summary/ reaches status completed with answered 3, failed 0 and counts Yes 2, No 1
+- GET /tracer/instant-eval/rows/ returns exactly the three seeded trace ids, each with its expected answer
+
+**Browser observations:**
+
+- the status line says 3 traces answered and the counts read 2 Yes · 1 No
+- the traces table shows exactly the three seeded traces, each with the same answer as the rows API
+
+### OBS-E2E-071 — select-all add to a new dataset keeps the grid filter, time window and deselections
+
+**Goal:** A developer filters the trace list, narrows the time window, selects all but one trace and gets a new dataset holding exactly those traces
+
+**Spec:** `flows/observe/bulk-add-to-dataset.spec.ts:74`
+
+**Tags:** —
+
+**User steps:**
+
+1. send three matching traces now, one non-matching trace now and two matching traces ten days ago
+2. open the project's trace list and widen the date range to Past 30D
+3. filter by the shared trace name and see all five matching traces
+4. narrow the date range to Past 7D and see only the three recent ones
+5. select all with the header checkbox, then untick one row
+6. Actions → Move to dataset → Add to a new dataset with the default mapping
+7. filter by a trace name that matches nothing, select all and try to add to another new dataset
+
+**Backend state verified:**
+
+- all twelve seeded spans present in CH `spans` (FINAL) under the auto-created project
+- the new dataset has exactly the grid count minus one rows in PG model_hub_row
+- the dataset's `id` cells in PG model_hub_cell are exactly the root spans of the two still-selected recent traces: no unticked, non-matching or out-of-window trace
+- the no-match add is refused with a 400 and the "No rows match the selection." toast, and no dataset of that name exists in PG model_hub_dataset
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -2912,7 +3475,7 @@
 
 **Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
 
-**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+**Spec:** `flows/settings/api-key-expiry.spec.ts:34`
 
 **Tags:** —
 
@@ -2935,13 +3498,58 @@
 - The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
 - Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
 
+### SET-E2E-004 — a link to the TypeSafe key opens AI Providers on that provider and survives navigation
+
+**Goal:** Follow a link to add a TypeSafe key, save it, and land on the TypeSafe card again after moving around AI Providers and going Back
+
+**Spec:** `flows/settings/ai-providers-deep-link.spec.ts:46`
+
+**Tags:** —
+
+**User steps:**
+
+1. open AI Providers from a link that names the TypeSafe provider
+2. see the search filled with typesafe and only the TypeSafe card
+3. enter the TypeSafe API key and add it
+4. click AI Providers in the sidebar and see every provider
+5. choose the Custom model category
+6. go Back and see the All category with only the TypeSafe card again
+
+**Backend state verified:**
+
+- POST /model-hub/api-keys/ saves the key and GET /model-hub/develops/provider-status/ then lists typesafe with has_key true
+- PG model_hub_apikey holds exactly one live typesafe row for the actor org
+- the All count after the plain sidebar link equals the providers provider-status lists plus the org custom models
+
+### SET-E2E-005 — a provider search that matches nothing says so and clears back to every provider
+
+**Goal:** Search AI Providers for a name that does not exist, be told nothing matched in the category I am in, and get the full list back in one click
+
+**Spec:** `flows/settings/ai-providers-no-match.spec.ts:32`
+
+**Tags:** —
+
+**User steps:**
+
+1. open AI Providers
+2. search for a provider name that does not exist
+3. see that no AI providers match it
+4. choose the Custom model category and see that no custom models match it
+5. click Clear filters
+6. see the All category with an empty search and every provider
+
+**Backend state verified:**
+
+- GET /model-hub/develops/provider-status/ has no provider whose name contains the searched text
+- after Clear filters the All count equals the providers provider-status lists plus the org custom models
+
 ## simulate
 
 ### SIM-E2E-001 — Simulate opens on Environments, and an org from after the cutoff sees only Environments
 
 **Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links
 
-**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:32`
 
 **Tags:** —
 
@@ -2952,28 +3560,28 @@
 3. open the old Simulator Agent link
 4. open the old Personas link
 5. open the Personas tab
-6. open the Prebuilt template links
+6. open the Prebuilt list
 7. read the Simulate menu
 8. open the old Agent Definition link
-9. open the Scenarios, Run Simulation and Agent Definition links directly
+9. open the Scenarios, Run Simulation, Agent Definition and template id links directly
 
 **Browser observations:**
 
 - /dashboard/simulate lands on Environments
-- harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>
+- harness lands on Environments, harness/new on My Environments with the Build environment drawer open (build= in the address), harness/<id> on environments/<id>
 - simulator-agent lands on Environments
 - personas lands on the Environments Personas tab
 - the Personas tab is selected and shows the persona search
-- both template URLs stay on their URL and open their page by title
+- the Prebuilt list stays on its URL and opens its page by title
 - agent-definitions lands on Connected agents
 - the Simulate menu is exactly Environment
-- /dashboard/simulate/scenarios, /test and /agent-definitions/<id> land on /404
+- /dashboard/simulate/scenarios, /test, /agent-definitions/<id> and environments/templates/<id> land on /404
 
 ### SIM-E2E-002 — an org from before the Simulate cutoff keeps Scenarios and Run Simulation
 
-**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu
+**Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu, and can debug the failures of a finished Run Simulation run once it has 15 connected calls
 
-**Spec:** `flows/simulate/existing-customer-pages.spec.ts:22`
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:89`
 
 **Tags:** —
 
@@ -2981,6 +3589,8 @@
 
 1. read the Simulate menu
 2. open Scenarios and Run Simulation from the menu
+3. open a finished Run Simulation run with 14 connected calls and point at Debug failures
+4. open a finished Run Simulation run with 15 connected calls and 14 completed calls
 
 **Backend state verified:**
 
@@ -2990,12 +3600,14 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+- at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."
+- at 15 connected calls and 14 completed calls Debug failures is enabled
 
 ### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
 
 **Goal:** An environment-only organisation turns production sessions from Observe into a draft regression import for one of its environments, through the reviewed bridge and never legacy Replay, and sees what the evidence holds and lacks
 
-**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:37`
+**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:43`
 
 **Tags:** —
 
@@ -3014,21 +3626,21 @@
 - the Actions menu is exactly "Add to annotation queue" and "Create environment test": no Replay for an environment-only org
 - from the Actions click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, and no request names replay
 - simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
-- the import's bundle re-reads Observe: each case's transcript holds its minted ask, and redaction reports the minted email as an EMAIL_ADDRESS finding
-- the review shows both cases waiting, the transcript present, the starting state missing, and that the test is not an exact replay
+- the import's bundle re-reads Observe: each case's transcript holds its minted ask, redaction reports the minted email as an EMAIL_ADDRESS finding, and each case's starting state is missing, with the reason that the draft labels what it assumes synthetic
+- the review shows both cases waiting, the transcript present, the starting state missing, and one Starting state alert saying Observe lacks the seed records (an earlier refund), the draft marks them synthetic and the test is not an exact replay; it never claims an exact replay
 
 ### SIM-E2E-004 — a person pastes a transcript into an environment and sees its personal data replaced and marked as their transcript
 
 **Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
 
-**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:44`
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:50`
 
 **Tags:** —
 
 **User steps:**
 
 1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
-2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
+2. open the environment's Scenarios tab, choose Add scenarios, then Upload transcript or file
 3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
 4. fix the line, name the transcript and import it
 5. land on the Scenarios tab with the import's review open
@@ -3112,7 +3724,7 @@
 - the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
 - the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
-- the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the epoch page's stages are Writing variations, Reproducing, Diagnosing, Proposing and Checking, and Writing variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
 - the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
 
 ### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
@@ -3136,11 +3748,43 @@
 
 **Browser observations:**
 
-- the ending reads "No safe improvement: the only candidate went over the cost or latency limit."
+- the ending reads "The only candidate went over the reply-time or cost limit."
 - the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
 - the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+
+### SIM-E2E-009 — a multi-agent call shows its participants step by step, an unplaced hand-off as not tied to a participant, and a refused worker action
+
+**Goal:** A developer opens a multi-agent call and sees which participant did what, step by step, which step the record could not tie to a participant, and what the world refused a participant
+
+**Spec:** `flows/simulate/participants-table.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one completed chat call with a stored Participants record and trial world changes
+2. open the call from its run
+3. open the Participants tab
+4. pick the first hand-off step and Open in trace, then close the trace
+5. go back to Participants and pick the hand-off the record could not place
+6. open the World state tab
+7. open the call the user stopped and its Participants tab
+
+**Backend state verified:**
+
+- the workers API serves two turns, each step with its turn and order, and the second hand-off as relationship unknown
+
+**Browser observations:**
+
+- one lane per participant, in the order they first act, plus one for the step the record could not tie
+- the order-lookup hand-off is numbered before the refund hand-off
+- a step read from a trace opens that trace, and closing it leaves the call on its Traces tab
+- the unplaced hand-off comes from the lane not tied to a participant
+- World changes lists the worker's refused attempt with its reason
+- World changes lists the order two workers named, with its committed writes
+- the stopped call says it was stopped by the user, and its cancelled worker was stopped with the run sandbox
 
 ### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
 
@@ -3173,6 +3817,30 @@
 - Add actor offers the caller's side and the world, and opens Add actor on the side picked
 - the Scenarios table names the actor, never its raw id
 - World state reads "1 read" and "Committed: issue_refund"
+
+### SIM-E2E-011 — the Contract tab lists the declared workers, and a worker the harness stopped at its deadline says so
+
+**Goal:** A developer reviews which workers the app declares before a run, and after a run sees that a worker past its deadline was stopped, not only refused
+
+**Spec:** `flows/simulate/worker-stop-and-declared-workers.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an Environment whose contract declares two workers, with a call whose refund worker the harness stopped at its deadline
+2. open its Contract tab
+3. open that call and its Participants tab
+
+**Backend state verified:**
+
+- the environment detail serves both declared workers with their binding and the tools each may use
+- the workers API serves the stopped worker as past its deadline with cleanup stopped
+
+**Browser observations:**
+
+- the Participants card lists each declared participant with its connection and only the tools it may use
+- the stopped call says the refund worker was stopped when its deadline passed
 
 ### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
 
@@ -3294,3 +3962,270 @@
 - her decision reads Refused
 - a line says the agent committed the change after Dana Brooks refused it
 - the approval names the refund the agent wrote after the decision
+
+### SIM-E2E-030 — a pairing reads its readiness, a re-check validates it, and a run waits for the check
+
+**Goal:** A developer reads whether an agent, environment and suite pairing can run and why, asks for an unchecked pairing to be checked, and is told to wait rather than run it while the check runs
+
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment whose contract routes issue_refund to production, and a built one whose pairing was never certified (e2e/lib/harness_environment_seed.py)
+2. read the certified pairing's readiness (GET capabilities)
+3. read the uncertified pairing's readiness
+4. ask for it to be checked again (POST capabilities/recheck)
+5. read its readiness while the check runs
+6. try to run a scenario on that pairing
+
+**Backend state verified:**
+
+- the certified pairing names the seeded default versions, reads its evidence from the pair certificate, and its measured rows are exactly five Supported and tool routing Blocked as production_only, answer blocked
+- the uncertified pairing reads not_run and unchecked
+- recheck answers 202 with a validating recheck validation, and the report then reads validating with that job
+- the validation is a queued certify-only job of this Environment pinned to its pending bundle, and the default agent did not move
+- the run answers 409 pair_validating, retryable, with when to retry and the check it waits on, and creates no run job
+
+### SIM-E2E-031 — the cases a pairing holds back are bucketed and paged by scenario number
+
+**Goal:** A developer selecting scenarios to run sees how many of them the pairing can run, how many it holds back and why, and pages through the held-back cases
+
+**Spec:** `flows/simulate/affected-scenarios.spec.ts:25`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, certified Environment of 53 refund and 2 lookup scenarios whose contract routes issue_refund to production (e2e/lib/harness_environment_seed.py)
+2. read the pairing's readiness for the whole suite (GET capabilities)
+3. page through the blocked cases (GET capabilities/cases?bucket=blocked, then cursor=next)
+4. read the eligible cases
+
+**Backend state verified:**
+
+- the buckets add up to requested: 2 eligible and 53 blocked of 55, each list naming exactly the seeded keys
+- tool routing holds back 53 of 55
+- the blocked cases page 50 at a time by scenario number: the first page ends on its last number as next, the second holds the rest with no next, every case held by tool_routing
+- the eligible page is the two lookups, held by nothing
+- the page numbers are the stored suite members' numbers
+
+### SIM-E2E-032 — a pairing whose check failed refuses runs with a plain reason, and a re-check starts afresh
+
+**Goal:** A developer whose agent failed its check with an environment is told why when a run is refused, without internal detail, and can check the pairing again
+
+**Spec:** `flows/simulate/pairing-readiness.spec.ts:150`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built Environment whose pairing's last check failed on issue_refund (e2e/lib/harness_environment_seed.py, failed_check)
+2. read the pairing's readiness (GET capabilities)
+3. try to run a scenario on that pairing
+4. ask for it to be checked again (POST capabilities/recheck)
+
+**Backend state verified:**
+
+- the report reads validation failed with a plain reason naming issue_refund, answer blocked, and tool routing Blocked on the failed action
+- the run answers 409 pair_failed, not retryable, with the reason code and a reason naming issue_refund, carries no internal text, and creates no run job
+- recheck answers 202 with a new validating job, and the bundle is pending again
+
+### SIM-E2E-033 — run readiness shows each worker's tools as Allowed, Blocked or Not enforced, never Supported
+
+**Goal:** A developer testing a multi-agent app sees, per worker, which tools the test world holds it to, and is told to rebuild an environment sealed before worker limits
+
+**Spec:** `flows/simulate/readiness-worker-boundaries.spec.ts:18`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a certified Environment with two separately wired workers and ALK's root door.json, worker-limits.json and tool proxy files sealed (e2e/lib/harness_environment_seed.py, workers=sealed)
+2. seed one with the same workers sealed before worker limits (workers=old_seal)
+3. read each pairing's readiness (GET capabilities)
+
+**Backend state verified:**
+
+- the sealed pairing reads both workers Partial held_at_world_cooperative, the lookup worker's lookup_order Allowed and issue_refund Blocked, and no worker Supported
+- the old seal reads both workers Untested sealed_before_worker_limits with a rebuild fix and every tool Not enforced
+
+### SIM-E2E-034 — a worker whose limits nothing holds keeps back the cases relying on it, and the run refusal names it
+
+**Goal:** A developer testing a multi-agent app who selects only the cases a blocked worker holds back is told which worker holds them and why, instead of a refusal that names nothing
+
+**Spec:** `flows/simulate/worker-hold-names-the-worker.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a certified Environment with two separately wired workers whose tool service ALK sealed outside the world's door, 2 refund cases that give the refund worker a budget (each sealed held in worker-limits.json) and 2 lookups (e2e/lib/harness_environment_seed.py)
+2. read the pairing's readiness (GET capabilities)
+3. start a run of only the refund cases (POST run)
+
+**Backend state verified:**
+
+- readiness counts 2 cases held back by the refund worker and 2 eligible
+- the run is refused all_cases_blocked, and the message names the Refund worker with the held reason
+
+### SIM-E2E-035 — a user stops a running Run, and its call reads Cancelled in the calls list, the chips and analytics while a skipped case stays Error
+
+**Goal:** A developer stops a Run mid-call and sees the stopped call counted as Cancelled, never as an error, while a case the harness skipped still reads Error
+
+**Spec:** `flows/simulate/stop-run-reads-cancelled.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a running hosted Run with one call under way and one case the harness skipped
+2. open the Run and click Stop simulation, then Stop run
+3. reload the Run once it has stopped
+4. read the status chips
+5. open Analytics and click the donut legend entry for Cancelled calls
+
+**Backend state verified:**
+
+- the calls API serves the stopped call as cancelled and the skipped case as error, with status counts Cancelled 1 and Error 1
+- the runs list serves the Run as Cancelled with one cancelled outcome, no errored one and the skipped case as skipped
+
+**Browser observations:**
+
+- after the stop the Run offers no Stop control
+- the Cancelled chip counts 1 and the Error chip counts 1
+- the donut legend entry for Cancelled calls opens the calls list on the stopped call alone
+
+### SIM-E2E-036 — an environment-only org imports Observe sessions only into its own workspace's environments, and no other org or workspace reaches them
+
+**Goal:** A person in an environment-only organisation creates an environment test from Observe and reaches only their own workspace's environments and projects, while another organisation or workspace can neither import into them nor read the import
+
+**Spec:** `flows/simulate/evidence-import-tenant-scope.spec.ts:38`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one session in a minted Observe project for each of two organisations' owners, A and B
+2. seed three built, versioned environments: in A's workspace, in A's sibling workspace and in B's (lib/environment-seed.ts)
+3. as A, open the project's Sessions, select the seeded session, choose Actions then Create environment test, and open the environment picker
+4. pick A's environment and import; land on its review
+5. as A, and as A scoped to the sibling workspace, import naming another organisation's or workspace's environment or project
+6. as B, read A's import through A's environment and through B's own
+7. as a viewer of A's workspace, import into A's environment and draft A's import
+
+**Backend state verified:**
+
+- both seeded sessions are stored for their own project in ClickHouse trace_sessions (FINAL)
+- A's organisation is environment-only, and the environment picker lists exactly A's environment: not the sibling workspace's, not B's
+- the import answers 201 and lands on the review; simulate_evidence_import has one row for A's organisation, A's environment and A's project, with one pending case for the seeded session
+- the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
+- B reading A's import answers 404, through A's environment and through B's own
+- a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending
+
+### SIM-E2E-037 — a Viewer opens a built environment, finds Run and Rename locked with the reason, and is refused a run
+
+**Goal:** A Viewer of a workspace opens one of its built environments, sees that they can't start a run or rename it and why, and the API refuses the run they try anyway without starting anything
+
+**Spec:** `flows/simulate/viewer-environment-refusal.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment in the owner's workspace (lib/environment-seed.ts)
+2. as a Viewer of that workspace, open the environment
+3. hover Run simulation
+4. look at Rename
+5. as the same Viewer, start a run through the API
+
+**Backend state verified:**
+
+- the run answers 403 with code viewer_read_only, action "start a paid run" and its reason
+- simulate_hosted_harness_job has no run job for the environment afterwards
+
+**Browser observations:**
+
+- the environment opens on its workspace with its name
+- Run simulation is disabled and its tooltip says "You don't have permission to start runs."
+- Rename environment is disabled
+
+### SIM-E2E-038 — a reviewed draft saves only the accepted change, and only through Validate
+
+**Goal:** A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule
+
+**Spec:** `flows/simulate/reviewed-change-save.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment and a draft rule the builder chat added in answer to a message (e2e/lib/simulate-seed.ts; no hosted build runs in this harness)
+2. add a Manager actor through the actors route
+3. read the review: the rule cited to the message, the actor to the person
+4. accept the rule and reject the actor
+5. try a plain Save, first with the decisions alone, then with the review digest too
+6. Validate
+7. stand in for the validation job: proofs recorded, the candidate pairing certified, the job completed (no sandbox in this harness)
+8. read the drafts until validation is ready, then Save the candidates with a name
+
+**Backend state verified:**
+
+- a plain Save of a draft with decisions recorded is refused 409 validation_required, with or without the review digest, and the default does not move
+- Validate answers 202 with candidates, which the drafts read returns in the same shape, while the default stays put
+- after Save the Environment default is the candidate version, active and named, holding the rule and its amendment line and not the actor
+- no draft is left open once saved
+
+### SIM-E2E-039 — a stopped Run reads Stop requested while its agent is unconfirmed, and Stopped once the stop is confirmed
+
+**Goal:** A developer stops a Run and is told Stop requested while the agent's side has not confirmed it stopped, and Stopped only once it has
+
+**Spec:** `flows/simulate/stop-run-cancel-confirmation.spec.ts:39`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two running Runs in one environment: one whose agent runs at its own URL, one whose agent ran in our sandbox
+2. open the URL agent's Run and click Stop simulation, then Stop run
+3. read the Run's status and hover it
+4. open the sandboxed agent's Run and stop it the same way
+5. open the environment's Runs tab and read both Runs' status
+
+**Backend state verified:**
+
+- the calls API serves the URL agent's Run as cancelled with its stop requested, of the endpoint kind
+- the URL agent's hosted job is canceled with its stop requested and not confirmed
+- the calls API serves the sandboxed Run with its stop confirmed by sandbox_absent, and so does its hosted job
+- the runs list serves the URL agent's Run as requested and the sandboxed Run as confirmed
+
+**Browser observations:**
+
+- the URL agent's Run reads Stop requested, its hover says the stop can't be confirmed, and its note says why
+- the runs list reads Stop requested for the URL agent's Run and Stopped for the sandboxed Run
+
+### SIM-E2E-040 — a developer narrows an environment's Epochs list to one status and sees only the epochs in it
+
+**Goal:** A developer narrows an environment's Epochs list to one status and sees only the epochs in it
+
+**Spec:** `flows/simulate/epochs-status-filter.spec.ts:94`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the environment's Epochs tab
+2. read every epoch under All statuses
+3. choose Running
+4. choose No safe improvement
+5. choose Ready for review
+6. choose All statuses again
+
+**Browser observations:**
+
+- All statuses asks the list with no state and shows exactly the three minted epochs, newest first
+- Running asks for state=queued,running,stopping and shows exactly the stopping epoch
+- No safe improvement asks for state=no_improvement and shows exactly that epoch
+- Ready for review asks for state=ready and says no epoch has that status
+- All statuses again shows the three epochs

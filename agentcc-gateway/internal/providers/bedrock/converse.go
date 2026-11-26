@@ -108,7 +108,8 @@ type converseToolResult struct {
 }
 
 type converseToolConfig struct {
-	Tools []converseTool `json:"tools"`
+	ToolChoice map[string]any `json:"toolChoice,omitempty"`
+	Tools      []converseTool `json:"tools"`
 }
 
 type converseTool struct {
@@ -221,6 +222,14 @@ func buildConverseRequest(req *models.ChatCompletionRequest) (*converseRequest, 
 		cr.OutputConfig = &converseOutputConfig{TextFormat: format}
 	}
 
+	if cr.ToolConfig != nil {
+		var mode string
+		if json.Unmarshal(req.ToolChoice, &mode) == nil && mode == "required" {
+			cr.ToolConfig.ToolChoice = map[string]any{"any": struct{}{}}
+		} else if tc := translateToolChoice(req.ToolChoice); tc != nil && tc.Type == "tool" {
+			cr.ToolConfig.ToolChoice = map[string]any{"tool": map[string]string{"name": tc.Name}}
+		}
+	}
 	return cr, modelID
 }
 

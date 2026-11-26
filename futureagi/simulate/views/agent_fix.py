@@ -27,6 +27,7 @@ from simulate.selectors.agent_fix import (
     fix_runs_for_read,
     launch_options,
 )
+from simulate.selectors.agent_fix_issue import jobs_of_epochs
 from simulate.serializers.agent_fix import (
     AgentFixCandidateCreatedSerializer,
     AgentFixCandidateUploadSerializer,
@@ -103,7 +104,7 @@ class _FixRunPages(ExtendedPageNumberPagination):
 
 
 class AgentFixRunViewSet(viewsets.ViewSet):
-    """A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+    """A user's epochs: start one from a finished run, follow it, stop it,
     and ship its winner: the environment's default, or a GitHub pull request."""
 
     permission_classes = [IsAuthenticated]
@@ -153,10 +154,16 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         paginator = _FixRunPages()
         page = paginator.paginate_queryset(
-            fix_runs_for_environment(environment), request, view=self
+            fix_runs_for_environment(
+                environment, states=request.validated_query_data.get("state")
+            ),
+            request,
+            view=self,
         )
         return paginator.get_paginated_response(
-            AgentFixRunSerializer(page, many=True).data
+            AgentFixRunSerializer(
+                page, many=True, context={"issue_links": jobs_of_epochs(page or [])}
+            ).data
         )
 
     @validated_request(

@@ -119,6 +119,62 @@ function normalizeHostStatusSchema(schema) {
   return nullable ? { anyOf: [result, { type: "null" }] } : result;
 }
 
+// Run Epoch from an Error Feed issue sends these nested objects as null. drf-yasg
+// writes x-nullable beside no $ref, so the nullable ones are named here.
+const EPOCH_NULLABLE_REFS = ["issue", "report", "failure", "plan", "diagnosis"];
+const AGENT_FIX_ISSUE_NULLABLE_REFS = {
+  SimulationEvidenceCall: ["goals"],
+  AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios"],
+  AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
+  AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
+  // The epoch an issue's page opens: before it ends it has no report, and only a
+  // failed one has a failure.
+  AgentFixRun: EPOCH_NULLABLE_REFS,
+  AgentFixRunDetail: EPOCH_NULLABLE_REFS,
+  AgentFixCandidate: ["verdict"],
+  AgentFixOverride: ["by"],
+};
+
+function isAgentFixIssueSchema(name) {
+  return (
+    name.startsWith("SimulationEvidence") ||
+    name.startsWith("AgentFixIssue") ||
+    name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
+    name === "AgentFixEpochIssue" ||
+    // The launch form's parts of an agent: a part it may change has no reason.
+    name === "AgentFixLaunchSurface"
+  );
+}
+
+// A scalar field's x-nullable becomes a null union. A definition's own x-nullable
+// only says how drf-yasg first met it, so it is dropped: the nested objects that are
+// sent as null are the ones AGENT_FIX_ISSUE_NULLABLE_REFS names.
+function withNullableFields(name, schema) {
+  const fields = AGENT_FIX_ISSUE_NULLABLE_REFS[name] || [];
+  if (!isAgentFixIssueSchema(name) && !fields.length) return schema;
+  const { "x-nullable": _definitionNullable, ...definition } = schema;
+  const properties = isAgentFixIssueSchema(name)
+    ? Object.fromEntries(
+        Object.entries(definition.properties || {}).map(([key, property]) => {
+          const { "x-nullable": nullable, ...rest } = property;
+          return [
+            key,
+            nullable === true ? { anyOf: [rest, { type: "null" }] } : rest,
+          ];
+        }),
+      )
+    : { ...definition.properties };
+  for (const field of fields) {
+    if (!properties[field]) {
+      throw new Error(
+        `${name}.${field} is not in the spec; update the nullable list`,
+      );
+    }
+    properties[field] = { anyOf: [properties[field], { type: "null" }] };
+  }
+  return { ...(isAgentFixIssueSchema(name) ? definition : schema), properties };
+}
+
 // The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
 // upgrade. Never insert native unions/null types into the Swagger 2 input, or
 // disable validation to make a nonconforming input pass.
@@ -131,12 +187,16 @@ function normalizeHostStatusSpec(spec) {
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
           name.startsWith("HostUpdateStatusResponse") ||
+          // Busy pauses have no measured row count; both the pause and its rows can be null.
+          name === "MetricCalculationPaused" ||
+          name.startsWith("AgentVersion") ||
+          name.startsWith("StoredAgent") ||
           // Every non-ready source state sends kind and the ids as explicit null.
           name === "EvalLogSourceNavigation" ||
           // A log row sends explicit null for ids its source does not have.
           name === "EvalApiLogRowResponseResult"
             ? normalizeHostStatusSchema(schema)
-            : schema,
+            : withNullableFields(name, schema),
         ]),
       ),
     },
@@ -860,6 +920,8 @@ export type ${jsonAlias} = JsonValueApi;`,
         ["requested_here", "boolean"],
         ["pickable", "boolean"],
         ["discardable", "boolean"],
+        ["name", "string"],
+        ["candidate_state", `${typeName}CandidateState`],
         ...extra,
       ]) {
         schemas = assertReplaceInNamedBlock(
@@ -872,6 +934,19 @@ export type ${jsonAlias} = JsonValueApi;`,
       }
     }
     // A piece without unsaved changes has no draft; a Save names the parent it saw.
+    // Validation and candidates are null until Validate has run.
+    for (const [field, valueType] of [
+      ["validation", "HarnessDraftValidationApi"],
+      ["candidates", "HarnessCandidatesApi"],
+    ]) {
+      schemas = assertReplaceInNamedBlock(
+        schemas,
+        "export interface HarnessDraftsApi {",
+        `${field}: ${valueType};`,
+        `${field}: ${valueType} | null;`,
+        `HarnessDraftsApi.${field} nullable`,
+      );
+    }
     for (const piece of ["environment", "suite"]) {
       schemas = assertReplaceInNamedBlock(
         schemas,
@@ -1195,6 +1270,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "$1JsonValueApi;",
       "conversation record JSON values → recursive JSON value",
     );
+    for (const field of ["Arguments", "Result", "Ok", "Error", "Refused"]) {
+      const alias = `SimulationEvidenceToolApi${field}`;
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = { [key: string]: unknown } | null;`,
+        `export type ${alias} = JsonValueApi;`,
+        `${alias} → recursive JSON value`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SimulationEvidenceCallApiPersona = {[key: string]: { [key: string]: unknown }} | null;",
+      "export type SimulationEvidenceCallApiPersona = { [key: string]: JsonValueApi } | null;",
+      "simulation persona → nullable JSON record",
+    );
     for (const recordType of [
       "ConversationVariablesApiConfigured",
       "ConversationVariablesApiCollected",
@@ -1222,7 +1312,10 @@ export type ${jsonAlias} = JsonValueApi;`,
       ["EvidenceImportCaseApi", "changed_since_import"],
       ["EvidenceImportCaseApi", "started_at"],
       ["EvidenceImportCaseApi", "ended_at"],
+      // Only a case already imported elsewhere repeats one.
+      ["EvidenceImportCaseApi", "duplicate_of"],
       ["EvidenceImportApi", "project_id"],
+      ["EvidenceImportApi", "dataset_id"],
       ["EvidenceImportApi", "agent_version_id"],
       ["EvidenceDraftRefApi", "id"],
     ]) {
@@ -1367,6 +1460,11 @@ export type ${jsonAlias} = JsonValueApi;`,
           /("discardable": zod\.boolean\(\)(?:\.describe\([^)]*\))?)/g,
           "discardable",
         ],
+        [/("name": zod\.string\(\)\.min\(1\)\.describe\([^)]*\))/g, "name"],
+        [
+          /("candidate_state": zod\.enum\(\[[^\]]*\]\)(?:\.describe\([^)]*\))?)/g,
+          "candidate_state",
+        ],
       ]) {
         zod = assertReplaceRegexInNamedBlock(
           zod,
@@ -1406,6 +1504,13 @@ export type ${jsonAlias} = JsonValueApi;`,
       /("(?:environment|suite)": zod\.object\(\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\))/g,
       "$1.nullable()",
       "SimulateApiHarnessEnvironmentsDraftsResponse.pieces nullable",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      draftsResponse,
+      /("(?:validation|candidates)": zod\.object\(\{(?:[^{}]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*\}\)(?:\.describe\([^)]*\))?)/g,
+      "$1.nullable()",
+      "SimulateApiHarnessEnvironmentsDraftsResponse.validation and candidates nullable",
     );
     zod = assertReplaceInNamedBlock(
       zod,
@@ -1724,6 +1829,13 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       "jsonValueSchema",
       "conversation evidence JSON values → recursive JSON value",
     );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse = zod.object({",
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "simulation evidence JSON values → recursive JSON value",
+    );
     for (const [anchor, label] of [
       [/("end_time": zod\.string\(\)\.datetime\([^)]*\))/, "end_time"],
       [/("agent_instructions": zod\.string\(\))/, "agent_instructions"],
@@ -1748,6 +1860,9 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
     for (const evidenceImportResponse of [
       "export const SimulateApiHarnessEnvironmentsEvidenceImportResponse = zod.object({",
       "export const SimulateApiHarnessEnvironmentsEvidenceImportsAddEvidenceCasesResponse = zod.object({",
+      // A Run Epoch from an issue carries its import for the review.
+      "export const SimulateApiAgentFixIssuesReadResponse = zod.object({",
+      "export const SimulateApiAgentFixIssuesStopResponse = zod.object({",
     ]) {
       zod = assertReplaceRegexInNamedBlock(
         zod,
@@ -1758,10 +1873,12 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       );
       for (const [anchor, label] of [
         [/("project_id": zod\.string\(\)\.uuid\(\))/, "project_id"],
+        [/("dataset_id": zod\.string\(\)\.uuid\(\))/, "dataset_id"],
         [/("agent_version_id": zod\.string\(\)\.uuid\(\))/, "agent_version_id"],
         [/("changed_since_import": zod\.boolean\(\))/, "changed_since_import"],
         [/("started_at": zod\.string\(\)\.datetime\([^)]*\))/, "started_at"],
         [/("ended_at": zod\.string\(\)\.datetime\([^)]*\))/, "ended_at"],
+        [/("duplicate_of": zod\.object\(\{[^{}]*\}\))/, "duplicate_of"],
         [/("at": zod\.string\(\)\.datetime\([^)]*\))/, "turn at"],
       ]) {
         zod = assertReplaceRegexInNamedBlock(

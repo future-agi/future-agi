@@ -128,6 +128,78 @@ class HarnessConversationBlockingInputSerializer(serializers.Serializer):
     )
 
 
+class HarnessConversationWindowSerializer(serializers.Serializer):
+    oldest_sequence = serializers.IntegerField(
+        allow_null=True,
+        help_text="The oldest sequence in this read; read what came before it with `before` set to it.",
+    )
+    has_older = serializers.BooleanField(
+        help_text="Items before `oldest_sequence` this read leaves out.",
+    )
+
+
+class HarnessConversationHistorySerializer(serializers.Serializer):
+    messages = HarnessConversationWindowSerializer()
+    events = HarnessConversationWindowSerializer(
+        required=False,
+        help_text="Absent on a read of only the events past `events_after`.",
+    )
+
+
+class HarnessConversationHistoryQuerySerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("messages", "events"))
+    before = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        help_text="Read the items just before this sequence. Give this or `around`.",
+    )
+    around = serializers.UUIDField(
+        required=False,
+        help_text=(
+            "Read the page of messages that holds this message (a change's `used` message id). Give this or"
+            " `before`; only with `kind` messages."
+        ),
+    )
+
+    def validate(self, attrs):
+        if ("before" in attrs) == ("around" in attrs):
+            raise serializers.ValidationError(
+                "Give exactly one of `before` and `around`."
+            )
+        if "around" in attrs and attrs["kind"] != "messages":
+            raise serializers.ValidationError("`around` reads messages only.")
+        return attrs
+
+
+class HarnessJobReadQuerySerializer(serializers.Serializer):
+    events_after = serializers.IntegerField(
+        min_value=0,
+        required=False,
+        help_text=(
+            "Only the builder chat events past this sequence, oldest first, `events_has_newer` saying whether more are"
+            " left; the newest ones when absent. Messages are always the newest ones whole."
+        ),
+    )
+
+
+class HarnessConversationHistoryPageSerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=("messages", "events"))
+    messages = HarnessConversationMessageSerializer(
+        many=True, help_text="Oldest first; empty for `kind` events."
+    )
+    events = HarnessConversationEventReadSerializer(
+        many=True, help_text="Oldest first; empty for `kind` messages."
+    )
+    oldest_sequence = serializers.IntegerField(allow_null=True)
+    newest_sequence = serializers.IntegerField(allow_null=True)
+    has_older = serializers.BooleanField(
+        help_text="Items before `oldest_sequence` this page leaves out."
+    )
+    has_newer = serializers.BooleanField(
+        help_text="Items after `newest_sequence` this page leaves out."
+    )
+
+
 class HarnessConversationReadSerializer(serializers.Serializer):
     conversation_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
@@ -138,6 +210,12 @@ class HarnessConversationReadSerializer(serializers.Serializer):
     messages = HarnessConversationMessageSerializer(many=True)
     events = HarnessConversationEventReadSerializer(many=True)
     event_watermark = serializers.IntegerField(min_value=0)
+    history = HarnessConversationHistorySerializer(
+        help_text="Where `messages` and `events` start, and whether older ones can be read with the history read."
+    )
+    events_has_newer = serializers.BooleanField(
+        help_text="On a read with `events_after`, whether more events past the last one here are left to read."
+    )
     runtime = HarnessConversationRuntimeSerializer()
 
 
@@ -163,6 +241,7 @@ class HarnessConversationEventSerializer(serializers.Serializer):
             "tool_result",
             "question_requested",
             "confirmation_requested",
+            "question_answered",
             "turn_interrupted",
             "turn_completed",
             "checkpoint_committed",
@@ -279,10 +358,26 @@ class HarnessConversationScenarioQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
     page_size = serializers.IntegerField(required=False, min_value=1, max_value=100)
     full = serializers.BooleanField(required=False, default=False)
+    removed = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Read instead the cases the environment had and no longer holds, to restore or copy one.",
+    )
+
+
+class HarnessConversationFailedScenarioSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField(max_length=255)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
 
 
 class HarnessConversationPublishSerializer(serializers.Serializer):
     digest = serializers.CharField(max_length=128)
+    # Scenarios the builder could not apply in this save.
+    failed_scenarios = serializers.ListField(
+        child=HarnessConversationFailedScenarioSerializer(),
+        required=False,
+        max_length=200,
+    )
 
 
 class HarnessConversationRunsQuerySerializer(serializers.Serializer):
@@ -309,6 +404,22 @@ class HarnessConversationOverviewQuerySerializer(serializers.Serializer):
     pass
 
 
+class HarnessLifecycleCountsSerializer(serializers.Serializer):
+    """Cases per state, and proved / not proved over every case not archived."""
+
+    draft = serializers.IntegerField()
+    validated = serializers.IntegerField()
+    active = serializers.IntegerField()
+    kept_as_written = serializers.IntegerField()
+    archived = serializers.IntegerField()
+    proved = serializers.IntegerField()
+    not_proved = serializers.IntegerField()
+    legacy_without_control = serializers.IntegerField(
+        help_text="Legacy cases running kept as written with no negative control: Validate and rebuild keep them "
+        "running as written, each with a warning that it has no negative control."
+    )
+
+
 class HarnessConversationOverviewSerializer(serializers.Serializer):
     environment = serializers.DictField()
     scenario_count = serializers.IntegerField()
@@ -320,4 +431,9 @@ class HarnessConversationOverviewSerializer(serializers.Serializer):
     drafts = serializers.DictField(
         required=False,
         help_text="The unsaved changes by piece, where the environment has drafts.",
+    )
+    lifecycle_counts = HarnessLifecycleCountsSerializer(
+        required=False,
+        allow_null=True,
+        help_text="Cases per lifecycle state, as the Scenarios tab counts them; null for an environment without versions.",
     )

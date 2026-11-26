@@ -18,9 +18,16 @@ const renderTab = (entry) =>
   });
 
 describe("useEnvironmentsTab", () => {
-  it("defaults to build when no tab param is present", () => {
+  it("defaults to My Environments when no tab param is present", () => {
     const { result } = renderTab("/x");
-    expect(result.current.tab).toBe("build");
+    expect(result.current.tab).toBe("my-environments");
+    expect(result.current.opensBuild).toBe(false);
+  });
+
+  it("reads the old ?tab=build as My Environments with the drawer to open", () => {
+    const { result } = renderTab("/x?tab=build");
+    expect(result.current.tab).toBe("my-environments");
+    expect(result.current.opensBuild).toBe(true);
   });
 
   it("reads a valid tab param", () => {
@@ -33,9 +40,10 @@ describe("useEnvironmentsTab", () => {
     expect(result.current.tab).toBe("personas");
   });
 
-  it("falls back to build for an unknown tab param", () => {
+  it("falls back to My Environments for an unknown tab param", () => {
     const { result } = renderTab("/x?tab=bogus");
-    expect(result.current.tab).toBe("build");
+    expect(result.current.tab).toBe("my-environments");
+    expect(result.current.opensBuild).toBe(false);
   });
 
   it("setTab writes the tab to the url", () => {

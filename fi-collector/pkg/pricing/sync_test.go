@@ -78,12 +78,12 @@ func newTestSyncer(t *testing.T, url string, baseEntries int) (*Syncer, *Pricer)
 }
 
 func priced(p *Pricer, model string) bool {
-	_, ok := p.TokenCost(context.Background(), "", model, 10, 10)
+	_, ok := p.TokenCost(context.Background(), "", model, 10, 10, "project")
 	return ok
 }
 
 func cost(p *Pricer, model string) float64 {
-	c, _ := p.TokenCost(context.Background(), "", model, 1000, 1000)
+	c, _ := p.TokenCost(context.Background(), "", model, 1000, 1000, "project")
 	return c
 }
 
@@ -220,7 +220,7 @@ func TestSync_WrongSchemaForEveryEmbeddedKeyKeepsTable(t *testing.T) {
 	}
 	f := newFakeCatalogue(t, string(body))
 	p := New(base, nil)
-	before, ok := p.TokenCost(context.Background(), "", "gpt-4o", 1000, 1000)
+	before, ok := p.TokenCost(context.Background(), "", "gpt-4o", 1000, 1000, "project")
 	if !ok || math.Abs(before-0.0125) > 1e-12 {
 		t.Fatalf("precondition: gpt-4o = (%v, %v), want (0.0125, true)", before, ok)
 	}
@@ -230,7 +230,7 @@ func TestSync_WrongSchemaForEveryEmbeddedKeyKeepsTable(t *testing.T) {
 	if p.table.Load() != base {
 		t.Error("the wrong-schema download replaced the table in use")
 	}
-	if c, ok := p.TokenCost(context.Background(), "", "gpt-4o", 1000, 1000); !ok || c != before {
+	if c, ok := p.TokenCost(context.Background(), "", "gpt-4o", 1000, 1000, "project"); !ok || c != before {
 		t.Errorf("gpt-4o = (%v, %v), want (%v, true)", c, ok, before)
 	}
 }
@@ -296,7 +296,7 @@ func TestSync_NegativeRateDropsTheEntry(t *testing.T) {
 			if got := cost(p, "gpt-4o"); got != 0.0025 {
 				t.Errorf("gpt-4o cost = %v, want the starting 0.0025", got)
 			}
-			if c, _ := p.TokenCost(context.Background(), "", "gpt-4o", 129000, 129000); c != 129000*2*gpt4oPrice {
+			if c, _ := p.TokenCost(context.Background(), "", "gpt-4o", 129000, 129000, "project"); c != 129000*2*gpt4oPrice {
 				t.Errorf("gpt-4o long-context cost = %v, want %v", c, 129000*2*gpt4oPrice)
 			}
 		})
@@ -336,7 +336,7 @@ func TestSync_AbsentOptionalRatesAccepted(t *testing.T) {
 
 	s.syncOnce(context.Background(), time.Second)
 
-	if c, ok := p.TokenCost(context.Background(), "", "input-only", 1000, 1000); !ok || c != 0.001 {
+	if c, ok := p.TokenCost(context.Background(), "", "input-only", 1000, 1000, "project"); !ok || c != 0.001 {
 		t.Errorf("input-only = (%v, %v), want (0.001, true)", c, ok)
 	}
 }
@@ -349,7 +349,7 @@ func TestSync_ExplicitFreePricingAccepted(t *testing.T) {
 
 	s.syncOnce(context.Background(), time.Second)
 
-	if c, ok := p.TokenCost(context.Background(), "", "free-model", 1000, 1000); !ok || c != 0 {
+	if c, ok := p.TokenCost(context.Background(), "", "free-model", 1000, 1000, "project"); !ok || c != 0 {
 		t.Errorf("free-model = (%v, %v), want (0, true)", c, ok)
 	}
 }

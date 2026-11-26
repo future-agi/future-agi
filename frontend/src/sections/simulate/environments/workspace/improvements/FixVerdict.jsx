@@ -1,16 +1,18 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { useFixScenarioRows } from "src/api/simulate-environments/fixRuns";
 
 import {
+  ceilingCards,
   checksLine,
   describeChecks,
   headline,
   pct,
+  provenOnTargetsOnly,
   verdictCards,
   winnerOf,
 } from "./fixRunView";
@@ -21,11 +23,22 @@ import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 const num = { fontVariantNumeric: "tabular-nums" };
 const line = { typography: "s3", color: "text.subtitle" };
 
+// A rate card reads from → to, the gap in points; a cost or reply-time card
+// comes already worded.
+const cardValue = (card) => {
+  // The gap's size; its note says which side did better.
+  if (card.id === "gap") return `${Math.abs(card.value)} pts`;
+  if (card.from != null) return `${card.from}% → ${card.to}%`;
+  return card.value;
+};
+
 function Card({ card }) {
-  const value =
-    card.id === "gap" ? `${card.value} pts` : `${card.from}% → ${card.to}%`;
+  const value = cardValue(card);
   return (
-    <Box sx={{ px: 2, py: 0.875, minWidth: 0 }}>
+    <Box
+      data-testid={`verdict-card-${card.id}`}
+      sx={{ px: 2, py: 0.875, minWidth: 0 }}
+    >
       <Typography noWrap sx={line}>
         {card.label}
       </Typography>
@@ -47,9 +60,12 @@ function Card({ card }) {
           </Typography>
         )}
       </Stack>
-      <Typography noWrap sx={line}>
-        {card.note}
-      </Typography>
+      {/* A why that does not fit on one line reads in full on hover. */}
+      <Tooltip arrow describeChild title={card.note} enterDelay={400}>
+        <Typography noWrap sx={line}>
+          {card.note}
+        </Typography>
+      </Tooltip>
     </Box>
   );
 }
@@ -59,7 +75,10 @@ function Checks({ tiers }) {
   const [all, setAll] = useState(false);
   const failed = tiers.filter((t) => t.status === "failed");
   return (
-    <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+    <Box
+      data-testid="verdict-checks"
+      sx={{ borderTop: "1px solid", borderColor: "divider" }}
+    >
       <Stack
         direction="row"
         alignItems="center"
@@ -230,7 +249,7 @@ EvalWarnings.propTypes = { warnings: PropTypes.array.isRequired };
 const HELD_BACK_VERIFIED_MIN = 4;
 
 // How many held-back scenarios the winner fixed, scenario by scenario as on
-// the Per scenario tab, for a fix held back on too few cases to call it proven.
+// the Scenarios tab, for a fix held back on too few cases to call it proven.
 function HeldBackTally({ fix, winner }) {
   const { before, after, isLoading, isError } = useFixScenarioRows(
     fix,
@@ -270,11 +289,10 @@ export default function FixVerdict({ fix }) {
   const winner = winnerOf(fix);
   const text = headline(fix);
   if (!winner || !text) return null;
-  const cards = verdictCards(fix);
+  const cards = [...verdictCards(fix), ...ceilingCards(fix)];
   // Too few held back to call it verified, whatever the verdict says.
   const limited = !!fix.limited_validation;
-  const provenOnTargets = !limited && !winner.verdict.held_back_pass_rate;
-  const heldBack = (fix.request?.held_back_scenario_keys || []).length > 0;
+  const provenOnTargets = provenOnTargetsOnly(fix);
   return (
     <Box
       sx={{
@@ -315,7 +333,7 @@ export default function FixVerdict({ fix }) {
           {text}
         </Typography>
       </Stack>
-      {limited && heldBack && <HeldBackTally fix={fix} winner={winner} />}
+      {limited && <HeldBackTally fix={fix} winner={winner} />}
       {provenOnTargets && (
         <Typography
           sx={{

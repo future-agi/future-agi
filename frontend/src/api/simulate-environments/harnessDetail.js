@@ -159,11 +159,15 @@ export function harnessDetailToEnvironment(detail) {
     // provider agents, which have none.
     dataSchema: contract?.data_schema || null,
     toolStatus: contract?.tool_status,
+    // An open draft's contract, which runs do not use until it is saved.
+    contractFromDraft: Boolean(contract?.from_draft),
     faultTargets: contract?.fault_targets,
     worldTables: world?.tables,
     worldTotalRows: world?.total_rows,
     // `edit`, `list` or null (tab hidden).
     actorsTab: detail.actors_tab,
+    // The workers the app's source declares; a run shows which took part.
+    workers: contract?.workers || null,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,
@@ -186,7 +190,8 @@ export function harnessDetailToEnvironment(detail) {
       seedServices: services?.length ? "real" : "mock",
       scenarios: detail.scenarios?.length ? "real" : "mock",
     },
-    detailReady: contract != null,
+    // A composition is assembled from sealed releases and has no contract of its own.
+    detailReady: contract != null || detail.composition != null,
   };
 
   const scenarios = Array.isArray(detail.scenarios)

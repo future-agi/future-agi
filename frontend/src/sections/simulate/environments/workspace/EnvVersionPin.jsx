@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { Box, Button, Stack, Typography, Popover } from "@mui/material";
 import Iconify from "src/components/iconify";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { fDateTime } from "src/utils/format-time";
 import { STATUS_ROLES } from "src/utils/runStatus";
 import {
@@ -10,9 +11,12 @@ import {
   useEnvironmentVersions,
   useMoveDefault,
 } from "src/api/simulate-environments/versions";
+import { named } from "./agents/agentVersionStatus";
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 import { refusalText } from "./evals/refusalText";
 import MakeDefaultConfirm from "./versions/MakeDefaultConfirm";
+import ViewerLock from "../components/ViewerLock";
+import useSimulationAccess from "../hooks/useSimulationAccess";
 
 // The environment-version pin: the header names the default environment version,
 // and clicking it lists every version of the world, where an earlier active one
@@ -24,6 +28,7 @@ export default function EnvVersionPin({ env }) {
   // The version waiting on the user's confirmation.
   const [confirming, setConfirming] = useState(null);
   const move = useMoveDefault(env?.id);
+  const { canEdit } = useSimulationAccess();
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, error } = useEnvironmentVersions(env?.id, {
     enabled,
@@ -34,7 +39,7 @@ export default function EnvVersionPin({ env }) {
   if (!enabled || !data || isVersioningDisabled(error) || !current) {
     return null;
   }
-  const currentLabel = current.label || VERSIONS_COPY.unlabelled;
+  const currentLabel = named(current);
 
   const open = (e) => setAnchor(e.currentTarget);
   const close = () => {
@@ -46,7 +51,7 @@ export default function EnvVersionPin({ env }) {
   const defaultIndex = versions.findIndex((v) => v.id === current.id);
   // Versions are newest first, so one listed after the default is older.
   const actionLabel = (v, index) => {
-    const label = v.label || VERSIONS_COPY.unlabelled;
+    const label = named(v);
     return index > defaultIndex
       ? pin.rollBack(label)
       : makeDefault.actionFor(label);
@@ -93,9 +98,14 @@ export default function EnvVersionPin({ env }) {
         }}
       >
         <Iconify icon="solar:code-linear" width={11} sx={{ opacity: 0.75 }} />
-        <Typography sx={{ typography: "s3", fontWeight: 500 }}>
-          {versionBar.envPrefix} {currentLabel}
-        </Typography>
+        <OverflowTooltip title={`${versionBar.envPrefix} ${currentLabel}`}>
+          <Typography
+            noWrap
+            sx={{ typography: "s3", fontWeight: 500, maxWidth: 240 }}
+          >
+            {versionBar.envPrefix} {currentLabel}
+          </Typography>
+        </OverflowTooltip>
         <Iconify
           data-testid="env-version-chevron"
           icon="solar:alt-arrow-down-linear"
@@ -184,13 +194,18 @@ export default function EnvVersionPin({ env }) {
                   }}
                 >
                   {v.label || VERSIONS_COPY.unlabelled}
+                  {v.name && (
+                    <Box component="span" sx={{ fontFamily: "fontFamily" }}>
+                      {` · ${v.name}`}
+                    </Box>
+                  )}
                 </Typography>
                 {v.isDefault && <VersionBadge label={pin.default} />}
                 {VERSIONS_COPY.status[v.status] && (
                   <VersionBadge label={VERSIONS_COPY.status[v.status]} />
                 )}
               </Stack>
-              {v.summary && (
+              {v.summary && v.summary !== v.name && (
                 <Typography
                   sx={{ typography: "s3", color: "text.secondary", mt: 0.375 }}
                 >
@@ -213,16 +228,21 @@ export default function EnvVersionPin({ env }) {
                   .join(" · ")}
               </Typography>
               {canMakeDefault("environment", v) && (
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="inherit"
-                  disabled={move.isPending}
-                  onClick={() => setConfirming(v)}
-                  sx={{ mt: 0.75 }}
+                <ViewerLock
+                  locked={!canEdit}
+                  title={WORKSPACE_COPY.viewer.versions}
                 >
-                  {actionLabel(v, index)}
-                </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    disabled={!canEdit || move.isPending}
+                    onClick={() => setConfirming(v)}
+                    sx={{ mt: 0.75 }}
+                  >
+                    {actionLabel(v, index)}
+                  </Button>
+                </ViewerLock>
               )}
             </Box>
           ))}

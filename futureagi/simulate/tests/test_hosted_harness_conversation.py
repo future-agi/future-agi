@@ -87,6 +87,80 @@ def _headers(capability):
 
 
 @pytest.mark.django_db
+def test_consumption_groups_frozen_turn_records_once_per_page(
+    organization, django_capture_on_commit_callbacks
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from simulate.services.harness_provider import HostedHarnessProvider
+
+    cases = (
+        ([], None),
+        ([None], None),
+        ([{"records": [{"credits": 0}]}], 0),
+        (
+            [
+                {"records": [{"credits": 1.5}, {"credits": 2}]},
+                {"records": [{"credits": 3}]},
+            ],
+            6.5,
+        ),
+    )
+    table = HostedHarnessBuilderTurnUsage._meta.db_table
+    expected = {}
+    for i, (reports, credits) in enumerate(cases):
+        job, _ = create_hosted_job(
+            organization, _payload(), idempotency_key=f"totals-{i}"
+        )
+        for j, report in enumerate(reports):
+            _, command, _ = enqueue_message(
+                job, content="change", client_request_id=str(j)
+            )
+            HostedHarnessBuilderTurnUsage.no_workspace_objects.create(
+                job=job,
+                organization=organization,
+                command_message=command,
+                usage={"tokens_in": 10},
+                report=report,
+            )
+            if len(reports) > 1 and j == 0:
+                with django_capture_on_commit_callbacks() as queued:
+                    harness_usage.bill_builder_turn(
+                        str(command.conversation_id),
+                        {
+                            "command_message_id": str(command.id),
+                            "usage": {"tokens_in": 999},
+                        },
+                    )
+                assert (
+                    len(queued) == 1
+                )  # Replay scheduled the frozen report for delivery.
+                frozen = HostedHarnessBuilderTurnUsage.no_workspace_objects.get(
+                    command_message=command
+                )
+                assert frozen.usage == {"tokens_in": 10}
+                assert frozen.report == report
+        expected[str(job.id)] = credits
+        with CaptureQueriesContext(connection) as captured:
+            used = harness_usage.harness_consumption(job)
+        reads = [q["sql"] for q in captured if table in q["sql"]]
+        assert len(reads) == 1 and "SUM(" in reads[0].upper()
+        assert (used["ai_credits"] if used is not None else None) == credits
+
+    request = SimpleNamespace(organization=organization, headers={})
+    with CaptureQueriesContext(connection) as captured:
+        rows = HostedHarnessProvider().list(request).data
+    assert sum(table in q["sql"] for q in captured) == 1
+    assert {
+        row["job"]["job_id"]: (
+            row["consumption"]["ai_credits"] if row["consumption"] is not None else None
+        )
+        for row in rows
+    } == expected
+
+
+@pytest.mark.django_db
 def test_message_submission_is_durable_ordered_and_idempotent(organization):
     job, _ = create_hosted_job(
         organization,
@@ -1121,7 +1195,9 @@ class _Storage:
     def set_bucket_policy(self, _bucket, _policy):
         pass
 
-    def put_object(self, bucket_name, object_name, data, length, content_type=None):
+    def put_object(
+        self, bucket_name, object_name, data, length, content_type=None, metadata=None
+    ):
         self.objects[object_name] = data.read(length)
 
     def get_object(self, _bucket, object_name):
@@ -2402,6 +2478,16 @@ def test_a_message_after_the_build_is_refused_over_the_authoring_cap(
         assert response.status_code == 402
         assert not queued
         assert checked == [str(job.organization_id)]
+        with monkeypatch.context() as below_cap:
+            below_cap.setattr(
+                harness_usage, "require_harness_authoring", lambda _org: None
+            )
+            assert provider.send_message(request, job.id).status_code == 202
+        assert provider.send_message(request, job.id).status_code == 202
+        assert checked == [str(job.organization_id)]
+        assert (
+            job.conversation.messages.filter(client_request_id="over-cap").count() == 1
+        )
     else:
         assert response.status_code == 202
         assert queued
@@ -2528,7 +2614,7 @@ def test_a_question_asked_again_under_a_new_id_takes_the_answer_and_never_holds_
 
 
 @pytest.mark.django_db
-def test_a_question_whose_turn_ended_stops_blocking_once_another_turn_runs(
+def test_a_question_whose_turn_ended_unanswered_closes_with_the_turn(
     organization,
 ):
     job, _ = create_hosted_job(
@@ -2585,19 +2671,16 @@ def test_a_question_whose_turn_ended_stops_blocking_once_another_turn_runs(
         message_id=question,
         payload={"prompt": "Confirm this change"},
     )
-    # The turn that asked ends unanswered (stopped), so the question stays open for now.
+    # The turn that asked ends unanswered: its question ends with it, and the chat is idle, not waiting.
     emit(
         "turn_completed",
         acknowledged_through=1,
         payload={"command_message_id": str(rework.id)},
     )
     conversation.refresh_from_db()
-    assert (conversation.state, conversation.blocking_input["message_id"]) == (
-        "waiting_for_user",
-        question,
-    )
+    assert (conversation.state, conversation.blocking_input) == ("warm_idle", None)
 
-    # The person writes in the chat instead of answering; that message runs a turn of its own.
+    # The person writes in the chat; that message runs a turn of its own, which asks nothing.
     _c, typed, _ = enqueue_message(
         job, content="No, not this one", client_request_id="typed"
     )
@@ -2641,3 +2724,195 @@ def test_a_resumed_turn_keeps_the_question_it_asks_again(organization):
     )
 
     assert conversation.blocking_input is not None
+
+
+def _events(conversation, count):
+    from django.utils import timezone
+
+    from simulate.models import HostedHarnessConversationEvent
+
+    for number in range(1, count + 1):
+        HostedHarnessConversationEvent.no_workspace_objects.create(
+            event_id=f"{conversation.id}-e{number}",
+            conversation=conversation,
+            sequence=number,
+            kind="stage_changed",
+            payload={},
+            digest="sha256:" + "0" * 64,
+            emitted_at=timezone.now(),
+        )
+
+
+@pytest.mark.django_db
+def test_a_conversation_read_pages_back_and_a_poll_carries_only_new_events(
+    organization, monkeypatch
+):
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="conversation-history"
+    )
+    for number in range(1, 6):
+        enqueue_message(
+            job, content=f"m{number}", client_request_id=f"history-{number}"
+        )
+    conversation = job.conversation
+    _events(conversation, 8)
+
+    newest = serialize_conversation(conversation)
+    assert [item["sequence"] for item in newest["messages"]] == [3, 4, 5]
+    assert [item["sequence"] for item in newest["events"]] == [6, 7, 8]
+    assert newest["history"] == {
+        "messages": {"oldest_sequence": 3, "has_older": True},
+        "events": {"oldest_sequence": 6, "has_older": True},
+    }
+    assert newest["events_has_newer"] is False
+
+    older = conversations.conversation_history(conversation, kind="messages", before=3)
+    assert [item["sequence"] for item in older["messages"]] == [1, 2]
+    assert (
+        older["events"] == []
+        and older["has_older"] is False
+        and older["oldest_sequence"] == 1
+    )
+    earlier = conversations.conversation_history(conversation, kind="events", before=6)
+    assert [item["sequence"] for item in earlier["events"]] == [3, 4, 5]
+    assert earlier["messages"] == [] and earlier["has_older"] is True
+
+    # A message changes in place (a streamed reply, its state), so every poll carries the newest messages whole.
+    conversation.messages.filter(sequence=5).update(content="m5, streamed further")
+    poll = serialize_conversation(conversation, events_after=7)
+    assert [item["sequence"] for item in poll["messages"]] == [3, 4, 5]
+    assert poll["messages"][-1]["content"] == "m5, streamed further"
+    assert [item["sequence"] for item in poll["events"]] == [8]
+    assert "events" not in poll["history"] and poll["events_has_newer"] is False
+
+    quiet = serialize_conversation(conversation, events_after=8)
+    assert quiet["events"] == [] and quiet["events_has_newer"] is False
+
+    # A reader behind the window catches up oldest first, never skipping to the newest.
+    behind = serialize_conversation(conversation, events_after=1)
+    assert [item["sequence"] for item in behind["events"]] == [2, 3, 4]
+    assert behind["events_has_newer"] is True
+    caught_up = serialize_conversation(conversation, events_after=4)
+    assert [item["sequence"] for item in caught_up["events"]] == [5, 6, 7]
+    assert caught_up["events_has_newer"] is True
+
+
+@pytest.mark.django_db
+def test_the_job_read_and_the_history_read_page_the_builder_chat_over_the_api(
+    organization, workspace, auth_client, monkeypatch
+):
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="conversation-history-api",
+        workspace=workspace,
+    )
+    for number in range(1, 6):
+        enqueue_message(job, content=f"m{number}", client_request_id=f"api-{number}")
+    _events(job.conversation, 5)
+    base = f"/simulate/api/harness-jobs/{job.id}"
+
+    full = auth_client.get(f"{base}/").json()["conversation"]
+    assert [item["sequence"] for item in full["messages"]] == [3, 4, 5]
+    assert full["history"]["messages"] == {"oldest_sequence": 3, "has_older": True}
+
+    poll = auth_client.get(f"{base}/", {"events_after": 4}).json()["conversation"]
+    assert [item["sequence"] for item in poll["messages"]] == [3, 4, 5]
+    assert [item["sequence"] for item in poll["events"]] == [5]
+    assert "events" not in poll["history"]
+
+    page = auth_client.get(
+        f"{base}/conversation/history/", {"kind": "messages", "before": 3}
+    )
+    assert page.status_code == 200
+    assert [item["sequence"] for item in page.json()["messages"]] == [1, 2]
+    assert page.json()["events"] == [] and page.json()["has_older"] is False
+
+    refused = auth_client.get(f"{base}/conversation/history/", {"kind": "messages"})
+    assert refused.status_code == 400
+
+
+def test_the_sandbox_provider_refuses_a_read_of_only_new_events():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_provider import SandboxHarnessProvider
+
+    provider = SandboxHarnessProvider.__new__(SandboxHarnessProvider)
+    answer = provider.retrieve(
+        SimpleNamespace(validated_query_data={"events_after": 3}), "job"
+    )
+
+    assert answer.status_code == 501
+    assert answer.data["code"] == "events_after_not_supported"
+
+
+@pytest.mark.django_db
+def test_a_history_read_around_a_message_returns_the_page_that_holds_it(
+    organization, workspace, auth_client, monkeypatch
+):
+    from uuid import uuid4
+
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="history-around", workspace=workspace
+    )
+    other, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="history-around-other",
+        workspace=workspace,
+    )
+    for number in range(1, 8):
+        enqueue_message(job, content=f"m{number}", client_request_id=f"around-{number}")
+    enqueue_message(other, content="elsewhere", client_request_id="around-other")
+    ids = {
+        one.sequence: str(one.id)
+        for one in job.conversation.messages.order_by("sequence")
+    }
+    base = f"/simulate/api/harness-jobs/{job.id}/conversation/history/"
+
+    def page(around):
+        answer = auth_client.get(base, {"kind": "messages", "around": around})
+        assert answer.status_code == 200, answer.content
+        body = answer.json()
+        return (
+            [item["sequence"] for item in body["messages"]],
+            body["oldest_sequence"],
+            body["newest_sequence"],
+            body["has_older"],
+            body["has_newer"],
+        )
+
+    assert page(ids[4]) == ([3, 4, 5], 3, 5, True, True)
+    # At the very start and the very end, the page fills from the other side.
+    assert page(ids[1]) == ([1, 2, 3], 1, 3, False, True)
+    assert page(ids[7]) == ([5, 6, 7], 5, 7, True, False)
+
+    elsewhere = str(other.conversation.messages.get().id)
+    for unknown in (str(uuid4()), elsewhere):
+        missing = auth_client.get(base, {"kind": "messages", "around": unknown})
+        assert missing.status_code == 404
+        assert elsewhere not in missing.content.decode()
+    both = auth_client.get(base, {"kind": "messages", "around": ids[4], "before": 4})
+    assert both.status_code == 400
+    assert (
+        auth_client.get(base, {"kind": "events", "around": ids[4]}).status_code == 400
+    )
+    assert auth_client.get(base, {"kind": "messages"}).status_code == 400
+
+    # A read back before a sequence says what lies on either side of it too.
+    before = auth_client.get(base, {"kind": "messages", "before": 4}).json()
+    assert [item["sequence"] for item in before["messages"]] == [1, 2, 3]
+    assert (before["newest_sequence"], before["has_older"], before["has_newer"]) == (
+        3,
+        False,
+        True,
+    )

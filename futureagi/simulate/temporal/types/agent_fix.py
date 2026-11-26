@@ -41,6 +41,17 @@ class AgentFixInput:
 
 
 @dataclass(frozen=True)
+class AgentFixIssueInput:
+    job_id: str
+
+
+@dataclass(frozen=True)
+class AgentFixIssueLook:
+    # True once the job launched its epoch or ended, and needs no more looks.
+    done: bool
+
+
+@dataclass(frozen=True)
 class AgentFixLaunch:
     # RUNNING when an engine was started; otherwise why the run gets no sandbox.
     observation: Observation
