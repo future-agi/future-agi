@@ -313,4 +313,25 @@ describe("ActorForm", () => {
       screen.getByLabelText("How they join the conversation"),
     ).toHaveTextContent("Beside the caller");
   });
+
+  it("lists an evaluator-only file in Files they can read, locked", () => {
+    verdict = CLEAN;
+    const data = cast([], {
+      knowledge_sources: {
+        files: ["knowledge/refunds.md"],
+        records: [],
+        roles: { "knowledge/answer-key.md": "evaluator_only" },
+      },
+    });
+    renderForm(newActor("world", null, data), { data });
+    fireEvent.mouseDown(
+      screen.getByLabelText("Files they can read (optional)"),
+    );
+    expect(
+      screen.getByRole("option", { name: /answer-key\.md · Evaluator only/ }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("option", { name: "knowledge/refunds.md" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+  });
 });

@@ -216,6 +216,38 @@ export const displayText = (value, fallback = "") => {
   }
 };
 
+// "sha256:<64 hex>" reads as noise in a label; the first 12 hex digits identify it on screen.
+export const shortDigest = (digest) => {
+  const text = String(digest || "");
+  const hex = text.startsWith("sha256:") ? text.slice(7) : text;
+  return hex ? hex.slice(0, 12) : "";
+};
+
+// How agent-learning-kit's adaptation workbench opens its approval question (`approval_question`).
+export const isAdaptationApproval = (question) =>
+  String(question?.prompt || "").startsWith("Use this binding for ");
+
+// The answers that workbench takes as yes; any other keeps the binding open.
+const ADAPTATION_YES = new Set(["yes", "y", "true", "approve", "approved", "ok"]);
+export const isAdaptationYes = (answer) =>
+  ADAPTATION_YES.has(String(answer || "").trim().toLowerCase());
+
+export const BINDING_MODE_LABELS = {
+  canonical: "Canonical",
+  tool_routed: "Tool-routed",
+  conversation_only: "Conversation only",
+};
+
+export const SCENARIO_ORIGIN_LABELS = {
+  base: "Base",
+  specialized: "Specialized",
+  custom: "Custom",
+};
+
+export const percent = (rate) =>
+  typeof rate === "number" && Number.isFinite(rate)
+    ? `${Math.round(rate * 100)}%`
+    : "\u2014";
 // credentials.detected_connectors is how ALK reports what the submitted source talks to.
 // It is lexical detection over the source files, so it is multi-valued and a voice agent
 // that also serves HTTP reports both — check for a voice transport before falling back to chat.

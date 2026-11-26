@@ -54,7 +54,7 @@ const VARIATIONS_NOTE =
   'An epoch needs 12 failing cases. It first writes 3 variations of each, then fixes the ones the current version also fails.';
 // The epoch page's first step for a fix that writes variations (fixRunView.js variationLines).
 const VARIATIONS_STEP_LINE = 'Writes variations of the 6 failing cases, then keeps those the current version also fails';
-const STEP_IDS = ['step-variations', 'step-reproduce', 'step-search', 'step-verify', 'step-done'];
+const STEP_IDS = ['step-variations', 'step-reproduce', 'step-diagnose', 'step-search', 'step-verify'];
 
 type Json = Record<string, unknown>;
 
@@ -234,7 +234,7 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
       'the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each',
       'the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit',
       'the browser lands on the environment\'s improvements/<id> URL of the epoch the POST returned',
-      'the epoch page\'s steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"',
+      'the epoch page\'s stages are Writing variations, Reproducing, Diagnosing, Proposing and Checking, and Writing variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"',
       'the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)',
     ],
   }),
