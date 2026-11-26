@@ -58453,10 +58453,10 @@ export const SimulateApiHarnessJobsScenariosParams = zod.object({
 
 export const SimulateApiHarnessJobsScenariosQueryParams = zod.object({
   page: zod
-    .string()
+    .number()
     .min(1)
     .optional()
-    .describe("A page number from 1, or last."),
+    .describe("A page number from 1; last is not supported."),
   limit: zod.number().min(1).optional().describe("Scenarios per page."),
   search: zod.string().optional().describe("Every word must match."),
   ordering: zod

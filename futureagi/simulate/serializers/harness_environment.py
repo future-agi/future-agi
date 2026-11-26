@@ -1376,8 +1376,10 @@ class HarnessRestoredCaseSerializer(serializers.Serializer):
 class HarnessScenarioListQuerySerializer(serializers.Serializer):
     """The scenario list's query. Filters on a scenario field (FIELD=VALUE, FIELD_not=VALUE) are read as given."""
 
-    page = serializers.CharField(
-        required=False, help_text="A page number from 1, or last."
+    page = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        help_text="A page number from 1; last is not supported.",
     )
     limit = serializers.IntegerField(
         min_value=1, required=False, help_text="Scenarios per page."

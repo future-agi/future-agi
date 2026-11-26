@@ -31561,8 +31561,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           page: {
             required: false,
             schema: {
-              type: "string",
-              minLength: 1,
+              type: "integer",
+              minimum: 1,
             },
           },
           limit: {

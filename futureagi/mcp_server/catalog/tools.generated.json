@@ -12082,9 +12082,9 @@
             "type": "string"
           },
           "page": {
-            "type": "string",
-            "minLength": 1,
-            "description": "A page number from 1, or last."
+            "type": "integer",
+            "minimum": 1,
+            "description": "A page number from 1; last is not supported."
           },
           "limit": {
             "type": "integer",

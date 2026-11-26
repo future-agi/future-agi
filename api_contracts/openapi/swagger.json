@@ -57327,10 +57327,10 @@
                     {
                         "name": "page",
                         "in": "query",
-                        "description": "A page number from 1, or last.",
+                        "description": "A page number from 1; last is not supported.",
                         "required": false,
-                        "type": "string",
-                        "minLength": 1
+                        "type": "integer",
+                        "minimum": 1
                     },
                     {
                         "name": "limit",

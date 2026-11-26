@@ -50041,10 +50041,10 @@ export const SimulateApiHarnessJobsConversationConversationHistoryKind = {
 
 export type SimulateApiHarnessJobsScenariosParams = {
   /**
-   * A page number from 1, or last.
-   * @minLength 1
+   * A page number from 1; last is not supported.
+   * @minimum 1
    */
-  page?: string;
+  page?: number;
   /**
    * Scenarios per page.
    * @minimum 1
