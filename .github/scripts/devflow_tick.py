@@ -1,8 +1,9 @@
 """Dev-flow heartbeat: base-health breaker, escape rate and the merge digest.
 
 Runs from pr-digest.yml on every push to dev, and the breaker also runs at
-the end of every merge-queue build (backend-queue-ci.yml), so a red base
-trips it even when nothing lands. The breaker (--breaker-only) runs every
+the end of every merge-queue build (backend-queue-ci.yml) and on every live
+batch-train tick (devflow_train.py), so a red base trips it even when
+nothing lands or only rollups run. The breaker (--breaker-only) runs every
 time; the full digest at most once an hour (the workflow gates it). It reads
 the Actions and git history, decides three things and says them in one
 Slack message:
@@ -21,6 +22,8 @@ Slack message:
   the base-red label per failing job, plus a Slack line. The batch train
   pauses while any such issue is open. The breaker closes its own issue when
   the job no longer trips and a later queue build of its workflow passed.
+  When a person closes one, only failures in runs created after that close
+  can trip the job again.
 - Escape rate: reverts and fix-forwards among the last 100 first-parent
   merges on dev, read from each pull request's title and description. Above
   2% the tight-approval mode is wanted, and it stays wanted until the rate
@@ -180,8 +183,9 @@ def wants_jobs(run: dict, now: datetime, breaker_only: bool) -> bool:
 def queue_failures(
     runs: list[dict], jobs_by_run: dict[int, list[dict]], prefix: str = "", dev: bool = False, prior: bool = False
 ) -> list[dict]:
-    """{job, pr, at, workflow, run} per completed failed job, whether or not its
-    run is done. `prefix` names a dev push run's jobs as the queue names them;
+    """{job, pr, at, started, workflow, run} per completed failed job, whether
+    or not its run is done. `started` is the run's creation: what it tested
+    was fixed then. `prefix` names a dev push run's jobs as the queue names them;
     `dev` marks the failures of a dev push run, and `prior` those of the run
     before the newest one."""
     out = []
@@ -194,7 +198,7 @@ def queue_failures(
             ):
                 out.append({
                     "job": prefix + j["name"], "pr": None if dev else pr_number(r), "workflow": r.get("path"),
-                    "at": j.get("completed_at") or r["updated_at"], "run": r["id"],
+                    "at": j.get("completed_at") or r["updated_at"], "started": r.get("created_at"), "run": r["id"],
                     **({"dev": True} if dev else {}), **({"prior": True} if prior else {}),
                 })
     return out
@@ -367,6 +371,30 @@ def resolved_trips(issues: list[dict], tripped: list[dict], failures: list[dict]
         if green:
             out.append({"number": issue["number"], "job": job, "run": max(green, key=lambda r: r["created_at"])["id"]})
     return out
+
+
+def manual_closes(issues: list[dict]) -> dict[str, datetime]:
+    """{job: newest close} of the closed base-red issues a person closed. The
+    breaker's own closes (by the bot that filed the issue) do not count."""
+    out: dict[str, datetime] = {}
+    for issue in issues:
+        closer, author = issue.get("closed_by") or {}, issue.get("user") or {}
+        if not issue["title"].startswith(BREAKER_TITLE) or not issue.get("closed_at"):
+            continue
+        if closer.get("type") == "Bot" and closer.get("login") == author.get("login"):
+            continue
+        job, at = issue["title"][len(BREAKER_TITLE):], parse_ts(issue["closed_at"])
+        out[job] = max(at, out.get(job, at))
+    return out
+
+
+def after_manual_close(failures: list[dict], closes: dict[str, datetime]) -> list[dict]:
+    """The failures whose run started after the newest manual close of their
+    job's issue: the person who closed it said the base was fixed then."""
+    return [
+        f for f in failures
+        if f["job"] not in closes or parse_ts(f.get("started") or f["at"]) > closes[f["job"]]
+    ]
 
 
 def landing(c: dict) -> dict:
@@ -890,10 +918,17 @@ def open_breaker_issues(api: Api) -> list[dict]:
     return [i for i in items if "pull_request" not in i]
 
 
+def closed_breaker_issues(api: Api, now: datetime) -> list[dict]:
+    """Base-red issues closed and updated inside the stats window; the listing carries closed_by."""
+    items = api.get_all(f"/issues?labels={BREAKER_LABEL}&state=closed&since={iso(now - STATS_WINDOW)}&per_page=100")
+    return [i for i in items if "pull_request" not in i]
+
+
 def signal_breaker(api: Api, breaker: list[dict], issues: list[dict]) -> list[dict]:
     """Label plus one open tracking issue per failing job; never twice for the same job.
 
-    Returns the entries that are new (no open issue yet).
+    Returns the entries that are new (no open issue yet), each with the
+    number of the issue filed for it.
     """
     open_titles = {i["title"] for i in issues}
     new = [b for b in breaker if BREAKER_TITLE + b["job"] not in open_titles]
@@ -905,14 +940,14 @@ def signal_breaker(api: Api, breaker: list[dict], issues: list[dict]) -> list[di
     except urllib.error.HTTPError:
         pass  # label exists
     for b in new:
-        api.call("POST", f"/repos/{api.repo}/issues", {
+        b["issue"] = (api.call("POST", f"/repos/{api.repo}/issues", {
             "title": BREAKER_TITLE + b["job"], "labels": [BREAKER_LABEL],
             "body": f"`{b['job']}` failed on {trip_where(b)}. "
                     "Groups behind a failing entry are not counted.\n"
                     "Likely a base problem, not the PRs. The batch train pauses while this issue is open. "
                     "The breaker closes it when the job stops tripping and a later queue build passes; "
                     "close it yourself once the base is green.",
-        })
+        }) or {}).get("number")
     return new
 
 
@@ -957,7 +992,8 @@ def run_breaker(api: Api, now: datetime, runs, failures, jobs_by_run, dry: bool)
         # A rollup in the queue stands for its members, as its own runs do.
         if f.get("pr") in members:
             f["members"] = members[f["pr"]]
-    breaker = detect_breaker(independent(failures, runs, jobs_by_run) + rollup_fails + dev_failures, now)
+    counted = independent(failures, runs, jobs_by_run) + rollup_fails + dev_failures
+    breaker = detect_breaker(after_manual_close(counted, manual_closes(closed_breaker_issues(api, now))), now)
     issues = open_breaker_issues(api)
     # Every failure, cascades too, dates the last bad build; a green dev push counts as green.
     resolved = resolved_trips(issues, breaker, failures + rollup_fails + dev_failures, runs + dev_runs)

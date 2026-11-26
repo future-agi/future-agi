@@ -501,6 +501,7 @@ class RollupRuns(unittest.TestCase):
                 mock.patch.object(t, "collect_dev", return_value=([], [])),
                 mock.patch.object(t, "collect_rollups", return_value=(rollup, {81: [3]})),
                 mock.patch.object(t, "open_breaker_issues", return_value=[]),
+                mock.patch.object(t, "closed_breaker_issues", return_value=[]),
             ):
                 tripped, _ = t.run_breaker(None, NOW, [], queue, {}, dry=True)
                 self.assertEqual(tripped, want)
@@ -785,6 +786,160 @@ class Digest(unittest.TestCase):
         text = t.render_digest(17, stats, esc, 0.1, [{"job": "backend", "prs": [1, 2, 3]}])
         for needle in ("landings in the last hour: 17", "queue red rate", "p90", "p95", "3.0% (3)", "tight approval", "10.0%", "`backend`"):
             self.assertIn(needle, text)
+
+
+class BreakerApi(t.Api):
+    """GitHub as the breaker reads it: runs per (workflow, event), jobs per
+    run and issues per (label, state). Records writes; a filed issue is #101."""
+
+    def __init__(self, runs=(), jobs=None, issues=None):
+        super().__init__("o/r", "token")
+        self.runs, self.jobs, self.issues, self.writes = list(runs), jobs or {}, issues or {}, []
+
+    def request(self, method, url, body=None, token=None):
+        path, _, query = url.removeprefix("https://api.github.com").partition("?")
+        params = dict(urllib.parse.parse_qsl(query))
+        if method != "GET":
+            self.writes.append((method, path))
+            return ({"number": 101} if path == "/repos/o/r/issues" else {}), ""
+        if path.endswith("/jobs"):
+            return {"jobs": self.jobs.get(int(path.split("/")[-2]), [])}, ""
+        if path.endswith("/runs"):
+            wf = path.split("/")[-2]
+            hits = [r for r in self.runs if r["path"].endswith("/" + wf) and r["event"] == params.get("event")]
+            return {"workflow_runs": hits, "total_count": len(hits)}, ""
+        if path == "/repos/o/r/issues":
+            return list(self.issues.get((params["labels"], params["state"]), [])), ""
+        raise AssertionError(url)
+
+
+class TrainTicksTheBreaker(unittest.TestCase):
+    """Rollup reds never reach the queue, so with no dev push and no queue
+    build only the live train tick runs the breaker. A trip it files pauses
+    that same tick."""
+
+    def tick(self, file_trips):
+        import devflow_train as train
+        import test_devflow_train as tt
+
+        at = t.iso(datetime.now(UTC) - timedelta(minutes=10))
+        runs = [dict(rollup_run(i, n), created_at=at, updated_at=at, event="pull_request")
+                for i, n in ((1, 80), (2, 81), (3, 82))]
+        jobs = {i: [dict(j, completed_at=at) for j in pr_shard_failed()] for i in (1, 2, 3)}
+        rollups = [rollup_issue(80, [1, 2]), rollup_issue(81, [3]), rollup_issue(82, [4, 5])]
+        api = BreakerApi(runs, jobs, {("devflow:rollup", "all"): rollups})
+        reader = tt.RedReader(tt.data([tt.pr_node(7)]), [])
+        from unittest import mock
+
+        with mock.patch("sys.stdout"):
+            out = train.tick(reader, tt.REQUIRED, tt.cfg(), None, api, file_trips)
+        return out, api
+
+    def test_three_red_rollups_trip_and_pause_the_same_tick(self):
+        out, api = self.tick(file_trips=True)
+        self.assertIn(("POST", "/repos/o/r/issues"), api.writes)
+        self.assertEqual(out["paused_by"], [101], "the listing has not caught up; the filed issue pauses")
+        self.assertEqual(out["batches"], [])
+
+    def test_without_the_heartbeat_the_tick_only_logs(self):
+        out, api = self.tick(file_trips=False)
+        self.assertEqual(api.writes, [])
+        self.assertEqual(out["paused_by"], [])
+
+    def test_a_failed_breaker_read_logs_and_the_tick_goes_on(self):
+        from unittest import mock
+
+        import devflow_train as train
+        import test_devflow_train as tt
+
+        class Down(BreakerApi):
+            def request(self, method, url, body=None, token=None):
+                raise urllib.error.URLError("down")
+
+        reader = tt.RedReader(tt.data([tt.pr_node(7)], base_red=[100]), [])
+        with mock.patch("sys.stdout"):
+            out = train.tick(reader, tt.REQUIRED, tt.cfg(), None, Down(), True)
+        self.assertEqual(out["paused_by"], [100], "open issues still pause")
+
+    def test_only_a_live_train_run_builds_the_breaker(self):
+        import devflow_train as train
+
+        self.assertIs(train.devflow_tick, t, "the train imports this module")
+        src = pathlib.Path(train.__file__).read_text()
+        self.assertIn("if live and devflow_tick:\n        breaker = devflow_tick.Api(repo, os.environ[\"GH_TOKEN\"])", src)
+        self.assertIn("tick(reader, required, cfg, live, breaker, file_trips)", src)
+
+    def test_the_import_works_under_isolated_mode(self):
+        import subprocess
+
+        script = pathlib.Path(__file__).with_name("devflow_train.py")
+        code = ("import runpy, sys; sys.argv = ['x']; "
+                f"m = runpy.run_path({str(script)!r}, run_name='not_main'); print(m['devflow_tick'] is not None)")
+        out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, cwd="/", check=False)
+        self.assertEqual(out.stdout.strip(), "True", out.stderr)
+
+
+class ManualClose(unittest.TestCase):
+    """A person who closes a base-red issue says the base is fixed: only
+    failures in runs created after that close can trip the job again."""
+
+    CLOSED = "2026-11-26T11:00:00Z"
+
+    def issue(self, closer="kartik", kind="User"):
+        return {"number": 5, "title": t.BREAKER_TITLE + SHARD, "state": "closed", "closed_at": self.CLOSED,
+                "user": {"login": "github-actions[bot]", "type": "Bot"}, "closed_by": {"login": closer, "type": kind}}
+
+    def breaker(self, failures, closed, dev=()):
+        from unittest import mock
+
+        api = BreakerApi()
+        with (
+            mock.patch.object(t, "collect_dev", return_value=([], list(dev))),
+            mock.patch.object(t, "collect_rollups", return_value=([], {})),
+            mock.patch.object(t, "open_breaker_issues", return_value=[]),
+            mock.patch.object(t, "closed_breaker_issues", return_value=closed),
+            mock.patch("builtins.print"),
+        ):
+            tripped, _ = t.run_breaker(api, NOW, [], failures, {}, dry=False)
+        return tripped, ("POST", "/repos/o/r/issues") in api.writes
+
+    def failures(self, started, done, prs=(1, 2, 3)):
+        return [dict(fail(SHARD, n, at=done), started=started) for n in prs]
+
+    def test_failures_before_a_manual_close_do_not_reopen(self):
+        self.assertEqual(self.breaker(self.failures("2026-11-26T10:40:00Z", "2026-11-26T10:50:00Z"), [self.issue()]), ([], False))
+
+    def test_a_run_created_before_the_close_that_failed_after_it_does_not_reopen(self):
+        self.assertEqual(self.breaker(self.failures("2026-11-26T10:50:00Z", "2026-11-26T11:10:00Z"), [self.issue()]), ([], False))
+
+    def test_new_failures_after_a_manual_close_reopen(self):
+        tripped, filed = self.breaker(self.failures("2026-11-26T11:10:00Z", "2026-11-26T11:20:00Z"), [self.issue()])
+        self.assertEqual(tripped, [{"job": SHARD, "prs": [1, 2, 3], "issue": 101}])
+        self.assertTrue(filed)
+        # Two from before the close and one after: only the one counts.
+        mixed = (self.failures("2026-11-26T10:40:00Z", "2026-11-26T10:50:00Z", (1, 2))
+                 + self.failures("2026-11-26T11:10:00Z", "2026-11-26T11:20:00Z", (3,)))
+        self.assertEqual(self.breaker(mixed, [self.issue()]), ([], False))
+
+    def test_the_breakers_own_close_does_not_count(self):
+        before = self.failures("2026-11-26T10:40:00Z", "2026-11-26T10:50:00Z")
+        self.assertTrue(self.breaker(before, [self.issue(closer="github-actions[bot]", kind="Bot")])[1])
+        self.assertTrue(self.breaker(before, [])[1], "no close at all")
+
+    def test_a_dev_red_before_the_close_does_not_repeat_into_one_after(self):
+        prior = {"job": SHARD, "dev": True, "prior": True, "pr": None,
+                 "at": "2026-11-26T10:30:00Z", "started": "2026-11-26T10:20:00Z"}
+        newest = {"job": SHARD, "dev": True, "pr": None, "at": "2026-11-26T11:40:00Z", "started": "2026-11-26T11:20:00Z"}
+        self.assertEqual(self.breaker([], [self.issue()], dev=[prior, newest]), ([], False))
+        self.assertTrue(self.breaker([], [], dev=[prior, newest])[1], "without the close the two dev reds trip")
+
+    def test_the_closed_listing_carries_closed_by(self):
+        api = BreakerApi(issues={("base-red", "closed"): [self.issue(), {**self.issue(), "pull_request": {}}]})
+        self.assertEqual(t.manual_closes(t.closed_breaker_issues(api, NOW)), {SHARD: t.parse_ts(self.CLOSED)})
+
+    def test_queue_failures_carry_the_run_creation(self):
+        run = group(1, 9, "h", created="2026-11-26T10:55:00Z")
+        self.assertEqual(t.queue_failures([run], {1: shard_failed()})[0]["started"], "2026-11-26T10:55:00Z")
 
 
 if __name__ == "__main__":
