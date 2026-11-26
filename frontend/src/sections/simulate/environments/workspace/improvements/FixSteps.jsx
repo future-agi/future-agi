@@ -127,9 +127,11 @@ export default function FixSteps({ fix, runTestId }) {
                 </Typography>
               )}
               {!quiet &&
-                subs.map((sub) => (
+                subs.map((sub, n) => (
                   <Typography
-                    key={sub}
+                    // A diagnosis can name the same cause twice.
+                    // eslint-disable-next-line react/no-array-index-key
+                    key={n}
                     sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
                   >
                     {sub}

@@ -4,11 +4,12 @@
 import {
   OUR_FAILURES,
   STATE_LABEL,
-  STEP_LABEL,
   fixName,
   isShipped,
   noSafeHeadline,
   shipLabel,
+  stageLabel,
+  stageOf,
   winnerOf,
 } from "src/sections/simulate/environments/workspace/improvements/fixRunView";
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
@@ -142,11 +143,13 @@ const whenEnded = (fix) => {
   return ` after ${n} ${n === 1 ? "candidate" : "candidates"}`;
 };
 
-const STEP_PHRASE = {
+// What each stage does, in the stage's own word (the epoch page's STAGE_LABEL).
+const STAGE_PHRASE = {
   variations: "writing variations of the issue's scenarios",
   reproduce: "reproducing the issue",
-  search: "searching for a change",
-  verify: "verifying the best candidate",
+  diagnose: "diagnosing the failures",
+  search: "proposing changes",
+  verify: "checking the best candidate",
 };
 
 const sentence = (text) =>
@@ -204,8 +207,8 @@ function epochText(fix) {
     case "queued":
       return `${name} is queued.`;
     case "running":
-      return STEP_PHRASE[fix.step]
-        ? `${name} is ${STEP_PHRASE[fix.step]}.`
+      return STAGE_PHRASE[stageOf(fix)]
+        ? `${name} is ${STAGE_PHRASE[stageOf(fix)]}.`
         : `${name} is running.`;
     case "stopping":
       return `${name} is stopping.`;
@@ -332,9 +335,7 @@ export function epochIcon(status) {
   if (!key || !ICONS[key]) return null;
   const [icon, role] = ICONS[key];
   const name = status.epoch ? fixName(status.epoch) : "Epoch";
-  const step =
-    key === "running" && STEP_LABEL[status.epoch?.step]
-      ? ` · ${STEP_LABEL[status.epoch.step]}`
-      : "";
+  const stage = key === "running" && stageLabel(status.epoch);
+  const step = stage ? ` · ${stage}` : "";
   return { icon, role, tip: `${name} · ${epochLabelLong(status)}${step}` };
 }

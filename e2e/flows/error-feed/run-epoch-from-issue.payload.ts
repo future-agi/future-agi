@@ -13,6 +13,8 @@ export const ENV_ID = 'env-voice-support';
 const SOURCE_RUN_ID = '4d5e6f70-8192-4a3b-9c4d-5e6f708192a3';
 const AGENT_VERSION_ID = '5e6f7081-92a3-4b4c-8d5e-6f708192a3b4';
 const CANDIDATE_VERSION_ID = '6f708192-a3b4-4c5d-9e6f-708192a3b4c5';
+const UNREAD_CANDIDATE_ID = '708192a3-b4c5-4d6e-8f70-8192a3b4c5d6';
+const UNREAD_CANDIDATE_VERSION_ID = '8192a3b4-c5d6-4e7f-9081-92a3b4c5d6e7';
 export const ENV_NAME = 'Customer Support Line';
 export const PROJECT_ID = '38338ba4-c1a4-46e8-be28-6fd4ba08e9d6';
 export const CASE_KEPT = 'a1f0c3d2-4b5e-4f60-8a71-0b2c3d4e5f60';
@@ -57,11 +59,18 @@ export function issuePlan(clusterId: string, withEnvironment: boolean): Json {
   return {
     issue: issueRef(clusterId),
     environment: withEnvironment ? { id: ENV_ID, name: ENV_NAME } : null,
-    blocked: null,
+    // With none picked yet, the plan says one of the caller's can run it.
+    blocked: withEnvironment
+      ? null
+      : {
+          code: 'environment_not_picked',
+          message: "Pick the environment that tests this issue's agent. This project's next epochs use it too.",
+        },
     sample: { unit: 'trace', picks: [pick(1, 'example'), pick(2, 'cited')], alternates: [pick(3, 'recent')] },
     open_job_id: null,
     issue_scenarios: { held: 4, limit: 36 },
     defaults: DEFAULTS,
+    ship: withEnvironment ? { path: 'pull_request', blocked: null } : null,
   };
 }
 
@@ -192,7 +201,9 @@ export function readyEpoch(ids: Ids): Json {
     retried_from_id: null,
     retryable: false,
     limited_validation: false,
-    issue: { job_id: ids.job, cluster_id: ids.cluster, project_id: PROJECT_ID },
+    issue: { job_id: ids.job, cluster_id: ids.cluster, project_id: PROJECT_ID, title: ISSUE_TITLE },
+    from_issue: true,
+    flaky_protected_text: [],
     check_runs: [],
     candidates: [
       {
@@ -213,6 +224,40 @@ export function readyEpoch(ids: Ids): Json {
         },
         check_runs: [],
         pull_request_url: '',
+        wording: {
+          headline: 'Held-back pass rate 25% → 75%. No must-pass scenario broke.',
+          must_pass: 'None of the 3 must-pass scenarios broke.',
+          must_pass_broken: 0,
+          changes: 'Changes agent.py: 4 lines added, 1 removed.',
+          caveats: [],
+        },
+      },
+      // A finalist whose patch could not be read: the read has no change line for it.
+      {
+        id: UNREAD_CANDIDATE_ID,
+        attempt: 2,
+        agent_version_id: UNREAD_CANDIDATE_VERSION_ID,
+        version_number: 3,
+        summary: 'Confirm only after the tool returns.',
+        outcome: 'finalist',
+        verdict: {
+          accepted: true,
+          reason: 'passed every check',
+          target_pass_rate: [0.25, 0.75],
+          held_back_pass_rate: [0.25, 0.5],
+          must_pass_regressions: [],
+          must_pass_within_noise: [],
+          tiers: [],
+        },
+        check_runs: [],
+        pull_request_url: '',
+        wording: {
+          headline: 'Held-back pass rate 25% → 50%. No must-pass scenario broke.',
+          must_pass: 'None of the 3 must-pass scenarios broke.',
+          must_pass_broken: 0,
+          changes: null,
+          caveats: [],
+        },
       },
     ],
   };
