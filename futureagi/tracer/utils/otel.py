@@ -25,7 +25,7 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from model_hub.models.ai_model import AIModel
 from model_hub.models.choices import StatusType
-from model_hub.models.custom_models import (  # noqa: E402 - pre-existing: imports below the logger; reordering them is a separate cleanup
+from model_hub.models.custom_models import (  # noqa: E402 - pre-existing: imports below the logger
     CustomAIModel,
     custom_model_pricing_cache_key,
 )
