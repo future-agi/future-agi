@@ -231,6 +231,7 @@ export default function VersionBar({ env, envState, action = null }) {
           {versionBar.scenariosShared(scenarioCount)}
         </Typography>
       </Tooltip>
+      <Box flex={1} />
       {action}
     </Stack>
   );

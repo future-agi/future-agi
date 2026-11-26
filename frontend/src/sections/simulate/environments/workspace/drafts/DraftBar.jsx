@@ -58,22 +58,106 @@ export default function DraftBar({
     flow.onDiscard();
   };
 
+  const discardDialog = (
+    <ConfirmDialog
+      open={confirming}
+      onClose={() => setConfirming(false)}
+      title={COPY.discardTitle}
+      content={
+        <Typography component="span" sx={{ typography: "s1" }}>
+          {COPY.discardBody}
+        </Typography>
+      }
+      action={
+        <Button
+          size="small"
+          variant="contained"
+          color="error"
+          onClick={onDiscard}
+        >
+          {COPY.discard}
+        </Button>
+      }
+    />
+  );
+  const discardButton = (
+    <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+      <Button
+        size="small"
+        variant="outlined"
+        color="inherit"
+        disabled={!canEdit || holdReasons.length > 0 || pending}
+        aria-describedby={holdReasons.join(" ") || undefined}
+        onClick={() => setConfirming(true)}
+      >
+        {flow.discardPending ? COPY.discarding : COPY.discard}
+      </Button>
+    </ViewerLock>
+  );
+  const holdMessages = (
+    <>
+      {" "}
+      {staleReason && (
+        <Typography
+          id={staleId}
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+        >
+          {staleReason}
+        </Typography>
+      )}
+      {busy && (
+        <Typography
+          id={busyId}
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+        >
+          {COPY.busy}
+        </Typography>
+      )}
+      {rebuilding && (
+        <Typography
+          id={holdId}
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+        >
+          {COPY.errors.rebuild_running}
+        </Typography>
+      )}{" "}
+    </>
+  );
+  const reviewDisabled =
+    reviewReasons.length > 0 || flow.savePending || flow.discardPending;
   if (compact) {
     const count = drafts.pieces.reduce(
       (sum, piece) => sum + changeCount(drafts[piece].changes),
       0,
     );
     return (
-      <>
+      <Stack
+        component="section"
+        data-testid="draft-bar"
+        aria-label={COPY.title}
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        flexWrap="wrap"
+      >
+        {holdMessages}
         <Typography variant="caption" color="text.secondary">
           {count
             ? count + (count === 1 ? " unsaved edit" : " unsaved edits")
             : COPY.title}
         </Typography>
-        <Button size="small" variant="outlined" onClick={onReview}>
+        {reviewReasons.length > 0 && discardButton}
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={reviewDisabled}
+          aria-describedby={reviewReasons.join(" ") || undefined}
+          onClick={onReview}
+        >
           {REVIEW_COPY.reviewAndSave}
         </Button>
-      </>
+        {discardDialog}
+      </Stack>
     );
   }
 
@@ -107,26 +191,13 @@ export default function DraftBar({
           {latest.updatedAt &&
             ` — ${COPY.lastEdited(latest.lastEditedBy, relativeTime(latest.updatedAt))}`}
         </Typography>
-        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={!canEdit || holdReasons.length > 0 || pending}
-            aria-describedby={holdReasons.join(" ") || undefined}
-            onClick={() => setConfirming(true)}
-          >
-            {flow.discardPending ? COPY.discarding : COPY.discard}
-          </Button>
-        </ViewerLock>
+        {discardButton}
         {/* Saving happens in the review: accept, validate, name, save. The bar only opens it, also while a check runs;
             someone who can't edit still opens it to read the changes. */}
         <Button
           size="small"
           variant="contained"
-          disabled={
-            reviewReasons.length > 0 || flow.savePending || flow.discardPending
-          }
+          disabled={reviewDisabled}
           aria-describedby={reviewReasons.join(" ") || undefined}
           onClick={onReview}
         >
@@ -157,30 +228,7 @@ export default function DraftBar({
           ))}
         </Box>
       )}
-      {staleReason && (
-        <Typography
-          id={staleId}
-          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
-        >
-          {staleReason}
-        </Typography>
-      )}
-      {busy && (
-        <Typography
-          id={busyId}
-          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
-        >
-          {COPY.busy}
-        </Typography>
-      )}
-      {rebuilding && (
-        <Typography
-          id={holdId}
-          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
-        >
-          {COPY.errors.rebuild_running}
-        </Typography>
-      )}
+      {holdMessages}
       {error && (
         <Typography
           role="alert"
@@ -189,26 +237,7 @@ export default function DraftBar({
           {error}
         </Typography>
       )}
-      <ConfirmDialog
-        open={confirming}
-        onClose={() => setConfirming(false)}
-        title={COPY.discardTitle}
-        content={
-          <Typography component="span" sx={{ typography: "s1" }}>
-            {COPY.discardBody}
-          </Typography>
-        }
-        action={
-          <Button
-            size="small"
-            variant="contained"
-            color="error"
-            onClick={onDiscard}
-          >
-            {COPY.discard}
-          </Button>
-        }
-      />
+      {discardDialog}
     </Box>
   );
 }

@@ -76,6 +76,7 @@ export default function ReviewChangesDrawer({
   onOpenTab,
   children,
   sourceHold,
+  addedSources = [],
 }) {
   const flow = useDraftSaveFlow(env, { reviewEnabled: open });
   const reviewQuery = flow.reviewQuery;
@@ -92,7 +93,25 @@ export default function ReviewChangesDrawer({
   const focusSave = useRef(false);
 
   const changes = review?.changes || [];
-  const name = typedName ?? suggestedName(changes);
+  const sourceFiles = addedSources.length
+    ? changes.filter(
+        (change) =>
+          change.piece === "environment" &&
+          change.kind === "file" &&
+          [
+            "reviewed-source.json",
+            "sources/manifest.json",
+            "sources/tested-agent.json",
+          ].includes(change.key),
+      )
+    : [];
+  const visibleChanges = changes.filter(
+    (change) => !sourceFiles.includes(change),
+  );
+  const name =
+    typedName ??
+    (suggestedName(visibleChanges) ||
+      (addedSources.length ? "Add source files" : ""));
   const kept = keptChanges(changes);
   const nameTooLong = name.trim().length > NAME_LIMIT;
   const names = recheckedKeys(changes);
@@ -265,7 +284,7 @@ export default function ReviewChangesDrawer({
         />
       );
     }
-    if (!changes.length) {
+    if (!changes.length && !addedSources.length) {
       return (
         <EmptyState
           variant="no-results"
@@ -276,7 +295,52 @@ export default function ReviewChangesDrawer({
     }
     return (
       <Stack spacing={2}>
-        {groupChanges(changes).map((group) => (
+        {addedSources.length > 0 && (
+          <Box component="section" aria-label="Sources added">
+            <GroupHeading>Sources added</GroupHeading>
+            <Box sx={cardSx}>
+              {addedSources.map((source) => (
+                <Box
+                  key={source.source_id}
+                  sx={{
+                    px: 1.5,
+                    py: 1,
+                    "& + &": { borderTop: 1, borderColor: "divider" },
+                  }}
+                >
+                  <Typography variant="body2">
+                    {source.filename || "Source file"} added
+                  </Typography>
+                </Box>
+              ))}
+              {canEdit && sourceFiles.length > 0 && (
+                <Stack direction="row" spacing={1} sx={{ px: 1.5, pb: 1 }}>
+                  {["accepted", "rejected"].map((decision) => (
+                    <Button
+                      key={decision}
+                      size="small"
+                      disabled={
+                        flow.validating ||
+                        decide.isPending ||
+                        sourceFiles.every((file) => file.decision === decision)
+                      }
+                      onClick={() =>
+                        sendDecisions(
+                          sourceFiles.map(({ id }) => ({ id, decision })),
+                        )
+                      }
+                    >
+                      {decision === "accepted"
+                        ? "Accept source changes"
+                        : "Reject source changes"}
+                    </Button>
+                  ))}
+                </Stack>
+              )}
+            </Box>
+          </Box>
+        )}
+        {groupChanges(visibleChanges).map((group) => (
           <Box key={group.id} component="section" aria-label={group.label}>
             <GroupHeading>
               {COPY.groupTitle(group.label, group.changes.length)}
@@ -470,6 +534,7 @@ export default function ReviewChangesDrawer({
 
 ReviewChangesDrawer.propTypes = {
   sourceHold: PropTypes.string,
+  addedSources: PropTypes.array,
   children: PropTypes.node,
   open: PropTypes.bool,
   env: PropTypes.shape({

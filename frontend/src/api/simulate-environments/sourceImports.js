@@ -111,11 +111,11 @@ function useSourceReviewMutation(path, afterSuccess) {
     meta: { errorHandled: true },
     mutationFn: async ({ reviewId, ...body }) =>
       (await axios.post(path(reviewId), body)).data,
-    onSuccess: async (review) => {
+    onSuccess: async (review, request) => {
       const queryKey = sourceReviewKey(review.id);
       await queryClient.cancelQueries({ queryKey });
       queryClient.setQueryData(queryKey, review);
-      afterSuccess?.(review);
+      afterSuccess?.(review, request);
     },
     onError: (error, { reviewId }) => {
       if (reviewId && error?.statusCode === 409) {

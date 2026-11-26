@@ -89,6 +89,31 @@ beforeEach(() => {
 });
 
 describe("ReviewChangesDrawer", () => {
+  it("represents shared source artifacts as a group while retaining their real decision IDs", async () => {
+    const files = [
+      "reviewed-source.json",
+      "sources/manifest.json",
+      "sources/tested-agent.json",
+    ].map((key) =>
+      change({ id: key, key, kind: "file", summary: "Add " + key }),
+    );
+    setFlow([...files, change()]);
+    renderDrawer({
+      addedSources: [{ source_id: "p", filename: "refund-policy.txt" }],
+    });
+    expect(screen.getByText("refund-policy.txt added")).toBeVisible();
+    for (const file of files)
+      expect(screen.queryByText(file.summary)).toBeNull();
+    expect(screen.getByText("Change refund")).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Accept source changes" }),
+    );
+    expect(decide.mock.lastCall[0]).toEqual({
+      expectedRevisions: { environment: 3 },
+      decisions: files.map(({ id }) => ({ id, decision: "accepted" })),
+    });
+  });
+
   it("sends each decision with the revisions the person saw", async () => {
     const user = userEvent.setup();
     setFlow([change()]);

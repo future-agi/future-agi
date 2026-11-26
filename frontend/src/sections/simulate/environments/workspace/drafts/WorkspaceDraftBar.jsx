@@ -96,19 +96,10 @@ export default function WorkspaceDraftBar({
         busy={busy}
         rebuilding={rebuilding}
         sourceHold={sourceHold}
+        addedSources={added}
         onOpenTab={onOpenTab}
         onClose={() => changeOpen(false)}
       >
-        {added.length > 0 && (
-          <Stack>
-            <Typography variant="subtitle2">Sources added</Typography>
-            {added.map((source) => (
-              <Typography key={source.source_id}>
-                {source.filename || "Source file"}
-              </Typography>
-            ))}
-          </Stack>
-        )}
         {generated.length > 0 && (
           <Stack>
             <Typography variant="subtitle2">Generated scenarios</Typography>

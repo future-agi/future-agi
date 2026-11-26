@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -411,6 +417,7 @@ describe("SourcesSection", () => {
         source_id: "policy",
         filename: "policy.pdf",
         purpose: "policy",
+        visibility: "agent_visible",
         review_id: "review-1",
         unsaved: false,
       },
@@ -445,6 +452,12 @@ describe("SourcesSection", () => {
     expect(
       await screen.findByText("Refunds are allowed for 15 days."),
     ).toBeVisible();
+    expect(
+      screen.getByText("Agent reads it").nextElementSibling,
+    ).toHaveTextContent("Yes");
+    expect(
+      screen.getByText("Used as", { selector: "dt" }).nextElementSibling,
+    ).toHaveTextContent("Rules");
     fireEvent.click(screen.getByRole("tab", { name: "Used by" }));
     expect(await screen.findByText("Refund request at day 15")).toBeVisible();
     expect(screen.queryByText("Different source case")).toBeNull();
@@ -572,6 +585,46 @@ describe("SourcesSection", () => {
         path.endsWith("/scenario-generation/"),
       ),
     ).toBe(false);
+  });
+
+  it("shows accepted sources immediately and surfaces generation failure while the drawer is closed", async () => {
+    sessionStorage.setItem(storageKey, ready.id);
+    let generation = { id: "gen", state: "queued" };
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      scenario_generation: generation,
+    };
+    const fallback = api.get.getMockImplementation();
+    api.get.mockImplementation((path) =>
+      path.endsWith("/scenario-generation/")
+        ? Promise.resolve({ data: generation })
+        : fallback(path),
+    );
+    mount();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Close", exact: true }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "orders.csv" }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Save or discard the current draft before adding another source.",
+      ),
+    ).toBeVisible();
+    generation = {
+      ...generation,
+      state: "failed",
+      error: "source_writer_failed",
+    };
+    expect(
+      await screen.findByText(
+        "Scenario generation failed. Open the source review to retry.",
+        {},
+        { timeout: 3500 },
+      ),
+    ).toBeVisible();
   });
 
   it("recovers a failed generation after reload, keeps Save held and retries the existing review", async () => {
@@ -726,7 +779,9 @@ describe("SourcesSection", () => {
       ],
     };
     expect(
-      await within(screen.getByRole("dialog", { name: /review changes/i })).findByText(
+      await within(
+        screen.getByRole("dialog", { name: /review changes/i }),
+      ).findByText(
         "Refund within the approved 15-day window",
         {},
         { timeout: 3000 },

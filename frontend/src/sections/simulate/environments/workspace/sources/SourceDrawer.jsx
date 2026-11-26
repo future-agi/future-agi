@@ -15,6 +15,7 @@ import {
 } from "src/api/simulate-environments/sourceImports";
 import { ReviewedStatements, ReviewedRecords } from "./ReviewedSource";
 import { readableField } from "./importSourceReview";
+import { plural, purposeLabel } from "./sources.constants";
 import SideDrawer from "../../components/SideDrawer";
 
 const tabs = {
@@ -62,6 +63,15 @@ export default function SourceDrawer({ envId, source, initialTab, onClose }) {
         sx={{ px: 2, py: 1.5, pr: 5, borderBottom: 1, borderColor: "divider" }}
       >
         <Typography variant="h6">{source.filename || "Source file"}</Typography>
+        <Typography variant="caption" color="text.secondary">
+          {[
+            source.filename?.includes(".") &&
+              source.filename.split(".").pop().toUpperCase(),
+            file?.row_count != null && plural(file.row_count, "row"),
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </Typography>
         <Typography color="text.secondary">
           {source.unsaved
             ? "In the environment draft"
@@ -69,6 +79,28 @@ export default function SourceDrawer({ envId, source, initialTab, onClose }) {
               ? "Saved in this environment"
               : ""}
         </Typography>
+      </Box>
+      <Box
+        component="dl"
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "auto 1fr",
+          gap: 1,
+          px: 2,
+          my: 1.5,
+          typography: "body2",
+          "& dt": { color: "text.secondary" },
+          "& dd": { m: 0 },
+        }}
+      >
+        <dt>Used as</dt>
+        <dd>{purposeLabel(source.purpose)}</dd>
+        <dt>Agent reads it</dt>
+        <dd>
+          {{ agent_visible: "Yes", evaluator_only: "No · Evaluator only" }[
+            source.visibility
+          ] || "Unspecified"}
+        </dd>
       </Box>
       <Tabs
         value={tab}

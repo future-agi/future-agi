@@ -857,7 +857,9 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText("Failed")).toBeInTheDocument();
     expect(screen.queryByText("Building")).toBeNull();
     expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
-    expect(screen.getByText("The build can be retried now.")).toBeInTheDocument();
+    expect(
+      screen.getByText("The build can be retried now."),
+    ).toBeInTheDocument();
   });
 
   it("swaps the build experience for the workspace in place when the job completes", async () => {
@@ -1032,13 +1034,11 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     serve({ environment: DRAFT, suite: null, set_aside: [] });
   });
 
-  it("shows the bar right under the version bar while drafts are open", async () => {
+  it("shows the unsaved edits in the version bar while drafts are open", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     const bar = await screen.findByTestId("draft-bar");
-    expect(bar.previousElementSibling).toHaveTextContent(
-      /shared across agent versions/,
-    );
+    expect(bar.parentElement).toHaveTextContent(/shared across agent versions/);
     expect(await saveButton()).toBeEnabled();
   });
 

@@ -1,10 +1,13 @@
 import React from "react";
+import { MemoryRouter } from "react-router-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import SourceBuilderConsole from "../SourceBuilderConsole";
 
 const mocks = vi.hoisted(() => ({
+  review: vi.fn(),
+  activeId: null,
   message: vi.fn(),
   upload: vi.fn(),
   create: vi.fn(),
@@ -18,9 +21,10 @@ vi.mock("src/api/simulate-environments/designDocuments", () => ({
   useUploadDesignDocument: () => mocks.upload,
 }));
 vi.mock("src/api/simulate-environments/sourceImports", () => ({
+  useEnvironmentSourceReview: () => ({ data: mocks.review() }),
   useCreateSourceReview: () => ({ mutateAsync: mocks.create }),
   useActiveEnvironmentSourceReview: () => ({
-    reviewId: null,
+    reviewId: mocks.activeId,
     setReviewId: mocks.activate,
   }),
   useSourceCapabilities: () => ({
@@ -46,7 +50,7 @@ vi.mock("../../../buildEnvironment/console/BuilderConsole", () => ({
         </button>
       )}
       {turns
-        .flatMap((turn) => turn.steps)
+        .flatMap((turn) => turn.steps || [{ id: turn.id, node: turn.text }])
         .map((step) => (
           <div key={step.id}>{step.node}</div>
         ))}
@@ -55,6 +59,47 @@ vi.mock("../../../buildEnvironment/console/BuilderConsole", () => ({
 }));
 
 describe("Builder chat source files", () => {
+  it("restores the file names and proposed changes card from the attached review on reopening chat", () => {
+    mocks.activeId = "review-7";
+    mocks.review.mockReturnValue({
+      scope: { id: "env" },
+      state: "ready",
+      preview: { sources: [{ filename: "orders.csv" }] },
+    });
+    try {
+      render(
+        <MemoryRouter>
+          <QueryClientProvider client={new QueryClient()}>
+            <SourceBuilderConsole
+              envId="env"
+              onSend={vi.fn()}
+              turns={[
+                {
+                  id: "m1",
+                  role: "user",
+                  text: "Check refunds",
+                  sourceReviewId: "review-7",
+                },
+              ]}
+            />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+      expect(
+        screen.getByText("Check refunds · Attached: orders.csv"),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("region", { name: "Attached files" }),
+      ).toHaveTextContent("orders.csv");
+      expect(
+        screen.getByRole("region", { name: "Proposed changes" }),
+      ).toBeVisible();
+    } finally {
+      mocks.activeId = null;
+      mocks.review.mockReset();
+    }
+  });
+
   it("retries only failed uploads and opens the actual environment review before sending the message", async () => {
     mocks.upload
       .mockResolvedValueOnce({ id: "doc-a" })
@@ -64,11 +109,14 @@ describe("Builder chat source files", () => {
     const send = vi.fn();
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <SourceBuilderConsole envId="env" onSend={send} />
+        <MemoryRouter>
+          <SourceBuilderConsole envId="env" onSend={send} />
+        </MemoryRouter>
       </QueryClientProvider>,
     );
     fireEvent.click(screen.getByText("Send files"));
     expect(await screen.findByText("Upload interrupted")).toBeInTheDocument();
+    expect(screen.getByText("Attached: rules.pdf, orders.csv")).toBeVisible();
     expect(mocks.create).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("Retry"));
     await waitFor(() =>
@@ -93,7 +141,7 @@ describe("Builder chat source files", () => {
         expected_draft: { digest: "basis" },
       },
       document_ids: ["doc-a", "doc-b"],
-      document_purposes: {"doc-a": "reference"},
+      document_purposes: { "doc-a": "reference" },
       idempotency_key: expect.any(String),
     });
     expect(mocks.activate).toHaveBeenCalledWith("review-7");

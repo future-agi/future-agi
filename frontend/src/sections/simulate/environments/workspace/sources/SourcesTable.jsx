@@ -7,14 +7,13 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  Typography,
 } from "@mui/material";
 import { fDate } from "src/utils/format-time";
 import useSourceParams from "./useSourceParams";
 import SourceDrawer from "./SourceDrawer";
-import { plural, ROLES } from "./sources.constants";
+import { plural, purposeLabel } from "./sources.constants";
 
-const purposeLabel = (value) =>
-  ROLES.find((role) => role.id === value)?.label || value || "—";
 export default function SourcesTable({ envId, sources, generation }) {
   const { sourceId, sourceTab, openSource, closeSource } = useSourceParams();
   const selected = sources.find((row) => row.source_id === sourceId);
@@ -105,6 +104,26 @@ export default function SourcesTable({ envId, sources, generation }) {
           </TableBody>
         </Table>
       </Box>
+      {showVisibility && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", px: 2, py: 1 }}
+        >
+          In a run · Tested agent:{" "}
+          {plural(
+            sources.filter((source) => source.visibility === "agent_visible")
+              .length,
+            "file",
+          )}{" "}
+          · Evaluator only:{" "}
+          {plural(
+            sources.filter((source) => source.visibility === "evaluator_only")
+              .length,
+            "file",
+          )}
+        </Typography>
+      )}
       {selected && (
         <SourceDrawer
           key={sourceId}

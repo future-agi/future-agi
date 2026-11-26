@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
-import { enqueueSnackbar } from "notistack";
+import useSourceAcceptedToast from "./useSourceAcceptedToast";
 import Iconify from "src/components/iconify";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import {
   sourceSummaryKey,
+  sourceGenerationPending,
+  useEnvironmentSourceGeneration,
+  useEnvironmentSourceReview,
   useActiveEnvironmentSourceReview,
   useCreateSourceReview,
   useEnvironmentSources,
@@ -28,7 +31,7 @@ import { overUploadLimit, SOURCES_COPY } from "./sources.constants";
 export default function SourcesSection({ env, locked }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const [, setParams] = useSearchParams();
+
   const queryClient = useQueryClient();
   const { canEdit } = useSimulationAccess();
   const writable = canEdit && !locked;
@@ -45,7 +48,48 @@ export default function SourcesSection({ env, locked }) {
   const create = useCreateSourceReview();
   const summary = useEnvironmentSources(env.id);
   const capabilities = useSourceCapabilities(env.id);
+  const { data: activeReview } = useEnvironmentSourceReview(reviewId);
+  const acceptedReview =
+    activeReview?.state === "accepted" && activeReview.scope.id === env.id
+      ? activeReview
+      : null;
   const rows = summary.data?.sources || [];
+  const generationId = acceptedReview?.id || summary.data?.generation_review_id;
+  const initialGeneration =
+    acceptedReview?.scenario_generation || summary.data?.scenario_generation;
+  const { data: generation } = useEnvironmentSourceGeneration(
+    generationId,
+    initialGeneration,
+  );
+  const pendingSources =
+    sourceGenerationPending(generation) || generation?.state === "failed"
+      ? (acceptedReview?.preview?.sources || []).filter(
+          (item) => !rows.some((row) => row.source_id === item.pin.source_id),
+        )
+      : [];
+  const sourceRows = [
+    ...rows,
+    ...pendingSources.map((item) => ({
+      source_id: item.pin.source_id,
+      filename: item.filename,
+      purpose: item.pin.role,
+      review_id: acceptedReview.id,
+      visibility: item.visibility,
+      unsaved: true,
+    })),
+  ];
+  const wasGenerating = useRef(false);
+  useEffect(() => {
+    if (
+      wasGenerating.current &&
+      generation &&
+      !sourceGenerationPending(generation)
+    ) {
+      queryClient.invalidateQueries({ queryKey: sourceSummaryKey(env.id) });
+      queryClient.invalidateQueries({ queryKey: draftsKey(env.id) });
+    }
+    wasGenerating.current = sourceGenerationPending(generation);
+  }, [env.id, generation, queryClient]);
 
   function begin() {
     request.current = null;
@@ -127,47 +171,29 @@ export default function SourcesSection({ env, locked }) {
     sources.clear();
   }
 
-  function reviewChanges() {
-    setReviewOpen(false);
-    setParams(
-      (current) => {
-        const next = new URLSearchParams(current);
-        next.set("reviewChanges", "1");
-        return next;
-      },
-      { replace: true },
-    );
-  }
-
-  function accepted() {
+  const notifyAccepted = useSourceAcceptedToast(() => setReviewOpen(false));
+  function accepted(review, requestBody) {
     queryClient.invalidateQueries({ queryKey: sourceSummaryKey(env.id) });
     queryClient.invalidateQueries({ queryKey: draftsKey(env.id) });
-    enqueueSnackbar("Sources added to the draft.", {
-      variant: "success",
-      action: (
-        <Button color="inherit" size="small" onClick={reviewChanges}>
-          Review changes
-        </Button>
-      ),
-    });
+    notifyAccepted(review, requestBody);
   }
 
   const error =
     limitError || summary.error?.message || capabilities.error?.message;
-  const draftGeneration =
-    rows.some((source) => source.unsaved) && summary.data?.scenario_generation;
-  const resumable = draftGeneration && summary.data?.generation_review_id;
+  const unsaved = sourceRows.some((source) => source.unsaved);
+  const draftGeneration = unsaved && generation;
+  const resumable = draftGeneration && generationId;
   const pendingReview = reviewId || selecting;
   const generationHeld =
     draftGeneration &&
-    ["failed", "queued", "running"].includes(draftGeneration.state);
+    ["failed", "queued", "running", "stale"].includes(draftGeneration.state);
   return (
     <SectionCard
       id="environment-sources"
       sx={{ mb: 2 }}
-      title={SOURCES_COPY.title(rows.length)}
+      title={SOURCES_COPY.title(sourceRows.length)}
       subtitle={
-        !rows.length
+        !sourceRows.length
           ? "Attach files in builder chat or add them here."
           : undefined
       }
@@ -188,9 +214,7 @@ export default function SourcesSection({ env, locked }) {
             <Button
               size="small"
               variant="outlined"
-              disabled={
-                Boolean(pendingReview || generationHeld) || !capabilities.data
-              }
+              disabled={Boolean(pendingReview || unsaved) || !capabilities.data}
               startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
               onClick={(event) => setAnchor(event.currentTarget)}
             >
@@ -201,7 +225,7 @@ export default function SourcesSection({ env, locked }) {
       }
     >
       {error && <Alert severity="error">{error}</Alert>}
-      {generationHeld && !pendingReview && (
+      {generationHeld && (
         <Alert severity={draftGeneration.state === "failed" ? "error" : "info"}>
           {draftGeneration.state === "failed"
             ? "Scenario generation failed. Open the source review to retry."
@@ -210,13 +234,24 @@ export default function SourcesSection({ env, locked }) {
               : "Scenario generation is in progress."}
         </Alert>
       )}
+      {writable && (unsaved || pendingReview) && (
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ px: 1.5, py: 1 }}
+        >
+          {unsaved
+            ? "Save or discard the current draft before adding another source."
+            : "Finish the current source review before adding another source."}
+        </Typography>
+      )}
       {summary.isLoading && (
         <Typography sx={{ p: 1.5 }}>Loading sources…</Typography>
       )}
       <SourcesTable
         envId={env.id}
-        sources={rows}
-        generation={summary.data?.scenario_generation}
+        sources={sourceRows}
+        generation={generation}
       />
       {writable && (
         <AddSourceMenu

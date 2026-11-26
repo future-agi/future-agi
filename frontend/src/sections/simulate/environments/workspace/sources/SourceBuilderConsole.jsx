@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
-import { Alert, Button, Stack, Typography } from "@mui/material";
+import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   harnessIdempotencyKey,
@@ -11,10 +11,14 @@ import {
   sourceSummaryKey,
   useActiveEnvironmentSourceReview,
   useCreateSourceReview,
+  useEnvironmentSourceReview,
   useSourceCapabilities,
 } from "src/api/simulate-environments/sourceImports";
 import { draftsKey } from "src/api/simulate-environments/versions";
 import BuilderConsole from "../../buildEnvironment/console/BuilderConsole";
+import Iconify from "src/components/iconify";
+import ShimmerText from "../../components/ShimmerText";
+import useSourceAcceptedToast from "./useSourceAcceptedToast";
 import SourceReviewPanel from "./SourceReviewPanel";
 import { overUploadLimit } from "./sources.constants";
 
@@ -28,6 +32,11 @@ export default function SourceBuilderConsole({
   const capabilities = useSourceCapabilities(envId);
   const create = useCreateSourceReview();
   const { reviewId, setReviewId } = useActiveEnvironmentSourceReview(envId);
+  const { data: activeReview } = useEnvironmentSourceReview(reviewId);
+  const filesInReview =
+    activeReview?.scope?.id === envId
+      ? activeReview.preview?.sources || []
+      : [];
   const client = useQueryClient();
   const pending = useRef(null);
   const [state, setState] = useState(null);
@@ -52,8 +61,18 @@ export default function SourceBuilderConsole({
             expected_draft: batch.basis.draft,
           },
           document_ids: batch.ids,
-          document_purposes: Object.fromEntries(batch.files.flatMap((file, index) =>
-            file.name.toLowerCase().endsWith(".pdf") ? [[batch.ids[index], batch.policyFiles.includes(file) ? "policy" : "reference"]] : [])),
+          document_purposes: Object.fromEntries(
+            batch.files.flatMap((file, index) =>
+              file.name.toLowerCase().endsWith(".pdf")
+                ? [
+                    [
+                      batch.ids[index],
+                      batch.policyFiles.includes(file) ? "policy" : "reference",
+                    ],
+                  ]
+                : [],
+            ),
+          ),
 
           idempotency_key: batch.key,
         });
@@ -84,7 +103,7 @@ export default function SourceBuilderConsole({
     pending.current = {
       text,
       files,
-      names: files.map((f) => f.name).join(", "),
+      names: files.map((f) => f.name),
       ids: [],
       policyFiles,
       key: harnessIdempotencyKey(),
@@ -93,27 +112,40 @@ export default function SourceBuilderConsole({
     prepare();
   };
   const close = () => setReviewId(null);
-  const refresh = () => {
+  const notifyAccepted = useSourceAcceptedToast();
+  const refresh = (review, requestBody) => {
+    notifyAccepted(review, requestBody);
     client.invalidateQueries({ queryKey: sourceSummaryKey(envId) });
     client.invalidateQueries({ queryKey: draftsKey(envId) });
   };
   const editor = (id) => (
-    <SourceReviewPanel
-      reviewId={id}
-      ownerId={envId}
-      canEdit={capabilities.isSuccess}
-      environmentBasis={capabilities.data}
-      acceptLabel="Add to draft"
-      onAccepted={refresh}
-      onCancelled={close}
-      onDismiss={close}
-    />
+    <Box
+      component="section"
+      aria-label="Proposed changes"
+      sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1.5 }}
+    >
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        Proposed changes
+      </Typography>
+      <SourceReviewPanel
+        reviewId={id}
+        ownerId={envId}
+        canEdit={capabilities.isSuccess}
+        environmentBasis={capabilities.data}
+        acceptLabel="Add to draft"
+        onAccepted={refresh}
+        onCancelled={close}
+        onDismiss={close}
+      />
+    </Box>
   );
   const status = state ? (
     <Stack spacing={1}>
-      <Typography>{state.names}</Typography>
+      <Typography variant="body2">
+        Attached: {state.names.join(", ")}
+      </Typography>
       {state.busy ? (
-        <Typography>Preparing files for review…</Typography>
+        <ChatFileRows names={state.names} reading />
       ) : (
         <Alert
           severity="error"
@@ -148,11 +180,42 @@ export default function SourceBuilderConsole({
         </Button>
       );
     return [
-      turn,
+      reviewId === id && filesInReview.length
+        ? {
+            ...turn,
+            text: [
+              turn.text,
+              "Attached: " +
+                filesInReview
+                  .map((s) => s.filename || "Source file")
+                  .join(", "),
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          }
+        : turn,
       {
         id: turn.id + "-sources",
         role: "builder",
-        steps: [{ id: "sources-" + id, kind: "node", node }],
+        steps: [
+          {
+            id: "sources-" + id,
+            kind: "node",
+            node: (
+              <Stack spacing={1}>
+                {reviewId === id && filesInReview.length > 0 && (
+                  <ChatFileRows
+                    names={filesInReview.map(
+                      (s) => s.filename || "Source file",
+                    )}
+                    reading={activeReview.state === "reading"}
+                  />
+                )}
+                {node}
+              </Stack>
+            ),
+          },
+        ],
       },
     ];
   });
@@ -176,4 +239,47 @@ SourceBuilderConsole.propTypes = {
   envId: PropTypes.string.isRequired,
   turns: PropTypes.array,
   onSend: PropTypes.func.isRequired,
+};
+
+function ChatFileRows({ names, reading }) {
+  return (
+    <Box
+      component="section"
+      aria-label="Attached files"
+      sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
+    >
+      {names.map((name, index) => (
+        <Stack
+          key={index}
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 1.25,
+            py: 1,
+            "& + &": { borderTop: 1, borderColor: "divider" },
+          }}
+        >
+          <Iconify icon="solar:file-text-linear" width={16} />
+          <Typography
+            variant="body2"
+            sx={{ flex: 1, overflowWrap: "anywhere" }}
+          >
+            {name}
+          </Typography>
+          {reading ? (
+            <ShimmerText>Reading…</ShimmerText>
+          ) : (
+            <Typography variant="caption" color="text.secondary">
+              Read
+            </Typography>
+          )}
+        </Stack>
+      ))}
+    </Box>
+  );
+}
+ChatFileRows.propTypes = {
+  names: PropTypes.arrayOf(PropTypes.string).isRequired,
+  reading: PropTypes.bool,
 };

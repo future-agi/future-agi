@@ -39,6 +39,9 @@ export const ROLES = [
   },
 ];
 
+export const purposeLabel = (value) =>
+  ROLES.find((role) => role.id === value)?.label || value || "—";
+
 export const VISIBILITY = [
   {
     id: "agent",
