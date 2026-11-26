@@ -80,6 +80,7 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRunEvaluationsQueuedSerializer,
     HarnessEnvironmentRunEvaluationsSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+    HarnessLockPreviewSerializer,
     HarnessLockRefusalSerializer,
     HarnessLockVersionSerializer,
     HarnessNudgeAnswerSerializer,
@@ -345,6 +346,26 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if job is None:
             return self._not_found()
         return Response(version_reads.list_versions(job))
+
+    @validated_request(responses={200: HarnessLockPreviewSerializer})
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="versions/lock-preview",
+        url_name="lock_preview",
+    )
+    def lock_preview(self, request, pk=None):
+        """Whether the default environment and suite versions can be locked now, why
+        not, and the train and test splits a lock would give. It plans as the lock does,
+        so it reads the default run's environment contract and scenario documents by
+        design; the versions list stays off them."""
+        from simulate.services.harness_versioning.locked_versions import lock_preview
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(lock_preview(job))
 
     @validated_request(
         query_serializer=HarnessVersionDiffQuerySerializer,

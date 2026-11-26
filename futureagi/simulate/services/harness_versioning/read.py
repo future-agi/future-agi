@@ -537,7 +537,6 @@ def list_versions(job: HostedHarnessJob) -> dict[str, Any]:
     runtimes = _runtimes(job, agents)
     parents = _parent_agent_versions(job, runtimes)
     lineage = _default_lineage(job)
-    history = locked_versions.locked_version_items(job)
     return {
         "agent": [
             _agent_item(
@@ -557,8 +556,7 @@ def list_versions(job: HostedHarnessJob) -> dict[str, Any]:
         "suite": [
             _piece_item(version, job.suite_version_id, suite=True) for version in suites
         ],
-        "locked_versions": history,
-        "lock": locked_versions.lock_preview(job, history),
+        "locked_versions": locked_versions.locked_version_items(job),
     }
 
 

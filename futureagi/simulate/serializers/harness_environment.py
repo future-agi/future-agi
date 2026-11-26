@@ -1338,7 +1338,6 @@ class HarnessVersionsSerializer(serializers.Serializer):
     environment = HarnessVersionSerializer(many=True)
     suite = HarnessVersionSerializer(many=True)
     locked_versions = HarnessLockedVersionSerializer(many=True)
-    lock = HarnessLockPreviewSerializer()
 
 
 class HarnessLockVersionSerializer(serializers.Serializer):

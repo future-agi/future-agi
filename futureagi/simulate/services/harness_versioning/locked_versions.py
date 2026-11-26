@@ -271,16 +271,12 @@ def _locked_version(
     ).first()
 
 
-def _plan_lock(
-    job: HostedHarnessJob, locked_versions: list[LockedVersionItem] | None = None
-) -> SplitPlan:
-    """What locking the default pair would give, or the reason it can't be locked.
-    ``locked_versions``, a read's own list, says which pair is locked, so the read's preview
-    and history agree; without it the database says."""
+def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
+    """What locking the default pair would give, or the reason it can't be locked. The
+    lock and its preview both plan here, so a lock never disagrees with its preview."""
     from simulate.services.harness_agent_versions import _busy
     from simulate.services.harness_versioning.read import require_versioning
 
-    # An unlock still answers with versioning off: its preview says why nothing locks.
     require_versioning()
     if job.environment_version_id is None or job.suite_version_id is None:
         raise HostedHarnessError(
@@ -297,25 +293,11 @@ def _plan_lock(
         )
     # An update's rebuild moves the default when it lands.
     require_no_rebuild(job)
-    if locked_versions is None:
-        current = _locked_version(job.environment_version_id, job.suite_version_id)
-        current_label = current.label if current is not None else None
-    else:
-        current_label = next(
-            (
-                locked_version["label"]
-                for locked_version in locked_versions
-                if locked_version["unlocked_at"] is None
-                and locked_version["environment_version_id"]
-                == str(job.environment_version_id)
-                and locked_version["suite_version_id"] == str(job.suite_version_id)
-            ),
-            None,
-        )
-    if current_label is not None:
+    current = _locked_version(job.environment_version_id, job.suite_version_id)
+    if current is not None:
         raise HostedHarnessError(
             "version_already_locked",
-            f"These versions are already locked as {current_label}.",
+            f"These versions are already locked as {current.label}.",
             status_code=409,
         )
     tasks = scorable_tasks(
@@ -551,11 +533,10 @@ class LockPreview(TypedDict):
     test_target: int | None
 
 
-def lock_preview(
-    job: HostedHarnessJob, locked_versions: list[LockedVersionItem] | None = None
-) -> LockPreview:
+def lock_preview(job: HostedHarnessJob) -> LockPreview:
     """Whether the default pair can be locked now, why not, and the splits it would
-    get. ``locked_versions`` is the same read's history, so both name the same lock."""
+    get. It reads what the lock reads, the default run's contract and scenario
+    documents included, so it has its own read, apart from the versions list."""
     proved = HarnessSuiteValidation.no_workspace_objects.filter(
         suite_version_id=job.suite_version_id,
         environment_version_id=job.environment_version_id,
@@ -572,7 +553,7 @@ def lock_preview(
         test_target=None,
     )
     try:
-        plan = _plan_lock(job, locked_versions)
+        plan = _plan_lock(job)
     except HostedHarnessError as refused:
         details = refused.details or {}
         preview["refusal"] = LockRefusal(code=refused.code, message=refused.message)
