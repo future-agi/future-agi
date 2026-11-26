@@ -1,6 +1,6 @@
 import React from "react";
 import PropTypes from "prop-types";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 
 import SavedEvalsList from "../SavedEvalsList";
@@ -133,5 +133,65 @@ describe("SavedEvalsList — auto-select of saved evals", () => {
     expect(rowCheckboxes()[0]).toBeChecked();
     expect(rowCheckboxes()[1]).not.toBeChecked();
     expect(screen.getByLabelText("Pending saves")).toHaveTextContent("0");
+  });
+});
+
+describe("SavedEvalsList — default path (no gating props)", () => {
+  it("select-all ticks every eval and Run All runs each one", async () => {
+    const user = userEvent.setup();
+    const onRunEvalClick = vi.fn();
+    render(
+      <SavedEvalsList
+        evals={[A, B]}
+        allColumns={[]}
+        onRunEvalClick={onRunEvalClick}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Run All (2)" })).toBeEnabled();
+    await user.click(screen.getAllByRole("checkbox")[0]);
+    expect(screen.getByText("2 of 2 selected")).toBeInTheDocument();
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Run Selected (2)" }));
+    expect(onRunEvalClick).toHaveBeenCalledTimes(2);
+    expect(onRunEvalClick).toHaveBeenCalledWith(A);
+    expect(onRunEvalClick).toHaveBeenCalledWith(B);
+  });
+
+  it("Run All with nothing ticked runs every eval", async () => {
+    const user = userEvent.setup();
+    const onRunEvalClick = vi.fn();
+    render(
+      <SavedEvalsList
+        evals={[A, B]}
+        allColumns={[]}
+        onRunEvalClick={onRunEvalClick}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Run All (2)" }));
+    expect(onRunEvalClick).toHaveBeenCalledTimes(2);
+  });
+
+  it("names the Add button 'Add', which the dataset E2E clicks", () => {
+    render(<SavedEvalsList evals={[A, B]} allColumns={[]} />);
+    expect(
+      screen.getByRole("button", { name: "Add", exact: true }),
+    ).toBeEnabled();
+  });
+
+  it("hides the footer Delete when the caller gates bulkDelete", async () => {
+    const user = userEvent.setup();
+    render(
+      <SavedEvalsList
+        evals={[A, B]}
+        allColumns={[]}
+        disabledReason={(_i, action) => (action === "bulkDelete" ? "no" : "")}
+      />,
+    );
+    await user.click(screen.getAllByRole("checkbox")[0]);
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 });

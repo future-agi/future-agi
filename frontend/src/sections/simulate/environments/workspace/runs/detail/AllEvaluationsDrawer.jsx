@@ -1,19 +1,10 @@
+import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  Box,
-  Button,
-  Checkbox,
-  FormControlLabel,
-  IconButton,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
+import { Box, Button, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
-import EvalTypeBadge from "src/sections/evals/components/EvalTypeBadge";
+import SavedEvalsList from "src/sections/common/EvaluationDrawer/SavedEvalsList";
 import {
   useEnvironmentRunTest,
   useRemoveAppliedEvaluation,
@@ -36,14 +27,12 @@ import {
   HARNESS_ONLY_TOOLTIP,
   NOT_COMPLETED_TOOLTIP,
   NOT_EDITABLE_TOOLTIP,
+  PENDING_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
 import { LoadingScreen } from "src/components/loading-screen";
-import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
-// A stable empty-array constant: `= []` as a hook default is a fresh
-// reference on every render, which would re-run the memos below even when
-// the run test's configs have not changed.
+// A stable empty array for `configs` while the run test's evals load.
 const NO_CONFIGS = [];
 
 /**
@@ -52,7 +41,8 @@ const NO_CONFIGS = [];
  * Every eval bound to the run test is listed here, including the harness's
  * per-scenario checks — those can't be ticked or re-run, because only a call
  * rerun refreshes them, but they can still be removed. The footer runs the
- * ticked rows and a row's run icon runs just that row; a row's edit icon edits
+ * ticked rows (every runnable eval when none is ticked) and a row's run icon
+ * runs just that row; a row's edit icon edits
  * that eval. Both go to the run page (`onRerun`, `onEdit`), whose one edit form
  * and confirm dialog also serve the table's column menus, and this drawer
  * closes once the grading it asked for is queued.
@@ -72,16 +62,13 @@ export default function AllEvaluationsDrawer({
   onAddEvaluations,
 }) {
   const queryClient = useQueryClient();
-  const access = useSimulationAccess();
-  const [ticked, setTicked] = useState(() => new Set());
-  const [removing, setRemoving] = useState(null);
-
-  // The run page keeps this drawer mounted while it's closed, so ticks would
-  // otherwise still be there on reopening — including on a removed eval that
-  // came back under the same id.
+  // Bumped each time the drawer opens, so a reopened list starts unticked
+  // while the list stays mounted through the close animation.
+  const [listKey, setListKey] = useState(0);
   useEffect(() => {
-    if (!open) setTicked(new Set());
+    if (open) setListKey((k) => k + 1);
   }, [open]);
+  const access = useSimulationAccess();
 
   const {
     data: configsData,
@@ -93,38 +80,6 @@ export default function AllEvaluationsDrawer({
   const configs = configsData ?? NO_CONFIGS;
 
   const removeEval = useRemoveAppliedEvaluation();
-
-  const runnableIds = useMemo(
-    () => configs.filter((c) => c.regradable === true).map((c) => c.id),
-    [configs],
-  );
-  // Filtering by the *current* runnableIds, not by whatever was ticked when a
-  // row was removed, is what drops a removed row out of the selection on its
-  // own — nothing here needs to react to a remove explicitly.
-  const selectedIds = useMemo(
-    () => runnableIds.filter((id) => ticked.has(id)),
-    [runnableIds, ticked],
-  );
-  const selectedConfigs = useMemo(
-    () => configs.filter((c) => selectedIds.includes(c.id)),
-    [configs, selectedIds],
-  );
-
-  const allTicked =
-    runnableIds.length > 0 && runnableIds.every((id) => ticked.has(id));
-  const someTicked = selectedIds.length > 0 && !allTicked;
-
-  const handleSelectAll = () => {
-    setTicked(allTicked ? new Set() : new Set(runnableIds));
-  };
-  const handleToggleRow = (id) => {
-    setTicked((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   const requestRerun = (list) => onRerun?.(list, { onSuccess: onClose });
 
@@ -154,50 +109,65 @@ export default function AllEvaluationsDrawer({
 
   const cannotRunTooltip = grading ? GRADING_TOOLTIP : NOT_COMPLETED_TOOLTIP;
 
-  return (
-    <SideDrawer open={open} onClose={onClose} width={520}>
-      <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-        <Box sx={{ p: 3, pb: 1 }}>
-          <Typography sx={{ typography: "m2", fontWeight: 500, pr: 4 }}>
-            All Evaluations
-          </Typography>
-          <Stack
-            direction="row"
-            alignItems="center"
-            justifyContent="space-between"
-            sx={{ mt: 2 }}
-          >
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={allTicked}
-                  indeterminate={someTicked}
-                  disabled={runnableIds.length === 0}
-                  onChange={handleSelectAll}
-                />
-              }
-              label={`Evals (${configs.length})`}
-            />
-            <ViewerLock
-              locked={!access.canEdit}
-              title={WORKSPACE_COPY.viewer.evals}
-            >
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={
-                  <Iconify icon="solar:add-circle-linear" width={16} />
-                }
-                disabled={!access.canEdit}
-                onClick={() => onAddEvaluations?.()}
-              >
-                Add evaluations
-              </Button>
-            </ViewerLock>
-          </Stack>
-        </Box>
+  // The run page's rules for each control, as reasons the shared list shows
+  // as tooltips. Empty means allowed.
+  const disabledReason = (config, action) => {
+    if (action === "add") {
+      return access.canEdit ? "" : WORKSPACE_COPY.viewer.evals;
+    }
+    if (action === "runAll") {
+      if (!access.canRun) return WORKSPACE_COPY.viewer.runEvals;
+      if (!canRun) return cannotRunTooltip;
+      return rerunPending ? PENDING_TOOLTIP : "";
+    }
+    // The run drawer has no bulk Delete: removals go one at a time, each
+    // reporting its own error.
+    if (action === "bulkDelete") return "Remove evals one at a time.";
+    const runnable = config.regradable === true;
+    if (action === "select") return runnable ? "" : HARNESS_ONLY_TOOLTIP;
+    if (action === "run") {
+      if (!access.canRun) return WORKSPACE_COPY.viewer.runEvals;
+      if (!runnable) return HARNESS_ONLY_TOOLTIP;
+      if (!canRun) return cannotRunTooltip;
+      return rerunPending ? PENDING_TOOLTIP : "";
+    }
+    if (action === "edit") {
+      if (!access.canEdit) return WORKSPACE_COPY.viewer.evals;
+      if (config.editable !== true) return NOT_EDITABLE_TOOLTIP;
+      if (grading) return GRADING_TOOLTIP;
+      if (!canRun) return NOT_COMPLETED_TOOLTIP;
+      if (editOpen || rerunPending) return PENDING_TOOLTIP;
+      return "";
+    }
+    if (action === "delete") {
+      // The grader copes with a removal mid-run (it drops the pending cell),
+      // but the column would vanish from a table that is polling for its
+      // scores. Removal waits.
+      if (!access.canEdit) return WORKSPACE_COPY.viewer.evals;
+      if (grading) return GRADING_TOOLTIP;
+      return removeEval.isPending ? "Removing an evaluation…" : "";
+    }
+    return "";
+  };
 
-        <Box sx={{ flex: 1, overflowY: "auto", px: 3 }}>
+  return (
+    <SideDrawer open={open} onClose={onClose} width={640}>
+      {/* The dataset's All Evaluations list (SavedEvalsList), fed this run's
+          evals and the run page's rules for what can run, change or go. */}
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          p: 2,
+          gap: 1,
+        }}
+      >
+        <Typography sx={{ typography: "m2", fontWeight: 600, pr: 4 }}>
+          All Evaluations
+        </Typography>
+
+        <Box sx={{ flex: 1, minHeight: 0 }}>
           {isPending ? (
             <LoadingScreen compact />
           ) : isError && configsData === undefined ? (
@@ -218,198 +188,48 @@ export default function AllEvaluationsDrawer({
             <EmptyState
               title="No evaluations yet"
               body="Add one to grade this run."
+              action={
+                <ViewerLock
+                  locked={!access.canEdit}
+                  title={WORKSPACE_COPY.viewer.evals}
+                >
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    disabled={!access.canEdit}
+                    startIcon={<Iconify icon="solar:add-linear" width={14} />}
+                    onClick={() => onAddEvaluations?.()}
+                  >
+                    Add evaluations
+                  </Button>
+                </ViewerLock>
+              }
             />
           ) : (
-            <Stack
-              divider={
-                <Box
-                  sx={{ borderBottom: "1px solid", borderColor: "divider" }}
-                />
+            <SavedEvalsList
+              key={listKey}
+              evals={configs}
+              hideStatus
+              disabledReason={disabledReason}
+              onAddClick={() => onAddEvaluations?.()}
+              onRunEvalClick={(config) => requestRerun([config])}
+              onRunSelected={(list) => requestRerun(list)}
+              onEditEvalClick={(config) =>
+                onEdit?.(config, { onSuccess: onClose })
               }
-            >
-              {configs.map((config) => {
-                const runnable = config.regradable === true;
-                const editable = config.editable === true;
-                const editTooltip = !access.canEdit
-                  ? WORKSPACE_COPY.viewer.evals
-                  : !editable
-                    ? NOT_EDITABLE_TOOLTIP
-                    : grading
-                      ? GRADING_TOOLTIP
-                      : !canRun
-                        ? NOT_COMPLETED_TOOLTIP
-                        : "";
-                const runTooltip = !access.canRun
-                  ? WORKSPACE_COPY.viewer.runEvals
-                  : !runnable
-                    ? HARNESS_ONLY_TOOLTIP
-                    : !canRun
-                      ? cannotRunTooltip
-                      : "";
-                return (
-                  <Stack
-                    key={config.id}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    sx={{ py: 1.5 }}
-                  >
-                    <Tooltip
-                      arrow
-                      title={!runnable ? HARNESS_ONLY_TOOLTIP : ""}
-                    >
-                      <span>
-                        <Checkbox
-                          checked={ticked.has(config.id)}
-                          disabled={!runnable}
-                          onChange={() => handleToggleRow(config.id)}
-                          inputProps={{ "aria-label": `Select ${config.name}` }}
-                        />
-                      </span>
-                    </Tooltip>
-                    <Iconify
-                      icon="solar:shield-check-linear"
-                      width={18}
-                      sx={{ color: "text.subtitle", flexShrink: 0 }}
-                    />
-                    <Typography sx={{ flex: 1, typography: "s1" }} noWrap>
-                      {config.name}
-                    </Typography>
-                    {config.eval_type && (
-                      <EvalTypeBadge type={config.eval_type} />
-                    )}
-                    <Tooltip arrow title={runTooltip}>
-                      <span>
-                        <IconButton
-                          aria-label={`Run ${config.name}`}
-                          disabled={
-                            !access.canRun ||
-                            !runnable ||
-                            !canRun ||
-                            rerunPending
-                          }
-                          onClick={() => requestRerun([config])}
-                        >
-                          <Iconify icon="solar:play-circle-linear" width={18} />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    <Tooltip arrow title={editTooltip}>
-                      <span>
-                        <IconButton
-                          aria-label={`Edit ${config.name}`}
-                          disabled={
-                            !access.canEdit ||
-                            !editable ||
-                            grading ||
-                            !canRun ||
-                            editOpen ||
-                            rerunPending
-                          }
-                          onClick={() =>
-                            onEdit?.(config, { onSuccess: onClose })
-                          }
-                        >
-                          <Iconify icon="solar:pen-linear" width={18} />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    {/* The grader copes with a removal mid-run (it drops the
-                        pending cell), but the column would vanish from a table
-                        that is polling for its scores. Removal waits. */}
-                    <Tooltip
-                      arrow
-                      title={
-                        !access.canEdit
-                          ? WORKSPACE_COPY.viewer.evals
-                          : grading
-                            ? GRADING_TOOLTIP
-                            : ""
-                      }
-                    >
-                      <span>
-                        <IconButton
-                          aria-label={`Remove ${config.name}`}
-                          disabled={
-                            !access.canEdit || grading || removeEval.isPending
-                          }
-                          onClick={() => setRemoving(config)}
-                        >
-                          <Iconify
-                            icon="solar:trash-bin-trash-linear"
-                            width={18}
-                          />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  </Stack>
-                );
-              })}
-            </Stack>
+              onDeleteEvalClick={(config) => handleRemove(config)}
+              // The run page asks before any re-grade, from here or a
+              // column menu, so the row doesn't ask first.
+              confirmRun={false}
+              confirmText={{
+                deleteLabel: "Remove",
+                delete: (config) =>
+                  `Remove ${config.name} from this environment? Its column leaves this run's results.`,
+              }}
+            />
           )}
         </Box>
-
-        <Box sx={{ p: 3, borderTop: "1px solid", borderColor: "divider" }}>
-          <Tooltip
-            arrow
-            title={
-              !access.canRun
-                ? WORKSPACE_COPY.viewer.runEvals
-                : !canRun
-                  ? cannotRunTooltip
-                  : ""
-            }
-          >
-            <span style={{ display: "block" }}>
-              <Button
-                fullWidth
-                variant="contained"
-                startIcon={<Iconify icon="solar:play-bold" width={16} />}
-                disabled={
-                  !access.canRun ||
-                  selectedIds.length === 0 ||
-                  !canRun ||
-                  rerunPending
-                }
-                onClick={() => requestRerun(selectedConfigs)}
-              >
-                {allTicked && runnableIds.length > 0
-                  ? `Run All (${selectedIds.length})`
-                  : `Run (${selectedIds.length})`}
-              </Button>
-            </span>
-          </Tooltip>
-        </Box>
       </Box>
-      <ConfirmDialog
-        open={Boolean(removing)}
-        onClose={() => setRemoving(null)}
-        title="Remove this evaluation?"
-        content={
-          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            <Box component="span" sx={{ fontWeight: 600 }}>
-              {removing?.name}
-            </Box>{" "}
-            is removed from this environment and its column leaves this
-            run&apos;s results.
-          </Typography>
-        }
-        action={
-          <Button
-            size="small"
-            variant="contained"
-            color="error"
-            disabled={!access.canEdit || removeEval.isPending}
-            onClick={() => {
-              const config = removing;
-              setRemoving(null);
-              if (access.canEdit && config) handleRemove(config);
-            }}
-          >
-            Remove
-          </Button>
-        }
-      />
     </SideDrawer>
   );
 }
