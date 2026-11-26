@@ -1026,6 +1026,32 @@ class LiveWrites(unittest.TestCase):
             ("PATCH", f"repos/{self.REPO}/pulls/70", {"state": "closed"}), app.calls
         )
 
+    def test_execute_evict_labels_red_and_links_the_failing_run(self):
+        node = rollup_node(
+            70, [(1, sha(1))], checks=green()[:2] + [run("Python Lint Pass", "FAILURE")]
+        )
+        result = train.plan(data([pr_node(1)], [node]), REQUIRED, cfg(), {70: "red"})
+        app, actions = FakeGitHub({}), FakeGitHub({})
+        url = f"https://github.com/{self.REPO}/actions/runs/555"
+        train.execute(
+            result,
+            train.Live(self.REPO, app, actions),
+            {70: [{"id": 555, "html_url": url}]},
+        )
+        self.assertIn(
+            (
+                "POST",
+                f"repos/{self.REPO}/issues/1/labels",
+                {"labels": [train.RED_LABEL]},
+            ),
+            actions.calls,
+        )
+        comment = next(
+            c[2]["body"] for c in actions.calls if c[1].endswith("/issues/1/comments")
+        )
+        self.assertIn(url, comment)
+        self.assertIn(f"<!-- devflow-train:red pr=1 sha={sha(1)} -->", comment)
+
 
 if __name__ == "__main__":
     unittest.main()

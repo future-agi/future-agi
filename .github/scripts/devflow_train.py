@@ -1042,15 +1042,16 @@ class Live:
             ok=(204, 422),
         )
 
-    def evict(self, pr: int, sha: str, rollup: int):
+    def evict(self, pr: int, sha: str, rollup: int, runs: list):
         self.label(pr, RED_LABEL)
+        links = ", ".join(r["html_url"] for r in runs if r.get("html_url"))
         self.actions.call(
             "POST",
             f"repos/{self.repo}/issues/{pr}/comments",
             {
                 "body": f"The batch train saw this pull request red on its own in rollup #{rollup} "
-                f"(head `{sha[:12]}`). It leaves the train until a new head is pushed. The failing run is "
-                f"on #{rollup}.\n\n<!-- devflow-train:red pr={pr} sha={sha} -->"
+                f"(head `{sha[:12]}`). It leaves the train until a new head is pushed. Failing run: "
+                f"{links or f'see #{rollup}'}.\n\n<!-- devflow-train:red pr={pr} sha={sha} -->"
             },
         )
 
@@ -1100,7 +1101,12 @@ def execute(result: dict, live: Live, red_runs: dict):
                 f"Closed by the batch train: red ({act['signal']}), split into {act['halves']}.",
             )
         elif kind == "evict":
-            live.evict(act["pr"], act["sha"], rollup["number"])
+            live.evict(
+                act["pr"],
+                act["sha"],
+                rollup["number"],
+                red_runs.get(rollup["number"], []),
+            )
             live.close(
                 rollup, f"Closed by the batch train: #{act['pr']} is red on its own."
             )
