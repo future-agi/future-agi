@@ -3,6 +3,10 @@ name: Reviewer Assigner
 on:
   pull_request:
     types: [opened, ready_for_review, reopened]
+  # Reassign heartbeat: every merge to dev runs the sweep from dev's copy.
+  # Schedules run main's copy, which lags dev, so the sweep has no cron.
+  push:
+    branches: [dev]
   workflow_dispatch:
     inputs:
       mode:
@@ -24,18 +28,13 @@ on:
   schedule:
     # 10:00 IST (UTC+5:30) → 04:30 UTC — same morning slot as pr-digest.
     - cron: "30 4 * * *"
-    # Reassign sweep: hourly, 09:45–18:45 IST, Monday to Friday. Schedules run
-    # main's copy, so this starts with the next release; until then dispatch
-    # `--ref dev -f mode=reassign`.
-    - cron: "15 4-13 * * 1-5"
 
 jobs:
   assign:
     if: >-
       github.repository == 'future-agi/future-agi' &&
-      inputs.mode != 'reassign' &&
-      github.event_name != 'schedule' &&
-      github.event.pull_request.draft != true
+      ((github.event_name == 'pull_request' && github.event.pull_request.draft != true) ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode != 'reassign'))
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -58,7 +57,7 @@ jobs:
   reassign:
     if: >-
       github.repository == 'future-agi/future-agi' &&
-      (github.event.schedule == '15 4-13 * * 1-5' ||
+      (github.event_name == 'push' ||
        (github.event_name == 'workflow_dispatch' && inputs.mode == 'reassign'))
     runs-on: ubuntu-latest
     concurrency:
