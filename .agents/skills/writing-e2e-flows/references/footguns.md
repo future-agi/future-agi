@@ -18,13 +18,13 @@ the way the design doc implies. Grouped, but each row stands alone: **symptom �
    equals the `flows/<area>/` directory; only the five fields' presence and id uniqueness are checked
    → keep them equal yourself.
 5. **`yarn catalog` exits 1 with `duplicate flow id`** → two specs claim the same id → take the next
-   free one for that area from `FLOWS.md`.
-6. **CI fails at "Flow catalog is current", before any container starts** → a title, tag or
-   annotation changed without regenerating → `cd e2e && yarn catalog` and commit `FLOWS.md` in the
-   same commit as the spec.
-7. **`catalog:check` disagrees between two machines** → `FLOWS.md` was hand-edited, or annotation
-   strings carry trailing whitespace or markdown the repo's prettier reflows → regenerate, never
-   hand-write; keep annotation strings plain.
+   free one for that area from `FLOWS.md` (after `yarn catalog`).
+6. **CI fails at "Flow catalog is current", before any container starts** → an annotation is
+   malformed, or a flow id is not a quoted string literal (or an area not an `area:` literal), so
+   the spec-text reading disagrees with Playwright → run `cd e2e && yarn catalog:check` and fix the
+   spec it names.
+7. **`E2E: new <ID>` blocks although the spec exists** → the id was already declared at the merge
+   base, or is built from a template string → take the next free id and write it as a literal.
 8. **`yarn catalog` fails on `Map.groupBy`** → Node older than 21 → the workspace requires Node
    ≥ 22.18. The catalog needs `node_modules` but not a running stack.
 
