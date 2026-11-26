@@ -188,7 +188,7 @@ describe("LockedVersionCard", () => {
     ).toBeInTheDocument();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Lock this version" }),
+      screen.getByRole("button", { name: "Lock versions" }),
     );
     const dialog = screen.getByRole("dialog");
     expect(
@@ -211,7 +211,7 @@ describe("LockedVersionCard", () => {
   it("locks the pair that opened the dialog, even if the default moved since", async () => {
     const { rerender } = render(<LockedVersionCard envId="env" />);
     await userEvent.click(
-      screen.getByRole("button", { name: "Lock this version" }),
+      screen.getByRole("button", { name: "Lock versions" }),
     );
 
     // The versions refresh behind the open dialog with a newer default pair.
@@ -257,7 +257,7 @@ describe("LockedVersionCard", () => {
       screen.getByText("Add scenarios to lock: a test split needs at least 4."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Lock this version" }),
+      screen.getByRole("button", { name: "Lock versions" }),
     ).toBeDisabled();
     await userEvent.click(
       screen.getByRole("button", { name: "Add scenarios" }),
@@ -290,7 +290,7 @@ describe("LockedVersionCard", () => {
     render(<LockedVersionCard envId="env" />);
 
     expect(
-      screen.getByRole("button", { name: "Lock this version" }),
+      screen.getByRole("button", { name: "Lock versions" }),
     ).toBeDisabled();
     await userEvent.tab();
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
@@ -321,7 +321,7 @@ describe("LockedVersionCard", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Lock this version" }),
+      screen.queryByRole("button", { name: "Lock versions" }),
     ).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Unlock" }));

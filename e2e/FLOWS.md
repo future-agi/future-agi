@@ -3800,7 +3800,7 @@
 2. read the environment's versions: nothing is locked
 3. read the lock preview: the default pair can be locked
 4. open the Overview tab and read the "Lock environment <vN>, scenarios <vN>" card as Ready
-5. choose Lock this version and confirm Lock versions in the dialog
+5. choose Lock versions on the card and confirm Lock versions in the dialog
 6. read the card as "Locked: environment <vN>, scenarios <vN>", with no status badge and the lock line
 7. delete the environment through the API
 
@@ -3815,5 +3815,5 @@
 
 **Browser observations:**
 
-- the card reads "Lock environment <vN>, scenarios <vN>" (the default pair) and Ready, with "Lock this version" enabled
+- the card reads "Lock environment <vN>, scenarios <vN>" (the default pair) and Ready, with "Lock versions" enabled
 - the dialog reads "Lock environment <vN>, scenarios <vN>?"; after confirming the card title is "Locked: environment <vN>, scenarios <vN>", it shows no status badge and its line reads "Lock <label> · <d Mon> · Train 8 · Test 4 scenarios · scorer frozen"

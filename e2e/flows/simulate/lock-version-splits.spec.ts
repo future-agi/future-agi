@@ -27,7 +27,7 @@ const LOCK_PREVIEW = (env: string) => `${ENVIRONMENTS}/${env}/versions/lock-prev
 const LOCK = (env: string) => `${ENVIRONMENTS}/${env}/versions/lock/`;
 // Copy, pinned from frontend/src/sections/simulate/environments/workspace/overview/overview.constants.js
 // (LOCK_COPY).
-const LOCK_BUTTON = 'Lock this version';
+const LOCK_BUTTON = 'Lock versions';
 const LOCK_ACTION = 'Lock versions';
 // The default pair, as the card names it: "environment vN, scenarios vN".
 const pairOf = (environmentLabel: string, suiteLabel: string) =>
@@ -69,7 +69,7 @@ test(
         "read the environment's versions: nothing is locked",
         'read the lock preview: the default pair can be locked',
         'open the Overview tab and read the "Lock environment <vN>, scenarios <vN>" card as Ready',
-        'choose Lock this version and confirm Lock versions in the dialog',
+        'choose Lock versions on the card and confirm Lock versions in the dialog',
         'read the card as "Locked: environment <vN>, scenarios <vN>", with no status badge and the lock line',
         'delete the environment through the API',
       ],
@@ -82,7 +82,7 @@ test(
         'deleting the environment answers 409 version_locked, "Lock <label> covers this version. A workspace admin or owner must unlock it first.", and the environment is still readable',
       ],
       browserChecks: [
-        'the card reads "Lock environment <vN>, scenarios <vN>" (the default pair) and Ready, with "Lock this version" enabled',
+        'the card reads "Lock environment <vN>, scenarios <vN>" (the default pair) and Ready, with "Lock versions" enabled',
         'the dialog reads "Lock environment <vN>, scenarios <vN>?"; after confirming the card title is "Locked: environment <vN>, scenarios <vN>", it shows no status badge and its line reads "Lock <label> · <d Mon> · Train 8 · Test 4 scenarios · scorer frozen"',
       ],
     }),
@@ -121,7 +121,7 @@ test(
     // The card sits on the environment's Overview; it has no test id, so it is found as the innermost
     // block holding the Reference passes table and the lock (or, once locked, unlock) button.
     const card = page.locator('div').filter({ hasText: 'Reference passes' })
-      .filter({ has: page.getByRole('button', { name: /^(Lock this version|Unlock)$/ }) }).last();
+      .filter({ has: page.getByRole('button', { name: /^(Lock versions|Unlock)$/ }) }).last();
 
     await test.step('open Overview: the version is ready to lock', async () => {
       await page.goto(`/dashboard/simulate/environments/${env}?tab=overview`);
