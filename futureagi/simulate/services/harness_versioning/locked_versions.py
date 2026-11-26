@@ -523,9 +523,29 @@ def locked_version_items(job: HostedHarnessJob) -> list[LockedVersionItem]:
     ]
 
 
+class LockRefusal(TypedDict):
+    """Why the default pair can't be locked now."""
+
+    code: str
+    message: str
+
+
+class LockPreview(TypedDict):
+    """Whether the default pair can be locked now, and the splits it would get."""
+
+    environment_version_id: UUID | None
+    suite_version_id: UUID | None
+    proved: bool
+    can_lock: bool
+    refusal: LockRefusal | None
+    train: int | None
+    test: int | None
+    test_target: int | None
+
+
 def lock_preview(
     job: HostedHarnessJob, locked_versions: list[LockedVersionItem] | None = None
-) -> dict[str, Any]:
+) -> LockPreview:
     """Whether the default pair can be locked now, why not, and the splits it would
     get. ``locked_versions`` is the same read's history, so both name the same lock."""
     proved = HarnessSuiteValidation.no_workspace_objects.filter(
@@ -533,28 +553,26 @@ def lock_preview(
         environment_version_id=job.environment_version_id,
         status=HarnessSuiteValidation.Status.PASSED,
     ).exists()
-    preview: dict[str, Any] = {
-        "environment_version_id": job.environment_version_id,
-        "suite_version_id": job.suite_version_id,
-        "proved": proved,
-        "can_lock": False,
-        "refusal": None,
-        "train": None,
-        "test": None,
-        "test_target": None,
-    }
+    preview = LockPreview(
+        environment_version_id=job.environment_version_id,
+        suite_version_id=job.suite_version_id,
+        proved=proved,
+        can_lock=False,
+        refusal=None,
+        train=None,
+        test=None,
+        test_target=None,
+    )
     try:
         plan = _plan_lock(job, locked_versions)
-    except HostedHarnessError as refusal:
-        preview["refusal"] = {"code": refusal.code, "message": refusal.message}
-        preview.update(
-            {key: (refusal.details or {}).get(key) for key in ("train", "test")}
-        )
+    except HostedHarnessError as refused:
+        details = refused.details or {}
+        preview["refusal"] = LockRefusal(code=refused.code, message=refused.message)
+        preview["train"] = details.get("train")
+        preview["test"] = details.get("test")
         return preview
-    preview.update(
-        can_lock=True,
-        train=plan.train,
-        test=plan.test,
-        test_target=plan.test_target,
-    )
+    preview["can_lock"] = True
+    preview["train"] = plan.train
+    preview["test"] = plan.test
+    preview["test_target"] = plan.test_target
     return preview
