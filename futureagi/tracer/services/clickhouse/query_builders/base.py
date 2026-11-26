@@ -44,17 +44,23 @@ def exact_datetime_bound_sql(params: dict[str, Any], name: str) -> str:
     this module's ``datetime`` name with a subclass whose ``utcnow`` returns
     plain ``datetime`` instances; ``date`` and ``time`` values keep the
     historical text.
+
+    A builder can render the same name again with a new value (successive span
+    partitions share one params dict), so the binding is recomputed on every
+    call: a whole-second value drops ``<name>_exact_us`` left by an earlier
+    sub-second one.
     """
 
     value = params[name]
+    exact_name = f"{name}_exact_us"
     if (
         getattr(value, "microsecond", 0)
         and hasattr(value, "year")
         and hasattr(value, "hour")
     ):
-        exact_name = f"{name}_exact_us"
         params[exact_name] = _unix_microseconds(value)
         return f"fromUnixTimestamp64Micro(%({exact_name})s, 'UTC')"
+    params.pop(exact_name, None)
     return f"%({name})s"
 
 
