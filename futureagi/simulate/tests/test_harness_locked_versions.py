@@ -1415,6 +1415,7 @@ class TestRoster:
             production_bound,
             scorable_tasks,
         )
+        from simulate.services.hosted_harness import resolve_run_pins
 
         settings.HARNESS_ACTORS_ENABLED = False
         environment = _environment(user, workspace, storage)
@@ -1430,7 +1431,10 @@ class TestRoster:
                 scorable_tasks(
                     environment.suite_version_id,
                     environment_version_id=environment.environment_version_id,
-                    blocked=production_bound(environment),
+                    blocked=production_bound(
+                        environment,
+                        resolve_run_pins(environment, credential_blob=False),
+                    ),
                 )
             )
             == 15

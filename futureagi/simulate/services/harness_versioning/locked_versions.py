@@ -43,6 +43,7 @@ from simulate.services.harness_versioning.versions import (
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    ResolvedPins,
     grades_nothing,
     resolve_run_pins,
     sub_goal_catalogue,
@@ -104,25 +105,32 @@ def _category(use_case: Any) -> str:
     return str(use_case or "").strip().casefold()
 
 
-def production_bound(job: HostedHarnessJob) -> frozenset[str]:
-    """The keys of the tasks the default run would refuse as production-only: those
-    that need a tool the default run's contract says reaches production. That contract
-    is the one its sealed bundle carries, so it can depend on the agent the bundle
-    binds. Read only while actors are on: off, no tool reaches production, and the
-    read stays off the contract and the suite documents. A default pair the run
-    refuses can't be locked: no task of it could run."""
-    if not actors_enabled():
-        return frozenset()
-    # The pins the default run would use, as default_bundle_key reads them. The
-    # agent's side row gives its bundle key; its credential blob is never read.
+def default_run_pins(job: HostedHarnessJob) -> ResolvedPins | None:
+    """The pins the default run would use, as default_bundle_key reads them, or the
+    reason the pair can't be locked: a run resolves its pins whatever the actors
+    flag, so a pair the run refuses has no task that could run. The agent's credential
+    blob is never read, nor, while actors are off, the version rows' documents."""
     try:
-        pins = resolve_run_pins(job, credential_blob=False)
+        return resolve_run_pins(job, credential_blob=False, documents=actors_enabled())
     except HostedHarnessError as refused:
         raise HostedHarnessError(
             "lock_not_ready",
             f"{refused.message.rstrip('.')}, so they can't be locked.",
             status_code=409,
         ) from refused
+
+
+def production_bound(
+    job: HostedHarnessJob, pins: ResolvedPins | None
+) -> frozenset[str]:
+    """The keys of the tasks the default run would refuse as production-only: those
+    that need a tool the default run's contract says reaches production. That contract
+    is the one its sealed bundle carries, so it can depend on the agent the bundle
+    binds. Read only while actors are on: off, no tool reaches production, and the
+    read stays off the contract and the suite documents. ``pins`` are the default
+    run's, from default_run_pins."""
+    if not actors_enabled():
+        return frozenset()
     return frozenset(
         registration_key(scenario["key"])
         for entry in blocked_tools(job, pins)
@@ -364,10 +372,11 @@ def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
             f"scenarios {_label(current.suite_number)}.",
             status_code=409,
         )
+    pins = default_run_pins(job)
     tasks = scorable_tasks(
         job.suite_version_id,
         environment_version_id=job.environment_version_id,
-        blocked=production_bound(job),
+        blocked=production_bound(job, pins),
     )
     plan = plan_splits(
         tasks,

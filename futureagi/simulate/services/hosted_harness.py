@@ -861,6 +861,7 @@ def resolve_run_pins(
     picks: VersionPicks | None = None,
     fix_run: Any = None,
     credential_blob: bool = True,
+    documents: bool = True,
 ) -> ResolvedPins | None:
     """The versions a new run would be pinned to, when versioning pins runs.
 
@@ -869,7 +870,8 @@ def resolve_run_pins(
     bundle is cached, or certifying is on; otherwise it runs the defaults. Picks that
     cannot run are refused rather than run as the defaults. Only a check run of
     ``fix_run`` may pick the suite version private to it. Without ``credential_blob``
-    the agent's side row comes without its blob, for a caller that never runs it.
+    the agent's side row comes without its blob, for a caller that never runs it;
+    without ``documents`` the version rows come without their documents.
     """
     from simulate.services.harness_versioning.assembly import (
         bundle_ready,
@@ -895,7 +897,12 @@ def resolve_run_pins(
         and rerun_of.environment_version_id is not None
         and rerun_of.suite_version_id is not None
     ):
-        loaded = _load_pins(environment, rerun_of, credential_blob=credential_blob)
+        loaded = _load_pins(
+            environment,
+            rerun_of,
+            credential_blob=credential_blob,
+            documents=documents,
+        )
         _, environment_version, suite_version, runtime = loaded
         kept = _source_bundle(environment, rerun_of)
         if _pin_ids(rerun_of) == defaults or (
@@ -928,7 +935,9 @@ def resolve_run_pins(
         if picked != ids:
             ids, loaded = picked, None
     if loaded is None:
-        loaded = _load_ids(environment, ids, credential_blob=credential_blob)
+        loaded = _load_ids(
+            environment, ids, credential_blob=credential_blob, documents=documents
+        )
     agent_version, environment_version, suite_version, runtime = loaded
     # A rerun of its source's very pins replays the bundle its source ran.
     if source is not rerun_of or ids != _pin_ids(rerun_of) or runtime is None:
@@ -1262,10 +1271,16 @@ def _load_pins(
     source: HostedHarnessJob,
     *,
     credential_blob: bool = True,
+    documents: bool = True,
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions ``source`` is pinned to, and the agent's
     side row."""
-    return _load_ids(environment, _pin_ids(source), credential_blob=credential_blob)
+    return _load_ids(
+        environment,
+        _pin_ids(source),
+        credential_blob=credential_blob,
+        documents=documents,
+    )
 
 
 def _load_ids(
@@ -1273,10 +1288,12 @@ def _load_ids(
     ids: tuple[Any, Any, Any],
     *,
     credential_blob: bool = True,
+    documents: bool = True,
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions of these ids, and the agent's side
     row with the facts it runs with in ``environment``: a shared legacy row stands
-    for the environment's own. Without ``credential_blob`` the row's blob is unread."""
+    for the environment's own. Without ``credential_blob`` the row's blob is unread;
+    without ``documents`` the version rows' documents are."""
     from simulate.models import (
         AgentVersion,
         HarnessAgentVersionRuntime,
@@ -1285,10 +1302,13 @@ def _load_ids(
     )
 
     agent_version_id, environment_version_id, suite_version_id = ids
-    environment_version = HarnessEnvironmentVersion._base_manager.get(
-        id=environment_version_id
-    )
-    suite_version = HarnessSuiteVersion._base_manager.get(id=suite_version_id)
+    environment_versions = HarnessEnvironmentVersion._base_manager.all()
+    suite_versions = HarnessSuiteVersion._base_manager.all()
+    if not documents:
+        environment_versions = environment_versions.defer("documents")
+        suite_versions = suite_versions.defer("documents")
+    environment_version = environment_versions.get(id=environment_version_id)
+    suite_version = suite_versions.get(id=suite_version_id)
     # A soft-deleted agent version is never pinned onto a run.
     agent_version = (
         AgentVersion.no_workspace_objects.select_related("agent_definition")
