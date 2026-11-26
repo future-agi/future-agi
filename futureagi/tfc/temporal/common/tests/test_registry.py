@@ -248,3 +248,18 @@ def test_scoring_sweeper_schedule_registered():
     assert "simulate.tasks.chat_sim" in registry.TEMPORAL_ACTIVITY_MODULES
     activities = registry.get_activities_for_queue("tasks_s")
     assert _ACTIVITY_WRAPPERS["sweep_stuck_scoring"] in activities
+
+
+def test_the_ask_engine_jobs_are_registered_with_the_worker():
+    """The ask's job and its later settle reach the worker through the registry's
+    own list, not through some other import of the module (a URLconf)."""
+    from simulate.services.ask_engine import run_ask, settle_ask_later
+    from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
+
+    assert "simulate.services.ask_engine" in registry.TEMPORAL_ACTIVITY_MODULES
+    assert _ACTIVITY_WRAPPERS[run_ask._activity_name] in (
+        registry.get_activities_for_queue("tasks_l")
+    )
+    assert _ACTIVITY_WRAPPERS[settle_ask_later._activity_name] in (
+        registry.get_activities_for_queue("tasks_s")
+    )
