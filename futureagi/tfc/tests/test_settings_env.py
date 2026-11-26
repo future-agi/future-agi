@@ -116,16 +116,21 @@ def test_only_a_cloud_region_turns_on_cloud_defaults(
 
 
 # Celery beat schedules a daily celery.backend_cleanup task while results expire
-# and the result backend cannot expire them itself, as django-db cannot. No
-# worker can run it from the in-process memory:// broker, so beat must not
-# schedule it there; a real broker keeps it.
+# and the backend cannot expire them itself, as django-db cannot. No worker can
+# run it from the in-process memory:// broker, so beat must not schedule it there.
+_BROKERS = ("CELERY_BROKER_URL", "CELERY_BROKER_READ_URL", "CELERY_BROKER_WRITE_URL")
 
 
 @pytest.mark.parametrize(
-    "broker, entries",
-    [("memory://", "[]"), ("amqp://u:p@mq:5672//", "['celery.backend_cleanup']")],
+    "brokers, entries",
+    [
+        ({"CELERY_BROKER_URL": "memory://"}, "[]"),
+        ({"CELERY_BROKER_URL": "amqp://u:p@mq:5672//"}, "['celery.backend_cleanup']"),
+        (dict.fromkeys(_BROKERS[1:], "amqp://mq//"), "['celery.backend_cleanup']"),
+    ],
 )
-def test_beat_schedules_result_cleanup_only_with_a_real_broker(broker, entries):
+def test_beat_schedules_result_cleanup_only_with_a_real_broker(brokers, entries):
+    env = {k: v for k, v in os.environ.items() if k not in _BROKERS}
     loaded = subprocess.run(
         [
             sys.executable,
@@ -140,7 +145,7 @@ def test_beat_schedules_result_cleanup_only_with_a_real_broker(broker, entries):
             "beat = Scheduler(app, lazy=True); beat.install_default_entries({}); "
             "print(sorted(beat.schedule))",
         ],
-        env={**os.environ, "CELERY_BROKER_URL": broker},
+        env={**env, "CELERY_RESULT_BACKEND": "disabled", **brokers},
         cwd=BACKEND,
         capture_output=True,
         text=True,
