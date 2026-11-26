@@ -155,6 +155,16 @@ def _splits(environment):
     )
 
 
+def _keyed(environment, members):
+    """A roster keyed by scenario key rather than scenario id."""
+    keys = dict(
+        HostedHarnessScenario.all_objects.filter(job=environment).values_list(
+            "id", "scenario_key"
+        )
+    )
+    return {keys[scenario_id]: split for scenario_id, split in members.items()}
+
+
 def _as_member(user):
     OrganizationMembership.no_workspace_objects.filter(user=user).update(
         level=Level.MEMBER, role="Member"
@@ -1312,11 +1322,114 @@ class TestLockedVersionsStay:
         _suite(environment, _scenarios(20))
         _lock(auth_client, environment)
 
+        from simulate.models import HarnessLockedVersionMember
+
+        assert HarnessLockedVersionMember._base_manager.count() == 20
+
         HostedHarnessJob._base_manager.filter(environment=environment).delete()
         HostedHarnessJob._base_manager.filter(id=environment.id).delete()
 
         assert not HarnessLockedVersion._base_manager.exists()
         assert not HarnessTaskSplit._base_manager.exists()
+        # The roster's scenario key restricts, but the job's cascade takes both.
+        assert not HarnessLockedVersionMember._base_manager.exists()
+
+
+class TestRoster:
+    """A lock keeps its own roster: the scenarios it covers and their splits, as
+    planned when it locked, so a later rule change never moves its members."""
+
+    def test_the_roster_is_the_split_planned_at_lock(
+        self, auth_client, user, workspace, storage
+    ):
+        from simulate.services.harness_versioning.locked_versions import (
+            locked_version_members,
+        )
+
+        environment = _environment(user, workspace, storage)
+        _suite(
+            environment,
+            _scenarios(30)
+            + _scenarios(12, prefix="b", use_case="billing")
+            + _scenarios(5, prefix="x", scorable=False),
+        )
+        preview = _preview(auth_client, environment)
+
+        [locked] = _lock(auth_client, environment).json()["locked_versions"]
+
+        roster = _keyed(environment, locked_version_members(locked["id"]))
+        assert roster == _splits(environment)
+        assert not any(key.startswith("x") for key in roster)
+        splits = list(roster.values())
+        assert (
+            (splits.count("train"), splits.count("test"))
+            == (
+                locked["train"],
+                locked["test"],
+            )
+            == (preview["train"], preview["test"])
+        )
+
+    def test_a_later_production_only_rule_leaves_an_old_lock_s_roster(
+        self, auth_client, user, workspace, storage, settings
+    ):
+        from simulate.services.harness_versioning.locked_versions import (
+            locked_version_members,
+            production_bound,
+            scorable_tasks,
+        )
+
+        settings.HARNESS_ACTORS_ENABLED = False
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [locked] = _lock(auth_client, environment).json()["locked_versions"]
+        before = locked_version_members(locked["id"])
+
+        # Actors come on, and the default bundle now blocks five of the lock's tasks.
+        settings.HARNESS_ACTORS_ENABLED = True
+        _needs_production(environment, {f"s{index}" for index in range(5)})
+        assert (
+            len(
+                scorable_tasks(
+                    environment.suite_version_id,
+                    environment_version_id=environment.environment_version_id,
+                    blocked=production_bound(environment),
+                )
+            )
+            == 15
+        )
+
+        body = auth_client.get(f"{BASE}/{environment.id}/versions/").json()
+
+        assert locked_version_members(locked["id"]) == before
+        assert len(before) == 20
+        [kept] = body["locked_versions"]
+        assert (kept["train"], kept["test"]) == (locked["train"], locked["test"])
+
+    def test_a_relock_writes_a_new_roster_with_the_same_splits(
+        self, auth_client, user, workspace, storage
+    ):
+        from simulate.models import HarnessLockedVersionMember
+        from simulate.services.harness_versioning.locked_versions import (
+            locked_version_members,
+        )
+
+        environment = _environment(user, workspace, storage)
+        _suite(environment, _scenarios(20))
+        [first] = _lock(auth_client, environment).json()["locked_versions"]
+        auth_client.post(
+            f"{BASE}/{environment.id}/versions/unlock/",
+            {"locked_version_id": first["id"]},
+            format="json",
+        )
+
+        second, _ = _lock(auth_client, environment).json()["locked_versions"]
+
+        assert second["id"] != first["id"]
+        assert locked_version_members(second["id"]) == locked_version_members(
+            first["id"]
+        )
+        assert HarnessLockedVersionMember.no_workspace_objects.count() == 40
 
 
 def test_lock_version_records_who_locked(user, workspace, storage):
