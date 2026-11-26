@@ -175,6 +175,7 @@ export const OUR_FAILURES = new Set([
   "fix_workflow_lost",
   "fix_dispatch_failed",
   "fix_variations_failed",
+  "fix_variations_timeout",
   "scheduler_unavailable",
 ]);
 
@@ -596,6 +597,14 @@ const NO_SAFE_WHY = {
   ceilings: { did: "went over the reply-time or cost limit" },
   "model-lock": { did: "didn't keep to the approved models" },
 };
+
+export function rejectionReason(candidate) {
+  if (candidate.outcome !== "rejected") return null;
+  const failed = candidate.verdict?.tiers?.find((tier) => tier.status === "failed");
+  if (!failed) return "No failed check was recorded.";
+  const why = Object.hasOwn(NO_SAFE_WHY, failed.name) && NO_SAFE_WHY[failed.name];
+  return why ? `This candidate ${why.did || why.one}.` : "A required check failed.";
+}
 
 const whyClause = (name, count, request) => {
   const why = NO_SAFE_WHY[name] || {

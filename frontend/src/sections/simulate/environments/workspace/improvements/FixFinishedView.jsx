@@ -277,7 +277,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
             {/* Every candidate's target pass rate, until the design's
                 All measurements view replaces it. */}
             <Box sx={{ mt: 2 }}>
-              <TrialChart candidates={trials} />
+              <TrialChart candidates={trials} finished />
             </Box>
           </>
         ) : (

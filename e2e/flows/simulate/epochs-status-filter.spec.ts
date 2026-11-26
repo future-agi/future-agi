@@ -91,10 +91,10 @@ async function stubEpochList(page: Page, epochs: Json[]) {
   return asked;
 }
 
-test('SIM-E2E-038: a developer narrows an environment\'s Epochs list to one status and sees only the epochs in it', {
+test('SIM-E2E-040: a developer narrows an environment\'s Epochs list to one status and sees only the epochs in it', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-038', area: 'simulate',
+    id: 'SIM-E2E-040', area: 'simulate',
     userGoal: 'A developer narrows an environment\'s Epochs list to one status and sees only the epochs in it',
     steps: ['open the environment\'s Epochs tab', 'read every epoch under All statuses', 'choose Running',
             'choose No safe improvement', 'choose Ready for review', 'choose All statuses again'],
