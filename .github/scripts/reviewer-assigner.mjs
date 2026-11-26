@@ -1,15 +1,27 @@
 #!/usr/bin/env node
-// Reviewer Assigner: routes PRs to team leads, DM-pings stale reviewers,
-// and posts a daily reviewer-load summary. Driven by .github/reviewer-config.json.
+// Reviewer Assigner: routes each PR to one owning-team member, reassigns stale
+// requests, DM-pings stale reviewers, and posts a daily reviewer-load summary.
+// Driven by .github/reviewer-config.json; selection logic is in reviewer-rotation.mjs.
 //
 // Modes (selected via MODE env var):
-//   assign   — request the right team lead(s) on PRs that have no reviewer
+//   assign   — request the least-loaded member of the owning team(s) on PRs that have no reviewer
+//   reassign — move a request with no devflow-review after 4 working hours to the next least-loaded member
 //   ping     — DM each pending reviewer of an open PR >3 days old (gated by REVIEWER_PING_ENABLED)
 //   summary  — post sorted "reviewer → open PR count" to SLACK_WEBHOOK_URL
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+
+import {
+  REASSIGN_AFTER_MS,
+  candidatesFor,
+  parseAssignment,
+  pickLeastLoaded,
+  reassignDue,
+  renderAssignment,
+  workingMsBetween,
+} from "./reviewer-rotation.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = resolve(__dirname, "..", "reviewer-config.json");
@@ -25,7 +37,7 @@ const {
   DRY_RUN,
 } = process.env;
 
-if (!MODE) die("MODE env var is required (assign|ping|summary)");
+if (!MODE) die("MODE env var is required (assign|reassign|ping|summary)");
 if (!GITHUB_TOKEN) die("GITHUB_TOKEN is required");
 if (!GITHUB_REPOSITORY) die("GITHUB_REPOSITORY is required");
 
@@ -177,6 +189,15 @@ async function assignForPr(prNumber) {
     );
     return;
   }
+  const comments = await ghPaginated(
+    `/repos/${OWNER}/${REPO}/issues/${prNumber}/comments?per_page=100`,
+  );
+  if (findAssignment(comments)) {
+    log(
+      "  already assigned once (devflow-assigned marker); the reassign sweep owns it, skipping",
+    );
+    return;
+  }
 
   const files = await ghPaginated(
     `/repos/${OWNER}/${REPO}/pulls/${prNumber}/files?per_page=100`,
@@ -187,32 +208,32 @@ async function assignForPr(prNumber) {
     if (t) matchedTeams.set(t.id, t);
   }
 
-  let leads = [...new Set([...matchedTeams.values()].map((t) => t.lead))];
   const author = pr.user?.login;
-  leads = leads.filter((l) => l !== author);
-
-  if (leads.length === 0) {
-    if (config.fallback_lead && config.fallback_lead !== author) {
-      leads = [config.fallback_lead];
-      log(
-        `  no team matched (or author was the only lead) → fallback ${config.fallback_lead}`,
-      );
-    } else {
-      log("  no reviewers to assign (no match and author == fallback)");
-      return;
-    }
+  const candidates = candidatesFor([...matchedTeams.values()], config, author);
+  const reviewer = pickLeastLoaded(candidates, await loadsOf(candidates), {
+    seed: prNumber,
+  });
+  if (!reviewer) {
+    log("  no reviewer to assign (the author is the only configured member)");
+    return;
   }
+  const teamNames = [...matchedTeams.values()]
+    .map((t) => t.display_name)
+    .join(", ");
 
-  log(`  assigning: ${leads.join(", ")}`);
+  log(`  assigning: ${reviewer} (least loaded of ${candidates.join(", ")})`);
   if (dryRun) {
     log("  DRY_RUN: skipping API calls");
     return;
   }
 
-  await gh(`/repos/${OWNER}/${REPO}/pulls/${prNumber}/requested_reviewers`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reviewers: leads }),
+  await requestReviewer(prNumber, reviewer);
+  await upsertAssignment(prNumber, comments, {
+    login: reviewer,
+    round: 1,
+    note: teamNames
+      ? `Review requested from \`${reviewer}\`, the least-loaded member of ${teamNames}.`
+      : `No owning team matched; review requested from \`${reviewer}\`.`,
   });
 
   if (matchedTeams.size > 1) {
@@ -247,6 +268,183 @@ async function runAssign() {
       await assignForPr(n);
     } catch (e) {
       console.error(`PR #${n}: ${e.message}`);
+    }
+  }
+}
+
+// ─── assignment helpers (assign + reassign) ───────────────────────────────────
+
+const loads = new Map(); // login → open PRs with a review requested from them, cached per run
+
+async function loadsOf(logins) {
+  for (const login of logins) {
+    if (loads.has(login)) continue;
+    const q = `repo:${OWNER}/${REPO} is:pr is:open draft:false user-review-requested:${login}`;
+    const res = await gh(
+      `/search/issues?per_page=1&q=${encodeURIComponent(q)}`,
+    );
+    loads.set(login, res.total_count);
+  }
+  return loads;
+}
+
+async function requestReviewer(prNumber, login) {
+  await gh(`/repos/${OWNER}/${REPO}/pulls/${prNumber}/requested_reviewers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reviewers: [login] }),
+  });
+  loads.set(login, (loads.get(login) ?? 0) + 1);
+}
+
+// The newest bot comment carrying the marker, so a quoted marker in a human
+// comment is ignored. Routing only: a branch workflow can also comment as the bot.
+const isBot = (c) => /^github-actions(\[bot\])?$/.test(c.user?.login || "");
+
+function findAssignment(comments) {
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const parsed = isBot(comments[i]) && parseAssignment(comments[i].body);
+    if (parsed) return { comment: comments[i], ...parsed };
+  }
+  return null;
+}
+
+// One sticky marker comment per PR, edited in place on reassign.
+async function upsertAssignment(prNumber, comments, { login, round, note }) {
+  const hours = REASSIGN_AFTER_MS / 3600000;
+  const body = [
+    renderAssignment({ login, at: new Date().toISOString(), round }),
+    `${note} If no agent review arrives within ${hours} working hours (10:00–19:00 IST, Mon–Fri), the next least-loaded member is requested.`,
+  ].join("\n");
+  const existing = findAssignment(comments);
+  const path = existing
+    ? `/repos/${OWNER}/${REPO}/issues/comments/${existing.comment.id}`
+    : `/repos/${OWNER}/${REPO}/issues/${prNumber}/comments`;
+  await gh(path, {
+    method: existing ? "PATCH" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
+}
+
+// ─── mode: reassign ───────────────────────────────────────────────────────────
+
+// Comments and reviews of many PRs: one GraphQL call per 25 PRs, where REST
+// needs two calls per PR against the repo's shared GITHUB_TOKEN budget. The
+// marker is posted when the PR opens, so the first 30 comments hold it.
+async function threadsOf(numbers) {
+  const out = new Map();
+  for (let i = 0; i < numbers.length; i += 25) {
+    const batch = numbers.slice(i, i + 25);
+    const fields = batch
+      .map(
+        (n) => `pr${n}: pullRequest(number: ${n}) {
+          comments(first: 30) { nodes { databaseId body author { login } } }
+          reviews(last: 30) { nodes { author { login } body submittedAt } }
+        }`,
+      )
+      .join("\n");
+    const res = await gh("/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query: `query($owner: String!, $repo: String!) { repository(owner: $owner, name: $repo) { ${fields} } }`,
+        variables: { owner: OWNER, repo: REPO },
+      }),
+    });
+    if (res.errors?.length)
+      throw new Error(
+        `GitHub GraphQL: ${res.errors.map((e) => e.message).join("; ")}`,
+      );
+    for (const n of batch) {
+      const pr = res.data.repository[`pr${n}`];
+      out.set(n, {
+        comments: pr.comments.nodes.map((c) => ({
+          id: c.databaseId,
+          body: c.body,
+          user: { login: c.author?.login },
+        })),
+        reviews: pr.reviews.nodes.map((r) => ({
+          user: { login: r.author?.login },
+          body: r.body,
+          submitted_at: r.submittedAt,
+        })),
+      });
+    }
+  }
+  return out;
+}
+
+async function reassignPr(pr, { comments, reviews }, now) {
+  const current = findAssignment(comments);
+  if (!current) return; // assigned before this rotation existed, or by hand
+  const requested = (pr.requested_reviewers || []).map((r) =>
+    r.login.toLowerCase(),
+  );
+  if (!requested.includes(current.login.toLowerCase())) return; // reviewed, or changed by hand
+  if (!reassignDue(current, reviews, now)) return;
+
+  const files = await ghPaginated(
+    `/repos/${OWNER}/${REPO}/pulls/${pr.number}/files?per_page=100`,
+  );
+  const teams = new Map();
+  for (const f of files) {
+    const t = ownerOf(f.filename);
+    if (t) teams.set(t.id, t);
+  }
+  const candidates = candidatesFor([...teams.values()], config, pr.user?.login);
+  const next = pickLeastLoaded(candidates, await loadsOf(candidates), {
+    exclude: [current.login],
+    seed: pr.number + current.round,
+  });
+  log(
+    `\n— PR #${pr.number} — ${current.login} has no agent review after ${REASSIGN_AFTER_MS / 3600000} working hours`,
+  );
+  if (!next) {
+    log("  nobody else to request; leaving the current assignment");
+    return;
+  }
+  log(`  reassigning: ${current.login} → ${next}`);
+  if (dryRun) {
+    log("  DRY_RUN: skipping API calls");
+    return;
+  }
+
+  await gh(`/repos/${OWNER}/${REPO}/pulls/${pr.number}/requested_reviewers`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reviewers: [current.login] }),
+  });
+  loads.set(current.login, Math.max(0, (loads.get(current.login) ?? 1) - 1));
+  await requestReviewer(pr.number, next);
+  await upsertAssignment(pr.number, comments, {
+    login: next,
+    round: current.round + 1,
+    note: `Review moved from \`${current.login}\` to \`${next}\`: no agent review within ${REASSIGN_AFTER_MS / 3600000} working hours.`,
+  });
+}
+
+async function runReassign() {
+  const open = await ghPaginated(
+    `/repos/${OWNER}/${REPO}/pulls?state=open&per_page=100`,
+  );
+  const now = Date.now();
+  // Cheap prefilter from the listing: only a PR older than the window can be due.
+  const due = open.filter(
+    (pr) =>
+      !pr.draft &&
+      (pr.requested_reviewers?.length ?? 0) > 0 &&
+      workingMsBetween(Date.parse(pr.created_at), now) >= REASSIGN_AFTER_MS,
+  );
+  log(
+    `${due.length} of ${open.length} open PRs are past the window; checking their assignment`,
+  );
+  const threads = await threadsOf(due.map((pr) => pr.number));
+  for (const pr of due) {
+    try {
+      await reassignPr(pr, threads.get(pr.number), now);
+    } catch (e) {
+      console.error(`PR #${pr.number}: ${e.message}`);
     }
   }
 }
@@ -389,7 +587,12 @@ async function runSummary() {
 
 // ─── entrypoint ───────────────────────────────────────────────────────────────
 
-const RUNNERS = { assign: runAssign, ping: runPing, summary: runSummary };
+const RUNNERS = {
+  assign: runAssign,
+  reassign: runReassign,
+  ping: runPing,
+  summary: runSummary,
+};
 const runner = RUNNERS[MODE];
 if (!runner) die(`Unknown MODE: ${MODE}`);
 runner().catch((e) => {
