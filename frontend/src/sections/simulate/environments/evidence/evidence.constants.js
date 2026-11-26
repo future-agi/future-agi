@@ -67,7 +67,17 @@ export const EVIDENCE_COPY = {
   create: "Create environment test",
   creating: "Creating…",
   transcriptTitle: "Add a transcript",
-  transcriptBody: `Paste a transcript or upload files. Emails, phone, card and ID numbers become placeholders; an import keeps ${MAX_IMPORT_KEPT_CHARS.toLocaleString("en-US")} characters, shared by its files.`,
+  transcriptBody:
+    "Paste one transcript, or add files: each file becomes its own case.",
+  transcriptPrivacy: `Emails, phone and card numbers, SSNs and API keys become placeholders. Up to ${MAX_IMPORT_KEPT_CHARS.toLocaleString("en-US")} characters per import.`,
+  dropHeading: "Choose files or drag & drop them here",
+  dropFormats:
+    "JSON messages (.json), User: / Agent: lines (.txt) or CSV with role and text (.csv)",
+  dropLimits: `Up to ${MAX_EVIDENCE_SOURCES} files, ${MAX_TRANSCRIPT_CHARS.toLocaleString("en-US")} characters each`,
+  browseFiles: "Browse files",
+  or: "or",
+  removeFile: (name) => `Remove ${name}`,
+  wrongType: (name) => `${name} isn't a .json, .txt or .csv file.`,
   pasteLabel: "Transcript",
   nameLabel: "Name",
   pastedName: "Pasted transcript",
@@ -79,9 +89,8 @@ export const EVIDENCE_COPY = {
   },
   uploadFiles: "Upload files",
   usePaste: "Paste instead",
-  production: "These transcripts come from production",
-  productionHelp:
-    "Ticked, they make regression tests; leave it off for a transcript you wrote or tested with. It can't change after import.",
+  production: "From production",
+  productionHelp: "Makes them regression tests. Can't be changed later.",
   transcriptTooLong: (name) =>
     `${name} is longer than ${MAX_TRANSCRIPT_CHARS.toLocaleString("en-US")} characters.`,
   transcriptsTooMany: `Pick at most ${MAX_EVIDENCE_SOURCES} files.`,
