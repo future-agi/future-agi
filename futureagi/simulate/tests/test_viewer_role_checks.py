@@ -59,6 +59,10 @@ VIEWER_REFUSALS = [
     ),
 ]
 
+# A Member can't take these either, so the refusal names who can.
+ADVICE = {"unlock a release": "Ask a workspace admin or owner to unlock it."}
+MEMBER_ROLE_ADVICE = "Ask a workspace admin for the Member role."
+
 LABELS_WITHOUT_A_ROUTE_CASE = {
     "add evaluations",
     "add evaluations to a run",
@@ -127,7 +131,7 @@ def test_a_viewer_is_told_which_action_needs_the_member_role(
     assert response.data["code"] == "viewer_read_only"
     assert response.data["action"] == action
     assert response.data["detail"] == (
-        f"Viewers can't {action}. Ask a workspace admin for the Member role."
+        f"Viewers can't {action}. {ADVICE.get(action, MEMBER_ROLE_ADVICE)}"
     )
 
 
