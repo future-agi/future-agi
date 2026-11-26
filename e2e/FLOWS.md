@@ -1253,7 +1253,7 @@
 
 **Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
 
-**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:131`
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:133`
 
 **Tags:** —
 
@@ -3706,7 +3706,7 @@
 
 **Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
 
-**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:226`
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:228`
 
 **Tags:** —
 
@@ -3731,7 +3731,7 @@
 
 **Goal:** A developer whose epoch found no safe improvement sees why, with the numbers it was decided on, and starts a new epoch from it with the agent's models locked and a cost limit
 
-**Spec:** `flows/simulate/epoch-limits-rerun.spec.ts:206`
+**Spec:** `flows/simulate/epoch-limits-rerun.spec.ts:208`
 
 **Tags:** —
 

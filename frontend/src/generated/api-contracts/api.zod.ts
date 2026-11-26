@@ -37741,6 +37741,23 @@ export const SimulateApiAgentFixIssuesPlanResponse = zod.object({
     reply_latency_margin_pct: zod.number(),
     cost_margin_pct: zod.number(),
   }),
+  ship: zod.union([
+    zod.object({
+      path: zod
+        .enum(["pull_request", "make_default"])
+        .describe(
+          "pull_request for a GitHub agent; make_default for an uploaded one.",
+        ),
+      blocked: zod.union([
+        zod.object({
+          code: zod.string().min(1),
+          message: zod.string().min(1),
+        }),
+        zod.null(),
+      ]),
+    }),
+    zod.null(),
+  ]),
 });
 
 /**
@@ -38700,8 +38717,8 @@ export const SimulateApiAgentFixRunsListResponse = zod.object({
           name: zod.string().min(1),
           kind: zod.string().min(1),
           version_id: zod.string().uuid(),
-          version_number: zod.number(),
-          ref: zod.string().min(1),
+          version_number: zod.union([zod.number(), zod.null()]),
+          ref: zod.union([zod.string().min(1), zod.null()]),
         })
         .optional(),
       state: zod
@@ -39137,34 +39154,40 @@ export const SimulateApiAgentFixRunsLaunchOptionsQueryParams = zod.object({
 export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
   source_run: zod.object({
     id: zod.string().uuid(),
-    number: zod.number(),
+    number: zod.union([zod.number(), zod.null()]),
     state: zod.string().min(1),
-    finished_at: zod.string().min(1),
+    finished_at: zod.union([zod.string().min(1), zod.null()]),
   }),
   environment: zod.object({
     id: zod.string().uuid(),
     name: zod.string().min(1),
-    version: zod.number(),
+    version: zod.union([zod.number(), zod.null()]),
   }),
-  agent: zod.object({
-    name: zod.string().min(1),
-    kind: zod.string().min(1),
-    version_id: zod.string().uuid(),
-    version_number: zod.number(),
-    ref: zod.string().min(1),
-  }),
+  agent: zod.union([
+    zod.object({
+      name: zod.string().min(1),
+      kind: zod.string().min(1),
+      version_id: zod.string().uuid(),
+      version_number: zod.union([zod.number(), zod.null()]),
+      ref: zod.union([zod.string().min(1), zod.null()]),
+    }),
+    zod.null(),
+  ]),
   scenarios: zod.array(
     zod.object({
       key: zod.string().min(1),
       name: zod.string().min(1),
-      passed: zod.boolean(),
+      passed: zod.union([zod.boolean(), zod.null()]),
       failing_sub_goals: zod.array(zod.string().min(1)),
-      evidence_import_id: zod
-        .string()
-        .uuid()
-        .describe(
-          "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
-        ),
+      evidence_import_id: zod.union([
+        zod
+          .string()
+          .uuid()
+          .describe(
+            "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
+          ),
+        zod.null(),
+      ]),
     }),
   ),
   suggested: zod.object({
@@ -39198,14 +39221,54 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     verified_cases_min: zod.number(),
     scenarios_max: zod.number(),
   }),
-  blocked: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
-  variations_blocked: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
+  blocked: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+      cluster_id: zod.union([
+        zod
+          .string()
+          .min(1)
+          .describe(
+            "For issue_epoch_measuring, the issue whose epoch is starting in the environment; its page shows it. Null otherwise.",
+          ),
+        zod.null(),
+      ]),
+    }),
+    zod.null(),
+  ]),
+  variations_blocked: zod.union([
+    zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
+  held_back_scenario_keys: zod.union([
+    zod
+      .array(zod.string().min(1))
+      .describe(
+        "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+      ),
+    zod.null(),
+  ]),
+  ship: zod.union([
+    zod.object({
+      path: zod
+        .enum(["pull_request", "make_default"])
+        .describe(
+          "pull_request for a GitHub agent; make_default for an uploaded one.",
+        ),
+      blocked: zod.union([
+        zod.object({
+          code: zod.string().min(1),
+          message: zod.string().min(1),
+        }),
+        zod.null(),
+      ]),
+    }),
+    zod.null(),
+  ]),
 });
 
 /**
@@ -39293,8 +39356,8 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
       name: zod.string().min(1),
       kind: zod.string().min(1),
       version_id: zod.string().uuid(),
-      version_number: zod.number(),
-      ref: zod.string().min(1),
+      version_number: zod.union([zod.number(), zod.null()]),
+      ref: zod.union([zod.string().min(1), zod.null()]),
     })
     .optional(),
   state: zod
@@ -39763,8 +39826,8 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
       name: zod.string().min(1),
       kind: zod.string().min(1),
       version_id: zod.string().uuid(),
-      version_number: zod.number(),
-      ref: zod.string().min(1),
+      version_number: zod.union([zod.number(), zod.null()]),
+      ref: zod.union([zod.string().min(1), zod.null()]),
     })
     .optional(),
   state: zod
@@ -41730,6 +41793,11 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
+      epoch_pickable: zod
+        .boolean()
+        .describe(
+          "Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing.",
+        ),
     }),
   ),
   status_counts: zod.object({

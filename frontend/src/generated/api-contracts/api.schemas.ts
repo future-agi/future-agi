@@ -19411,6 +19411,23 @@ export interface AgentFixIssueScenariosApi {
   limit: number;
 }
 
+/**
+ * pull_request for a GitHub agent; make_default for an uploaded one.
+ */
+export type AgentFixShipReadinessApiPath =
+  (typeof AgentFixShipReadinessApiPath)[keyof typeof AgentFixShipReadinessApiPath];
+
+export const AgentFixShipReadinessApiPath = {
+  pull_request: "pull_request",
+  make_default: "make_default",
+} as const;
+
+export interface AgentFixShipReadinessApi {
+  /** pull_request for a GitHub agent; make_default for an uploaded one. */
+  path: AgentFixShipReadinessApiPath;
+  blocked: AgentFixFailureApi | null;
+}
+
 export interface AgentFixIssuePlanApi {
   issue: AgentFixIssueApi;
   environment: AgentFixIssueEnvironmentApi | null;
@@ -19419,6 +19436,7 @@ export interface AgentFixIssuePlanApi {
   open_job_id: string | null;
   issue_scenarios: AgentFixIssueScenariosApi | null;
   defaults: AgentFixIssueDefaultsApi;
+  ship: AgentFixShipReadinessApi | null;
 }
 
 export type AgentFixIssueRunApiSurfacesItem =
@@ -19479,9 +19497,8 @@ export interface AgentFixAgentApi {
   /** @minLength 1 */
   kind: string;
   version_id: string;
-  version_number: number;
-  /** @minLength 1 */
-  ref: string;
+  version_number: number | null;
+  ref: string | null;
 }
 
 export type AgentFixRunApiState =
@@ -19684,18 +19701,17 @@ export interface AgentFixLaunchApi {
 
 export interface AgentFixLaunchSourceRunApi {
   id: string;
-  number: number;
+  number: number | null;
   /** @minLength 1 */
   state: string;
-  /** @minLength 1 */
-  finished_at: string;
+  finished_at: string | null;
 }
 
 export interface AgentFixLaunchEnvironmentApi {
   id: string;
   /** @minLength 1 */
   name: string;
-  version: number;
+  version: number | null;
 }
 
 export interface AgentFixLaunchScenarioApi {
@@ -19703,10 +19719,9 @@ export interface AgentFixLaunchScenarioApi {
   key: string;
   /** @minLength 1 */
   name: string;
-  passed: boolean;
+  passed: boolean | null;
   failing_sub_goals: string[];
-  /** The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence. */
-  evidence_import_id: string;
+  evidence_import_id: string | null;
 }
 
 export interface AgentFixLaunchSuggestedApi {
@@ -19745,17 +19760,27 @@ export interface AgentFixLaunchLimitsApi {
   scenarios_max: number;
 }
 
+export interface AgentFixLaunchBlockedApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+  cluster_id: string | null;
+}
+
 export interface AgentFixLaunchOptionsApi {
   source_run: AgentFixLaunchSourceRunApi;
   environment: AgentFixLaunchEnvironmentApi;
-  agent: AgentFixAgentApi;
+  agent: AgentFixAgentApi | null;
   scenarios: AgentFixLaunchScenarioApi[];
   suggested: AgentFixLaunchSuggestedApi;
   surfaces: AgentFixLaunchSurfaceApi[];
   defaults: AgentFixLaunchDefaultsApi;
   limits: AgentFixLaunchLimitsApi;
-  blocked: AgentFixFailureApi;
-  variations_blocked: AgentFixFailureApi;
+  blocked: AgentFixLaunchBlockedApi | null;
+  variations_blocked: AgentFixFailureApi | null;
+  held_back_scenario_keys: string[] | null;
+  ship: AgentFixShipReadinessApi | null;
 }
 
 export type AgentFixRunDetailApiState =
@@ -21165,6 +21190,8 @@ export interface HarnessEnvironmentApi {
   created_at: string;
   agent: HarnessEnvironmentAgentRefApi;
   last_run: HarnessRunSummaryApi;
+  /** Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing. */
+  epoch_pickable: boolean;
 }
 
 export interface HarnessEnvironmentStatusCountsApi {
