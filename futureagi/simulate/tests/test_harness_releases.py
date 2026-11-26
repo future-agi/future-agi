@@ -556,7 +556,9 @@ class TestUnlockAndDelete:
 
         assert response.status_code == 409
         assert response.json()["error"] == "release_locked"
-        assert response.json()["message"] == f"Unlock release {label} first."
+        assert response.json()["message"] == (
+            f"A workspace admin or owner must unlock release {label} first."
+        )
         environment.refresh_from_db()
         assert environment.deleted is False
 
