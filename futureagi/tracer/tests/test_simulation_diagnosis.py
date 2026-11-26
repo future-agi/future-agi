@@ -29,7 +29,9 @@ def test_diagnosis_accepts_harness_evaluations(output):
         ),
     ):
         calls.return_value.order_by.return_value = [call]
-        result = build_diagnosis(SimpleNamespace(run_test_id="run-1"), [], {}, {})
+        result = build_diagnosis(
+            SimpleNamespace(run_test_id="run-1", id="execution-1"), [], {}, {}
+        )
 
     assert result["summary"]["measured_call_count"] == 1
     assert result["summary"]["excluded_call_ids"] == []
@@ -57,7 +59,9 @@ def test_a_sub_goal_that_did_not_apply_to_a_call_is_not_counted_as_tested():
         ),
     ):
         calls.return_value.order_by.return_value = calls_run
-        result = build_diagnosis(SimpleNamespace(run_test_id="run-1"), [], {}, {})
+        result = build_diagnosis(
+            SimpleNamespace(run_test_id="run-1", id="execution-1"), [], {}, {}
+        )
 
     [goal] = result["goals"]
     assert (goal["broken_call_ids"], goal["tested_call_count"]) == (["broke"], 1)
