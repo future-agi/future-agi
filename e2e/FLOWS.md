@@ -3790,26 +3790,27 @@
 
 **Goal:** An author whose environment has enough scorable scenarios opens its Overview, sees the version is ready to lock, locks it, and reads its label with the train and test task counts; the environment then cannot be deleted until the version is unlocked
 
-**Spec:** `flows/simulate/lock-version-splits.spec.ts:53`
+**Spec:** `flows/simulate/lock-version-splits.spec.ts:55`
 
 **Tags:** —
 
 **User steps:**
 
 1. seed a built, versioned environment with 12 scorable scenarios (e2e/lib/harness_environment_seed.py)
-2. read the environment's versions: nothing is locked and the default pair can be locked
-3. open the Overview tab and read the Lock a version card as Ready
-4. choose Lock this version and confirm Lock version in the dialog
-5. read the card as Locked version <label>, with no status badge and the Train and Test line
-6. delete the environment through the API
+2. read the environment's versions: nothing is locked
+3. read the lock preview: the default pair can be locked
+4. open the Overview tab and read the Lock a version card as Ready
+5. choose Lock this version and confirm Lock version in the dialog
+6. read the card as Locked version <label>, with no status badge and the Train and Test line
+7. delete the environment through the API
 
 **Backend state verified:**
 
-- before the lock the versions read has no locked version, lock.can_lock is true and lock names 8 train and 4 test tasks
+- before the lock the versions read has no locked version and no lock key, and the versions/lock-preview read says can_lock is true with 8 train and 4 test tasks
 - from the confirm click on, the only mutating /simulate/ request is one POST to the versions/lock route, naming the default environment and suite version ids, answered 200 with one locked version
 - simulate_harness_locked_version has one row for the environment, unlocked_at NULL, with the default environment and suite version ids and a YYYY.M.N label
 - simulate_harness_task_split has one row per seeded scenario, each first given by that locked version, and the test rows number what target_test_size gives (4 of 12)
-- the versions read lists that locked version with the same label and the 8 train and 4 test counts
+- the versions read lists that locked version with the same label and the 8 train and 4 test counts, and the versions/lock-preview read refuses with version_already_locked
 - deleting the environment answers 409 version_locked, "A workspace admin or owner must unlock version <label> first.", and the environment is still readable
 
 **Browser observations:**
