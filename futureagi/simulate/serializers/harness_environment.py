@@ -11,6 +11,7 @@ from simulate.constants.harness_environment import (
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
     RUN_KIND_SIMULATE,
+    STATUS_AWAITING_APPROVAL,
     STATUS_BUILDING,
     STATUS_COMPLETED,
     STATUS_FAILED,
@@ -69,7 +70,13 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     )
     status = serializers.ChoiceField(
         required=False,
-        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED),
+        choices=(
+            STATUS_AWAITING_APPROVAL,
+            STATUS_BUILDING,
+            STATUS_RUNNING,
+            STATUS_COMPLETED,
+            STATUS_FAILED,
+        ),
     )
     agent_type = serializers.ChoiceField(
         required=False, choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT)
@@ -114,7 +121,13 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     source_kind = serializers.CharField()
     agent_type = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
     status = serializers.ChoiceField(
-        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+        choices=(
+            STATUS_AWAITING_APPROVAL,
+            STATUS_BUILDING,
+            STATUS_RUNNING,
+            STATUS_COMPLETED,
+            STATUS_FAILED,
+        )
     )
     # The fine-grained pipeline stage behind ``status``, so a caller that draws a
     # progress bar does not have to infer it from the four-state pill.
@@ -201,6 +214,7 @@ class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
 
 
 class HarnessEnvironmentStatusCountsSerializer(serializers.Serializer):
+    awaiting_approval = serializers.IntegerField()
     building = serializers.IntegerField()
     running = serializers.IntegerField()
     completed = serializers.IntegerField()
@@ -972,8 +986,73 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     enable_tool_evaluation = serializers.BooleanField()
 
 
+class HarnessCompositionReleaseSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField()
+
+
+class HarnessCompositionScenarioSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    origin = serializers.ChoiceField(choices=("base", "specialized", "custom"))
+    derived_from = serializers.CharField(allow_null=True)
+
+
+class HarnessCompositionRuleSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    text = serializers.CharField(allow_blank=True)
+
+
+class HarnessCompositionSuiteSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField()
+    parent_digest = serializers.CharField(allow_null=True)
+    policy_profile = serializers.JSONField()
+    unscored_agent_rules = HarnessCompositionRuleSerializer(
+        many=True,
+        help_text="The environment's agent_policy rules no scenario in this suite grades.",
+    )
+    scenarios = HarnessCompositionScenarioSerializer(many=True)
+
+
+class HarnessCompositionBindingSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    mode = serializers.ChoiceField(choices=("canonical", "tool_routed"))
+    agent_tools = serializers.ListField(child=serializers.JSONField())
+    tools = serializers.ListField(child=serializers.JSONField())
+
+
+class HarnessCompositionAgentSerializer(serializers.Serializer):
+    agent_definition_id = serializers.UUIDField()
+    agent_version_id = serializers.UUIDField()
+    connector = serializers.CharField()
+    name = serializers.CharField(allow_null=True)
+    version_name = serializers.CharField(allow_null=True)
+
+
+class HarnessCompositionProofSerializer(serializers.Serializer):
+    passed = serializers.BooleanField()
+    scenarios = serializers.JSONField()
+
+
+class HarnessCompositionSerializer(serializers.Serializer):
+    """What a composition is made of: releases, suite, binding and its proof.
+
+    ``alignment`` is the adaptation's alignment (admission, mapped and unsupported tools,
+    extension candidates, unscorable scenarios, policy conflicts); null for a canonical
+    composition.
+    """
+
+    environment = HarnessCompositionReleaseSerializer(many=True)
+    suite = HarnessCompositionSuiteSerializer()
+    binding = HarnessCompositionBindingSerializer()
+    agent = HarnessCompositionAgentSerializer()
+    alignment = serializers.JSONField(allow_null=True)
+    binding_proof = HarnessCompositionProofSerializer(allow_null=True)
+
+
 class HarnessEnvironmentDetailSerializer(serializers.Serializer):
-    """One environment. ``contract`` and ``world`` are null until authoring finishes."""
+    """One environment. ``contract`` and ``world`` are null until authoring finishes;
+    ``composition`` is null unless the environment is a release composition."""
 
     id = serializers.UUIDField()
     overview = HarnessEnvironmentOverviewSerializer()
@@ -987,6 +1066,7 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
         allow_null=True,
         help_text="edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab.",
     )
+    composition = HarnessCompositionSerializer(allow_null=True)
 
 
 class HarnessScenarioFaultSerializer(serializers.Serializer):

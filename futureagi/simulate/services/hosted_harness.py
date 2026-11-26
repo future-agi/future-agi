@@ -402,7 +402,11 @@ def create_selected_harness_run(
             status_code=409,
         )
     metadata = dict((environment.payload or {}).get("metadata") or {})
-    if not environment.run_test_id or not metadata.get("authoring_object_key"):
+    # A composition's snapshot is its immutable releases rather than an authoring archive.
+    snapshot = metadata.get("authoring_object_key") or metadata.get(
+        "release_composition"
+    )
+    if not environment.run_test_id or not snapshot:
         raise HostedHarnessError(
             "environment_snapshot_missing",
             "environment has no durable validated snapshot",
@@ -487,12 +491,14 @@ def create_selected_harness_run(
                 "environment was deleted while submitting this Run",
                 status_code=409,
             ) from exc
+        locked_metadata = environment.payload.get("metadata") or {}
         if (
             environment.deleted
             or environment.state != HostedHarnessJob.State.COMPLETED
             or not environment.run_test_id
-            or not (environment.payload.get("metadata") or {}).get(
-                "authoring_object_key"
+            or not (
+                locked_metadata.get("authoring_object_key")
+                or locked_metadata.get("release_composition")
             )
         ):
             raise HostedHarnessError(
@@ -746,6 +752,12 @@ def create_selected_harness_run(
         child_payload = dict(child.payload)
         child_metadata = dict(child_payload.get("metadata") or {})
         child_metadata["execution_manifest"] = manifest
+        if child_metadata.get("release_composition"):
+            from simulate.services.harness_releases import freeze_run_manifest
+
+            child_metadata["run_manifest"] = freeze_run_manifest(
+                environment, child, scenario_keys=scenario_keys, trials=trials
+            )
         child_payload["metadata"] = child_metadata
         child.payload = child_payload
         execution_metadata = dict(test_execution.execution_metadata or {})
@@ -1273,15 +1285,17 @@ def all_run_keys(
 
     resolved = resolve_run_pins(environment, rerun_of=None, picks=picks, fix_run=None)
     if resolved is not None:
-        keys = HarnessSuiteMember.no_workspace_objects.filter(
+        listed = HarnessSuiteMember.no_workspace_objects.filter(
             suite_version=resolved.suite_version
         ).order_by("number", "scenario_key")
+        found = list(listed.values_list("scenario_key", flat=True))
     else:
-        keys = HostedHarnessScenario.no_workspace_objects.filter(
+        scenarios = HostedHarnessScenario.no_workspace_objects.filter(
             job=environment
         ).order_by("created_at", "id")
+        found = list(scenarios.values_list("scenario_key", flat=True))
     left_out = set(hidden)
-    ordered = dict.fromkeys(keys.values_list("scenario_key", flat=True))
+    ordered = dict.fromkeys(found)
     return [key for key in ordered if key not in left_out]
 
 
@@ -2239,6 +2253,33 @@ def keep_delivered_attempt(attempt: HostedHarnessAttempt) -> bool:
     return True
 
 
+def fail_unscheduled_run(run: HostedHarnessJob) -> bool:
+    """Fail a Run whose workflow could not be started, and say whether it was still queued."""
+    failure = {
+        "domain": "infrastructure",
+        "stage": "queued",
+        "code": "scheduler_unavailable",
+        "message": "Selected harness Run could not be scheduled",
+    }
+    with transaction.atomic():
+        failed = HostedHarnessJob.no_workspace_objects.filter(
+            id=run.id,
+            state=HostedHarnessJob.State.QUEUED,
+        ).update(
+            state=HostedHarnessJob.State.FAILED,
+            current_stage="failed",
+            terminal_at=timezone.now(),
+            failure=failure,
+        )
+        if failed and run.test_execution_id:
+            TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
+                status=TestExecution.ExecutionStatus.FAILED,
+                completed_at=timezone.now(),
+                error_reason=failure["message"],
+            )
+    return bool(failed)
+
+
 # The failures the platform records when it loses an attempt: the sandbox went away or
 # stopped answering, the guest crashed, or its ending or manifest never arrived. None of
 # them describes a Run whose every call delivered its result.
@@ -2517,7 +2558,7 @@ def _lock_job_and_current_attempt(
         current = (
             HostedHarnessAttempt.no_workspace_objects.select_for_update()
             .select_related("job")
-            .get(job_id=job_id, attempt_number=number)
+            .get(job_id=uuid.UUID(str(job_id)), attempt_number=number)
         )
         # Registration moves the number only under these locks; re-read if one did.
         if current.job.current_attempt_number == number:
@@ -2621,6 +2662,8 @@ def _register_attempt(
     snapshot_name: str | None = None,
     snapshot_digest: str | None = None,
 ) -> AttemptCapability:
+    from simulate.services.harness_releases import reset_approval
+
     now = timezone.now()
     token = secrets.token_urlsafe(32)
     fence = secrets.token_urlsafe(32)
@@ -2667,6 +2710,8 @@ def _register_attempt(
         job.current_attempt_number = attempt_number
         if attempt_number == 1:
             _freeze_build_pin(job)
+        else:
+            reset_approval(job)
         job.state = HostedHarnessJob.State.PROVISIONING
         # A retry is a fresh active attempt. Do not keep presenting the previous
         # attempt's terminal state while Daytona is launching (or even running)
@@ -3281,18 +3326,18 @@ def _environment_definition_for(
 
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     """Resolve target instructions without reducing an Others prompt."""
-    connector = str((job.payload.get("agent") or {}).get("connector") or "")
-    if connector in {"phone", "livekit"}:
-        # "Others" is configured from a user-supplied system prompt.  Keep that
-        # complete prompt as the agent definition's source of truth: the hosted
-        # guest's ``agent_prompt`` may only be the short contract excerpt used
-        # during authoring and must not replace it.
-        configured = str(
-            ((job.payload.get("agent") or {}).get("config") or {}).get(
-                "target_system_prompt"
-            )
-            or ""
-        ).strip()
+    agent = job.payload.get("agent") or {}
+    # "Others" is configured from a user-supplied system prompt, and our hosted agent carries
+    # its instructions. Keep that complete prompt as the agent definition's source of truth:
+    # the hosted guest's ``agent_prompt`` may only be the short contract excerpt used during
+    # authoring and must not replace it.
+    configured_key = {
+        "phone": "target_system_prompt",
+        "livekit": "target_system_prompt",
+        "hosted_agent": "instructions",
+    }.get(str(agent.get("connector") or ""))
+    if configured_key:
+        configured = str((agent.get("config") or {}).get(configured_key) or "").strip()
         if configured:
             return configured
     supplied = str(payload.get("agent_prompt") or "").strip()
@@ -3772,6 +3817,8 @@ def record_cleanup(
     retry_pending: bool = False,
     details: dict[str, Any] | None = None,
 ) -> HostedHarnessJob:
+    from simulate.services.harness_releases import adaptation_settled
+
     if not verified_absent:
         raise HostedHarnessError(
             "sandbox_cleanup_unverified",
@@ -3815,6 +3862,10 @@ def record_cleanup(
             id=attempt.job_id
         )
         if attempt.attempt_number < job.current_attempt_number:
+            return job
+        if adaptation_settled(job):
+            if hidden := finish_deferred_delete(job):
+                job.save(update_fields=[*hidden, "updated_at"])
             return job
         missing = executions_without_result(job, attempt.attempt_number)
         # With every call's result in, a relaunch would only run them and charge them
@@ -3867,6 +3918,8 @@ def _settle_job(
         job.environment_id is None
         and job.test_execution_id is None
         and attempt.terminal_stage == "completed"
+        # An adaptation job is completed by complete_adaptation, not by an authoring archive.
+        and not (job.payload.get("metadata") or {}).get("adaptation")
         and (
             not job.run_test_id
             or not (job.payload.get("metadata") or {}).get("authoring_object_key")

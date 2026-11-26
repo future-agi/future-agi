@@ -7,7 +7,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0120_merge_cancel_confirmation_and_scenario_lifecycle"),
+        ("simulate", "0121_merge_harness_releases_and_scenario_lifecycle"),
     ]
 
     operations = [
