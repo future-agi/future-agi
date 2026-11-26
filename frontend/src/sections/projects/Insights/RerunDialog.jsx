@@ -260,7 +260,9 @@ function RerunForm({
               severity="error"
               action={
                 <Button
+                  variant="outlined"
                   color="inherit"
+                  size="small"
                   onClick={() => (sameRows ? sameCost : count).refetch()}
                 >
                   Retry cost check
@@ -321,6 +323,7 @@ function RerunForm({
         </Button>
         <Button
           variant="contained"
+          color="primary"
           onClick={run}
           // A new sample size is costed first: the shown cost is the
           // previous one until the server answers.

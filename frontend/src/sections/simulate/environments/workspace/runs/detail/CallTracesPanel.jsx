@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import { fDateTime } from "src/utils/format-time";
@@ -23,6 +23,7 @@ export default function CallTracesPanel({
   testExecutionId,
   isError = false,
   onMountedChange,
+  openTrace = null,
 }) {
   const { setTraceDetailDrawerOpen, setVisibleTraces, resetStates } =
     useLLMTracingStoreShallow((state) => ({
@@ -37,7 +38,8 @@ export default function CallTracesPanel({
     );
   }, [traces, projectId, setVisibleTraces]);
 
-  useEffect(() => {
+  // Before the effects below can open a trace: an open trace with no panel mounted is cleared as stale.
+  useLayoutEffect(() => {
     onMountedChange?.(true);
     return () => {
       onMountedChange?.(false);
@@ -46,6 +48,19 @@ export default function CallTracesPanel({
       resetStates();
     };
   }, [onMountedChange, setTraceDetailDrawerOpen, resetStates]);
+
+  // A trace asked for from another tab (a Participants step) opens with the panel, which mounts per request.
+  const [opening] = useState(openTrace);
+  useEffect(() => {
+    if (!opening) return;
+    setTraceDetailDrawerOpen({
+      traceId: opening.traceId,
+      projectId,
+      testExecutionId,
+      // The step's own span, so the trace opens on it rather than at its root.
+      ...(opening.spanId ? { spanId: opening.spanId } : {}),
+    });
+  }, [opening, projectId, testExecutionId, setTraceDetailDrawerOpen]);
 
   if (isError && traces.length === 0) {
     return (
@@ -102,6 +117,10 @@ CallTracesPanel.propTypes = {
   testExecutionId: PropTypes.string,
   isError: PropTypes.bool,
   onMountedChange: PropTypes.func,
+  openTrace: PropTypes.shape({
+    traceId: PropTypes.string.isRequired,
+    spanId: PropTypes.string,
+  }),
 };
 
 function TraceRow({ trace, onOpen }) {

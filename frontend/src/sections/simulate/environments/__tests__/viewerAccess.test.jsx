@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import useSimulationAccess from "../hooks/useSimulationAccess";
@@ -17,9 +15,7 @@ import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 const VIEWER = WORKSPACE_COPY.viewer;
 
 const providers = (ui) => (
-  <QueryClientProvider client={new QueryClient()}>
-    <MemoryRouter>{ui}</MemoryRouter>
-  </QueryClientProvider>
+  <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>
 );
 
 const hoverShows = async (element, text) => {
@@ -63,6 +59,24 @@ describe("ViewerLock", () => {
     await hoverShows(
       screen.getByRole("button", { name: "Save" }),
       VIEWER.secrets,
+    );
+  });
+  it("lets a keyboard user reach the reason", async () => {
+    const user = userEvent.setup();
+    render(
+      <ViewerLock locked title={VIEWER.secrets}>
+        <button type="button" disabled>
+          Save
+        </button>
+      </ViewerLock>,
+    );
+
+    await user.tab();
+
+    const reason = screen.getByRole("button", { name: "Save" }).parentElement;
+    expect(reason).toHaveFocus();
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip")).toHaveTextContent(VIEWER.secrets),
     );
   });
 });

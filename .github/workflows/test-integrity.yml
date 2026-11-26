@@ -23,7 +23,8 @@ jobs:
   test-integrity:
     name: Test integrity (new errors and review warnings)
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # A dev-to-main promotion compares thousands of files; 5 minutes cut it off.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,11 +32,27 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      # The self-tests run from the merge result, the same tree this workflow comes
+      # from. A PR head that predates a newly added script would otherwise fail on a
+      # file it never had. The self-tests build their own throwaway repositories.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: merged
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Self-test the gate and its throwaway-repository canary
+        working-directory: merged
         run: python3 -I scripts/test_check_test_integrity.py
+      - name: Self-test the before-push scripts
+        working-directory: merged
+        # scripts/check_new_tests_in_ci.py fails a change whose new test files no job
+        # runs, so its own tests and the runner's are named here.
+        run: |
+          python3 -I scripts/test_check_new_tests_in_ci.py
+          python3 -I scripts/test_before_push.py
       - name: Report test-integrity changes
         env:
           BASE_REF: ${{ github.event.pull_request.base.sha || inputs.base || 'origin/dev' }}

@@ -107,6 +107,7 @@ from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
 )
+from simulate.types import is_worker_subject
 from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
 from tracer.services.clickhouse.client import CHError
 
@@ -453,7 +454,12 @@ def check_failure(failure: Mapping[str, Any] | None) -> CheckFailure | None:
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
     Not applicable and inconclusive sub-goals are left out."""
-    checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
+    # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
+    checks = [
+        one
+        for one in receipt.get("sub_goals") or []
+        if isinstance(one, Mapping) and not is_worker_subject(one.get("subject"))
+    ]
     results = {
         str(one["name"]): sub_goal_result(dict(one))
         for one in checks
@@ -789,7 +795,9 @@ def worst_case_usd_per_execution(fix_run: AgentFixRun, *, graded: bool) -> Decim
     return _worst_case(evals)
 
 
-def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
+def with_spend(
+    runs: QuerySet[AgentFixRun], *, eval_count: int | None = None
+) -> QuerySet[AgentFixRun]:
     """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls,
     every check run's sealed usage and what its evals billed. ``committed_usd`` is what the
     fix's limit is held against: a check run not settled yet (usage not sealed, or evals
@@ -797,7 +805,11 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     winner's grading may read still holds its evals' worst case while the fix goes on.
 
     A retry reads again the runs the failed fix finished, and grades them: their evals count
-    for the retry (``graded_for``), never for the failed fix that paid their simulation."""
+    for the retry (``graded_for``), never for the failed fix that paid their simulation.
+
+    ``eval_count`` replaces the environment's live count of billed evals in the holds: a
+    winner's grading passes 0 to read what is held without them, and prices the evals it
+    queues itself."""
     live = Q(check_runs__deleted=False)
     money = DecimalField(max_digits=12, decimal_places=4)
     actual = ExpressionWrapper(
@@ -812,14 +824,18 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         ),
         output_field=money,
     )
-    evals = Coalesce(
-        Subquery(
-            runnable_eval_configs(OuterRef("environment__run_test_id"))
-            .values("run_test_id")
-            .annotate(total=Count("id"))
-            .values("total")
-        ),
-        0,
+    evals: Any = (
+        eval_count
+        if eval_count is not None
+        else Coalesce(
+            Subquery(
+                runnable_eval_configs(OuterRef("environment__run_test_id"))
+                .values("run_test_id")
+                .annotate(total=Count("id"))
+                .values("total")
+            ),
+            0,
+        )
     )
     graded = Q(check_runs__fix_label__regex=_BASELINE_LABEL.pattern) | Q(
         check_runs__fix_label__regex=_FINALIST_LABEL.pattern
@@ -913,12 +929,15 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
-def committed_usd(fix_run: AgentFixRun) -> Decimal:
+def committed_usd(fix_run: AgentFixRun, *, eval_count: int | None = None) -> Decimal:
     """What the fix's limit is held against: its spend, and a worst case for each check run
-    whose usage is not sealed yet."""
+    whose usage is not sealed yet. ``eval_count`` is ``with_spend``'s."""
     # committed_usd is with_spend's annotation, which the Django plugin cannot see.
     committed: Decimal = (
-        with_spend(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))  # type: ignore[misc]
+        with_spend(  # type: ignore[misc]
+            AgentFixRun.no_workspace_objects.filter(id=fix_run.id),
+            eval_count=eval_count,
+        )
         .values_list("committed_usd", flat=True)
         .get()
     )

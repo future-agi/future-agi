@@ -35,7 +35,7 @@ def value_column(value_type: str) -> str:
 
 
 def input_type(item: dict) -> str:
-    kind = item.get("value_type", "number")
+    kind: str = item.get("value_type", "number")
     if kind not in TYPES:
         raise FormulaError("Unsupported source value type.")
     return kind
@@ -120,8 +120,9 @@ def comparison_sql(
             or (
                 kind == "number"
                 and type(value) in (int, float)
-                and abs(value) <= 1e15
-                and math.isfinite(value)
+                # type(value) in (int, float) excludes None; mypy cannot see it.
+                and abs(value) <= 1e15  # type: ignore[arg-type]
+                and math.isfinite(value)  # type: ignore[arg-type]
             )
         )
         if not valid:
@@ -233,7 +234,9 @@ def compile_conditions(conditions: list[dict], inputs: list[dict]) -> TypedCondi
     if not conditions or len(conditions) > 16:
         raise FormulaError("Use 1–16 field conditions.")
     kinds = {item["alias"]: reduced_type(item) for item in inputs}
-    params, predicates, required = {}, [], set()
+    params: dict = {}
+    predicates: list[str] = []
+    required: set = set()
     for index, condition in enumerate(conditions):
         if condition.get("condition_stage", "after_reduction") != "after_reduction":
             raise FormulaError(

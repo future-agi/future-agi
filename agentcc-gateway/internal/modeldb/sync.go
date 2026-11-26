@@ -84,7 +84,8 @@ func (s *Syncer) Run(ctx context.Context) {
 func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	fetched, err := s.fetch(ctx)
+	zero := make(priceDeclarations)
+	fetched, err := s.fetch(ctx, zero)
 	if err != nil {
 		// Whatever the error carries of the URL is a credential in the logs and
 		// in the admin endpoint's last_error.
@@ -94,11 +95,11 @@ func (s *Syncer) syncOnce(ctx context.Context, timeout time.Duration) {
 			"url", s.logURL, "error", err, "source", s.catalogue.Info().Source)
 		return
 	}
-	s.catalogue.Overlay(fetched, s.logURL)
+	s.catalogue.overlay(fetched, zero, s.logURL)
 	slog.Info("model catalogue loaded", "source", SourceFetched, "url", s.logURL, "fetched_entries", len(fetched), "entries", s.catalogue.Info().Entries)
 }
 
-func (s *Syncer) fetch(ctx context.Context) (map[string]*ModelInfo, error) {
+func (s *Syncer) fetch(ctx context.Context, zero priceDeclarations) (map[string]*ModelInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -118,7 +119,7 @@ func (s *Syncer) fetch(ctx context.Context) (map[string]*ModelInfo, error) {
 	if len(body) > maxCatalogueBytes {
 		return nil, fmt.Errorf("catalogue larger than %d bytes", maxCatalogueBytes)
 	}
-	models, err := parseLiteLLM(body, true)
+	models, err := loadLiteLLM(body, true, zero)
 	if err != nil {
 		return nil, err
 	}

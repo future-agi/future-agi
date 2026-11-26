@@ -36,9 +36,11 @@ class Score(BaseModel):
 
     """
 
-    objects = PgResponseBaseManager()
-    all_objects = PgResponseAllManager()
-    no_workspace_objects = PgResponseNoWorkspaceManager()
+    # Subclasses of BaseModel's managers; the django-stubs plugin declares the
+    # base managers as ClassVars, so these same-name overrides need an ignore.
+    objects = PgResponseBaseManager()  # type: ignore[misc]
+    all_objects = PgResponseAllManager()  # type: ignore[misc]
+    no_workspace_objects = PgResponseNoWorkspaceManager()  # type: ignore[misc]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 

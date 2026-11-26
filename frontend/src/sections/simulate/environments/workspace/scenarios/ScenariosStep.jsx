@@ -26,7 +26,6 @@ import AddScenariosDrawer from "./AddScenariosDrawer";
 import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import EvidenceReviewDrawer from "../../evidence/EvidenceReviewDrawer";
-import ImportEvidenceButton from "../../evidence/ImportEvidenceButton";
 import DraftImports from "../../evidence/DraftImports";
 import { IMPORT_PARAM } from "../../evidence/evidence.constants";
 import PropTypes from "prop-types";
@@ -53,32 +52,21 @@ import PagedScenarioViews from "./PagedScenarioViews";
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
 // The add CTA. Rendered in two places (the toolbar when the list is populated, and
-// the empty placeholder), so it lives here as one node. Disabled with a
-// coming-soon tooltip for now — the drawer it opens is built and wired, just
-// not surfaced yet. On a locked template the same disabled button reads the
-// fork tooltip instead. Wrapped in a span so the tooltip still fires over the
-// disabled button.
+// the empty placeholder), so it lives here as one node. It opens the Add
+// scenarios panel. A locked template or a Viewer gets it disabled, with the
+// reason on a tooltip; the span keeps the tooltip firing over the disabled
+// button.
 // `short` is the toolbar form: the list it sits on says what gets added, so the
 // visible label drops the noun and the accessible name keeps it.
-function AddButton({
-  onClick,
-  contained = false,
-  locked = false,
-  short = false,
-}) {
+function AddButton({ onClick, contained = false, lockReason, short = false }) {
   return (
-    <CustomTooltip
-      show
-      arrow
-      size="small"
-      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.addComingSoon}
-    >
+    <CustomTooltip show={!!lockReason} arrow size="small" title={lockReason}>
       <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
         <Button
           variant={contained ? "contained" : "outlined"}
           color="primary"
           size="small"
-          disabled
+          disabled={!!lockReason}
           onClick={onClick}
           aria-label={SCENARIOS_COPY.addLabel}
           startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
@@ -92,23 +80,27 @@ function AddButton({
 AddButton.propTypes = {
   onClick: PropTypes.func,
   contained: PropTypes.bool,
-  locked: PropTypes.bool,
+  // Why it can't be used, if it can't.
+  lockReason: PropTypes.string,
   short: PropTypes.bool,
 };
 
 // Shown when the environment has no scenarios at all — rare, since they are
 // normally derived when the environment is built.
-function RoutePlaceholder({ onAdd, locked = false }) {
+function RoutePlaceholder({ onAdd, lockReason }) {
   return (
     <EmptyState
       icon="solar:widget-add-linear"
       title={SCENARIOS_COPY.emptyTitle}
       body={SCENARIOS_COPY.emptyBody}
-      action={<AddButton onClick={onAdd} contained locked={locked} />}
+      action={<AddButton onClick={onAdd} contained lockReason={lockReason} />}
     />
   );
 }
-RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
+RoutePlaceholder.propTypes = {
+  onAdd: PropTypes.func,
+  lockReason: PropTypes.string,
+};
 
 // Scenarios tab body. The scenarios are already here — derived when the
 // environment is built — so the page leads with them: one toolbar (search,
@@ -118,15 +110,14 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 export default function ScenariosStep({
   env,
   envState,
-  patch,
   locked = false,
   onStartRun,
   runDialogOpen = false,
   canRun = false,
   runBlockedReason,
 }) {
-  // An evidence import opened from Observe, or a transcript added here, lands
-  // as `?import=`.
+  // An evidence import opened from Observe or a dataset, or a transcript added
+  // here, lands as `?import=`.
   const [searchParams, setSearchParams] = useSearchParams();
   const importId = searchParams.get(IMPORT_PARAM);
   const closeImport = () => {
@@ -146,6 +137,7 @@ export default function ScenariosStep({
   const rowsLockTooltip = locked
     ? LOCK_TOOLTIP
     : WORKSPACE_COPY.viewer.scenarios;
+  const addLockReason = rowsLocked ? rowsLockTooltip : undefined;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -478,14 +470,6 @@ export default function ScenariosStep({
     );
   };
 
-  // Adds dedupe against what is already on the environment, so re-adding a row
-  // the drawer still had selected is a no-op rather than a duplicate.
-  const addScenarios = (rows) => {
-    const existing = new Set(selected.map((s) => s.id));
-    const fresh = (rows || []).filter((r) => !existing.has(r.id));
-    if (fresh.length) patch({ scenarios: [...selected, ...fresh] });
-  };
-
   // Edits route through the amend route as set_field / set_persona ops (the
   // editor emits only the changed writable fields). A refused receipt surfaces
   // its `why`; a success invalidates the list + coverage so the row updates.
@@ -518,7 +502,10 @@ export default function ScenariosStep({
           body="Something went wrong loading this environment's scenarios. Try again."
         />
       ) : !hasScenarios ? (
-        <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
+        <RoutePlaceholder
+          onAdd={() => setAdding(true)}
+          lockReason={addLockReason}
+        />
       ) : (
         <ClickAwayListener onClickAway={handleClickAway}>
           <Box
@@ -581,16 +568,10 @@ export default function ScenariosStep({
                         search={debouncedQuery}
                         filters={filters}
                       />
-                      {!locked && env?.id && (
-                        <ImportEvidenceButton
-                          envId={env.id}
-                          onImported={openImport}
-                        />
-                      )}
                       <AddButton
                         onClick={() => setAdding(true)}
                         contained
-                        locked={locked}
+                        lockReason={addLockReason}
                         short
                       />
                     </>
@@ -646,7 +627,7 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
-              {!locked && env?.id ? (
+              {!rowsLocked && env?.id ? (
                 <DraftImports envId={env.id} onResume={openImport} />
               ) : null}
               <PagedScenarioViews
@@ -695,9 +676,8 @@ export default function ScenariosStep({
       <AddScenariosDrawer
         open={adding}
         onClose={() => setAdding(false)}
-        env={env}
-        selected={selected}
-        onAdd={addScenarios}
+        envId={env.id}
+        onImported={openImport}
       />
       <ScenarioDrawer
         row={openRow}
@@ -750,7 +730,6 @@ export default function ScenariosStep({
 ScenariosStep.propTypes = {
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE.isRequired,
-  patch: PropTypes.func.isRequired,
   locked: PropTypes.bool,
   // Starts a run scoped to the selected scenarios × trials — (ids, trials).
   onStartRun: PropTypes.func,

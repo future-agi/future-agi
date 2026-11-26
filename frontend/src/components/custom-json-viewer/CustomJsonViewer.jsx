@@ -199,7 +199,7 @@ const CustomJsonViewer = ({
 };
 
 CustomJsonViewer.propTypes = {
-  object: PropTypes.object,
+  object: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
   searchable: PropTypes.bool,
   searchPlaceholder: PropTypes.string,
 };

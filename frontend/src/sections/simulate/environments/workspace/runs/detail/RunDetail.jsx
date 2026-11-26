@@ -22,6 +22,7 @@ import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
 import {
+  useDebugAnalysis,
   useRunDetail,
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
@@ -64,6 +65,7 @@ import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
+import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
 
 /**
@@ -105,7 +107,7 @@ export default function RunDetail({
   // The open call, where it was opened from ("table", "analytics" or "link")
   // and, after a prev/next step, the table page it sits on so the table can
   // follow. Mirrored in `?rowId=`.
-  const { openCall, showCall } = useOpenCallParam({
+  const { openCall, showCall, openById } = useOpenCallParam({
     executionId,
     tableQuery,
     tableShown: tab === "tasks",
@@ -127,6 +129,7 @@ export default function RunDetail({
     live: identity?.status === "running",
     onStep: showCall,
   });
+  const openTask = callNav.openRow ?? openCall?.task ?? null;
   // The All Evaluations drawer and the table's eval column menus share one
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
@@ -178,13 +181,20 @@ export default function RunDetail({
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
-  // A finished run whose failures include cases an evidence import added offers
-  // Run Epoch on them; the launch form reads the same cached options.
+  // The header launches from failing cases without opening the diagnosis drawer.
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
+  const headerLaunchOpen = fixLaunching && !!fixTargets;
+  const diagnosis = useDebugAnalysis(headerLaunchOpen ? executionId : null);
   const epoch = epochTargets(fixOptions);
-  const improvable = epoch.imported;
+  const importedCount = epoch.imported.length;
+  const canOfferEpoch =
+    fixAllowed &&
+    identity &&
+    !live &&
+    !fixRun &&
+    fixOptions?.scenarios?.some((one) => one.failing_sub_goals?.length);
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
@@ -380,17 +390,22 @@ export default function RunDetail({
             {backed ? "Run evals" : "Add evals"}
           </Button>
         </ViewerLock>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={exportResults}
-          disabled={live || exporting}
-          startIcon={
-            <Iconify icon="solar:download-minimalistic-linear" width={15} />
-          }
+        <ViewerLock
+          locked={!access.canEdit}
+          title={WORKSPACE_COPY.viewer.export}
         >
-          {exporting ? "Exporting…" : "Export"}
-        </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={exportResults}
+            disabled={!access.canEdit || live || exporting}
+            startIcon={
+              <Iconify icon="solar:download-minimalistic-linear" width={15} />
+            }
+          >
+            {exporting ? "Exporting…" : "Export"}
+          </Button>
+        </ViewerLock>
         {resumeState?.resumable && (
           <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
             <Button
@@ -423,37 +438,53 @@ export default function RunDetail({
             </Button>
           </ViewerLock>
         )}
-        {improvable.length > 0 && (
-          <Tooltip
-            describeChild
-            title={`Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
-          >
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => {
-                setFixTargets(epoch);
-                setFixLaunching(true);
-              }}
-              startIcon={
-                <Iconify icon="solar:magic-stick-3-linear" width={15} />
+        {canOfferEpoch && (
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Tooltip
+              describeChild
+              title={
+                !access.canRun
+                  ? ""
+                  : importedCount
+                    ? `Starts an epoch from the ${importedCount} failing scenario${importedCount === 1 ? "" : "s"} that came from imported evidence.`
+                    : "Start from this run’s failing scenarios without requesting a diagnosis."
               }
             >
-              Run Epoch
-            </Button>
-          </Tooltip>
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={!access.canRun}
+                onClick={() => {
+                  setFixTargets({
+                    keys: importedCount ? epoch.keys : undefined,
+                    note: importedCount
+                      ? epochTargetsNote(epoch)
+                      : undefined,
+                  });
+                  setFixLaunching(true);
+                }}
+                startIcon={
+                  <Iconify icon="solar:magic-stick-3-linear" width={15} />
+                }
+              >
+                Run Epoch
+              </Button>
+            </Tooltip>
+          </ViewerLock>
         )}
         {!fixRun && (
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() => setDebugging(true)}
-            disabled={live}
-            startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-          >
-            Debug failures
-          </Button>
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => setDebugging(true)}
+              disabled={!access.canRun || live}
+              startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            >
+              Debug failures
+            </Button>
+          </ViewerLock>
         )}
       </Stack>
       {creditBanner}
@@ -624,7 +655,18 @@ export default function RunDetail({
       )}
 
       <CallDrawer
-        task={openCall?.task ?? null}
+        task={openTask}
+        trials={trialsOf(callNav.rows, openTask)}
+        onPickTrial={(id) => {
+          const row = callNav.rows.find((one) => one.id === id);
+          if (row)
+            showCall({
+              task: row,
+              source: openCall?.source ?? "table",
+              page: openCall?.page ?? null,
+            });
+        }}
+        onOpenTrial={openById}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
         onClose={() => showCall(null)}
@@ -657,7 +699,11 @@ export default function RunDetail({
           envId={env.id}
           sourceRunId={executionId}
           initialTargets={fixTargets?.keys}
-          initialNote={fixTargets ? epochTargetsNote(fixTargets) : ""}
+          initialNote={fixTargets?.note}
+          diagnosisUnavailable={
+            headerLaunchOpen && !diagnosis.isLoading && !diagnosis.loadError &&
+            diagnosis.analysis.status !== "completed"
+          }
         />
       )}
 

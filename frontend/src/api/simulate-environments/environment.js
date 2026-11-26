@@ -263,25 +263,27 @@ const overlayDefined = (base, extra) => {
   return merged;
 };
 
-// Resolve an environment id to its record. Order: an adopted client env in the
-// store, then the harness backend, then the prebuilt template catalogue. An
-// unknown id whose harness fetch 404s (and that no template claims) is notFound.
+// Client records and prebuilt templates resolve locally. Other ids go to the
+// harness backend; a 404 there means the environment was not found.
 export function useEnvironment(envId) {
   const clientEnv = useEnvironmentsStore((s) => s.workspaceEnvs[envId]);
   const prebuilt = usePrebuiltEnvironments();
+  const templateEnv = useMemo(
+    () => prebuilt.data?.find((tpl) => tpl.id === envId) || null,
+    [prebuilt.data, envId],
+  );
 
-  // A client record only shadows the poll when it is genuinely client-only
-  // (template/fork, or a mockMode build). A real build-adopted record
-  // (origin:"harness") already holds the completed job's real snapshot, so the
-  // client-first branch below serves it without a second fetch.
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: !clientEnv }));
+  // Catalogue entries have no job. Resolve the local catalogue before issuing
+  // either backend lookup, including on a cold workspace load.
+  const lookupJob = !clientEnv && !prebuilt.isPending && !templateEnv;
+  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: lookupJob }));
 
   // §6 detail (gated by HARNESS_DETAIL_ENABLED). The job poll stays the live
   // heartbeat (§7); the detail carries no progress, so it is fetched once and
   // refetched when the job crosses `validating_scenarios` (sections appear) or a
   // terminal stage (results appear).
   const detailQuery = useQuery(
-    harnessEnvironmentQuery(envId, { enabled: HARNESS_DETAIL_ENABLED && !clientEnv }),
+    harnessEnvironmentQuery(envId, { enabled: HARNESS_DETAIL_ENABLED && lookupJob }),
   );
   const stage = jobQuery.data?.status?.stage;
   const detailRefetch = detailQuery.refetch;
@@ -361,11 +363,6 @@ export function useEnvironment(envId) {
   const harness = useMemo(
     () => (jobQuery.data ? harnessJobToEnvironment(jobQuery.data) : null),
     [jobQuery.data],
-  );
-
-  const templateEnv = useMemo(
-    () => prebuilt.data?.find((tpl) => tpl.id === envId) || null,
-    [prebuilt.data, envId],
   );
 
   if (clientEnv) {

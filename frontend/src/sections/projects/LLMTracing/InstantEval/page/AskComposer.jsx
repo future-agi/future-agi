@@ -1,5 +1,5 @@
 import Section from "src/components/section";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Alert,
@@ -9,10 +9,13 @@ import {
   CircularProgress,
   Link,
   MenuItem,
+  Radio,
   Skeleton,
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import Iconify from "src/components/iconify";
@@ -58,6 +61,30 @@ import { scopeWords } from "./askFormat";
 const asDraft = (entry) => draftsFromQuestions([entry])[0];
 
 const ALL = "all";
+// The least a size choice's skeleton fills (padding, title row and its
+// one-line cost); the hidden reserve row sets the real height.
+const CHOICE_CARD_HEIGHT = 64;
+// A size choice's least width, and the gap between two.
+const CHOICE_CARD_MIN_WIDTH = 240;
+const CHOICE_GAP = 1.25;
+// Side by side once the composer itself has room for two cards, stacked
+// below that. Its own width, not the window's: History open beside it takes
+// some, and the hidden reserve's two cards must never widen it.
+const CHOICES_SIDE_BY_SIDE = `@container (min-width: ${
+  2 * CHOICE_CARD_MIN_WIDTH + CHOICE_GAP * 8
+}px)`;
+const choiceRowSx = {
+  flexDirection: "column",
+  [CHOICES_SIDE_BY_SIDE]: { flexDirection: "row" },
+};
+const noop = () => {};
+// The hidden reserve's text: as long as a big view's real cost lines, so it
+// wraps like them, in words no real card shows.
+const RESERVE_SAMPLE_DETAIL =
+  "Reads up to 5,000 rows · about 300 points · about 20 min. Picked from the view; the same rows each time.";
+const RESERVE_ALL_DETAIL =
+  "Reads up to 100,000 rows · about 6,000 points · about 7 h";
+const RESERVE_ALL_NOTE = "You confirm the cost here before it begins.";
 // A sample size typed in rather than picked from the menu.
 const CUSTOM = "custom";
 
@@ -69,20 +96,25 @@ function ChoiceCard({
   note,
   noteIsReason,
   disabled,
+  aside,
   children,
 }) {
   // The note sits outside the radio, at full opacity: it can say why the
   // choice can't run (in full contrast) and hold the way forward (a smaller
-  // sample, billing), which stays usable when the choice is not.
+  // sample, billing), which stays usable when the choice is not. `aside` is
+  // a way forward too, so it sits outside the radio, in the card's corner.
   return (
     <Section
       variant="panel"
       sx={{
-        flex: 1,
-        minWidth: 240,
+        position: "relative",
+        // Stacked, a card keeps its own height (the cell can be two cards
+        // tall) and narrows with the composer; side by side, the two share
+        // the row and each keeps room for its cost line.
+        flex: "none",
+        [CHOICES_SIDE_BY_SIDE]: { flex: 1, minWidth: CHOICE_CARD_MIN_WIDTH },
         p: 1.5,
-
-        borderColor: selected ? "primary.main" : "divider",
+        borderColor: selected ? "border.selected" : "divider",
       }}
     >
       <Box
@@ -106,35 +138,26 @@ function ChoiceCard({
           opacity: disabled ? 0.55 : 1,
           "&:focus-visible": {
             outline: "2px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
             outlineOffset: 4,
           },
         }}
       >
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Box
-            aria-hidden
-            sx={{
-              width: 14,
-              height: 14,
-              borderRadius: "50%",
-              border: "2px solid",
-              borderColor: selected ? "primary.main" : "text.disabled",
-              display: "grid",
-              placeItems: "center",
-              flexShrink: 0,
-            }}
-          >
-            {selected && (
-              <Box
-                sx={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: "50%",
-                  bgcolor: "primary.main",
-                }}
-              />
-            )}
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={{ pr: aside ? 16 : 0 }}
+        >
+          {/* The card is the radio; the themed box only shows its state. */}
+          <Box aria-hidden sx={{ display: "flex", flexShrink: 0 }}>
+            <Radio
+              checked={selected}
+              disabled={disabled}
+              tabIndex={-1}
+              disableRipple
+              sx={{ p: 0 }}
+            />
           </Box>
           <Typography
             variant="body2"
@@ -150,11 +173,14 @@ function ChoiceCard({
           variant="caption"
           color="text.secondary"
           component="p"
-          sx={{ mt: 0.5, pl: 3, fontVariantNumeric: "tabular-nums" }}
+          sx={{ mt: 0.5, pl: 3.25, fontVariantNumeric: "tabular-nums" }}
         >
           {detail}
         </Typography>
       </Box>
+      {aside && (
+        <Box sx={{ position: "absolute", top: 12, right: 12 }}>{aside}</Box>
+      )}
       {note && (
         <Typography
           variant="caption"
@@ -178,6 +204,8 @@ ChoiceCard.propTypes = {
   // The note says why the choice can't run, not just a hint.
   noteIsReason: PropTypes.bool,
   disabled: PropTypes.bool,
+  // A link beside the choice, kept out of the radio.
+  aside: PropTypes.node,
   children: PropTypes.node,
 };
 
@@ -276,7 +304,7 @@ function SampleSizeBox({ custom, plural }) {
           width: 96,
           "& .MuiInput-input": {
             py: 0,
-            fontSize: 14,
+            typography: "s1",
             fontWeight: 600,
             fontVariantNumeric: "tabular-nums",
           },
@@ -376,15 +404,15 @@ function ScopeCard({
     <Section variant="panel" sx={{ p: 2 }}>
       <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Iconify
-          icon="mdi:table-eye"
+          icon="solar:eye-scan-linear"
           width={20}
           sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }}
         />
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {population.isLoading ? (
-            <Skeleton variant="text" width={300} />
+            <Skeleton variant="text" width={300} height={18} />
           ) : population.isError ? (
-            <Typography variant="body2" color="error.main">
+            <Typography variant="body2" color="status.danger.fg">
               The {meta.plural} in that view couldn&apos;t be counted.{" "}
               <Link
                 component="button"
@@ -459,173 +487,263 @@ function ScopeCard({
           )}
         </Box>
       </Stack>
-      {estimate && count > 0 && (
+      {/* The size choices' place. A hidden row of the counted cards' tallest
+          usual shapes (a sample with its size menu and a cost line as long
+          as a big sample's, every row with its confirm note) shares one grid
+          cell with what shows: the skeleton
+          while counting, nothing after a failed or empty count, the real
+          cards once counted. The cell is never shorter than a counted row,
+          so the question box and suggestions below never jump. */}
+      <Box
+        data-testid="scope-choices"
+        sx={{
+          display: "grid",
+          mt: 1.75,
+          containerType: "inline-size",
+          "& > *": { gridArea: "1 / 1" },
+        }}
+      >
         <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1.25}
-          role="radiogroup"
-          aria-label="How many to read"
-          sx={{ mt: 1.75 }}
+          spacing={CHOICE_GAP}
+          useFlexGap
+          aria-hidden
+          data-testid="scope-choices-reserve"
+          sx={{ ...choiceRowSx, visibility: "hidden" }}
         >
-          {sizes.length > 0 && (
+          <ChoiceCard
+            selected={false}
+            onSelect={noop}
+            title={"\u00a0"}
+            detail={RESERVE_SAMPLE_DETAIL}
+          >
+            <TextField
+              select
+              size="small"
+              variant="standard"
+              value=""
+              tabIndex={-1}
+              SelectProps={{ displayEmpty: true, renderValue: () => "\u00a0" }}
+              sx={{ minWidth: 64, "& .MuiInput-input": { typography: "s1" } }}
+            />
+          </ChoiceCard>
+          <ChoiceCard
+            selected={false}
+            onSelect={noop}
+            title={"\u00a0"}
+            detail={RESERVE_ALL_DETAIL}
+            note={RESERVE_ALL_NOTE}
+          />
+        </Stack>
+        {!(estimate && count > 0) && (
+          <Stack
+            spacing={CHOICE_GAP}
+            useFlexGap
+            sx={choiceRowSx}
+            aria-hidden
+            data-testid={
+              population.isLoading && !estimate
+                ? "scope-choices-loading"
+                : "scope-choices-space"
+            }
+          >
+            {population.isLoading &&
+              !estimate &&
+              [0, 1].map((key) => (
+                <Skeleton
+                  key={key}
+                  variant="rounded"
+                  sx={{
+                    // Stacked, two cells' worth would overflow.
+                    flex: "none",
+                    height: CHOICE_CARD_HEIGHT,
+                    minHeight: CHOICE_CARD_HEIGHT,
+                    borderRadius: "8px",
+                    [CHOICES_SIDE_BY_SIDE]: {
+                      flex: 1,
+                      height: "100%",
+                      minWidth: CHOICE_CARD_MIN_WIDTH,
+                    },
+                  }}
+                />
+              ))}
+          </Stack>
+        )}
+        {estimate && count > 0 && (
+          <Stack
+            spacing={CHOICE_GAP}
+            useFlexGap
+            sx={choiceRowSx}
+            role="radiogroup"
+            aria-label="How many to read"
+          >
+            {sizes.length > 0 && (
+              <ChoiceCard
+                selected={sampled}
+                onSelect={() => onChoose(typed ? CUSTOM : shownSize)}
+                title={
+                  typed ? (
+                    <SampleSizeBox custom={custom} plural={meta.plural} />
+                  ) : (
+                    <>
+                      A sample of{" "}
+                      <Box
+                        component="span"
+                        sx={{ fontVariantNumeric: "tabular-nums" }}
+                      >
+                        {shownSize.toLocaleString()}
+                      </Box>
+                    </>
+                  )
+                }
+                detail={
+                  sampleCost
+                    ? `${costLine(sampleCost, unit, typed ? custom.estimate : estimate)}. Picked at random; the same rows each time.`
+                    : null
+                }
+                noteIsReason={Boolean(
+                  (typed && custom.problem) || sampleCost?.creditLimited,
+                )}
+                note={
+                  typed && custom.problem ? (
+                    <SizeProblem
+                      problem={custom.problem}
+                      onUse={custom.onText}
+                    />
+                  ) : sampleCost?.creditLimited &&
+                    noteHere(sampleCost, sampled) ? (
+                    <CreditNote
+                      cost={sampleCost}
+                      estimate={estimate}
+                      unit={unit}
+                      onChoose={onChoose}
+                    />
+                  ) : null
+                }
+              >
+                <TextField
+                  select
+                  size="small"
+                  variant="standard"
+                  value={typed ? CUSTOM : shownSize}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) =>
+                    onChoose(
+                      event.target.value === CUSTOM
+                        ? CUSTOM
+                        : Number(event.target.value),
+                    )
+                  }
+                  SelectProps={{
+                    renderValue: () => "Change",
+                    inputProps: { "aria-label": "Sample size" },
+                  }}
+                  sx={{
+                    minWidth: 64,
+                    "& .MuiInput-input": { typography: "s1" },
+                  }}
+                >
+                  {sizes.map((size) => (
+                    <MenuItem key={size} value={size}>
+                      {size.toLocaleString()} {meta.plural}
+                    </MenuItem>
+                  ))}
+                  <MenuItem value={CUSTOM}>Custom…</MenuItem>
+                </TextField>
+              </ChoiceCard>
+            )}
             <ChoiceCard
-              selected={sampled}
-              onSelect={() => onChoose(typed ? CUSTOM : shownSize)}
-              title={
-                typed ? (
-                  <SampleSizeBox custom={custom} plural={meta.plural} />
-                ) : (
-                  <>
-                    A sample of{" "}
-                    <Box
-                      component="span"
-                      sx={{ fontVariantNumeric: "tabular-nums" }}
-                    >
-                      {shownSize.toLocaleString()}
-                    </Box>
-                  </>
-                )
-              }
-              detail={
-                sampleCost
-                  ? `${costLine(sampleCost, unit, typed ? custom.estimate : estimate)}. Picked at random; the same rows each time.`
-                  : null
-              }
-              noteIsReason={Boolean(
-                (typed && custom.problem) || sampleCost?.creditLimited,
-              )}
+              selected={!sampled}
+              onSelect={() => onChoose(ALL)}
+              disabled={!allCost?.allowed}
+              title={`${sizes.length ? "All " : "Every one of the "}${count.toLocaleString()}`}
+              detail={costLine(allCost, unit, estimate)}
+              noteIsReason={!allCost?.allowed}
               note={
-                typed && custom.problem ? (
-                  <SizeProblem problem={custom.problem} onUse={custom.onText} />
-                ) : sampleCost?.creditLimited &&
-                  noteHere(sampleCost, sampled) ? (
+                allCost?.creditLimited && noteHere(allCost, !sampled) ? (
                   <CreditNote
-                    cost={sampleCost}
+                    cost={allCost}
                     estimate={estimate}
                     unit={unit}
                     onChoose={onChoose}
                   />
+                ) : allCost?.creditLimited ? null : !allCost?.allowed ? (
+                  `Over the ${estimate.max_rows.toLocaleString()}-row limit for one run. Read a sample, or narrow the filters.`
+                ) : allCost.needsConfirm ? (
+                  allCost.credits != null ? (
+                    "You confirm the credits before it starts."
+                  ) : (
+                    "You confirm before it starts."
+                  )
                 ) : null
               }
-            >
-              <TextField
-                select
-                size="small"
-                variant="standard"
-                value={typed ? CUSTOM : shownSize}
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) =>
-                  onChoose(
-                    event.target.value === CUSTOM
-                      ? CUSTOM
-                      : Number(event.target.value),
-                  )
-                }
-                SelectProps={{
-                  renderValue: () => "Change",
-                  inputProps: { "aria-label": "Sample size" },
-                }}
-                sx={{ minWidth: 64, "& .MuiInput-input": { fontSize: 12 } }}
-              >
-                {sizes.map((size) => (
-                  <MenuItem key={size} value={size}>
-                    {size.toLocaleString()} {meta.plural}
-                  </MenuItem>
-                ))}
-                <MenuItem value={CUSTOM}>Custom…</MenuItem>
-              </TextField>
-            </ChoiceCard>
-          )}
-          <ChoiceCard
-            selected={!sampled}
-            onSelect={() => onChoose(ALL)}
-            disabled={!allCost?.allowed}
-            title={`${sizes.length ? "All " : "Every one of the "}${count.toLocaleString()}`}
-            detail={costLine(allCost, unit, estimate)}
-            noteIsReason={!allCost?.allowed}
-            note={
-              allCost?.creditLimited && noteHere(allCost, !sampled) ? (
-                <CreditNote
-                  cost={allCost}
-                  estimate={estimate}
-                  unit={unit}
-                  onChoose={onChoose}
-                />
-              ) : allCost?.creditLimited ? null : !allCost?.allowed ? (
-                `Over the ${estimate.max_rows.toLocaleString()}-row limit for one run. Read a sample, or narrow the filters.`
-              ) : allCost.needsConfirm ? (
-                allCost.credits != null ? (
-                  "You confirm the credits before it starts."
-                ) : (
-                  "You confirm before it starts."
-                )
-              ) : null
-            }
-          />
-        </Stack>
-      )}
-      {estimate && count > 1 && custom.small && (
+              aside={
+                count > 1 && custom.small && !custom.shown ? (
+                  // On a view too small for the fixed sizes, the way to a
+                  // typed sample sits in the card, so it adds no row once
+                  // counted.
+                  <Link
+                    component="button"
+                    type="button"
+                    variant="caption"
+                    onClick={custom.onOpen}
+                  >
+                    Read a sample instead
+                  </Link>
+                ) : null
+              }
+            />
+          </Stack>
+        )}
+      </Box>
+      {estimate && count > 1 && custom.small && custom.shown && (
         <Box sx={{ mt: 1.25, pl: 0.5 }}>
-          {custom.shown ? (
-            <>
-              <Stack
-                direction="row"
-                spacing={1.5}
-                alignItems="center"
-                flexWrap="wrap"
-                useFlexGap
-              >
-                <Typography variant="body2" component="div" fontWeight={600}>
-                  <SampleSizeBox custom={custom} plural={meta.plural} />
-                </Typography>
-                <Link
-                  component="button"
-                  type="button"
-                  variant="caption"
-                  onClick={custom.onClose}
-                >
-                  Read every one instead
-                </Link>
-              </Stack>
-              <Typography
-                variant="caption"
-                color={custom.problem ? "text.primary" : "text.secondary"}
-                component="p"
-                sx={{ mt: 0.5, fontVariantNumeric: "tabular-nums" }}
-              >
-                {custom.problem ? (
-                  <SizeProblem problem={custom.problem} onUse={custom.onText} />
-                ) : custom.coversAll ? (
-                  `That is every one of the ${count.toLocaleString()}, so Jev reads every one.`
-                ) : sampleCost ? (
-                  `${costLine(sampleCost, unit, custom.estimate)}. Picked at random; the same rows each time.`
-                ) : null}
-              </Typography>
-              {sampled && sampleCost?.creditLimited && (
-                <Typography
-                  variant="caption"
-                  color="text.primary"
-                  component="p"
-                  sx={{ mt: 0.5 }}
-                >
-                  <CreditNote
-                    cost={sampleCost}
-                    estimate={estimate}
-                    unit={unit}
-                    onChoose={(size) => custom.onText(String(size))}
-                  />
-                </Typography>
-              )}
-            </>
-          ) : (
+          <Stack
+            direction="row"
+            spacing={1.5}
+            alignItems="center"
+            flexWrap="wrap"
+            useFlexGap
+          >
+            <Typography variant="body2" component="div" fontWeight={600}>
+              <SampleSizeBox custom={custom} plural={meta.plural} />
+            </Typography>
             <Link
               component="button"
               type="button"
               variant="caption"
-              onClick={custom.onOpen}
+              onClick={custom.onClose}
             >
-              Read a sample instead
+              Read every one instead
             </Link>
+          </Stack>
+          <Typography
+            variant="caption"
+            color={custom.problem ? "text.primary" : "text.secondary"}
+            component="p"
+            sx={{ mt: 0.5, fontVariantNumeric: "tabular-nums" }}
+          >
+            {custom.problem ? (
+              <SizeProblem problem={custom.problem} onUse={custom.onText} />
+            ) : custom.coversAll ? (
+              `That is every one of the ${count.toLocaleString()}, so Jev reads every one.`
+            ) : sampleCost ? (
+              `${costLine(sampleCost, unit, custom.estimate)}. Picked at random; the same rows each time.`
+            ) : null}
+          </Typography>
+          {sampled && sampleCost?.creditLimited && (
+            <Typography
+              variant="caption"
+              color="text.primary"
+              component="p"
+              sx={{ mt: 0.5 }}
+            >
+              <CreditNote
+                cost={sampleCost}
+                estimate={estimate}
+                unit={unit}
+                onChoose={(size) => custom.onText(String(size))}
+              />
+            </Typography>
           )}
         </Box>
       )}
@@ -693,6 +811,8 @@ export default function AskComposer({
   onAsk,
 }) {
   const meta = unitMeta(unit);
+  const theme = useTheme();
+  const phone = useMediaQuery(theme.breakpoints.down("sm"));
   const jev = useJevAvailability();
   const canRun = useCanStartRuns();
   // A sample size typed in, read before the scope's estimate is known so
@@ -930,7 +1050,14 @@ export default function AskComposer({
     : "";
   const questionWords = `${filled} question${filled === 1 ? "" : "s"}`;
 
-  const showExamples = !questions.some((question) => question.question.trim());
+  // The examples stay put once a question has text, so the Ask button below
+  // doesn't move; one already asked, or with no room left, is disabled.
+  const askedKeys = new Set(
+    questions.map((question) => question.question.trim().toLowerCase()),
+  );
+  const roomForExample =
+    questions.length < MAX_QUESTIONS ||
+    questions.some((question) => !question.question.trim());
   const recent = (saved.items || []).slice(0, 6);
   const nothingInView =
     !population.isLoading &&
@@ -939,8 +1066,57 @@ export default function AskComposer({
     Boolean(estimate) &&
     !count;
 
+  const scopeCard = (
+    <ScopeCard
+      projectId={projectId}
+      unit={unit}
+      scope={scope}
+      from={seed?.label}
+      startedFrom={
+        seed ? seed.source || `the ${sourceViewTitle(unit)} view` : undefined
+      }
+      population={population}
+      onScopeChange={onScopeChange}
+      notice={scopeNotice}
+      onUseView={onUseView}
+      choice={choice}
+      sizes={sizes}
+      shownSize={shownSize}
+      custom={custom}
+      sizeNotice={sizeNotice}
+      onChoose={(next) => {
+        setSizeNotice(null);
+        setPicked(next);
+        if (next !== ALL) setLastSample(next);
+        // Custom… starts from the size shown, ready to edit.
+        if (next === CUSTOM && !customText)
+          setCustomText(String(shownSize ?? 1));
+        setFocusCustom(next === CUSTOM);
+        setConfirming(false);
+      }}
+      questions={filled}
+    />
+  );
+
+  // A confirm takes Ask Jev's place: focus moves to its Back, and back to
+  // Ask Jev from Back, rather than being dropped with the button pressed.
+  // Back, not Start: a second Enter, or a held one, must not spend the run.
+  const confirmShown = Boolean((confirming && cost) || serverConfirm);
+  const confirmWasShown = useRef(confirmShown);
+  const askRef = useRef(null);
+  const backRef = useRef(null);
+  useEffect(() => {
+    if (confirmShown === confirmWasShown.current) return;
+    confirmWasShown.current = confirmShown;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    (confirmShown ? backRef : askRef).current?.focus();
+  }, [confirmShown]);
+
   return (
-    <Stack spacing={3} sx={{ maxWidth: 880 }}>
+    // Gaps rather than margins, so the action row's auto top margin can
+    // hold it at the bottom of the pane.
+    <Stack spacing={3} useFlexGap sx={{ maxWidth: 880, flexGrow: 1 }}>
       <Box>
         <Typography variant="m1" component="h1" sx={{ fontWeight: 600 }}>
           Ask Jev about these {meta.plural}
@@ -957,7 +1133,13 @@ export default function AskComposer({
           severity="info"
           action={
             jev.settingsPath && (
-              <Button size="small" component={RouterLink} to={jev.settingsPath}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                component={RouterLink}
+                to={jev.settingsPath}
+              >
                 Open AI Providers
               </Button>
             )
@@ -967,35 +1149,7 @@ export default function AskComposer({
         </Alert>
       )}
 
-      <ScopeCard
-        projectId={projectId}
-        unit={unit}
-        scope={scope}
-        from={seed?.label}
-        startedFrom={
-          seed ? seed.source || `the ${sourceViewTitle(unit)} view` : undefined
-        }
-        population={population}
-        onScopeChange={onScopeChange}
-        notice={scopeNotice}
-        onUseView={onUseView}
-        choice={choice}
-        sizes={sizes}
-        shownSize={shownSize}
-        custom={custom}
-        sizeNotice={sizeNotice}
-        onChoose={(next) => {
-          setSizeNotice(null);
-          setPicked(next);
-          if (next !== ALL) setLastSample(next);
-          // Custom… starts from the size shown, ready to edit.
-          if (next === CUSTOM && !customText)
-            setCustomText(String(shownSize ?? 1));
-          setFocusCustom(next === CUSTOM);
-          setConfirming(false);
-        }}
-        questions={filled}
-      />
+      {!phone && scopeCard}
 
       <Stack spacing={1.25}>
         {questions.map((value, index) => (
@@ -1022,7 +1176,8 @@ export default function AskComposer({
         <Stack direction="row" alignItems="center" spacing={1}>
           <Button
             size="small"
-            startIcon={<Iconify icon="mdi:plus" width={16} />}
+            variant="outlined"
+            startIcon={<Iconify icon="solar:add-linear" width={16} />}
             disabled={questions.length >= MAX_QUESTIONS}
             onClick={() => setQuestions((prev) => [...prev, emptyDraft()])}
           >
@@ -1034,31 +1189,76 @@ export default function AskComposer({
         </Stack>
       </Stack>
 
-      {showExamples && (
+      <Box>
+        <Typography
+          variant="s3"
+          color="text.secondary"
+          component="h2"
+          fontWeight="fontWeightMedium"
+          sx={{ display: "block", mb: 0.75 }}
+        >
+          Try one
+        </Typography>
+        <Stack direction="row" gap={0.75} flexWrap="wrap">
+          {(EXAMPLES[unit] || EXAMPLES.traces).map((example) => (
+            <Chip
+              key={example.question}
+              size="small"
+              variant="outlined"
+              label={example.question}
+              title={example.question}
+              disabled={
+                askedKeys.has(example.question.trim().toLowerCase()) ||
+                !roomForExample
+              }
+              onClick={() => addQuestion(example)}
+              sx={{ maxWidth: "100%" }}
+            />
+          ))}
+        </Stack>
+      </Box>
+
+      {recent.length > 0 && (
         <Box>
           <Typography
-            variant="overline"
+            variant="s3"
             color="text.secondary"
             component="h2"
+            fontWeight="fontWeightMedium"
             sx={{ display: "block", mb: 0.75 }}
           >
-            Try one
+            Recent questions
           </Typography>
           <Stack direction="row" gap={0.75} flexWrap="wrap">
-            {(EXAMPLES[unit] || EXAMPLES.traces).map((example) => (
+            {recent.map((item) => (
               <Chip
-                key={example.question}
+                key={item.configId}
                 size="small"
                 variant="outlined"
-                label={example.question}
-                title={example.question}
-                onClick={() => addQuestion(example)}
+                icon={<Iconify icon="solar:history-linear" width={14} />}
+                label={item.question}
+                title={item.question}
+                onClick={() => {
+                  addQuestion({
+                    question: item.question,
+                    answerType: item.answerType,
+                    categories: item.labels,
+                    definitions: item.definitions,
+                  });
+                  if (readChoices.includes(item.reads)) setReads(item.reads);
+                }}
                 sx={{ maxWidth: "100%" }}
               />
             ))}
           </Stack>
         </Box>
       )}
+
+      {/* On a phone the count comes after the questions, in the page's
+          order too (not only drawn there), so a count that lands, fails or
+          wraps never moves the box being typed in, and Tab and screen
+          readers meet things in the order they are seen. */}
+      {phone && scopeCard}
 
       <Box sx={{ maxWidth: 432 }}>
         <TextField
@@ -1091,167 +1291,165 @@ export default function AskComposer({
         </TextField>
       </Box>
 
-      {error && <Alert severity="error">{error}</Alert>}
-      {nothingInView && (
-        <Alert severity="info">
-          {population.handedOver
-            ? `None of the ${meta.plural} handed over can be read.`
-            : `No ${meta.plural} match this date range and these filters. Widen the date range or remove a filter.`}
-        </Alert>
-      )}
+      {/* Pinned to the bottom of the page while the questions above grow
+          (another example, a category question's definitions), so Ask Jev
+          and its confirmations stay where they were. */}
+      <Stack
+        spacing={1.5}
+        data-testid="ask-actions"
+        sx={{
+          mt: "auto",
+          position: "sticky",
+          bottom: 0,
+          zIndex: 1,
+          bgcolor: "background.paper",
+          borderTop: 1,
+          borderColor: "divider",
+          py: 1.5,
+        }}
+      >
+        {error && <Alert severity="error">{error}</Alert>}
+        {nothingInView && (
+          <Alert severity="info">
+            {population.handedOver
+              ? `None of the ${meta.plural} handed over can be read.`
+              : `No ${meta.plural} match this date range and these filters. Widen the date range or remove a filter.`}
+          </Alert>
+        )}
 
-      {confirming && cost && (
-        <Alert
-          severity="warning"
-          icon={<Iconify icon="mdi:cash-check" width={20} />}
-          action={
-            <Stack direction="row" spacing={1}>
-              <Button size="small" onClick={() => setConfirming(false)}>
-                Back
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                color="warning"
-                disabled={starting}
-                onClick={() => ask(true)}
-              >
-                Start
-              </Button>
-            </Stack>
-          }
-        >
-          {cost.credits != null
-            ? `Read ${rowWords}? That is ${creditWords(cost.credits)} for ${questionWords}, and takes ${durationWords(cost.seconds)}.`
-            : `Read ${rowWords} for ${questionWords}? It takes ${durationWords(cost.seconds)}.`}{" "}
-          You can pause or cancel it while it runs.
-        </Alert>
-      )}
-
-      {serverConfirm && (
-        <Alert
-          severity="warning"
-          icon={<Iconify icon="mdi:cash-check" width={20} />}
-          action={
-            <Stack direction="row" spacing={1}>
-              <Button size="small" onClick={onServerConfirmCancel}>
-                Back
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                color="warning"
-                disabled={starting}
-                onClick={onServerConfirm}
-              >
-                Start
-              </Button>
-            </Stack>
-          }
-        >
-          {/* The server's count, which can be more than the estimate here;
-              a user question's sessions are the most it can read. */}
-          {serverConfirm.credits != null
-            ? `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}: ${creditWords(serverConfirm.credits)}.`
-            : `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}.`}{" "}
-          Start it?
-        </Alert>
-      )}
-
-      <Box>
-        <Button
-          size="large"
-          variant="contained"
-          disabled={
-            !canRun ||
-            !jev.available ||
-            jev.isLoading ||
-            starting ||
-            population.isLoading ||
-            population.isUpdating ||
-            costing ||
-            nothingInView ||
-            !cost?.allowed ||
-            confirming
-          }
-          onClick={() => ask(false)}
-          sx={{
-            "&:focus-visible": {
-              outline: "2px solid",
-              outlineColor: "primary.main",
-              outlineOffset: 2,
-            },
-          }}
-          startIcon={
-            starting ? (
-              <CircularProgress size={16} color="inherit" />
-            ) : (
-              <Iconify icon="mdi:creation-outline" width={18} />
-            )
-          }
-        >
-          {starting
-            ? "Starting…"
-            : population.isLoading || population.isUpdating
-              ? `Counting the ${meta.plural}…`
-              : cost
-                ? `Ask Jev about ${sampleSize ? "a sample of " : ""}${asked.toLocaleString()} ${
-                    asked === 1 ? meta.noun : meta.plural
-                  }`
-                : `Ask Jev`}
-        </Button>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          component="p"
-          sx={{ mt: 1, maxWidth: 640 }}
-        >
-          {canRun ? (
-            <>
-              Each question is saved as a Jev evaluator you can reuse or edit.
-              {billed ? " Every answer is billed as one eval run;" : ""}{" "}
-              TypeSafe bills its tokens to your own key.
-            </>
-          ) : (
-            VIEWER_CANT_RUN
-          )}
-        </Typography>
-      </Box>
-
-      {recent.length > 0 && (
-        <Box>
-          <Typography
-            variant="overline"
-            color="text.secondary"
-            component="h2"
-            sx={{ display: "block", mb: 0.75 }}
+        {confirming && cost && (
+          <Alert
+            severity="warning"
+            icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
+            action={
+              <Stack direction="row" spacing={1}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  ref={backRef}
+                  onClick={() => setConfirming(false)}
+                >
+                  Back
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  disabled={starting}
+                  onClick={() => ask(true)}
+                >
+                  Start
+                </Button>
+              </Stack>
+            }
           >
-            Recent questions
+            {cost.credits != null
+              ? `Read ${rowWords}? That is ${creditWords(cost.credits)} for ${questionWords}, and takes ${durationWords(cost.seconds)}.`
+              : `Read ${rowWords} for ${questionWords}? It takes ${durationWords(cost.seconds)}.`}{" "}
+            You can pause or stop it while it runs.
+          </Alert>
+        )}
+
+        {serverConfirm && (
+          <Alert
+            severity="warning"
+            icon={<Iconify icon="solar:wallet-money-linear" width={20} />}
+            action={
+              <Stack direction="row" spacing={1}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  ref={backRef}
+                  onClick={onServerConfirmCancel}
+                >
+                  Back
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  disabled={starting}
+                  onClick={onServerConfirm}
+                >
+                  Start
+                </Button>
+              </Stack>
+            }
+          >
+            {/* The server's count, which can be more than the estimate here;
+              a user question's sessions are the most it can read. */}
+            {serverConfirm.credits != null
+              ? `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}: ${creditWords(serverConfirm.credits)}.`
+              : `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}.`}{" "}
+            Start it?
+          </Alert>
+        )}
+
+        <Box>
+          {!confirmShown && (
+            <Button
+              ref={askRef}
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={
+                !canRun ||
+                !jev.available ||
+                jev.isLoading ||
+                starting ||
+                population.isLoading ||
+                population.isUpdating ||
+                costing ||
+                nothingInView ||
+                !cost?.allowed
+              }
+              onClick={() => ask(false)}
+              sx={{
+                "&:focus-visible": {
+                  outline: "2px solid",
+                  outlineColor: "border.focus",
+                  outlineOffset: 2,
+                },
+              }}
+              startIcon={
+                starting ? (
+                  <CircularProgress size={16} color="inherit" />
+                ) : (
+                  <Iconify icon="solar:magic-stick-3-linear" width={18} />
+                )
+              }
+            >
+              {starting
+                ? "Starting…"
+                : population.isLoading || population.isUpdating
+                  ? `Counting the ${meta.plural}…`
+                  : cost
+                    ? `Ask Jev about ${sampleSize ? "a sample of " : ""}${asked.toLocaleString()} ${
+                        asked === 1 ? meta.noun : meta.plural
+                      }`
+                    : `Ask Jev`}
+            </Button>
+          )}
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            component="p"
+            sx={{ mt: 1, maxWidth: 640 }}
+          >
+            {canRun ? (
+              <>
+                Each question is saved as a Jev evaluator you can reuse or edit.
+                {billed ? " Every answer is billed as one eval run;" : ""}{" "}
+                TypeSafe bills its tokens to your own key.
+              </>
+            ) : (
+              VIEWER_CANT_RUN
+            )}
           </Typography>
-          <Stack direction="row" gap={0.75} flexWrap="wrap">
-            {recent.map((item) => (
-              <Chip
-                key={item.configId}
-                size="small"
-                variant="outlined"
-                icon={<Iconify icon="mdi:history" width={14} />}
-                label={item.question}
-                title={item.question}
-                onClick={() => {
-                  addQuestion({
-                    question: item.question,
-                    answerType: item.answerType,
-                    categories: item.labels,
-                    definitions: item.definitions,
-                  });
-                  if (readChoices.includes(item.reads)) setReads(item.reads);
-                }}
-                sx={{ maxWidth: "100%" }}
-              />
-            ))}
-          </Stack>
         </Box>
-      )}
+      </Stack>
     </Stack>
   );
 }

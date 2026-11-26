@@ -42,9 +42,11 @@ from simulate.serializers.response.agent_version import (
 )
 from simulate.services.agent_connect import found_check_required
 from simulate.services.agent_definition import (
+    CredentialsNeedReentry,
     delete_agent,
     delete_agents,
     is_masked,
+    merge_websocket_secrets,
     resolve_api_key_for_version,
     resolve_stored_api_key,
     sync_provider_credentials,
@@ -52,6 +54,7 @@ from simulate.services.agent_definition import (
 from simulate.services.agent_overview import (
     annotate_agent_rows,
     environment_refs,
+    filter_agent_rows,
     observability_on,
     observe_project,
     recent_agent_runs,
@@ -157,7 +160,6 @@ class AgentDefinitionView(APIView):
 
             validated = request.validated_query_data
             search_query = validated.get("search", "").strip()
-            agent_type = validated.get("agent_type", None)
             required_agent_id = validated.get("agent_definition_id", None)
 
             # Use Subquery to get latest version info in a single query (avoid N+1)
@@ -175,10 +177,13 @@ class AgentDefinitionView(APIView):
             )
 
             agents = (
-                annotate_agent_rows(
-                    AgentDefinition.objects.filter(
-                        organization=user_organization,
-                    )
+                filter_agent_rows(
+                    annotate_agent_rows(
+                        AgentDefinition.objects.filter(
+                            organization=user_organization,
+                        )
+                    ),
+                    validated,
                 )
                 .annotate(
                     _latest_version=Subquery(latest_version_subquery),
@@ -186,9 +191,6 @@ class AgentDefinitionView(APIView):
                 )
                 .select_related("observability_provider__project", "production_project")
             )
-
-            if agent_type is not None:
-                agents = agents.filter(agent_type=agent_type)
 
             # Apply search filter
             if search_query:
@@ -828,6 +830,15 @@ class EditAgentDefinitionView(APIView):
             # Only what this request set: a full save of this copy could undo an
             # observability link another request wrote meanwhile.
             with transaction.atomic():
+                current = (
+                    AgentDefinition.objects.select_for_update(of=("self",))
+                    .only("id", "websocket_url", "websocket_headers")
+                    .get(pk=agent.pk)
+                )
+                for field, value in merge_websocket_secrets(
+                    validated, current.websocket_url, current.websocket_headers
+                ).items():
+                    setattr(agent, field, value)
                 agent.save(update_fields=[*changed_fields, "updated_at"])
 
                 # Route livekit_* fields to ProviderCredentials so they
@@ -904,6 +915,8 @@ class EditAgentDefinitionView(APIView):
             return self._gm.not_found("Agent definition not found")
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except CredentialsNeedReentry as error:
+            return self._gm.bad_request(error.message)
         except ProductionProjectError as error:
             return self._gm.bad_request(str(error))
         except Exception as e:

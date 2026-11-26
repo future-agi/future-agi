@@ -61,6 +61,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -772,25 +773,58 @@ class FaultE2EBase(unittest.TestCase):
         self.assertNotIn("[harness] killed after", result.stderr, f"bin/update timed out:\n{result.describe()}")
         return result
 
-    def prepared_run(self, spec: Spec, fd: faults.FaultDocker, env: Callable[[], Dict[str, str]]) -> e2e.Result:
-        """spec.prepare(), then the command; once more when Docker lost the image it had just pulled.
+    def prepared_run(self, spec: Spec, fd: faults.FaultDocker, env: Callable[[], Dict[str, str]],
+                     before: Dict[str, Any], data_before: Optional[str] = None) -> Tuple[e2e.Result, Dict[str, Any]]:
+        """Return the result and baseline of the attempt to judge. Never retry an injected fault."""
 
-        prepare() removes the tag the command pulls. A pull that follows the removal closely is, rarely,
-        reported done while the image is missing (faults.lost_after_pull); bin/update then stops before it
-        changed anything, so the same run can start again from the same state. Exactly one more attempt,
-        only when no fault was injected in the run, and said again at the end of the suite (NOTES).
-        """
+        co = spec.co
+        args = [*spec.flags, *spec.command]
+        spec.prepare()
+        first = self.spawn_run(co, args, env())
+        calls = fd.calls()
+        _, faulted = faults.phase_of(calls)
+        if faulted is not None or not faults.lost_after_pull(first.output):
+            return first, before
 
-        env_before = spec.co.env_bytes()
-        for attempt in (1, 2):
-            spec.prepare()
-            result = self.spawn_run(spec.co, [*spec.flags, *spec.command], env())
-            _, faulted = faults.phase_of(fd.calls())
-            if attempt == 2 or faulted is not None or not faults.lost_after_pull(result.output):
-                return result
-            self.assertEqual(spec.co.env_bytes(), env_before, f"the stopped run changed the env file\n{result.describe()}")
-            NOTES.append(f"{spec.name}: Docker reported a pull done and the image was then missing; ran the command again")
-        raise AssertionError("unreachable")
+        # A normal pre-rollout stop is a completed transaction, not part of the faulted attempt.
+        # Judge it before env() resets its trace. Never adopt changed state as the new baseline.
+        self.assertEqual(first.code, 4, "missing image did not stop the first attempt before rollout")
+        self.assertFalse("Traceback (most recent call last)" in first.output)
+        faults.validate_transactions(calls, spec.kind)
+        self.assertFalse(faults.restarted(calls))
+        self.assertTrue(co.env_bytes() == before["env"], "first attempt did not restore the env file")
+        self.assertEqual(self.started(co), before["containers"])
+        if data_before is not None:
+            self.assertTrue(self.persistent_data(co, local_only=True) == data_before, "first attempt changed fixture data")
+        self.assertFalse((co.state_dir / "journal.json").exists(), "first attempt left a journal")
+        self.assertFalse(lock_held(co.state_dir))
+        self.assertFalse(leftovers(co))
+        self.assertEqual(verify_dirs(co), [], "first attempt left verification directories")
+
+        added = [p for p in co.receipt_paths() if p.name not in before["receipts"]]
+        self.assertEqual(len(added), 1, "first attempt must have exactly one new receipt")
+        path, = added
+        receipt_bytes = path.read_bytes()
+        receipt = json.loads(receipt_bytes)
+        self.assertTrue((receipt.get("kind"), receipt.get("target_version"), receipt.get("status")) ==
+                        (spec.kind, spec.target, "failed_before_rollout"), "wrong first-attempt receipt")
+        detail = receipt.get("error", "")
+        # A Compose pull error may be streamed; the receipt then describes the command's nonzero exit.
+        self.assertTrue(detail and detail in first.stderr, "receipt does not describe the first attempt's failure")
+        self.assertIn(receipt.get("stage"), ("env_written", "pulled"))
+        self.assertEqual(receipt["stage"], calls[-1].transaction[0])
+        self.assertTrue(f"Receipt: {path}" in first.stderr, "first attempt did not report its receipt")
+        NOTES.append(f"{spec.name}: first attempt exited 4 before injection, failed_before_rollout at "
+                     f"{receipt['stage']}, restored state ({path.name} SHA256 {hashlib.sha256(receipt_bytes).hexdigest()}); "
+                     "retrying once")
+
+        spec.prepare()
+        retry_env = env()
+        retry_receipts = [p.name for p in co.receipt_paths()]
+        self.assertCountEqual(retry_receipts, [*before["receipts"], path.name])
+        retry = self.spawn_run(co, args, retry_env)
+        self.assertTrue(path.is_file() and path.read_bytes() == receipt_bytes, "retry lost or rewrote the first receipt")
+        return retry, dict(before, receipts=retry_receipts)
 
     def assertExit(self, result: e2e.Result, code: int, *needles: str, stream: str = "stderr") -> None:
         message = f"\n{result.describe()}"
@@ -811,14 +845,15 @@ class FaultE2EBase(unittest.TestCase):
         return {"env": co.env_bytes(), "containers": self.started(co), "receipts": [p.name for p in co.receipt_paths()],
                 "journal": co.journal()}
 
-    def persistent_data(self, co: e2e.Checkout) -> str:
+    def persistent_data(self, co: e2e.Checkout, *, local_only: bool = False) -> str:
         """Read fixture data strictly: a failed probe is not an empty-data success."""
 
         if isinstance(co, dist.DistributedCheckout):
             volume, files = "bootstrap-data", ["bootstrap-history"]
         else:
             volume, files = "app-data", ["history", "schema"]
-        result = e2e.run(["docker", "run", "--rm", "--name", f"{co.project}-data-probe",
+        pull_policy = ["--pull=never"] if local_only else []
+        result = e2e.run(["docker", "run", "--rm", *pull_policy, "--name", f"{co.project}-data-probe",
                           "-v", f"{co.project}_{volume}:/volume:ro", e2e.BASE_IMAGE,
                           "cat", *[f"/volume/{name}" for name in files]])
         self.assertTrue(result.stdout, "fixture data probe returned no data")
@@ -913,7 +948,8 @@ class FaultE2EBase(unittest.TestCase):
     def record(self, spec: Spec, fd: faults.FaultDocker) -> List[faults.Call]:
         """Run the command once, unfaulted, and keep its calls and the env file it leaves (E1); then reset."""
 
-        result = self.prepared_run(spec, fd, fd.env)
+        data_before = self.persistent_data(spec.co)
+        result, _ = self.prepared_run(spec, fd, fd.env, self.snapshot(spec.co), data_before)
         self.assertExit(result, 0)
         calls = fd.calls()
         (spec.co.harness.logs_dir / (spec.name + '-recorded.json')).write_text(
@@ -953,7 +989,7 @@ class FaultE2EBase(unittest.TestCase):
         data_before = self.persistent_data(co)
         self.assertEqual(before["env"], spec.env_before, f"{spec.name}: the point did not start from the reset state")
         words = spec.recorded[point.index - 1].words
-        result = self.prepared_run(spec, fd, lambda: fd.point_env(point, words))
+        result, attempt_before = self.prepared_run(spec, fd, lambda: fd.point_env(point, words), before, data_before)
         calls = fd.calls()
         # Keep the selected event and exact prefix even when its assertion fails;
         # the next point resets the injector, not this diagnostic evidence.
@@ -963,7 +999,7 @@ class FaultE2EBase(unittest.TestCase):
                         'env_before_sha256': hashlib.sha256(before['env']).hexdigest(),
                         'env_after_sha256': hashlib.sha256(co.env_bytes()).hexdigest(),
                         'containers_before': before['containers'], 'containers_after': self.started(co),
-                        'receipts_before': before['receipts'],
+                        'receipts_before': before['receipts'], 'attempt_receipts_before': attempt_before['receipts'],
                         'receipts_after': [p.name for p in co.receipt_paths()]}, indent=2) + '\n', encoding='utf-8')
         faults.validate_transactions(calls, spec.kind)
         phase, faulted = faults.phase_of(calls)
@@ -981,7 +1017,7 @@ class FaultE2EBase(unittest.TestCase):
             self.assertEqual(faulted.index, point.index, message)
         if faulted is not None:
             self.assertEqual(faulted.action, point.action, message)
-        outcome = self.judge(spec, point, result, calls, phase, faulted, before, message)
+        outcome = self.judge(spec, point, result, calls, phase, faulted, attempt_before, message)
         if not faults.restarted(calls):
             self.assertEqual(self.started(co), before["containers"], message)
             self.assertEqual(self.persistent_data(co), data_before, message)
@@ -1054,6 +1090,7 @@ class FaultE2EBase(unittest.TestCase):
             self.assertEqual((journal["kind"], journal["target_version"], journal["status"]),
                              (spec.kind, spec.target, "running"), message)
             if phase == "prepare":
+                self.assertEqual(new, [], message)
                 self.assertIn(journal["stage"], ("env_written", "pulled"), message)
                 # The old release keeps running; the killed run's env file is put back by the next run.
                 self.assertEqual(self.started(co), before["containers"], message)
@@ -1507,14 +1544,17 @@ class DistributedMatrixE2E(FaultE2EBase):
 class ScenariosE2E(FaultE2EBase):
     """Corners of a real host that the other suites do not reach."""
 
-    def standalone(self, name: str, **kwargs: Any) -> Tuple[e2e.Checkout, e2e.PrivateRegistry, List[str]]:
+    def standalone(self, name: str, *, observe_install: bool = False,
+                   **kwargs: Any) -> Tuple[e2e.Checkout, e2e.PrivateRegistry, List[str]]:
         """A v1.51.0 install on a registry of its own, and the arguments of its apply to v1.52.0."""
 
         assert H is not None
         registry = self.own_registry(name, V51, V52)
         release = H.release(V52, registry=registry.host)
         co = self.checkout(name, registry=registry.host, **kwargs)
-        co.install()
+        window = e2e.image_attempt.install_window(co, registry, V51) if observe_install else nullcontext()
+        with window:
+            co.install()
         return co, registry, ["apply", "--manifest", str(release.manifest), "--allow-no-backup"]
 
     def assertRuns(self, co: e2e.Checkout, registry: e2e.PrivateRegistry, version: str) -> None:
@@ -1939,8 +1979,8 @@ class ScenariosE2E(FaultE2EBase):
         """
 
         assert H is not None
-        a, _, apply = self.standalone("shell-a")
-        b, _, _ = self.standalone("shell-b")
+        a, _, apply = self.standalone("shell-a", observe_install=True)
+        b, _, _ = self.standalone("shell-b", observe_install=True)
         before_a, before_b = self.snapshot(a), self.snapshot(b)
         for command in (apply, ["rollback", "--yes"], ["status"]):
             with self.subTest(command=command[0]):

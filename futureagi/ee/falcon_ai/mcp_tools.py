@@ -123,6 +123,10 @@ class MCPToolWrapper(BaseTool):
         This avoids blocking the async event loop — the main reason MCP tools
         fail in Falcon but work in Claude Code.
         """
+        refusal = ToolResult.background_refusal(context)
+        if refusal is not None:
+            return refusal
+
         from channels.db import database_sync_to_async
 
         from ee.falcon_ai.mcp_proxy import MCPConnectorProxy

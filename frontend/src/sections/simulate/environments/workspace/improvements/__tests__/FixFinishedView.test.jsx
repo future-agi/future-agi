@@ -51,15 +51,17 @@ vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
 });
 
 // The launch form has its own tests; here it only shows which run and environment it opens on.
+// It stays mounted and toggles `open` (so the drawer slides); closed, it shows nothing.
 vi.mock("../LaunchFixDialog", () => ({
   // eslint-disable-next-line react/prop-types
-  default: ({ envId, sourceRunId }) => (
-    <div
-      data-testid="launch-fix-dialog"
-      data-env={envId}
-      data-source={sourceRunId}
-    />
-  ),
+  default: ({ open, envId, sourceRunId }) =>
+    open && (
+      <div
+        data-testid="launch-fix-dialog"
+        data-env={envId}
+        data-source={sourceRunId}
+      />
+    ),
 }));
 
 const axios = (await import("src/utils/axios")).default;
@@ -333,6 +335,57 @@ describe("FixVerdict", () => {
       />,
     );
     expect(screen.queryByText(/platform eval/)).toBeNull();
+  });
+});
+
+describe("finished trial presentation", () => {
+  function showTrials(fix) {
+    renderUi(
+      <FixFinishedView fix={fix} tab="trials" onTab={vi.fn()} renderTab={() => null} />,
+    );
+    const plot = screen.getByRole("img", { name: "Target pass rate per candidate" });
+    return within(plot.parentElement.parentElement);
+  }
+
+  it("plots rejected candidates without a lead", () => {
+    const fix = fixOf("fix-no-improvement");
+    fix.candidates[0].verdict.target_pass_rate = [0, 0.9];
+    const chart = showTrials(fix);
+    expect(chart.getAllByTestId("trial-point")).toHaveLength(2);
+    expect(chart.queryByText(/best so far|winner/i)).toBeNull();
+  });
+
+  it("explains rejections in product words without displaying engine text", () => {
+    const fix = fixOf("fix-no-improvement");
+    const [first, second] = fix.candidates;
+    first.verdict = {
+      target_pass_rate: [0, 0.9],
+      reason: "INTERNAL_VERDICT_A",
+    };
+    second.verdict.reason = "INTERNAL_VERDICT_B";
+    showTrials(fix);
+    const firstRow = within(screen.getByTestId("trial-1"));
+    const secondRow = within(screen.getByTestId("trial-2"));
+    expect(firstRow.queryByText(first.verdict.reason)).not.toBeInTheDocument();
+    expect(secondRow.queryByText(second.verdict.reason)).not.toBeInTheDocument();
+    expect(firstRow.getByText("No failed check was recorded.")).toBeVisible();
+    expect(secondRow.getByText("This candidate didn't improve the target scenarios.")).toBeVisible();
+  });
+
+  it("leads with the kept candidate even when a rejected candidate scored higher", () => {
+    const fix = fixOf("fix-ready-archive");
+    fix.candidates.find((c) => c.outcome === "rejected").verdict.target_pass_rate = [0, 1];
+    const kept = fix.candidates.find((c) => c.outcome === "winner");
+    kept.verdict.target_pass_rate = [0.1, 0.7];
+    const chart = showTrials(fix);
+    expect(chart.getByText(/Candidate 3 · winner ▲ 60 pts/)).toBeVisible();
+    const points = chart.getAllByTestId("trial-point");
+    const filled = points.filter((point) => {
+      const dot = point.querySelector("circle");
+      return dot.getAttribute("fill") === dot.getAttribute("stroke");
+    });
+    expect(filled).toHaveLength(1);
+    expect(filled[0].textContent).toBe(String(kept.attempt));
   });
 });
 

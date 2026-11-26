@@ -31,6 +31,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import cast
 
 import structlog
 from django.contrib.postgres.fields import ArrayField
@@ -305,7 +306,7 @@ class DerivedMetricVersion(models.Model):
         FORWARD = "forward"
 
     # Kinds a user-level metric may use, with the per-user rules each allows.
-    USER_LEVEL_RULES = {
+    USER_LEVEL_RULES: dict[str, tuple[str, ...]] = {
         Kind.SHARE: (UserRule.ANY, UserRule.EVERY),
         Kind.COUNT: (UserRule.ANY, UserRule.EVERY),
         Kind.AVERAGE: (UserRule.AVERAGE, UserRule.TOTAL),
@@ -511,7 +512,7 @@ class DerivedMetricRun(models.Model):
         FAILED = "failed"
 
     SNAPSHOT_GRAINS = ("conversation", "trace")
-    CLEANUP_TRANSITIONS = {
+    CLEANUP_TRANSITIONS: dict[str, tuple[str, ...]] = {
         CleanupStatus.PENDING: (CleanupStatus.RUNNING,),
         CleanupStatus.RUNNING: (CleanupStatus.DONE, CleanupStatus.FAILED),
         CleanupStatus.FAILED: (CleanupStatus.RUNNING,),
@@ -1022,7 +1023,7 @@ class MetricRefreshAttempt(models.Model):
         ERASURE = "erasure"
         COMPACTION = "compaction"
 
-    TRANSITIONS = {
+    TRANSITIONS: dict[str, tuple[str, ...]] = {
         State.PREPARED: (State.STAGING, State.ABORTED),
         State.STAGING: (State.VERIFIED, State.ABORTED),
         State.VERIFIED: (State.COMMITTED, State.ABORTED),
@@ -1438,7 +1439,7 @@ class MetricRefreshAttempt(models.Model):
             condition &= Q(ledger_sealed_at__isnull=False)
             updates["staged_at"] = now
         else:
-            condition &= ~Exists(
+            condition &= ~Exists(  # type: ignore[assignment]  # Q & Exists is a Q
                 MetricAttemptBatch.objects.filter(
                     attempt_id=OuterRef("pk"), verified_at__isnull=True
                 )
@@ -2080,9 +2081,11 @@ class MetricReadManifest(models.Model):
     def allowed_attempts(self) -> list[tuple[int, uuid.UUID]]:
         """(generation, attempt id) pairs whose rows this manifest makes visible."""
 
-        pairs = []
+        pairs: list[tuple[int, uuid.UUID]] = []
         if self.checkpoint_attempt_id is not None:
-            pairs.append((self.checkpoint_generation, self.checkpoint_attempt_id))
+            # metric_manifest_checkpoint_shape sets both checkpoint fields together.
+            generation = cast(int, self.checkpoint_generation)
+            pairs.append((generation, self.checkpoint_attempt_id))
         pairs.extend(zip(self.delta_generations, self.delta_attempt_ids, strict=True))
         return pairs
 
@@ -2170,7 +2173,10 @@ class MetricReadManifest(models.Model):
             ).exists():
                 raise MetricStateConflict("attempt expired")
             if attempt.purpose == MetricRefreshAttempt.Purpose.COMPACTION:
-                checkpoint = (attempt.id, attempt.generation)
+                checkpoint: tuple[uuid.UUID | None, int | None] = (
+                    attempt.id,
+                    attempt.generation,
+                )
                 deltas: list[tuple[uuid.UUID, int]] = []
             else:
                 checkpoint = (
@@ -2440,7 +2446,7 @@ class MetricGenerationPin(models.Model):
         """Compatibility entry point; mandatory synchronized capture, never bare."""
         from tracer.services.derived_metrics.deletion_protocol import capture_pin
 
-        return capture_pin(
+        pin: MetricGenerationPin = capture_pin(
             project_id,
             consumer_kind=consumer_kind,
             ttl=ttl,
@@ -2449,6 +2455,7 @@ class MetricGenerationPin(models.Model):
             metric_id=metric_id,
             now=now,
         )
+        return pin
 
     @classmethod
     def invalidate(
@@ -2665,7 +2672,7 @@ class MetricErasureRequest(models.Model):
     def save(self, *args, **kwargs):
         if self._state.adding:
             if self.organization_key is None:
-                self.organization_key = self.organization_id
+                self.organization_key = self.organization_id  # type: ignore[unreachable]  # unset until the first save
             if self.project_key is None:
                 self.project_key = self.project_id
             if (
@@ -2822,6 +2829,7 @@ class MetricErasureRequest(models.Model):
                 request is None
                 or request.status != cls.Status.RUNNING
                 or request.claim_token != token
+                or request.claim_expires_at is None
                 or request.claim_expires_at <= now
             ):
                 raise MetricStateConflict("the erasure claim is not held")
@@ -2864,8 +2872,8 @@ class MetricErasureRequest(models.Model):
         if not ids and "subjects" not in payload:
             return {}
         salt = secrets.token_hex(16)
-        scrub = {"algorithm": ERASURE_SUBJECT_DIGEST, "salt": salt}
-        fields = {}
+        scrub: dict[str, object] = {"algorithm": ERASURE_SUBJECT_DIGEST, "salt": salt}
+        fields: dict[str, object] = {}
         if ids:
             digest = cls._subject_digest(ids, salt)
             scrub["subject_ids"] = {"count": len(set(ids)), "sha256": digest}

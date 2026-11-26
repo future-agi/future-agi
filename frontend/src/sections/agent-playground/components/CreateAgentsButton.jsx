@@ -29,7 +29,7 @@ const OPTIONS = [
 ];
 
 /**
- * "Create agents" — build one in the Playground, or connect one that already
+ * "New agent" — build one in the Playground, or connect one that already
  * exists. The Playground limit only gates the Playground option; connecting
  * an agent is always available.
  */
@@ -75,7 +75,7 @@ export default function CreateAgentsButton({ canCreatePlayground = true }) {
         }
         endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={20} />}
       >
-        Create agents
+        New agent
       </LoadingButton>
 
       <CustomPopover

@@ -27,6 +27,7 @@ from tracer.services.derived_metrics.storage import (
 
 if TYPE_CHECKING:
     from tracer.models.derived_metric import MetricReadManifest
+    from tracer.services.derived_metrics.changes import SourceKey
     from tracer.services.derived_metrics.publication import ClickHousePublicationStore
 
 MAX_KEY_IN_ITEMS = 1000
@@ -46,7 +47,7 @@ def validate_prefix(prefix):
 
 def merge_bindings(*bindings):
     """Refuse to silently change the meaning of an already composed relation."""
-    result = {}
+    result: dict[str, object] = {}
     for params in bindings:
         for name, value in params.items():
             if name in result and result[name] != value:
@@ -158,6 +159,8 @@ def normalize_key_in(
         or not 1 <= max_bytes <= MAX_KEY_IN_BYTES
     ):
         raise ValueError("invalid metric key membership budget")
+    used: set[str]
+    result: dict[str | tuple[str, ...], tuple[object, ...]]
     used, items, size, result = set(), 0, 0, {}
     for columns, values in key_in.items():
         names = _columns(table, columns)
@@ -169,7 +172,7 @@ def normalize_key_in(
         if items > max_items:
             raise ValueError("metric key membership item cap exceeded")
         size += 2  # the sequence's parentheses, including an empty sequence
-        unique = {}
+        unique: dict[object, None] = {}
         for index, value in enumerate(values):
             value = _member(table, columns, value)
             size += (2 if index else 0) + len(
@@ -406,7 +409,7 @@ def field_window_requires_subdivision(
     branches.append(
         f"SELECT level, unit_id, bucket_start FROM ({frozen}) WHERE {predicate}"
     )
-    count = store.execute(
+    count: int = store.execute(
         "SELECT count() FROM (SELECT DISTINCT level, unit_id FROM ("
         + " UNION ALL ".join(branches)
         + ") WHERE bucket_start IN (SELECT parseDateTimeBestEffort(arrayJoin(%(bucket_probe_starts)s), 'UTC')) "
@@ -559,6 +562,7 @@ class BucketFieldScan:
         from tracer.services.derived_metrics.refresh import payload_select
 
         limit = min(self.byte_limit, MAX_COMPACTION_BYTES)
+        page: list[str]
         page, size, lower, last = [], 0, None, None
 
         def child():
@@ -705,6 +709,7 @@ def iter_key_membership_batches(
     item_capacity = max_items - len(fixed)
     if item_capacity < 1 or size > max_bytes:
         raise ValueError("metric membership budget leaves no varying key capacity")
+    page: list[object]
     base_size, page, seen = size, [], set()
     for value in values:
         value = _member(table, columns, value)
@@ -799,7 +804,7 @@ class CapturedSourceOutput(SourceOutputPage):
         # those at their committed reader as well.
         from tracer.services.derived_metrics.publication import MAX_BATCH_ROWS
 
-        groups = {}
+        groups: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
         for record in self.records:
             groups.setdefault(record[:2], []).append(record)
         for membership in iter_key_membership_batches(
@@ -810,6 +815,7 @@ class CapturedSourceOutput(SourceOutputPage):
             max_items=max_items,
             max_bytes=max_bytes,
         ):
+            page: list[tuple[str, str, str]]
             page, size = [], 0
             for _field, _version, level, unit in membership[SOURCE_FIELD_KEY]:
                 # A remap chain can drive the same canonical ID and retired raw
@@ -885,8 +891,10 @@ def capture_source_output(
         "max_result_bytes": 2 * SOURCE_CAPTURE_BYTES + 1024 * 1024,
         "result_overflow_mode": "throw",
     }
+    rows: list[tuple[str, str, str]]
+    seen: dict[tuple[str, str], str]
     rows, seen, size = [], {}, 0
-    dependencies = {}
+    dependencies: dict[SourceKey, object] = {}
     # The capture can name session tables (source_identity_relation): replay
     # them first if the native session was replaced, as store.execute does.
     restore = getattr(store, "_restore_transients", None)
@@ -916,8 +924,11 @@ def capture_source_output(
                         "" if value == "00000000-0000-0000-0000-000000000000" else value
                         for value in member
                     ]
-                    dependency = Dependency(
-                        *normalized[:-1], is_deleted=bool(normalized[-1])
+                    # member_dependencies rows are fixed-arity (seven fields,
+                    # then is_deleted); mypy cannot see the starred list length.
+                    dependency = Dependency(  # type: ignore[misc]
+                        *normalized[:-1],  # type: ignore[arg-type]
+                        is_deleted=bool(normalized[-1]),
                     )
                     prior = dependencies.setdefault(dependency.key, dependency)
                     if prior != dependency:
@@ -960,11 +971,11 @@ def capture_source_output(
     digest = sha256()
     for _level, _unit, encoded in rows:
         digest.update(bytes.fromhex(encoded))
-    members = tuple(dependencies[key] for key in sorted(dependencies))
-    if members:
-        digest.update(repr(members).encode("utf-8"))
+    captured = tuple(dependencies[key] for key in sorted(dependencies))
+    if captured:
+        digest.update(repr(captured).encode("utf-8"))
     return CapturedSourceOutput(
-        field_id, field_version, tuple(rows), digest.hexdigest(), members
+        field_id, field_version, tuple(rows), digest.hexdigest(), captured
     )
 
 
@@ -1038,7 +1049,7 @@ def committed_branches(
     if not names or set(names) - set(table.columns):
         raise ValueError("invalid committed metric projection")
     projection = ", ".join(names)
-    params = {
+    params: dict[str, object] = {
         f"{prefix}_org": str(UUID(str(org_id))),
         f"{prefix}_project": str(UUID(str(project_id))),
     }
@@ -1146,6 +1157,7 @@ def committed_key_pages(
             param_prefix=param_prefix,
             columns=keys,
         )
+        literals: list[str]
         literals, merge_size = [], 0
         for branch_index in range(len(branches)):
             after, candidates = cursor, 0

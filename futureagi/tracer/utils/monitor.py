@@ -79,7 +79,9 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryB
             DerivedMonitorQueryBuilder,
         )
 
-        return DerivedMonitorQueryBuilder(monitor)
+        # Duck-types the monitor builder protocol (value/historical queries);
+        # it is not a MonitorMetricsQueryBuilder subclass.
+        return DerivedMonitorQueryBuilder(monitor)  # type: ignore[return-value]
 
     eval_config_id = None
     eval_output_type = None
