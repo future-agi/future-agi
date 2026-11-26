@@ -1246,7 +1246,9 @@ def test_one_rows_database_error_does_not_leave_the_ask_unsettled(
     settled = []
     settle = engine.settle_ask
     monkeypatch.setattr(
-        engine, "settle_ask", lambda ask_id: settled.append(ask_id) or settle(ask_id)
+        engine,
+        "settle_ask",
+        lambda ask_id, **options: settled.append(ask_id) or settle(ask_id, **options),
     )
 
     _run_ask(ask)
@@ -1456,3 +1458,207 @@ def test_the_same_launch_sent_twice_makes_two_asks_for_now(
 
     assert first.id != second.id
     assert SimulateAsk.objects.filter(organization=organization).count() == 2
+
+
+# --- round 2 review ------------------------------------------------------------------
+
+
+def _claim_late_and_die(ask, decision_model):
+    """Launch + 6 h 35 m: a retry claimed the first row 15 min ago, the evaluator
+    logged its call, and the worker died. Nothing else claimed anything."""
+    first, second = _rows(ask)
+    SimulateEvalResult.objects.filter(ask=ask).update(
+        created_at=timezone.now() - engine.SETTLE_AFTER - engine.SETTLE_MARGIN
+    )
+    decision_model.error = _WorkerKilled()
+    with pytest.raises(_WorkerKilled):
+        grade_row(str(first.id))
+    decision_model.error = None
+    SimulateEvalResult.objects.filter(id=first.id).update(
+        claimed_at=timezone.now() - timedelta(minutes=15)
+    )
+    return first, second
+
+
+@pytest.mark.django_db
+def test_a_claim_still_live_at_the_later_settle_is_settled_by_a_follow_up(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    _settle_not_queued,
+):
+    """The one settle queued at launch finds a claim too young to call dead. It
+    queues one more settle for after the give-up time, which closes the row and
+    names its charge."""
+    from ee.usage.models.usage import APICallLog
+
+    ask = _launch(selection, organization, workspace, user)
+    first, second = _claim_late_and_die(ask, decision_model)
+    _settle_not_queued.reset_mock()
+
+    engine.settle_ask_later._original_func(str(ask.id))
+
+    first.refresh_from_db()
+    assert first.state == STATE.PENDING
+    (follow_up,) = _settle_not_queued.call_args_list
+    assert follow_up.kwargs["args"] == (str(ask.id),)
+    assert follow_up.kwargs["start_delay"] == (
+        engine.GRADING_GIVE_UP + engine.SETTLE_MARGIN
+    )
+    # Its own workflow id: the launch's settle may still hold the first one.
+    assert follow_up.kwargs["task_id"] != f"simulate-ask-settle-{ask.id}"
+
+    # The follow-up runs once the claim is past the give-up time.
+    SimulateEvalResult.objects.filter(id=first.id).update(
+        claimed_at=timezone.now() - engine.GRADING_GIVE_UP - engine.SETTLE_MARGIN
+    )
+    _settle_not_queued.reset_mock()
+    engine.settle_ask_later._original_func(str(ask.id))
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    ask.refresh_from_db()
+    (log,) = APICallLog.objects.filter(organization=organization)
+    assert (first.state, first.cause) == (STATE.INFRASTRUCTURE_ERROR, "worker_died")
+    assert first.evaluator_log_id == log.log_id
+    assert (second.state, second.cause) == (STATE.INFRASTRUCTURE_ERROR, "job_ended")
+    assert ask.status == SimulateAsk.Status.FINISHED
+    # Nothing is left claimed, so nothing more is queued.
+    assert _settle_not_queued.call_args_list == []
+
+
+@pytest.mark.django_db
+def test_a_job_that_ends_beside_a_live_claim_queues_a_follow_up_settle(
+    organization,
+    workspace,
+    user,
+    selection,
+    gate_passes,
+    queued,
+    decision_model,
+    _settle_not_queued,
+):
+    """A short ask whose first worker died: the retry grades what is left, and the
+    dead worker's claim is settled after the give-up time, not when someone reads."""
+    ask = _launch(selection, organization, workspace, user)
+    dead, _ = _rows(ask)
+    SimulateEvalResult.objects.filter(id=dead.id).update(claimed_at=timezone.now())
+    _settle_not_queued.reset_mock()
+
+    _run_ask(ask)
+
+    (follow_up,) = _settle_not_queued.call_args_list
+    assert follow_up.kwargs["args"] == (str(ask.id),)
+    assert follow_up.kwargs["start_delay"] == (
+        engine.GRADING_GIVE_UP + engine.SETTLE_MARGIN
+    )
+
+
+@pytest.mark.django_db
+def test_a_reader_settling_an_ask_with_a_live_claim_queues_nothing(
+    organization, workspace, user, selection, gate_passes, queued, _settle_not_queued
+):
+    """A reader settles on every read; only the job and the later settle queue."""
+    ask = _launch(selection, organization, workspace, user)
+    row = _rows(ask)[0]
+    SimulateEvalResult.objects.filter(id=row.id).update(
+        claimed_at=timezone.now() - timedelta(minutes=15)
+    )
+    _settle_not_queued.reset_mock()
+
+    engine.settle_ask(ask.id)
+
+    assert _settle_not_queued.call_args_list == []
+
+
+@pytest.mark.django_db
+def test_a_failed_grading_closed_as_dead_meanwhile_still_names_its_charge(
+    organization, workspace, user, selection, gate_passes, queued, decision_model
+):
+    """The row is closed as a dead worker's before the evaluator logs, then the
+    decision model fails. The failure carries no log id, so the late write looks
+    the evaluator's log row up."""
+    from ee.usage.models.usage import APICallLog
+
+    ask = _launch(selection, organization, workspace, user)
+    row = _rows(ask)[0]
+
+    def closed_before_the_evaluator_logs(*_args):
+        SimulateEvalResult.objects.filter(id=row.id).update(
+            claimed_at=timezone.now() - engine.GRADING_GIVE_UP - timedelta(seconds=1)
+        )
+        engine._close_dead(ask.id)
+        return False
+
+    decision_model.error = RuntimeError("decision model down")
+    with patch.object(
+        engine, "_too_large", side_effect=closed_before_the_evaluator_logs
+    ):
+        grade_row(str(row.id))
+
+    row.refresh_from_db()
+    (log,) = APICallLog.objects.filter(organization=organization)
+    assert (row.state, row.cause) == (STATE.INFRASTRUCTURE_ERROR, "worker_died")
+    assert row.evaluator_log_id == log.log_id
+
+
+@pytest.mark.django_db
+def test_the_charge_is_looked_up_among_its_own_questions_log_rows(
+    organization, workspace, user, selection, gate_passes, queued, decision_model
+):
+    """The lookup filters on the template, so it uses the log's
+    (organization, source_id) index and never takes another template's row."""
+    import uuid
+
+    from ee.usage.models.usage import APICallLog
+
+    ask = _launch(selection, organization, workspace, user)
+    row = _rows(ask)[0]
+    grade_row(str(row.id))
+    (log,) = APICallLog.objects.filter(organization=organization)
+    template_id = ask.questions[0]["eval_template_id"]
+
+    assert engine._logged_call(row.id, organization.id, template_id) == log.log_id
+    APICallLog.objects.filter(log_id=log.log_id).update(source_id=str(uuid.uuid4()))
+    assert engine._logged_call(row.id, organization.id, template_id) is None
+    # A row kept without its question still finds its charge.
+    assert engine._logged_call(row.id, organization.id, None) == log.log_id
+
+
+@pytest.mark.django_db
+def test_re_saving_the_same_instructions_keeps_the_question_as_launched(
+    organization, workspace, user, auth_client
+):
+    """The update view stores the instructions' inputs in set order, which differs
+    between processes; the same inputs in another order are the same question."""
+    template, _ = engine.save_question_template(
+        _question(kinds=(Kind.AGENT_INSTRUCTIONS, Kind.SCENARIO, Kind.TOOL_CALLS)),
+        organization=organization,
+        workspace_id=workspace.id,
+        user=user,
+        at=timezone.now(),
+    )
+    template.refresh_from_db()
+    launched = engine.template_digest(template)
+    keys = list(template.config["required_keys"])
+    assert len(keys) == 3
+
+    for reordered in (keys[::-1], keys[1:] + keys[:1]):
+        template.config["required_keys"] = reordered
+        assert engine.template_digest(template) == launched
+
+    _put_template(
+        auth_client,
+        template.id,
+        {"instructions": template.config["rule_prompt"], "description": "Re-saved"},
+    )
+    template.refresh_from_db()
+    assert engine.template_digest(template) == launched
+
+    # Other inputs are another question.
+    template.config["required_keys"] = keys[:2]
+    assert engine.template_digest(template) != launched
