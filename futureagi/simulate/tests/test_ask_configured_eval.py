@@ -631,6 +631,14 @@ def test_a_usage_check_that_cannot_answer_refuses_the_launch(
     assert refused.value.code == "credit_check_unavailable"
 
 
+def test_without_ee_usage_the_usage_check_gives_nothing_to_refuse_on():
+    from tfc.ee_gates import eval_usage_check
+
+    # A build with ee/ stripped: the import fails, and nothing is checked.
+    with patch.dict("sys.modules", {"ee.usage.services.metering": None}):
+        assert eval_usage_check("org", "agent_eval") is None
+
+
 @pytest.mark.django_db
 def test_a_capability_check_that_fails_refuses_the_launch(
     organization, workspace, user
