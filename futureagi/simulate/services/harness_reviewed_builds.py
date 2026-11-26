@@ -16,7 +16,7 @@ PRIVATE_CONTROLLER_JOB = "/run/futureagi/reviewed-source-job.json"
 PRIVATE_PERMISSIONS = f"chown svc-control:svc-control {PRIVATE_CONTROLLER_JOB} {SNAPSHOT} && chmod 0600 {PRIVATE_CONTROLLER_JOB} {SNAPSHOT}"
 
 
-def sourced(job):
+def sourced(job) -> bool:
     metadata = job.payload.get("metadata") or {}
     return bool(
         not getattr(job, "environment_id", None)
@@ -55,6 +55,8 @@ def expected_pin(job):
     ).first()
     if (
         row is None
+        or not isinstance(row.receipt, dict)
+        or not row.receipt.get("snapshot_id")
         or str(row.id) != pin.get("review_id")
         or str(job.id) != pin.get("owner_id")
     ):

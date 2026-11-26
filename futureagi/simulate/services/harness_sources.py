@@ -192,8 +192,9 @@ def resolve_evaluator_sources(run) -> dict[str, Any]:
 
 
 def _alk_result(response: dict) -> dict:
-    if response.get("ok") is True and isinstance(response.get("result"), dict):
-        return response["result"]
+    result = response.get("result")
+    if response.get("ok") is True and isinstance(result, dict):
+        return result
     error = response.get("error") or {}
     code = str(error.get("code") or "source_request_invalid")
     status_code = {
@@ -586,7 +587,14 @@ def prepare_draft(
         ),
         **({"schema_repairs": schema_repairs} if schema_repairs else {}),
     }
-    return _alk_result(execute_source_request(prepare_request))["draft"]
+    draft = _alk_result(execute_source_request(prepare_request)).get("draft")
+    if not isinstance(draft, dict):
+        raise HostedHarnessError(
+            "source_snapshot_invalid",
+            "The source processor returned an invalid draft.",
+            status_code=502,
+        )
+    return draft
 
 
 def accept_source_import(

@@ -25,7 +25,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from django.conf import settings
 from django.db import transaction
@@ -178,7 +178,7 @@ def design_source_basis(job, target_table, captured):
         table_choices,
     )
 
-    template = design_of(job).get("template")
+    template = (design_of(job) or {}).get("template")
     basis = {"revision": 1, "schema_digest": None}
     if not template:
         if target_table:
@@ -424,7 +424,7 @@ def design_payload(
             **source_selection,
             "target_table": target_table,
         }
-    return json.loads(json.dumps(payload, default=str))
+    return cast(dict[str, Any], json.loads(json.dumps(payload, default=str)))
 
 
 def continued_payload(organization, job: HostedHarnessJob) -> dict[str, Any]:
@@ -627,7 +627,7 @@ def design_launch_for(job: HostedHarnessJob) -> DesignLaunch | None:
         previous = HostedHarnessJob.no_workspace_objects.filter(
             id=design["resume_from"],
             organization=job.organization,
-            workspace_id=job.workspace_id,
+            workspace=job.workspace_id,
         ).first()
         conversation = (
             HostedHarnessConversation.no_workspace_objects.filter(job=previous).first()
@@ -765,6 +765,7 @@ def complete_design(attempt, output: Path | None) -> HostedHarnessJob:
     if job.current_attempt_number != attempt.attempt_number or job.terminal_at:
         return job
     design_result: dict[str, Any] = {}
+    failure: dict | None
     if output is None:
         failure = _design_failure("design_result_missing", "the design left no output")
     else:

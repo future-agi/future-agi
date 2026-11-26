@@ -5,6 +5,7 @@ import json
 
 from django.conf import settings
 from minio.error import S3Error
+from urllib3.response import BaseHTTPResponse
 
 from tfc.utils.storage_client import _is_anonymous, get_storage_client
 
@@ -54,7 +55,7 @@ def put_private(key: str, body: bytes, content_type: str) -> None:
     )
 
 
-def open_private(key: str, *, legacy_archive: bool = False):
+def open_private(key: str, *, legacy_archive: bool = False) -> BaseHTTPResponse:
     client = get_storage_client()
     try:
         return client.get_object(private_bucket(), key)

@@ -30,8 +30,11 @@ class HarnessDesignSourceSelectionSerializer(StrictInputSerializer):
         required=False,
         default=dict,
     )
-    knowledge_base = HarnessSourceSelectionSerializer(
-        many=True, required=False, default=list, max_length=100
+    knowledge_base: serializers.ListSerializer = serializers.ListSerializer(
+        child=HarnessSourceSelectionSerializer(),
+        required=False,
+        default=list,
+        max_length=100,
     )
 
     def validate(self, attrs):

@@ -7521,11 +7521,12 @@ def rewrite_conversation_scenarios(job: HostedHarnessJob, suite: list[dict]) -> 
     )
     rewritten_count = 0
     for conversation in conversations:
+        object_key = conversation.latest_workspace_object_key
+        if not object_key:
+            continue
         response = None
         try:
-            response = open_private(
-                conversation.latest_workspace_object_key, legacy_archive=True
-            )
+            response = open_private(object_key, legacy_archive=True)
             body = response.read()
             rewritten = _rewritten_authoring_archive(body, suite)
             if rewritten is None:

@@ -36,7 +36,7 @@ def _unsealed():
     )
 
 
-def summary(job):
+def summary(job) -> dict:
     return {
         "id": str(job.id),
         "review_id": str(job.review_id),
@@ -414,7 +414,7 @@ def _apply(generation_id, archive, digest, generated):
     generation.save(update_fields=["state", "result", "error"])
 
 
-def process(generation_id, *, retry_available=False):
+def process(generation_id, *, retry_available=False) -> dict:
     job = Generation.objects.select_related("review__owner").get(pk=generation_id)
     if job.state not in {Generation.State.QUEUED, Generation.State.RUNNING}:
         return summary(job)

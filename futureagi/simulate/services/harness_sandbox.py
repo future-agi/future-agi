@@ -48,9 +48,14 @@ class HarnessSandboxClient:
         return self._request("POST", "/v1/preflight", json=payload)
 
     def environment_sources(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request(
+        response = self._request(
             "POST", "/v1/environment-sources", json=payload, timeout=(5, 300)
         )
+        if not isinstance(response, dict):
+            raise HarnessSandboxUnavailable(
+                "ALK returned an invalid environment sources response."
+            )
+        return response
 
     def upload_source(
         self, files: list[Any], paths: list[str], name: str

@@ -94,7 +94,7 @@ _SOURCE_UPLOAD_MAX_BYTES = 200 * 1024 * 1024
 _SOURCE_UPLOAD_FRAMING_BYTES = 8 * 1024 * 1024
 
 
-def _receive_source_zip(request, store):
+def _receive_source_zip(request, store) -> Response:
     from simulate.services.harness_source_zip import unpack_source_zip
     from simulate.services.hosted_harness import HostedHarnessError
 
@@ -473,15 +473,19 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
             HarnessSourceReview.objects.filter(
                 pk=metadata["source_review_id"],
                 organization_id=job.organization_id,
-                workspace_id=job.workspace_id,
+                workspace=job.workspace_id,
             )
             .values("state", "revision", "draft_digest", "basis__schema_digest")
             .first()
         )
         if summary:
-            summary["id"] = str(metadata["source_review_id"])
-            summary["schema_digest"] = summary.pop("basis__schema_digest")
-            metadata["source_review"] = summary
+            metadata["source_review"] = {
+                "id": str(metadata["source_review_id"]),
+                "state": summary["state"],
+                "revision": summary["revision"],
+                "draft_digest": summary["draft_digest"],
+                "schema_digest": summary["basis__schema_digest"],
+            }
     renamed = str(job.name or "").strip()
     if isinstance(metadata, dict) and renamed:
         # A name set through the rename endpoint wins, as on the environments list.
@@ -2753,7 +2757,10 @@ class HostedHarnessProvider:
                     )
                     harness_reviewed_builds.chat_review(job, body)
                 except HostedHarnessError as exc:
-                    if exc.code == "conversation_source_snapshot_changed":
+                    if (
+                        exc.code == "conversation_source_snapshot_changed"
+                        and conversation is not None
+                    ):
                         fail_source_mismatch(conversation.id, exc.message)
                     return Response(exc.as_dict(), status=exc.status_code)
         data = request.validated_data
@@ -3761,7 +3768,9 @@ class HostedHarnessProvider:
             }
         )
 
-    def _extend_in_chat(self, request, job, count, guidance, client_request_id):
+    def _extend_in_chat(
+        self, request, job, count, guidance, client_request_id
+    ) -> Response:
         """Extend where drafts apply: a builder request whose scenarios land in the
         unsaved changes."""
         from uuid import uuid4

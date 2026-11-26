@@ -156,8 +156,12 @@ def _environment_schema(
     owner: HostedHarnessJob, target_table, *, fields_by_table=None
 ) -> tuple[dict | None, list[str]]:
     version = drafts.fresh_draft(owner, "environment") or owner.environment_version
+    if version is None:
+        raise _conflict(
+            "Save an Environment version before reviewing its source schema."
+        )
     schema = ((version.documents or {}).get("contract") or {}).get("data_schema") or {}
-    columns = []
+    columns: list[tuple[str, str, str]] = []
     if isinstance(schema, dict):
         for table, table_schema in schema.items():
             if not isinstance(table_schema, dict):
@@ -360,7 +364,7 @@ def table_choices(captured, table_fields):
     tables = sorted(table_fields)
     if len(tables) < 2:
         return {}
-    headers = set()
+    headers: set[str] = set()
     for source in captured:
         if source.role != "seed_records":
             continue
@@ -372,11 +376,11 @@ def table_choices(captured, table_fields):
             elif source.media_type == "application/json":
                 records = json.loads(source.content)
                 sample = (
-                    records[0].keys()
+                    list(records[0])
                     if isinstance(records, list)
                     and records
                     and isinstance(records[0], dict)
-                    else ()
+                    else []
                 )
             else:
                 continue
@@ -426,7 +430,7 @@ def _stage(
         if row.owner_kind == Owner.ENVIRONMENT and (
             row.basis.get("target_table") or row.basis.get("destination_tables")
         ):
-            table_fields = {}
+            table_fields: dict[str, set[str]] = {}
             _environment_schema(
                 row.owner, row.basis.get("target_table"), fields_by_table=table_fields
             )
@@ -486,9 +490,10 @@ def _stage(
                 "schema_digest": schema_digest(draft["destination_schema"]),
             }
         )
+        origins = [item.origin for item in captured]
         staged = {
             "draft_payload": draft,
-            "origins": [item.origin for item in captured],
+            "origins": origins,
             "originals": [
                 {
                     "source_id": item.source_id,
@@ -514,7 +519,7 @@ def _stage(
             staged_digest=row.staged_digest,
             draft_digest=draft["draft_digest"],
             preview={
-                **sources.safe_source_preview(draft, staged["origins"]),
+                **sources.safe_source_preview(draft, origins),
                 **choices,
             },
         )
@@ -1026,7 +1031,10 @@ def _read_staging(row: HarnessSourceReview) -> dict:
         raise _conflict("The prepared sources are no longer available.") from None
     if hashlib.sha256(body).hexdigest() != row.staged_digest:
         raise _conflict()
-    return json.loads(body)
+    staged = json.loads(body)
+    if not isinstance(staged, dict):
+        raise _conflict("The prepared source review is invalid.")
+    return staged
 
 
 def _accept(
@@ -1241,7 +1249,7 @@ def accept_environment_review(
             if revision is not None
             else row.revision - (row.state == State.ACCEPTED)
         )
-        return _accept(
+        receipt = _accept(
             request,
             row,
             expected_revision=expected_revision,
@@ -1249,6 +1257,9 @@ def accept_environment_review(
             decisions=decisions,
             idempotency_key=idempotency_key or str(review_id),
         ).receipt
+        if not isinstance(receipt, dict):
+            raise _conflict("The accepted source review receipt is missing.")
+        return receipt
 
 
 def accepted_source_snapshot(

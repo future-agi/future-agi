@@ -194,7 +194,7 @@ def _add_source_usage(head, by_source):
             case = fixture.get("reviewed_source") or {}
             if not isinstance(case, dict):
                 continue
-            citations = {}
+            citations: dict[str, list[dict]] = {}
             for cite in case.get("citations") or []:
                 if isinstance(cite, dict) and cite.get("source_id") in by_source:
                     citations.setdefault(cite["source_id"], []).append(

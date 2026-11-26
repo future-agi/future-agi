@@ -4,7 +4,7 @@ import stat
 import struct
 from contextlib import ExitStack, contextmanager
 from pathlib import PurePosixPath
-from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile, ZipInfo
 from zlib import error as CompressionError
 
 from django.core.files import File
@@ -61,7 +61,7 @@ def unpack_source_zip(upload, max_bytes, max_files):
     try:
         _check_directory_size(upload, max_files)
         with ZipFile(upload) as archive, ExitStack() as stack:
-            entries = []
+            entries: list[ZipInfo] = []
             paths = []
             total = 0
             for entry in archive.infolist():

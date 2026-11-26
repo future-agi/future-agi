@@ -53,8 +53,8 @@ class SourceSchemaRepairSerializer(StrictInputSerializer):
 class HarnessSourceReviewCreateSerializer(HarnessDesignSourceSelectionSerializer):
     scope = HarnessSourceScopeSerializer()
     idempotency_key = serializers.CharField(max_length=128)
-    schema_repairs = SourceSchemaRepairSerializer(
-        many=True, required=False, max_length=100
+    schema_repairs: serializers.ListSerializer = serializers.ListSerializer(
+        child=SourceSchemaRepairSerializer(), required=False, max_length=100
     )
 
 
@@ -69,8 +69,11 @@ class HarnessSourceReviewReprepareSerializer(StrictInputSerializer):
     expected_revision = serializers.IntegerField(min_value=1)
     idempotency_key = serializers.CharField(max_length=128)
     target_table = serializers.CharField(required=False, max_length=255)
-    schema_repairs = SourceSchemaRepairSerializer(
-        many=True, required=False, allow_empty=False, max_length=100
+    schema_repairs: serializers.ListSerializer = serializers.ListSerializer(
+        child=SourceSchemaRepairSerializer(),
+        required=False,
+        allow_empty=False,
+        max_length=100,
     )
 
     redact_text_sources = serializers.ListField(

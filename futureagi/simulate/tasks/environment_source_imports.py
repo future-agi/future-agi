@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from uuid import UUID
 
 from django.db import transaction
 from django.utils import timezone
@@ -22,7 +23,7 @@ def expire_environment_source_import(object_key: str) -> dict[str, bool]:
         raise ValueError("invalid environment source import key")
     reviews = HarnessSourceReview.objects.filter(
         organization_id=match["org"],
-        owner_id=match["owner"],
+        owner_id=UUID(match["owner"]),
         staged_digest=match["digest"],
     )
     with transaction.atomic():

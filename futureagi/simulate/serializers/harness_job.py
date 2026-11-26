@@ -937,8 +937,10 @@ class HarnessDesignCreateSerializer(HarnessJobCreateSerializer):
     the environment rather than testing an agent. `metadata.design` is written by the design
     service only. It runs one world at a time."""
 
-    agent = None
-    source_selection = None
+    def get_fields(self):
+        fields = super().get_fields()
+        del fields["agent"], fields["source_selection"]
+        return fields
 
     def validate(self, attrs):
         for name in ("runtime", "security", "retry"):
