@@ -3,6 +3,8 @@ import { Box, Stack, Typography } from "@mui/material";
 import ChatSplitPane from "../components/ChatSplitPane";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import DesignReview from "./DesignReview";
+import { useEnvironmentSourceReview } from "src/api/simulate-environments/sourceImports";
+import { ROLES } from "../workspace/sources/sources.constants";
 import ChatMarkdown from "../buildEnvironment/console/ChatMarkdown";
 
 function ProposedPlan({
@@ -12,11 +14,46 @@ function ProposedPlan({
   busy,
   requirements,
   modality,
-  hasSources,
+  sourceReviewId,
 }) {
   const proposal = question.design_proposal;
   const names = (items = []) => items.map((name) => ({ name }));
   const texts = (items = []) => items.map((text) => ({ text }));
+  const review = useEnvironmentSourceReview(sourceReviewId);
+  const sources = (
+    review.data?.state === "accepted" ? review.data.preview?.sources || [] : []
+  )
+    .filter((source) => source.pin?.source_id && source.filename)
+    .map((source) => ({
+      id: source.pin.source_id,
+      name: source.filename,
+      role: ROLES.find((role) => role.id === source.pin.role)?.label,
+      visibility: source.visibility,
+      reviewed: true,
+    }));
+  const rules = texts(proposal?.rules).map((rule, index) => {
+    const locations = (proposal.rule_sources || []).filter(
+      (ref) =>
+        ref.rule_index === index &&
+        Number.isInteger(ref.page) &&
+        ref.page > 0 &&
+        sources.some(
+          (source) =>
+            source.id === ref.source_id &&
+            source.visibility === "agent_visible",
+        ),
+    );
+    return {
+      ...rule,
+      sourceIds: locations.map((ref) => ref.source_id),
+      src: locations
+        .map(
+          (ref) =>
+            `From ${sources.find((source) => source.id === ref.source_id).name} · page ${ref.page}`,
+        )
+        .join(", "),
+    };
+  });
   const summary = {
     structured: Boolean(proposal),
     brief: {
@@ -24,11 +61,13 @@ function ProposedPlan({
         ? [proposal.one_liner, proposal.summary].filter(Boolean).join("\n\n")
         : question.prompt,
       channel: modality,
-      sourcesLine: hasSources ? "Reviewed source material" : "None selected",
+      sourcesLine: sourceReviewId
+        ? "Reviewed source material"
+        : "None selected",
     },
     records: names(proposal?.records),
     tools: names(proposal?.tools),
-    rules: texts(proposal?.rules),
+    rules,
     people: names(proposal?.people),
     scenarios: texts(proposal?.use_cases),
     deps: (proposal?.dependencies || []).map((request) => ({
@@ -36,7 +75,7 @@ function ProposedPlan({
       request,
     })),
     readingParts: [],
-    sources: [],
+    sources,
     unusable: [],
     approveBlocked: Boolean(proposal?.dependencies?.length),
   };
@@ -66,7 +105,7 @@ ProposedPlan.propTypes = {
   busy: PropTypes.bool,
   requirements: PropTypes.string,
   modality: PropTypes.string,
-  hasSources: PropTypes.bool,
+  sourceReviewId: PropTypes.string,
 };
 
 export default function DesignWorkspace({
@@ -77,7 +116,7 @@ export default function DesignWorkspace({
   progress,
   requirements,
   modality,
-  hasSources,
+  sourceReviewId,
 }) {
   return (
     <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -113,7 +152,7 @@ export default function DesignWorkspace({
                 question={question}
                 requirements={requirements}
                 modality={modality}
-                hasSources={hasSources}
+                sourceReviewId={sourceReviewId}
                 canEdit={canEdit}
                 send={chat.send}
                 busy={chat.running || chat.frozen}
@@ -142,5 +181,5 @@ DesignWorkspace.propTypes = {
   progress: PropTypes.node,
   requirements: PropTypes.string,
   modality: PropTypes.string,
-  hasSources: PropTypes.bool,
+  sourceReviewId: PropTypes.string,
 };

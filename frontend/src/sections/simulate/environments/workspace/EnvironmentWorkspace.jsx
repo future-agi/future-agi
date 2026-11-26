@@ -439,7 +439,7 @@ export default function EnvironmentWorkspace() {
             progress={designPanel}
             requirements={metadata.design?.requirements}
             modality={metadata.design?.modality}
-            hasSources={Boolean(reviewId)}
+            sourceReviewId={reviewId}
             review={
               reviewId && reviewStage ? (
                 <SourceReviewPanel

@@ -63,7 +63,10 @@ const READS = {
    exists, opening the file itself. */
 function FilePreview({ file, summary, onClose }) {
   const from = `From ${file?.name}`;
-  const fromIt = (x) => x.src === from || x.src?.startsWith(`${from} ·`);
+  const fromIt = (x) =>
+    file?.reviewed
+      ? x.sourceIds?.includes(file.id)
+      : x.src === from || x.src?.startsWith(`${from} ·`);
   const gave = [
     ...(summary.records || [])
       .filter(fromIt)
@@ -76,7 +79,18 @@ function FilePreview({ file, summary, onClose }) {
           "Used as",
           ROLES.find((r) => r.label === file.role)?.option || file.role,
         ],
-        ["Agent reads it", READS[file.role]],
+        ...(file.reviewed
+          ? ["agent_visible", "evaluator_only"].includes(file.visibility)
+            ? [
+                [
+                  "Who reads it",
+                  file.visibility === "agent_visible"
+                    ? "Tested agent"
+                    : "Evaluator only",
+                ],
+              ]
+            : []
+          : [["Agent reads it", READS[file.role]]]),
         // Only files dropped with the question carry an answer.
         ...(file.personalChoice
           ? [
@@ -95,7 +109,9 @@ function FilePreview({ file, summary, onClose }) {
           <Box sx={{ pr: 4 }}>
             <Typography sx={{ typography: "m1" }}>{file.name}</Typography>
             <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-              {`${extOf(file.name).toUpperCase()} · ${formatFileSize(file.size)} · not in the environment yet`}
+              {file.reviewed
+                ? "Reviewed source"
+                : `${extOf(file.name).toUpperCase()} · ${formatFileSize(file.size)} · not in the environment yet`}
             </Typography>
           </Box>
           <Box>
@@ -132,7 +148,9 @@ function FilePreview({ file, summary, onClose }) {
               gave.map((g) => <PlanLine key={g}>{g}</PlanLine>)
             ) : (
               <PlanLine empty>
-                Nothing is graded from it. The agent reads it as background.
+                {file.reviewed
+                  ? "No proposal items have a verified citation to this file."
+                  : "Nothing is graded from it. The agent reads it as background."}
               </PlanLine>
             )}
           </PlanRow>
@@ -409,7 +427,13 @@ export default function DesignReview({
         </Box>
       </Collapse>
 
-      <Stack spacing={3} sx={{ mt: 3, display: summary.structured === false ? "none" : undefined }}>
+      <Stack
+        spacing={3}
+        sx={{
+          mt: 3,
+          display: summary.structured === false ? "none" : undefined,
+        }}
+      >
         {pendingDeps.length > 0 && (
           <PlanRow
             label="Can't be built here, simulate it instead"
@@ -569,9 +593,7 @@ export default function DesignReview({
               ),
             ]
           ) : (
-            <PlanLine empty>
-              Written once it knows what the agent does
-            </PlanLine>
+            <PlanLine empty>Written once it knows what the agent does</PlanLine>
           )}
         </PlanRow>
       </Stack>
