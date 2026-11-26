@@ -9953,6 +9953,7 @@
           "status": {
             "type": "string",
             "enum": [
+              "awaiting_approval",
               "building",
               "running",
               "completed",
