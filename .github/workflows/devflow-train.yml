@@ -101,4 +101,7 @@ jobs:
           TRAIN_APP_PRIVATE_KEY: ${{ secrets.TRAIN_APP_PRIVATE_KEY }}
           REPO: ${{ github.repository }}
           LOOP_MINUTES: ${{ vars.DEVFLOW_TRAIN_LOOP_MINUTES || 330 }}
+          # A crash posts one Slack line, only with DEVFLOW_HEARTBEAT=live.
+          DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python3 -I .github/scripts/devflow_train.py tick --mode live --loop-minutes "$LOOP_MINUTES" --idle-minutes 10

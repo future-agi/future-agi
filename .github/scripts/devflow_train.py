@@ -10,10 +10,10 @@ dev and nobody bypasses a rule.
 
 One tick reads GitHub, plans, and (live mode only) acts:
 
-1. Open rollups. A member that moved, closed, lost its admit label, gained
-   a high label or was enqueued alone makes the rollup stale: close it and
-   let the rest re-batch. A rollup that is no longer approved on its head
-   was pushed to by someone: close it. A rollup whose required checks
+1. Open rollups. A member that moved, closed, lost its admit label or its
+   approval, gained a high label or was enqueued alone makes the rollup
+   stale: close it and let the rest re-batch. A rollup that is no longer
+   approved on its head was pushed to by someone: close it. A rollup whose required checks
    failed, or that the queue removed, is retried once only if every failed
    job matches a known infra signature; otherwise it splits in halves at
    once, and a red single member leaves with train:red. A rollup removed for
@@ -24,7 +24,8 @@ One tick reads GitHub, plans, and (live mode only) acts:
    v2), reverts, natively enqueued, auto-merge on a full head, conflicts with
    dev, high-risk or code-owned paths, required checks not green on the
    head, no approval on the head (medium: a person's). One that goes alone
-   on a light-mode (deferred) head gets ci:full and a full re-run.
+   on a light-mode (deferred) head gets ci:full and a full re-run. A member
+   whose checks are still running keeps a live loop ticking.
 3. Batches. Size B = clamp(ceil(eligible / free train slots), 1, MAX_BATCH),
    so under load B grows and when idle a pull request goes alone at once.
    Two members that each add a migration to the same app never share a
@@ -42,7 +43,8 @@ runs here: there is no checkout.
     python3 -I .github/scripts/devflow_train.py parity --candidate SHA --landed SHA
 
 State lives only in GitHub (labels, the rollup body manifest, marker
-comments), so every tick rebuilds it and a crash loses nothing.
+comments), so every tick rebuilds it and a crash loses nothing. A live run
+that exits on an error posts one Slack line when DEVFLOW_HEARTBEAT=live.
 """
 
 from __future__ import annotations
@@ -93,6 +95,7 @@ DEFERRED_CHECKS = {"Backend Tests Pass": "Backend Tests Deferred"}
 FULL_LABEL = "ci:full"
 BACKEND_WORKFLOW = "backend-ci.yml"
 GREEN = ("success", "deferred")
+CHECKS_NOT_GREEN = "required checks not green: "
 BASE = "dev"
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 WRITE = {"admin", "write"}
@@ -307,11 +310,12 @@ def lower_login(item: dict) -> str:
 def parse_verdict(body: str) -> dict | None:
     """The verdict JSON of one review body (tier contract v2.1 parsing): the
     body must hold exactly one ```json fence, or a fake verdict fenced inside
-    a finding's text could be read first."""
+    a finding's text could be read first. The block comes after the marker."""
     if body.count("```json") != 1:
         return None
     match = JSON_BLOCK.search(body)
-    if not match:
+    marker = body.find(VERDICT_MARKER)
+    if not match or marker < 0 or match.start() < marker:
         return None
     try:
         verdict = json.loads(match.group(1))
@@ -328,12 +332,14 @@ def tier_rank(tier) -> int:
 
 def final_tier(verdict: dict, tight: bool = False) -> str:
     """The ordinal max of the reviewer's tier and the diff-only tier_check (a
-    missing one is high). Low that asks for a person, or tight mode, is at
-    least medium. The deterministic path scan is high_path and code_owned."""
+    missing one, or one whose input is not "diff-only", is high). Low that
+    asks for a person, or tight mode, is at least medium. The deterministic
+    path scan is high_path and code_owned."""
     check = verdict.get("tier_check")
+    diff_only = isinstance(check, dict) and check.get("input") == "diff-only"
     ranks = [
         tier_rank(verdict.get("tier")),
-        tier_rank(check.get("tier") if isinstance(check, dict) else None),
+        tier_rank(check.get("tier") if diff_only else None),
     ]
     if verdict.get("needs_person") is not False or tight:
         ranks.append(1)
@@ -485,7 +491,7 @@ def exclusion(m: dict, cfg: Config, reserved: dict) -> str | None:
     owned = code_owned(m["files"], cfg.codeowners)
     if owned:
         return f"code-owned path, goes alone ({owned})"
-    if m["review_decision"] != "APPROVED" or not m["approved_on_head"]:
+    if not approved(m):
         return "not approved on this head"
     tier = member_tier(m, cfg)
     if tier is None:
@@ -502,13 +508,27 @@ def exclusion(m: dict, cfg: Config, reserved: dict) -> str | None:
     # Last, and the only rules that cost API calls (see needs_checks).
     bad = {name: state for name, state in m["checks"].items() if state not in GREEN}
     if bad:
-        return "required checks not green: " + ", ".join(
-            f"{k}={v}" for k, v in sorted(bad.items())
-        )
+        return CHECKS_NOT_GREEN + ", ".join(f"{k}={v}" for k, v in sorted(bad.items()))
     if m["auto_merge"] and "deferred" not in m["checks"].values():
         # A full head with auto-merge: GitHub enqueues it alone any moment.
         return "auto-merge is on and the head ran the full plan: GitHub lands it alone"
     return None
+
+
+def approved(m: dict) -> bool:
+    return m["review_decision"] == "APPROVED" and m["approved_on_head"]
+
+
+def waits_on_checks(m: dict, reason: str | None) -> bool:
+    """Excluded only because required checks are still running: work in
+    flight, so the loop stays awake. A failed or missing check is not."""
+    bad = [state for state in m["checks"].values() if state not in GREEN]
+    return bool(
+        reason
+        and reason.startswith(CHECKS_NOT_GREEN)
+        and bad
+        and all(state == "pending" for state in bad)
+    )
 
 
 def wants_full_run(m: dict, reason: str | None) -> bool:
@@ -751,6 +771,8 @@ def stale_members(manifest: dict, live: dict) -> list:
         if (
             m is None
             or m["head_sha"] != member["head_sha"]
+            # Dismissed, or changes requested since the build.
+            or not approved(m)
             or ADMIT_LABEL not in m["labels"]
             or any(label in m["labels"] for label in HIGH_LABELS)
             # Enqueued on its own (a person, or auto-merge on a full head).
@@ -869,6 +891,7 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
     new_from_splits = sum(len(a["halves"]) for a in actions if a["action"] == "split")
 
     labels, excluded, eligible, full_runs = [], {}, [], []
+    waiting = 0
     for m in admitted:
         if m["number"] in evicted:
             # This tick labels it red; it must not ride the next batch.
@@ -882,6 +905,7 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
         reason = exclusion(m, cfg, reserved)
         if reason:
             excluded[m["number"]] = reason
+            waiting += waits_on_checks(m, reason)
             if wants_full_run(m, reason):
                 full_runs.append(
                     {
@@ -906,8 +930,9 @@ def plan(data: dict, required: list, cfg: Config, failures: dict | None = None) 
         "train_slots": slots,
         "batches": [[m["number"] for m in b] for b in batches],
         # Eligible work waiting (paused, or no free slot) keeps the loop
-        # awake: closing a base-red issue is not a push to dev.
-        "busy": bool(still_open or new_from_splits or batches or ordered),
+        # awake: closing a base-red issue is not a push to dev. So does a
+        # member whose checks are still running: it is eligible when they end.
+        "busy": bool(still_open or new_from_splits or batches or ordered or waiting),
         "_members": live,
         "_rollups": {r["number"]: r for r in rollups},
     }
@@ -1655,7 +1680,34 @@ def keep_looping(
     return now + interval <= deadline and now - last_busy < idle_s
 
 
-def main(argv=None) -> int:
+def post_slack(url: str, text: str) -> None:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps({"text": text}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    urllib.request.urlopen(req, timeout=30).read()
+
+
+def alert_crash(err: Exception) -> None:
+    """One Slack line when a live run exits on an error. Only with
+    DEVFLOW_HEARTBEAT=live; the post never hides the error itself."""
+    url = os.environ.get("SLACK_WEBHOOK_URL")
+    if os.environ.get("DEVFLOW_HEARTBEAT") != "live" or not url:
+        return
+    run = "{}/{}/actions/runs/{}".format(
+        os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
+        os.environ.get("GITHUB_REPOSITORY", ""),
+        os.environ.get("GITHUB_RUN_ID", ""),
+    )
+    detail = " ".join(f"{type(err).__name__}: {err}".split())[:300]
+    try:
+        post_slack(url, f":rotating_light: batch train stopped: {detail} {run}")
+    except (OSError, ValueError) as post_err:
+        print(f"::warning::crash alert not posted: {post_err}", flush=True)
+
+
+def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     tick_cmd = sub.add_parser("tick")
@@ -1676,8 +1728,20 @@ def main(argv=None) -> int:
     parity = sub.add_parser("parity")
     parity.add_argument("--candidate", required=True)
     parity.add_argument("--landed", required=True)
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
 
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    try:
+        return run_cmd(args)
+    except Exception as err:
+        if args.cmd == "tick" and args.mode == "live":
+            alert_crash(err)
+        raise
+
+
+def run_cmd(args: argparse.Namespace) -> int:
     repo = os.environ["REPO"]
     reader = GitHub(os.environ["GH_TOKEN"], repo)
     if args.cmd == "parity":
