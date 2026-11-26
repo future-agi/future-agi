@@ -44,7 +44,7 @@ env:
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
   # E2E CI's hold rule, so the parity aggregate stays a copy of E2E Tests
   # Pass. A dispatch is never held.
-  HOLD_SUITES: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+  HOLD_SUITES: ${{ vars.CI_HOLD_DRAFTS == '1' && github.event_name == 'pull_request' && github.event.pull_request.draft }}
 
 jobs:
   changes:

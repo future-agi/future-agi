@@ -1206,10 +1206,11 @@ test("the E2E gate passes only on a green suite with its report, or when nothing
     PLAN_HOLD: "${{ needs.changes.outputs.hold }}",
     ATTEMPT: "${{ github.run_attempt }}",
   });
-  // HOLD_SUITES is the workflow-level env the gate evaluates again.
+  // HOLD_SUITES is the workflow-level env the gate evaluates again. A
+  // draft holds only with the repository variable CI_HOLD_DRAFTS=1.
   assert.equal(
     workflow().env.HOLD_SUITES,
-    "${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}",
+    "${{ vars.CI_HOLD_DRAFTS == '1' && github.event_name == 'pull_request' && github.event.pull_request.draft }}",
   );
   // A ready pull request, or any event that is not a pull request.
   const ready = { PLAN_HOLD: "false", HOLD_SUITES: "false", ATTEMPT: "1" };

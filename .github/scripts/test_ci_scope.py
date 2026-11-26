@@ -788,10 +788,16 @@ class CandidateScope(unittest.TestCase):
 
     def test_one_expression_holds_the_suites_and_the_gate_rereads_it(self):
         # HOLD_SUITES, a workflow-level env, is the one place that decides
-        # which runs hold the suites. Today it is a draft's pull_request run:
-        # false for every other event, so merge groups, pushes, schedules,
-        # dispatches and the queue's call keep their plan unchanged.
-        hold = "  HOLD_SUITES: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}\n"
+        # which runs hold the suites: a draft's pull_request run, and only
+        # with the repository variable CI_HOLD_DRAFTS=1 (default off, so a
+        # draft runs everything as before). False for every other event, so
+        # merge groups, pushes, schedules, dispatches and the queue's call
+        # keep their plan unchanged. The comparison renders true or false
+        # only: anything else fails both hold steps.
+        hold = (
+            "  HOLD_SUITES: ${{ vars.CI_HOLD_DRAFTS == '1' && github.event_name == 'pull_request'"
+            " && github.event.pull_request.draft }}\n"
+        )
         backend = (SCRIPTS.parent / "workflows/backend-ci.yml").read_text()
         e2e = (SCRIPTS.parent / "workflows/e2e-ci.yml").read_text()
         for name, text, aggregate in (

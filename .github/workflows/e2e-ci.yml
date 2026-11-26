@@ -8,7 +8,7 @@ on:
     # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
     # the merge queue re-tests every dev merge, but a PR moved onto main is
     # not re-tested until a push (see e2e/README.md).
-    # A draft runs no suite (see HOLD_SUITES below). The
+    # With CI_HOLD_DRAFTS=1 a draft runs no suite (see HOLD_SUITES below). The
     # ready_for_review run is the full one, and as the newest suite it is the
     # one the required check reads.
     types: [opened, synchronize, reopened, ready_for_review]
@@ -71,10 +71,11 @@ env:
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
   # Which runs hold the suites: "true" runs only the planner, and the
   # required aggregate then passes with every suite skipped. The one place
-  # that chooses; the changes job and the aggregate both read it. Today: a
-  # draft's pull_request run. False for merge groups, pushes, schedules,
-  # dispatches and the queue's call, which run as before.
-  HOLD_SUITES: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+  # that chooses; the changes job and the aggregate both read it. A draft's
+  # pull_request run, only with the repository variable CI_HOLD_DRAFTS=1
+  # (default off: a draft runs everything). False for merge groups, pushes,
+  # schedules, dispatches and the queue's call, which run as before.
+  HOLD_SUITES: ${{ vars.CI_HOLD_DRAFTS == '1' && github.event_name == 'pull_request' && github.event.pull_request.draft }}
 
 jobs:
   changes:
@@ -266,7 +267,7 @@ jobs:
     # Only the E2E legs use it, and a held run runs none. A job's if cannot
     # read env, so this repeats HOLD_SUITES. If the two ever differ, either
     # this job runs for nothing, or the legs skip and E2E Tests Pass fails.
-    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
+    if: ${{ !(vars.CI_HOLD_DRAFTS == '1' && github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     # The script stops retrying after 180 s; the step below caps a stalled
     # transfer at 4 minutes.
