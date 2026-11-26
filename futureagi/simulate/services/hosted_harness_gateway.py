@@ -5096,7 +5096,7 @@ class HostedHarnessGateway:
             observation = self.inspect(attempt)
         except SandboxNotFoundError:
             # An ending the guest sent stands; without one, the platform records the loss.
-            kept = self._keep_delivered_results(
+            results_kept = self._keep_delivered_results(
                 attempt,
                 loss={
                     "domain": "infrastructure",
@@ -5106,7 +5106,7 @@ class HostedHarnessGateway:
                 },
             )
             retry_pending = (
-                not kept
+                not results_kept
                 and not attempt.terminal_event_received
                 and self._should_retry(attempt, "infrastructure")
             )
