@@ -27,7 +27,7 @@ const ONE_LINE = {
 };
 
 // How they take part, how loud, when they come in and how many scenarios, one short tag each.
-export function tagsOf(actor, loudChannels) {
+function tagsOf(actor, loudChannels) {
   return [
     actor.channel
       ? CHANNEL_LABELS[actor.channel] || actor.channel
@@ -43,7 +43,7 @@ export function tagsOf(actor, loudChannels) {
 }
 
 // What the open row says about their part before what they see.
-export function partOf(actor) {
+function partOf(actor) {
   const mayDo = actor.permissions.length
     ? actor.permissions
         .map((one) =>
