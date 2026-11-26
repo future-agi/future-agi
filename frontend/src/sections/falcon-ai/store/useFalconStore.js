@@ -91,7 +91,12 @@ const useFalconStore = create((set, _get) => ({
   // Conversation actions
   setConversations: (conversations) => set({ conversations }),
   setCurrentConversation: (id) =>
-    set({ currentConversationId: id, messages: [] }),
+    set({
+      currentConversationId: id,
+      messages: [],
+      isStreaming: false,
+      streamingMessageId: null,
+    }),
 
   // Message actions
   setMessages: (messages) =>
