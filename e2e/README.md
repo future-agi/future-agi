@@ -663,6 +663,16 @@ merges every shard's results into the one Playwright HTML report (7-day retentio
 the shards together ran the whole suite. The `E2E Tests Pass` gate fails closed unless every
 dependency, the report job included, succeeded or was legitimately skipped.
 
+**Manual image handoff proof** ([workflow](../.github/workflows/e2e-image-handoff-proof.yml)).
+On a manual dispatch, one runner builds the final wrapped standard backend. Two clean runners
+independently download that same artifact by ID, verify the ZIP and OCI archive, and run a
+network-isolated one-shot from the verified tag. Compare both `handoff-receipt-*` files: the
+candidate, donor attempt, artifact ID, manifest, config and ordered diff IDs must match; each
+container's `container_image` must equal the donor config. The receipts record compressed and
+uncompressed bytes; use the Actions step timings for build, export/upload and download/import.
+The image expires after one day; receipts last 14 days. This proves transport, not application
+coverage or queue speed. No required workflow consumes it.
+
 After the Playwright suite, the last shard runs the SDK live suites from
 [futureagi-sdk](https://github.com/future-agi/futureagi-sdk) against the stack it booted, on every
 PR and push: `python/tests/platform` calls every operation of the generated Python client and

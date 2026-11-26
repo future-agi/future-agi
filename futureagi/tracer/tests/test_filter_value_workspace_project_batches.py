@@ -1396,6 +1396,9 @@ def test_workspace_span_system_retained_lookup_failure_falls_back_to_epoch(
         ["attribute_retained_window_metadata_budget_exceeded"],
         ["dashboard_filter_value_retained_window_lookup_failed"],
     )
+    # The class names the failure without echoing driver text.
+    error_class = warnings[0].get("error_class")
+    assert isinstance(error_class, str) and error_class.isidentifier()
     assert "secret-value-42" not in repr(logs)
     assert "system.parts" not in repr(logs)
 
@@ -1759,3 +1762,354 @@ with patch.object(dashboard, 'AttributeReadSelector') as selector:
         check=True,
         timeout=30,
     )
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _install_v2_client(monkeypatch, **kwargs):
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.v2 import query_service
+
+    client = ClickHouseClient(**kwargs)
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
+    return client
+
+
+def _wait_for_idle_retained_slot():
+    from time import monotonic, sleep
+
+    stop = monotonic() + 5
+    while monotonic() < stop:
+        if dashboard_view._RETAINED_LOOKUP_SLOT.acquire(blocking=False):
+            dashboard_view._RETAINED_LOOKUP_SLOT.release()
+            return
+        sleep(0.01)
+    raise AssertionError("retained lookup worker did not release its slot")
+
+
+def _lookup_events(logs):
+    return [
+        entry
+        for entry in logs
+        if entry["log_level"] in {"info", "warning"}
+        and "retained_window" in entry["event"]
+    ]
+
+
+@pytest.mark.unit
+def test_server_readonly_lane_skips_retained_lookup_before_taking_slot(monkeypatch):
+    """A readonly=1 server profile refuses every client setting, so the
+    bounded metadata read can never be sent there. Skip it up front with a
+    distinct reason instead of starting a worker that always fails."""
+
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    client = _install_v2_client(monkeypatch, server_enforced_readonly=True)
+    monkeypatch.setattr(
+        client, "_create_client", Mock(side_effect=AssertionError("native read"))
+    )
+    # Record a started worker but still run it, so the slot is always released.
+    worker = Mock(side_effect=lambda *, target, **_: SimpleNamespace(start=target))
+    monkeypatch.setattr(dashboard_view, "Thread", worker)
+
+    with capture_logs() as logs:
+        start = dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)],
+            window_end=datetime.now(UTC),
+            deadline=ReadDeadline.start(10_000),
+        )
+
+    assert start == _EPOCH
+    worker.assert_not_called()
+    assert [
+        (entry["event"], entry.get("reason")) for entry in _lookup_events(logs)
+    ] == [
+        (
+            "dashboard_filter_value_retained_window_lookup_skipped",
+            "server_enforced_readonly",
+        )
+    ]
+    # The slot stays free for a lane that can run the lookup.
+    assert dashboard_view._RETAINED_LOOKUP_SLOT.acquire(blocking=False)
+    dashboard_view._RETAINED_LOOKUP_SLOT.release()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("leader_result", "joiner_offset", "joiner_expected"),
+    [
+        pytest.param("retained", timedelta(seconds=1), "retained", id="retained"),
+        # The earlier lookup could not see parts between its end and ours.
+        pytest.param(None, timedelta(seconds=1), "epoch", id="empty-earlier-lookup"),
+        # The lookup covered this whole window and found no part in it.
+        pytest.param(None, -timedelta(seconds=1), "empty", id="empty-covering-lookup"),
+    ],
+)
+def test_concurrent_first_pages_join_the_in_flight_retained_lookup(
+    monkeypatch, leader_result, joiner_offset, joiner_expected
+):
+    from concurrent.futures import Future
+    from threading import Event, Thread
+
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    _install_v2_client(monkeypatch, server_enforced_readonly=False)
+    leader_end = datetime.now(UTC)
+    joiner_end = leader_end + joiner_offset
+    retained = leader_end - RETAINED_SPAN_AGE
+    entered, release, two_waiters = Event(), Event(), Event()
+    lookups = []
+
+    def lookup(_self, _project_ids, *, window_end):
+        lookups.append(window_end)
+        entered.set()
+        assert release.wait(timeout=5)
+        return retained if leader_result == "retained" else None
+
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector, "retained_window_start", lookup
+    )
+    waits = []
+
+    class CountingFuture(Future):
+        def result(self, timeout=None):
+            waits.append(timeout)
+            if len(waits) >= 2:
+                two_waiters.set()
+            return super().result(timeout=timeout)
+
+    monkeypatch.setattr(dashboard_view, "Future", CountingFuture)
+    results = {}
+
+    def first_page(name, window_end):
+        results[name] = dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)],
+            window_end=window_end,
+            deadline=ReadDeadline.start(10_000),
+        )
+
+    leader = Thread(target=first_page, args=("leader", leader_end), daemon=True)
+    joiner = Thread(target=first_page, args=("joiner", joiner_end), daemon=True)
+    leader.start()
+    try:
+        assert entered.wait(timeout=5), "leader did not start its lookup"
+        joiner.start()
+        # The joiner waits on the leader's read instead of skipping the floor.
+        joined = two_waiters.wait(timeout=0.5)
+        release.set()
+        joiner.join(timeout=5)
+        leader.join(timeout=5)
+    finally:
+        release.set()
+        _wait_for_idle_retained_slot()
+
+    expected = {
+        "retained": retained,
+        "epoch": _EPOCH,
+        "empty": joiner_end - timedelta(microseconds=1),
+    }[joiner_expected]
+    assert joined, "the concurrent first page did not join the in-flight lookup"
+    assert results == {
+        "leader": retained
+        if leader_result == "retained"
+        else leader_end - timedelta(microseconds=1),
+        "joiner": expected,
+    }
+    assert lookups == [leader_end]  # One native lookup served both pages.
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("parent_ms", "cap_seconds"),
+    [
+        pytest.param(30_000, 0.75, id="metadata-cap"),
+        # (2000 - 1000 reserve - 100 handoff) // 2
+        pytest.param(2_000, 0.45, id="half-the-surplus"),
+    ],
+)
+def test_retained_lookup_waiter_never_waits_past_its_cap(
+    monkeypatch, parent_ms, cap_seconds
+):
+    from concurrent.futures import Future
+    from threading import Event
+
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    _install_v2_client(monkeypatch, server_enforced_readonly=False)
+    release = Event()
+
+    def held(_self, _project_ids, *, window_end):
+        assert release.wait(timeout=5)
+        return window_end - RETAINED_SPAN_AGE
+
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector, "retained_window_start", held
+    )
+    waits = []
+
+    class RecordingFuture(Future):
+        def result(self, timeout=None):
+            waits.append(timeout)
+            return super().result(timeout=0)  # Expire now; record the request.
+
+    monkeypatch.setattr(dashboard_view, "Future", RecordingFuture)
+    try:
+        start = dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)],
+            window_end=datetime.now(UTC),
+            deadline=ReadDeadline.start(parent_ms),
+        )
+    finally:
+        release.set()
+        _wait_for_idle_retained_slot()
+
+    assert start == _EPOCH
+    assert len(waits) == 1
+    assert cap_seconds - 0.1 < waits[0] <= cap_seconds
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(DriverNetworkError(_LEAKY_DETAIL), id="driver-network-error"),
+        pytest.param(
+            DriverSocketTimeoutError(_LEAKY_DETAIL), id="driver-socket-timeout"
+        ),
+        pytest.param(
+            DriverServerException(_LEAKY_DETAIL, code=ErrorCodes.TIMEOUT_EXCEEDED),
+            id="driver-server-timeout",
+        ),
+        pytest.param(
+            DriverServerException(_LEAKY_DETAIL, code=ErrorCodes.UNKNOWN_TABLE),
+            id="driver-server-exception",
+        ),
+        pytest.param("too-many-simultaneous-queries", id="server-busy"),
+    ],
+)
+def test_retained_lookup_failures_through_native_client_fall_back_once(
+    monkeypatch, error
+):
+    """Drive the real client's retained-read path, not a replaced executor."""
+
+    from tracer.services.clickhouse import client as native_client
+    from tracer.services.clickhouse.read_budget import ReadDeadline
+
+    if error == "too-many-simultaneous-queries":
+        error = DriverServerException(
+            _LEAKY_DETAIL, code=native_client._TOO_MANY_SIMULTANEOUS_QUERIES_CODE
+        )
+    # Run the worker inline so the test owns its ordering and logs.
+    monkeypatch.setattr(
+        dashboard_view, "Thread", lambda *, target, **_: SimpleNamespace(start=target)
+    )
+    monkeypatch.setattr(
+        attribute_reads.AttributeReadSelector,
+        "retained_window_start",
+        _REAL_RETAINED_WINDOW_START,
+    )
+    sends = []
+
+    class Driver(_PickerDriver):
+        def send_query(self, query, params):
+            sends.append(query)
+            raise error
+
+    client = _install_v2_client(monkeypatch, server_enforced_readonly=False)
+    monkeypatch.setattr(client, "_create_client", Driver)
+
+    with capture_logs() as logs:
+        start = dashboard_view._batched_span_system_retained_window_start(
+            [_uuid(1)],
+            window_end=datetime.now(UTC),
+            deadline=ReadDeadline.start(10_000),
+        )
+
+    assert start == _EPOCH
+    # The optional read is never retried, even on a busy server.
+    assert len(sends) == 1 and "system.parts" in sends[0]
+    events = _lookup_events(logs)
+    assert len(events) == 1
+    assert events[0]["event"] in {
+        "attribute_retained_window_metadata_budget_exceeded",
+        "dashboard_filter_value_retained_window_lookup_failed",
+    }
+    assert isinstance(events[0].get("error_class"), str)
+    assert "secret-value-42" not in repr(logs)
+    assert "system.parts" not in repr(logs)
+    _wait_for_idle_retained_slot()
+
+
+@pytest.mark.unit
+def test_fixed_scope_first_page_bounds_a_stalled_retained_lookup(monkeypatch):
+    """The fixed-scope lane must not wait on the optional lookup unbounded."""
+
+    from concurrent.futures import Future
+    from threading import Event, Thread
+
+    project = _uuid(1)
+    _install_scope_and_seen_state(monkeypatch, _ProjectQuery([project], []))
+    _install_v2_client(monkeypatch, server_enforced_readonly=False)
+    entered, release = Event(), Event()
+
+    def stalled(_self, _project_ids, *, window_end):
+        entered.set()
+        release.wait(timeout=10)
+        return window_end - RETAINED_SPAN_AGE
+
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector, "retained_window_start", stalled
+    )
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    windows = []
+
+    def read_page(_analytics, **kwargs):
+        windows.append(kwargs["window_start"])
+        return FilterValueCursorPageRead(
+            ("customer-ended-call",),
+            kwargs["window_start"],
+            kwargs["window_end"],
+            False,
+            kwargs["window_start"],
+            None,
+            None,
+            (),
+            "exhausted",
+        )
+
+    monkeypatch.setattr(
+        dashboard_view, "read_span_system_filter_value_cursor_page", read_page
+    )
+    response = Future()
+
+    def request_page():
+        try:
+            result = _invoke(
+                {
+                    "metric_name": "ended_reason",
+                    "metric_type": "system_metric",
+                    "source": "traces",
+                    "project_ids": [project],
+                    "search": "",
+                    "page_size": 10,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - propagate request failures to the test
+            response.set_exception(exc)
+        else:
+            response.set_result(result)
+
+    Thread(target=request_page, daemon=True).start()
+    try:
+        assert entered.wait(timeout=5), "fixed-scope page did not look up the floor"
+        # The waiter gives up at its cap; the held driver does not hold the page.
+        page = _result(response.result(timeout=3))
+    finally:
+        release.set()
+        _wait_for_idle_retained_slot()
+
+    assert windows == [_EPOCH]
+    assert page["values"] == [
+        {"value": "customer-ended-call", "label": "customer-ended-call"}
+    ]

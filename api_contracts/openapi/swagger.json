@@ -92084,10 +92084,10 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/SimulationEvidenceRequest"
+                            "$ref": "#/definitions/SimulationEvidenceResponse"
                         }
                     },
                     "409": {
@@ -230534,6 +230534,279 @@
                 },
                 "cursor": {
                     "title": "Cursor",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "SimulationEvidenceTurn": {
+            "required": [
+                "id",
+                "speaker",
+                "content",
+                "start_time",
+                "end_time"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "speaker": {
+                    "title": "Speaker",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                },
+                "start_time": {
+                    "title": "Start time",
+                    "type": "number"
+                },
+                "end_time": {
+                    "title": "End time",
+                    "type": "number"
+                }
+            }
+        },
+        "SimulationEvidenceGoals": {
+            "required": [
+                "use_case",
+                "sub_goals",
+                "expected_outcome"
+            ],
+            "type": "object",
+            "properties": {
+                "use_case": {
+                    "title": "Use case",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "sub_goals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "expected_outcome": {
+                    "title": "Expected outcome",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "SimulationEvidenceEvaluation": {
+            "required": [
+                "name",
+                "value",
+                "passed",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "passed": {
+                    "title": "Passed",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SimulationEvidenceTool": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "arguments": {
+                    "title": "Arguments",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "ok": {
+                    "title": "Ok",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "refused": {
+                    "title": "Refused",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "start_time_ms": {
+                    "title": "Start time ms",
+                    "type": "number",
+                    "minimum": 0
+                }
+            }
+        },
+        "SimulationEvidenceCall": {
+            "required": [
+                "call_execution_id",
+                "status",
+                "simulation_call_type",
+                "scenario",
+                "call_summary",
+                "error_message",
+                "ended_reason",
+                "transcript",
+                "goals",
+                "situation",
+                "persona",
+                "evaluations",
+                "agent_prompt"
+            ],
+            "type": "object",
+            "properties": {
+                "call_execution_id": {
+                    "title": "Call execution id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "simulation_call_type": {
+                    "title": "Simulation call type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario": {
+                    "title": "Scenario",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "call_summary": {
+                    "title": "Call summary",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error_message": {
+                    "title": "Error message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "ended_reason": {
+                    "title": "Ended reason",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "transcript": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SimulationEvidenceTurn"
+                    }
+                },
+                "goals": {
+                    "$ref": "#/definitions/SimulationEvidenceGoals"
+                },
+                "situation": {
+                    "title": "Situation",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    },
+                    "x-nullable": true
+                },
+                "evaluations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SimulationEvidenceEvaluation"
+                    }
+                },
+                "agent_prompt": {
+                    "title": "Agent prompt",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "tool_calls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SimulationEvidenceTool"
+                    }
+                }
+            }
+        },
+        "SimulationEvidenceResponse": {
+            "required": [
+                "calls",
+                "next_cursor",
+                "total_calls"
+            ],
+            "type": "object",
+            "properties": {
+                "calls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SimulationEvidenceCall"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total_calls": {
+                    "title": "Total calls",
                     "type": "integer",
                     "minimum": 0
                 }

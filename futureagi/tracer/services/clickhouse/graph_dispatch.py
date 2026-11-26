@@ -80,8 +80,9 @@ GRAPH_EVENT_LIMIT = settings.GRAPH_EVENT_LIMIT
 GRAPH_RESULT_BYTES = settings.DASHBOARD_ROLLUP_MAX_RESULT_BYTES
 # Part of the cache identity, not a database schema version. Incrementing this
 # prevents a rolling deploy from serving a 30-day cached payload produced by
-# the retired hierarchy-as-path projection.
-AGENT_GRAPH_PAYLOAD_VERSION = 6
+# the retired hierarchy-as-path projection. 7: retires snapshots whose window
+# bounds were read truncated to the whole second.
+AGENT_GRAPH_PAYLOAD_VERSION = 7
 # The same, for the exact system-metric snapshots (observe-system-graph,
 # observe-session-system-graph, observe-user-system-graph). The version
 # rotates the identity, and with it the cache, alias, refresh-lock and
@@ -89,8 +90,10 @@ AGENT_GRAPH_PAYLOAD_VERSION = 6
 # latency is a mean of per-user means) is ever read. Within a version, a
 # latency snapshot is served only when marked "mean"
 # (graph_metric_statistic.snapshot_names_its_statistic), which covers an
-# older worker taking a current-version job mid-deploy.
-OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION = 3
+# older worker taking a current-version job mid-deploy. 4: retires snapshots
+# whose fractional-second window bounds were read truncated to the second (a
+# default "now" window counted the wrong second at each edge).
+OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION = 4
 # A short-window selector may prove as many as 4,096 trace matches. Decoration
 # fans each trace set into child-span reads, so keep the same finite 40-trace
 # envelope used by the long-window sampler before any decoration query runs.

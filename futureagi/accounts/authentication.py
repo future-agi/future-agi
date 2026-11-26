@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import ipaddress
 import json
 import re
 import time
@@ -37,6 +38,7 @@ from accounts.models.auth_token import (
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
+from accounts.services.default_workspace import get_or_create_default_workspace
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.levels import Level
 from tfc.ee_gating import is_oss
@@ -777,37 +779,14 @@ class APIKeyAuthentication(BaseAuthentication):
         if org_level is None:
             return None
         try:
-            default_workspace = Workspace.objects.get(
-                organization=organization, is_default=True, is_active=True
+            # A concurrent first login may create it between our read and
+            # insert; the helper then returns that workspace instead.
+            default_workspace, _created = get_or_create_default_workspace(
+                organization, created_by=user
             )
-        except Workspace.DoesNotExist:
-            try:
-                default_workspace = Workspace.objects.create(
-                    name="Default Workspace",
-                    organization=organization,
-                    is_default=True,
-                    is_active=True,
-                    created_by=user,
-                )
-            except IntegrityError as e:
-                if "unique_default_workspace_per_org" in str(e):
-                    try:
-                        default_workspace = Workspace.objects.get(
-                            organization=organization,
-                            is_default=True,
-                            is_active=True,
-                        )
-                    except Workspace.DoesNotExist:
-                        logger.error(
-                            f"Failed to get default workspace after creation conflict: {e}"
-                        )
-                        return None
-                else:
-                    logger.error(f"Failed to create default workspace: {e}")
-                    return None
-            except Exception as e:
-                logger.error(f"Failed to create default workspace: {e}")
-                return None
+        except Exception as e:  # noqa: BLE001 - auth falls back to no workspace
+            logger.error(f"Failed to create default workspace: {e}")
+            return None
 
         # Ensure the user has a workspace membership so that subsequent
         # _user_has_workspace_access checks pass.
@@ -916,62 +895,75 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         return user, None
 
 
+# Private IPv4 ranges treated as non-routable by get_client_ip.
+_PRIVATE_IPV4_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+
+
+def _parse_client_ip(value):
+    """
+    Return ``(host, address)`` for an address-like header value, or None.
+
+    Accepts a bare IPv4/IPv6 address, ``[ipv6]`` or ``[ipv6]:port``, and
+    ``ipv4:port``. ``host`` is the address text as sent (without brackets
+    or port), so valid values keep the exact string used before.
+    """
+    if not isinstance(value, str):
+        return None
+    host = value.strip()
+    candidates = [host]
+    if host.startswith("["):
+        closing = host.find("]")
+        if closing != -1:
+            candidates.append(host[1:closing])
+    elif host.count(":") == 1:
+        candidates.append(host.split(":", 1)[0])
+    for candidate in candidates:
+        try:
+            return candidate, ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+    return None
+
+
 def get_client_ip(request):
     """
     Get client IP address from request object.
     Returns tuple of (ip_address, is_routable).
+
+    The first valid X-Forwarded-For entry is used, as before. Entries that
+    are not IP addresses are skipped; if none is valid, REMOTE_ADDR is
+    used. Malformed values never raise.
     """
+    parsed = None
+
     # Try to get IP from X-Forwarded-For header first
     x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-
     if x_forwarded_for:
         # X-Forwarded-For header can contain multiple IPs
         # First IP is the client's, followed by proxy IPs
-        ip = x_forwarded_for.split(",")[0].strip()
-    else:
-        # If no X-Forwarded-For header, use REMOTE_ADDR
-        ip = request.META.get("REMOTE_ADDR")
-
-    # Check if IP is private/routable
-    is_routable = True
-
-    # Private IP ranges
-    private_ips = [
-        ("10.0.0.0", "10.255.255.255"),
-        ("172.16.0.0", "172.31.255.255"),
-        ("192.168.0.0", "192.168.255.255"),
-    ]
-
-    # Convert IP string to integer for range comparison
-    ip_parts = ip.split(".")
-    if len(ip_parts) == 4:
-        ip_int = (
-            (int(ip_parts[0]) << 24)
-            + (int(ip_parts[1]) << 16)
-            + (int(ip_parts[2]) << 8)
-            + int(ip_parts[3])
-        )
-
-        for start, end in private_ips:
-            start_parts = start.split(".")
-            end_parts = end.split(".")
-
-            start_int = (
-                (int(start_parts[0]) << 24)
-                + (int(start_parts[1]) << 16)
-                + (int(start_parts[2]) << 8)
-                + int(start_parts[3])
-            )
-            end_int = (
-                (int(end_parts[0]) << 24)
-                + (int(end_parts[1]) << 16)
-                + (int(end_parts[2]) << 8)
-                + int(end_parts[3])
-            )
-
-            if start_int <= ip_int <= end_int:
-                is_routable = False
+        for entry in x_forwarded_for.split(","):
+            parsed = _parse_client_ip(entry)
+            if parsed is not None:
                 break
+
+    if parsed is None:
+        # If no usable X-Forwarded-For entry, use REMOTE_ADDR
+        remote_addr = request.META.get("REMOTE_ADDR")
+        parsed = _parse_client_ip(remote_addr)
+        if parsed is None:
+            return remote_addr or "unknown", False
+
+    ip, address = parsed
+
+    # Only the private IPv4 ranges count as non-routable
+    is_routable = not (
+        address.version == 4
+        and any(address in network for network in _PRIVATE_IPV4_NETWORKS)
+    )
 
     return ip, is_routable
 

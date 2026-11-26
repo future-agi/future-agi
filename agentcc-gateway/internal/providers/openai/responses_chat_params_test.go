@@ -47,7 +47,7 @@ func TestChatOnlyParametersOverResponses(t *testing.T) {
 							t.Errorf("%s sent over Responses: %s", key, body)
 						}
 					}
-					if drops := p.ResponsesDrops(req); len(drops) != 1 || drops[0] != tc.name {
+					if _, drops := p.ChatRouteDrops(req); len(drops) != 1 || drops[0] != tc.name {
 						t.Errorf("drops = %v, want only %s", drops, tc.name)
 					}
 				})
@@ -69,7 +69,7 @@ func TestChatOnlyParametersThatChangeNothingAreNotRefused(t *testing.T) {
 		if _, err := toResponsesRequest(req, false); err != nil {
 			t.Fatalf("stop=%s: %v", stop, err)
 		}
-		if drops := p.ResponsesDrops(req); len(drops) != 0 {
+		if _, drops := p.ChatRouteDrops(req); len(drops) != 0 {
 			t.Errorf("stop=%s: no-op settings reported as %v", stop, drops)
 		}
 	}
@@ -83,7 +83,8 @@ func TestChatOnlyParametersAreNamedTogether(t *testing.T) {
 	req.Seed = &seed
 	mustResponsesRequest(t, req)
 	p := &Provider{openAIAPI: true}
-	if got := strings.Join(p.ResponsesDrops(req), ","); got != "stop,seed" {
+	_, drops := p.ChatRouteDrops(req)
+	if got := strings.Join(drops, ","); got != "stop,seed" {
 		t.Fatalf("drops = %q", got)
 	}
 }
@@ -105,14 +106,14 @@ func TestResponsesDropsRequireAValidResponsesAttempt(t *testing.T) {
 			req.Stop = json.RawMessage(`"secret"`)
 			req.Extra = make(map[string]json.RawMessage)
 			tc.edit(req)
-			if drops := p.ResponsesDrops(req); len(drops) != 0 {
+			if _, drops := p.ChatRouteDrops(req); len(drops) != 0 {
 				t.Fatalf("no dispatch should report no drops, got %v", drops)
 			}
 		})
 	}
 	req := toolTurnRequest("gpt-5.6-terra")
 	req.Stop = json.RawMessage(`"secret"`)
-	if drops := (&Provider{}).ResponsesDrops(req); len(drops) != 0 {
+	if _, drops := (&Provider{}).ChatRouteDrops(req); len(drops) != 0 {
 		t.Fatalf("unofficial upstream reports %v", drops)
 	}
 }

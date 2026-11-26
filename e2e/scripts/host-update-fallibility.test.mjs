@@ -545,7 +545,8 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.equal(validation.if, "github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'");
   assert.match(validation.run, /requires stack=distributed/);
   assert.match(validation.run, /exit 1/);
-  assert.equal(workflow.jobs.e2e.needs, 'changes');
+  // lock-wheels: the run's verified URL-pinned wheels for the backend build.
+  assert.deepEqual(workflow.jobs.e2e.needs, ['changes', 'lock-wheels']);
   const steps = workflow.jobs.e2e.steps;
   const normal = steps.findIndex(step => step.name === 'Run E2E suite');
   const proof = steps[normal + 1];

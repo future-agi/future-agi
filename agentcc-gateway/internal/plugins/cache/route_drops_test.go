@@ -76,15 +76,15 @@ func throughCache(t *testing.T, p *Plugin, call carriageCall, resp *models.ChatC
 	rc.Request.TranslatedFrom = call.translatedFrom
 	rc.Model = "gpt-5.6-terra"
 	rc.TranslationDrops = call.translator
-	rc.SetResponsesRouteDrops(nil)
+	rc.SetRouteDrops(nil)
 	p.ProcessRequest(context.Background(), rc)
 	if rc.Flags.CacheHit {
 		return rc
 	}
 	rc.Response = resp
-	rc.ResponsesCarriage = carriage
 	if carriage {
-		rc.SetResponsesRouteDrops(models.ResponsesRouteNotes(rc.Request))
+		rc.ChatRoute = models.RouteResponses
+		rc.SetRouteDrops(models.RouteNotes(rc.Request, models.ResponsesOmittedParams(rc.Request)))
 	}
 	p.ProcessResponse(context.Background(), rc)
 	return rc
@@ -149,7 +149,7 @@ func TestCarriageRestoredOnCacheHit(t *testing.T) {
 			for _, label := range []string{"request 2", "request 3"} {
 				rc := throughCache(t, p, carriageCall{}, makeResp("never-stored"), false)
 				wantHitNotes(t, label, rc, "seed_unsupported")
-				if !rc.ResponsesCarriage {
+				if rc.ChatRoute != models.RouteResponses {
 					t.Errorf("%s: carriage not restored", label)
 				}
 				if string(rc.Response.Extra["citations"]) != `["https://example.test"]` {
@@ -186,6 +186,28 @@ func TestCarriageNotesFollowTheCurrentRequest(t *testing.T) {
 	})
 }
 
+// ParallelToolCalls is not in the cache key. A hit must report the current
+// caller's restriction, not the settings of the call that filled the cache.
+func TestGeminiCarriageNotesFollowCurrentRequest(t *testing.T) {
+	stored := respWithExtra("cached", map[string]json.RawMessage{carriageField: json.RawMessage(`"gemini"`)})
+	for _, parallel := range []bool{false, true} {
+		rc := models.AcquireRequestContext()
+		t.Cleanup(rc.Release)
+		rc.Request = &models.ChatCompletionRequest{
+			Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "lookup"}}}, ParallelToolCalls: &parallel,
+		}
+		served := restoreCarriage(rc, stored)
+		assertNoCarriageField(t, "hit", served)
+		want := ""
+		if !parallel {
+			want = "parallel_tool_calls_unsupported"
+		}
+		if got := rc.Metadata["translation_drops"]; got != want {
+			t.Errorf("parallel=%t: translation_drops=%q, want %q", parallel, got, want)
+		}
+	}
+}
+
 // An entry produced over ordinary chat completions omitted nothing, so a hit
 // reports nothing even for a request whose settings that route would omit.
 func TestCarriageAbsentReportsNothing(t *testing.T) {
@@ -198,7 +220,7 @@ func TestCarriageAbsentReportsNothing(t *testing.T) {
 	if got, ok := rc.Metadata["translation_drops"]; ok {
 		t.Errorf("hit of an ordinary chat entry reported %q", got)
 	}
-	if rc.ResponsesCarriage {
+	if rc.ChatRoute != "" {
 		t.Error("carriage set for an ordinary chat entry")
 	}
 	assertNoCarriageField(t, "hit", rc.Response)

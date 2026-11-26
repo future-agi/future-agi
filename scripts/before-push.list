@@ -1,0 +1,8 @@
+# Before a push: the cheap gates that fail a first push in this repository.
+# Run them all with:  python3 scripts/before_push.py
+#
+# One item per line:  name | command
+# The command runs in bash from the repository root and passes when it exits 0.
+# Keep each item fast and offline where it can be; a slow or flaky item gets skipped by people.
+
+new-tests-in-ci | python3 -I scripts/check_new_tests_in_ci.py --base "${BEFORE_PUSH_BASE:-origin/dev}"

@@ -423,7 +423,9 @@ describe("FilterValueLabel", () => {
     expect(screen.getByText("gone-id")).toBeInTheDocument();
   });
 
-  it("gives a different selection its own continuation budget", () => {
+  // This mock never grows its page count, so the shared query budget below
+  // stays unspent; only the chip's own walk is exercised here.
+  it("gives a different selection a fresh walk while the shared query has budget", () => {
     const fetchNextPage = vi.fn();
     mockState.current = unresolvedChain(fetchNextPage);
     const { rerender } = renderLabel({ ...baseFilter, value: ["gone-id"] });
@@ -453,6 +455,19 @@ describe("FilterValueLabel", () => {
     });
     expect(fetchNextPage).toHaveBeenCalledTimes(24);
     expect(screen.getByText("other-id")).toBeInTheDocument();
+  });
+
+  it("reads nothing once the shared query has spent its continuation budget", () => {
+    const fetchNextPage = vi.fn();
+    // Twelve continuation pages are already loaded by sibling chips.
+    mockState.current = { ...unresolvedChain(fetchNextPage), pageCount: 13 };
+    const { container } = renderLabel({ ...baseFilter, value: ["other-id"] });
+
+    expect(fetchNextPage).not.toHaveBeenCalled();
+    expect(screen.getByText("other-id")).toBeInTheDocument();
+    expect(
+      container.querySelector(".MuiSkeleton-root"),
+    ).not.toBeInTheDocument();
   });
 
   it("reads page two when an exhausted row is reused for another property with the same id selected", () => {

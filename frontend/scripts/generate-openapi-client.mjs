@@ -179,6 +179,7 @@ export function normalizeSwaggerSchema(schema) {
 // writes x-nullable beside no $ref, so the nullable ones are named here.
 const EPOCH_NULLABLE_REFS = ["issue", "report", "failure", "plan", "diagnosis"];
 const AGENT_FIX_ISSUE_NULLABLE_REFS = {
+  SimulationEvidenceCall: ["goals"],
   AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios"],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
@@ -192,6 +193,7 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
 
 function isAgentFixIssueSchema(name) {
   return (
+    name.startsWith("SimulationEvidence") ||
     name.startsWith("AgentFixIssue") ||
     name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
     name === "AgentFixEpochIssue" ||
@@ -1352,6 +1354,21 @@ export type ${jsonAlias} = JsonValueApi;`,
       "$1JsonValueApi;",
       "conversation record JSON values → recursive JSON value",
     );
+    for (const field of ["Arguments", "Result", "Ok", "Error", "Refused"]) {
+      const alias = `SimulationEvidenceToolApi${field}`;
+      schemas = assertReplace(
+        schemas,
+        `export type ${alias} = { [key: string]: unknown } | null;`,
+        `export type ${alias} = JsonValueApi;`,
+        `${alias} → recursive JSON value`,
+      );
+    }
+    schemas = assertReplace(
+      schemas,
+      "export type SimulationEvidenceCallApiPersona = {[key: string]: { [key: string]: unknown }} | null;",
+      "export type SimulationEvidenceCallApiPersona = { [key: string]: JsonValueApi } | null;",
+      "simulation persona → nullable JSON record",
+    );
     for (const recordType of [
       "ConversationVariablesApiConfigured",
       "ConversationVariablesApiCollected",
@@ -1883,6 +1900,13 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
       "jsonValueSchema",
       "conversation evidence JSON values → recursive JSON value",
+    );
+    zod = assertReplaceRegexInNamedBlock(
+      zod,
+      "export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse = zod.object({",
+      /zod\.object\(\{\n\n\}\)\.passthrough\(\)(?=(?:\.(?:optional|nullish|nullable)\(\)|\.default\([^)]*\))*\.describe\('Any valid JSON value\.'\))/g,
+      "jsonValueSchema",
+      "simulation evidence JSON values → recursive JSON value",
     );
     for (const [anchor, label] of [
       [/("end_time": zod\.string\(\)\.datetime\([^)]*\))/, "end_time"],
