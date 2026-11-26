@@ -21381,6 +21381,8 @@ export interface HarnessLockRefusalApi {
    * @minLength 1
    */
   label?: string;
+  environment_label?: string | null;
+  suite_label?: string | null;
 }
 
 /**

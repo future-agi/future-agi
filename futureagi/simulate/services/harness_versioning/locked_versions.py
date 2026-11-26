@@ -519,9 +519,13 @@ def unlock_version(
 
 def require_no_locked_version(environment: HostedHarnessJob) -> None:
     """Refuse to delete an environment while one of its versions is locked."""
+    from simulate.services.harness_versioning.read import _label
+
     locked_version = (
-        HarnessLockedVersion.no_workspace_objects.filter(
-            environment=environment, unlocked_at__isnull=True
+        _with_pair_numbers(
+            HarnessLockedVersion.no_workspace_objects.filter(
+                environment=environment, unlocked_at__isnull=True
+            )
         )
         .order_by("-locked_at")
         .first()
@@ -532,10 +536,13 @@ def require_no_locked_version(environment: HostedHarnessJob) -> None:
             f"Lock {locked_version.label} covers this version. A workspace admin or "
             "owner must unlock it first.",
             status_code=409,
-            # What an admin's Unlock in the refusal names and sends.
+            # What an admin's Unlock in the refusal sends, and the pair its
+            # confirmation names.
             details={
                 "locked_version_id": str(locked_version.id),
                 "label": locked_version.label,
+                "environment_label": _label(locked_version.environment_number),
+                "suite_label": _label(locked_version.suite_number),
             },
         )
 

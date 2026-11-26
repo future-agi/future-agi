@@ -73349,6 +73349,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        environment_label: {
+          title: "Environment label",
+          description: "version_locked: its environment version's label.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        suite_label: {
+          title: "Suite label",
+          description: "version_locked: its suite version's label.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
       },
     },
     HarnessLockVersion: {

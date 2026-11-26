@@ -1388,6 +1388,16 @@ class HarnessLockRefusalSerializer(serializers.Serializer):
     label = serializers.CharField(  # type: ignore[assignment]  # the API field is named label, as DRF Field's own
         required=False, help_text="version_locked: that locked version's label."
     )
+    environment_label = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_locked: its environment version's label.",
+    )
+    suite_label = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_locked: its suite version's label.",
+    )
 
 
 class HarnessUnlockForbiddenSerializer(ViewerReadOnlyErrorSerializer):
