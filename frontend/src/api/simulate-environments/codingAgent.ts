@@ -1,5 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 
+import type {
+  AgentFixAttemptVerdictApi,
+  AgentFixCodingAgentBriefApi,
+  AgentFixRunApi,
+  CapabilitiesResponseApi,
+} from "src/generated/api-contracts/api.schemas";
 import {
   CAPABILITY,
   useCapabilities,
@@ -9,27 +15,34 @@ import axios, { endpoints } from "src/utils/axios";
 
 import { FIX_LIVE_STATES, FIX_POLL_MS } from "./fixRuns";
 
+// An Epoch as the attempt reads take it: its list read and its detail read both fit.
+type AttemptFix = Pick<AgentFixRunApi, "id" | "state" | "request">;
+
 // A person's own coding agent (Claude Code, Cursor, Codex) fixes a finished run from
 // a brief, submits its change with the `fagi` CLI, and Future AGI checks it as a short
 // Epoch: an attempt. The backend setting turns all of it on; the capabilities read
 // carries it, so nothing here probes a route that answers 404 while it is off.
-export function useCodingAgentAttemptsEnabled() {
+export function useCodingAgentAttemptsEnabled(): boolean {
   const { data, isLoading, isError } = useCapabilities();
+  const capabilities: CapabilitiesResponseApi | undefined = data;
   const { allowed } = useFeatureAllowed(CAPABILITY.FIX_MY_AGENT);
   return (
     allowed &&
     !isLoading &&
     !isError &&
-    data?.coding_agent_attempts_enabled === true
+    capabilities?.coding_agent_attempts_enabled === true
   );
 }
 
 // An Epoch a coding agent's submitted change started. The first attempt has no
 // attempt_of_id, so the request's outside candidate is the mark.
-export const isOutsideAttempt = (fix) =>
-  fix?.request?.outside_candidate?.number != null;
+export const isOutsideAttempt = (
+  fix: Pick<AgentFixRunApi, "request"> | null | undefined,
+): boolean => fix?.request?.outside_candidate?.number != null;
 
-export async function getCodingAgentBrief(sourceRunId) {
+export async function getCodingAgentBrief(
+  sourceRunId: string,
+): Promise<AgentFixCodingAgentBriefApi> {
   const res = await axios.get(endpoints.agentFixRuns.codingAgentBrief(), {
     params: { source_run_id: sourceRunId },
   });
@@ -38,7 +51,7 @@ export async function getCodingAgentBrief(sourceRunId) {
 
 // The setup a coding agent needs before it can follow the brief: the CLI, its login,
 // and, if it wants the brief and the verdict as tools, the MCP server.
-export function codingAgentSetup(setupUrl) {
+export function codingAgentSetup(setupUrl: string): string {
   return [
     "## Set up Future AGI first",
     "",
@@ -52,28 +65,41 @@ export function codingAgentSetup(setupUrl) {
 
 // What "Copy for coding agent" copies: the setup, then the brief's own instructions
 // exactly as the platform wrote them.
-export const codingAgentPrompt = (brief, setupUrl) =>
-  `${codingAgentSetup(setupUrl)}\n\n---\n\n${brief.instructions}`;
+export const codingAgentPrompt = (
+  brief: Pick<AgentFixCodingAgentBriefApi, "instructions">,
+  setupUrl: string,
+): string => `${codingAgentSetup(setupUrl)}\n\n---\n\n${brief.instructions}`;
 
-export const attemptVerdictKey = (fixId) => [
-  "agent-fix-attempt-verdict",
-  fixId,
-];
+export const attemptVerdictKey = (fixId: string | undefined) =>
+  ["agent-fix-attempt-verdict", fixId] as const;
 
-export async function getAttemptVerdict(fixId) {
+export async function getAttemptVerdict(
+  fixId: string,
+): Promise<AgentFixAttemptVerdictApi> {
   const res = await axios.get(endpoints.agentFixRuns.verdict(fixId));
   return res.data;
 }
 
+interface AttemptVerdictRead {
+  verdict: AgentFixAttemptVerdictApi | undefined;
+  isLoading: boolean;
+  error: Error | null;
+}
+
 // An outside attempt's verdict, as its coding agent reads it: each check's status,
 // and detail only on the checks that ran on cases the agent was given.
-export function useAttemptVerdict(fix, { enabled }) {
+export function useAttemptVerdict(
+  fix: AttemptFix | null | undefined,
+  { enabled }: { enabled: boolean },
+): AttemptVerdictRead {
+  const fixId = fix?.id;
   const { data, isLoading, error } = useQuery({
-    queryKey: attemptVerdictKey(fix?.id),
-    queryFn: () => getAttemptVerdict(fix.id),
+    queryKey: attemptVerdictKey(fixId),
+    // Only enabled with an id (an outside attempt is a stored Epoch).
+    queryFn: () => getAttemptVerdict(fixId as string),
     enabled: enabled && isOutsideAttempt(fix),
     refetchInterval: (query) =>
-      FIX_LIVE_STATES.has(query.state.data?.state ?? fix?.state)
+      FIX_LIVE_STATES.has(query.state.data?.state ?? fix?.state ?? "")
         ? FIX_POLL_MS
         : false,
     meta: { errorHandled: true },
