@@ -505,12 +505,26 @@ supported yet.
 
 AWS S3, Google Cloud Storage (HMAC keys) or any S3-compatible service, with
 an access key and secret key: IAM roles for service accounts, Workload
-Identity and Entra ID are not supported. On GCS, create the bucket
-(`objectStorage.bucket`) in advance and let anyone read objects by URL;
-elsewhere the app creates it on the first upload with that policy (anonymous
-reads of an object by its URL; no listing, no writes). Browsers download
-stored files by plain object URLs, so the bucket's endpoint must be
-reachable from your users' browsers.
+Identity and Entra ID are not supported. Browsers download stored files by
+plain object URLs, so the bucket's endpoint must be reachable from your users'
+browsers.
+
+On S3 and S3-compatible services, the app creates the bucket on the first
+upload with a policy that lets anyone read an object by its URL, except agent
+source archives under `agent-fix/`, `harness-sources/`,
+`harness-conversations/` and `agent-contracts/`. Nobody can list or write
+without the app's keys.
+
+On a bundled MinIO bucket from an earlier release, the policy changes on the
+next upload: after upgrading, upload one file to apply the new policy to an
+existing bucket.
+
+A GCS bucket (`objectStorage.bucket`) must be created in advance.
+
+On GCS, public read on this bucket also exposes agent source archives (GCS
+can't deny anonymous reads by prefix). The app serves stored files by plain
+object URLs, so making the bucket private breaks those downloads. Until agent
+source moves to a bucket of its own, choose between them.
 
 ### Bundled datastores
 

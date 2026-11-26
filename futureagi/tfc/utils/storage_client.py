@@ -312,6 +312,17 @@ def extract_object_key(file_url: str, bucket_name: str) -> str:
 
 ANONYMOUS_READ_ACTION = "s3:GetObject"
 
+# Agent source, its patches and workspaces, and the contracts read from it: read
+# only with the backend's own credentials, never by URL. No get_object_url() is
+# ever built for these keys.
+PRIVATE_PREFIXES = (
+    "agent-fix/",
+    "harness-sources/",
+    "harness-conversations/",
+    "agent-contracts/",
+)
+PRIVATE_OBJECTS_SID = "PrivateObjectsNotAnonymous"
+
 # Buckets whose anonymous policy this process has already checked.
 _checked_bucket_policies: set[str] = set()
 
@@ -321,13 +332,43 @@ def _anonymous_read_statement(bucket_name: str) -> dict:
 
     Stored files reach browsers as plain object URLs (get_object_url), so
     anonymous reads are needed. Uploads, overwrites, deletes and listings all
-    go through the backend's own credentials.
+    go through the backend's own credentials. _private_objects_statement takes
+    agent source back out.
     """
     return {
         "Effect": "Allow",
         "Principal": {"AWS": ["*"]},
         "Action": [ANONYMOUS_READ_ACTION],
         "Resource": [f"arn:aws:s3:::{bucket_name}/*"],
+    }
+
+
+def _private_objects_statement(bucket_name: str) -> dict:
+    """Nobody may download agent source by its URL, whatever an Allow says.
+
+    Anonymous callers only: on S3 a Deny for "*" with no condition also refuses
+    the backend's own signed and presigned reads. Keep the key lowercase: MinIO
+    refuses "aws:PrincipalType" as a MalformedPolicy and accepts only
+    "aws:principaltype"; AWS key names are case-insensitive. Values are lists,
+    as MinIO stores them.
+    """
+    return {
+        "Sid": PRIVATE_OBJECTS_SID,
+        "Effect": "Deny",
+        "Principal": {"AWS": ["*"]},
+        "Action": [ANONYMOUS_READ_ACTION],
+        "Resource": [
+            f"arn:aws:s3:::{bucket_name}/{prefix}*" for prefix in PRIVATE_PREFIXES
+        ],
+        "Condition": {"StringEquals": {"aws:principaltype": ["Anonymous"]}},
+    }
+
+
+def _same_statement(stored: dict, wanted: dict) -> bool:
+    # MinIO keeps resources as a set, so their order comes back changed.
+    return {**stored, "Resource": sorted(stored.get("Resource") or [])} == {
+        **wanted,
+        "Resource": sorted(wanted["Resource"]),
     }
 
 
@@ -341,13 +382,19 @@ def _is_anonymous(principal) -> bool:
 
 
 def _restrict_anonymous_access(policy: dict, bucket_name: str) -> dict | None:
-    """The policy with anonymous access cut down to object reads, or None if it
-    already grants nothing more. Statements for named principals are kept."""
+    """The policy with anonymous access cut down to object reads outside agent
+    source, or None if it already is. Statements for named principals are kept."""
     statements = policy.get("Statement") or []
     if isinstance(statements, dict):
         statements = [statements]
+    private = _private_objects_statement(bucket_name)
+    ours = [s for s in statements if s.get("Sid") == PRIVATE_OBJECTS_SID]
+    private_current = len(ours) == 1 and _same_statement(ours[0], private)
     kept, too_broad = [], False
     for statement in statements:
+        if statement.get("Sid") == PRIVATE_OBJECTS_SID:
+            # Put back below with today's prefixes, so there is only ever one.
+            continue
         if statement.get("Effect") == "Allow" and _is_anonymous(
             statement.get("Principal")
         ):
@@ -358,19 +405,21 @@ def _restrict_anonymous_access(policy: dict, bucket_name: str) -> dict | None:
                 too_broad = True
                 continue
         kept.append(statement)
-    if not too_broad:
+    if not too_broad and private_current:
         return None
-    if not any(
+    if too_broad and not any(
         statement.get("Effect") == "Allow" and _is_anonymous(statement.get("Principal"))
         for statement in kept
     ):
         kept.append(_anonymous_read_statement(bucket_name))
+    kept.append(private)
     return {**policy, "Statement": kept}
 
 
 def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> None:
     """Buckets created by earlier releases let anyone list, overwrite and delete
-    every object. Cut that back to reads once per process; never fail the caller."""
+    every object, or read agent source by URL. Cut that back once per process;
+    never fail the caller."""
     try:
         current = client.get_bucket_policy(bucket_name)
     except Exception as exc:  # NoSuchBucketPolicy, or a policy we may not read
@@ -394,13 +443,13 @@ def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> None:
     logger.warning(
         "storage_bucket_policy_tightened",
         bucket=bucket_name,
-        detail="anonymous access is now limited to reading objects by URL",
+        detail="anonymous access is limited to object reads, never of agent source",
     )
 
 
 def ensure_bucket(client: Minio, bucket_name: str) -> None:
-    """Create the bucket if needed, readable (not writable or listable) by URL.
-    Policy only applies on S3/MinIO."""
+    """Create the bucket if needed, readable (not writable or listable) by URL,
+    except agent source. Policy only applies on S3/MinIO."""
     if STORAGE_BACKEND == "gcs":
         # GCS buckets are pre-created via Terraform with IAM — skip
         return
@@ -414,7 +463,10 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
                 raise
         policy = {
             "Version": "2012-10-17",
-            "Statement": [_anonymous_read_statement(bucket_name)],
+            "Statement": [
+                _anonymous_read_statement(bucket_name),
+                _private_objects_statement(bucket_name),
+            ],
         }
         client.set_bucket_policy(bucket_name, json.dumps(policy))
         _checked_bucket_policies.add(bucket_name)

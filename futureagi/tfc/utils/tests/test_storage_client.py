@@ -529,6 +529,56 @@ def _anonymous_statements(policy):
     ]
 
 
+# Agent source, and what is kept of it, which nobody may read by URL.
+PRIVATE_RESOURCES = {
+    "arn:aws:s3:::futureagi/agent-fix/*",
+    "arn:aws:s3:::futureagi/harness-sources/*",
+    "arn:aws:s3:::futureagi/harness-conversations/*",
+    "arn:aws:s3:::futureagi/agent-contracts/*",
+}
+
+
+def _denials(policy):
+    return [s for s in policy["Statement"] if s["Effect"] == "Deny"]
+
+
+def _assert_agent_source_is_private(policy):
+    (denial,) = _denials(policy)
+    assert denial["Action"] == ["s3:GetObject"]
+    assert set(denial["Resource"]) == PRIVATE_RESOURCES
+    # Anonymous callers only: on S3 a Deny for "*" would also refuse the backend's
+    # own signed reads.
+    assert denial["Condition"] == {"StringEquals": {"aws:principaltype": ["Anonymous"]}}
+
+
+def test_the_denial_names_its_condition_key_in_lowercase(monkeypatch):
+    """MinIO refuses "aws:PrincipalType" as a MalformedPolicy; only the lowercase
+    spelling is accepted there, and AWS reads key names in any case."""
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = FakeBucketClient(exists=False)
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    (denial,) = _denials(policy)
+    assert list(denial["Condition"]["StringEquals"]) == ["aws:principaltype"]
+
+
+def _read_only_policy(bucket="futureagi"):
+    """What ensure_bucket applied before agent source was kept private."""
+    return {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"AWS": ["*"]},
+                "Action": ["s3:GetObject"],
+                "Resource": [f"arn:aws:s3:::{bucket}/*"],
+            }
+        ],
+    }
+
+
 def _legacy_public_policy(bucket="futureagi", principal="*"):
     """What ensure_bucket applied before: every action for anyone."""
     return json.dumps(
@@ -556,6 +606,7 @@ def test_new_bucket_is_readable_by_url_but_not_writable_or_listable(monkeypatch)
     (statement,) = _anonymous_statements(policy)
     assert statement["Action"] == ["s3:GetObject"]
     assert statement["Resource"] == ["arn:aws:s3:::futureagi/*"]
+    _assert_agent_source_is_private(policy)
 
 
 class RacedBucketClient(FakeBucketClient):
@@ -609,6 +660,7 @@ def test_existing_minio_bucket_with_the_old_policy_is_cut_back_to_reads(monkeypa
     (statement,) = _anonymous_statements(policy)
     assert statement["Action"] == ["s3:GetObject"]
     assert statement["Resource"] == ["arn:aws:s3:::futureagi/*"]
+    _assert_agent_source_is_private(policy)
 
 
 def test_tightening_keeps_statements_for_named_principals(monkeypatch):
@@ -630,17 +682,55 @@ def test_tightening_keeps_statements_for_named_principals(monkeypatch):
     assert [s["Action"] for s in _anonymous_statements(policy)] == [["s3:GetObject"]]
 
 
-def test_read_only_bucket_is_left_alone(monkeypatch):
+def test_read_only_bucket_from_an_earlier_release_keeps_agent_source_private(
+    monkeypatch,
+):
     storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
-    read_only = {
-        "Version": "2012-10-17",
-        "Statement": [storage_client._anonymous_read_statement("futureagi")],
-    }
-    client = FakeBucketClient(exists=True, policy=json.dumps(read_only))
+    client = FakeBucketClient(exists=True, policy=json.dumps(_read_only_policy()))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    assert _anonymous_statements(policy) == _read_only_policy()["Statement"]
+    _assert_agent_source_is_private(policy)
+
+
+def _current_policy_as_minio_stores_it():
+    policy = _read_only_policy()
+    policy["Statement"].append(
+        {
+            "Sid": "PrivateObjectsNotAnonymous",
+            "Effect": "Deny",
+            "Principal": {"AWS": ["*"]},
+            "Action": ["s3:GetObject"],
+            "Resource": sorted(PRIVATE_RESOURCES, reverse=True),
+            "Condition": {"StringEquals": {"aws:principaltype": ["Anonymous"]}},
+        }
+    )
+    return policy
+
+
+def test_bucket_with_the_current_policy_is_left_alone(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = FakeBucketClient(
+        exists=True, policy=json.dumps(_current_policy_as_minio_stores_it())
+    )
 
     storage_client.ensure_bucket(client, "futureagi")
 
     assert client.set_calls == []
+
+
+def test_a_stale_denial_is_replaced_not_duplicated(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    stale = _current_policy_as_minio_stores_it()
+    stale["Statement"][1]["Resource"] = ["arn:aws:s3:::futureagi/agent-fix/*"]
+    client = FakeBucketClient(exists=True, policy=json.dumps(stale))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    _assert_agent_source_is_private(policy)
 
 
 def test_existing_bucket_policy_is_checked_once_per_process(monkeypatch):
