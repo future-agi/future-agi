@@ -9,6 +9,7 @@ row before any read, its rows are capped, its schema is checked, and nothing of 
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from collections.abc import Mapping
@@ -234,12 +235,21 @@ def _screenshot(
         "url": url,
         "link": urlsplit(url).scheme.lower() in {"http", "https"} if url else False,
         "tab": tab if isinstance(tab, int) and not isinstance(tab, bool) else None,
-        "at": float(at)
-        if isinstance(at, int | float) and not isinstance(at, bool)
-        else None,
+        "at": _seconds(at),
         "kept": picture is not None,
         "picture_url": picture,
     }
+
+
+def _seconds(value: Any) -> float | None:
+    # The file's JSON reads NaN, Infinity and numbers too large for a float; none of them can be served as JSON.
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        seconds = float(value)
+    except OverflowError:
+        return None
+    return seconds if math.isfinite(seconds) else None
 
 
 def _blocked(body: Mapping[str, Any]) -> BrowserEvidence:
