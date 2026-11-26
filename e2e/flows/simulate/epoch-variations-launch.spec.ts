@@ -279,6 +279,8 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
 
   seen.connectedCalls = 15;
   seen.diagnosed = true;
+  // The run page reads the launch options on every load; check 1 counts this load's.
+  seen.launchSourceRunIds.length = 0;
   await test.step('ui: the finished run opens with Debug failures', async () => {
     await page.goto(runPath);
     await expect(page.getByRole('button', { name: 'Debug failures' })).toBeEnabled({ timeout: UI_READY });
