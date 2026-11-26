@@ -12247,7 +12247,7 @@
     },
     {
       "name": "validate_environment_scenarios",
-      "description": "Prove an environment's scenarios again for a pairing of agent, environment and suite versions (absent ones are the defaults), all of them or only keys. Each proof runs in a build sandbox and makes model calls; see Usage for what it counts toward. Returns a job_id while it runs; poll get_scenario_validation.",
+      "description": "Prove an environment's scenarios again for a pairing of agent, environment and suite versions (absent ones are the defaults), all of them or only keys. Each proof runs in a build sandbox and makes model calls; see the Usage page in the app for what it counts toward. Returns a job_id while it runs; poll get_scenario_validation.",
       "group": "simulation",
       "inputSchema": {
         "type": "object",
@@ -12921,7 +12921,7 @@
     },
     {
       "name": "recheck_environment_readiness",
-      "description": "Validate a pairing of versions again (absent ones are the defaults) without a run; moves no default. A pairing that is not yet certified runs its check in a build sandbox and makes model calls; see Usage for what it counts toward. Read the result with get_environment_readiness.",
+      "description": "Validate a pairing of versions again (absent ones are the defaults) without a run; moves no default. A pairing that is not yet certified runs its check in a build sandbox and makes model calls; see the Usage page in the app for what it counts toward. Read the result with get_environment_readiness.",
       "group": "simulation",
       "inputSchema": {
         "type": "object",

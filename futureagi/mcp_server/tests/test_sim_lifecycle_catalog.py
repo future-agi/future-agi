@@ -75,9 +75,9 @@ def test_access_and_spend(registry, name):
     # Archive keeps the scenario's identity, runs and evidence; restore undoes it.
     assert tool.annotations["destructiveHint"] is False
     assert tool.annotations["openWorldHint"] is (name in SPENDING)
-    assert ("see Usage for what it counts toward" in tool.description) is (
-        name in SPENDING
-    )
+    assert (
+        "see the Usage page in the app for what it counts toward" in tool.description
+    ) is (name in SPENDING)
 
 
 def test_validation_status_needs_its_job(registry):
