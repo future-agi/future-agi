@@ -358,6 +358,31 @@ class HarnessTaskSplit(BaseModel):
         db_table = "simulate_harness_task_split"
 
 
+class HarnessLockedVersionMember(BaseModel):
+    """A scenario a lock covers, with its split, written with the lock and never
+    changed. Which tasks can run follows the default bundle, which a lock doesn't
+    freeze, so a lock's members are recorded rather than worked out at read time."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    locked_version = models.ForeignKey(
+        HarnessLockedVersion, on_delete=models.CASCADE, related_name="+"
+    )
+    # RESTRICT, as a suite member's: a cascade from the job removes both.
+    scenario = models.ForeignKey(
+        "simulate.HostedHarnessScenario", on_delete=models.RESTRICT, related_name="+"
+    )
+    split = models.CharField(max_length=8, choices=TaskSplit.choices)
+
+    class Meta:
+        db_table = "simulate_harness_locked_version_member"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["locked_version", "scenario"],
+                name="uniq_harness_lockver_member",
+            ),
+        ]
+
+
 class HarnessAgentVersionRuntime(BaseModel):
     """Harness-side facts of one agent version: source, payload and credential set."""
 

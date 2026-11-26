@@ -3,7 +3,8 @@
 A locked version names a pair of immutable versions, so locking freezes nothing new: it
 records the pair and gives each scorable scenario its split. A scenario keeps the split it
 got at the first lock that included it, so a growing suite never moves a test task into
-train.
+train. Each lock records its roster, the scenarios it covers with their splits, since
+which tasks can run follows the default bundle, which a lock doesn't freeze.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from django.utils import timezone
 from simulate.models.harness_versioning import (
     HarnessEnvironmentVersion,
     HarnessLockedVersion,
+    HarnessLockedVersionMember,
     HarnessSuiteMember,
     HarnessSuiteValidation,
     HarnessTaskSplit,
@@ -71,12 +73,14 @@ class Task:
 
 @dataclass(frozen=True)
 class SplitPlan:
-    """The splits a lock gives: ``assign`` holds only scenarios that have none yet."""
+    """The splits a lock gives: ``splits`` holds every runnable task's, its roster;
+    ``assign`` only those of scenarios that have none yet."""
 
     train: int
     test: int
     test_target: int
     assign: Mapping[UUID, str]
+    splits: Mapping[UUID, str]
 
 
 # The test split never takes more than this share of the runnable tasks.
@@ -248,14 +252,17 @@ def plan_splits(
             assign[task.scenario_id] = (
                 TaskSplit.TEST if index < seats[name] else TaskSplit.TRAIN
             )
-    splits = [
-        assigned.get(task.scenario_id) or assign[task.scenario_id] for task in tasks
-    ]
+    splits = {
+        task.scenario_id: assigned.get(task.scenario_id) or assign[task.scenario_id]
+        for task in tasks
+    }
+    counts = list(splits.values())
     return SplitPlan(
-        train=splits.count(TaskSplit.TRAIN),
-        test=splits.count(TaskSplit.TEST),
+        train=counts.count(TaskSplit.TRAIN),
+        test=counts.count(TaskSplit.TEST),
         test_target=target,
         assign=assign,
+        splits=splits,
     )
 
 
@@ -391,6 +398,18 @@ def lock_version(
                 for scenario_id, split in plan.assign.items()
             ]
         )
+        # The lock's own roster: which tasks can run follows the default bundle,
+        # which the lock doesn't freeze, so its members are recorded here.
+        HarnessLockedVersionMember.no_workspace_objects.bulk_create(
+            [
+                HarnessLockedVersionMember(
+                    locked_version=locked_version,
+                    scenario_id=scenario_id,
+                    split=split,
+                )
+                for scenario_id, split in plan.splits.items()
+            ]
+        )
     logger.info(
         "harness_version_locked",
         environment_id=str(locked.id),
@@ -400,6 +419,16 @@ def lock_version(
         actor=getattr(user, "id", None),
     )
     return locked
+
+
+def locked_version_members(locked_version_id: UUID | str) -> dict[UUID, str]:
+    """A lock's members, scenario id to split, as it locked them. A later rule
+    change, an edit or a new default never moves them."""
+    return dict(
+        HarnessLockedVersionMember.no_workspace_objects.filter(
+            locked_version_id=locked_version_id
+        ).values_list("scenario_id", "split")
+    )
 
 
 def require_unlock_admin(environment: HostedHarnessJob, user: User) -> None:
