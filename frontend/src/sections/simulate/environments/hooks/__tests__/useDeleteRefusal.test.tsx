@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactElement, ReactNode } from "react";
-import { render, screen, waitFor } from "src/utils/test-utils";
+import type { ReactElement } from "react";
+import { render, screen, waitFor, within } from "src/utils/test-utils";
 import type { HarnessVersionsApi } from "src/generated/api-contracts/api.schemas";
 
 interface Shown {
@@ -23,11 +22,12 @@ vi.mock("src/sections/simulate/environments/hooks/useSimulationAccess", () => ({
   }),
 }));
 const snackbars = vi.hoisted((): Shown[] => []);
+const closed = vi.hoisted((): unknown[] => []);
 vi.mock("notistack", () => ({
   enqueueSnackbar: vi.fn((message: unknown, options: Shown["options"]) =>
     snackbars.push({ message, options }),
   ),
-  closeSnackbar: vi.fn(),
+  closeSnackbar: vi.fn((key: unknown) => closed.push(key)),
 }));
 const unlockVersion = vi.hoisted(() =>
   vi.fn(async (..._args: unknown[]): Promise<unknown> => null),
@@ -53,6 +53,8 @@ const LOCKED = {
       retryable: false,
       locked_version_id: "lv-1",
       label: "2026.11.1",
+      environment_label: "v3",
+      suite_label: "v2",
     },
   },
 };
@@ -80,28 +82,49 @@ const UNLOCKED: HarnessVersionsApi = {
   ],
 };
 
+// The list that refused the delete: it renders the hook's confirmation.
+let show: (envId: string, error: unknown) => void;
+function RefusingList() {
+  const { showDeleteRefusal, unlockConfirm } = useDeleteRefusal();
+  show = showDeleteRefusal;
+  return unlockConfirm;
+}
+
 let client: QueryClient;
 let unmount: () => void;
 const refuse = (error: unknown): Shown => {
   client = new QueryClient();
-  const hook = renderHook(() => useDeleteRefusal(), {
-    wrapper: ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>
-    ),
-  });
-  unmount = hook.unmount;
-  hook.result.current("env-1", error);
+  unmount = render(
+    <QueryClientProvider client={client}>
+      <RefusingList />
+    </QueryClientProvider>,
+  ).unmount;
+  show("env-1", error);
   return snackbars.at(-1) as Shown;
+};
+
+// Choose the refusal's Unlock versions, then confirm it in the dialog it opens.
+const unlockAndConfirm = async (shown: Shown) => {
+  render(shown.options.action!("snack-1"));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Unlock versions" }),
+  );
+  await userEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Unlock versions",
+    }),
+  );
 };
 
 beforeEach(() => {
   snackbars.length = 0;
+  closed.length = 0;
   access.canUnlockVersion = true;
   unlockVersion.mockClear();
 });
 
 describe("useDeleteRefusal", () => {
-  it("offers an admin Unlock versions in a locked-version refusal, and unlocks it", async () => {
+  it("offers an admin Unlock versions, which asks the card's confirmation first", async () => {
     unlockVersion.mockResolvedValueOnce(UNLOCKED);
     const shown = refuse(LOCKED);
 
@@ -114,6 +137,23 @@ describe("useDeleteRefusal", () => {
       screen.getByRole("button", { name: "Unlock versions" }),
     );
 
+    // The confirmation the locked-version card shows; nothing is sent yet.
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText("Unlock environment v3, scenarios v2?"),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "Lock 2026.11.1 is kept; its scores stay, but they're no longer a locked comparison. Each scenario keeps its train and test split.",
+      ),
+    ).toBeInTheDocument();
+    expect(unlockVersion).not.toHaveBeenCalled();
+    expect(closed).toEqual(["snack-1"]);
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Unlock versions" }),
+    );
+
     expect(unlockVersion).toHaveBeenCalledWith("env-1", "lv-1");
     await waitFor(() =>
       expect(snackbars.at(-1)).toMatchObject({
@@ -121,6 +161,27 @@ describe("useDeleteRefusal", () => {
         options: { variant: "success" },
       }),
     );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("sends nothing when the confirmation is cancelled", async () => {
+    const shown = refuse(LOCKED);
+    render(shown.options.action!("snack-1"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Unlock versions" }),
+    );
+
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(unlockVersion).not.toHaveBeenCalled();
+    expect(snackbars).toHaveLength(1);
   });
 
   it("says how the unlock went after the page that asked for it is gone", async () => {
@@ -131,10 +192,7 @@ describe("useDeleteRefusal", () => {
       }),
     );
     const shown = refuse(LOCKED);
-    render(shown.options.action!("snack-1"));
-    await userEvent.click(
-      screen.getByRole("button", { name: "Unlock versions" }),
-    );
+    await unlockAndConfirm(shown);
 
     // The list that refused the delete unmounts before the unlock answers.
     unmount();
@@ -156,10 +214,7 @@ describe("useDeleteRefusal", () => {
       }),
     );
     const shown = refuse(LOCKED);
-    render(shown.options.action!("snack-1"));
-    await userEvent.click(
-      screen.getByRole("button", { name: "Unlock versions" }),
-    );
+    await unlockAndConfirm(shown);
 
     unmount();
     refuseUnlock({
@@ -184,11 +239,8 @@ describe("useDeleteRefusal", () => {
     unlockVersion.mockResolvedValueOnce(UNLOCKED);
     const shown = refuse(LOCKED);
     client.setQueryData(lockPreviewKey("env-1"), { can_lock: false });
-    render(shown.options.action!("snack-1"));
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Unlock versions" }),
-    );
+    await unlockAndConfirm(shown);
 
     await waitFor(() =>
       expect(client.getQueryState(lockPreviewKey("env-1"))?.isInvalidated).toBe(
