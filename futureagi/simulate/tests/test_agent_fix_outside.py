@@ -53,6 +53,7 @@ from simulate.services.agent_fix_runs import (
     split_held_back,
 )
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_agent_fix_api import ENGINE_MODEL, _armed, _engine
 from simulate.tests.test_agent_fix_api import (  # noqa: F401 - fixture
     browser_client as browser_client,
@@ -197,11 +198,18 @@ def _finished(fix_run, label, *, state="completed", key=None):
     return run
 
 
+class _Configs(list):
+    """Evals as runnable_eval_configs answers them: a query the grading orders."""
+
+    def order_by(self, *_fields):
+        return self
+
+
 def _grade(fix_run, winner_id, *, evals=("relevance",), queued=1, lands=True):
     """A winner's grading, run to its commit, with the queue faked: ``queued`` calls
     stamped, and the eval entries still on the calls once it commits unless the dispatch
     failed (``lands`` false), which puts each call back. Returns the executions queued."""
-    configs = [SimpleNamespace(id=name) for name in evals]
+    configs = _Configs(SimpleNamespace(id=name) for name in evals)
     sent = []
 
     def queue(execution, chosen):
@@ -2060,7 +2068,10 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
             browser_client, planted.environment, candidate.agent_version_id
         )
 
-        assert response.status_code == 200, response.content
+        # The move waits for the new pairing to validate, then lands.
+        assert response.status_code == 202, response.content
+        assert response.json()["validation"]["state"] == "validating"
+        settle_validations(planted.environment)
         planted.environment.refresh_from_db()
         assert planted.environment.agent_version_id == candidate.agent_version_id
 

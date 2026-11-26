@@ -70,6 +70,8 @@ export function readyEpoch(ids: Ids): Json {
     failure: null,
     retried_from_id: null,
     retryable: false,
+    attempt_of_id: null,
+    counted: null,
     limited_validation: false,
     issue: null,
     from_issue: false,
