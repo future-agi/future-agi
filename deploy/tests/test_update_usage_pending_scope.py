@@ -1,17 +1,25 @@
-"""Complete 132/137-pending-migration inventory and A9 scope regressions, without Django.
+"""Pending-migration A9 scope regressions for the supported releases, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
-This guards the prior incomplete hand inventory, not a substitute for the
-native B MigrationLoader scope probe or PostgreSQL constraint observation.
-The SQL/sampling scope regressions remain pinned. Metrics has undeclared opaque
-operations, which must fail closed rather than gain invented safety declarations.
+Not a substitute for the native B MigrationLoader scope probe or PostgreSQL
+constraint observation.
+
+The pending inventory is every migration git reports as added since each
+supported release; no hand-kept list restates it. Each pending migration's
+high-volume scope must match a declaration in its own file (UPDATE_SAFETY
+tables, or UPDATE_SCOPE), so a migration that reaches a high-volume table
+cannot merge unannounced. Migrations merged before declarations existed keep
+their reviewed scopes in PINNED_SCOPES. Opaque operations without a
+declaration still fail closed.
 """
 import ast
 import copy
 from pathlib import Path
 import re
 import subprocess
+import sys
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -19,90 +27,6 @@ from unittest import mock
 from scripts import rehearse_update_compatibility as p
 from deploy.tests.test_update_usage_reference import ROOT, REVISIONS, source
 
-LATEST = (
-    ('accounts','0029_demotracepublication_demoseedrequest'),
-    ('accounts','0030_queue_existing_demo_trace_publications'),
-    ('accounts','0031_orgapikey_coding_agent'),
-    ('accounts','0029_lower_self_granted_default_workspace_admins'),
-    ('accounts','0032_merge_coding_agent_key_and_workspace_admins'),
-    ('accounts','0033_merge_workspace_admins_and_api_key_expiry'),
-    ('usage','0030_add_jev_evaluator_call_type'),
-    ('tracer','0116_insight_reports'),
-    ('tracer','0117_instant_eval_scale'),
-    ('tracer','0118_instant_eval_answers'),
-    ('tracer','0119_instant_eval_scope_preset'),
-    ('tracer','0120_merge_error_feed_alerts_and_instant_eval'),
-    ('tracer','0121_remove_insightconfig_schedule'),
-    ('tracer','0122_merge_instant_eval_and_simulation_project'),
-    ('tracer','0123_merge_instant_eval_and_shared_link_resource'),
-    ('tracer','0124_merge_analysis_and_alert_high_water'),
-    ('tracer','0125_insightrun_source_started_at'),
-    ('tracer','0126_analysis_source_arrival'),
-    ('tracer','0127_project_analysis_source_generation'),
-    ('tracer','0128_instantevalrow_source_session_ids'),
-    ('tracer','0129_project_analysis_source_generation_db_default'),
-    ('tracer','0130_observationspan_internal_type'),
-    ('simulate','0102_agent_fix_engine_notes'),
-    ('simulate','0103_harness_job_verify_of'),
-    ('simulate','0104_actors'),
-    ('simulate','0105_scenario_faults'),
-    ('simulate','0104_agent_fix_variations'),
-    ('simulate','0106_merge_0104_agent_fix_variations_0105_scenario_faults'),
-    ('simulate','0105_harness_job_fix_eval_cost'),
-    ('simulate','0106_harness_job_graded_for'),
-    ('simulate','0107_builder_turn_usage'),
-    ('tracer','0098_useralertmonitor_webhook_url'),
-    ('tracer','0131_merge_alert_webhook'),
-    ('tracer','0132_merge_alert_webhook_and_sql_workbench'),
-    ('accounts','0026_orgapikey_expires_at'),
-    ('accounts','0031_merge_api_key_expiry'),
-    ('accounts','0032_merge_expiry_and_coding_agent'),
-    ('tracer','0133_eval_recalculation'),
-    ('tracer','0134_merge_eval_recalculation_and_sampling'),
-    ('tracer','0135_eval_put_back'),
-    # Directory name, not app label: agentcc/ migrations run as app "prism".
-    ('agentcc','0030_guardrail_policy_runs_on_gateway'),
-    ('simulate','0108_evidence_import'),
-    ('simulate','0109_evidence_import_transcript'),
-    ('simulate','0110_evidence_import_dataset'),
-    ('simulate','0111_evidence_import_case_discarded'),
-    ('simulate','0112_evidence_import_case_duplicate'),
-    ('integrations','0006_github_integration'),
-    ('simulate','0100_code_archive'),
-    ('simulate','0101_agent_production_project'),
-    ('simulate','0102_agent_version_connect_triggers'),
-    ('simulate','0103_agentversionsetup_contract_object_key'),
-    ('simulate','0104_merge_20261103_1030'),
-    ('simulate','0105_alter_harnessagentversionruntime_trigger'),
-    ('simulate','0106_agent_reading'),
-    ('simulate','0107_merge_20261104_1400'),
-    ('simulate','0108_merge_20261111_1830'),
-    ('simulate','0109_code_archive_workspace'),
-    ('simulate','0110_merge_code_archive_and_graded_for'),
-    ('simulate','0113_merge_agent_layer_and_evidence_import'),
-    ('simulate','0113_merge_actors_and_evidence_import'),
-    ('simulate','0114_agent_definition_source_checked_at'),
-    ('simulate','0115_merge_agent_definition_synced_and_actors'),
-    ('simulate','0116_agent_fix_issue_job'),
-    ('simulate','0116_harness_releases'),
-    ('simulate','0117_harness_release_policy'),
-    ('simulate','0118_hosted_agent_spec'),
-    ('simulate','0119_merge_agent_fix_issue_job_and_hosted_agent_spec'),
-    ('simulate','0104_hosted_job_capability_snapshot'),
-    ('simulate','0114_harness_certification_files'),
-    ('simulate','0117_merge_certification_files_and_agent_fix_issue_job'),
-    ('simulate','0115_hosted_job_cancel_confirmation'),
-    ('simulate','0118_merge_cancel_confirmation_and_agent_fix_issue_job'),
-    ('simulate','0115_harness_version_name'),
-    ('simulate','0116_harness_version_candidate'),
-    ('simulate','0118_merge_version_candidate_and_dev'),
-    ('simulate','0119_merge_cancel_confirmation_and_version_candidate'),
-    ('simulate','0117_scenario_lifecycle'),
-    ('simulate','0119_merge_scenario_lifecycle_and_dev'),
-    ('simulate','0120_merge_cancel_confirmation_and_scenario_lifecycle'),
-    ('simulate','0121_merge_harness_releases_and_scenario_lifecycle'),
-    ('mcp_server','0005_enable_epoch_tool_group'),
-)
 # Eight SQL additions shared with the SQL-only candidate. These identities
 # account for the graph; they are not safety declarations for opaque operations.
 SQL_ADDITIONS = (
@@ -128,7 +52,6 @@ SAMPLING_ADDITIONS = (
     ('tracer','0132_merge_sampling_and_sql_workbench_dev_merge'),
     ('tracer','0133_merge_sampling_and_alert_webhook'),
 )
-BASELINE_ADDITIONS = LATEST + SQL_ADDITIONS + SAMPLING_ADDITIONS
 # Metrics identities and the new graph join; these are not UPDATE_SAFETY claims.
 METRICS_ADDITIONS = (
     ('tracer','0117_derived_metrics'),
@@ -168,13 +91,57 @@ FEED_ESCALATION_ADDITIONS = (
     ('tracer','0131_merge_feed_escalation_and_internal_span_type'),
     ('tracer','0143_merge_feed_escalation_and_metrics'),
 )
-LATEST = BASELINE_ADDITIONS + METRICS_ADDITIONS + FEED_ESCALATION_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
     ('simulate','0101_agent_fix_candidate_override'),
     ('tracer','0119_retire_deleted_eval_memberships'),
     ('tracer','0120_alert_issue_state_occurrences_high_water'),
 )
+# Reviewed high-volume scopes of migrations that merged before UPDATE_SCOPE
+# existed. The gate refuses edits to a merged migration, so these cannot carry
+# their own declaration. Every other pending migration declares in its file.
+# Identities are (migration directory, name): agentcc/ runs as app "prism".
+PINNED_SCOPES = {
+    ('accounts','0030_queue_existing_demo_trace_publications'): {'tracer_trace','tracer_observation_span'},
+    ('usage','0030_add_jev_evaluator_call_type'): {'usage_apicalllog'},
+    ('tracer','0117_cohort_sampling'): {'tracer_eval_task'},
+    ('tracer','0118_instant_eval_answers'): {'tracer_eval_task'},
+    ('tracer','0130_observationspan_internal_type'): set(),  # Choices-only state change.
+    ('tracer','0119_retire_deleted_eval_memberships'): {'tracer_error_cluster_traces','tracer_eval_logger',
+        'tracer_trace_error_group'},
+    ('simulate','0116_agent_fix_issue_job'): {'tracer_trace_error_group'},  # Relation to the source issue.
+    ('tracer','0117_feed_escalation_policy'): {'tracer_error_cluster_traces','tracer_trace_error_group'},
+    ('tracer','0118_backfill_feed_issue_statuses'): {'tracer_error_cluster_traces',
+        'tracer_trace_investigation_finding','tracer_trace_investigation_job','tracer_trace_investigation_report'},
+}
+DECLARED_TABLE = re.compile(r'(postgres|clickhouse):[a-z_][a-z0-9_]*')
+
+
+def git_lines(*args):
+    return subprocess.check_output(['git','-C',str(ROOT),*args],text=True).splitlines()
+
+
+def added_migrations(revision):
+    """Migration files added between a supported release and HEAD, in path order."""
+    paths=git_lines('diff','--name-only','--diff-filter=A',revision,'HEAD','--','futureagi/**/migrations/*.py')
+    return tuple((Path(path).parent.parent.name,Path(path).stem) for path in sorted(paths)
+        if not Path(path).name.startswith('__'))
+
+
+def declared_scope(app,name):
+    """(UPDATE_SAFETY tables, UPDATE_SCOPE tables) as engine:table strings, by AST."""
+    path=migration_path(app,name)
+    safety,scope=set(),set()
+    for node in ast.parse(path.read_text()).body:
+        targets=[t.id for t in getattr(node,'targets',()) if isinstance(t,ast.Name)]
+        if 'UPDATE_SAFETY' in targets:
+            safety|=set(ast.literal_eval(node.value)['tables'])
+        if 'UPDATE_SCOPE' in targets:
+            value=ast.literal_eval(node.value)
+            assert type(value) in (tuple,list) and all(type(t) is str and DECLARED_TABLE.fullmatch(t) for t in value), (
+                f"{path}: UPDATE_SCOPE must be a literal tuple of 'postgres:<table>' strings")
+            scope|=set(value)
+    return safety,scope
 
 
 def keywords(node): return {k.arg:k.value for k in node.keywords}
@@ -295,8 +262,19 @@ def scope_environment(state):
     return env
 
 
+def migration_directories():
+    """Tracked migration packages by directory name (ee/usage is "usage")."""
+    roots=[Path(path).parent for path in git_lines('ls-files','futureagi/**/migrations/__init__.py')]
+    result={root.parent.name:ROOT/root for root in roots}
+    assert len(result)==len(roots), 'two migration packages share a directory name'
+    return result
+
+
+MIGRATION_DIRECTORIES=migration_directories()
+
+
 def migration_path(app,name):
-    return ROOT/'futureagi'/('ee/usage' if app=='usage' else app)/'migrations'/(name+'.py')
+    return MIGRATION_DIRECTORIES[app]/(name+'.py')
 
 
 def baseline_state(revision):
@@ -414,48 +392,76 @@ def pending_plan(identities,env):
     return ordered
 
 
-class CompleteUsagePendingIntersectionTests(unittest.TestCase):
-    def assert_complete_inventory(self,revision,identities,count):
-        # Additions, not edited applied migrations. This deliberately breaks if
-        # the shipping plan changes without refreshing its complete inventory.
-        paths=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only','--diff-filter=A',
-            revision,'HEAD','--','futureagi/**/migrations/*.py'],text=True).splitlines()
-        actual={(Path(path).parent.parent.name,Path(path).stem) for path in paths}
-        self.assertEqual(actual,set(identities)); self.assertEqual(len(actual),count)
-        self.assertEqual(len(identities),count)  # duplicate fixture identities also fail
+def plan_scopes(revision, identities):
+    """Each pending migration's resolved tables, in plan order, as the producer reports them."""
+    state=baseline_state(revision); env=scope_environment(state)
+    scopes=[]
+    for migration in pending_plan(identities,env):
+        tables=set()
+        for op in migration.operations:
+            tables |= env['touched'](op,migration,state)
+            op.state_forwards(migration.app_label,state)
+        scopes.append(dict(app_label=migration.app_label,name=migration.name,
+            tables=[dict(engine=e,table=t) for e,t in sorted(tables)]))
+    return scopes
 
-    def test_complete_latest_and_floor_inventory(self):
+
+def declared_high_volume_scope(registry, row):
+    """The high-volume tables one migration must declare; fails with the fix."""
+    key=(row['app_label'],row['name'])
+    scoped=p.select_reference_registry(registry,[row],plan=[{'app_label':key[0],'name':key[1]}])
+    actual={item['table'] for item in scoped}
+    if key in PINNED_SCOPES:
+        declared=PINNED_SCOPES[key]
+    else:
+        high_volume={(item['database'],item['table']) for item in registry}
+        safety,scope=declared_scope(*key)
+        unknown=sorted(t for t in scope if tuple(t.split(':',1)) not in high_volume)
+        assert not unknown, (f'{key[0]}/{key[1]}: UPDATE_SCOPE lists tables that are not in '
+            f'deploy/update/high-volume-tables.json: {unknown}')
+        declared={t.split(':',1)[1] for t in safety|scope if tuple(t.split(':',1)) in high_volume}
+    wanted=', '.join(repr('postgres:'+t) for t in sorted(actual))
+    assert actual==declared, (f'{key[0]}/{key[1]}: its high-volume scope is {sorted(actual)} but it declares '
+        f'{sorted(declared)}. Declare it in the migration: UPDATE_SCOPE = ({wanted},) at module level, '
+        "or UPDATE_SAFETY['tables'] when it carries one. scripts/check_update_safety.py refuses edits "
+        'to a merged migration, so pin a merged one in PINNED_SCOPES instead.')
+    return declared
+
+
+PROBE = '''from django.db import migrations, models
+import django.db.models.deletion
+
+{declaration}
+
+
+def forwards(apps, schema_editor):
+    pass
+
+
+class Migration(migrations.Migration):
+    dependencies = [('tracer', '0001_initial')]
+    operations = [
+        {operation},
+    ]
+'''
+
+
+class CompleteUsagePendingIntersectionTests(unittest.TestCase):
+    def test_pending_inventory_is_derived_from_git(self):
+        # Guards the derivation: a shallow clone, a wrong pathspec or a moved
+        # release must not shrink the pending plan unnoticed.
         self.assertEqual(len(SQL_ADDITIONS),8)
         self.assertEqual(len(SAMPLING_ADDITIONS),10)
         self.assertEqual(len(METRICS_ADDITIONS),29)
-        self.assertTrue(set(BASELINE_ADDITIONS).isdisjoint(METRICS_ADDITIONS))
-        self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,132),(REVISIONS[0],LATEST+FLOOR_ONLY,137)):
-            with self.subTest(revision=revision):
-                self.assert_complete_inventory(revision,identities,count)
-
-    def test_pending_inventory_rejects_unknown_missing_and_substituted_migrations(self):
-        # Preserve the SQL-layer negative controls when adding sampling's graph.
-        # Same-count replacement must fail just as an extra or missing file does.
-        unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 132),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 137)):
-            paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
-                '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
-                'futureagi/**/migrations/*.py'], text=True).splitlines()
-            self.assert_complete_inventory(revision, identities, count)
-            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS + METRICS_ADDITIONS:
-                missing = 'futureagi/' + app + '/migrations/' + name + '.py'
-                self.assertIn(missing, paths)
-                without = [path for path in paths if path != missing]
-                for mutation, changed in (('missing', without),
-                        ('unknown', paths + [unknown]),
-                        ('same_count_substitution', without + [unknown])):
-                    with self.subTest(revision=revision, missing=missing, mutation=mutation):
-                        with mock.patch.object(subprocess, 'check_output',
-                                return_value='\n'.join(changed) + '\n'):
-                            with self.assertRaises(AssertionError):
-                                self.assert_complete_inventory(revision, identities, count)
+        floor,latest=(added_migrations(revision) for revision in REVISIONS)
+        for identities in (floor,latest):
+            self.assertEqual(len(identities),len(set(identities)))
+        self.assertLessEqual(set(SQL_ADDITIONS+SAMPLING_ADDITIONS+METRICS_ADDITIONS+FEED_ESCALATION_ADDITIONS),
+            set(latest))
+        self.assertLessEqual(set(latest),set(floor))
+        self.assertEqual(set(floor)-set(latest),set(FLOOR_ONLY))
+        self.assertLessEqual(set(PINNED_SCOPES),set(floor))
+        self.assertIn(('usage','0030_add_jev_evaluator_call_type'),latest)
 
     def test_sql_index_operations_have_explicit_state_table_scope(self):
         # The sampling layer retains SQL's concurrent-index scope regression.
@@ -470,14 +476,6 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # The RunPython has its own upstream-reviewed table declaration.
         self.assertEqual(env['touched'](migration.operations[2], migration, state),
                          {('postgres', 'public.tracer_sqlexecution')})
-
-    def test_unexpected_migration_still_fails_complete_inventory(self):
-        paths=subprocess.check_output(['git','-C',str(ROOT),'diff','--name-only','--diff-filter=A',
-            REVISIONS[1],'HEAD','--','futureagi/**/migrations/*.py'],text=True)
-        with mock.patch.object(subprocess,'check_output',return_value=paths+
-                'futureagi/tracer/migrations/9999_unexpected.py\n'):
-            with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,132)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -525,61 +523,61 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 row={**plan[0],'tables':[{'engine':e,'table':t} for e,t in sorted(tables)]}
                 self.assertEqual(list(p.select_reference_registry(registry,[row],plan=plan)),[])
 
-    def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
-        for revision,identities,count in ((REVISIONS[1],LATEST,132),(REVISIONS[0],LATEST+FLOOR_ONLY,137)):
-            with self.subTest(revision=revision):
-                self.assert_complete_inventory(revision,identities,count)
-                # Keep the complete gate fail-closed on undeclared Metrics operations.
-                self.assert_plan_scope(revision, identities)
-
-    def test_dev_scope_intersection_independently_of_metrics_declarations(self):
-        # A blocked Metrics operation must not hide a regression in dev's
-        # already reviewed SQL, sampling and other migration scopes.
-        for revision, identities in ((REVISIONS[1], BASELINE_ADDITIONS),
-                (REVISIONS[0], BASELINE_ADDITIONS + FLOOR_ONLY)):
-            with self.subTest(revision=revision):
-                self.assert_plan_scope(revision, identities)
-
-    def assert_plan_scope(self, revision, identities):
+    def test_each_pending_migration_declares_its_high_volume_scope(self):
+        # Fail closed on undeclared opaque operations; then each migration's
+        # computed high-volume scope must equal its own declaration.
         registry=p.load_high_volume_registry()
-        state=baseline_state(revision); env=scope_environment(state)
-        plan=pending_plan(identities,env); scopes=[]
-        for migration in plan:
-            tables=set()
-            for op in migration.operations:
-                tables |= env['touched'](op,migration,state)
-                op.state_forwards(migration.app_label,state)
-            scopes.append(dict(app_label=migration.app_label,name=migration.name,
-                tables=[dict(engine=e,table=t) for e,t in sorted(tables)]))
-        identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
-        selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
-        # simulate 0116 adds the evidence import's relation to the issue it came from.
-        expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog',
-            'tracer_trace_error_group'}
-        if set(FEED_ESCALATION_ADDITIONS) <= set(identities):
-            expected|={'tracer_error_cluster_traces','tracer_trace_investigation_finding',
-                'tracer_trace_investigation_job','tracer_trace_investigation_report'}
-        if revision==REVISIONS[0]: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
-        self.assertEqual({row['table'] for row in selected},expected)
-        self.assertTrue(all(row['database']=='postgres' for row in selected))
-        self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary') for row in selected))
-        usage=next(row for row in scopes if row['app_label']=='usage')
-        self.assertEqual({row['table'] for row in usage['tables']},
-            {'public.usage_apicalltype','public.usage_apicalllog','public.usage_pricing','public.usage_ratelimit'})
-        for row in scopes:
-            scoped=p.select_reference_registry(registry,[row],plan=[{k:row[k] for k in ('app_label','name')}])
-            names={item['table'] for item in scoped}
-            if row['name']=='0030_queue_existing_demo_trace_publications': expected_row={'tracer_trace','tracer_observation_span'}
-            elif row['app_label']=='usage': expected_row={'usage_apicalllog'}
-            elif row['name'] in ('0118_instant_eval_answers','0117_cohort_sampling'): expected_row={'tracer_eval_task'}
-            elif row['name']=='0130_observationspan_internal_type': expected_row=set()  # Choices-only state change.
-            elif row['name']=='0119_retire_deleted_eval_memberships': expected_row={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
-            elif row['name']=='0116_agent_fix_issue_job': expected_row={'tracer_trace_error_group'}  # Relation to the source issue.
-            elif row['name']=='0117_feed_escalation_policy': expected_row={'tracer_error_cluster_traces','tracer_trace_error_group'}
-            elif row['name']=='0118_backfill_feed_issue_statuses': expected_row={'tracer_error_cluster_traces',
-                'tracer_trace_investigation_finding','tracer_trace_investigation_job','tracer_trace_investigation_report'}
-            else: expected_row=set()
-            self.assertEqual(names,expected_row,(row['app_label'],row['name']))
+        for revision in REVISIONS:
+            with self.subTest(revision=revision):
+                scopes=plan_scopes(revision,added_migrations(revision))
+                expected=set()
+                for row in scopes:
+                    expected|=declared_high_volume_scope(registry,row)
+                plan=[{k:row[k] for k in ('app_label','name')} for row in scopes]
+                selected=p.select_reference_registry(registry,scopes,plan=plan)
+                self.assertEqual({row['table'] for row in selected},expected)
+                self.assertTrue(all(row['database']=='postgres' for row in selected))
+                self.assertFalse(any(row.get('app_label')=='prism' or row.get('model') in ('UsageEventLog','UsageSummary')
+                    for row in selected))
+                usage=next(row for row in scopes if (row['app_label'],row['name'])==('usage','0030_add_jev_evaluator_call_type'))
+                self.assertEqual({row['table'] for row in usage['tables']},
+                    {'public.usage_apicalltype','public.usage_apicalllog','public.usage_pricing','public.usage_ratelimit'})
+
+    def test_new_migration_must_declare_its_high_volume_scope(self):
+        # Negative controls on a synthetic new migration. A nullable FK to the
+        # trace table reaches tracer_trace; a plain column reaches no
+        # high-volume table and needs no declaration.
+        registry=p.load_high_volume_registry()
+        identity=('tracer','9999_devflow_probe')
+        fk=("migrations.AddField(model_name='project', name='devflow_probe', field=models.ForeignKey("
+            "null=True, on_delete=django.db.models.deletion.SET_NULL, to='tracer.trace'))")
+        column="migrations.AddField(model_name='project', name='devflow_note', field=models.TextField(null=True))"
+        cases=(
+            ('undeclared high-volume scope',fk,'',False),
+            ('declared high-volume scope',fk,"UPDATE_SCOPE = ('postgres:tracer_trace',)",True),
+            ('stale declaration',fk,"UPDATE_SCOPE = ('postgres:tracer_trace', 'postgres:tracer_eval_task')",False),
+            ('non high-volume declaration',fk,"UPDATE_SCOPE = ('postgres:tracer_trace', 'postgres:tracer_project')",False),
+            ('no high-volume scope',column,'',True),
+            ('undeclared opaque operation','migrations.RunPython(forwards)','',None),
+        )
+        original=migration_path
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/(identity[1]+'.py')
+            def resolve(app,name): return path if (app,name)==identity else original(app,name)
+            with mock.patch.object(sys.modules[__name__],'migration_path',side_effect=resolve):
+                for label,operation,declaration,passes in cases:
+                    path.write_text(PROBE.format(declaration=declaration,operation=operation))
+                    with self.subTest(case=label):
+                        if passes is None:
+                            with self.assertRaisesRegex(AssertionError,'opaque_operation_table_scope_unavailable'):
+                                plan_scopes(REVISIONS[1],[identity])
+                            continue
+                        row,=plan_scopes(REVISIONS[1],[identity])
+                        if passes:
+                            declared_high_volume_scope(registry,row)
+                        else:
+                            with self.assertRaises(AssertionError):
+                                declared_high_volume_scope(registry,row)
 
     def test_opaque_operations_without_a_declaration_remain_a_plan_scope_blocker(self):
         expected = {
