@@ -8,6 +8,7 @@ import runpy
 import subprocess
 import tempfile
 import textwrap
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -622,6 +623,37 @@ class CandidateScope(unittest.TestCase):
         self.git("merge", "-q", "--no-ff", "work", "-m", "event merge")
         tested = self.git("rev-parse", "HEAD")
         self.assertEqual(plan("pull_request", tested, base, head, "light")["mode"], "full")
+
+    def test_dev_pushes_share_one_uncancelled_group_and_the_rest_is_unchanged(self):
+        # One dev push run runs, one waits, a newer push replaces the waiting
+        # one. Red before: every dev push had its own group (its SHA).
+        text = (SCRIPTS.parent / "workflows" / "backend-ci.yml").read_text()
+        block = text.split("\nconcurrency:\n", 1)[1].split("\n\n", 1)[0]
+        values = dict(re.findall(r"(?m)^  (group|cancel-in-progress): (.*)$", block))
+
+        def evaluate(value, **github):
+            # GitHub's && and || return an operand, as Python's and/or do.
+            parts = re.findall(r"\$\{\{(.*?)\}\}|([^$]+)", value)
+            ctx = {"github": types.SimpleNamespace(**{"workflow": "Backend CI", "run_id": "9", **github})}
+            return "".join(
+                str(eval(expr.replace("&&", " and ").replace("||", " or "), {}, ctx)) if expr else lit
+                for expr, lit in parts
+            )
+
+        def run(event, ref, sha):
+            return (
+                evaluate(values["group"], event_name=event, ref=ref, sha=sha),
+                evaluate(values["cancel-in-progress"], event_name=event, ref=ref, sha=sha),
+            )
+
+        dev = [run("push", "refs/heads/dev", sha) for sha in ("a" * 40, "b" * 40)]
+        self.assertEqual(dev[0], dev[1])
+        self.assertEqual(dev[0], ("backend-ci-dev-push-candidate", "False"))
+        main = [run("push", "refs/heads/main", sha) for sha in ("a" * 40, "b" * 40)]
+        self.assertNotEqual(main[0][0], main[1][0])
+        self.assertEqual(run("pull_request", "refs/pull/7/merge", "c" * 40), ("backend-ci-refs/pull/7/merge-candidate", "True"))
+        group = run("merge_group", "refs/heads/gh-readonly-queue/dev/pr-7-x", "d" * 40)
+        self.assertEqual(group, ("backend-ci-refs/heads/gh-readonly-queue/dev/pr-7-x-candidate", "False"))
 
     def test_light_names_the_aggregate_deferred_so_the_required_check_is_absent(self):
         text = (SCRIPTS.parent / "workflows" / "backend-ci.yml").read_text()

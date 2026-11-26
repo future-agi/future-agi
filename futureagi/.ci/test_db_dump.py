@@ -678,7 +678,7 @@ class BackendWorkflowTest(unittest.TestCase):
 
     def test_manual_trials_have_independent_concurrency_groups(self):
         self.assertIn(
-            "group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}",
+            "group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}",
             self.workflow,
         )
 
