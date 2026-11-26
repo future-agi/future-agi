@@ -5143,7 +5143,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             "attribute_type": attribute_type,
                         }
 
-                        selector = None
                         if cursor_token:
                             cursor_state, cursor_window_mode = (
                                 decode_native_list_cursor(
@@ -5276,14 +5275,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         # those phases finish; otherwise read_value_cursor_page
                         # would start the earlier duration anew and outlive the
                         # interaction contract.
-                        if selector is None:
-                            selector = AttributeReadSelector(
-                                typed_only=True,
-                                json_attribute_mode="arrays",
-                                wall_timeout_ms=filter_value_deadline.remaining_ms(
-                                    ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
-                                ),
-                            )
+                        selector = AttributeReadSelector(
+                            typed_only=True,
+                            json_attribute_mode="arrays",
+                            wall_timeout_ms=filter_value_deadline.remaining_ms(
+                                ATTRIBUTE_PROPERTY_PICKER_WALL_TIMEOUT_MS
+                            ),
+                        )
                         page_read = selector.read_value_cursor_page(
                             project_ids,
                             metric_name,
