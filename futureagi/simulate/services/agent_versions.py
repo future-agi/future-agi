@@ -165,20 +165,19 @@ def _branch_head(definition: AgentDefinition, source: dict[str, Any]) -> str:
 
 def branch_head_of(organization_id: Any, workspace_id: Any, source: dict[str, Any]):
     """The commit a source's branch points at now; a private repository is read
-    through the workspace's GitHub installation, a public one with the workspace's
-    read credential."""
+    through its installation, and a public one can be read anonymously."""
     from simulate.services.harness_agent_changes import github_head
     from simulate.services.harness_github import read_credential, read_refused
 
     installation_id = source.get("installation_id")
-    if source.get("visibility") == "private" and installation_id:
+    if source.get("visibility") == "private":
         from integrations.services.github_app import (
             GitHubAppError,
             branch_head,
             installation_connected,
         )
 
-        if not installation_connected(
+        if not installation_id or not installation_connected(
             organization_id=organization_id,
             workspace_id=workspace_id,
             installation_id=str(installation_id),
@@ -201,7 +200,9 @@ def branch_head_of(organization_id: Any, workspace_id: Any, source: dict[str, An
         if sha is None:
             raise _source_gone()
         return sha
-    with read_credential(organization_id, workspace_id) as credential:
+    with read_credential(
+        organization_id, workspace_id, allow_public=True
+    ) as credential:
         head = github_head(
             str(source["repository"]),
             source.get("ref"),

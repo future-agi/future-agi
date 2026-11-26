@@ -978,8 +978,7 @@ def validate_github_source(
 ) -> int | None:
     """Refuse a new environment on a GitHub repository the watcher could not read:
     a private one needs its installation, and a public one must exist. A public
-    repository is read with the workspace's credential, a private one through its
-    installation. GitHub not answering never blocks a public creation, unless
+    repository can be read anonymously, a private one through its installation. GitHub not answering never blocks a public creation, unless
     ``required``: then an unchecked repository is refused, saying why. Without
     ``lookup`` only what the payload says is checked. Returns GitHub's id for the
     repository when it was looked up."""
@@ -1011,7 +1010,9 @@ def validate_github_source(
         return None
     found = None
     if safe_repository(repository):
-        with read_credential(organization_id, workspace_id) as credential:
+        with read_credential(
+            organization_id, workspace_id, allow_public=True
+        ) as credential:
             found = github_repository(
                 repository, credential=credential, purpose="create"
             )
