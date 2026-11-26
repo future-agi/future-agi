@@ -131,6 +131,8 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   // A launch nothing refuses has neither refusal; a run whose environment has no
   // agent version has no agent, and an agent Epoch can't change ships nothing.
   AgentFixLaunchOptions: ["blocked", "variations_blocked", "agent", "ship"],
+  // Only issue_epoch_measuring names an issue; every other refusal sends null.
+  AgentFixLaunchBlocked: [],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
   // The epoch an issue's page opens: before it ends it has no report, and only a

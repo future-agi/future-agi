@@ -19765,11 +19765,7 @@ export interface AgentFixLaunchBlockedApi {
   code: string;
   /** @minLength 1 */
   message: string;
-  /**
-   * For issue_epoch_measuring, the issue whose epoch is starting in the environment; its page shows it. Null otherwise.
-   * @minLength 1
-   */
-  cluster_id: string;
+  cluster_id: string | null;
 }
 
 export interface AgentFixLaunchOptionsApi {

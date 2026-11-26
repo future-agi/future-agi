@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SimulateApiAgentFixRunsLaunchOptionsResponse,
   SimulateApiHarnessEnvironmentsDraftsResponse,
   SimulateApiHarnessEnvironmentsDraftsSaveDraftsBody,
   SimulateApiHarnessEnvironmentsNudgesAnswerNudgeResponse,
@@ -36,6 +37,30 @@ describe.each([
     expect(
       schema.safeParse([{ name: "Verify the caller's PIN", passed }]).success,
     ).toBe(false);
+  });
+});
+
+describe("generated launch options contract", () => {
+  const { blocked } = SimulateApiAgentFixRunsLaunchOptionsResponse.shape;
+
+  // Only issue_epoch_measuring names an issue; every other refusal sends null.
+  it.each([
+    {
+      code: "fix_run_active",
+      message: "An epoch is running.",
+      cluster_id: null,
+    },
+    {
+      code: "issue_epoch_measuring",
+      message: "Another issue's epoch is starting.",
+      cluster_id: "cluster-1",
+    },
+  ])("accepts a $code refusal", (refusal) => {
+    expect(blocked.parse(refusal)).toEqual(refusal);
+  });
+
+  it("accepts a launch nothing refuses", () => {
+    expect(blocked.parse(null)).toBeNull();
   });
 });
 
