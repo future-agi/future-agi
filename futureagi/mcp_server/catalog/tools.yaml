@@ -627,7 +627,7 @@ tools:
     access: read
   - name: validate_environment_scenarios
     group: simulation
-    description: Prove an environment's scenarios again for a pairing of agent, environment and suite versions (absent ones are the defaults), all of them or only keys. Each proof runs in a build sandbox, so it may incur usage charges. Returns a job_id while it runs; poll get_scenario_validation.
+    description: Prove an environment's scenarios again for a pairing of agent, environment and suite versions (absent ones are the defaults), all of them or only keys. Each proof runs in a build sandbox and makes model calls; see Usage for what it counts toward. Returns a job_id while it runs; poll get_scenario_validation.
     operation: {method: POST, path: "/simulate/api/harness-environments/{id}/scenarios/validate/"}
     access: write
     open_world: true
@@ -678,7 +678,7 @@ tools:
     access: read
   - name: recheck_environment_readiness
     group: simulation
-    description: Validate a pairing of versions again (absent ones are the defaults) without a run; moves no default. A pairing that is not yet certified runs its check in a build sandbox, so it may incur usage charges. Read the result with get_environment_readiness.
+    description: Validate a pairing of versions again (absent ones are the defaults) without a run; moves no default. A pairing that is not yet certified runs its check in a build sandbox and makes model calls; see Usage for what it counts toward. Read the result with get_environment_readiness.
     operation: {method: POST, path: "/simulate/api/harness-environments/{id}/capabilities/recheck/"}
     access: write
     open_world: true
