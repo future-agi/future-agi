@@ -40,9 +40,15 @@ export function readyEnvironmentFrom(release) {
   const type = catalogue?.channel === "voice" ? "voice" : "chat";
   const records = catalogue?.records || {};
   const apps = catalogue?.apps || [];
+  // A private copy reads as the world it was made from (env-world-customize).
+  const source = release.derived_from || null;
+  const sourceTitle = source ? source.title || titleOf(source.name) : null;
   return {
     id: release.id,
-    name: catalogue?.title || titleOf(release.name),
+    name: sourceTitle
+      ? `${sourceTitle} · copy`
+      : catalogue?.title || titleOf(release.name),
+    copyOf: sourceTitle,
     releaseName: release.name,
     digest: release.digest,
     system: release.system,

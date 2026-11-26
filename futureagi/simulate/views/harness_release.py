@@ -20,6 +20,7 @@ from simulate.serializers.harness_release import (
     HarnessHostedAgentRequestSerializer,
     HarnessHostedAgentResponseSerializer,
     HarnessReleaseAgentRequestSerializer,
+    HarnessReleaseCustomizeRequestSerializer,
     HarnessReleaseFitRequestSerializer,
     HarnessReleaseFitResponseSerializer,
     HarnessReleaseListResponseSerializer,
@@ -120,6 +121,23 @@ class HarnessReleaseViewSet(viewsets.ViewSet):
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
+
+    @viewer_denied("customize a ready environment")
+    @validated_request(
+        request_serializer=HarnessReleaseCustomizeRequestSerializer,
+        responses={
+            202: HarnessJobReadSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=False, methods=["post"])
+    def customize(self, request):
+        """Build a private copy of a ready environment with the person's change. The builder
+        starts from the ready world; the copy is sealed as this organization's own release and
+        the original stays as it was. The job is followed like any harness job."""
+        return HostedHarnessProvider().create_customization(request)
 
 
 class HarnessAdaptationViewSet(viewsets.ViewSet):

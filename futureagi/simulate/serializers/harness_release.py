@@ -68,6 +68,14 @@ class HarnessReleaseCatalogueSerializer(serializers.Serializer):
     example_requests = serializers.ListField(child=serializers.CharField())
 
 
+class HarnessReleaseSourceSerializer(serializers.Serializer):
+    """The ready environment a private copy was made from."""
+
+    digest = serializers.CharField()
+    name = serializers.CharField()
+    title = serializers.CharField(allow_null=True)
+
+
 class HarnessReleaseSerializer(serializers.Serializer):
     """An environment release an organization may compose: a system release or its own."""
 
@@ -82,6 +90,10 @@ class HarnessReleaseSerializer(serializers.Serializer):
     catalogue = HarnessReleaseCatalogueSerializer(
         allow_null=True,
         help_text="Null for a release sealed before catalogue metadata existed.",
+    )
+    derived_from = HarnessReleaseSourceSerializer(
+        allow_null=True,
+        help_text="For a private copy, the ready environment it was customized from.",
     )
 
 
@@ -129,6 +141,22 @@ class HarnessReleaseAgentRequestSerializer(serializers.Serializer):
             "the binding is drafted and checked without a session, then the measurable cases run."
         ),
     )
+
+
+class HarnessReleaseCustomizeRequestSerializer(serializers.Serializer):
+    """A private copy of a ready environment with the person's change (contract §7.5's
+    design, started from the ready world)."""
+
+    suite_id = serializers.UUIDField()
+    agent_version_id = serializers.UUIDField(
+        help_text="The agent whose workspace the copy is built in, as every build is.",
+    )
+    name = serializers.CharField(max_length=255)
+    change = serializers.CharField(
+        max_length=4000,
+        help_text="What should change in the copy, in the person's words.",
+    )
+    idempotency_key = serializers.CharField(max_length=255)
 
 
 class HarnessHostedAgentRequestSerializer(serializers.Serializer):

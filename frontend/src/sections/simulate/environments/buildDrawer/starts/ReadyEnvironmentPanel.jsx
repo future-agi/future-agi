@@ -22,12 +22,12 @@ import { paths } from "src/routes/paths";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import {
   createHarnessAdaptation,
+  createHarnessCustomization,
   useHarnessReleaseFit,
 } from "src/api/harness/releases";
 import { harnessJobQuery } from "src/api/simulate-environments/environment";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
-import UiOnlyFlag from "../../components/UiOnlyFlag";
 import ViewerLock from "../../components/ViewerLock";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
@@ -808,13 +808,71 @@ function Line({ label, value }) {
 Line.propTypes = { label: PropTypes.string, value: PropTypes.node };
 
 /* Customize: a private copy built from this world with the change asked for. */
+/*
+  Customize — a private copy of the ready world with the person's change
+  (env-world-customize). The builder starts from this world's records, tools and rules and
+  adds the change; its design opens at once and nothing is sealed until it's approved. The
+  copy is built in the chosen agent's workspace, as every build is, and is then listed with
+  the ready environments as Private.
+*/
 function CustomizeTab({ world }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { canEdit } = useSimulationAccess();
+  const modality = modalityOfWorld(world);
+  const { agents, isLoading } = useWorldAgents(modality);
+  const [agentId, setAgentId] = useState(null);
+  const agent = agents.find((a) => a.id === agentId) || null;
+  const { version, isLoading: versionLoading } = useAdaptedVersion(
+    agent?.sample ? null : agentId,
+  );
   const [change, setChange] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+  // One key per attempt: sending the same copy again is the same job.
+  const [key, setKey] = useState(harnessIdempotencyKey);
+  const ready =
+    canEdit &&
+    Boolean(change.trim()) &&
+    Boolean(version) &&
+    !agent?.sample &&
+    !versionLoading &&
+    !submitting;
+  const why = !canEdit
+    ? ""
+    : !agent
+      ? "Choose the agent whose workspace the copy is built in."
+      : agent.sample
+        ? "A sample agent can't be used. Connect your agent first."
+        : !change.trim()
+          ? "Say what should change in the copy."
+          : "";
+  const build = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const created = await createHarnessCustomization({
+        suite_id: world.suite.id,
+        agent_version_id: version.id,
+        name: `${world.name} copy`,
+        change: change.trim(),
+        idempotency_key: key,
+      });
+      queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
+      navigate(
+        paths.dashboard.simulate.environments.detail(created.job.job_id),
+      );
+    } catch (requestError) {
+      if (requestError?.error === "idempotency_conflict")
+        setKey(harnessIdempotencyKey());
+      setError(errorMessage(requestError));
+      setSubmitting(false);
+    }
+  };
   return (
     <StartCard
       title="Customize a private copy"
       subtitle="Your own editable copy. Its scores won't compare with this release."
-      action={<UiOnlyFlag feature="customizing a ready environment" />}
     >
       <Stack sx={{ p: 2 }} spacing={1.5}>
         <TextField
@@ -823,30 +881,49 @@ function CustomizeTab({ world }) {
           fullWidth
           size="small"
           value={change}
+          disabled={submitting}
           onChange={(e) => setChange(e.target.value)}
           placeholder={`What should change in ${world.name}? For example: refunds over $500 need a supervisor.`}
+          inputProps={{ "aria-label": "What should change", maxLength: 4000 }}
           sx={INPUT_SX}
+        />
+        <AgentPicker
+          agents={agents}
+          isLoading={isLoading}
+          value={agentId}
+          onChange={setAgentId}
+          modality={modality}
+          disabled={submitting}
+          subtitle="The copy is built in this agent's workspace; use it with any agent once it's saved."
         />
         <Typography sx={{ ...T12, color: "text.secondary" }}>
           {
             "The builder starts from this world's records, tools and rules, adds your change, and shows the design for you to approve before it builds."
           }
         </Typography>
+        {error && <Alert severity="error">{error}</Alert>}
       </Stack>
       <Stack direction="row" alignItems="center" spacing={1.5} sx={footSx}>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled
-          startIcon={<Iconify icon="solar:pen-new-square-linear" width={14} />}
-          sx={BTN_SX}
-        >
-          Build my copy
-        </Button>
-        <Typography sx={{ ...T12, color: "text.secondary" }}>
-          Building a copy from a ready environment isn&apos;t connected yet.
-        </Typography>
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.create}>
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            disabled={!ready}
+            onClick={build}
+            startIcon={
+              <Iconify icon="solar:pen-new-square-linear" width={14} />
+            }
+            sx={BTN_SX}
+          >
+            {submitting ? "Starting…" : "Build my copy"}
+          </Button>
+        </ViewerLock>
+        {why && (
+          <Typography sx={{ ...T12, color: "text.secondary" }}>
+            {why}
+          </Typography>
+        )}
       </Stack>
     </StartCard>
   );

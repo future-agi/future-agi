@@ -55,6 +55,11 @@ VIEWER_REFUSALS = [
         "/simulate/api/harness-releases/fit/",
         "check how an agent fits an environment",
     ),
+    (
+        "post",
+        "/simulate/api/harness-releases/customize/",
+        "customize a ready environment",
+    ),
     ("post", "/simulate/api/harness-adaptations/", "adapt an agent"),
     (
         "post",

@@ -382,9 +382,30 @@ def list_releases(organization) -> list[dict[str, Any]]:
                 "catalogue": (environment.manifest.get("metadata") or {}).get(
                     "catalogue"
                 ),
+                "derived_from": _derived_from(organization, environment),
             }
         )
     return results
+
+
+def _derived_from(organization, environment: HarnessEnvironmentRelease):
+    """The ready environment a copy was made from, as its sealed manifest names it; None for
+    one that is no copy, or whose source this organization can't see."""
+    reference = str(environment.manifest.get("derived_from") or "")
+    if not reference.startswith("release:"):
+        return None
+    source = _visible(
+        HarnessEnvironmentRelease, organization, reference.removeprefix("release:")
+    )
+    if source is None:
+        return None
+    return {
+        "digest": source.digest,
+        "name": source.name,
+        "title": ((source.manifest.get("metadata") or {}).get("catalogue") or {}).get(
+            "title"
+        ),
+    }
 
 
 def _check_entries(suite: dict[str, Any]) -> None:
@@ -1918,3 +1939,246 @@ def _run_measurable(job: HostedHarnessJob, composition_id: str) -> HostedHarness
     metadata["adaptation_result"] = {**metadata["adaptation_result"], **outcome}
     job.save(update_fields=["payload", "updated_at"])
     return job
+
+
+# --- customizing a ready environment ----------------------------------------------------------------
+
+# The builder designs in the conversation's workspace (agent-learning-kit `design hosted`), which
+# seals the copy into `design-output/environment` and `design-output/suite` there.
+AUTHORING_WORKSPACE = "/work/authoring"
+DESIGN_OUTPUT = f"{AUTHORING_WORKSPACE}/design-output"
+_DESIGN_NAME = re.compile(r"[^a-z0-9_]+")
+
+
+def customization_of(job: HostedHarnessJob) -> dict[str, Any] | None:
+    value = ((job.payload or {}).get("metadata") or {}).get("customization")
+    return value if isinstance(value, dict) else None
+
+
+def design_name(name: str, source: str, key: str) -> str:
+    """The copy's release name: the person's name as a slug, else the source's with `_copy`, and
+    a short tag from the request so two copies of one world are listed apart."""
+    slug = _DESIGN_NAME.sub("_", name.strip().lower()).strip("_")
+    if not slug or not slug[0].isalpha():
+        slug = f"{source}_copy"
+    tag = hashlib.sha256(key.encode()).hexdigest()[:6]
+    return f"{slug[:60]}_{tag}"
+
+
+def customization_payload(
+    organization,
+    *,
+    suite: HarnessSuiteRelease,
+    agent: dict[str, Any],
+    agent_version: AgentVersion,
+    name: str,
+    change: str,
+    idempotency_key: str,
+    secret_values: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """The validated hosted job payload that builds a private copy of `suite`'s world with the
+    person's `change`. The builder starts from the ready world (`metadata.design.template`) and
+    the copy is sealed as this organization's own release; the original stays as it was. The
+    agent version names whose workspace the copy is built in, as every build does."""
+    from simulate.serializers.harness_job import HarnessJobCreateSerializer
+
+    if suite.organization_id not in (None, organization.id):
+        raise _error("release_not_found", "suite release not found", 404)
+    if agent_version.organization_id != organization.id:
+        raise _error("agent_version_not_found", "agent version not found", 404)
+    change = change.strip()
+    if not change:
+        raise _error("customization_invalid", "say what should change in the copy")
+    chain = _chain(suite)
+    if len(chain) != 1:
+        raise _error(
+            "customization_unsupported",
+            "only a ready environment that extends no other can be customized",
+            422,
+        )
+    serializer = HarnessJobCreateSerializer(
+        data={
+            "agent": agent,
+            "artifacts": {"level": "full"},
+            # A copy is designed, not run: the field only needs a count the job admits.
+            "scenario_count": max(len(suite.personas), 1),
+            "metadata": {"name": name},
+            **({"credential_values": secret_values} if secret_values else {}),
+        }
+    )
+    if not serializer.is_valid():
+        raise _error(
+            "customization_invalid", json.dumps(serializer.errors, default=str)
+        )
+    payload = serializer.validated_data
+    connector = payload["agent"]["connector"]
+    if (connector, payload["agent"].get("mode")) not in COMPOSABLE:
+        raise _error(
+            "compose_unsupported",
+            f"{connector} agents can't build a copy yet; retell_chat, retell and vapi agents "
+            "in provider_import mode can",
+        )
+    _check_modality(agent_version, connector)
+    [environment] = chain
+    template = {
+        "environment": [
+            {
+                "digest": environment.digest,
+                "name": environment.name,
+                "object_key": environment.object_key,
+            }
+        ],
+        "suite": {
+            "digest": suite.digest,
+            "name": suite.name,
+            "object_key": suite.object_key,
+        },
+    }
+    payload["metadata"]["design"] = {
+        "name": design_name(name, environment.name, idempotency_key),
+        "requirements": change,
+        "modality": "voice" if MODALITY[connector] == "voice" else "chat",
+        "template": template,
+    }
+    payload["metadata"]["customization"] = {
+        "source": {
+            "suite_id": str(suite.id),
+            "suite_digest": suite.digest,
+            "suite_name": suite.name,
+            "environment_id": str(environment.id),
+            "environment_digest": environment.digest,
+            "environment_name": environment.name,
+        },
+        "change": change,
+        "agent_version_id": str(agent_version.id),
+    }
+    document: dict[str, Any] = json.loads(json.dumps(payload, default=str))
+    return document
+
+
+def customization_launch_for(job: HostedHarnessJob) -> AdaptationLaunch | None:
+    """The releases a copy is designed from, and the design's control process."""
+    if customization_of(job) is None:
+        return None
+    template = ((job.payload or {}).get("metadata") or {})["design"]["template"]
+    uploads, prepare_command = _release_archives(
+        job.organization, template["environment"], template["suite"]
+    )
+    return AdaptationLaunch(
+        uploads=tuple(uploads),
+        prepare_command=prepare_command,
+        command=(
+            "python -m fi.alk.harness.design hosted --job /work/job.json "
+            f"--releases {RELEASES_ROOT} --workspace {AUTHORING_WORKSPACE}"
+        ),
+    )
+
+
+def customization_settled(job: HostedHarnessJob) -> bool:
+    """A copy whose outcome is recorded: how its sandbox ends no longer changes it."""
+    return customization_of(job) is not None and job.state in _TERMINAL_STATES
+
+
+def _customization_failure(code: str, message: str) -> dict[str, Any]:
+    return {
+        "domain": "environment",
+        "stage": "designing",
+        "code": code,
+        "message": message[:1000],
+    }
+
+
+def complete_customization(
+    job: HostedHarnessJob, output: Path | None
+) -> HostedHarnessJob:
+    """Finish a copy from its `design-output`: a completed design registers the sealed
+    environment and suite as the organization's own releases and records them in
+    `metadata.customization_result`; anything else fails the job with the reason."""
+    with transaction.atomic():
+        locked = HostedHarnessJob._base_manager.select_for_update().get(id=job.id)
+        if not customization_settled(locked):
+            _settle_customization(locked, output)
+    return locked
+
+
+def _customized(
+    job: HostedHarnessJob, output: Path
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The copy's registered releases, or why there are none."""
+    result = _read_object(output, "result.json")
+    if result.get("status") != "completed":
+        reported = result.get("failure")
+        failure: dict[str, Any] = reported if isinstance(reported, dict) else {}
+        return {}, _customization_failure(
+            str(failure.get("code") or "design_failed"),
+            str(failure.get("message") or "the design did not finish"),
+        )
+    source = (customization_of(job) or {}).get("source") or {}
+    environment, suite = register_release(
+        output / "environment", output / "suite", organization=job.organization
+    )
+    if environment.manifest.get("derived_from") != (
+        f"release:{source.get('environment_digest')}"
+    ):
+        raise _error(
+            "customization_lineage_invalid",
+            "the sealed copy does not name the ready environment it was made from",
+        )
+    return {
+        "environment_release_id": str(environment.id),
+        "environment_name": environment.name,
+        "suite_release_id": str(suite.id),
+        "suite_name": suite.name,
+        "scenario_count": len(suite.manifest.get("scenarios") or []),
+    }, None
+
+
+def _settle_customization(job: HostedHarnessJob, output: Path | None) -> None:
+    """Record the outcome of a copy; the caller holds its row lock."""
+    from simulate.models import HostedHarnessConversation
+
+    result: dict[str, Any] = {}
+    failure: dict[str, Any] | None = None
+    canceled = bool(job.cancel_requested_at or job.deleted)
+    if not canceled:
+        if output is None or not (Path(output) / "result.json").is_file():
+            failure = _customization_failure(
+                "design_result_missing", "the design left no readable result.json"
+            )
+        else:
+            try:
+                result, failure = _customized(job, Path(output))
+            except HostedHarnessError as exc:
+                failure = _customization_failure(exc.code, exc.message)
+    now = timezone.now()
+    payload = dict(job.payload)
+    payload["metadata"] = {
+        **(payload.get("metadata") or {}),
+        "customization_result": result or None,
+    }
+    job.payload = payload
+    job.state = (
+        HostedHarnessJob.State.CANCELED
+        if canceled
+        else HostedHarnessJob.State.FAILED
+        if failure
+        else HostedHarnessJob.State.COMPLETED
+    )
+    job.current_stage = job.state
+    job.failure = failure
+    job.terminal_at = now
+    job.content_updated_at = now
+    job.save(
+        update_fields=[
+            "payload",
+            "state",
+            "current_stage",
+            "failure",
+            "terminal_at",
+            "content_updated_at",
+            "updated_at",
+        ]
+    )
+    HostedHarnessConversation.no_workspace_objects.filter(job=job).update(
+        blocking_input=None, updated_at=now
+    )

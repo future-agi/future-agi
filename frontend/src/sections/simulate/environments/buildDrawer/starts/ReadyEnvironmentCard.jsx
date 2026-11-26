@@ -54,6 +54,7 @@ export default function ReadyEnvironmentCard({ world, onOpen }) {
             {world.name}
           </Typography>
           <QuietTag>{world.typeLabel}</QuietTag>
+          {world.system === false && <QuietTag>Private</QuietTag>}
         </Stack>
         <Typography sx={clampSx}>{world.tagline}</Typography>
         <Typography
@@ -68,11 +69,7 @@ export default function ReadyEnvironmentCard({ world, onOpen }) {
           {`${world.scenarioCount} scenarios · ${world.tools} tools`}
         </Typography>
       </ButtonBase>
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{ px: 1.5, pb: 1.5, pt: 0.25 }}
-      >
+      <Stack direction="row" spacing={1} sx={{ px: 1.5, pb: 1.5, pt: 0.25 }}>
         <Button
           size="small"
           variant="contained"

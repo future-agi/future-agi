@@ -1707,6 +1707,68 @@ class HostedHarnessProvider:
             request_digest=request_digest,
         )
 
+    def create_customization(self, request) -> Response:
+        """Build a private copy of a ready environment with the person's change: a hosted job
+        whose builder starts from the ready world (`metadata.design.template`)."""
+        from simulate.services.harness_releases import (
+            connected_agent_connection,
+            customization_payload,
+            organization_agent_version,
+            visible_suite,
+        )
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            find_replayed_job,
+        )
+
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                build_error_envelope(
+                    "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        workspace = request_workspace(request)
+        request_digest = canonical_digest(json.loads(json.dumps(data, default=str)))
+        try:
+            replayed = find_replayed_job(
+                organization,
+                {},
+                idempotency_key=data["idempotency_key"],
+                workspace=workspace,
+                request_digest=request_digest,
+            )
+            if replayed is not None:
+                return self._dispatch(request, replayed)
+            agent_version = organization_agent_version(
+                organization, workspace, data["agent_version_id"]
+            )
+            suite = visible_suite(organization, data["suite_id"])
+            agent, secret_values = connected_agent_connection(
+                organization, agent_version
+            )
+            payload = customization_payload(
+                organization,
+                suite=suite,
+                agent=agent,
+                agent_version=agent_version,
+                name=data["name"],
+                change=data["change"],
+                idempotency_key=data["idempotency_key"],
+                secret_values=secret_values,
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return self._submit(
+            request,
+            organization,
+            payload,
+            data["idempotency_key"],
+            request_digest=request_digest,
+        )
+
     def _submit(
         self,
         request,
