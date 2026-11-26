@@ -186,7 +186,8 @@ export default function RunDetail({
     identity?.status === "running" || identity?.status === "cancelling";
   const stopNotice = stopNoticeOf(identity, live);
   // A new diagnosis needs enough connected calls and a failing one; the server
-  // refuses the rest. Judged once the run has loaded, so it never flashes.
+  // refuses the rest. Judged once the run has loaded; until then the server's refusal
+  // is the guard, and the drawer shows it.
   const ruleBlocked = identity
     ? debugFailuresBlockedReason({
         connectedCalls: stats.connected,
@@ -478,9 +479,7 @@ export default function RunDetail({
                 onClick={() => {
                   setFixTargets({
                     keys: importedCount ? epoch.keys : undefined,
-                    note: importedCount
-                      ? epochTargetsNote(epoch)
-                      : undefined,
+                    note: importedCount ? epochTargetsNote(epoch) : undefined,
                   });
                   setFixLaunching(true);
                 }}
@@ -792,7 +791,9 @@ export default function RunDetail({
           initialTargets={fixTargets?.keys}
           initialNote={fixTargets?.note}
           diagnosisUnavailable={
-            headerLaunchOpen && !diagnosis.isLoading && !diagnosis.loadError &&
+            headerLaunchOpen &&
+            !diagnosis.isLoading &&
+            !diagnosis.loadError &&
             diagnosis.analysis.status !== "completed"
           }
         />
