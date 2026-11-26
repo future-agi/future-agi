@@ -3327,7 +3327,7 @@
 
 **Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu, and can debug the failures of a finished Run Simulation run once it has 15 connected calls
 
-**Spec:** `flows/simulate/existing-customer-pages.spec.ts:88`
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:89`
 
 **Tags:** —
 
@@ -3336,7 +3336,7 @@
 1. read the Simulate menu
 2. open Scenarios and Run Simulation from the menu
 3. open a finished Run Simulation run with 14 connected calls and point at Debug failures
-4. open a finished Run Simulation run with 15 connected calls
+4. open a finished Run Simulation run with 15 connected calls and 14 completed calls
 
 **Backend state verified:**
 
@@ -3347,7 +3347,7 @@
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
 - at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."
-- at 15 connected calls Debug failures is enabled
+- at 15 connected calls and 14 completed calls Debug failures is enabled
 
 ### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
 
