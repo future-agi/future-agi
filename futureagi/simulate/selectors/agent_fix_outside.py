@@ -200,9 +200,13 @@ def run_held_back(source_run: HostedHarnessJob, ran: list[LaunchScenario]) -> se
 def hidden_launch_options(options: LaunchOptions, held_back: set[str]) -> LaunchOptions:
     """A run's launch options with no held-back case (run_held_back) in them: the read every
     caller but a person's signed-in session gets. A held-back case is a failing one, so
-    with it go its failed sub-goals and its place in the suggested targets."""
+    with it go its failed sub-goals, its place in the suggested targets, and the list of
+    the cases an Epoch would hold back (empty, as on a hidden Epoch read)."""
     return options.model_copy(
         update={
+            "held_back_scenario_keys": (
+                None if options.held_back_scenario_keys is None else []
+            ),
             "scenarios": [one for one in options.scenarios if one.key not in held_back],
             "suggested": options.suggested.model_copy(
                 update={

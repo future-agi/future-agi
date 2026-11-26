@@ -1877,11 +1877,17 @@ class TestLaunchOptionsHoldBack:
         shown = {one["key"] for one in options["scenarios"]}
         assert shown == set(self.FAILING) - held
         assert set(options["suggested"]["target_scenario_keys"]) == shown
+        # Nor does the list of the cases a launch would hold back name them.
+        assert options["held_back_scenario_keys"] == []
+        text = json.dumps(options)
+        assert [key for key in held if f'"{key}"' in text] == []
 
     def test_a_signed_in_session_reads_every_case(self, browser_client, source_run):
         options = self._options(browser_client, source_run)
 
         assert {one["key"] for one in options["scenarios"]} == set(self.FAILING)
+        assert options["held_back_scenario_keys"]
+        assert set(options["held_back_scenario_keys"]) <= set(self.FAILING)
 
 
 ENVIRONMENTS = "/simulate/api/harness-environments"
