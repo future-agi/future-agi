@@ -565,6 +565,9 @@ export default function RepoAgentFlow({
 
   return (
     <ConnectSteps
+      agentName={pickedAgent?.name || ""}
+      codeProject={pickedAgent ? pickedAgent.tracing?.project || null : undefined}
+      traced={pickedAgent ? frameworkTuningOf(pickedAgent.framework)?.traced : undefined}
       title={title}
       subtitle={`${
         !initial?.host || initial?.direct
@@ -1000,7 +1003,10 @@ export default function RepoAgentFlow({
 
         {/* What improvements can change in the agent picked, before it's read. */}
         {pickedAgent && (
-          <FrameworkTuning tuning={frameworkTuningOf(pickedAgent.framework)} />
+          <FrameworkTuning
+            tuning={frameworkTuningOf(pickedAgent.framework)}
+            hideTraces
+          />
         )}
         {direct && !pastedLink && (!viaGithub || !!pickedAgent) && (
           <Field

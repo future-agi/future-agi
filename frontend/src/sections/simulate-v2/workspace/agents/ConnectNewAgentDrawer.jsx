@@ -81,9 +81,16 @@ export default function ConnectNewAgentDrawer({
         origin: "connect",
       },
     ];
+    /* The tracing project the connect linked — waiting for its first trace,
+       or settled — saved on the agent the same way Agents → New agent does. */
+    const settled = source.observeChosenAt
+      ? { observeChosenAt: source.observeChosenAt }
+      : source.observePending
+        ? { observePending: source.observePending }
+        : null;
     connectAgent({
       ...record,
-      values: { ...(record.values || {}), setupStartedAt: now },
+      values: { ...(record.values || {}), ...settled, setupStartedAt: now },
       versions,
     });
     onConnected({

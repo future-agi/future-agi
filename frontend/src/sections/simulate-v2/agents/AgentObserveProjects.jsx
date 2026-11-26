@@ -68,7 +68,7 @@ export function ObserveProjectCard({ agent }) {
             flexShrink: 0,
           }}
         >
-          Observe project
+          Tracing project
           <InfoTip text="Its traces or call logs feed the Error Feed. This link is what lets Fix find this agent behind an issue." />
         </Typography>
         {project ? (

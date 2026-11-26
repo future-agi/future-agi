@@ -30,7 +30,11 @@ import { observeProjectById } from "../_mock/connectAgent";
 
 /* A project said by name — a Tracing project's ID is a UUID. */
 const nameOf = (id) => observeProjectById(id)?.name || id;
-import { observeProjectOf, pendingProjectOf } from "./observeProject";
+import {
+  lacksProject,
+  observeProjectOf,
+  pendingProjectOf,
+} from "./observeProject";
 import { resolveObserve } from "../_mock/connectAgent";
 import { ObserveProjectStep } from "./connect/ConnectAboutStep";
 import { showsSetup, testedInLine } from "./agentViewUtils";
@@ -71,6 +75,13 @@ export default function AgentSetupCard({
   const { dispatch } = useSimStore();
   /* The traces setup, opened in place under the two paths. */
   const [choosing, setChoosing] = useState(false);
+  /* Set up tracing on a project already linked (at connect or here): only
+     how to send traces — the project was chosen once, so it isn't asked
+     again. Change project opens the full choice. */
+  const [setupOnly, setSetupOnly] = useState(false);
+  useEffect(() => {
+    if (!choosing) setSetupOnly(false);
+  }, [choosing]);
   const [observeChoice, setObserveChoice] = useState(null);
   /* A new project: the instrumentor picked, and the wait for its first trace. */
   const [instrumentorPick, setInstrumentorPick] = useState(null);
@@ -87,6 +98,15 @@ export default function AgentSetupCard({
   const [prDialog, setPrDialog] = useState(null);
   /* Waiting on a project with nothing in it yet: its first trace settles it. */
   const pendingId = agent?.values?.observePending?.project || null;
+  /* Opened from an environment's "Set up tracing": straight to how to send traces. */
+  const tracingAsked =
+    new URLSearchParams(window.location.search).get("tracing") === "setup";
+  useEffect(() => {
+    if (!tracingAsked || !pendingId) return;
+    setObserveChoice({ mode: "create", id: pendingId });
+    setSetupOnly(true);
+    setChoosing(true);
+  }, [tracingAsked, pendingId]);
   const saveObserveRef = useRef(null);
   useEffect(() => {
     if (traceWait !== "received" || choosing || !pendingId) return;
@@ -96,7 +116,14 @@ export default function AgentSetupCard({
     );
     setTraceWait("idle");
   }, [traceWait, choosing, pendingId]);
-  if (!showsSetup(agent)) return null;
+  /* An agent with no tracing project keeps the card, even hidden — its
+     environment waits on it. So does a link that asks for the tracing setup. */
+  if (
+    !showsSetup(agent) &&
+    !lacksProject(agent, state, agents) &&
+    !tracingAsked
+  )
+    return null;
   const v = agent.values || {};
 
   const source = agentSourceOf(agent);
@@ -125,15 +152,25 @@ export default function AgentSetupCard({
   /* Only while the project is still this agent's — another agent may have taken it. */
   const pending =
     !tracesDone && !pulls ? pendingProjectOf(agent, state, agents) : null;
+  /* No tracing project at all — an agent from before every connect linked
+     one. Its environment waits for one: the project is what ties the agent,
+     its real calls and the environments that test it together. A new project
+     with no trace yet counts — building an environment never waits on traces. */
+  const noProject = !project;
   const provider = PROVIDER_LABELS[v.provider] || source.label;
   /* What the repository scan says about tracing — evidence, not a name match. */
   const scan = source.kind === "repo" ? scannedTracingOf(agent) : null;
   const envDone = (agent.usedIn || []).length > 0;
   /* Unconfirmed: the project it's linked to for now, else the existing one
      its traces most likely land in — suggested before a new, empty one. */
+  /* A new project linked when it was connected (a hosted agent whose calls
+     aren't pulled yet): ours, so never offered as "looks like it lands in". */
+  const madeAtConnect =
+    !!project && v.observePending?.project === project.project;
   const suggestedBase =
     !tracesDone &&
     !pending &&
+    !madeAtConnect &&
     (scan?.project
       ? { id: scan.project, name: scan.project, evidence: scan.file }
       : project
@@ -162,6 +199,15 @@ export default function AgentSetupCard({
     arrived) settles it; a new one with nothing in it yet is linked and left
     pending, so nothing claims Error Feed is watching an empty project.
   */
+  /* Linked from a card that was reopened only because there was no
+     project: it stays open, so Build environment is right there. */
+  const saveLinked = (patch, message) =>
+    onSaveValues(
+      noProject && v.setupDismissedAt
+        ? { ...patch, setupDismissedAt: null }
+        : patch,
+      message,
+    );
   const saveObserve = (
     choice = observeChoice,
     { firstTrace = false, pendingVia: via = null, pr = null } = {},
@@ -187,7 +233,7 @@ export default function AgentSetupCard({
     setChoosing(false);
     setTraceWait("idle");
     if (pendingVia) {
-      onSaveValues(
+      saveLinked(
         {
           observePending: {
             project: chosen.id,
@@ -202,7 +248,7 @@ export default function AgentSetupCard({
           : `${nameOf(chosen.id)} is linked — it settles when its first trace arrives.`,
       );
       /* Saved by hand: start waiting for the first trace straight away. */
-      if (pendingVia === "manual") setTraceWait("listening");
+      /* Saved by hand: nothing to listen for until tracing is in its code. */
       return;
     }
     const at = new Date().toISOString();
@@ -219,7 +265,7 @@ export default function AgentSetupCard({
       });
     /* A hosted agent: observability on — its calls come in with the key it already has. */
     if (pulls) {
-      onSaveValues(
+      saveLinked(
         {
           observeChosenAt: at,
           observePending: null,
@@ -234,7 +280,7 @@ export default function AgentSetupCard({
       );
       return;
     }
-    onSaveValues(
+    saveLinked(
       {
         observeChosenAt: at,
         observePending: null,
@@ -264,14 +310,31 @@ export default function AgentSetupCard({
       ? `Calls are pulled with the key it already has. Choose the Observe project.`
       : kind === "builtin"
         ? "Choose the Observe project its production calls land in."
-        : scan && !scan.project
-          ? `No traceAI in its code yet. Add it, or link a project it already sends to.`
-          : "Add traceAI to its code, or link the project it already sends to.";
+        : kind === "endpoint" && v.phoneNumber
+          ? "Link the project its call traces already land in, or create one. Wherever it runs, traceAI sends them there."
+          : scan && !scan.project
+            ? `No traceAI in its code yet. Add it, or link a project it already sends to.`
+            : "Add traceAI to its code, or link the project it already sends to.";
 
   /* What blocks a run — only what applies. */
   const foundChecked = !!v.foundCheckedAt;
   const foundNeeded = needsFoundCheck(agent);
   const gates = [
+    /* No tracing project at all (an agent from before every connect linked
+       one): its environment and its fixes wait on this. */
+    noProject && {
+      id: "project",
+      done: false,
+      title: "Link a tracing project",
+      body: "Where its real calls land — Error Feed and Fix find this agent through it. Pick the project it already sends to, or create one; it needn't have traces yet. Its environment waits for this.",
+      action: {
+        label: "Link",
+        onClick: () => {
+          setObserveChoice(null);
+          setChoosing(true);
+        },
+      },
+    },
     isCodeAgent(agent) && {
       id: "found",
       done: foundChecked && !reviewing,
@@ -426,75 +489,97 @@ export default function AgentSetupCard({
               : "Get its traces",
       body: tracesDone
         ? pulls
-          ? `Observe project · its ${provider} calls are pulled in, and Error Feed watches them`
-          : "Observe project · Error Feed watches its real calls"
+          ? `Tracing project · its ${provider} calls are pulled in, and Error Feed watches them`
+          : "Tracing project · Error Feed watches its real calls"
         : pending
           ? prOpen
             ? `Draft PR #${pr.number} on ${pr.repo} adds traceAI. Merge and deploy it — the first trace settles ${pending.project}.`
             : pr && pending.via === "pr"
               ? `PR #${pr.number} is merged. Deploy it — the first trace from production settles ${pending.project}.`
-              : `In ${pending.project} — nothing has arrived yet. Once traceAI is in its code and it runs, the first trace settles it.`
-          : suggested
-            ? `${
-                suggested.evidence
-                  ? `Its code already sends traces to ${suggested.name} (${suggested.evidence}).`
-                  : `Its traces look like they land in ${suggested.name}${suggested.traces ? ` (${suggested.traces.split(" · ")[0]})` : ""}.`
-              }${suggested.owner ? ` It's linked to ${suggested.owner} now — review moving it here.` : " Confirm it, or pick another project."}`
-            : tracesHow,
+              : `Linked to ${pending.project} — empty until traceAI sends its first trace.`
+          : pulls && madeAtConnect
+            ? `Linked to ${project.name} — its ${provider} calls come in once observability is on.`
+            : suggested
+              ? `${
+                  suggested.evidence
+                    ? `Its code already sends traces to ${suggested.name} (${suggested.evidence}).`
+                    : `Its traces look like they land in ${suggested.name}${suggested.traces ? ` (${suggested.traces.split(" · ")[0]})` : ""}.`
+                }${suggested.owner ? ` It's linked to ${suggested.owner} now — review moving it here.` : " Confirm it, or pick another project."}`
+              : noProject
+                ? "Once its tracing project is linked above: add traceAI where it runs, or link a project it already sends to."
+                : tracesHow,
       unlocks: tracesDone
         ? null
         : pending
           ? "Error Feed starts watching with the first trace."
           : "Error Feed finds issues in real calls, and Fix can repair them.",
       done: tracesDone,
-      action: choosing
-        ? null
-        : tracesDone
-          ? {
-              label: "Change",
-              onClick: () => {
-                setObserveChoice({ mode: "existing", id: project.project });
-                setChoosing(true);
-              },
-            }
-          : pending
-            ? prOpen
-              ? {
-                  label: "Mark merged",
-                  tooltip:
-                    "Once the pull request is merged on GitHub. The tracing commit isn't a new agent version.",
-                  onClick: mergeTracingPr,
-                }
-              : traceWait === "idle"
-                ? {
-                    label: "Listen for traces",
-                    onClick: () => setTraceWait("listening"),
-                  }
-                : null
-            : suggested
-              ? suggested.owner
-                ? {
-                    label: `Review ${suggested.name}`,
-                    onClick: () => {
-                      setObserveChoice({ mode: "existing", id: suggested.id });
-                      setChoosing(true);
-                    },
-                  }
-                : {
-                    label: `Confirm ${suggested.name}`,
-                    onClick: () =>
-                      saveObserve({ mode: "existing", id: suggested.id }),
-                  }
-              : {
-                  label:
-                    kind === "platform" || kind === "builtin"
-                      ? "Choose project"
-                      : "Connect traces",
-                  onClick: () => {
-                    setObserveChoice(null);
-                    setChoosing(true);
-                  },
+      action:
+        choosing || noProject
+          ? null
+          : tracesDone
+            ? {
+                label: "Change",
+                onClick: () => {
+                  setObserveChoice({ mode: "existing", id: project.project });
+                  setChoosing(true);
                 },
+              }
+            : pending
+              ? prOpen
+                ? {
+                    label: "Mark merged",
+                    tooltip:
+                      "Once the pull request is merged on GitHub. The tracing commit isn't a new agent version.",
+                    onClick: mergeTracingPr,
+                  }
+                : traceWait === "idle"
+                  ? {
+                      /* The setup is the next thing to do — listening is for once it's in. */
+                      label: "Set up tracing",
+                      onClick: () => {
+                        setObserveChoice({
+                          mode: "create",
+                          id: pending.project,
+                        });
+                        setSetupOnly(true);
+                        setChoosing(true);
+                      },
+                    }
+                  : null
+              : pulls && madeAtConnect
+                ? {
+                    label: "Turn on observability",
+                    onClick: () =>
+                      saveObserve({ mode: "existing", id: project.project }),
+                  }
+                : suggested
+                  ? suggested.owner
+                    ? {
+                        label: `Review ${suggested.name}`,
+                        onClick: () => {
+                          setObserveChoice({
+                            mode: "existing",
+                            id: suggested.id,
+                          });
+                          setChoosing(true);
+                        },
+                      }
+                    : {
+                        label: `Confirm ${suggested.name}`,
+                        onClick: () =>
+                          saveObserve({ mode: "existing", id: suggested.id }),
+                      }
+                  : {
+                      label:
+                        kind === "platform" || kind === "builtin"
+                          ? "Choose project"
+                          : "Connect traces",
+                      onClick: () => {
+                        setObserveChoice(null);
+                        setChoosing(true);
+                      },
+                    },
       secondary:
         !tracesDone && suggested && !suggested.owner && !choosing
           ? {
@@ -504,13 +589,10 @@ export default function AgentSetupCard({
                 setChoosing(true);
               },
             }
-          : pending && !choosing && traceWait === "idle"
+          : pending && !choosing && traceWait === "idle" && !prOpen
             ? {
-                label: "Change",
-                onClick: () => {
-                  setObserveChoice({ mode: "create", id: pending.project });
-                  setChoosing(true);
-                },
+                label: "Listen for traces",
+                onClick: () => setTraceWait("listening"),
               }
             : null,
     },
@@ -532,8 +614,18 @@ export default function AgentSetupCard({
       action: envDone
         ? { label: "View", onClick: () => onTab("environments") }
         : onBuild
-          ? { label: "Build environment", onClick: () => onBuild() }
+          ? {
+              label: "Build environment",
+              onClick: () => onBuild(),
+              ...(noProject && {
+                disabled: true,
+                tooltip:
+                  "Link a tracing project first: pick the one it sends to, or create one. It needn't have any traces yet.",
+              }),
+            }
           : null,
+      ...(noProject &&
+        !envDone && { waiting: "After its tracing project is linked" }),
     },
   ];
 
@@ -571,7 +663,9 @@ export default function AgentSetupCard({
         )}
         <Box flex={1} />
         {/* A pending project is settled from here — hiding it would leave nothing to listen with. */}
-        {!foundNeeded && !pending && (
+        {/* Hideable once it has a project — waiting for a first trace too:
+            an agent that isn't live may never send one. */}
+        {!foundNeeded && !noProject && (
           <Button
             variant="outlined"
             size="small"
@@ -667,19 +761,47 @@ export default function AgentSetupCard({
           }}
         >
           <Typography sx={{ typography: "s2", fontWeight: 600, mb: 1 }}>
-            Get its traces
+            {setupOnly
+              ? "Set up tracing"
+              : noProject
+                ? "Link a tracing project"
+                : "Get its traces"}
           </Typography>
-          <ObserveProjectStep
-            agentName={agent.name}
-            agentKey={agent.key}
-            value={observeChoice}
-            onChange={setObserveChoice}
-          />
+          {setupOnly ? (
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  color: "text.secondary",
+                  flex: 1,
+                  minWidth: 0,
+                  "& b": { color: "text.primary", fontWeight: 600 },
+                }}
+              >
+                Traces go to <b>{nameOf(chosen.id)}</b>.
+              </Typography>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => setSetupOnly(false)}
+                sx={{ flexShrink: 0 }}
+              >
+                Change project
+              </Button>
+            </Stack>
+          ) : (
+            <ObserveProjectStep
+              agentName={agent.name}
+              agentKey={agent.key}
+              value={observeChoice}
+              onChange={setObserveChoice}
+            />
+          )}
           {/* A new project has nothing coming in yet — the same steps as Observe's New project, then its first trace. */}
           {sendsCode && chosen.mode === "create" && !pickingExisting && (
             <Box sx={{ mt: 2 }}>
               <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                Then start sending traces
+                {setupOnly ? "Send its traces" : "Then start sending traces"}
               </Typography>
               <Typography
                 sx={{ typography: "s3", color: "text.subtitle", mb: 0.75 }}
@@ -761,7 +883,7 @@ export default function AgentSetupCard({
                   minWidth: 0,
                 }}
               >
-                {`${nameOf(chosen.id)} traces ${takenFrom}. Moving it here takes it from ${takenFrom} — its issues are this agent's from now on, and a fix ${takenFrom} already started stays with ${takenFrom}.`}
+                {`${nameOf(chosen.id)} traces ${takenFrom}. Moving it here takes it from ${takenFrom} — its issues are this agent's from now on, and a fix ${takenFrom} already started stays with ${takenFrom}. ${takenFrom} is left without a tracing project and needs one before its next environment.`}
               </Typography>
             )}
             <Button
@@ -772,10 +894,22 @@ export default function AgentSetupCard({
               }}
               sx={{ color: "text.secondary" }}
             >
-              Cancel
+              {setupOnly ? "Close" : "Cancel"}
             </Button>
             {/* New and empty: linked now, settled by its first trace. */}
-            {pickingExisting ? (
+            {setupOnly ? (
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={() => {
+                  setChoosing(false);
+                  setTraceWait("listening");
+                }}
+              >
+                Listen for traces
+              </Button>
+            ) : pickingExisting ? (
               <Button size="small" variant="contained" color="primary" disabled>
                 Pick a project
               </Button>
@@ -907,9 +1041,21 @@ AgentSetupCard.propTypes = {
 };
 
 /* One way forward: where it applies, what to do, what it unlocks — or, done, where it stands. */
-function PathCell({ eyebrow, title, body, unlocks, done, action, secondary }) {
+function PathCell({
+  eyebrow,
+  title,
+  body,
+  unlocks,
+  done,
+  action,
+  secondary,
+  needed,
+  waiting,
+}) {
   return (
-    <Stack spacing={0.5} sx={{ px: 2, py: 1.75, minWidth: 0 }}>
+    /* Full height of the row, button at the bottom: both ways forward line
+       their buttons up whatever their text runs to. */
+    <Stack spacing={0.5} sx={{ px: 2, py: 1.75, minWidth: 0, height: "100%" }}>
       <Stack direction="row" alignItems="center" spacing={0.75}>
         <Typography
           sx={{
@@ -929,6 +1075,11 @@ function PathCell({ eyebrow, title, body, unlocks, done, action, secondary }) {
             sx={{ color: "text.secondary" }}
           />
         )}
+        {(needed || waiting) && (
+          <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            {`· ${needed || waiting}`}
+          </Typography>
+        )}
       </Stack>
       <Typography sx={{ typography: "s1", fontWeight: 600 }}>
         {title}
@@ -942,17 +1093,25 @@ function PathCell({ eyebrow, title, body, unlocks, done, action, secondary }) {
         </Typography>
       )}
       {action && (
-        <Stack direction="row" spacing={0.5} sx={{ pt: 0.75 }}>
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{ pt: 0.75, mt: "auto !important" }}
+        >
           <Tooltip arrow title={action.tooltip || ""}>
-            {/* The way forward is the card's one main action. */}
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={action.onClick}
-            >
-              {action.label}
-            </Button>
+            {/* The way forward is the card's one main action. A span keeps
+                the tooltip on a disabled button. */}
+            <span>
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                disabled={!!action.disabled}
+                onClick={action.onClick}
+              >
+                {action.label}
+              </Button>
+            </span>
           </Tooltip>
           {secondary && (
             <Button variant="outlined" size="small" onClick={secondary.onClick}>
@@ -965,6 +1124,10 @@ function PathCell({ eyebrow, title, body, unlocks, done, action, secondary }) {
   );
 }
 PathCell.propTypes = {
+  /* "Needed first" — the step the other one waits on. */
+  needed: PropTypes.string,
+  /* What this step waits on, said beside its eyebrow. */
+  waiting: PropTypes.string,
   eyebrow: PropTypes.string,
   title: PropTypes.string,
   body: PropTypes.node,

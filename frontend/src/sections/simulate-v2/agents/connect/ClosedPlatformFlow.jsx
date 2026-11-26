@@ -147,6 +147,7 @@ export default function ClosedPlatformFlow({
 
   return (
     <ConnectSteps
+      agentName={name}
       title={title}
       subtitle="Their configuration is closed, so we test the agent the way a customer reaches it. Epochs end in a suggested fix."
       steps={STEPS}

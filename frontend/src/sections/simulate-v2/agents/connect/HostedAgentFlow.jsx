@@ -381,6 +381,7 @@ export default function HostedAgentFlow({
 
   return (
     <ConnectSteps
+      agentName={name}
       title={title}
       subtitle="An assistant on a managed platform. Add the key and pick the assistant."
       steps={STEPS}
@@ -705,7 +706,7 @@ export default function HostedAgentFlow({
                   body={
                     watch ? (
                       <>
-                        {`Pull its production ${voice ? "calls" : "conversations"} into Observe project `}
+                        {`Pull its production ${voice ? "calls" : "conversations"} into tracing project `}
                         <Box
                           component="span"
                           sx={{ fontFamily: MONO, color: "text.primary" }}
@@ -715,7 +716,16 @@ export default function HostedAgentFlow({
                         {prefill?.project ? "" : " — created when you connect"}
                       </>
                     ) : (
-                      `Off — its production ${voice ? "calls" : "conversations"} stay out of Observe.`
+                      <>
+                        {"Off — its tracing project "}
+                        <Box
+                          component="span"
+                          sx={{ fontFamily: MONO, color: "text.primary" }}
+                        >
+                          {observeProject}
+                        </Box>
+                        {` is still made, but its production ${voice ? "calls" : "conversations"} aren't pulled in until this is on.`}
+                      </>
                     )
                   }
                   hint={

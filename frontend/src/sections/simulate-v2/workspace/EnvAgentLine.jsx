@@ -53,6 +53,13 @@ import { COMPAT_STATUS, compatibilityOf } from "../_mock/compatibility";
 import { StatusDot } from "../components/primitives";
 import { checksConnection } from "../_mock/connectionCheck";
 import { isBuildStopped } from "../_mock/buildStop";
+import {
+  observabilityOnPatch,
+  observeProjectOf,
+  pendingProjectOf,
+} from "../agents/observeProject";
+import { PROVIDER_LABELS, sourceKindOf } from "../_mock/agentRegistry";
+import AgentProjectNote from "../agents/AgentProjectNote";
 
 const outlined = {
   color: "text.primary",
@@ -446,6 +453,11 @@ export default function EnvAgentLine({
           </IconButton>
         )}
       </Stack>
+      {/* The agent's tracing project — the same one its real calls land in,
+          so this environment, the agent and its traces read as one. */}
+      {record && (
+        <ProjectRow agent={record} state={state} agents={agents} env={env} />
+      )}
       {/* A default whose check failed stays where it was; said on its own row. */}
       {failedDefault && (
         <Stack
@@ -637,4 +649,103 @@ EnvAgentLine.propTypes = {
   onFork: PropTypes.func,
   /* Bumped to open the agent picker — "Connect agent" elsewhere on the page. */
   openPick: PropTypes.number,
+};
+
+/* Where the tested agent's traces land, under the agent line. An agent with
+   no project yet gets the same note the Build environment dialog shows. */
+function ProjectRow({ agent, state, agents, env }) {
+  const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
+  const { setAgentValues } = useConnectedAgents();
+  const project = observeProjectOf(agent, state, agents);
+  if (!project)
+    return (
+      <Box sx={{ px: 2, pb: 1.25 }}>
+        <AgentProjectNote agent={agent} />
+      </Box>
+    );
+  const v = agent.values || {};
+  const hosted = sourceKindOf(agent) === "platform";
+  const provider = PROVIDER_LABELS[v.provider] || "its platform";
+  /* A hosted agent's calls are pulled with its key: off until observability is on. */
+  const notPulled = hosted && !v.observability?.on;
+  const waiting = !hosted && !!pendingProjectOf(agent, state, agents);
+  const flowing = !notPulled && !waiting;
+  /* No real calls yet: say what this environment runs on, with the one step that changes it. */
+  const note = notPulled
+    ? ` · ${provider} calls aren't pulled in yet, so scenarios come from the agent only`
+    : waiting
+      ? " · no real calls yet, so scenarios come from the agent only"
+      : " · real calls come in here";
+  const action = notPulled
+    ? {
+        label: "Turn on observability",
+        onClick: () => {
+          setAgentValues(
+            agent.key,
+            observabilityOnPatch(agent, project.project),
+          );
+          enqueueSnackbar(
+            `Observability on — ${provider} calls are pulled into ${project.name}.`,
+            { variant: "success" },
+          );
+        },
+      }
+    : waiting
+      ? {
+          label: "Set up tracing",
+          onClick: () =>
+            navigate(
+              `${paths.dashboard.agents}/connected/${agentIdOf(agent.key)}?tab=overview&tracing=setup`,
+            ),
+        }
+      : {
+          /* Real calls are in: the next step is turning their failures into tests. */
+          label: "Add real failures",
+          onClick: () =>
+            navigate(
+              `${paths.dashboard.simulate.environmentDetail(env.id)}/scenarios?add=observe`,
+            ),
+        };
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.5}
+      data-testid="env-agent-project"
+      sx={{ px: 2, py: 1, borderTop: "1px solid", borderColor: "divider" }}
+    >
+      <Iconify
+        icon="solar:graph-new-linear"
+        width={16}
+        sx={{ color: "text.secondary", flexShrink: 0 }}
+      />
+      <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+        <Box component="span" sx={{ color: "text.tertiary" }}>
+          Traces in{" "}
+        </Box>
+        <Box component="span" sx={{ fontWeight: 600 }}>
+          {project.name}
+        </Box>
+        <Box component="span" sx={{ color: "text.tertiary" }}>
+          {note}
+        </Box>
+      </Typography>
+      <Button
+        size="small"
+        variant={flowing ? "outlined" : "contained"}
+        color="primary"
+        onClick={action.onClick}
+        sx={{ flexShrink: 0, ...(flowing && outlined) }}
+      >
+        {action.label}
+      </Button>
+    </Stack>
+  );
+}
+ProjectRow.propTypes = {
+  env: PropTypes.object,
+  agent: PropTypes.object,
+  state: PropTypes.object,
+  agents: PropTypes.array,
 };

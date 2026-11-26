@@ -112,7 +112,7 @@ export default function ConnectedAgentsView({ onConnect }) {
       },
       {
         value: "observe",
-        label: "Observe project",
+        label: "Tracing project",
         type: "enum",
         choices: ["Linked", "Waiting for first trace", "Not linked"],
       },
@@ -353,7 +353,7 @@ export default function ConnectedAgentsView({ onConnect }) {
          its Error Feed issues be fixed. */
       id: "observe",
       accessorKey: "project",
-      header: "Observe project",
+      header: "Tracing project",
       size: 170,
       enableSorting: false,
       cell: ({ row }) => {

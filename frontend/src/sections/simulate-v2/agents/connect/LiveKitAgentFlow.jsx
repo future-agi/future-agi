@@ -82,7 +82,7 @@ export default function LiveKitAgentFlow({ title, onSave, initial = null, note =
   };
 
   return (
-    <ConnectSteps
+    <ConnectSteps agentName={agentName}
       title={title}
       subtitle="A LiveKit agent. Add the project's URL and key, and the worker's agent name."
       steps={STEPS}

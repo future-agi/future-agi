@@ -37,7 +37,9 @@ import {
   parseDataset,
   parseTranscript,
 } from "../../_mock/evidenceSources";
-import { useEnvState, useSimStore } from "../../store";
+import { useConnectedAgents, useEnvState, useSimStore } from "../../store";
+import { envAgentKey } from "../../_mock/agentRegistry";
+import { observeProjectOf } from "../../agents/observeProject";
 import { observeEnvsOf } from "../../_mock/runningNow";
 import CopyCommandButton from "../../components/CopyCommandButton";
 import { TextLink } from "../../agents/connect/connectBits";
@@ -107,7 +109,18 @@ export default function ProductionReplayImport({
       null,
     [simState, env?.id],
   );
-  const project = sel?.project || traceProjectOf(env, envState);
+  /* The tested agent's tracing project, as linked now — a project linked
+     after the environment was built counts too. */
+  const { agents: connected } = useConnectedAgents();
+  const agentProject = useMemo(() => {
+    const a = envState?.agent;
+    if (!a) return null;
+    const rec = connected.find((x) => x.key === envAgentKey(a, env?.id));
+    return rec
+      ? observeProjectOf(rec, simState, connected)?.name || null
+      : null;
+  }, [envState?.agent, connected, simState, env?.id]);
+  const project = sel?.project || agentProject || traceProjectOf(env, envState);
   const unit = sel?.kind || "traces";
   /* What each becomes as a replay, already scrubbed — the only form shown. */
   const drafts = useMemo(

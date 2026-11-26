@@ -19,6 +19,8 @@ import { agentChannelsOf } from "../_mock/agentLifecycle";
 import { useSaveConnectedAgent } from "../agents/connect/useSaveConnectedAgent";
 import { ConnectSubmitContext } from "../agents/connect/connectSubmit";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
+import AgentProjectNote from "../agents/AgentProjectNote";
+import { lacksProject } from "../agents/observeProject";
 import SideDrawer from "../components/SideDrawer";
 import ChipCard from "./ChipCard";
 import { SectionHead } from "./LandingBits";
@@ -503,7 +505,10 @@ export default function WorldAgentPicker({
   /* What stops the picked agent from being built from, said on this step. */
   const picked = agents.find((a) => a.id === value) || null;
   const pickedBlockers = useMemo(() => buildBlockersOf(picked), [picked]);
-  const pickedBlocked = pickedBlockers.some((b) => b.severity === "blocked");
+  /* Every environment's agent has a tracing project — linked in the note below. */
+  const pickedNoProject = lacksProject(picked, state, all);
+  const pickedBlocked =
+    pickedBlockers.some((b) => b.severity === "blocked") || pickedNoProject;
   useEffect(() => {
     onBlockedChange?.(pickedBlocked);
   }, [pickedBlocked]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -584,6 +589,11 @@ export default function WorldAgentPicker({
 
       {picked && pickedBlockers.length > 0 && (
         <BuildBlockerNote agent={picked} blockers={pickedBlockers} />
+      )}
+      {picked && (
+        <Box sx={{ mt: 1 }}>
+          <AgentProjectNote agent={picked} />
+        </Box>
       )}
 
       <SideDrawer

@@ -86,6 +86,7 @@ export default function BuiltinAgentFlow({
 
   return (
     <ConnectSteps
+      agentName={name}
       title={title}
       subtitle="One prompt, one model and its tools. It runs in Future AGI — nothing to deploy."
       steps={STEPS}

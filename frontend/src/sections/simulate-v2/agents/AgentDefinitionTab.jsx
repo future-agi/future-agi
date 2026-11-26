@@ -190,7 +190,7 @@ export default function AgentDefinitionTab({
               ...identityRowsOf(agent).filter((r) => r.label !== "Name"),
               ...reachRowsOf(agent),
               {
-                label: "Observe project",
+                label: "Tracing project",
                 value: observeProject ? (
                   `${observeProject.name}${observePending ? " · waiting for its first trace" : " · linked"}`
                 ) : (

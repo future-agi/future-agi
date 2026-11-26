@@ -52,6 +52,7 @@ export function ObserveProjectStep({
   onChange,
   prefillProject,
   issue,
+  autoName = false,
 }) {
   const { state } = useSimStore();
   const { agents } = useConnectedAgents();
@@ -91,7 +92,16 @@ export function ObserveProjectStep({
     }
     return id;
   };
-  const createId = creating ? chosen.id : freeSlug(observeSlugOf(agentName));
+  /* Connecting: the agent has no name yet, so a new project is named after
+     it when it's saved — unless a name is typed here. */
+  const autoNamed = autoName && creating && !value?.id;
+  const createId = autoNamed
+    ? ""
+    : creating
+      ? chosen.id
+      : autoName
+        ? ""
+        : freeSlug(observeSlugOf(agentName));
   /* What each project traces now — a project has one agent, so picking one
      that has another moves it here. This agent's own link reads as such. */
   const linkOf = (id) => projectLinkOf(id, state, agents);
@@ -149,7 +159,8 @@ export function ObserveProjectStep({
     },
     {
       id: "other",
-      label: "Traces another agent — taking one moves it here",
+      label:
+        "Traces another agent — taking one moves it here, and that agent needs a new one",
       rows: shown.filter((p) => groupOf(p) === "other"),
     },
   ].filter((g) => g.rows.length);
@@ -179,16 +190,19 @@ export function ObserveProjectStep({
           label="Create a new project"
           on={creating}
           short="Its traces don't land anywhere yet — they start once tracing is on"
-          hint="Name it here. It appears in Observe with its first trace."
+          hint="Name it here. It appears in Tracing with its first trace."
           onClick={() =>
-            !creating && onChange({ mode: "create", id: createId })
+            !creating &&
+            onChange(
+              createId ? { mode: "create", id: createId } : { mode: "create" },
+            )
           }
         />
         <WhereOption
           icon="solar:graph-new-linear"
           label="Use an existing project"
           on={!creating}
-          short={`${projects.length} project${projects.length === 1 ? "" : "s"} in Observe — pick the one its traces land in`}
+          short={`${projects.length} project${projects.length === 1 ? "" : "s"} in Tracing — pick the one its traces land in`}
           hint="For an agent that already sends traces. Error Feed and Fix use the project from now on."
           onClick={() =>
             creating && onChange({ mode: "existing", id: lastPicked })
@@ -202,9 +216,21 @@ export function ObserveProjectStep({
           fullWidth
           autoFocus
           value={createId}
-          onChange={(e) => onChange({ mode: "create", id: e.target.value })}
-          placeholder="project-name"
-          helperText="The project's name in Observe"
+          onChange={(e) =>
+            onChange(
+              e.target.value || !autoName
+                ? { mode: "create", id: e.target.value }
+                : { mode: "create" },
+            )
+          }
+          placeholder={
+            autoName
+              ? agentName?.trim()
+                ? observeSlugOf(agentName)
+                : "Named after the agent"
+              : "project-name"
+          }
+          helperText="The project's name in Tracing"
           sx={{
             "& .MuiInputBase-input": { typography: "s2", fontFamily: MONO },
           }}
@@ -328,6 +354,8 @@ ObserveProjectStep.propTypes = {
   onChange: PropTypes.func.isRequired,
   prefillProject: PropTypes.string,
   issue: PropTypes.string,
+  /* Connecting: a new project is named after the agent unless one is typed. */
+  autoName: PropTypes.bool,
 };
 
 function ProjectRow({ on, onClick, icon, title, mono, meta, tag }) {
@@ -604,11 +632,7 @@ export function AgentAboutFields({
         overflow: "hidden",
       }}
     >
-      <AboutRow
-        label="Owner"
-        first
-        hint="Asked about its issues and epochs."
-      >
+      <AboutRow label="Owner" first hint="Asked about its issues and epochs.">
         <Box sx={{ maxWidth: 360 }}>
           <Field
             value={value.owner || ""}

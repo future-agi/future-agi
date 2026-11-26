@@ -128,6 +128,7 @@ export default function UploadAgentFlow({ title, onSave, initial = null }) {
 
   return (
     <ConnectSteps
+      agentName={name}
       title={title}
       subtitle="A folder or a .zip, read once and built in our sandbox for every run. Fixes come back as a patch to apply."
       steps={STEPS}

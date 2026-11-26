@@ -23,3 +23,12 @@ export const DEFAULT_BUILD_SCENARIOS = 10;
 export const MAX_BUILD_SCENARIOS = 1000;
 /* "What should this environment test?" — long enough to say something. */
 export const BUILD_TEST_MIN = 10;
+
+/*
+  Where the agent's traces go — asked in every connect flow, so no agent is
+  saved without a tracing project. Set by ConnectAgentPicker:
+    { observe, setObserve, prefillProject }
+  `observe` is null until changed: a new project named after the agent.
+*/
+export const ConnectObserveContext = createContext(null);
+export const useConnectObserve = () => useContext(ConnectObserveContext);

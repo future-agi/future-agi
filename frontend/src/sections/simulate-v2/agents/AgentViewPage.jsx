@@ -59,7 +59,7 @@ import CommitPicker from "./CommitPicker";
 import { currentVersionName } from "../_mock/envSnapshot";
 import { runResultOf } from "../_mock/runResult";
 import { ObserveProjectCard } from "./AgentObserveProjects";
-import { useAgentObserveProject } from "./observeProject";
+import { lacksProject, useAgentObserveProject } from "./observeProject";
 import { deleteBlockOf } from "./agentDelete";
 import { useDemoMode } from "./demoMode";
 import ImprovementSourcesList from "../improvements/ImprovementSourcesList";
@@ -505,7 +505,8 @@ export default function AgentViewPage() {
      or archived — said in the header and on Connections. */
   const status = agentStatusOf(agent);
   /* Finish setting up is on the Overview (see AgentSetupCard). */
-  const settingUp = showsSetup(agent);
+  /* An agent with no tracing project keeps Next steps up until it has one. */
+  const settingUp = showsSetup(agent) || lacksProject(agent, state, agents);
   /* Deleted reads like archived everywhere it stops work — with nothing to restore. */
   const deleted = status.status === "deleted";
   const archived = status.status === "archived" || deleted;
@@ -1131,13 +1132,15 @@ export default function AgentViewPage() {
             !agent.usedIn.length &&
             !runs.length &&
             !inProgress.length &&
-            !observeLink.project &&
+            (!observeLink.project || !!observeLink.pending) &&
             !improvementStats?.total
           }
           improvements={improvementStats}
           production={{
             project: observeLink.project,
             pending: !!observeLink.pending,
+            /* Next steps shows the project step while setting up. */
+            inSetupCard: settingUp,
             onOpenProject: observeLink.openInObserve,
             /* Error Feed, filtered to this agent's project. */
             onViewIssues: observeLink.viewIssues,
@@ -2252,7 +2255,7 @@ function ConnectionTab({
 
       {/* The one Observe project its traces or call logs land in. */}
       <SettingsSection
-        title="Observe project"
+        title="Tracing project"
         sub={
           <>
             Where its traces or call logs feed the Error Feed.

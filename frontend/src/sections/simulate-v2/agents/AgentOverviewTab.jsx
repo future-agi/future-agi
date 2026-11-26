@@ -120,6 +120,10 @@ function AgentHealth({ agent, production }) {
   const prod = production || {};
   /* Linked to a new project that has had no trace yet — nothing in Observe to open. */
   const awaitingTrace = !!prod.project && !!prod.pending;
+  /* Next steps already says it (no project, or waiting for a first trace) —
+     the Production section would only repeat it. */
+  const productionInCard =
+    !!prod.inSetupCard && (!prod.project || awaitingTrace);
   const nm = (l) => versionNameOf(agent, l).main;
 
   /* Its open issues, from the Observe project its traces land in. */
@@ -248,7 +252,7 @@ function AgentHealth({ agent, production }) {
   return (
     <Stack spacing={2.5}>
       {/* ── production: the open issues its traces raised ── */}
-      <Box>
+      <Box sx={productionInCard ? { display: "none" } : undefined}>
         <Stack
           direction="row"
           alignItems="baseline"

@@ -20,6 +20,25 @@ export const observeProjectOf = (agent, state, agents = []) => {
   return [...all].sort((a, b) => (RANK[a.how] ?? 3) - (RANK[b.how] ?? 3))[0] || null;
 };
 
+/** The values that switch a hosted agent's observability on: its calls are pulled into `projectId` with its key — nothing to wait for. */
+export const observabilityOnPatch = (agent, projectId) => {
+  const at = new Date().toISOString();
+  return {
+    observeChosenAt: at,
+    observePending: null,
+    observability: {
+      ...(agent?.values?.observability || {}),
+      on: true,
+      since: at,
+      project: projectId,
+    },
+  };
+};
+
+/** True when the agent has no tracing project at all — not even a new one waiting for its first trace. */
+export const lacksProject = (agent, state, agents = []) =>
+  !!agent && !observeProjectOf(agent, state, agents);
+
 /**
  * A new project linked to this agent that hasn't had its first trace yet:
  * { project, since, via } or null. Only while the link is still this

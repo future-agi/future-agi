@@ -512,7 +512,7 @@ MembersPreview.propTypes = {
   traces reach the Error Feed through traceAI. `tuning` is
   frameworkTuningOf(…); nothing renders for a framework we don't know.
 */
-export function FrameworkTuning({ tuning, structure }) {
+export function FrameworkTuning({ tuning, structure, hideTraces = false }) {
   if (!tuning) return null;
   const rows = [
     ["Epochs edit", tuning.edits],
@@ -524,12 +524,17 @@ export function FrameworkTuning({ tuning, structure }) {
           ],
         ]
       : []),
-    [
-      "Production traces",
-      tuning.traced
-        ? "Through traceAI, into the Error Feed"
-        : "traceAI doesn't instrument it — failures come from simulations",
-    ],
+    /* In a connect flow the Tracing project line says this, with where. */
+    ...(hideTraces
+      ? []
+      : [
+          [
+            "Production traces",
+            tuning.traced
+              ? "Through traceAI, into the Error Feed"
+              : "traceAI doesn't instrument it — failures come from simulations",
+          ],
+        ]),
   ];
   return (
     <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}>
@@ -573,6 +578,8 @@ export function FrameworkTuning({ tuning, structure }) {
 FrameworkTuning.propTypes = {
   tuning: PropTypes.object,
   structure: PropTypes.string,
+  /* The connect flow's Tracing project line already says how traces arrive. */
+  hideTraces: PropTypes.bool,
 };
 
 /** One of two or three ways to do something, as a selectable card with a one-line summary and a hint. */

@@ -195,6 +195,7 @@ export default function FrameworkAgentFlow({
 
   return (
     <ConnectSteps
+      traced={tuning?.traced}
       title={title}
       subtitle="Wrap your graph, pipeline or crew with our adapter, then confirm what it found."
       steps={STEPS}
@@ -221,7 +222,7 @@ export default function FrameworkAgentFlow({
             </Box>
           </Box>
         )}
-        <FrameworkTuning tuning={tuning} structure={meta.structure} />
+        <FrameworkTuning tuning={tuning} structure={meta.structure} hideTraces />
 
         <Box>
           <RailStep

@@ -20,6 +20,7 @@ import BuildTestField from "../../environments/BuildTestField";
 import { buildCreditsCheck } from "../../_mock/metering";
 import useCreditBalance from "../../usage/useCreditBalance";
 import BuildFilesField from "../../environments/BuildFilesField";
+import ConnectProjectLine from "./ConnectProjectLine";
 
 /**
  * The frame every New agent flow walks through: where you are, the step
@@ -35,6 +36,9 @@ export default function ConnectSteps({
   onBack,
   next: asked,
   preflight = null,
+  agentName = "",
+  codeProject,
+  traced,
   children,
 }) {
   const creditBalance = useCreditBalance();
@@ -205,6 +209,12 @@ export default function ConnectSteps({
             )}
           </Stack>
         )}
+        {/* Every agent is saved with a tracing project — said last, by the button. */}
+        <ConnectProjectLine
+          agentName={agentName}
+          codeProject={codeProject}
+          traced={traced}
+        />
       </Box>
 
       {/* In a drawer the submit row stays pinned to its bottom edge while a
@@ -286,6 +296,13 @@ ConnectSteps.propTypes = {
   next: PropTypes.object.isRequired,
   /* { state: usePreflight(), canRun, blockedReason, summary } — the flow's checks. */
   preflight: PropTypes.object,
+  /* The agent's name once the flow knows it — the default project is named after it. */
+  agentName: PropTypes.string,
+  /* What the code read says about tracing: a project name, null when it
+     sends none, undefined when we haven't read it. */
+  codeProject: PropTypes.string,
+  /* Whether traceAI instruments its framework: false says failures come from simulations. */
+  traced: PropTypes.bool,
   children: PropTypes.node,
 };
 

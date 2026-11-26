@@ -18,11 +18,19 @@ import {
 } from "../../_mock/connectAgent";
 import { currentUser } from "../../_mock/scenarioProvenance";
 import {
+  knownProjects,
+  likelyProjectFor,
+  projectLinkOf,
+} from "../../_mock/projectLinks";
+import { scannedTracingOf } from "../../_mock/integrations";
+import { observeProjectOf } from "../observeProject";
+import {
   ConnectModeContext,
   InDrawerContext,
 } from "../../environments/connectMode";
 import { FlowPanel } from "../../environments/StartEnvironment";
 import ConnectCatalog from "./ConnectCatalog";
+import ConnectProjectLine from "./ConnectProjectLine";
 import SetupDrawer from "../../environments/SetupDrawer";
 import { newAgentChoicesFor } from "./agentConnectData";
 import HostedAgentFlow from "./HostedAgentFlow";
@@ -38,6 +46,7 @@ import { CLOSED_WAY, CONNECT_KINDS, MORE_WAYS } from "./connectKinds";
 import {
   CONNECT_LABEL,
   ConnectBuildContext,
+  ConnectObserveContext,
   DEFAULT_BUILD_SCENARIOS,
   useConnectSubmitLabel,
 } from "./connectSubmit";
@@ -164,12 +173,61 @@ export default function ConnectAgentPicker({
        pulled with the same key); an issue's project comes with any agent.
        Anything else is chosen on the agent's page, in Next steps — never
        guessed here. */
+      /* Every agent is saved with a tracing project. Picked in the line above
+       the button, else a new one named after the agent — never one Observe
+       already has. An agent already in Agents keeps the project it has. */
+      const sameKey = agentRecordFromSource(source).key;
+      const already = (state?.connectedAgents || []).find(
+        (a) => a.key === sameKey,
+      );
+      const keepsOwn =
+        !observe &&
+        !prefill?.project &&
+        !!already &&
+        !!observeProjectOf(already, state, state?.connectedAgents || []);
+      const freshProject = () => {
+        const taken = new Set(
+          knownProjects(state, state?.connectedAgents || []).map((p) => p.id),
+        );
+        const base = resolveObserve(
+          observe?.mode === "create" ? observe : null,
+          null,
+          agentName,
+        ).id;
+        let id = base;
+        for (let n = 2; taken.has(id); n += 1) id = `${base}-${n}`;
+        return { mode: "create", id };
+      };
+      /* Left at the default: the project it already sends to, if we can
+         tell — read from its code, or (not for code) a project whose name
+         matches. Only one no other agent has. It's linked unconfirmed, so
+         the agent page asks to confirm it; nothing new is made. */
+      const guessed = (() => {
+        if (observe || prefill?.project || keepsOwn) return null;
+        const everyone = state?.connectedAgents || [];
+        const rec = agentRecordFromSource({ ...source, name: agentName });
+        const fromCode = scannedTracingOf(rec)?.project || null;
+        const id =
+          fromCode ||
+          (source.kind === "repo"
+            ? null
+            : likelyProjectFor(rec, state, everyone)?.id || null);
+        if (!id) return null;
+        const l = projectLinkOf(id, state, everyone);
+        return l.status === "linked" && l.agentKey !== rec.key
+          ? null
+          : { mode: "existing", id };
+      })();
       const observeProject =
         (source.kind === "platform" &&
           observeChoiceOf({ ...source, name: agentName }, prefill?.project)) ||
-        (observe || prefill?.project
-          ? resolveObserve(observe, prefill?.project, agentName)
-          : null);
+        (keepsOwn
+          ? null
+          : observe?.mode === "existing" && observe.id
+            ? observe
+            : prefill?.project
+              ? resolveObserve(null, prefill.project, agentName)
+              : guessed || freshProject());
       /* Pulled with the platform key: nothing to wait for, so it's settled now. */
       const pulled =
         source.kind === "platform" &&
@@ -193,7 +251,12 @@ export default function ConnectAgentPicker({
         }),
         /* Connected from an issue: its project is the one — settled, not a suggestion. */
         ...(((prefill?.project && observeProject?.id === prefill.project) ||
-          pulled) && { observeChosenAt: new Date().toISOString() }),
+          pulled ||
+          /* Picked by hand in the Tracing project line — the person said so. */
+          (observe?.mode === "existing" &&
+            observeProject?.id === observe.id)) && {
+          observeChosenAt: new Date().toISOString(),
+        }),
         /* A project created here for code has no traces yet — it settles with the first one. */
         ...(observeProject?.mode === "create" &&
           !pulled &&
@@ -238,7 +301,7 @@ export default function ConnectAgentPicker({
         if (replaced.length) {
           const nameOf = (id) => observeProjectById(id)?.name || id;
           enqueueSnackbar(
-            `${existing?.name || agentName} now links ${nameOf(observeProject.id)} instead of ${replaced.map(nameOf).join(", ")} — one Observe project per agent.`,
+            `${existing?.name || agentName} now links ${nameOf(observeProject.id)} instead of ${replaced.map(nameOf).join(", ")} — one tracing project per agent.`,
             { variant: "info" },
           );
         }
@@ -318,62 +381,77 @@ export default function ConnectAgentPicker({
     lockedType: channel,
   };
 
+  const observeCtx = useMemo(
+    () => ({
+      observe,
+      setObserve,
+      prefillProject: prefill?.project || null,
+      kind: choice,
+    }),
+    [observe, prefill?.project, choice],
+  );
   const flows = (
-    <ConnectBuildContext.Provider value={buildCtx}>
-      <Box key={picked?.at || 0}>
-        {choice === "hosted" && (
-          <HostedAgentFlow
-            {...flowProps}
-            onSwitch={pick}
-            onPlatform={(pl) =>
-              setPicked((cur) =>
-                cur && cur.meta?.name !== pl.name
-                  ? {
-                      ...cur,
-                      meta: { ...cur.meta, name: pl.name, logo: pl.id },
-                    }
-                  : cur,
-              )
-            }
-          />
-        )}
-        {choice === "repo" && <RepoAgentFlow {...flowProps} preset={preset} />}
-        {choice === "coding" && (
-          <CodingAgentFlow {...flowProps} title={picked?.meta?.name} />
-        )}
-        {choice === "browser" && (
-          <BrowserAgentFlow {...flowProps} title="Browser agent" />
-        )}
-        {choice === "builtin" && <BuiltinAgentFlow {...flowProps} />}
-        {choice === CLOSED_WAY.id && (
-          <ClosedPlatformFlow {...flowProps} title={CLOSED_WAY.title} />
-        )}
-        {choice === "phone" && (
-          <PhoneAgentFlow {...flowProps} title="Phone number" />
-        )}
-        {choice === "upload" && (
-          <UploadAgentFlow {...flowProps} title="Code upload" />
-        )}
-        {choice === "framework" && (
-          <FrameworkAgentFlow
-            {...flowProps}
-            title="Framework adapter"
-            framework={framework}
-            onFramework={setFramework}
-            onSwitch={pick}
-          />
-        )}
-        {legacy && (
-          <ConnectModeContext.Provider value={ctx}>
-            <FlowPanel
-              choice={choice}
-              prefill={picked?.initial || null}
-              bare={flowsIn === "drawer"}
+    <ConnectObserveContext.Provider value={observeCtx}>
+      <ConnectBuildContext.Provider value={buildCtx}>
+        <Box key={picked?.at || 0}>
+          {choice === "hosted" && (
+            <HostedAgentFlow
+              {...flowProps}
+              onSwitch={pick}
+              onPlatform={(pl) =>
+                setPicked((cur) =>
+                  cur && cur.meta?.name !== pl.name
+                    ? {
+                        ...cur,
+                        meta: { ...cur.meta, name: pl.name, logo: pl.id },
+                      }
+                    : cur,
+                )
+              }
             />
-          </ConnectModeContext.Provider>
-        )}
-      </Box>
-    </ConnectBuildContext.Provider>
+          )}
+          {choice === "repo" && (
+            <RepoAgentFlow {...flowProps} preset={preset} />
+          )}
+          {choice === "coding" && (
+            <CodingAgentFlow {...flowProps} title={picked?.meta?.name} />
+          )}
+          {choice === "browser" && (
+            <BrowserAgentFlow {...flowProps} title="Browser agent" />
+          )}
+          {choice === "builtin" && <BuiltinAgentFlow {...flowProps} />}
+          {choice === CLOSED_WAY.id && (
+            <ClosedPlatformFlow {...flowProps} title={CLOSED_WAY.title} />
+          )}
+          {choice === "phone" && (
+            <PhoneAgentFlow {...flowProps} title="Phone number" />
+          )}
+          {choice === "upload" && (
+            <UploadAgentFlow {...flowProps} title="Code upload" />
+          )}
+          {choice === "framework" && (
+            <FrameworkAgentFlow
+              {...flowProps}
+              title="Framework adapter"
+              framework={framework}
+              onFramework={setFramework}
+              onSwitch={pick}
+            />
+          )}
+          {legacy && (
+            <ConnectModeContext.Provider value={ctx}>
+              <FlowPanel
+                choice={choice}
+                prefill={picked?.initial || null}
+                bare={flowsIn === "drawer"}
+              />
+              {/* The older panels have their own footer — the line goes under them. */}
+              <ConnectProjectLine />
+            </ConnectModeContext.Provider>
+          )}
+        </Box>
+      </ConnectBuildContext.Provider>
+    </ConnectObserveContext.Provider>
   );
 
   return (

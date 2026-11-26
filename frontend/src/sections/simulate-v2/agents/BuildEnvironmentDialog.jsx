@@ -13,7 +13,9 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useOptionalSimStore } from "../store";
+import { useConnectedAgents, useOptionalSimStore } from "../store";
+import AgentProjectNote from "./AgentProjectNote";
+import { lacksProject } from "./observeProject";
 import { uniqueEnvName } from "../_mock/envNames";
 import { codeRefOf, isGitAgent, versionNameOf } from "../_mock/codeRefs";
 import { definitionOf, sourceKindOf } from "../_mock/agentRegistry";
@@ -228,19 +230,24 @@ export default function BuildEnvironmentDialog({
 
   /* An agent the builder can read proposes its own tests (buildTestRule.js). */
   const testOptional = testIsOptional(sourceKindOf(agent));
-  const blocked = !name.trim()
-    ? "Name it first"
-    : !testOptional && request.trim().length < 10
-      ? "Say what it should test"
-      : !countOk
-        ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
-        : credits && !credits.ok
-          ? "Over your AI credits — build fewer scenarios"
-          : !preflight.ready
-            ? preflight.status === "done"
-              ? "Fix what preflight found, then run it again"
-              : "Run preflight first"
-            : null;
+  const { agents: allAgents, state: simState } = useConnectedAgents();
+  /* Every environment's agent has a tracing project — linked in the note above the button. */
+  const noProject = lacksProject(agent, simState, allAgents);
+  const blocked = noProject
+    ? "Link a tracing project first"
+    : !name.trim()
+      ? "Name it first"
+      : !testOptional && request.trim().length < 10
+        ? "Say what it should test"
+        : !countOk
+          ? `Scenarios: ${MIN_SCENARIOS} to ${MAX_SCENARIOS.toLocaleString()}`
+          : credits && !credits.ok
+            ? "Over your AI credits — build fewer scenarios"
+            : !preflight.ready
+              ? preflight.status === "done"
+                ? "Fix what preflight found, then run it again"
+                : "Run preflight first"
+              : null;
 
   return (
     <ClosableDialog
@@ -409,6 +416,7 @@ export default function BuildEnvironmentDialog({
           </Stack>
         )}
         <ConnectPreflight preflight={preflight} required />
+        <AgentProjectNote agent={agent} />
         {/* When another environment is the right call (RSI PRD). */}
       </Stack>
       <Stack
