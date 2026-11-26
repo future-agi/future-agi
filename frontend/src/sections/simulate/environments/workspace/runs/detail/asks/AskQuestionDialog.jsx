@@ -36,7 +36,11 @@ import {
   plural,
 } from "./asks.constants";
 
+// Each question keeps its own id, so removing one never hands its typing to
+// the next.
+let lastQuestionId = 0;
 const blankQuestion = () => ({
+  id: `question-${(lastQuestionId += 1)}`,
   question: "",
   answerType: "yes_no",
   labels: "",
@@ -164,9 +168,7 @@ export default function AskQuestionDialog({
         <Stack spacing={2}>
           {questions.map((one, index) => (
             <QuestionForm
-              // Questions are only added at the end and removed by position.
-              // eslint-disable-next-line react/no-array-index-key
-              key={index}
+              key={one.id}
               index={index}
               value={one}
               removable={questions.length > 1}
@@ -194,7 +196,12 @@ export default function AskQuestionDialog({
             {error}
           </Alert>
         )}
-        {check && <CheckSummary check={check} />}
+        {check && (
+          <CheckSummary
+            check={check}
+            questionIds={questions.map((one) => one.id)}
+          />
+        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
@@ -334,17 +341,17 @@ QuestionForm.propTypes = {
 };
 
 /** What the check found: per question, ready, unmeasured and why. */
-function CheckSummary({ check }) {
+function CheckSummary({ check, questionIds }) {
   return (
     <Box sx={{ mt: 2 }} data-testid="ask-check">
       <Typography sx={{ typography: "s2", fontWeight: 600 }}>
         {`${plural(check.requested, "call")} requested`}
       </Typography>
       <Stack spacing={1} sx={{ mt: 1 }}>
+        {/* The check returns the questions in the order they were sent, and any
+            edit throws it away, so the form's questions line up with it. */}
         {check.questions.map((one, index) => (
-          // The check returns the questions in the order they were sent.
-          // eslint-disable-next-line react/no-array-index-key
-          <Box key={index}>
+          <Box key={questionIds[index] ?? one.name}>
             <Typography sx={{ typography: "s2" }}>
               {`Question ${index + 1}: ${one.ready} ready · ${one.unmeasured} unmeasured · ${one.not_applicable} not applicable`}
             </Typography>
@@ -370,7 +377,10 @@ function CheckSummary({ check }) {
     </Box>
   );
 }
-CheckSummary.propTypes = { check: PropTypes.object.isRequired };
+CheckSummary.propTypes = {
+  check: PropTypes.object.isRequired,
+  questionIds: PropTypes.arrayOf(PropTypes.string).isRequired,
+};
 
 // "Transcript: 2 never uploaded" — why calls are unmeasured, per kind.
 function missingParts(question) {

@@ -278,7 +278,7 @@ function AnswerCell({ row }) {
           color: answered ? "text.primary" : "text.subtitle",
         }}
       >
-        {answered ? row.label : stateLabel(row.state)}
+        {answered ? row.answer : stateLabel(row.state)}
       </Typography>
       {!answered && row.cause && (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>

@@ -122,6 +122,23 @@ describe("AskQuestionDialog", () => {
     expect(accepted).toBe(CHECK);
   });
 
+  it("launches once, however often Ask is pressed while it starts", async () => {
+    const user = userEvent.setup();
+    checkAsk.mockResolvedValue(CHECK);
+    launchAsk.mockReturnValue(new Promise(() => {}));
+    renderDialog();
+
+    await typeQuestion(user);
+    await user.click(checkButton());
+    await screen.findByTestId("ask-check");
+    await user.click(askButton());
+
+    expect(askButton()).toHaveTextContent("Starting…");
+    expect(askButton()).toBeDisabled();
+    expect(checkButton()).toBeDisabled();
+    expect(launchAsk).toHaveBeenCalledTimes(1);
+  });
+
   it("asks about the ticked calls only", async () => {
     const user = userEvent.setup();
     checkAsk.mockResolvedValue({ ...CHECK, requested: 2 });

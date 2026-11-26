@@ -45,17 +45,17 @@ const ASK = {
     },
   ],
 };
-const row = (id, name, state, label = null, cause = "") => ({
+const row = (id, name, state, answer = null, cause = "") => ({
   call_execution_id: id,
   test_execution_id: "ex1",
   call_name: name,
   question_key: "q1",
   state,
   cause,
-  label,
+  answer,
   score: null,
   confidence: null,
-  reason: label ? `Because ${label}` : null,
+  reason: answer ? `Because ${answer}` : null,
   finished_at: null,
 });
 
