@@ -5,16 +5,18 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useActorCheck } from "src/api/simulate-environments/versions";
 import SideDrawer from "../../components/SideDrawer";
 import ActorActionFields from "./ActorActionFields";
+import ActorAdvancedFields from "./ActorAdvancedFields";
 import ActorField from "./ActorField";
 import ActorFormFooter from "./ActorFormFooter";
 import ActorFormHeader from "./ActorFormHeader";
 import ActorIdentityFields from "./ActorIdentityFields";
 import ActorKnowledgeFields from "./ActorKnowledgeFields";
-import ActorMoreDetails from "./ActorMoreDetails";
+import ActorPressureFields from "./ActorPressureFields";
 import ActorTriggerFields from "./ActorTriggerFields";
 import { ACTORS_COPY } from "./actors.constants";
 import { OPTIONS_SHAPE } from "./actors.shapes";
 import {
+  ADVANCED,
   PROBLEM_FIELDS,
   changesOf,
   fallbackActs,
@@ -40,7 +42,7 @@ export default function ActorForm({
 }) {
   const existing = Boolean(actor?.id);
   const [fields, setFields] = useState({});
-  const [more, setMore] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const initial = initialFields(actor);
   const readerOf = (holder) => (name) =>
     name in holder ? holder[name] : initial[name];
@@ -97,14 +99,23 @@ export default function ActorForm({
   const [confirmedFor, setConfirmedFor] = useState("");
   const shareConfirmed = conflicts.length > 0 && confirmedFor === conflictKey;
   // Nothing is on screen while the form is closed.
-  const shown = !actor
-    ? new Set()
-    : fieldsOnScreen(value, {
-        capField,
-        loud: Boolean(chosen?.loudness),
-        models: context.actorModels.length > 0,
-        more,
-      });
+  const screenOf = (open) =>
+    !actor
+      ? new Set()
+      : fieldsOnScreen(value, {
+          capField,
+          loud: Boolean(chosen?.loudness),
+          models: context.actorModels.length > 0,
+          advanced: open,
+        });
+  // A problem on a folded field opens the fold, so it shows under its field.
+  const foldOpen =
+    advanced ||
+    problems.some((one) => {
+      const name = PROBLEM_FIELDS[one.field];
+      return ADVANCED.includes(name) && screenOf(true).has(name);
+    });
+  const shown = screenOf(foldOpen);
   const fieldOf = (one) =>
     shown.has(PROBLEM_FIELDS[one.field]) ? PROBLEM_FIELDS[one.field] : null;
   const form = {
@@ -156,42 +167,6 @@ export default function ActorForm({
               fieldOptions={options}
               loudness={context.loudness}
             />
-            {field("kind", F.kind, { options: options.kind })}
-            {field("facts", F.facts, {
-              multiline: true,
-              minRows: 2,
-              helperText: F.factsHelp,
-            })}
-            <ActorKnowledgeFields
-              files={value("files")}
-              records={value("records")}
-              sources={context.knowledgeSources}
-              upload={context.upload}
-              uploadRules={context.uploadRules}
-              problems={form.problems}
-              onChange={put}
-            />
-            <Stack direction="row" spacing={1}>
-              {field("timing", F.answers, {
-                options: options.response_timing,
-                sx: { flex: 1 },
-              })}
-              {value("timing") === "delayed" &&
-                field("seconds", F.seconds, {
-                  type: "number",
-                  sx: { width: 140 },
-                  inputProps: { min: 0 },
-                })}
-            </Stack>
-            <ActorActionFields
-              form={form}
-              actions={context.actions}
-              unknownActions={unknownActions}
-              conflicts={conflicts}
-              shareConfirmed={shareConfirmed}
-              onShare={(checked) => setConfirmedFor(checked ? conflictKey : "")}
-              plays={options.play}
-            />
             <ActorTriggerFields
               form={form}
               actor={actor}
@@ -201,32 +176,40 @@ export default function ActorForm({
               collections={context.knowledgeSources.records.map(
                 (one) => one.collection,
               )}
-              fallbackWords={options.fallback_word}
-              others={others}
             />
-            {context.actorModels.length > 0 &&
-              field("model", F.model, {
-                options: [
-                  { value: "", label: F.environmentModel },
-                  ...context.actorModels.map((one) => ({
-                    value: one,
-                    label: one,
-                  })),
-                ],
-                helperText: F.modelHelp,
-                startLabel: initial.model,
-              })}
-            {capField &&
-              field(capField, F.caps[capField], {
-                type: "number",
-                helperText: F.noLimitHelp,
-                inputProps: { min: 1, step: 1 },
-              })}
-            <ActorMoreDetails
+            {field("facts", F.facts, {
+              multiline: true,
+              minRows: 2,
+              helperText: F.factsHelp,
+            })}
+            <ActorKnowledgeFields
+              files={value("files")}
+              sources={context.knowledgeSources}
+              upload={context.upload}
+              uploadRules={context.uploadRules}
+              problems={form.problems}
+              onChange={put}
+            />
+            <ActorActionFields
               form={form}
-              open={more}
-              onToggle={() => setMore((open) => !open)}
+              actions={context.actions}
+              unknownActions={unknownActions}
+              conflicts={conflicts}
+              shareConfirmed={shareConfirmed}
+              onShare={(checked) => setConfirmedFor(checked ? conflictKey : "")}
+            />
+            <ActorPressureFields form={form} />
+            {field("style", F.style, { helperText: F.styleHelp })}
+            <ActorAdvancedFields
+              form={form}
+              open={foldOpen}
+              onToggle={() => setAdvanced(!foldOpen)}
+              actor={actor}
               others={others}
+              recordSources={context.knowledgeSources.records}
+              fieldOptions={options}
+              actorModels={context.actorModels}
+              capField={capField}
             />
           </Stack>
           <ActorFormFooter

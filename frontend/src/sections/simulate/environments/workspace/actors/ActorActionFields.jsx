@@ -8,9 +8,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import ActorField from "./ActorField";
 import { ACTORS_COPY } from "./actors.constants";
-import { ACTOR_FORM_SHAPE, OPTIONS_SHAPE } from "./actors.shapes";
+import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
 const F = ACTORS_COPY.worldActors.form;
 
@@ -21,7 +20,6 @@ export default function ActorActionFields({
   conflicts,
   shareConfirmed,
   onShare,
-  plays,
 }) {
   const permitted = form.value("permitted");
   const problem = form.problems.permitted;
@@ -82,13 +80,6 @@ export default function ActorActionFields({
           />
         </Alert>
       )}
-      <ActorField
-        form={form}
-        name="play"
-        label={F.play}
-        options={plays}
-        helperText={F.playHelp}
-      />
     </>
   );
 }
@@ -114,5 +105,4 @@ ActorActionFields.propTypes = {
   shareConfirmed: PropTypes.bool,
   // (checked)
   onShare: PropTypes.func.isRequired,
-  plays: OPTIONS_SHAPE.isRequired,
 };

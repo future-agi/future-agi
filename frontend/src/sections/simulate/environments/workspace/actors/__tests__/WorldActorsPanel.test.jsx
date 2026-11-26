@@ -717,7 +717,7 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" locked />);
     fireEvent.click(screen.getByText("What they see"));
     expect(
-      screen.getByText("What they want: Approve fast"),
+      screen.getByText("What they push for: Approve fast"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("What they know: The limit is 25%"),
@@ -747,11 +747,11 @@ describe("WorldActorsPanel", () => {
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Priya" },
     });
-    fireEvent.click(screen.getByText("More details"));
     fireEvent.change(
-      screen.getByLabelText("Is done when (optional, one per line)"),
+      screen.getByLabelText("They give up when (optional, one per line)"),
       { target: { value: "She has decided" } },
     );
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     fireEvent.change(
       screen.getByLabelText("What they know (optional, one per line)"),
       { target: { value: "The limit is 25%" } },
@@ -907,6 +907,7 @@ describe("WorldActorsPanel", () => {
       target: { value: "Priya Nair" },
     });
     const wait = screen.getByLabelText("Waits, in seconds (optional)");
+    expect(wait).not.toBeVisible();
     answer = {
       ...CLEAN,
       problems: [
@@ -914,6 +915,8 @@ describe("WorldActorsPanel", () => {
       ],
     };
     fireEvent.change(wait, { target: { value: "-5" } });
+    // The fold opens itself so a problem on a folded field shows under it.
+    expect(wait).toBeVisible();
     expect(screen.getByText("A wait is 0 seconds or more")).toBeInTheDocument();
     expect(screen.queryByTestId("actor-problems")).toBeNull();
     expect(saveButton()).toBeDisabled();
@@ -985,23 +988,37 @@ describe("WorldActorsPanel", () => {
     expect(saveButton()).toBeDisabled();
   });
 
-  it("keeps the details a run does not read yet folded under More details", () => {
+  it("keeps the working settings folded under Advanced settings, with Pressure and How they behave always on screen", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
+    const always = [
+      "What they know (optional, one per line)",
+      "What they push for (optional)",
+      "They give up when (optional, one per line)",
+      "How they behave (optional)",
+    ];
+    const folded = [
+      "Records they can read (optional)",
+      "Answers",
+      "How they act in the world",
+      "Waits, in seconds (optional)",
+      "If they do not answer",
+      "May agree to (optional, one per line)",
+    ];
+    for (const label of always)
+      expect(screen.getByLabelText(label)).toBeVisible();
+    for (const label of folded)
+      expect(screen.getByLabelText(label)).not.toBeVisible();
+    expect(screen.getByText("Pressure")).toBeVisible();
     expect(
-      screen.getByLabelText("What they know (optional, one per line)"),
-    ).toBeVisible();
-    expect(
-      screen.getByLabelText("What they want (optional)"),
-    ).not.toBeVisible();
-    fireEvent.click(screen.getByText("More details"));
-    expect(screen.getByLabelText("What they want (optional)")).toBeVisible();
-    expect(
-      screen.getByText(
+      screen.getAllByText(
         /Given to them as background whenever they speak or decide in the moment/,
-      ),
+      )[0],
     ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    for (const label of folded)
+      expect(screen.getByLabelText(label)).toBeVisible();
     expect(screen.queryByText(/not used by runs/)).toBeNull();
   });
 
@@ -1010,7 +1027,7 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
     expect(screen.getByLabelText("Role (optional)")).toBeInTheDocument();
-    choose("How they join the conversation", "Heard nearby");
+    choose("How they take part", "Heard nearby");
     expect(screen.getByLabelText("Role")).toBeInTheDocument();
     expect(screen.getByText("a voice near the person")).toBeInTheDocument();
   });
@@ -1022,7 +1039,7 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByLabelText("World actions they may take (optional)"),
     ).toBeInTheDocument();
-    choose("How they join the conversation", "Heard nearby");
+    choose("How they take part", "Heard nearby");
     fireEvent.change(screen.getByLabelText("Id"), {
       target: { value: "colleague" },
     });
@@ -1054,7 +1071,7 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    choose("How they join the conversation", "Takes the phone");
+    choose("How they take part", "Takes the phone");
     expect(screen.queryByText(/Automatic: each call picks/)).toBeNull();
   });
 
@@ -1101,7 +1118,7 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.click(screen.getByText("More details"));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     choose("Brought in by (optional)", "Jordan Taylor");
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Sam" },
@@ -1419,9 +1436,10 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText("In 2 scenarios, so how they join stays as it is."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByLabelText("How they join the conversation"),
-    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByLabelText("How they take part")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("clears the in-use warning when a form opens", () => {
@@ -1472,20 +1490,23 @@ describe("WorldActorsPanel", () => {
   });
 
   it("still asks when an existing value was emptied and then folded away", async () => {
-    actorsData = cast([{ ...MANAGER, goal: "Approve refunds" }]);
+    const LABEL = "May agree to (optional, one per line)";
+    actorsData = cast([
+      {
+        ...MANAGER,
+        constraints: { ...MANAGER.constraints, may_agree: ["Up to 20%"] },
+      },
+    ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    const more = screen.getByRole("button", { name: /more details/i });
-    fireEvent.click(more);
-    fireEvent.change(
-      screen.getByRole("textbox", { name: "What they want (optional)" }),
-      { target: { value: "" } },
-    );
-    fireEvent.click(more);
+    const fold = screen.getByRole("button", { name: /advanced settings/i });
+    fireEvent.click(fold);
+    fireEvent.change(screen.getByRole("textbox", { name: LABEL }), {
+      target: { value: "" },
+    });
+    fireEvent.click(fold);
     await waitFor(() =>
-      expect(
-        screen.queryByRole("textbox", { name: "What they want (optional)" }),
-      ).toBeNull(),
+      expect(screen.queryByRole("textbox", { name: LABEL })).toBeNull(),
     );
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(

@@ -11,11 +11,9 @@ import { refusalText } from "../evals/refusalText";
 import { ACTORS_COPY } from "./actors.constants";
 
 const F = ACTORS_COPY.worldActors.form;
-const recordLabel = (one) => `${one.store}.${one.collection}`;
 
 export default function ActorKnowledgeFields({
   files,
-  records,
   sources,
   upload,
   uploadRules,
@@ -96,43 +94,14 @@ export default function ActorKnowledgeFields({
           </Typography>
         </Box>
       )}
-      <Autocomplete
-        multiple
-        size="small"
-        options={sources.records}
-        value={records}
-        onChange={(_, next) => onChange("records", next)}
-        getOptionLabel={recordLabel}
-        isOptionEqualToValue={(one, other) =>
-          recordLabel(one) === recordLabel(other)
-        }
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            label={F.recordsRead}
-            error={Boolean(problems.records)}
-            helperText={
-              problems.records ||
-              (sources.records.length ? F.recordsHelp : F.noRecords)
-            }
-          />
-        )}
-      />
     </>
   );
 }
 
-const RECORD = PropTypes.shape({
-  store: PropTypes.string,
-  collection: PropTypes.string,
-});
-
 ActorKnowledgeFields.propTypes = {
   files: PropTypes.arrayOf(PropTypes.string).isRequired,
-  records: PropTypes.arrayOf(RECORD).isRequired,
   sources: PropTypes.shape({
     files: PropTypes.arrayOf(PropTypes.string).isRequired,
-    records: PropTypes.arrayOf(RECORD).isRequired,
     // Every attached file's role by path; evaluator-only files are never in `files`.
     roles: PropTypes.objectOf(PropTypes.string),
   }).isRequired,

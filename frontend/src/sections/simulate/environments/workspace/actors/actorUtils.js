@@ -53,7 +53,10 @@ export const triggerOf = (read, keys) => ({
   ...Object.fromEntries(
     keys.map((key) => {
       const typedIn = read(TRIGGER_INPUTS[key]);
-      return [key, TRIGGER_VALUES[key] ? TRIGGER_VALUES[key](typedIn) : typedIn];
+      return [
+        key,
+        TRIGGER_VALUES[key] ? TRIGGER_VALUES[key](typedIn) : typedIn,
+      ];
     }),
   ),
 });
@@ -247,32 +250,58 @@ export const PROBLEM_FIELDS = {
   max_lines: "max_lines",
 };
 
-const MORE_DETAILS = [...CONSTRAINTS, "parent", "goal", "style"];
+// Fields the Advanced settings fold holds; the rest are always on screen.
+export const ADVANCED = [
+  "records",
+  "timing",
+  "seconds",
+  "play",
+  "timeout",
+  "fallback",
+  "fallback_arguments",
+  "model",
+  "max_turns",
+  "max_lines",
+  "may_agree",
+  "private",
+  "escalate_when",
+  "parent",
+];
 
 // A server problem on a field not in this set shows above Save.
-export const fieldsOnScreen = (read, { capField, loud, models, more }) =>
+export const fieldsOnScreen = (read, { capField, loud, models, advanced }) =>
   new Set([
     ...[
       "id",
       "name",
       "role",
-      "channel",
       "kind",
+      "channel",
+      "mode",
       "facts",
       "files",
-      "records",
       "permitted",
-      "play",
-      "mode",
-      "timeout",
-      "fallback",
-      "timing",
+      "goal",
+      "stop_when",
+      "style",
     ],
-    ...(capField ? [capField] : []),
     ...(read("channel") ? VOICE_FIELDS : []),
     ...(read("channel") && loud ? ["loudness_ratio"] : []),
-    ...(read("timing") === "delayed" ? ["seconds"] : []),
-    ...(fallbackActs(read("fallback")) ? ["fallback_arguments"] : []),
-    ...(models ? ["model"] : []),
-    ...(more ? MORE_DETAILS : []),
+    ...(advanced
+      ? [
+          "records",
+          "timing",
+          "play",
+          "timeout",
+          "fallback",
+          "parent",
+          "may_agree",
+          "private",
+          "escalate_when",
+          ...(capField ? [capField] : []),
+          ...(read("timing") === "delayed" ? ["seconds"] : []),
+          ...(fallbackActs(read("fallback")) ? ["fallback_arguments"] : []),
+          ...(models ? ["model"] : []),
+        ]
+      : []),
   ]);

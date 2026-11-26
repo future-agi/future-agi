@@ -2,19 +2,12 @@ import PropTypes from "prop-types";
 import ActorField from "./ActorField";
 import { ACTORS_COPY } from "./actors.constants";
 import { ACTOR_FORM_SHAPE, OPTIONS_SHAPE } from "./actors.shapes";
-import {
-  KEPT,
-  fallbackActs,
-  fallbackKey,
-  parsedArguments,
-  whereProblem,
-  words,
-} from "./actorUtils";
+import { KEPT, whereProblem, words } from "./actorUtils";
 
 const F = ACTORS_COPY.worldActors.form;
 
 // The trigger kinds the chosen way of joining offers and the cast's labels for them; only the inputs the picked kind
-// takes (`triggerKeys`) show.
+// takes (`triggerKeys`) show. Waits and the fallback are in ActorFallbackFields.
 export default function ActorTriggerFields({
   form,
   actor,
@@ -22,8 +15,6 @@ export default function ActorTriggerFields({
   triggerKeys,
   actionIds,
   collections,
-  fallbackWords,
-  others,
 }) {
   const { initial } = form;
   const takes = (key) => triggerKeys.includes(key);
@@ -33,25 +24,6 @@ export default function ActorTriggerFields({
       ? actor.when_label
       : triggerOptions.find((one) => one.value === initial.mode)?.label ||
         words(initial.mode);
-  const fallbackOptions = [
-    ...fallbackWords.map((one) => ({
-      value: fallbackKey({ kind: one.value, value: one.value }),
-      label: one.label,
-    })),
-    ...form.value("permitted").map((id) => ({
-      value: fallbackKey({ kind: "action", value: id }),
-      label: F.takesAction(id),
-    })),
-    ...others.map((one) => ({
-      value: fallbackKey({ kind: "actor", value: one.id }),
-      label: F.answeredBy(one.name || one.id),
-    })),
-  ];
-  const acts = fallbackActs(form.value("fallback"));
-  const argumentsWrong =
-    acts && parsedArguments(form.value("fallback_arguments")) === null
-      ? F.fallbackArgumentsWrong
-      : "";
   const where = takes("where") ? whereProblem(form.value("triggerWhere")) : "";
   const field = (name, label, extra = {}) => (
     <ActorField form={form} name={name} label={label} {...extra} />
@@ -92,20 +64,6 @@ export default function ActorTriggerFields({
           error: Boolean(where),
           helperText: where || F.triggerWhereHelp,
         })}
-      {field("timeout", F.timeout, {
-        type: "number",
-        helperText: F.timeoutHelp,
-        inputProps: { min: 0 },
-      })}
-      {field("fallback", F.fallback, {
-        options: fallbackOptions,
-        startLabel: actor.fallback.label,
-      })}
-      {acts &&
-        field("fallback_arguments", F.fallbackArguments, {
-          error: Boolean(argumentsWrong || form.problems.fallback_arguments),
-          helperText: argumentsWrong || F.fallbackArgumentsHelp,
-        })}
     </>
   );
 }
@@ -120,9 +78,4 @@ ActorTriggerFields.propTypes = {
   triggerKeys: PropTypes.arrayOf(PropTypes.string).isRequired,
   actionIds: PropTypes.arrayOf(PropTypes.string).isRequired,
   collections: PropTypes.arrayOf(PropTypes.string).isRequired,
-  // Fallbacks that are neither an action nor an actor.
-  fallbackWords: OPTIONS_SHAPE.isRequired,
-  others: PropTypes.arrayOf(
-    PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }),
-  ).isRequired,
 };

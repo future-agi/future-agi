@@ -307,9 +307,9 @@ describe("ActorForm", () => {
       ),
     });
     renderForm(newActor("caller", "audio_mix", data), { data });
-    expect(
-      screen.getByLabelText("How they join the conversation"),
-    ).toHaveTextContent("Beside the caller");
+    expect(screen.getByLabelText("How they take part")).toHaveTextContent(
+      "Beside the caller",
+    );
   });
 
   it("lists an evaluator-only file in Files they can read, locked", () => {

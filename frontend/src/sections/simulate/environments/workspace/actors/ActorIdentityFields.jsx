@@ -60,6 +60,12 @@ export default function ActorIdentityFields({
       />
       <ActorField
         form={form}
+        name="kind"
+        label={F.kind}
+        options={fieldOptions.kind}
+      />
+      <ActorField
+        form={form}
         name="channel"
         label={F.channel}
         options={channelOptions.map((one) =>
