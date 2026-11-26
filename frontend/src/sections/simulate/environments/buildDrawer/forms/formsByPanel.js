@@ -5,7 +5,7 @@ import ScratchForm from "../starts/ScratchForm";
 import FromCodeForm from "../starts/FromCodeForm";
 import McpForm from "../starts/McpForm";
 import SandboxForm from "../starts/SandboxForm";
-import WorldForm from "../starts/WorldForm";
+import ReadyEnvironmentPanel from "../starts/ReadyEnvironmentPanel";
 
 // Each way in's setup form, by its `setup.panel`.
 export const FORMS_BY_PANEL = {
@@ -18,6 +18,6 @@ export const FORMS_BY_PANEL = {
   fromCode: FromCodeForm,
   mcpWorld: McpForm,
   sandbox: SandboxForm,
-  world: WorldForm,
+  ready: ReadyEnvironmentPanel,
   ...UI_ONLY_FORMS,
 };

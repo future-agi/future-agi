@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import Any
 
 import structlog
 from django.db import transaction
@@ -433,7 +434,7 @@ def _held(
     )
     # A blocked case is superseded by a retry even if the source was repaired.
     # Only originals that would hold a new case need a fresh fingerprint.
-    stale = set()
+    stale: set[Any] = set()
     if statuses == _REPEATED_STATUSES:
         by_import = defaultdict(list)
         for case in found:
@@ -640,8 +641,8 @@ def _promote_duplicates(evidence_import: EvidenceImport, leaving) -> None:
         )
         for owner, cases in by_import.items()
     }
-    by_departing = {}
-    by_digest = {}
+    by_departing: dict[Any, Any] = {}
+    by_digest: dict[Any, Any] = {}
     now = timezone.now()
     for preferred, group in _promotion_candidates(duplicates):
         current = held[preferred.evidence_import_id].of(
