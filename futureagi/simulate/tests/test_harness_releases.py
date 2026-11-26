@@ -229,11 +229,23 @@ class TestPlanSplits:
         assert (plan.train, plan.test) == (28, 12)
         assert tests == {"a": 6, "b": 5, "c": 1, "d": 0}
 
-    def test_a_category_of_one_stays_in_train(self):
+    def test_a_lone_single_task_category_stays_in_train(self):
+        # One single-task category alone forms a group of one, which keeps its train task.
         plan = plan_splits(_tasks({"a": 14, "lonely": 1}), {}, "env")
 
         assert plan.assign["lonely-0"] == "train"
         assert plan.test == target_test_size(15)
+
+    def test_single_task_categories_split_as_one_group(self):
+        # Three single-task categories pool into one group of three: it is covered like
+        # any category of two or more, and keeps at least one train task.
+        sizes = {"a": 14, "s1": 1, "s2": 1, "s3": 1}
+
+        plan = plan_splits(_tasks(sizes), {}, "env")
+
+        pooled = [plan.assign[f"s{i}-0"] for i in (1, 2, 3)]
+        assert 1 <= pooled.count("test") <= 2
+        assert plan.test == target_test_size(17)
 
     def test_every_category_keeps_a_train_task(self):
         plan = plan_splits(_tasks({"a": 2, "b": 2, "c": 2, "d": 2, "e": 2}), {}, "env")
@@ -292,7 +304,8 @@ class TestPlanSplits:
             _tasks({"a": 100, "b": 100, "c": 50}), dict(first.assign), "env"
         )
 
-        # Nothing already assigned moves, and the target is a ceiling.
+        # Nothing already assigned moves, and new tasks take only the test seats the
+        # target leaves; the 60 retained tests already meet it, so c trains.
         assert second.test == second.test_target == 60
         assert _tests_by_category(second.assign, "c") == {"c": 0}
 
