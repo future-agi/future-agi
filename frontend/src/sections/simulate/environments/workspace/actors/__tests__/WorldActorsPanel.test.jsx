@@ -496,6 +496,16 @@ describe("WorldActorsPanel", () => {
     asked = undefined;
   });
 
+  it("keeps Enter in a field from saving or closing the form", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    addActor();
+    const name = screen.getByLabelText(starred("Name"));
+    fireEvent.change(name, { target: { value: "Priya" } });
+    fireEvent.submit(name.closest("form"));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.getByText("Save to draft")).toBeInTheDocument();
+  });
+
   it("lists every attached file with its role, evaluator-only ones too, and changes a role at the cast's revision", () => {
     roleMutate.mockReset();
     actorsData = cast([MANAGER], {

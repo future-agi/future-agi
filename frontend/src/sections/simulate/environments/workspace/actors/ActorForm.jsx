@@ -1,6 +1,8 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { Button, Stack } from "@mui/material";
+import { useForm, useWatch } from "react-hook-form";
+import FormProvider from "src/components/hook-form";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useActorCheck } from "src/api/simulate-environments/versions";
 import SideDrawer from "../../components/SideDrawer";
@@ -44,12 +46,30 @@ export default function ActorForm({
   onSave,
 }) {
   const existing = Boolean(actor?.id);
-  const [fields, setFields] = useState({});
   const [advanced, setAdvanced] = useState(false);
   const initial = initialFields(actor);
-  const readerOf = (holder) => (name) =>
-    name in holder ? holder[name] : initial[name];
-  const value = readerOf(fields);
+  const methods = useForm({ defaultValues: initial });
+  const fields = useWatch({ control: methods.control });
+  const { touchedFields } = methods.formState;
+  const value = (name) => (name in fields ? fields[name] : initial[name]);
+  // Changed at all, even back to where it started: a cleared id stays cleared rather than taking the suggestion.
+  const edited = (name) => Boolean(touchedFields[name]);
+  const put = (name, next) =>
+    methods.setValue(name, next, { shouldDirty: true, shouldTouch: true });
+  // An upload that finds the draft moved hands in the fresh record: it becomes the start, and what was typed stays.
+  const opened = useRef(actor);
+  useEffect(() => {
+    if (opened.current === actor) return;
+    opened.current = actor;
+    const typed = Object.keys(methods.formState.touchedFields).map((name) => [
+      name,
+      methods.getValues(name),
+    ]);
+    methods.reset(initialFields(actor));
+    typed.forEach(([name, next]) =>
+      methods.setValue(name, next, { shouldDirty: true, shouldTouch: true }),
+    );
+  }, [actor, methods]);
   // Null while a JSON field does not parse; that field shows why.
   // The trigger keys each kind takes, as the cast lists them.
   const triggerKeys = context.triggerFields;
@@ -69,8 +89,6 @@ export default function ActorForm({
     const id = String(value("id")).trim();
     return { op: "create", changes, ...(id ? { id } : {}) };
   };
-  const put = (name, next) =>
-    setFields((current) => ({ ...current, [name]: next }));
   const set = (name) => (event) => put(name, event.target.value);
   const changed = hasEdits(actor, fields);
   const request = actor ? requestOf() : null;
@@ -87,8 +105,8 @@ export default function ActorForm({
   };
   const touched = (name) =>
     name === "mode"
-      ? ["mode", ...Object.values(TRIGGER_INPUTS)].some((one) => one in fields)
-      : name in fields;
+      ? ["mode", ...Object.values(TRIGGER_INPUTS)].some(edited)
+      : edited(name);
   const filled = (name) =>
     name === "mode"
       ? (triggerKeys[value("mode")] || [])
@@ -284,90 +302,99 @@ export default function ActorForm({
       width={{ xs: "100%", sm: 520 }}
     >
       {actor && (
-        <Stack sx={{ height: "100%", minHeight: 0 }}>
-          <ActorFormHeader
-            actor={actor}
-            error={error}
-            offline={offline}
-            conflict={conflict}
-          />
-          <Stack
-            ref={body}
-            spacing={2}
-            sx={{ p: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}
-          >
-            <ActorIdentityFields
-              form={form}
+        <FormProvider
+          methods={methods}
+          // Enter in a field never saves; Save does.
+          onSubmit={(event) => event.preventDefault()}
+          style={{ height: "100%" }}
+        >
+          <Stack sx={{ height: "100%", minHeight: 0 }}>
+            <ActorFormHeader
               actor={actor}
-              idTyped={"id" in fields}
-              suggestedId={verdict?.suggested_id || ""}
-              idHint={context.idHint}
-              channelOptions={context.channelOptions}
-              chosen={chosen}
-              fieldOptions={options}
+              error={error}
+              offline={offline}
+              conflict={conflict}
             />
-            <ActorTriggerFields
-              form={form}
-              actor={actor}
-              triggerOptions={chosen ? chosen.trigger_options : []}
-              triggerKeys={triggerKeys[value("mode")] || []}
-              actionIds={context.actions.map((one) => one.action)}
-              collections={context.knowledgeSources.records.map(
-                (one) => one.collection,
-              )}
-            />
-            {field("facts", F.facts, {
-              multiline: true,
-              minRows: 2,
-              helperText: F.factsHelp,
-            })}
-            <ActorKnowledgeFields
-              files={value("files")}
-              sources={context.knowledgeSources}
-              upload={context.upload}
-              uploadRules={context.uploadRules}
-              problems={form.problems}
-              onChange={put}
-            />
-            <ActorActionFields
-              form={form}
-              actions={context.actions}
-              unknownActions={unknownActions}
-              conflicts={conflicts}
-              shareConfirmed={shareConfirmed}
-              onShare={(checked) => setConfirmedFor(checked ? conflictKey : "")}
-            />
-            {value("channel") && (
-              <ActorVoiceFields
+            <Stack
+              ref={body}
+              spacing={2}
+              sx={{ p: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}
+            >
+              <ActorIdentityFields
                 form={form}
-                options={options}
-                loudness={chosen?.loudness ? context.loudness : null}
+                actor={actor}
+                idTyped={edited("id")}
+                suggestedId={verdict?.suggested_id || ""}
+                idHint={context.idHint}
+                channelOptions={context.channelOptions}
+                chosen={chosen}
+                fieldOptions={options}
               />
-            )}
-            <ActorPressureFields form={form} />
-            {field("style", F.style, { helperText: F.styleHelp })}
-            <ActorAdvancedFields
-              form={form}
-              open={foldOpen}
-              onToggle={() => setAdvanced(!foldOpen)}
-              actor={actor}
-              others={others}
-              recordSources={context.knowledgeSources.records}
-              fieldOptions={options}
-              actorModels={context.actorModels}
-              capField={capField}
+              <ActorTriggerFields
+                form={form}
+                actor={actor}
+                triggerOptions={chosen ? chosen.trigger_options : []}
+                triggerKeys={triggerKeys[value("mode")] || []}
+                actionIds={context.actions.map((one) => one.action)}
+                collections={context.knowledgeSources.records.map(
+                  (one) => one.collection,
+                )}
+              />
+              {field("facts", F.facts, {
+                multiline: true,
+                minRows: 2,
+                helperText: F.factsHelp,
+              })}
+              <ActorKnowledgeFields
+                files={value("files")}
+                sources={context.knowledgeSources}
+                upload={context.upload}
+                uploadRules={context.uploadRules}
+                problems={form.problems}
+                onChange={put}
+              />
+              <ActorActionFields
+                form={form}
+                actions={context.actions}
+                unknownActions={unknownActions}
+                conflicts={conflicts}
+                shareConfirmed={shareConfirmed}
+                onShare={(checked) =>
+                  setConfirmedFor(checked ? conflictKey : "")
+                }
+              />
+              {value("channel") && (
+                <ActorVoiceFields
+                  form={form}
+                  options={options}
+                  loudness={chosen?.loudness ? context.loudness : null}
+                />
+              )}
+              <ActorPressureFields form={form} />
+              {field("style", F.style, { helperText: F.styleHelp })}
+              <ActorAdvancedFields
+                form={form}
+                open={foldOpen}
+                onToggle={() => setAdvanced(!foldOpen)}
+                actor={actor}
+                others={others}
+                recordSources={context.knowledgeSources.records}
+                fieldOptions={options}
+                actorModels={context.actorModels}
+                capField={capField}
+              />
+            </Stack>
+            <ActorFormFooter
+              problems={problems.filter((one) => !fieldOf(one))}
+              overBy={overBy}
+              check={check}
+              busy={busy}
+              saving={busy || saveAsked}
+              onCancel={onClose}
+              onSave={attemptSave}
             />
           </Stack>
-          <ActorFormFooter
-            problems={problems.filter((one) => !fieldOf(one))}
-            overBy={overBy}
-            check={check}
-            busy={busy}
-            saving={busy || saveAsked}
-            onCancel={onClose}
-            onSave={attemptSave}
-          />
-        </Stack>
+        </FormProvider>
       )}
       <ConfirmDialog
         open={leaving}
