@@ -71,8 +71,9 @@ const numberOrNull = (text) =>
 const numberOrNone = (text) =>
   String(text ?? "").trim() === "" ? undefined : Number(text);
 
-// How each trigger key's input becomes its value: words as a list, numbers as typed (emptied is null), a match as
-// JSON (only read once `whereProblem` is "").
+// How each trigger key's input becomes its value: words as a list, numbers as typed (emptied is null), a chance as
+// a share of 1, a match as JSON (only read once `whereProblem` is ""). An emptied call of the action is left out:
+// it means the first.
 const TRIGGER_VALUES = {
   words: (text) =>
     String(text)

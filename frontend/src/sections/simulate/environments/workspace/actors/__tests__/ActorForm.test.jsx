@@ -149,6 +149,7 @@ describe("ActorForm", () => {
       [
         "Present from the start",
         "Joins partway",
+        "A chance on each call",
         "When the agent contacts them",
         "At a set moment",
       ],
@@ -532,6 +533,32 @@ describe("ActorForm", () => {
     expect(onSave.mock.calls[0][0].changes.trigger).toEqual({
       kind: "contacted",
       seconds: 12,
+    });
+  });
+
+  it("edits the action of a later-call trigger without losing which call", () => {
+    verdict = CLEAN;
+    const onSave = vi.fn();
+    renderForm(
+      typedActor({
+        id: "ops",
+        name: "Ops",
+        trigger: { kind: "on_tool", tool: "crm.approve_discount", on_call: 2 },
+      }),
+      { onSave },
+    );
+    expect(
+      screen.getByLabelText("Which call of the action (optional)"),
+    ).toHaveValue(2);
+    fireEvent.mouseDown(screen.getByLabelText(starred("The action")));
+    fireEvent.click(
+      screen.getByRole("option", { name: "crm.request_approval" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    expect(onSave.mock.calls[0][0].changes.trigger).toEqual({
+      kind: "on_tool",
+      tool: "crm.request_approval",
+      on_call: 2,
     });
   });
 

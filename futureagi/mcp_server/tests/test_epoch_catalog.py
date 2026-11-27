@@ -49,6 +49,8 @@ EPOCH = [
     ("launch_epoch", "POST", EPOCHS),
     ("stop_epoch", "POST", EPOCHS + "{id}/stop/"),
     ("retry_epoch", "POST", EPOCHS + "{id}/retry/"),
+    ("get_epoch_coding_agent_brief", "GET", EPOCHS + "coding-agent-brief/"),
+    ("get_epoch_attempt_verdict", "GET", EPOCHS + "{id}/verdict/"),
     ("get_epoch_candidate_patch", "GET", CANDIDATE + "patch/"),
     ("make_epoch_candidate_default", "POST", CANDIDATE + "make-default/"),
     ("open_epoch_candidate_pull_request", "POST", CANDIDATE + "pull-request/"),
@@ -114,6 +116,18 @@ def test_epoch_tools_need_the_entitlement_their_views_check(registry):
     assert {
         tool.entitlement for tool in registry.list_all() if tool.entitlement
     } <= features
+
+
+@pytest.mark.parametrize(
+    "name", ["make_epoch_candidate_default", "open_epoch_candidate_pull_request"]
+)
+def test_shipping_tools_leave_a_refused_candidate_to_a_person(registry, name):
+    """An override reason from MCP is refused (only a signed-in person ships a candidate
+    its checks refused), so the tools never tell an agent to give one."""
+    description = registry.get(name).description
+
+    assert "override_reason" not in description
+    assert "only by a person, in Future AGI" in description
 
 
 def test_discarding_an_import_is_destructive(registry):

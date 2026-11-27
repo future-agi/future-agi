@@ -51729,6 +51729,35 @@
                 }
             ]
         },
+        "/simulate/api/agent-fix-engine/{id}/submitted/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-engine_submitted",
+                "description": "The tree an outside attempt verifies, `source/`-rooted like ``source``.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": {
             "post": {
                 "operationId": "simulate_api_agent-fix-engine_v1_chat_completions_create",
@@ -52105,10 +52134,127 @@
             },
             "parameters": []
         },
+        "/simulate/api/agent-fix-runs/coding-agent-attempts/": {
+            "post": {
+                "operationId": "simulate_api_agent-fix-runs_submit_attempt",
+                "description": "Submit the tree a person's own coding agent made for a finished run. Future AGI\nchecks it as a short Epoch: no model proposes a change, but each check runs the\nagent on the run's cases and uses credits. Read its verdict.",
+                "parameters": [
+                    {
+                        "name": "source_run_id",
+                        "in": "formData",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "tree",
+                        "in": "formData",
+                        "description": "A `source/`-rooted tar.gz: each file of the brief it keeps, changed or not, and any new file. A file of the brief left out is deleted.",
+                        "required": true,
+                        "type": "file"
+                    },
+                    {
+                        "name": "summary",
+                        "in": "formData",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 2000
+                    },
+                    {
+                        "name": "base_commit",
+                        "in": "formData",
+                        "description": "A GitHub agent's change is refused unless this is the brief's base_commit.",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 64
+                    },
+                    {
+                        "name": "locked_paths",
+                        "in": "formData",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "maxLength": 512,
+                            "minLength": 1
+                        }
+                    },
+                    {
+                        "name": "budget_credits",
+                        "in": "formData",
+                        "description": "The attempt's limit in credits. Left out, the attempt's hold × 1.25, capped at 50,000 credits. Its hold is the most its check runs can hold at once.",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 50000,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/agent-fix-runs/coding-agent-brief/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-runs_brief",
+                "description": "What a person's own coding agent reads to fix a finished run: its failing cases,\nnever a held-back one, the agent's files, the rules, and how to submit.",
+                "parameters": [
+                    {
+                        "name": "source_run_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixCodingAgentBrief"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/simulate/api/agent-fix-runs/launch-options/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_launch_options",
-                "description": "What the launch form shows and prefills for a finished run, and what would\nrefuse the launch now.",
+                "description": "What the launch form shows and prefills for a finished run, and what would\nrefuse the launch now. Only a person's signed-in session reads the cases an Epoch\non the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP\nnever.",
                 "parameters": [
                     {
                         "name": "source_run_id",
@@ -52384,6 +52530,39 @@
                     "simulate"
                 ],
                 "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/agent-fix-runs/{id}/verdict/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-runs_verdict",
+                "description": "An outside attempt's verdict: each tier's status, the static and target tiers'\ndetail, and its must-pass regressions, none on a held-back case.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixAttemptVerdict"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
                 "x-runtime-response-validation": true
             },
             "parameters": [
@@ -102068,6 +102247,11 @@
                     "type": "boolean",
                     "default": false
                 },
+                "coding_agent_attempts_enabled": {
+                    "title": "Coding agent attempts enabled",
+                    "type": "boolean",
+                    "default": false
+                },
                 "license": {
                     "$ref": "#/definitions/LicenseDetails"
                 },
@@ -146964,6 +147148,26 @@
                 }
             }
         },
+        "AgentFixOutsideCandidate": {
+            "required": [
+                "summary",
+                "number"
+            ],
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "number": {
+                    "title": "Number",
+                    "type": "integer",
+                    "maximum": 4,
+                    "minimum": 1
+                }
+            },
+            "x-nullable": true
+        },
         "AgentFixRequest": {
             "required": [
                 "target_scenario_keys",
@@ -147078,6 +147282,9 @@
                     "title": "Measured automatically",
                     "type": "boolean",
                     "default": false
+                },
+                "outside_candidate": {
+                    "$ref": "#/definitions/AgentFixOutsideCandidate"
                 }
             }
         },
@@ -147321,6 +147528,7 @@
                 "report",
                 "failure",
                 "retried_from_id",
+                "attempt_of_id",
                 "candidates"
             ],
             "type": "object",
@@ -147386,7 +147594,6 @@
                 },
                 "step": {
                     "title": "Step",
-                    "description": "A finished fix is done, whatever the engine last said.",
                     "type": "string",
                     "enum": [
                         "variations",
@@ -147431,6 +147638,18 @@
                     "title": "Retryable",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "attempt_of_id": {
+                    "title": "Attempt of id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "limited_validation": {
                     "title": "Limited validation",
@@ -147673,6 +147892,169 @@
                     "title": "Version",
                     "type": "integer",
                     "x-nullable": true
+                }
+            }
+        },
+        "AgentFixCodingAgentTarget": {
+            "required": [
+                "key",
+                "name",
+                "failing_sub_goals"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failing_sub_goals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AgentFixCodingAgentFailure": {
+            "required": [
+                "scenario_key",
+                "trial",
+                "sub_goals",
+                "reasons",
+                "transcript"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "trial": {
+                    "title": "Trial",
+                    "type": "integer"
+                },
+                "sub_goals": {
+                    "title": "Sub goals",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
+                "reasons": {
+                    "title": "Reasons",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "transcript": {
+                    "title": "Transcript",
+                    "type": "string"
+                }
+            }
+        },
+        "AgentFixOutsideAttempts": {
+            "required": [
+                "used",
+                "max"
+            ],
+            "type": "object",
+            "properties": {
+                "used": {
+                    "title": "Used",
+                    "type": "integer"
+                },
+                "max": {
+                    "title": "Max",
+                    "type": "integer"
+                }
+            }
+        },
+        "AgentFixCodingAgentBrief": {
+            "required": [
+                "source_run",
+                "environment",
+                "agent",
+                "base_commit",
+                "files",
+                "targets",
+                "protected_scenario_keys",
+                "locked_paths",
+                "failures",
+                "attempts",
+                "blocked",
+                "instructions"
+            ],
+            "type": "object",
+            "properties": {
+                "source_run": {
+                    "$ref": "#/definitions/AgentFixLaunchSourceRun"
+                },
+                "environment": {
+                    "$ref": "#/definitions/AgentFixLaunchEnvironment"
+                },
+                "agent": {
+                    "$ref": "#/definitions/AgentFixAgent"
+                },
+                "base_commit": {
+                    "title": "Base commit",
+                    "description": "The commit a GitHub agent's change must start from; blank for an uploaded agent.",
+                    "type": "string"
+                },
+                "files": {
+                    "description": "The agent's files as the run ran them. The submitted tree holds each one it keeps, changed or not, and may add new files; one left out is deleted.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "targets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixCodingAgentTarget"
+                    }
+                },
+                "protected_scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "locked_paths": {
+                    "description": "The paths earlier attempts on the run locked: every later attempt keeps them, and may lock more.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "failures": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixCodingAgentFailure"
+                    }
+                },
+                "attempts": {
+                    "$ref": "#/definitions/AgentFixOutsideAttempts"
+                },
+                "blocked": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "description": "The prompt the coding agent follows, in markdown.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -148094,6 +148476,7 @@
                 "report",
                 "failure",
                 "retried_from_id",
+                "attempt_of_id",
                 "candidates"
             ],
             "type": "object",
@@ -148159,7 +148542,6 @@
                 },
                 "step": {
                     "title": "Step",
-                    "description": "A finished fix is done, whatever the engine last said.",
                     "type": "string",
                     "enum": [
                         "variations",
@@ -148204,6 +148586,18 @@
                     "title": "Retryable",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "attempt_of_id": {
+                    "title": "Attempt of id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "limited_validation": {
                     "title": "Limited validation",
@@ -148323,6 +148717,135 @@
                     "type": "string",
                     "format": "uri",
                     "minLength": 1
+                }
+            }
+        },
+        "AgentFixAttemptTier": {
+            "required": [
+                "name",
+                "status",
+                "detail"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "failed",
+                        "pending",
+                        "skipped"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                }
+            }
+        },
+        "AgentFixAttemptVerdict": {
+            "required": [
+                "id",
+                "number",
+                "state",
+                "step",
+                "ending",
+                "failure",
+                "summary",
+                "tiers",
+                "counted",
+                "must_pass_regressions",
+                "patch_available",
+                "pull_request_url"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "number": {
+                    "title": "Number",
+                    "type": "integer"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "stopping",
+                        "ready",
+                        "no_improvement",
+                        "not_reproduced",
+                        "out_of_budget",
+                        "stopped",
+                        "failed",
+                        "too_few_cases"
+                    ]
+                },
+                "step": {
+                    "title": "Step",
+                    "type": "string",
+                    "enum": [
+                        "variations",
+                        "reproduce",
+                        "search",
+                        "verify",
+                        "done"
+                    ],
+                    "x-nullable": true
+                },
+                "ending": {
+                    "title": "Ending",
+                    "type": "string",
+                    "enum": [
+                        "ready",
+                        "no_improvement",
+                        "not_reproduced",
+                        "out_of_budget",
+                        "failed"
+                    ],
+                    "x-nullable": true
+                },
+                "failure": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixAttemptTier"
+                    }
+                },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean"
+                },
+                "must_pass_regressions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "patch_available": {
+                    "title": "Patch available",
+                    "type": "boolean"
+                },
+                "pull_request_url": {
+                    "title": "Pull request url",
+                    "type": "string"
                 }
             }
         },

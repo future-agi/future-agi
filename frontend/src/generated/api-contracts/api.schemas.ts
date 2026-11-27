@@ -4063,6 +4063,7 @@ export interface CapabilitiesResponseApi {
   license_state: CapabilitiesResponseApiLicenseState;
   features: CapabilitiesResponseApiFeatures;
   metrics_enabled?: boolean;
+  coding_agent_attempts_enabled?: boolean;
   license?: LicenseDetailsApi;
   instance_id?: string;
 }
@@ -19540,6 +19541,15 @@ export const AgentFixRunApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
+export interface AgentFixOutsideCandidateApi {
+  summary: string;
+  /**
+   * @minimum 1
+   * @maximum 4
+   */
+  number: number;
+}
+
 export type AgentFixRequestApiVariationParents = { [key: string]: string };
 
 export interface AgentFixRequestApi {
@@ -19556,18 +19566,17 @@ export interface AgentFixRequestApi {
   allowed_models?: string[];
   reply_latency_margin_pct?: number;
   cost_margin_pct?: number;
-  cost_limit_usd?: number;
+  cost_limit_usd?: number | null;
   observes_models?: boolean;
   meters_agent_cost?: boolean;
   measured_automatically?: boolean;
+  outside_candidate?: AgentFixOutsideCandidateApi | null;
 }
 
 export interface AgentFixReportApi {
-  /** @minLength 1 */
-  ending: string;
+  ending: string | null;
   summary: string;
-  /** @minLength 1 */
-  winner_candidate_id: string;
+  winner_candidate_id: string | null;
   flaky_protected?: AgentFixFlakyProtectedApi[];
 }
 
@@ -19652,6 +19661,8 @@ export interface AgentFixRunApi {
   failure: AgentFixFailureApi | null;
   retried_from_id: string | null;
   readonly retryable?: boolean;
+  attempt_of_id: string | null;
+  counted?: boolean | null;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
   /** Run from an Error Feed issue, even once the issue is gone. */
@@ -19735,6 +19746,54 @@ export interface AgentFixLaunchEnvironmentApi {
   /** @minLength 1 */
   name: string;
   version: number | null;
+}
+
+export interface AgentFixCodingAgentTargetApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+  failing_sub_goals: string[];
+}
+
+export type AgentFixCodingAgentFailureApiSubGoals = { [key: string]: boolean };
+
+export type AgentFixCodingAgentFailureApiReasons = { [key: string]: string };
+
+export interface AgentFixCodingAgentFailureApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  trial: number;
+  sub_goals: AgentFixCodingAgentFailureApiSubGoals;
+  reasons: AgentFixCodingAgentFailureApiReasons;
+  transcript: string;
+}
+
+export interface AgentFixOutsideAttemptsApi {
+  used: number;
+  max: number;
+}
+
+export interface AgentFixCodingAgentBriefApi {
+  source_run: AgentFixLaunchSourceRunApi;
+  environment: AgentFixLaunchEnvironmentApi;
+  agent: AgentFixAgentApi | null;
+  /** The commit a GitHub agent's change must start from; blank for an uploaded agent. */
+  base_commit: string;
+  /** The agent's files as the run ran them. The submitted tree holds each one it keeps, changed or not, and may add new files; one left out is deleted. */
+  files: string[];
+  targets: AgentFixCodingAgentTargetApi[];
+  protected_scenario_keys: string[];
+  /** The paths earlier attempts on the run locked: every later attempt keeps them, and may lock more. */
+  locked_paths: string[];
+  failures: AgentFixCodingAgentFailureApi[];
+  attempts: AgentFixOutsideAttemptsApi;
+  blocked: AgentFixFailureApi | null;
+  /**
+   * The prompt the coding agent follows, in markdown.
+   * @minLength 1
+   */
+  instructions: string;
 }
 
 export interface AgentFixLaunchScenarioApi {
@@ -19903,6 +19962,8 @@ export interface AgentFixRunDetailApi {
   failure: AgentFixFailureApi | null;
   retried_from_id: string | null;
   readonly retryable?: boolean;
+  attempt_of_id: string | null;
+  counted?: boolean | null;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
   /** Run from an Error Feed issue, even once the issue is gone. */
@@ -19931,6 +19992,60 @@ export interface AgentFixMakeDefaultApi {
 
 export interface AgentFixPullRequestApi {
   /** @minLength 1 */
+  pull_request_url: string;
+}
+
+export type AgentFixAttemptVerdictApiState =
+  (typeof AgentFixAttemptVerdictApiState)[keyof typeof AgentFixAttemptVerdictApiState];
+
+export const AgentFixAttemptVerdictApiState = {
+  queued: "queued",
+  running: "running",
+  stopping: "stopping",
+  ready: "ready",
+  no_improvement: "no_improvement",
+  not_reproduced: "not_reproduced",
+  out_of_budget: "out_of_budget",
+  stopped: "stopped",
+  failed: "failed",
+  too_few_cases: "too_few_cases",
+} as const;
+
+export type AgentFixAttemptTierApiStatus =
+  (typeof AgentFixAttemptTierApiStatus)[keyof typeof AgentFixAttemptTierApiStatus];
+
+export const AgentFixAttemptTierApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  pending: "pending",
+  skipped: "skipped",
+} as const;
+
+export interface AgentFixAttemptTierApi {
+  /** @minLength 1 */
+  name: string;
+  status: AgentFixAttemptTierApiStatus;
+  detail: string;
+}
+
+export interface AgentFixAttemptVerdictApi {
+  id: string;
+  number: number;
+  state: AgentFixAttemptVerdictApiState;
+  step: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  ending:
+    | "ready"
+    | "no_improvement"
+    | "not_reproduced"
+    | "out_of_budget"
+    | "failed"
+    | null;
+  failure: AgentFixFailureApi | null;
+  summary: string;
+  tiers: AgentFixAttemptTierApi[];
+  counted: boolean;
+  must_pass_regressions: string[];
+  patch_available: boolean;
   pull_request_url: string;
 }
 
@@ -49882,6 +49997,22 @@ export type SimulateApiAgentFixRunsListParams = {
    * @minLength 1
    */
   state?: string;
+};
+
+export type SimulateApiAgentFixRunsSubmitAttemptBody = {
+  source_run_id: string;
+  /** A `source/`-rooted tar.gz: each file of the brief it keeps, changed or not, and any new file. A file of the brief left out is deleted. */
+  tree: Blob;
+  summary?: string;
+  /** A GitHub agent's change is refused unless this is the brief's base_commit. */
+  base_commit?: string;
+  locked_paths?: string[];
+  /** The attempt's limit in credits. Left out, the attempt's hold × 1.25, capped at 50,000 credits. Its hold is the most its check runs can hold at once. */
+  budget_credits?: number;
+};
+
+export type SimulateApiAgentFixRunsBriefParams = {
+  source_run_id: string;
 };
 
 export type SimulateApiAgentFixRunsLaunchOptionsParams = {

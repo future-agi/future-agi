@@ -87,6 +87,7 @@ const KIND_LABELS = {
   contacted: "When the agent contacts them",
   after_seconds: "At a set time",
   conditional: "Once a record exists",
+  probability: "By chance",
 };
 const optionsOf = (kinds) =>
   kinds.map((value) => ({ value, label: KIND_LABELS[value] }));
@@ -94,12 +95,13 @@ const optionsOf = (kinds) =>
 // The trigger keys each kind takes.
 export const TRIGGER_FIELDS = {
   always: [],
-  on_tool: ["tool"],
+  on_tool: ["tool", "on_call"],
   on_keyword: ["words"],
   mid_journey: ["turn"],
   contacted: [],
   after_seconds: ["seconds"],
   conditional: ["collection", "where"],
+  probability: ["p"],
 };
 
 const WORLD_KINDS = [
@@ -108,6 +110,7 @@ const WORLD_KINDS = [
   "contacted",
   "after_seconds",
   "conditional",
+  "probability",
 ];
 const SPEAKING_KINDS = [
   "always",

@@ -9,6 +9,21 @@ import { Box, Stack, Typography } from "@mui/material";
 // a panel inside a panel — use plain inside. Pass `onClick` for a whole-panel
 // click target (hover tint, keyboard activation).
 
+/**
+ * The props as propTypes gives them, for a TypeScript caller; any other prop goes to
+ * the Box.
+ * @typedef {object} SectionProps
+ * @property {import("react").ReactNode} [title]
+ * @property {import("react").ReactNode} [description]
+ * @property {import("react").ReactNode} [actions]
+ * @property {"plain" | "panel"} [variant]
+ * @property {(event: import("react").SyntheticEvent) => void} [onClick]
+ * @property {boolean} [disabled]
+ * @property {import("react").ReactNode} [children]
+ * @property {object} [sx]
+ */
+
+/** @param {SectionProps & Record<string, unknown>} props */
 export default function Section({
   title,
   description,
