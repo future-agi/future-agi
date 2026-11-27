@@ -58,7 +58,6 @@ function pr(number, over = {}) {
     reviewRequests: { nodes: [] },
     latestReviews: { nodes: [] },
     comments: { nodes: [] },
-    files: { nodes: [{ path: "futureagi/simulate/a.py" }] },
     ...over,
   };
 }
@@ -213,6 +212,20 @@ test("a page of recent PRs reads the next page", () => {
   assert.equal(calls.filter((c) => c.path === "/graphql").length, 2);
   assert.ok(
     calls.some((c) => c.path === "/repos/o/r/pulls/2/requested_reviewers"),
+  );
+});
+
+test("anyone on the roster reviews any PR: teams do not narrow the pool", () => {
+  // atharva-bhange owns none of the simulate paths, and is the only reviewer who can push.
+  const { run, calls } = sweep(
+    [pr(1, { files: { nodes: [{ path: "futureagi/simulate/a.py" }] } })],
+    ["some-author", "atharva-bhange"],
+  );
+  assert.equal(run.status, 0, run.stderr);
+  const requests = calls.filter((c) => c.path.endsWith("/requested_reviewers"));
+  assert.deepEqual(
+    requests.map((c) => JSON.parse(c.body).reviewers),
+    [["atharva-bhange"]],
   );
 });
 
