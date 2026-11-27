@@ -1074,6 +1074,54 @@ _PHRASE_NAMES = frozenset({"password", "passphrase"})
 _PHRASE_MAX_WORDS = 4
 # At a line's start, a value of fewer words than this is a field's value.
 _LINE_RULE_MIN_WORDS = 4
+# A value whose first this many words hold no sentence word is a secret, masked
+# whole, whatever prose follows it.
+_PLAIN_LOOK_WORDS = 8
+# A number of up to three digits followed by one of these is a rule's count
+# (``5 minutes``), not a key.
+_UNIT_WORDS = frozenset(
+    {
+        "second",
+        "seconds",
+        "sec",
+        "secs",
+        "minute",
+        "minutes",
+        "min",
+        "mins",
+        "hour",
+        "hours",
+        "hr",
+        "hrs",
+        "day",
+        "days",
+        "week",
+        "weeks",
+        "month",
+        "months",
+        "year",
+        "years",
+        "time",
+        "times",
+        "attempt",
+        "attempts",
+        "try",
+        "tries",
+        "digit",
+        "digits",
+        "character",
+        "characters",
+        "chars",
+        "letter",
+        "letters",
+        "word",
+        "words",
+        "call",
+        "calls",
+        "percent",
+        "%",
+    }
+)
 _AUTH_SCHEMES = frozenset({"basic", "bearer", "token", "digest", "apikey", "negotiate"})
 # scheme://user:password@. The lookbehind means a start inside a run of scheme
 # characters is never tried, which keeps the scan linear on a long id or hex run.
@@ -1275,9 +1323,10 @@ def _read_bare_value(
     In this order, so no exception can pass over a secret: one word, a key-shaped
     word anywhere in the value, or a key-shaped lead (a scheme's credential) are a
     secret, masked whole; so is a value whose first sentence is up to four words,
-    after a password's or passphrase's name, whatever its first word. Then a value that starts with a rule
-    word is a rule, and is kept. Words with no sentence word among them, or a short
-    value at a line's start, are masked whole. Otherwise a plain word is followed by
+    after a password's or passphrase's name, whatever its first word. Then a value
+    that starts with a rule word is a rule, and is kept. A value whose first eight
+    words hold no sentence word, or a short value at a line's start, is masked
+    whole. Otherwise a plain word is followed by
     prose, and that word (a scheme's credential) is the secret."""
     words: list[re.Match[str]] = []
     at = start
@@ -1289,14 +1338,15 @@ def _read_bare_value(
     plain = [_plain(each.group(1)) for each in words]
     lead = 2 if word == "authorization" and plain[0] in _AUTH_SCHEMES else 1
     if any(_key_shaped(each.group(1)) for each in words[:lead]) or any(
-        _secret_shaped(each.group(1)) for each in words
+        _secret_shaped(each.group(1), plain[index + 1 : index + 2])
+        for index, each in enumerate(words)
     ):
         return _WHOLE
     if word in _PHRASE_NAMES and _first_sentence(words) <= _PHRASE_MAX_WORDS:
         return _WHOLE
     if plain[0] in _RULE_WORDS:
         return None
-    if not any(each in _SENTENCE_WORDS for each in plain):
+    if not any(each in _SENTENCE_WORDS for each in plain[:_PLAIN_LOOK_WORDS]):
         return _WHOLE
     if line_start and len(words) < _LINE_RULE_MIN_WORDS:
         return _WHOLE
@@ -1317,11 +1367,13 @@ def _first_sentence(words: list[re.Match[str]]) -> int:
     return len(words)
 
 
-def _secret_shaped(word: str) -> bool:
-    """A word that is key-shaped wherever it sits in a value: a small number of up to
-    three digits (``5 minutes``) is a rule's count, not a key."""
+def _secret_shaped(word: str, following: list[str]) -> bool:
+    """A word that is key-shaped wherever it sits in a value. A number of up to three
+    digits followed by a unit (``5 minutes``) is a rule's count, not a key."""
     plain = word.strip(_WORD_PUNCTUATION)
-    return _key_shaped(word) and not (plain.isdigit() and len(plain) <= 3)
+    if plain.isdigit() and len(plain) <= 3:
+        return not (following and following[0] in _UNIT_WORDS)
+    return _key_shaped(word)
 
 
 def _key_shaped(word: str) -> bool:
