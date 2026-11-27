@@ -3936,6 +3936,12 @@ class ClosingDeploymentFileCoverageTests(unittest.TestCase):
 
     def ci_paths(self, event: str) -> List[str]:
         text = (ROOT / ".github/workflows/update-ci.yml").read_text(encoding="utf-8")
+        if event == "pull_request":
+            # No trigger-level path filter: every pull request starts the
+            # workflow, and UPDATE_CI_PATHS in ci_scope.py selects its jobs.
+            policy = (ROOT / ".github/scripts/ci_scope.py").read_text(encoding="utf-8")
+            block = policy.split("UPDATE_CI_PATHS = (\n", 1)[1].split("\n)\n", 1)[0]
+            return re.findall(r'^    "([^"]+)",$', block, re.M)
         block = re.search(rf"^  {event}:\n(?:    .*\n)*?    paths:\n((?:      .*\n)+)", text, re.M)
         self.assertIsNotNone(block, event)
         return [m.group(1) for m in re.finditer(r'^      - "([^"]+)"$', block.group(1), re.M)]

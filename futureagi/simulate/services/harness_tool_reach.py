@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 import structlog
 
 from simulate.models import HostedHarnessJob
-from simulate.selectors.environment_documents import contract_data
+from simulate.selectors.environment_documents import version_contract
 from simulate.selectors.stage_outputs import stage_output
 from simulate.services.harness_actor_rules import (
     ActorRecord,
@@ -26,6 +26,7 @@ from simulate.services.scenario_faults import (
     scenario_key,
     target_of,
 )
+from simulate.services.scenario_refs import arrives_on_tool, step_tools
 
 if TYPE_CHECKING:
     from simulate.models import HarnessEnvironmentVersion
@@ -127,20 +128,17 @@ def production_only(contract: Any) -> list[str]:
 PRODUCTION_ONLY_FIX = "serve it from the agent's tools service or remove it"
 
 
+def production_only_reason(tool: str) -> str:
+    """Why a production-only tool is blocked, as the run's refusal says it."""
+    return f"{tool} reaches production and is blocked in this controlled test: {PRODUCTION_ONLY_FIX}."
+
+
 def needed_production_tools(scenario: Any, blocked: list[str]) -> list[str]:
     """The production-only tools a scenario cannot pass without: those its solution calls, unless one of its
     alternative paths calls none of them."""
 
     def calls(steps: Any) -> set[str]:
-        return (
-            {
-                str(step.get("tool"))
-                for step in steps
-                if isinstance(step, dict) and step.get("tool") in blocked
-            }
-            if isinstance(steps, list)
-            else set()
-        )
+        return {tool for tool in step_tools(steps) if tool in blocked}
 
     if any(
         isinstance(path, list) and path and not calls(path)
@@ -161,23 +159,28 @@ class BlockedTool(TypedDict):
 
 
 class PinnedEnvironment(Protocol):
-    """A run's pins as far as the production-only rule reads them: the environment version, if any."""
+    """A run's pins as far as the production-only rule reads them: the environment and suite versions, if any.
+    The bundle the run replays is read from the rest of the pins as launch reads it (``pins_bundle_key``)."""
 
     @property
     def environment_version(self) -> HarnessEnvironmentVersion | None: ...
+
+    @property
+    def suite_version(self) -> Any: ...
 
 
 def _version_documents(
     environment: HostedHarnessJob, pins: PinnedEnvironment | None
 ) -> dict[str, Any]:
-    version = pins.environment_version if pins is not None else None
+    """The documents of the suite version the run is pinned to, where its scenarios are; else the default's."""
+    version = pins.suite_version if pins is not None else environment.suite_version
     return (version.documents if version is not None else None) or {}
 
 
 def _version_scenarios(
     environment: HostedHarnessJob, documents: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """The scenarios of the run's version, else the environment's own."""
+    """The scenarios of the run's suite version, else the environment's own."""
     scenarios = documents.get("scenarios")
     if not isinstance(scenarios, list):
         scenarios = stage_output(environment, "scenarios")
@@ -189,7 +192,16 @@ def blocked_tools(
 ) -> list[BlockedTool]:
     """Each production-only tool of the run's environment version, with the scenarios that need it."""
     documents = _version_documents(environment, pins)
-    contract = documents.get("contract") or contract_data(environment)
+    # The run's version's contract, the one its bundle is sealed with; a run with no pin runs the default version.
+    from simulate.services.harness_versioning.assembly import pins_bundle_key
+
+    contract = (
+        version_contract(
+            environment, pins.environment_version, key=pins_bundle_key(pins)
+        )
+        if pins is not None and pins.environment_version is not None
+        else version_contract(environment)
+    )
     blocked = production_only(contract)
     if not blocked:
         return []
@@ -327,6 +339,8 @@ class ToolStatus(TypedDict):
     # reaches a system the test world has no copy of; unknown: the build read nothing about where it runs.
     status: ToolState
     status_label: str
+    # Why a test cannot run it, in the words the run's own refusal uses; None for a tool a test can run.
+    status_reason: str | None
     # Whether the world restores what it changes before each trial; None when where it runs is not known.
     reset_between_trials: bool | None
     # Where it runs: the agent's callable, or the tools service route; None when the contract names neither.
@@ -495,6 +509,9 @@ def tool_status(contract: object) -> list[ToolStatus]:
                 "tool": name,
                 "status": status,
                 "status_label": STATUS_LABELS[status],
+                "status_reason": production_only_reason(name)
+                if status == "unsupported"
+                else None,
                 "reset_between_trials": reach[name] if known else None,
                 "runs_at": _runs_at(entries.get(name)),
                 "writes": _writes(entries.get(name)),
@@ -587,10 +604,7 @@ def _acts(actor: object) -> bool:
     """Whether a scenario's actor acts in the world: it has actions, or one of the agent's tool calls brings it in."""
     if not isinstance(actor, dict):
         return False
-    trigger = actor.get("trigger")
-    return bool(actor.get("actions")) or (
-        isinstance(trigger, dict) and trigger.get("kind") == "on_tool"
-    )
+    return bool(actor.get("actions")) or arrives_on_tool(actor) is not None
 
 
 def door_problem(

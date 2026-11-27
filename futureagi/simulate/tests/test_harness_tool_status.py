@@ -14,7 +14,7 @@ from simulate.services.harness_tool_reach import (
 # The first sealing release's rules: routes named with `/` read as `.`, POST routes only.
 RULES = actor_rules({})
 
-# A tools service serves refund (behind the world's door); lookup runs inside the agent as a closure; notify reaches
+# A tools service serves refund (behind the test's tool gateway); lookup runs inside the agent as a closure; notify reaches
 # someone else's API; audit has no entrypoint the build could read.
 CONTRACT = {
     "runtime": {"language": "python"},
@@ -262,4 +262,30 @@ def test_the_tables_a_tool_reads_and_changes_are_shown_when_the_contract_declare
     assert (rows["audit"]["tables"]["recorded"], rows["audit"]["tables"]["read"]) == (
         False,
         [],
+    )
+
+
+def test_an_unsupported_tool_says_why_in_the_words_the_run_refuses_with():
+    from simulate.serializers.harness_environment import (
+        HarnessEnvironmentToolStatusSerializer,
+    )
+
+    rows = _by_tool(tool_status(CONTRACT))
+    assert rows["notify"]["status_reason"] == (
+        "notify reaches production and is blocked in this controlled test: "
+        "serve it from the agent's tools service or remove it."
+    )
+    # A tool a test can run has no reason to give.
+    assert {
+        rows[name]["status_reason"]
+        for name in ("issue_refund", "lookup_order", "audit")
+    } == {None}
+    served = HarnessEnvironmentToolStatusSerializer(rows["notify"]).data
+    assert (
+        served["status_label"]
+        and served["status_reason"] == rows["notify"]["status_reason"]
+    )
+    assert (
+        HarnessEnvironmentToolStatusSerializer(rows["audit"]).data["status_reason"]
+        is None
     )

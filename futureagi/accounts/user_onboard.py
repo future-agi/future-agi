@@ -1052,7 +1052,19 @@ Include a brief note explaining how your answer connects to the context.
         raise
 
 
+def _demo_publication_table_ready():
+    """False only while an old install migrates through accounts.0020, before
+    accounts.0029 creates the publication outbox. accounts.0030 then queues
+    every demo trace created without a publication row."""
+    from django.db import connection
+
+    from accounts.models.demo_seed import DemoTracePublication
+
+    return DemoTracePublication._meta.db_table in connection.introspection.table_names()
+
+
 def create_demo_traces_and_spans(organization_id, user_id=None, *, publish=True):
+    publish = publish and _demo_publication_table_ready()
     try:
         organization = Organization.objects.get(id=organization_id)
 
@@ -4430,12 +4442,26 @@ def _write_demo_trace_to_clickhouse(trace, spans):
             column_names=list(_TRACE_COLUMNS),
             settings={"async_insert": 0},
         )
-        client.insert(
-            "trace_sessions",
-            [trace_session_to_row(trace.session)],
-            column_names=list(_TRACE_SESSION_COLUMNS),
-            settings={"async_insert": 0},
-        )
+        # session_id is a soft reference: a trace can outlive its PG session.
+        # Keep that ID on the trace and spans without fabricating a session row.
+        try:
+            session = trace.session
+        except TraceSession.DoesNotExist:
+            session = None
+            transaction.on_commit(
+                lambda: logger.info(
+                    "demo_trace_session_missing",
+                    trace_id=str(trace.id),
+                    session_id=str(trace.session_id),
+                )
+            )
+        if session is not None:
+            client.insert(
+                "trace_sessions",
+                [trace_session_to_row(session)],
+                column_names=list(_TRACE_SESSION_COLUMNS),
+                settings={"async_insert": 0},
+            )
         # Publication is serialized by its pending-row lock. Re-inserting saved
         # spans after a lost acknowledgement would double additive MV metrics,
         # even though ReplacingMergeTree deduplicates the source rows under FINAL.

@@ -95,6 +95,7 @@ def test_a_run_with_errored_calls_keeps_the_dev_counts_and_rate():
         "outcome_failed": 2,
         "outcome_errored": 2,
         "outcome_skipped": 0,
+        "outcome_cancelled": 0,
         "outcome_no_score": 0,
         "outcome_status": "failed",
         "pass_rate": 80,
@@ -115,7 +116,7 @@ def test_a_passed_receipt_whose_call_has_no_score_is_counted_but_not_scored():
         fields["outcome_status"],
         fields["pass_rate"],
         fields["scored"],
-    ) == (3, 3, "no_score", None, 0)
+    ) == (0, 3, "no_score", None, 0)
 
 
 def test_the_runs_list_judges_a_run_without_receipts_by_its_calls():
@@ -128,6 +129,7 @@ def test_the_runs_list_judges_a_run_without_receipts_by_its_calls():
         "outcome_failed": None,
         "outcome_errored": None,
         "outcome_skipped": None,
+        "outcome_cancelled": None,
         "outcome_no_score": None,
         "outcome_status": "failed",
         "pass_rate": 75,

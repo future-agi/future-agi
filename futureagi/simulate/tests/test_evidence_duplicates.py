@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
 from django.db import IntegrityError, connection, transaction
 from rest_framework import status
 
+from model_hub.models.develop_dataset import Cell
 from simulate.models import EvidenceImport, EvidenceImportCase, HostedHarnessJob
 from simulate.selectors.evidence_import import RETRIED_LATER
 from simulate.services import evidence_import as evidence_import_service
@@ -21,7 +23,8 @@ from simulate.services.evidence_import import (
     create_transcript_import,
     discard_evidence_import,
 )
-from tracer.selectors.observe_evidence import Turn
+from tracer.models.project import Project
+from tracer.selectors.observe_evidence import Label, Turn
 
 from .test_evidence_datasets import CHAT, EXPECTED, _column, _mapping, _row
 from .test_evidence_datasets import _create as _create_rows
@@ -67,6 +70,37 @@ def _stored(made):
 
 
 class TestObserve:
+    @pytest.mark.parametrize("same_content", [False, True])
+    def test_same_session_id_in_another_project_matches_only_by_content(
+        self, client, environment, project, same_content
+    ):
+        other = Project.objects.create(
+            organization=project.organization,
+            workspace=project.workspace,
+            model_type=project.model_type,
+            trace_type=project.trace_type,
+            name="Other agent",
+        )
+        first = _evidence()
+        second = (
+            first
+            if same_content
+            else _evidence(
+                turns=(Turn("user", "Another conversation", False, "trace", T0),)
+            )
+        )
+        _sessions(client, environment, project, {SESSION: first}, [SESSION])
+        with patch(
+            "simulate.selectors.evidence_import.observe_evidence",
+            side_effect=lambda owner, kind, ids: {
+                SESSION: first if owner == project else second
+            },
+        ):
+            response = _create_sessions(client, environment, other, ids=[SESSION])
+        assert response.status_code == status.HTTP_201_CREATED, response.data
+        [case] = response.json()["cases"]
+        assert case["status"] == ("duplicate" if same_content else "pending")
+
     def test_a_session_imported_again_is_no_second_case_and_counts_as_a_source(
         self, client, environment, project
     ):
@@ -85,6 +119,17 @@ class TestObserve:
         assert [one["id"] for one in _list(client, environment)] == [first["id"]]
         [original] = _review(client, environment, first, found)["cases"]
         assert (original["status"], original["also_from"]) == ("pending", 1)
+
+    def test_changed_label_allows_reimport(self, client, environment, project):
+        label = Label("Quality", "text", "good", "", "session")
+        source = _evidence(labels=(label,))
+        _sessions(client, environment, project, {SESSION: source}, [SESSION])
+
+        changed = replace(source, labels=(replace(label, value="poor"),))
+        again = _sessions(client, environment, project, {SESSION: changed}, [SESSION])
+
+        [case] = again["cases"]
+        assert (case["status"], case["duplicate_of"]) == ("pending", None)
 
     def test_two_sessions_holding_the_same_conversation_are_one_case(
         self, client, environment, project
@@ -163,6 +208,28 @@ class TestTranscripts:
 
 
 class TestDataset:
+    @pytest.mark.parametrize(
+        "next_source", ["edited_original", "old_content", "removed_original"]
+    )
+    def test_changed_or_removed_original_no_longer_holds_a_case(
+        self, client, environment, dataset, columns, next_source
+    ):
+        values = {columns["chat"]: CHAT, columns["expected"]: EXPECTED}
+        original = _row(dataset, 0, values)
+        first = _create_rows(client, environment, dataset, [original], columns)
+        assert first.status_code == status.HTTP_201_CREATED, first.data
+        if next_source == "removed_original":
+            original.delete()
+        else:
+            Cell.objects.filter(row=original, column=columns["expected"]).update(
+                value="Refuse."
+            )
+        row = original if next_source == "edited_original" else _row(dataset, 1, values)
+        again = _create_rows(client, environment, dataset, [row], columns)
+        assert again.status_code == status.HTTP_201_CREATED, again.data
+        [case] = again.json()["cases"]
+        assert case["status"] == "pending"
+
     def test_a_row_imported_again_is_already_imported(
         self, client, environment, dataset, columns
     ):
@@ -377,6 +444,82 @@ class TestRetry:
 
         [old] = _stored(first)
         assert (old.status, old.reason) == ("blocked", BLOCKED_BECAUSE)
+
+
+class TestImportHistory:
+    def test_discard_promotes_only_the_current_version_of_a_repeated_source(
+        self, client, environment, dataset, columns
+    ):
+        same = {columns["chat"]: CHAT, columns["expected"]: EXPECTED}
+        other = {**same, columns["expected"]: "Refuse."}
+        a, d, b = [
+            _row(dataset, i, values) for i, values in enumerate((same, other, same))
+        ]
+        first = _create_rows(client, environment, dataset, [a, d], columns).json()
+        old = _create_rows(client, environment, dataset, [b], columns).json()
+        Cell.objects.filter(row=b, column=columns["expected"]).update(value="Refuse.")
+        fresh = _create_rows(client, environment, dataset, [b], columns).json()
+        original_a, original_d = _stored(first)
+        assert _stored(old)[0].duplicate_of_id == original_a.id
+        assert _stored(fresh)[0].duplicate_of_id == original_d.id
+
+        discard_evidence_import(EvidenceImport.no_workspace_objects.get(pk=first["id"]))
+
+        [earlier] = _stored(old)
+        [current] = _stored(fresh)
+        assert (current.status, current.duplicate_of_id) == ("pending", None)
+        assert (earlier.status, earlier.duplicate_of_id) == ("duplicate", current.id)
+
+    def test_discard_reuses_current_original(
+        self, client, environment, dataset, columns
+    ):
+        same = {columns["chat"]: CHAT, columns["expected"]: EXPECTED}
+        a, b = [_row(dataset, index, same) for index in range(2)]
+        first = _create_rows(client, environment, dataset, [a], columns).json()
+        repeat = _create_rows(client, environment, dataset, [b], columns).json()
+        a.delete()
+        fresh = _create_rows(client, environment, dataset, [b], columns).json()
+        [current] = _stored(fresh)
+        assert current.status == "pending"
+
+        discard_evidence_import(EvidenceImport.no_workspace_objects.get(pk=first["id"]))
+
+        [earlier] = _stored(repeat)
+        assert (earlier.status, earlier.duplicate_of_id) == ("duplicate", current.id)
+
+    def test_edited_source_retires_pending_history(
+        self, client, environment, dataset, columns
+    ):
+        row = _row(dataset, 0, {columns["chat"]: CHAT, columns["expected"]: EXPECTED})
+        first = _create_rows(client, environment, dataset, [row], columns).json()
+        repeat = _create_rows(client, environment, dataset, [row], columns).json()
+        Cell.objects.filter(row=row, column=columns["expected"]).update(value="Refuse.")
+        fresh = _create_rows(client, environment, dataset, [row], columns).json()
+
+        [new] = _stored(fresh)
+        [old] = _stored(first)
+        [historical] = _stored(repeat)
+        assert (old.status, new.status) == ("discarded", "pending")
+        assert historical.duplicate_of_id == old.id
+
+    def test_unavailable_observe_history_does_not_abort_transcript(
+        self, client, environment, project
+    ):
+        turns = (
+            Turn("user", "Where is my parcel?", False, "t", T0),
+            Turn("agent", "It left the depot today.", False, "t", T0),
+        )
+        first = _sessions(
+            client, environment, project, {SESSION: _evidence(turns=turns)}, [SESSION]
+        )
+        with patch(
+            "simulate.selectors.evidence_import.observe_evidence",
+            side_effect=ConnectionError,
+        ):
+            response = _post_transcripts(client, environment, _transcript(text=_CHAT))
+        assert response.status_code == status.HTTP_201_CREATED, response.data
+        assert _stored(response.json())[0].status == "pending"
+        assert _stored(first)[0].status == "pending"
 
 
 class TestAcrossSources:

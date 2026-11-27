@@ -4,6 +4,8 @@ import math
 
 from rest_framework import serializers
 
+from simulate.types import WORKER_SUBJECT_PREFIX
+
 _SHA256 = r"^sha256:[0-9a-f]{64}$"
 
 
@@ -92,6 +94,10 @@ class HarnessSubGoalSerializer(serializers.Serializer):
     evidence = serializers.ListField(
         child=serializers.CharField(max_length=64), max_length=16, required=False
     )
+    # Whose result this is: the task, or one of the agent's workers; reported beside the task verdict.
+    subject = serializers.RegexField(
+        rf"^(task|{WORKER_SUBJECT_PREFIX}.*\S.*)$", required=False, max_length=255
+    )
 
 
 class HarnessMetricEvaluationSerializer(serializers.Serializer):
@@ -162,6 +168,8 @@ class HarnessCallSerializer(serializers.Serializer):
     )
     script_completed = serializers.BooleanField(required=False)
     target_metrics = HarnessTargetMetricsSerializer(required=False, allow_null=True)
+    # Writes the world applied twice after the agent's answer was lost: the agent's failure, whatever the checks say.
+    duplicate_commits = serializers.IntegerField(min_value=0, required=False)
 
 
 HARNESS_FAILURE_DOMAINS = (

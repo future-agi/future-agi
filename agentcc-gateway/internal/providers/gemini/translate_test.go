@@ -267,6 +267,41 @@ func TestTranslateRequest_Tools(t *testing.T) {
 	}
 }
 
+func TestTranslateRequest_AllowedToolsRestrictsDeclarations(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		mode     string
+		toolType string
+		wantMode string
+	}{
+		{name: "auto", mode: "auto", toolType: "function", wantMode: "AUTO"},
+		{name: "required", mode: "required", toolType: "function", wantMode: "ANY"},
+		{name: "implicit_function", mode: "required", toolType: "", wantMode: "ANY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &models.ChatCompletionRequest{
+				Model:    "gemini-1.5-pro",
+				Messages: []models.Message{{Role: "user", Content: mustJSON("Hi")}},
+				Tools: []models.Tool{
+					{Type: "function", Function: models.ToolFunction{Name: "tool_a"}},
+					{Type: tc.toolType, Function: models.ToolFunction{Name: "tool_b"}},
+				},
+				ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"` + tc.mode + `","tools":[{"type":"function","function":{"name":"tool_b"}}]}}`),
+			}
+			if err := validateToolPolicy(req); err != nil {
+				t.Fatal(err)
+			}
+			gr, _ := translateRequest(req)
+			if len(gr.Tools) != 1 || len(gr.Tools[0].FunctionDeclarations) != 1 || gr.Tools[0].FunctionDeclarations[0].Name != "tool_b" {
+				t.Fatalf("forwarded tools = %+v, want only tool_b", gr.Tools)
+			}
+			if gr.ToolConfig == nil || gr.ToolConfig.FunctionCallingConfig == nil || gr.ToolConfig.FunctionCallingConfig.Mode != tc.wantMode {
+				t.Fatalf("toolConfig = %+v, want %s", gr.ToolConfig, tc.wantMode)
+			}
+		})
+	}
+}
+
 func TestTranslateRequest_NormalizesJSONToolSchemaForGemini(t *testing.T) {
 	params := json.RawMessage(`{
 		"$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1468,6 +1503,10 @@ func TestTranslateResponse_FinishReasonMapping(t *testing.T) {
 		{"MAX_TOKENS", "length"},
 		{"SAFETY", "content_filter"},
 		{"RECITATION", "content_filter"},
+		{"BLOCKLIST", "content_filter"},
+		{"PROHIBITED_CONTENT", "content_filter"},
+		{"SPII", "content_filter"},
+		{"IMAGE_SAFETY", "content_filter"},
 		{"OTHER", "stop"},
 		{"UNKNOWN_VALUE", "stop"},
 		{"", "stop"},
@@ -1489,6 +1528,70 @@ func TestTranslateResponse_FinishReasonMapping(t *testing.T) {
 					tt.gemini, result.Choices[0].FinishReason, tt.openai)
 			}
 		})
+	}
+}
+
+func TestParseStreamData_FinishReasonMapping(t *testing.T) {
+	tests := []struct {
+		gemini string
+		openai string
+	}{
+		{"STOP", "stop"},
+		{"MAX_TOKENS", "length"},
+		{"SAFETY", "content_filter"},
+		{"RECITATION", "content_filter"},
+		{"BLOCKLIST", "content_filter"},
+		{"PROHIBITED_CONTENT", "content_filter"},
+		{"SPII", "content_filter"},
+		{"IMAGE_SAFETY", "content_filter"},
+		{"OTHER", "stop"},
+		{"UNKNOWN_VALUE", "stop"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.gemini, func(t *testing.T) {
+			state := newStreamState("test-model")
+			data := `{"candidates":[{"content":{"role":"model","parts":[{"text":"test"}]},"finishReason":"` + tt.gemini + `"}]}`
+			chunk, err := state.parseStreamData(data)
+			if err != nil {
+				t.Fatalf("parseStreamData: %v", err)
+			}
+			got := chunk.Choices[0].FinishReason
+			if got == nil || *got != tt.openai {
+				t.Errorf("stream finish reason for %q = %v, want %q", tt.gemini, got, tt.openai)
+			}
+		})
+	}
+}
+
+// A tool call still wins over a safety finish reason, in both paths. This
+// pins the current behaviour; it is not changed here.
+func TestFinishReason_ToolCallWinsOverSafety(t *testing.T) {
+	resp := &geminiResponse{
+		Candidates: []geminiCandidate{
+			{
+				Content: geminiContent{Parts: []geminiPart{
+					{FunctionCall: &geminiFunctionCall{Name: "f", Args: json.RawMessage(`{}`)}},
+				}},
+				FinishReason: "SAFETY",
+			},
+		},
+	}
+	result := translateResponse(resp, "test-model")
+	if got := result.Choices[0].FinishReason; got != "tool_calls" {
+		t.Errorf("non-stream finish reason = %q, want tool_calls", got)
+	}
+
+	state := newStreamState("test-model")
+	if _, err := state.parseStreamData(`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"f","args":{}}}]}}]}`); err != nil {
+		t.Fatalf("parseStreamData: %v", err)
+	}
+	chunk, err := state.parseStreamData(`{"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}`)
+	if err != nil {
+		t.Fatalf("parseStreamData: %v", err)
+	}
+	if got := chunk.Choices[0].FinishReason; got == nil || *got != "tool_calls" {
+		t.Errorf("stream finish reason = %v, want tool_calls", got)
 	}
 }
 

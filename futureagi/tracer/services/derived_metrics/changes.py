@@ -72,11 +72,16 @@ def memory_limit_exceeded(exc: BaseException) -> bool:
     is evidence that the window holds more keys than one pass can buffer.
     """
     seen = set()
-    while exc is not None and id(exc) not in seen:
-        seen.add(id(exc))
-        if _clickhouse_error_code(exc) == ErrorCodes.MEMORY_LIMIT_EXCEEDED:
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        # Only Exception subclasses can carry a ClickHouse error code.
+        if (
+            isinstance(current, Exception)
+            and _clickhouse_error_code(current) == ErrorCodes.MEMORY_LIMIT_EXCEEDED
+        ):
             return True
-        exc = exc.__cause__
+        current = current.__cause__
     return False
 
 
@@ -326,7 +331,7 @@ def _nonempty(value):
 
 
 def _dependencies(analytics, keys, params, budget):
-    result = {}
+    result: dict[SourceKey, Dependency] = {}
     if not params["committed_attempts"]:
         return result
     for batch in _chunks(keys):
@@ -425,7 +430,7 @@ def _physical_units(analytics, keys, params, budget):
     These are opportunistic preimages; committed dependencies and full repair
     remain necessary when source merges have already removed old revisions.
     """
-    sessions = set()
+    sessions: set[str] = set()
     for batch in _chunks(keys):
         rows = read(
             analytics,
@@ -497,7 +502,7 @@ def _remap_aliases(analytics, table, values, budget):
 def _dependency_keys_for_aliases(analytics, params, sessions, users, budget):
     if not params["committed_attempts"] or not (sessions or users):
         return ()
-    keys = set()
+    keys: set[SourceKey] = set()
     for kind, ids in (("session", sessions), ("user", users)):
         for batch in _chunks(ids):
             rows = read(
@@ -526,7 +531,7 @@ def _batch(
     *,
     extra_units: Iterable[UnitKey] = (),
     divergent_only: bool = False,
-):
+) -> ChangeBatch:
     keys = _limit(keys)
     before = _dependencies(analytics, keys, params, budget)
     after = _latest_membership(analytics, keys, params, budget)
@@ -622,6 +627,8 @@ def _relation_refs(
                 budget=budget,
             )
         )
+    sessions: list[str]
+    users: list[str]
     sessions, users = [], []
     for table, target in (
         ("trace_session_id_remap", sessions),
@@ -1139,7 +1146,7 @@ def reconcile_page(
             covered_through=cp.covered_through,
         )
     burst = cp.floor is not None
-    if burst:
+    if cp.floor is not None:  # i.e. burst, written so mypy narrows cp.floor
         # Version-bounded arrivals may move an existing key before coverage.
         # Nominate that key too; the writer, not discovery, owns eligibility.
         floor = (

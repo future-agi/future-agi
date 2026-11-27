@@ -3,6 +3,7 @@ import { sendTrace } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { DISPATCH_LIMIT_MS, boundaryDispatchError, probeAtBoundary } from '../../lib/expiry-boundary';
 
 // frontend/src/utils/axios.js keys endpoints; accounts/serializers/org_api_key.py.
 const CREATE = '/accounts/key/generate_secret_key/';
@@ -238,16 +239,32 @@ test('SET-E2E-003: optional-expiry keys stop access and remain distinguishable f
     const headers = { 'X-Api-Key': key.api_key, 'X-Secret-Key': key.secret_key };
     // Empty OTLP export is a valid request, accepted before expiry. Authentication
     // assertions are single calls, not polled or retried.
+    const target = rows[0].expires_at.getTime();
+    const exportEmpty = () => request.post(`${E2E.collectorUrl}/v1/traces`, {
+      headers, data: { resourceSpans: [] },
+    });
+    let refused: Awaited<ReturnType<typeof exportEmpty>>;
     if (kind === 'near') {
       const before = await request.post(`${E2E.collectorUrl}/v1/traces`, {
         headers, data: { resourceSpans: [] },
       });
+      const acceptedAt = Date.now();
+      // The first refusal goes out as soon as the wall clock crosses the stored
+      // instant; only its dispatch time is bounded, not its response latency.
+      const crossed = await probeAtBoundary(target, UI_READY, exportEmpty);
+      refused = crossed.result;
+      await testInfo.attach('near-expiry-boundary', {
+        body: JSON.stringify({ keyId: key.key_id, target: iso, acceptedStatus: before.status(),
+          acceptedBeforeTargetMs: target - acceptedAt, dispatchedAfterTargetMs: crossed.dispatchedAt - target,
+          refusedStatus: refused.status(), limitMs: DISPATCH_LIMIT_MS }),
+        contentType: 'application/json',
+      });
       expect(before.status()).toBe(200);
-      await expect.poll(() => Date.now() >= expires.getTime(), { timeout: UI_READY }).toBe(true);
+      expect(acceptedAt, 'accepted request must complete before stored expiry').toBeLessThan(target);
+      expect(boundaryDispatchError(crossed.dispatchedAt, target), 'stored expiry boundary').toBeNull();
+    } else {
+      refused = await exportEmpty();
     }
-    const refused = await request.post(`${E2E.collectorUrl}/v1/traces`, {
-      headers, data: { resourceSpans: [] },
-    });
     expect(refused.status()).toBe(401);
     expect((await refused.json()).code).toBe('api_key_expired');
     const apiRefused = await request.get(`${E2E.apiUrl}${HEALTH}`, { headers });

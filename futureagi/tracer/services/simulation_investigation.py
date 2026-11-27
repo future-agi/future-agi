@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from simulate.models import SimulateEvalConfig
 from simulate.models.test_execution import CallExecution, CallTranscript, TestExecution
+from simulate.selectors.debug_failures import connected_call_count, failing_call_count
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import build_evaluation_catalog, eval_rows
 from tracer.models.project import Project, ProjectSourceChoices
@@ -24,7 +25,18 @@ from tracer.services.simulation_diagnosis import build_diagnosis
 
 
 class SimulationInvestigationConflict(Exception):
-    pass
+    def __init__(self, message: str, code: str = "execution_not_completed") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+# Fewer connected calls than this and a diagnosis has too little to read. The
+# frontend's debugFailuresRule.ts holds the same number and words.
+MIN_CONNECTED_CALLS = 15
+TOO_FEW_CALLS = (
+    f"You need at least {MIN_CONNECTED_CALLS} connected calls to debug failures."
+)
+NOTHING_FAILED = "Nothing failed in this run, so there’s nothing to debug."
 
 
 def _project_for_execution(execution: TestExecution) -> Project:
@@ -60,7 +72,12 @@ _TERMINAL_CALL_STATUSES = (
 def ensure_simulation_investigation(
     execution: TestExecution,
 ) -> list[TraceInvestigationJob]:
-    """Create one durable job per call of a completed execution; re-arm failed ones."""
+    """Create one durable job per call of a completed execution; re-arm failed ones.
+
+    Refuses to start a diagnosis of a run with too few connected calls or no
+    failing call: it would spend credits and find nothing. A diagnosis such a run
+    already has is returned unchanged.
+    """
     if execution.status != TestExecution.ExecutionStatus.COMPLETED:
         raise SimulationInvestigationConflict("Test execution is not completed")
     with transaction.atomic():
@@ -78,16 +95,26 @@ def ensure_simulation_investigation(
             raise SimulationInvestigationConflict(
                 "Test execution contains nonterminal calls"
             )
-        project = _project_for_execution(execution)
-        existing = {
-            job.call_execution_id: job
-            for job in TraceInvestigationJob.objects.select_for_update(of=("self",))
+        earlier = list(
+            TraceInvestigationJob.objects.select_for_update(of=("self",))
             .select_related("current_report")
             .filter(
-                project=project,
                 test_execution=execution,
                 workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
             )
+        )
+        refusal = _refusal(execution)
+        # The rule stops new spend, not a diagnosis already made: that one stays
+        # readable as it is, with no call read again.
+        if refusal is not None and earlier:
+            return earlier
+        if refusal is not None:
+            raise refusal
+        project = _project_for_execution(execution)
+        existing = {
+            job.call_execution_id: job
+            for job in earlier
+            if job.project_id == project.id
         }
         now = timezone.now()
         jobs = []
@@ -107,6 +134,19 @@ def ensure_simulation_investigation(
                 _rearm(job, now)
             jobs.append(job)
         return jobs
+
+
+def _refusal(execution: TestExecution) -> SimulationInvestigationConflict | None:
+    """Why a new diagnosis of this run would find nothing, or None."""
+    if connected_call_count(execution) < MIN_CONNECTED_CALLS:
+        return SimulationInvestigationConflict(
+            TOO_FEW_CALLS, code="investigation_too_few_calls"
+        )
+    if not failing_call_count(execution):
+        return SimulationInvestigationConflict(
+            NOTHING_FAILED, code="investigation_nothing_failed"
+        )
+    return None
 
 
 def _unread(job: TraceInvestigationJob) -> bool:
@@ -332,7 +372,7 @@ def _authored_goals(execution: TestExecution, calls: list) -> dict:
     return {
         call_id: _goals_payload(scenario)
         for call_id, scenario in authored_scenarios_for_calls(
-            execution.run_test_id, calls
+            execution.run_test_id, calls, test_execution_id=execution.id
         ).items()
     }
 
@@ -524,7 +564,9 @@ def simulation_evidence_page(
     if cursor > total:
         raise SimulationInvestigationConflict("Evidence cursor is outside the result")
     rows = list(calls_qs[cursor : cursor + 20])
-    authored = authored_scenarios_for_calls(execution.run_test_id, rows)
+    authored = authored_scenarios_for_calls(
+        execution.run_test_id, rows, test_execution_id=execution.id
+    )
     _, live_eval_ids = build_evaluation_catalog(execution)
     live_eval_configs = {
         str(config.id): config

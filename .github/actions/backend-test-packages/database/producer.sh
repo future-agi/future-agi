@@ -12,7 +12,10 @@ else
   # A partial or unexpected restore is not a clean staging directory.
   [[ -z $(find "$stage" -mindepth 1 -print -quit) ]]
 fi
-CI_PRESEED_DIGEST="$fresh/preseed" uv run pytest .ci/migrated_db.py --create-db -q
+# Observation only: report which backend files this fresh migrate touches
+# (.ci/migrate_inputs.py). It never fails the migrate or changes the key.
+CI_PRESEED_DIGEST="$fresh/preseed" CI_MIGRATE_INPUTS="$RUNNER_TEMP/migrate-inputs" PYTHONPATH=.ci \
+  uv run pytest -p migrate_inputs .ci/migrated_db.py --create-db -q
 "${tool[@]}" dump "$fresh/internal.sql.gz" test_user test_tfc_test "${pg[@]}"
 if [[ $CACHE_HIT == true && ! -f $stage/cold-only ]]; then
   "${tool[@]}" compare "$stage/dump.sql.gz" "$fresh/internal.sql.gz"

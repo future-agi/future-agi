@@ -966,6 +966,20 @@ VAPI_WEBHOOK_SECRET = os.getenv("VAPI_WEBHOOK_SECRET", "")
 
 # Internal API authentication (shared secret for service-to-service calls)
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
+# Calculate in shadow mode until replay and managed source flows qualify writes.
+ERROR_FEED_ESCALATION_MODE = (
+    os.getenv("ERROR_FEED_ESCALATION_MODE", "shadow").strip().lower()
+)
+ERROR_FEED_ESCALATION_WORKSPACE_IDS = tuple(
+    value.strip()
+    for value in os.getenv("ERROR_FEED_ESCALATION_WORKSPACE_IDS", "").split(",")
+    if value.strip()
+)
+ERROR_FEED_ESCALATION_SOURCES = tuple(
+    value.strip()
+    for value in os.getenv("ERROR_FEED_ESCALATION_SOURCES", "scanner").split(",")
+    if value.strip()
+)
 ERROR_FEED_OMEGA_DELAY_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_DELAY_SECONDS", "60"))
 ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS", "120"))
 ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
@@ -1073,6 +1087,9 @@ ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
 # provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
 # (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
 ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-control")
+# After a user stop, how long cancel waits for the guest to seal the call in flight before deleting the sandbox: above
+# the guest's own bound (ALK_CANCEL_SEAL_SECONDS, 15 s) plus the time its runner takes to post the receipt.
+HARNESS_CANCEL_SEAL_SECONDS = float(os.getenv("HARNESS_CANCEL_SEAL_SECONDS") or 45)
 # Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
 # A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
 ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
@@ -1083,6 +1100,11 @@ ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
 # budget begins. Keep that bounded work separate from the customer's maximum call duration.
 ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
     os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "10800")
+)
+# How long a Validate (a check of an environment's cases) may run before it is stopped: generous, so a suite of a
+# thousand cases is proved; cases a stopped check did not reach keep their earlier proofs.
+HARNESS_VALIDATION_CHECK_SECONDS = int(
+    os.getenv("HARNESS_VALIDATION_CHECK_SECONDS", "") or 7200
 )
 # Derived from the budget above so the two cannot disagree.
 ALK_HOSTED_AUTHORING_TIMEOUT = int(
@@ -1211,6 +1233,11 @@ HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower()
     "true",
     "yes",
 )
+# Validate before Save on every draft save where validation is available, not only once a change was decided: the
+# Save bar validates the drafts, then saves the validated versions. Set to false to let an undecided draft save as is.
+HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE = os.getenv(
+    "HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE", "true"
+).lower() in ("1", "true", "yes")
 # A pinned run that misses the bundle cache certifies its own bundle; off, it runs the
 # environment's default pair as before.
 HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
@@ -1280,8 +1307,21 @@ HARNESS_SEED_CONTRACT_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes")
 # How long one reading of an agent, or one scan for the agents in a source, may run.
 ALK_HOSTED_READING_TIMEOUT = int(os.getenv("ALK_HOSTED_READING_TIMEOUT", "2400"))
+
+
+def _reading_call_limit() -> int:
+    """Most model calls one reading of an agent may make, its readers' calls included.
+    Empty, zero, a negative number or anything but a whole number means 60, so a bad
+    value never stops settings import."""
+    limit = _admission_env_int("ALK_HOSTED_READING_MAX_MODEL_CALLS", 60)
+    return limit if limit > 0 else 60
+
+
+ALK_HOSTED_READING_MAX_MODEL_CALLS = _reading_call_limit()
 # Most scenarios × trials one simulation Run may submit.
-HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
+HARNESS_MAX_EXECUTIONS_PER_RUN = int(
+    os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "1000")
+)
 # Each profile is an operator-certified size/connector/snapshot combination.
 HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
 # Comma-separated allowlist of provider runtime identifiers certified for W>1.
@@ -1842,6 +1882,12 @@ INSIGHTS_EVIDENCE_STORE = (
     os.getenv("INSIGHTS_EVIDENCE_STORE", "").strip().lower() or "local"
 )
 INSIGHTS_EVIDENCE_BUCKET = os.getenv("INSIGHTS_EVIDENCE_BUCKET", "").strip()
+# Which object storage holds the evidence bucket: empty follows STORAGE_BACKEND;
+# "gcs" puts it on GCS (GCS_HMAC_* keys) while the rest of the platform stays
+# where STORAGE_BACKEND says, e.g. a deployment whose uploads are still on S3.
+INSIGHTS_EVIDENCE_STORAGE_BACKEND = (
+    os.getenv("INSIGHTS_EVIDENCE_STORAGE_BACKEND", "").strip().lower()
+)
 INSIGHTS_EVIDENCE_CACHE_DIR = os.getenv("INSIGHTS_EVIDENCE_CACHE_DIR", "").strip()
 INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
     1, int(os.getenv("INSIGHTS_EVIDENCE_CACHE_MAX_BYTES") or 2 * 1024**3)

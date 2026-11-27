@@ -24,6 +24,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.models.evals_metric import EvalTemplate
+from simulate.constants.hosted_harness import SCENARIO_KEY
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
@@ -51,6 +52,7 @@ from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
 )
+from simulate.types import worker_subject_id
 from simulate.utils.ended_reason import to_canonical_ended_reason
 from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
 from simulate.utils.test_execution_utils import (
@@ -328,6 +330,7 @@ def provision_alk_sim_run_test(
     personas: list[dict] | None = None,
     scenario_ids: list | None = None,
     agent_definition_id: str | None = None,
+    agent_definition: AgentDefinition | None = None,
     agent_name: str | None = None,
     description: str = "",
     modality: str = "text",
@@ -344,6 +347,9 @@ def provision_alk_sim_run_test(
       supplied personas (see ``_build_persona_scenario_dataset``). This matches
       the platform's native dataset model: a scenario suite is one dataset and
       every conversation case is one datapoint.
+
+    ``agent_definition`` is one the caller has already authorised and checked the
+    modality of; ``agent_definition_id`` is resolved in exactly this workspace.
 
     ``enable_tool_evaluation`` starts the run test with the tool-call judge on.
     Defaults to off, since it costs an extra judge per call. A v3 environment
@@ -378,7 +384,7 @@ def provision_alk_sim_run_test(
                     f"scenario(s) not found: {', '.join(missing)}"
                 )
 
-        agent_definition = _provision_agent_definition(
+        agent_definition = agent_definition or _provision_agent_definition(
             organization,
             agent_definition_id,
             agent_name,
@@ -1289,7 +1295,7 @@ def _build_manifest_call_executions(
         call.call_metadata.update(
             {
                 "harness_execution_key": entry["execution_key"],
-                "harness_scenario_key": entry["scenario_key"],
+                SCENARIO_KEY: entry["scenario_key"],
                 "harness_trial_index": entry["trial_index"],
             }
         )
@@ -1944,7 +1950,14 @@ def _apply_harness_evaluation_outputs(
         if not name:
             continue
         kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
-        template = _resolve_harness_eval_template(run_test, evaluation, name)
+        subject = str(evaluation.get("subject") or "")
+        worker = worker_subject_id(subject) or ""
+        # A worker's own check is never the task's column: it gets its own id and no error localizer.
+        template = (
+            None
+            if worker
+            else _resolve_harness_eval_template(run_test, evaluation, name)
+        )
         config = None
         if template is not None:
             config = _get_or_create_harness_eval_config(run_test, template, name)
@@ -1953,7 +1966,9 @@ def _apply_harness_evaluation_outputs(
             output_id = str(
                 uuid.uuid5(
                     _HARNESS_EVAL_NAMESPACE,
-                    f"{run_test.id}:{kind}:{name}",
+                    f"{run_test.id}:{kind}:{subject}:{name}"
+                    if worker
+                    else f"{run_test.id}:{kind}:{name}",
                 )
             )
 
@@ -1980,6 +1995,8 @@ def _apply_harness_evaluation_outputs(
             "output_type": output_type,
             **({"result": evaluation["result"]} if evaluation.get("result") else {}),
             "reason": str(evaluation.get("reason") or "")[:10000],
+            # A worker's own check names its worker by subject; the reader's label is the client's.
+            **({"subject": subject} if worker else {}),
             "status": "completed",
             "source": "harness",
             "kind": kind,

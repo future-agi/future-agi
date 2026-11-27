@@ -6,7 +6,7 @@ export default function ViewerLock({ locked, title, children, ...forwarded }) {
   if (!locked) return cloneElement(children, forwarded);
   return (
     <CustomTooltip show title={title} size="small" arrow>
-      <span>{children}</span>
+      <span tabIndex={0}>{children}</span>
     </CustomTooltip>
   );
 }

@@ -77,6 +77,9 @@ class GeneratedAPITool(BaseTool):
         return bool(self.generated.annotations.get("readOnlyHint"))
 
     def run(self, raw_params: dict | None, context: ToolContext) -> ToolResult:
+        refusal = ToolResult.background_refusal(context)
+        if refusal is not None:
+            return refusal
         return self._invoke(self._coerce_params(raw_params or {}), context)
 
     def execute(

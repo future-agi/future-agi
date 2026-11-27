@@ -15,6 +15,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from time import monotonic
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 import structlog
@@ -87,6 +88,9 @@ from tracer.services.derived_metrics.unit_reads import (
     unit_source_version_select,
     unit_values_select,
 )
+
+if TYPE_CHECKING:
+    from tracer.services.derived_metrics.changes import Dependency, SourceKey
 
 logger = structlog.get_logger(__name__)
 
@@ -951,7 +955,7 @@ class RefreshWriter:
             # nor frozen physical rows. Its durable ledger proves emptiness;
             # still validate any span recovery preimages against the final policy.
             return min(starts) if starts else None
-        private_relations = []
+        private_relations: list[tuple[str, dict]] = []
         for table in tables:
             if attempt.purpose == "compaction":
                 # A checkpoint's frozen rows ARE its complete relation: the
@@ -1082,7 +1086,9 @@ class RefreshWriter:
         that transaction, then atomically transfers the handoff and aborts its
         predecessors. A crash must never leave only an in-memory copy.
         """
-        entries = {part: [] for part in MetricAttemptLedgerChunk.Part.values}
+        entries: dict[str, list] = {
+            part: [] for part in MetricAttemptLedgerChunk.Part.values
+        }
         head = MetricProjectRefresh.for_project(self.lease.project_id).head_manifest
         if head and head.published_by.source_ceilings.get("recovery_pending"):
             for chunk in head.published_by.ledger_chunks.exclude(part="cleanup_intent"):
@@ -1201,7 +1207,7 @@ class RefreshWriter:
                 .exclude(status="done")
                 .exists()
             )
-        if resume:
+        if resume and previous is not None:  # resume already implies previous
             try:
                 self._publish_compaction(previous.checkpoint_attempt, deadline=deadline)
                 if previous.published_by_id == previous.checkpoint_attempt_id:
@@ -1219,7 +1225,7 @@ class RefreshWriter:
             if head.revoked_at is not None:
                 raise MetricStateConflict("expired base requires source rebuild")
             pending = head.published_by.source_ceilings.get("recovery_pending", False)
-            handoff = {}
+            handoff: dict[str, list] = {}
             if pending:
                 for chunk in head.published_by.ledger_chunks.exclude(
                     part="cleanup_intent"
@@ -1729,8 +1735,8 @@ class RefreshWriter:
                 else None
             )
             if inherited_floor:
-                floor = datetime.fromisoformat(inherited_floor)
-                cutoff = max(cutoff, floor) if cutoff is not None else floor
+                floor_at = datetime.fromisoformat(inherited_floor)
+                cutoff = max(cutoff, floor_at) if cutoff is not None else floor_at
             from tracer.models.derived_metric import DerivedMetricVersion
 
             for definition in definitions:
@@ -1811,7 +1817,7 @@ class RefreshWriter:
         )
         dependencies = {d.key: d for d in recovered_dependencies}
         dependencies.update({d.key: d for d in change.dependencies})
-        captured_dependencies = {}
+        captured_dependencies: dict[SourceKey, Dependency] = {}
         ids.update(
             d.canonical_session_id
             for d in recovered_dependencies
@@ -2393,8 +2399,11 @@ class RefreshWriter:
             )
             for row in rows:
                 normalized = ["" if v == str(UUID(int=0)) else v for v in row]
-                dependency = Dependency(
-                    *normalized[:-1], is_deleted=bool(normalized[-1])
+                # Rows are fixed-arity (seven fields, then is_deleted); mypy
+                # cannot see the starred list length.
+                dependency = Dependency(  # type: ignore[misc]
+                    *normalized[:-1],  # type: ignore[arg-type]
+                    is_deleted=bool(normalized[-1]),
                 )
                 result[(dependency.trace_id, dependency.span_id)] = dependency
         for entry in entries:
@@ -2412,17 +2421,12 @@ class RefreshWriter:
                 )
             ):
                 dependency = Dependency(
-                    *(
-                        entry[name]
-                        for name in (
-                            "trace_id",
-                            "span_id",
-                            "raw_session_id",
-                            "canonical_session_id",
-                            "raw_user_id",
-                            "canonical_user_id",
-                        )
-                    ),
+                    entry["trace_id"],
+                    entry["span_id"],
+                    entry["raw_session_id"],
+                    entry["canonical_session_id"],
+                    entry["raw_user_id"],
+                    entry["canonical_user_id"],
                     unit_start=datetime.fromisoformat(str(entry["unit_start"])),
                     is_deleted=True,
                 )
@@ -2443,7 +2447,7 @@ class RefreshWriter:
         Owners with ANY committed conversation row (live, deleted or expired)
         keep their existing retention semantics.
         """
-        sessions = set()
+        sessions: set[str] = set()
         # The draft's frozen field batches (PG ledger, not yet physical), one
         # bounded batch per statement.
         for number, plan in enumerate(self.plans(attempt, kind="field_values")):
@@ -2460,15 +2464,15 @@ class RefreshWriter:
                     params,
                 )
             )
-        sessions = sorted(sessions - set(ids))
-        if not sessions:
+        owners = sorted(sessions - set(ids))
+        if not owners:
             return set()
-        anchored = set()
+        anchored: set[str] = set()
         for membership in iter_key_membership_batches(
             FIELD_VALUES,
             fixed={"level": ("conversation",)},
             columns="unit_id",
-            values=sessions,
+            values=owners,
             max_items=MAX_BATCH_ROWS,
         ):
             fields, fp = committed_rows_select(
@@ -2485,7 +2489,7 @@ class RefreshWriter:
                     f"SELECT DISTINCT unit_id FROM ({fields})", fp
                 )
             )
-        return set(sessions) - anchored
+        return set(owners) - anchored
 
     def _span_dirty_keys(self, attempt, change, head, source_ids):
         """Nominate old/new starts without treating mutable starts as identity."""
@@ -2749,9 +2753,9 @@ class RefreshWriter:
         # bounded SET of dirty quarters, not per quarter. The same pre-fold
         # statistics keep bucket_start in their key, so folding remains exact.
         # Physical row/byte caps and subdivision still apply to every input page.
-        dirty = sorted(dirty)
-        for offset in range(0, len(dirty), BUCKET_WINDOWS_PER_FOLD):
-            moments = tuple(dirty[offset : offset + BUCKET_WINDOWS_PER_FOLD])
+        ordered = sorted(dirty)
+        for offset in range(0, len(ordered), BUCKET_WINDOWS_PER_FOLD):
+            moments = tuple(ordered[offset : offset + BUCKET_WINDOWS_PER_FOLD])
             starts = tuple(str(at) for at in moments)
             if proof_starts := tuple(at for at in moments if at in fold_only):
                 # A fold-only quarter has no source capture to replace missing

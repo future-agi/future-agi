@@ -74,6 +74,7 @@ from simulate.services.harness_scenarios import (
     NO_CALL_ACTOR,
     SIMULATED_USER_ONLY,
 )
+from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY, graded_sub_goals
 from simulate.services.run_reliability_v3 import (
     NOT_COMPARABLE,
     build_reliability,
@@ -90,6 +91,7 @@ from simulate.services.run_results_v3_expressions import (
     project_annotation,
 )
 from simulate.services.run_results_v3_scoring import (
+    CANCELLED_CALL_STATUSES,
     ERRORED_CALL_STATUSES,
     ERRORED_EVAL_STATUSES,
     HARNESS_ERROR,
@@ -101,6 +103,7 @@ from simulate.services.run_results_v3_scoring import (
     NATIVE_FAILED,
     NATIVE_PASSED,
     QUEUED_CALL_STATUSES,
+    SKIPPED_HARNESS_STATUSES,
     UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
     LiveEvals,
@@ -108,7 +111,11 @@ from simulate.services.run_results_v3_scoring import (
     resolve_eval_scoring_spec,
     score_tokens,
 )
-from simulate.types import CallActorDelivery, CallActorFacetValue
+from simulate.types import (
+    WORKER_SUBJECT_PREFIX,
+    CallActorDelivery,
+    CallActorFacetValue,
+)
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -732,6 +739,9 @@ class _NativeHarnessVerdict(Func):
             f"THEN {source_sql} ELSE '{{}}'::jsonb END) AS check_result(key, value) "
             "WHERE jsonb_typeof(check_result.value) = 'object' "
             "AND check_result.value->>'source' = 'harness' "
+            # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
+            f"AND left(COALESCE(check_result.value->>'subject', ''), {len(WORKER_SUBJECT_PREFIX)}) "
+            f"<> '{WORKER_SUBJECT_PREFIX}' "
             f"AND NOT ({ids_sql} ? check_result.key) AND {condition})"
         )
         return sql, [*source_params, *source_params, *ids_params, *verdict_params]
@@ -912,6 +922,21 @@ def run_calls_queryset(
         result_outcome=Case(
             When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
             When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
+            # A skipped scenario is stored cancelled but nobody stopped it: an error.
+            When(
+                status__in=list(CANCELLED_CALL_STATUSES),
+                call_metadata__harness_outcome_status__in=list(
+                    SKIPPED_HARNESS_STATUSES
+                ),
+                then=Value("error"),
+            ),
+            When(status__in=list(CANCELLED_CALL_STATUSES), then=Value("cancelled")),
+            # The trial ended on the agent's own failure (it stalled, it hung up): the agent failed it.
+            When(
+                Q(call_metadata__harness_outcome_status__in=list(HARNESS_ERROR))
+                & Q(call_metadata__hosted_harness_receipt__failure__domain="agent"),
+                then=Value("failed"),
+            ),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
@@ -1474,11 +1499,17 @@ def build_run_comparison(
                 result_harness_status=_json_text(
                     "call_metadata", "harness_outcome_status"
                 ),
+                result_unverified=_json_value("call_metadata", UNVERIFIED_KEY),
+                result_failure_domain=_json_text(
+                    "call_metadata", "hosted_harness_receipt", "failure", "domain"
+                ),
             )
             fields += [
                 "result_eval_outcome",
                 "result_receipt_sub_goals",
                 "result_harness_status",
+                "result_unverified",
+                "result_failure_domain",
             ]
         for scenario_key, scenario_label, outcome, *trial in calls.values_list(
             *fields
@@ -1490,12 +1521,19 @@ def build_run_comparison(
             elif outcome == "failed":
                 counts[key][1] += 1
             if trial:
-                eval_outcome, sub_goals, harness_status = trial
+                eval_outcome, sub_goals, harness_status, unverified, failure_domain = (
+                    trial
+                )
                 trials.setdefault(key, run_compare.ScenarioTrials(labels[key])).add(
-                    sub_goals if isinstance(sub_goals, list) else None,
+                    (
+                        graded_sub_goals(sub_goals, unverified or [])
+                        if isinstance(sub_goals, list)
+                        else None
+                    ),
                     harness_status,
                     outcome,
                     eval_outcome,
+                    {"domain": failure_domain} if failure_domain else None,
                 )
         return (
             {
@@ -1623,6 +1661,15 @@ def _run_pairs(
         not_run=run_compare.suite_members(older_suite, newer.keys() - older.keys()),
         against_is_newer=against_is_newer,
     )
+    changed = run_compare.changed_tests(
+        current_suite,
+        previous_suite,
+        environments[0],
+        environments[1],
+        current_trials.keys() & previous_trials.keys(),
+    )
+    for pair in pairs:
+        pair["changed_test"] = pair["scenario_key"] in changed
     return {
         "pairs": pairs,
         "summary": summary,

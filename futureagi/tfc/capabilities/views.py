@@ -44,7 +44,7 @@ class CapabilitiesView(APIView):
                 "oss_baseline": feature_def.oss_baseline,
             }
 
-        response_data = {
+        response_data: dict[str, object] = {
             "deployment_flavor": flavor.value,
             "display_mode": display_mode.value,
             "license_state": license_state.value,

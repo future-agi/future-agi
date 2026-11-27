@@ -520,6 +520,7 @@ class AcceptancePlanTests(unittest.TestCase):
             for name in ('bin/update','scripts/update_rehearsal_shipping.py',
                          'scripts/update_rehearsal_trace_reference.py','scripts/update_rehearsal_eval_task_reference.py',
                          'scripts/update_rehearsal_usage_reference.py',
+                         'scripts/update_rehearsal_investigation_reference.py',
                          'deploy/standalone/bin/bootstrap.py'):
                 self.assertEqual(inventory[name],hashlib.sha256((ROOT/name).read_bytes()).hexdigest())
             self.assertFalse(any(name.endswith('.pyc') for name in inventory))
@@ -599,8 +600,10 @@ class AcceptancePlanTests(unittest.TestCase):
             self.assertNotIn('packages: write',job)
             self.assertNotIn('id-token: write',job)
             self.assertNotIn('secrets.',job)
+        policy=(ROOT/'.github/scripts/ci_scope.py').read_text()
         for suffix in ('**/*.py','**/*.go','**/*.sql','**/*.sh','deploy/**'):
-            self.assertGreaterEqual(text.count('"'+suffix+'"'),2)
+            self.assertGreaterEqual(text.count('"'+suffix+'"'),1)
+            self.assertGreaterEqual(policy.count('"'+suffix+'"'),1)
 
 
 class OCIRegistryTests(unittest.TestCase):

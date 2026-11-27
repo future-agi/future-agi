@@ -134,6 +134,11 @@ from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_github_webhook import HarnessGitHubWebhookView
 from .views.harness_job import HarnessJobViewSet
+from .views.harness_release import (
+    HarnessAdaptationViewSet,
+    HarnessHostedAgentViewSet,
+    HarnessReleaseViewSet,
+)
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
     HostedHarnessIngressProxyView,
@@ -152,11 +157,13 @@ from .views.livekit_api import (
 from .views.persona import PersonaDuplicateView, PersonaViewSet
 from .views.run_results_v3 import (
     CallExecutionV3DetailView,
+    CallExecutionV3WorkersView,
     RunAnalyticsV3View,
     RunCallsV3View,
     RunExportV3View,
     RunReliabilityV3View,
     RunTracesV3View,
+    RunTrialRoutesV3View,
 )
 from .views.scenarios import EditScenarioPromptsView
 
@@ -184,6 +191,13 @@ router.register(
     r"harness-environments",
     HarnessEnvironmentViewSet,
     basename="harness-environment",
+)
+router.register(r"harness-releases", HarnessReleaseViewSet, basename="harness-release")
+router.register(
+    r"harness-adaptations", HarnessAdaptationViewSet, basename="harness-adaptation"
+)
+router.register(
+    r"harness-hosted-agents", HarnessHostedAgentViewSet, basename="harness-hosted-agent"
 )
 router.register(
     r"harness/attempts",
@@ -222,6 +236,16 @@ urlpatterns = [
         "v3/call-executions/<uuid:call_execution_id>/",
         CallExecutionV3DetailView.as_view(),
         name="v3-call-execution-detail",
+    ),
+    path(
+        "v3/call-executions/<uuid:call_execution_id>/workers/",
+        CallExecutionV3WorkersView.as_view(),
+        name="v3-call-execution-workers",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/trial-routes/",
+        RunTrialRoutesV3View.as_view(),
+        name="v3-test-execution-trial-routes",
     ),
     path(
         "v3/test-executions/<uuid:test_execution_id>/analytics/",

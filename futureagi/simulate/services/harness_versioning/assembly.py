@@ -12,6 +12,8 @@ from __future__ import annotations
 import copy
 import json
 import re
+import tarfile
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -19,6 +21,7 @@ from typing import Any
 
 import structlog
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
@@ -40,10 +43,24 @@ from simulate.services.hosted_sandbox.base import SandboxCommandStep
 logger = structlog.get_logger(__name__)
 
 CERTIFICATE = "runtime-validation.json"
+TOOL_CERTIFICATION = "generic-harness/tool-certification.json"
+ACTION_CERTIFICATION = "generic-harness/action-certification.json"
+# Each tool call the qualification conversation made that reached the test world.
+TOOL_ROUTING = "generic-harness/tool-routing-observations.json"
+# The world door's sealed per-worker allow-lists.
+PERMISSIONS_FILE_PATH = "environment-bundle/generated/tool-proxy/permissions.json"
+# What ALK decided for this build: whether the door stands and on which surface, or why not; each worker's limits and
+# the workers each scenario relies on; and each sealed world action's tool.
+DOOR_OUTCOME_PATH = "environment-bundle/door.json"
+WORKER_LIMITS_PATH = "environment-bundle/worker-limits.json"
+ACTIONS_FILE_PATH = "environment-bundle/generated/tool-proxy/actions.json"
 SEALED_MANIFEST = "environment-bundle/manifest.json"
+# What a build stamps as its manifest's `sealed_from`; a chat's reseal stamps the digest of the tree it sealed.
+BUILD_SEAL = "build"
 BUNDLE_ROOT = "environment-bundle/"
 CERTIFY_JOB_PATH = "/work/certify-job.json"
 CERTIFY_REPORT_PATH = "/work/authoring/certify-report.json"
+ACTION_CERTIFICATION_PATH = "/work/authoring/generic-harness/action-certification.json"
 # The suite index as assembled; certifying prunes /work/authoring/scenarios.json in place.
 SUITE_INDEX_PATH = "/work/suite-scenarios.json"
 # Run-only fields the certify job must not carry: it certifies the whole suite once.
@@ -69,6 +86,7 @@ _RESET = {
     "size": None,
     "bundle_digest": None,
     "certificate": None,
+    "certification_files": None,
     "built_by_attempt": None,
     "error": None,
 }
@@ -196,6 +214,44 @@ def _json_object(body: bytes | None) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+# Bumped when the kept certification files gain a file: readiness reads an older row's archive once more.
+CERTIFICATION_FILES_VERSION = 3
+
+
+def certification_files(files: Mapping[str, bytes], object_key: str) -> dict[str, Any]:
+    """The per-tool and per-action certification and the tool routing among a sealed
+    bundle's files, with the key of the archive they are kept with."""
+
+    def items(path: str, name: str) -> list[dict[str, Any]]:
+        values = (_json_object(files.get(path)) or {}).get(name)
+        return [one for one in values or [] if isinstance(one, dict)]
+
+    door_paths = (
+        PERMISSIONS_FILE_PATH,
+        DOOR_OUTCOME_PATH,
+        WORKER_LIMITS_PATH,
+        ACTIONS_FILE_PATH,
+    )
+    return {
+        "object_key": object_key,
+        "files_version": CERTIFICATION_FILES_VERSION,
+        "tools": items(TOOL_CERTIFICATION, "tools"),
+        "actions": items(ACTION_CERTIFICATION, "actions"),
+        "routed": items(TOOL_ROUTING, "tools"),
+        "unobserved": items(TOOL_ROUTING, "unobserved"),
+        # Mappings, not lists: read by key, None when absent.
+        "worker_permissions": _json_object(files.get(PERMISSIONS_FILE_PATH)),
+        "door_outcome": _json_object(files.get(DOOR_OUTCOME_PATH)),
+        "worker_limits": _json_object(files.get(WORKER_LIMITS_PATH)),
+        "actions_to_tools": _json_object(files.get(ACTIONS_FILE_PATH)),
+        # A door file sealed but not a JSON object: worker limits read as not known, never as absent.
+        "door_unreadable": any(
+            files.get(path) and _json_object(files.get(path)) is None
+            for path in door_paths
+        ),
+    }
+
+
 def manifest_facts(sealed: Mapping[str, bytes]) -> tuple[str | None, str | None]:
     """The sealed bundle's digest and the source fingerprint it was built from."""
     manifest = _json_object(sealed.get(SEALED_MANIFEST)) or {}
@@ -259,6 +315,125 @@ def sealed_certificate(sealed: Mapping[str, bytes]) -> dict[str, Any] | None:
     return safe
 
 
+# A bundle's object never changes once ready, so what is read from it is kept by its key; a bundle that could not
+# be read is tried again only after a short while.
+_SEAL_CACHE = "harness_bundle_seal:v2:"
+_SEAL_SECONDS = 7 * 24 * 60 * 60
+_SEAL_RETRY_SECONDS = 5 * 60
+_SEAL_MAX_BYTES = 8 * 1024 * 1024
+_UNREADABLE = {"unreadable": True}
+
+
+@dataclass(frozen=True)
+class Seal:
+    """What a ready bundle was sealed with: its contract, whether a chat's save resealed it from its tree
+    (``resealed``) rather than a build sealing it, and whether it says which (``stamped``): a bundle sealed before
+    builds stamped theirs says nothing. ``seeded``: its row holds the bundle a full build cached as it recorded the
+    version, not one a run cached. ``sha256``: the digest its row records for the bundle."""
+
+    contract: dict[str, Any]
+    resealed: bool
+    stamped: bool = True
+    seeded: bool = False
+    sha256: str = ""
+
+
+def pins_bundle_key(pins: Any) -> str | None:
+    """The assembly key of the bundle a run of ``pins`` replays, as launch picks it: the key a rerun keeps, else
+    the one its agent, environment and suite versions make."""
+    kept = getattr(pins, "assembly_key", None) or getattr(
+        getattr(pins, "assembly", None), "key", None
+    )
+    if kept:
+        return str(kept)
+    runtime = getattr(pins, "runtime", None)
+    environment_version = getattr(pins, "environment_version", None)
+    suite_version = getattr(pins, "suite_version", None)
+    if runtime is None or environment_version is None or suite_version is None:
+        return None
+    return bundle_key(runtime, environment_version, suite_version)
+
+
+def run_seal(job_id: Any, key: str) -> Seal | None:
+    """The seal of the ready bundle a run under ``key`` replays; None when there is none or it cannot be read."""
+    return _seal_at(
+        HarnessAssembledBundle._base_manager.filter(job_id=job_id, assembly_key=key)
+    )
+
+
+def latest_seal(environment_version: Any) -> Seal | None:
+    """The seal of this version's latest ready bundle, for any agent and suite: how a build of it reached its
+    tools, when no run names a pair."""
+    return _seal_at(
+        HarnessAssembledBundle._base_manager.filter(
+            environment_version_id=environment_version.id
+        )
+    )
+
+
+def _seal_at(rows: Any) -> Seal | None:
+    row = (
+        rows.filter(state=HarnessAssembledBundle.State.READY, deleted=False)
+        .exclude(object_key__isnull=True)
+        .exclude(object_key="")
+        .order_by("-updated_at")
+        .values_list("object_key", "sha256")
+        .first()
+    )
+    if not row:
+        return None
+    key, sha256 = row[0], row[1] or ""
+    seeded = key.startswith(archives.SEALED_PREFIX)
+    cached = cache.get(_SEAL_CACHE + key)
+    if cached is not None:
+        return _seal(cached, seeded, sha256)
+    try:
+        found = archives.read_members(
+            archives.get_archive(key),
+            {archives.SEALED_CONTRACT, SEALED_MANIFEST},
+            _SEAL_MAX_BYTES,
+        )
+        contract = json.loads(found.get(archives.SEALED_CONTRACT) or b"{}")
+        manifest = json.loads(found.get(SEALED_MANIFEST) or b"{}")
+    except (
+        S3Error,
+        HTTPError,
+        HostedHarnessError,
+        ValueError,
+        OSError,
+        EOFError,
+        tarfile.TarError,
+        zlib.error,
+    ):
+        # Unreadable: the version's own documents stand in until it is tried again.
+        logger.warning("harness_bundle_seal_unreadable", object_key=key, exc_info=True)
+        cache.set(_SEAL_CACHE + key, _UNREADABLE, _SEAL_RETRY_SECONDS)
+        return None
+    metadata = manifest.get("metadata") if isinstance(manifest, dict) else None
+    read = {
+        "contract": contract if isinstance(contract, dict) else {},
+        # A chat's reseal stamps the tree it sealed from, a build stamps that it is one, an older bundle neither.
+        "stamp": str(metadata.get("sealed_from") or "")
+        if isinstance(metadata, dict)
+        else "",
+    }
+    cache.set(_SEAL_CACHE + key, read, _SEAL_SECONDS)
+    return _seal(read, seeded, sha256)
+
+
+def _seal(read: Any, seeded: bool, sha256: str) -> Seal | None:
+    if not isinstance(read, dict) or read == _UNREADABLE or not read.get("contract"):
+        return None
+    stamp = str(read.get("stamp") or "")
+    return Seal(
+        contract=read["contract"],
+        resealed=bool(stamp) and stamp != BUILD_SEAL,
+        stamped=bool(stamp),
+        seeded=seeded,
+        sha256=sha256,
+    )
+
+
 def seed_ready_bundle(
     model: Any,
     *,
@@ -305,6 +480,7 @@ def seed_ready_bundle(
         "sha256": sha256,
         "size": size,
         "certificate": certificate,
+        "certification_files": certification_files(sealed, object_key),
         "warnings": [],
         "error": None,
     }
@@ -428,10 +604,7 @@ def run_assembly(
     )
     failed_before = bundle.state == HarnessAssembledBundle.State.FAILED
     if failed_before:
-        HarnessAssembledBundle._base_manager.filter(
-            id=bundle.id, state=HarnessAssembledBundle.State.FAILED
-        ).update(**_RESET, updated_at=timezone.now())
-        bundle.refresh_from_db()
+        reset_failed(bundle)
     cached = bundle.state == HarnessAssembledBundle.State.READY and bool(
         bundle.object_key
     )
@@ -443,6 +616,22 @@ def run_assembly(
         failed_before=failed_before,
         unsealed=unsealed,
     )
+
+
+def reset_failed(bundle: HarnessAssembledBundle) -> None:
+    """Put a failed row back to pending, so the next run or validation certifies it."""
+    HarnessAssembledBundle._base_manager.filter(
+        id=bundle.id, state=HarnessAssembledBundle.State.FAILED
+    ).update(**_RESET, updated_at=timezone.now())
+    bundle.refresh_from_db()
+
+
+def reset_outdated(bundle: HarnessAssembledBundle) -> None:
+    """Put a certified row back to pending, so its validation certifies it again."""
+    HarnessAssembledBundle._base_manager.filter(
+        id=bundle.id, state=HarnessAssembledBundle.State.READY
+    ).update(**_RESET, updated_at=timezone.now())
+    bundle.refresh_from_db()
 
 
 def bundle_ready(
@@ -841,7 +1030,7 @@ def _hit_source_digest(
     return found
 
 
-def _assembly_unavailable() -> HostedHarnessError:
+def assembly_unavailable() -> HostedHarnessError:
     return HostedHarnessError(
         "assembly_unavailable",
         "the bundle for this run's pinned versions is no longer available "
@@ -863,7 +1052,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
         return None
     if job.assembled_bundle_id is None:
         if runs_unsealed(job):
-            raise _assembly_unavailable()
+            raise assembly_unavailable()
         return None
     if _memoised(job, assembly):
         return LaunchAssembly(
@@ -877,7 +1066,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
     ).first()
     if bundle is None or job.environment_version_id is None:
         if runs_unsealed(job):
-            raise _assembly_unavailable()
+            raise assembly_unavailable()
         return None
     log = {
         "run_id": str(job.id),
@@ -891,7 +1080,7 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
     def fallback() -> None:
         # Today's path runs the default pair, so only a run pinned to it may take it.
         if not defaults or unsealed:
-            raise _assembly_unavailable()
+            raise assembly_unavailable()
         logger.info("harness_bundle_cache", outcome="miss_fallback", **log)
 
     # Only a run pinned off the defaults certifies; a default-pair miss runs as today,
@@ -1002,9 +1191,18 @@ def prepare_launch(job: HostedHarnessJob) -> LaunchAssembly | None:
 
 
 def certify_scenario_count(job: HostedHarnessJob) -> int:
-    return HarnessSuiteMember.no_workspace_objects.filter(
+    """The pinned suite's scenarios; a suite without members counts its documents."""
+    members = HarnessSuiteMember.no_workspace_objects.filter(
         suite_version_id=job.suite_version_id
     ).count()
+    if members or job.suite_version_id is None:
+        return members
+    return (
+        HarnessSuiteVersion._base_manager.filter(id=job.suite_version_id)
+        .values_list("scenario_count", flat=True)
+        .first()
+        or 0
+    )
 
 
 def certify_job_payload(
@@ -1035,13 +1233,208 @@ def source_check_command(source_digest: str | None) -> str:
     return f'python -c "{code}" {source_digest} && '
 
 
-def certify_steps() -> tuple[SandboxCommandStep, ...]:
+FAILURE_RECORD_PATH = "/work/failure.json"
+_FAILURE_DOMAINS = frozenset({"harness", "world", "agent"})
+_FAILURE_FIELDS = ("phase", "stage", "code", "process", "message")
+
+
+def failure_record(sandbox: Any) -> dict[str, Any] | None:
+    """ALK's record of why the guest failed, ``{domain, phase, stage, code, process,
+    message}`` with ``domain`` one of harness, world or agent; ``None`` when a template
+    writes none or it cannot be read."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                FAILURE_RECORD_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - older templates write no record
+        logger.info("harness_failure_record_unread", error=type(exc).__name__)
+        return None
+    if not document or document.get("domain") not in _FAILURE_DOMAINS:
+        return None
+    return {
+        "domain": document["domain"],
+        **{
+            name: str(document[name])[:300] if document.get(name) else None
+            for name in _FAILURE_FIELDS
+        },
+    }
+
+
+REPORTED_PREFIX = "Reported by the sandbox's failure record: "
+
+
+def reported_excerpt(failure: dict[str, Any]) -> str | None:
+    """The failure record's message as a reader may see it: labelled as the sandbox's report. The tested agent can
+    write that file, so its text is never shown as the harness's own line and never decides whose failure it is."""
+    message = ((failure.get("details") or {}).get("harness_failure") or {}).get(
+        "message"
+    )
+    return f"{REPORTED_PREFIX}{message}" if message else None
+
+
+TOOL_ROUTING_PATH = "/work/authoring/generic-harness/tool-routing-observations.json"
+
+
+def tool_routing_observations(sandbox: Any) -> dict[str, Any] | None:
+    """The tools a check's qualification saw reaching the test world, as ALK wrote
+    them; ``None`` when absent or unreadable."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(TOOL_ROUTING_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS)
+        )
+    except Exception as exc:  # noqa: BLE001 - older templates write none
+        logger.info("harness_tool_routing_unread", error=type(exc).__name__)
+        return None
+    if not document or not isinstance(document.get("tools"), list):
+        return None
+    return {
+        "tools": [one for one in document["tools"] if isinstance(one, dict)][:500],
+        "unobserved": [
+            one for one in document.get("unobserved") or [] if isinstance(one, dict)
+        ][:500],
+    }
+
+
+SCENARIO_PROOFS_PATH = "/work/authoring/scenario-proofs.json"
+# How long before the check's window ends the prove command is stopped, so its proofs are read before the check is.
+PROVE_MARGIN_SECONDS = 300
+# How long before the check's window ends ALK itself stops proving and writes what it proved: inside the outer stop.
+ALK_DEADLINE_MARGIN_SECONDS = 2 * PROVE_MARGIN_SECONDS
+SCENARIO_PROOFS_MAX_KEYS = 5000
+
+
+def scenario_proofs(sandbox: Any) -> dict[str, Any] | None:
+    """The proofs a validation made of every scenario, ``{key: entry}``; ``None`` when the
+    file is absent or unreadable, which reads as "no new proofs"."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                SCENARIO_PROOFS_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a job that proved nothing writes none
+        logger.info("harness_scenario_proofs_unread", error=type(exc).__name__)
+        return None
+    if not isinstance(document, dict):
+        return None
+    kept = [(key, value) for key, value in document.items() if isinstance(value, dict)]
+    return dict(kept[:SCENARIO_PROOFS_MAX_KEYS])
+
+
+def _deadline_flag(deadline_at: float | None) -> str:
+    return f" --deadline-at {int(deadline_at)}" if deadline_at is not None else ""
+
+
+_KEY_SHAPE = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def prove_suite_command(
+    *, deadline_at: float | None = None, keys: list[str] | None = None
+) -> str:
+    """Prove the certified pair's scenarios (or only ``keys``) into ``SCENARIO_PROOFS_PATH`` on the pair's sealed
+    runtime, the way a build proves them: ALK's ``--prove-only`` starts that runtime, its services included, so a
+    step a running service serves is proved live, and proves the rest offline. Never fails the command; the outer
+    timeout is the last resort, the deadline gives ALK its own margin first."""
+    from simulate.services.harness_versioning.validation import check_window
+
+    named = [
+        one for one in keys or [] if isinstance(one, str) and _KEY_SHAPE.fullmatch(one)
+    ]
+    keys_flag = f" --keys {','.join(named)}" if named else ""
+    # Inside the check's own window, so the outer stop never ends a check that still has time.
+    seconds = max(
+        int(check_window().total_seconds()) - PROVE_MARGIN_SECONDS, PROVE_MARGIN_SECONDS
+    )
+    return (
+        f"timeout {seconds} python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "
+        f"--source /work/source --output {PurePosixPath(SCENARIO_PROOFS_PATH).parent} "
+        f"--prove-only{keys_flag}{_deadline_flag(deadline_at)}{AGENT_DOCUMENT_FLAG} || true; "
+    )
+
+
+AGENT_READING_PATH = "/work/reading/agent.json"
+# The module asked whether the harness takes --agent-document: it builds its parser before anything else, so --help
+# exits with no side effects. The hosted entrypoint is never probed: it sets up isolation and writes credential files
+# before it parses, and under required isolation it exits before --help is read.
+AGENT_DOCUMENT_PROBE = "fi.alk.harness.authoring_entrypoint"
+# The agent version's tools, for proving to refuse a case whose reference calls one it lacks: the document a reading
+# wrote or the version's stored one, given only when it is there and the harness takes the flag. The platform records
+# no harness version it could compare (the sandbox template is an opaque name), so the harness in the sandbox is asked
+# whether it lists the flag; an older one is never given an argument it would refuse. Drop the probe once every
+# template in use carries the flag.
+AGENT_DOCUMENT_FLAG = (
+    f"$(test -f {AGENT_READING_PATH} && python -m {AGENT_DOCUMENT_PROBE} --help 2>/dev/null "
+    f"| grep -q -- --agent-document && echo ' --agent-document {AGENT_READING_PATH}')"
+)
+
+
+def agent_reading_command() -> str:
+    """Read the agent version's tools from its source into ``AGENT_READING_PATH``, its
+    model spend journalled where the gateway reads a build's. Never fails the command:
+    an unread version stays unread and the certify after it runs as without it."""
+    return (
+        "ALK_SPEND_JOURNAL=/work/authoring/cost.json python -m "
+        "fi.alk.harness.hosted_agent_reading --source /work/source "
+        f"--output {PurePosixPath(AGENT_READING_PATH).parent} || true; "
+    )
+
+
+def stored_agent_document(agent_version_id: Any) -> bytes | None:
+    """The agent version's stored document as a reading writes it, ``{sdk_version, agent}``; ``None`` when no
+    current reading of it is stored (a stale one no longer matches the agent's provider, as readiness reads it)."""
+    from simulate.models import AgentVersion
+    from simulate.services.agent_setup import stored_agent_answer
+
+    version = (
+        AgentVersion.no_workspace_objects.filter(id=agent_version_id).first()
+        if agent_version_id is not None
+        else None
+    )
+    answer = stored_agent_answer(version) if version is not None else None
+    if answer is None or answer.setup_stale:
+        return None
+    return json.dumps(
+        {"sdk_version": answer.sdk_version, "agent": answer.agent},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode()
+
+
+def agent_reading(sandbox: Any) -> dict[str, Any] | None:
+    """The agent document a reading wrote, ``{sdk_version, agent}``; ``None`` when it
+    is absent or unreadable."""
+    try:
+        document = _json_object(
+            sandbox.fs.download_file(
+                AGENT_READING_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a reading that failed writes nothing
+        logger.info("harness_agent_reading_unread", error=type(exc).__name__)
+        return None
+    if not (
+        isinstance(document, dict)
+        and isinstance(document.get("agent"), dict)
+        and isinstance(document.get("sdk_version"), str)
+    ):
+        return None
+    return document
+
+
+def certify_steps(
+    *, prove: bool = False, deadline_at: float | None = None
+) -> tuple[SandboxCommandStep, ...]:
     """Certify the pinned pair into ``/work/bundle`` and make it the run's bundle.
 
     Certifying writes ``/work/runtime-validation.json`` itself once the bundle is in place
-    and never fetches a provider profile. The certify entrypoint is the harness step: it runs the
-    suite's customer processes, so it alone may run each as its own OS user.
+    and never fetches a provider profile. With ``prove`` it also proves every scenario before
+    sealing, into ``SCENARIO_PROOFS_PATH``. The certify entrypoint is the harness step: it runs
+    the suite's customer processes, so it alone may run each as its own OS user.
     """
+    proving = f" --prove-scenarios{_deadline_flag(deadline_at)}" if prove else ""
     return (
         SandboxCommandStep(
             "if [ -f /work/authoring/scenarios.json ]; then "
@@ -1050,7 +1443,7 @@ def certify_steps() -> tuple[SandboxCommandStep, ...]:
         SandboxCommandStep(
             "python -m fi.alk.harness.hosted_authoring_entrypoint "
             f"{CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
-            "--certify-only --bundle-output /work/bundle",
+            f"--certify-only --bundle-output /work/bundle{proving}{AGENT_DOCUMENT_FLAG}",
             harness=True,
         ),
         SandboxCommandStep("rm -rf /work/authoring/environment-bundle"),
@@ -1058,9 +1451,11 @@ def certify_steps() -> tuple[SandboxCommandStep, ...]:
     )
 
 
-def certify_command() -> str:
+def certify_command(*, prove: bool = False, deadline_at: float | None = None) -> str:
     """The certify steps as one command, for a provider that runs them as one."""
-    return " && ".join(step.command for step in certify_steps())
+    return " && ".join(
+        step.command for step in certify_steps(prove=prove, deadline_at=deadline_at)
+    )
 
 
 # --- fill ------------------------------------------------------------------------------
@@ -1089,6 +1484,17 @@ def _set_fill_attempt(
         locked.payload = payload
         locked.save(update_fields=["payload", "updated_at"])
     return True
+
+
+def assembled_bundle_ready(job: HostedHarnessJob) -> bool:
+    """Whether the bundle the job is bound to is cached."""
+    if job.assembled_bundle_id is None:
+        return False
+    return HarnessAssembledBundle._base_manager.filter(
+        id=job.assembled_bundle_id,
+        state=HarnessAssembledBundle.State.READY,
+        object_key__isnull=False,
+    ).exists()
 
 
 def certifies_here(job: HostedHarnessJob) -> bool:
@@ -1193,6 +1599,31 @@ def certify_warnings(sandbox: Any) -> list[dict[str, Any]]:
     return warnings
 
 
+def certify_failed_actions(sandbox: Any) -> list[dict[str, str]] | None:
+    """The action probes a rejected certify failed, each ``{action, reason}``; ``None``
+    when the report is absent or unreadable."""
+    try:
+        report = _json_object(
+            sandbox.fs.download_file(
+                ACTION_CERTIFICATION_PATH, _CERTIFY_REPORT_TIMEOUT_SECONDS
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a certify can stop before it probes actions
+        logger.info("harness_certify_action_report_unread", error=type(exc).__name__)
+        return None
+    actions = (report or {}).get("actions")
+    if not isinstance(actions, list):
+        return None
+    return [
+        {
+            "action": str(item.get("action") or ""),
+            "reason": str(item.get("reason") or ""),
+        }
+        for item in actions
+        if isinstance(item, dict) and item.get("status") == "failed"
+    ]
+
+
 def fill_bundle(
     job: HostedHarnessJob, attempt: Any, sandbox: Any, manifest: Mapping[str, Any]
 ) -> None:
@@ -1290,6 +1721,7 @@ def fill_bundle(
                 size=len(body),
                 bundle_digest=digest,
                 certificate={**certificate, **({"recast": recast} if recast else {})},
+                certification_files=certification_files(sealed, object_key),
                 warnings=certify_warnings(sandbox),
                 built_by_attempt_id=attempt.id,
                 error=None,
@@ -1321,11 +1753,23 @@ def fill_bundle(
             logger.exception("harness_bundle_cache", outcome="fill_unreleased", **log)
 
 
-def mark_failed(job: HostedHarnessJob, message: str) -> None:
-    """A rejected certify leaves its row failed, so the next run rebuilds. A hit whose
+def mark_failed(
+    job: HostedHarnessJob,
+    failure: dict[str, Any],
+    *,
+    failed_actions: list[dict[str, str]] | None = None,
+) -> None:
+    """A rejected certify leaves its row failed with the actions it failed, so the next
+    run rebuilds; a validation job's failure is marked as the validation's. A hit whose
     source check failed puts its row back to pending, so the next run certifies again or
     falls back.
     """
+    from simulate.services.harness_versioning.validation import (
+        FAILURE_SOURCE,
+        certify_only,
+        platform_failure,
+    )
+
     assembly = _assembly(job)
     if assembly is None or job.assembled_bundle_id is None:
         return
@@ -1336,16 +1780,27 @@ def mark_failed(job: HostedHarnessJob, message: str) -> None:
             **_RESET, updated_at=timezone.now()
         )
         outcome = "reset"
+    elif certify_only(job) and platform_failure(failure, failed_actions):
+        # A check that failed on our side settles as unavailable, never failed.
+        return
     elif assembly.get("outcome") == "miss":
+        error: dict[str, Any] = {
+            "code": "authoring_runtime_validation_failed",
+            "message": str(failure.get("message") or "")[:1000],
+            "run_id": str(job.id),
+        }
+        if failed_actions is not None:
+            error["failed_actions"] = failed_actions
+        excerpt = reported_excerpt(failure)
+        if excerpt:
+            error["excerpt"] = excerpt
+        if certify_only(job):
+            error["source"] = FAILURE_SOURCE
         rows.exclude(state=HarnessAssembledBundle.State.READY).update(
             state=HarnessAssembledBundle.State.FAILED,
             # A certify for the cast that failed leaves no stamp, so the next launch claims it again.
             certificate=None,
-            error={
-                "code": "authoring_runtime_validation_failed",
-                "message": message[:1000],
-                "run_id": str(job.id),
-            },
+            error=error,
             updated_at=timezone.now(),
         )
         outcome = "failed"

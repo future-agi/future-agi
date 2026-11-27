@@ -187,8 +187,12 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 
 	// Create circuit breaker registry.
 	var cbReg *routing.CircuitBreakerRegistry
-	if cfg.Routing.CircuitBreaker.Enabled && registry.Router() != nil {
-		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, registry.Router().SetHealthy)
+	if cfg.Routing.CircuitBreaker.Enabled {
+		var onChange func(string, bool)
+		if router := registry.Router(); router != nil {
+			onChange = router.SetHealthy
+		}
+		cbReg = routing.NewCircuitBreakerRegistry(cfg.Routing.CircuitBreaker, onChange)
 		slog.Info("circuit breaker enabled",
 			"failure_threshold", cfg.Routing.CircuitBreaker.FailureThreshold,
 			"cooldown", cfg.Routing.CircuitBreaker.Cooldown,
@@ -340,7 +344,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+			noteRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err
@@ -438,7 +442,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 			rc.Provider = provider.ID()
 
 			providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-				noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+				noteRouteDrops(nil, callRC, provider, callRC.Request)
 				resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 				if err != nil {
 					return err
@@ -515,7 +519,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		Reason: "exact model catalog operation emits only configured model identifiers, owner, numeric limits/pricing and capability flags; it neither reads nor returns inference content",
 	}}
 	router.handleInspected("GET", "/v1/models", handlers.ListModels, modelCatalogInspection)
-	router.handleInspected("GET", "/v1/models/{model}", handlers.GetModel, modelCatalogInspection)
+	router.handleInspected("GET", "/v1/models/{model...}", handlers.GetModel, modelCatalogInspection)
 
 	// Assistants API.
 	router.Handle("POST", "/v1/assistants", handlers.CreateAssistant)
@@ -651,7 +655,7 @@ func NewWithStartupContext(startup context.Context, cfg *config.Config, configPa
 		rc.Provider = provider.ID()
 
 		providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-			noteChatResponsesRouteDrops(nil, callRC, provider, callRC.Request)
+			noteRouteDrops(nil, callRC, provider, callRC.Request)
 			resp, err := provider.ChatCompletion(callCtx, callRC.Request)
 			if err != nil {
 				return err

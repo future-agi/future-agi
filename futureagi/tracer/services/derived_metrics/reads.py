@@ -7,9 +7,12 @@ and bounded delta chain. Replacement collapse precedes deletion predicates.
 
 import json
 import math
+from collections.abc import Sequence
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 from django.core import signing
@@ -221,7 +224,8 @@ def metric_read(metric, *, store=None):
             .values_list("head_manifest_id", "paused_reason")
             .first()
         )
-        if state == (None, "too_large"):
+        # head_manifest is a nullable FK; the stubs type its _id as non-null.
+        if state == (None, "too_large"):  # type: ignore[comparison-overlap]
             raise MetricUnavailableError(
                 "window_not_calculated_yet",
                 "Metrics are paused because this project exceeds the size limit. No values have been calculated.",
@@ -581,10 +585,13 @@ def bucket_select(
 def _aggregate_select(sql, definition, params, *, grouped=False, per_period=False):
     recipe = field_recipe(definition)
     if definition.kind not in {"unique_count", "percentile"}:
-        params.update(recipe.formula.parameters)
+        # field_recipe compiles a formula for every kind except unique_count.
+        formula = recipe.formula
+        assert formula is not None
+        params.update(formula.parameters)
         return combine_parts_select(
             sql,
-            recipe.formula,
+            formula,
             rollup="cohort" if grouped else "overall",
             per_period=per_period,
             packed_uncertainty=True,
@@ -1221,7 +1228,7 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
     ids = None if drivers else tuple(dict.fromkeys(data["unit_ids"]))
     if ids is not None and not 1 <= len(ids) <= 100:
         raise MetricInputError({"unit_ids": "Use 1 to 100 unit ids."})
-    limit = data.get("limit", 20) if drivers else len(ids)
+    limit = data.get("limit", 20) if ids is None else len(ids)
     if not 1 <= limit <= 100:
         raise MetricInputError({"limit": "Use 1 to 100 rows."})
     with metric_read(metric, store=store) as (store, manifest, definition):
@@ -1231,7 +1238,8 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
                 "Exact leave-one-out drivers cannot be recovered from distinct or percentile sketches.",
             )
         through = calculated_through(manifest, definition)
-        requested, finality, exclude = window, None, ()
+        requested, finality = window, None
+        exclude: Sequence[Any] = ()
         if drivers:
             # Drivers rank units of the window's final buckets only.
             finality = require_calculated_window(
@@ -1335,6 +1343,7 @@ def read_units(metric, data, *, drivers=False, store=None, retention_days=None):
                 )
             results = [_unit_value(row) for row in rows[:limit]]
         else:
+            assert ids is not None  # ids is None only for drivers
             by_id = {row["unit_id"]: row for row in rows}
             results = [_unit_value(by_id.get(unit), unit) for unit in ids]
         return {
@@ -1377,7 +1386,8 @@ def read_history(metric, data):
     limit = data.get("limit", 30)
     if not 1 <= limit <= 100:
         raise MetricInputError({"limit": "Use 1 to 100 history entries."})
-    rows = [
+    # One keyset over versions, attempts and snapshots; obj's model follows kind.
+    rows: list[tuple[datetime, UUID, str, Any]] = [
         (v.created_at, v.id, "version", v)
         for v in versions.order_by("-created_at", "-id")[: limit + 1]
     ]

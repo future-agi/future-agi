@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 from tfc.licensing.types import (
     DeploymentFlavor,
@@ -15,6 +16,8 @@ from tfc.licensing.types import (
     LicenseState,
     LicenseType,
 )
+
+preserve_capability_service = capability_testing.preserve_capability_service
 
 
 class _FakeResolver:
@@ -26,7 +29,7 @@ class _FakeResolver:
 
 
 @pytest.fixture(autouse=True)
-def configure_capability_service():
+def configure_capability_service(preserve_capability_service):
     """Configure capability service so delegation is active."""
     snapshot = LicenseSnapshot(
         state=LicenseState.ACTIVE,
@@ -42,14 +45,6 @@ def configure_capability_service():
         location=DeploymentLocation.SELF_HOSTED,
         license_resolver=resolver,
     )
-    yield
-    service._configured = False
-    service.configure(
-        flavor=DeploymentFlavor.OSS,
-        location=DeploymentLocation.SELF_HOSTED,
-        license_resolver=None,
-    )
-    service._configured = False
 
 
 class TestDelegation:

@@ -59,13 +59,17 @@ export const getInitials = (id = "") => {
     : clean.slice(0, 1).toUpperCase();
 };
 
+// The provider category filters (AI Providers and the keys drawer). The
+// selected one is neutral: purple is only for the main action and focus.
 export const buttonStyles = (isSelected, theme) => ({
-  color: isSelected ? "primary.dark" : "text.primary",
-  backgroundColor: isSelected ? "action.hover" : "transparent",
+  color: "text.primary",
+  backgroundColor: isSelected ? "action.selected" : "transparent",
   border: "1px solid",
-  borderColor: isSelected ? "primary.main" : "text.disabled",
+  borderColor: isSelected ? "text.secondary" : "text.disabled",
   "&:hover": {
-    backgroundColor: isSelected ? "action.hover" : theme.palette.action.hover,
+    backgroundColor: isSelected
+      ? "action.selected"
+      : theme.palette.action.hover,
   },
 });
 

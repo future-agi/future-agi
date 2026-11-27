@@ -10,7 +10,6 @@ import {
   Alert,
   Box,
   Button,
-  Chip,
   IconButton,
   InputBase,
   ListItemIcon,
@@ -67,35 +66,6 @@ import { ErrorState } from "./parts";
 
 const CONTENT_WIDTH = 1180;
 
-function HeaderChip({ label, icon, title }) {
-  const chip = (
-    <Chip
-      size="small"
-      variant="outlined"
-      icon={icon ? <Iconify icon={icon} width={13} /> : undefined}
-      label={label}
-      sx={{
-        maxWidth: 320,
-        color: "text.secondary",
-        "& .MuiChip-icon": { color: "text.secondary", ml: 0.75 },
-      }}
-    />
-  );
-  return title ? (
-    <Tooltip describeChild arrow title={title}>
-      {chip}
-    </Tooltip>
-  ) : (
-    chip
-  );
-}
-
-HeaderChip.propTypes = {
-  label: PropTypes.node.isRequired,
-  icon: PropTypes.string,
-  title: PropTypes.node,
-};
-
 // The report's name, renamed in place: click it (or the pencil), Enter saves,
 // Escape cancels.
 function InlineName({ config }) {
@@ -151,11 +121,11 @@ function InlineName({ config }) {
             ml: -0.75,
             borderRadius: 0.75,
             outline: "1px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
           }}
         />
         {saving.state.status === "error" && (
-          <Typography variant="caption" color="error.main">
+          <Typography variant="caption" color="status.danger.fg">
             {saving.state.error}
           </Typography>
         )}
@@ -166,10 +136,10 @@ function InlineName({ config }) {
       direction="row"
       alignItems="center"
       spacing={0.25}
-      sx={{ minWidth: 0, "&:hover .rename": { opacity: 1 } }}
+      sx={{ minWidth: 0 }}
     >
       <Typography
-        variant="m2"
+        variant="m1"
         component="h1"
         fontWeight={600}
         noWrap
@@ -184,7 +154,6 @@ function InlineName({ config }) {
         {config.name}
       </Typography>
       <IconButton
-        className="rename"
         size="small"
         aria-label="Rename report"
         disabled={!canRun}
@@ -192,13 +161,9 @@ function InlineName({ config }) {
           setValue(config.name);
           setEditing(true);
         }}
-        sx={{
-          opacity: 0.4,
-          color: "text.secondary",
-          "&:focus-visible": { opacity: 1 },
-        }}
+        sx={{ color: "text.subtitle" }}
       >
-        <Iconify icon="mdi:pencil-outline" width={14} />
+        <Iconify icon="solar:pen-linear" width={15} />
       </IconButton>
     </Stack>
   );
@@ -233,46 +198,61 @@ function ReportHeader({
         <InlineName key={config.name} config={config} />
         <Stack
           direction="row"
-          spacing={0.75}
           alignItems="center"
           useFlexGap
           flexWrap="wrap"
-          sx={{ mt: 0.75 }}
+          sx={{ mt: 0.5 }}
         >
-          <HeaderChip
-            label={unitTitle(config.unit)}
-            icon="mdi:layers-outline"
-          />
-          <HeaderChip
-            label={lens.key === "custom" ? "Custom question" : lens.title}
-            icon={lens.icon}
-          />
-          {scope && (
-            <HeaderChip
-              label={scope}
-              icon="mdi:calendar-range"
-              title="What this run read"
-            />
-          )}
-          {summaryIncomplete(run) && (
-            <HeaderChip
-              label="Partial report"
-              icon="mdi:alert-outline"
-              title="Analysis is complete, but the summary did not finish or pass verification."
-            />
-          )}
+          {/* What the report reads, as one meta line. */}
+          <Typography
+            component="span"
+            data-testid="report-meta"
+            sx={{
+              typography: "s1",
+              color: "text.subtitle",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {unitTitle(config.unit)} ·{" "}
+            {lens.key === "custom" ? "Custom question" : lens.title}
+            {scope && (
+              <>
+                {" · "}
+                <Tooltip describeChild arrow title="What this run read">
+                  <span>{scope}</span>
+                </Tooltip>
+              </>
+            )}
+            {summaryIncomplete(run) && (
+              <>
+                {" · "}
+                <Tooltip
+                  describeChild
+                  arrow
+                  title="Analysis is complete, but the summary did not finish or pass verification."
+                >
+                  <Box
+                    component="span"
+                    sx={{ color: (theme) => theme.palette.status.warning.fg }}
+                  >
+                    Partial report
+                  </Box>
+                </Tooltip>
+              </>
+            )}
+          </Typography>
           {run && (
             <Box
               component="button"
               type="button"
               onClick={onDetails}
               sx={{
-                ml: 0.5,
+                ml: 1,
                 p: 0,
                 border: 0,
                 bgcolor: "transparent",
                 font: "inherit",
-                fontSize: 12,
+                typography: "s1",
                 color: "text.secondary",
                 cursor: "pointer",
                 textDecoration: "underline",
@@ -283,7 +263,7 @@ function ReportHeader({
                 },
                 "&:focus-visible": {
                   outline: "2px solid",
-                  outlineColor: "primary.main",
+                  outlineColor: "border.focus",
                 },
               }}
             >
@@ -310,9 +290,9 @@ function ReportHeader({
       >
         <Button
           size="small"
-          variant="outlined"
-          color="inherit"
-          startIcon={<Iconify icon="mdi:play-outline" width={16} />}
+          variant="contained"
+          color="primary"
+          startIcon={<Iconify icon="solar:play-linear" width={16} />}
           onClick={onRunNow}
           disabled={busy || !canRun}
         >
@@ -322,7 +302,7 @@ function ReportHeader({
           size="small"
           variant="outlined"
           color="inherit"
-          startIcon={<Iconify icon="mdi:cog-outline" width={16} />}
+          startIcon={<Iconify icon="solar:settings-linear" width={16} />}
           onClick={onEdit}
           disabled={!canRun}
         >
@@ -334,7 +314,7 @@ function ReportHeader({
           onClick={(event) => setAnchor(event.currentTarget)}
           sx={{ border: "1px solid", borderColor: "divider" }}
         >
-          <Iconify icon="mdi:dots-horizontal" width={18} />
+          <Iconify icon="solar:menu-dots-bold" width={18} />
         </IconButton>
         <Menu
           anchorEl={anchor}
@@ -352,7 +332,7 @@ function ReportHeader({
             sx={{ maxWidth: 340, whiteSpace: "normal" }}
           >
             <ListItemIcon>
-              <Iconify icon="mdi:shape-plus-outline" width={18} />
+              <Iconify icon="solar:widget-add-linear" width={18} />
             </ListItemIcon>
             <ListItemText
               primary="Rediscover categories"
@@ -368,7 +348,7 @@ function ReportHeader({
             }}
           >
             <ListItemIcon sx={{ color: "inherit" }}>
-              <Iconify icon="mdi:trash-can-outline" width={18} />
+              <Iconify icon="solar:trash-bin-trash-linear" width={18} />
             </ListItemIcon>
             <ListItemText>Delete report</ListItemText>
           </MenuItem>
@@ -419,7 +399,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ mt: 0.5, fontSize: 12, fontVariantNumeric: "tabular-nums" }}
+          sx={{ mt: 0.5, typography: "m3", fontVariantNumeric: "tabular-nums" }}
         >
           {meta.join(" · ")}
         </Typography>
@@ -429,10 +409,10 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
           ) : (
             <Box
               sx={{
-                p: 2.5,
+                p: 2,
                 border: "1px solid",
                 borderColor: "divider",
-                borderRadius: 1,
+                borderRadius: "8px",
               }}
             >
               <Typography variant="subtitle2">
@@ -441,7 +421,7 @@ function ReportBody({ config, run, lens, methodOpen, onMethod }) {
               <Typography
                 variant="body2"
                 color="text.secondary"
-                sx={{ fontSize: 12 }}
+                sx={{ typography: "m3" }}
               >
                 None of the {formatCount(run.sample_size)} sampled matched the
                 question. Try a wider window, a different lens, or remove an
@@ -491,13 +471,20 @@ function FailedRun({ run, lens, onRerun }) {
   let action = null;
   if (next.rerun)
     action = (
-      <Button color="inherit" size="small" onClick={onRerun} disabled={!canRun}>
+      <Button
+        variant="outlined"
+        color="inherit"
+        size="small"
+        onClick={onRerun}
+        disabled={!canRun}
+      >
         {next.rerun}
       </Button>
     );
   else if (next.license)
     action = (
       <Button
+        variant="outlined"
         color="inherit"
         size="small"
         sx={{ whiteSpace: "nowrap" }}
@@ -655,6 +642,7 @@ export default function ReportPage({
         severity="info"
         action={
           <Button
+            variant="outlined"
             color="inherit"
             size="small"
             disabled={!canRun}
@@ -752,6 +740,7 @@ export default function ReportPage({
                   sx={{ mt: 2 }}
                   action={
                     <Button
+                      variant="outlined"
                       color="inherit"
                       size="small"
                       onClick={() => onSelectRun(latest.id)}

@@ -45,7 +45,10 @@ from tracer.services.trace_investigation import (
 )
 from tracer.tests.test_grouping_runtime import FakeFeatureStore, _feature_rows
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("_debug_failures_readable"),
+]
 
 
 def _execution(organization, workspace, scenario, name, call_status):
@@ -873,7 +876,7 @@ def _hosted_run(organization, workspace, execution, catalogue=None, **scenario_f
     environment = job(
         stage_outputs=[{"kind": "sub_goals", "data": {"sub_goals": catalogue or []}}]
     )
-    job(environment=environment, run_test=execution.run_test)
+    job(environment=environment, run_test=execution.run_test, test_execution=execution)
     return HostedHarnessScenario.no_workspace_objects.create(
         job=environment,
         scenario_key="pin-booking",
@@ -882,6 +885,75 @@ def _hosted_run(organization, workspace, execution, catalogue=None, **scenario_f
         tests="the agent books after a spoken PIN",
         **scenario_fields,
     )
+
+
+@override_settings(INTERNAL_API_SECRET="test-secret")
+def test_simulation_evidence_http_page_matches_documented_contract(
+    client, auth_client, organization, workspace
+):
+    from pathlib import Path
+
+    from jsonschema import Draft4Validator
+
+    scenario = Scenarios.objects.create(
+        name="Booking", organization=organization, workspace=workspace
+    )
+    execution, _ = _execution(
+        organization, workspace, scenario, "booking", CallExecution.CallStatus.COMPLETED
+    )
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    (claim,) = claim_due_investigations(
+        worker_id="worker", engine_version="omega-v1", limit=1
+    )["claims"]
+    route = "/tracer/internal/error-feed-v2/attempts/{attempt_id}/simulation-evidence/"
+
+    def request(token):
+        return client.post(
+            route.format(**claim),
+            {"lease_token": token, "cursor": 0},
+            content_type="application/json",
+            HTTP_AUTHORIZATION="Bearer test-secret",
+        )
+
+    assert request("expired").status_code == 409
+    response = request(claim["lease_token"])
+    assert response.status_code == 200
+    body = response.json()
+    swagger = json.loads(
+        (
+            Path(__file__).resolve().parents[3] / "api_contracts/openapi/swagger.json"
+        ).read_text()
+    )
+    documented = swagger["paths"][route]["post"]["responses"]["200"]["schema"]
+
+    def native(schema):
+        if isinstance(schema, list):
+            return [native(item) for item in schema]
+        if not isinstance(schema, dict):
+            return schema
+        if "$ref" in schema:
+            return native(swagger["definitions"][schema["$ref"].split("/")[-1]])
+        if schema.get("x-json-value"):
+            return {}
+        result = {
+            key: native(item) for key, item in schema.items() if key != "x-nullable"
+        }
+        return (
+            {"anyOf": [result, {"type": "null"}]}
+            if schema.get("x-nullable")
+            else result
+        )
+
+    validator = Draft4Validator(native(documented))
+    validator.validate(body)
+    for persona in (None, {"traits": ["patient", None, {"active": True}]}):
+        body["calls"][0]["persona"] = persona
+        validator.validate(body)
+    for persona in (False, []):
+        body["calls"][0]["persona"] = persona
+        assert not validator.is_valid(body)
+    del body["calls"][0]["persona"]
+    assert not validator.is_valid(body)
 
 
 def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
@@ -922,6 +994,14 @@ def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
             attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
         )["calls"][0]
 
+    sibling = TestExecution.objects.create(run_test=execution.run_test)
+    _hosted_run(
+        organization,
+        workspace,
+        sibling,
+        instruction="A different call",
+        persona={"name": "Other"},
+    )
     call_record = served()
     assert call_record["situation"] == "You want a late-cancellation fee removed."
     # The whole authored persona, including what the amend whitelist leaves out: the
@@ -955,9 +1035,10 @@ def test_debug_evidence_carries_the_simulated_callers_situation_and_persona(
     assert call_record["persona"]["metadata"].endswith("more characters]")
     assert len(json.dumps(call_record["persona"])) < 2 * _CALLER_TEXT_LIMIT
 
-    # A call with no authored scenario says it has none.
-    call.call_metadata = {}
-    call.save(update_fields=["call_metadata"])
+    # Older jobs have no execution link. Neither matching key proves identity.
+    HostedHarnessJob.no_workspace_objects.filter(test_execution=execution).update(
+        test_execution=None
+    )
     call_record = served()
     assert (call_record["goals"], call_record["situation"], call_record["persona"]) == (
         None,

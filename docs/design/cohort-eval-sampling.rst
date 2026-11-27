@@ -104,7 +104,7 @@ Only selected closed members need durable rows. New units first arriving after
 that cohort's freeze are excluded even if their event times lie in the window.
 Late rows of already selected units keep the original stratum and k/N. A cohort
 is certified (``complete``) only after its whole membership stream has been
-written; a failed or interrupted stream deletes the uncertified cohort, and a
+written; a failed or interrupted stream normally deletes the uncertified cohort, and a
 later attempt that finds an uncertified cohort whose lease has lapsed discards
 it before freezing again. No partially materialized first page can masquerade
 as an exact quota.
@@ -117,6 +117,22 @@ after the window end. In-window rows that arrive within ``S`` of the window's
 end are therefore counted, and a replica lagging by less than ``S`` reads the
 same population. A certified cohort never waits again. Previews do not apply
 the margin; they count what is visible now and are not reservations.
+
+For a non-Instant historical task with a closed policy, the first workflow
+reconcile waits until the task's original ``created_at + S``. Temporal owns
+this timer: restart does not start a fresh margin and a continue-as-new hop
+skips the initial reconcile. This does not change ``frozen_at`` to creation
+time. The ClickHouse clock at the actual read still sets the cutoff; clock
+skew, a late wake or intervening arrivals can change membership.
+
+During a rolling upgrade an older status activity returns no deadline and
+that run takes the original path. A compatible first reconcile and initial
+reap check the locked task row before writing; an older activity worker
+ignores the opt-in, including the prior race that can reap a stale entry
+after a pause. If the task stops mid-stream the compatible worker leaves
+any unfinished lease to expire rather than writing cleanup after the stop.
+An older workflow worker may be unable to replay a new timer: the workflow
+task then needs a compatible poller to resume the same execution.
 
 Live mode uses the same stable SHA-256, compared with the exact integer
 threshold ``floor(rate / 100 * 2**256)``. The inclusion probability is rate/100.

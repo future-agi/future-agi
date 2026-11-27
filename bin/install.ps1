@@ -889,6 +889,7 @@ function Save-ReadinessDiagnostics {
       'property-catalog-runtime-volume-init',
       'property-catalog-topic-init',
       'property-catalog-clickhouse-bootstrap',
+      'metrics-schema-bootstrap',
       'fi-collector',
       'fi-property-catalog-consumer',
       'backend'

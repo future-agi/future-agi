@@ -58,7 +58,7 @@ func (r *Retryer) IsEnabled() bool {
 
 // ShouldRetry returns true if the error is retryable.
 func (r *Retryer) ShouldRetry(err error) bool {
-	if err == nil {
+	if err == nil || DispatchRejection(err) != nil {
 		return false
 	}
 

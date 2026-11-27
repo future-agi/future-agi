@@ -38,6 +38,7 @@ import {
   NOT_EDITABLE_TOOLTIP,
 } from "./allEvaluationsDrawer.constants";
 import { LoadingScreen } from "src/components/loading-screen";
+import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
@@ -73,6 +74,7 @@ export default function AllEvaluationsDrawer({
   const queryClient = useQueryClient();
   const access = useSimulationAccess();
   const [ticked, setTicked] = useState(() => new Set());
+  const [removing, setRemoving] = useState(null);
 
   // The run page keeps this drawer mounted while it's closed, so ticks would
   // otherwise still be there on reopening — including on a removed eval that
@@ -331,7 +333,7 @@ export default function AllEvaluationsDrawer({
                           disabled={
                             !access.canEdit || grading || removeEval.isPending
                           }
-                          onClick={() => handleRemove(config)}
+                          onClick={() => setRemoving(config)}
                         >
                           <Iconify
                             icon="solar:trash-bin-trash-linear"
@@ -379,6 +381,35 @@ export default function AllEvaluationsDrawer({
           </Tooltip>
         </Box>
       </Box>
+      <ConfirmDialog
+        open={Boolean(removing)}
+        onClose={() => setRemoving(null)}
+        title="Remove this evaluation?"
+        content={
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+            <Box component="span" sx={{ fontWeight: 600 }}>
+              {removing?.name}
+            </Box>{" "}
+            is removed from this environment and its column leaves this
+            run&apos;s results.
+          </Typography>
+        }
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            disabled={!access.canEdit || removeEval.isPending}
+            onClick={() => {
+              const config = removing;
+              setRemoving(null);
+              if (access.canEdit && config) handleRemove(config);
+            }}
+          >
+            Remove
+          </Button>
+        }
+      />
     </SideDrawer>
   );
 }

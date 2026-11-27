@@ -111,6 +111,9 @@ function summaryOf({ summary }, visibleGoalCount, oneOffs) {
     : `Your agent held every goal on ${plural(measuredCalls, "call")}.`;
 }
 
+// The failure text ends as a sentence, so the rule's reason can follow it.
+const sentence = (text) => (/[.!?]$/.test(text) ? text : `${text}.`);
+
 export default function DiagnosisPane({
   analysis,
   isLoading,
@@ -127,17 +130,36 @@ export default function DiagnosisPane({
     return <ThinkingLoader />;
   }
 
+  // A run the rule refuses is not a failed diagnosis: it says why, and a retry
+  // would be refused the same way.
+  if (analysis.refused) {
+    return (
+      <Box sx={{ flex: 1 }}>
+        <EmptyState
+          icon="solar:info-circle-linear"
+          title={analysis.errorMessage}
+        />
+      </Box>
+    );
+  }
+
   if (analysis.status === "failed") {
     return (
       <Box sx={{ flex: 1 }}>
         <EmptyState
           icon="solar:danger-triangle-linear"
           title="Couldn't finish the diagnosis"
-          body={analysis.errorMessage || "Couldn't read this run. Try again."}
+          body={
+            analysis.retryBlockedBy
+              ? `${sentence(analysis.errorMessage || "Couldn't read this run")} ${analysis.retryBlockedBy}`
+              : analysis.errorMessage || "Couldn't read this run. Try again."
+          }
           action={
-            <Button variant="outlined" size="small" onClick={onRetry}>
-              Try again
-            </Button>
+            !analysis.retryBlockedBy && (
+              <Button variant="outlined" size="small" onClick={onRetry}>
+                Try again
+              </Button>
+            )
           }
         />
       </Box>
@@ -220,6 +242,8 @@ DiagnosisPane.propTypes = {
     status: PropTypes.string,
     isWorking: PropTypes.bool,
     errorMessage: PropTypes.string,
+    refused: PropTypes.bool,
+    retryBlockedBy: PropTypes.string,
     groupingPending: PropTypes.bool,
     summary: PropTypes.shape({
       measuredCalls: PropTypes.number,

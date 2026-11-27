@@ -558,6 +558,7 @@ test('DASH-E2E-008: a saved User widget keeps project and identifier-type scope'
         await popup.getByRole('button', { name: 'Add', exact: true }).click(); await uiExpect(popup).toHaveCount(0);
       }
     };
+    let attachChartSelection: (() => Promise<void>) | undefined;
     try {
       await test.step('1 create and name a Table widget with 7D and Day', async () => {
         await page.goto('/dashboard/dashboards', { waitUntil: 'domcontentloaded' });
@@ -579,7 +580,53 @@ test('DASH-E2E-008: a saved User widget keeps project and identifier-type scope'
         await page.getByRole('button', { name: /^add widget$/i }).first().click();
         await page.getByText('Untitled widget', { exact: true }).click();
         await page.getByPlaceholder('Untitled widget').fill(widgetName); await page.getByPlaceholder('Untitled widget').press('Enter');
-        await page.getByRole('combobox').filter({ hasText: 'Line' }).click(); await page.getByRole('option', { name: 'Table', exact: true }).click();
+        const chart = page.getByRole('combobox').filter({ hasText: /^(Line|Table)$/ });
+        await uiExpect(chart).toHaveText('Line');
+        const trace = await chart.evaluateHandle(trigger => {
+          const events: Record<string, unknown>[] = [];
+          const state = () => {
+            const menu = document.querySelector('[role="listbox"]');
+            return { chart: trigger.textContent?.trim(), expanded: trigger.getAttribute('aria-expanded'),
+              menuPresent: !!menu, selected: menu?.querySelector('[aria-selected="true"]')?.textContent?.trim() ?? null };
+          };
+          let previous = '';
+          const selection = () => {
+            const snapshot = state(), key = JSON.stringify(snapshot);
+            if (key !== previous) events.push({ type: 'selection', at: performance.now(), ...snapshot });
+            previous = key;
+          };
+          const input = (e: Event) => {
+            const el = e.target instanceof Element ? e.target : null;
+            events.push({ type: e.type, at: performance.now(), trusted: e.isTrusted, tag: el?.tagName,
+              classes: el?.getAttribute('class'), option: el?.closest('[role="option"]')?.textContent?.trim(),
+              point: e instanceof MouseEvent ? [e.clientX, e.clientY] : null, ...state() });
+          };
+          const types = ['pointerdown', 'pointerup', 'click', 'change'];
+          for (const type of types) document.addEventListener(type, input, true);
+          const observer = new MutationObserver(selection);
+          observer.observe(document.body, { subtree: true, childList: true, characterData: true,
+            attributes: true, attributeFilter: ['aria-expanded', 'aria-selected'] });
+          selection();
+          return { finish() {
+            observer.disconnect();
+            for (const type of types) document.removeEventListener(type, input, true);
+            selection(); return events;
+          } };
+        });
+        attachChartSelection = async () => {
+          const events = await trace.evaluate(t => t.finish());
+          await testInfo.attach('chart-selection-events', { contentType: 'application/json', body: JSON.stringify(events) });
+          attachChartSelection = undefined;
+        };
+        await chart.click();
+        const listbox = page.getByRole('listbox', { includeHidden: true });
+        await uiExpect(listbox).toBeVisible();
+        const table = listbox.getByRole('option', { name: 'Table', exact: true });
+        await uiExpect(table).toBeVisible();
+        await table.click();
+        await uiExpect(chart).toHaveText('Table');
+        await uiExpect(listbox).toHaveCount(0);
+        await attachChartSelection();
         await page.getByText('7D', { exact: true }).click();
         await page.getByRole('combobox').filter({ hasText: 'Day' }).click(); await page.getByRole('option', { name: 'Day', exact: true }).click();
       }, { timeout: UI_READY });
@@ -735,7 +782,11 @@ test('DASH-E2E-008: a saved User widget keeps project and identifier-type scope'
         expect(finalTraces).toEqual(initialTraces); expect(finalRemaps).toEqual(initialRemaps); expect(finalProjects).toEqual(projects);
         expect(savedWidget!.query_config).toEqual(canonicalU1); expect(savedWidget!.chart_config).toEqual(originalChart);
       }, { timeout: UI_READY });
-    } finally { page.off('response', captureResponse); }
+    } finally {
+      page.off('response', captureResponse);
+      // A failed selection can exhaust the enclosing step. Flush while its page is still open.
+      await attachChartSelection?.();
+    }
   } finally {
     try {
       await Promise.all(pending);

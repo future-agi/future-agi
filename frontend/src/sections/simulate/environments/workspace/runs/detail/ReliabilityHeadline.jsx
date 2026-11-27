@@ -13,10 +13,7 @@ function Stat({ label, value, help }) {
   return (
     <Tooltip arrow title={help}>
       <Box sx={{ minWidth: 0 }}>
-        <Typography
-          noWrap
-          sx={{ typography: "s3", color: "text.secondary" }}
-        >
+        <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
           {label}
         </Typography>
         <Typography

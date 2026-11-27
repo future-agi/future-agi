@@ -226,20 +226,11 @@ class TestVolumeFloorBands:
 
 
 @pytest.mark.django_db
-class TestStatusIsEscalatingAndOtherwiseHuman:
-    """Status is escalating by default; every other value belongs to a person.
+class TestStatusStartsForReviewAndPreservesHumanSelection:
+    """Creation awaits deterministic escalation; attachment never changes triage."""
 
-    Automation briefly downgraded low-volume clusters to for_review. That is a
-    triage state a user sets through PATCH /tracer/feed/issues/{cluster_id}/, so
-    writing it by machine both invented a review nobody did and — because the
-    guard only covered acknowledged/resolved — flipped a user's own for_review
-    back to escalating the moment the cluster gained a fifth trace.
-    """
-
-    def test_a_new_cluster_is_escalating(self, project):
-        """Through create_cluster, not the model default — the downgrade this
-        replaces lived in create_cluster, so asserting the default would pass
-        with the downgrade restored."""
+    def test_a_new_cluster_is_for_review(self, project):
+        """Pin the explicit scanner creator as well as the model default."""
         from tracer.queries.scan_clustering import create_cluster
 
         with (
@@ -252,7 +243,7 @@ class TestStatusIsEscalatingAndOtherwiseHuman:
         created = TraceErrorGroup.objects.get(
             cluster_id=cluster_id, project_id=project.id
         )
-        assert created.status == FeedIssueStatus.ESCALATING
+        assert created.status == FeedIssueStatus.FOR_REVIEW
 
     @pytest.mark.parametrize(
         "human",

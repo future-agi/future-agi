@@ -9,9 +9,10 @@ context propagation, mirroring ``tfc/temporal/evaluations/activities.py``.
 
 import asyncio
 import time
+from contextlib import nullcontext
 
 import structlog
-from django.db import close_old_connections, connection
+from django.db import close_old_connections, connection, transaction
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -22,13 +23,13 @@ from tfc.temporal.eval_tasks.db_errors import (
     database_control_errors,
 )
 from tfc.temporal.eval_tasks.types import (
+    CheckedReapInput,
+    CheckedReconcileInput,
     ClaimBatchInput,
     ClaimBatchOutput,
     FinalizeInput,
     FinalizeOutput,
-    ReapInput,
     ReapOutput,
-    ReconcileActivityInput,
     ReconcileActivityOutput,
     RequeueEntriesInput,
     RequeueEntriesOutput,
@@ -109,7 +110,7 @@ def _require_instant_eval_license(task) -> None:
         ) from None
 
 
-def _reconcile_sync(task_id: str) -> dict:
+def _reconcile_sync(task_id: str, *, require_running: bool = False) -> dict:
     """Make the task's live entries match its desired (sampled rows × evals) set.
 
     Creates the missing pending entries, re-queues stale/errored ones, and drops
@@ -121,11 +122,32 @@ def _reconcile_sync(task_id: str) -> dict:
     try:
         from tracer.models.eval_task import EvalTask
         from tracer.services.eval_tasks.reconciler import reconcile
+        from tracer.services.eval_tasks.running_task import (
+            InactiveTask,
+            locked_running_task,
+        )
 
-        with eval_ch_guardrails():
-            task = EvalTask.objects.get(id=task_id)
-            _require_instant_eval_license(task)
-            result = reconcile(task)
+        try:
+            with eval_ch_guardrails():
+                if require_running:
+                    with transaction.atomic():
+                        task = locked_running_task(task_id)
+                    _require_instant_eval_license(task)
+                    # The CH stream stays outside the lock. Each write rechecks
+                    # the primary row in its own bounded transaction.
+                    result = reconcile(task, require_running=True)
+                else:
+                    task = EvalTask.objects.get(id=task_id)
+                    _require_instant_eval_license(task)
+                    result = reconcile(task)
+        except InactiveTask as exc:
+            return {
+                "task_id": task_id,
+                "created": 0,
+                "requeued": 0,
+                "dropped": 0,
+                "inactive_status": exc.status,
+            }
         return {
             "task_id": str(task_id),
             "created": result.created,
@@ -340,6 +362,8 @@ def _reap_sync(
     older_than_seconds: int,
     max_attempts: int,
     workflow_confirmed_stopped: bool = False,
+    *,
+    require_running: bool = False,
 ) -> dict:
     """Reclaim entries stuck running past ``older_than_seconds`` (e.g. a worker
     crashed mid-eval).
@@ -376,10 +400,27 @@ def _reap_sync(
             older_than_seconds,
             workflow_confirmed_stopped=workflow_confirmed_stopped,
         )
-        task = EvalTask.objects.get(id=task_id)
-        requeued, failed = reap_stale_running(
-            task, older_than_seconds=stale_seconds, max_attempts=max_attempts
-        )
+        with transaction.atomic() if require_running else nullcontext():
+            if require_running:
+                from tracer.services.eval_tasks.running_task import (
+                    InactiveTask,
+                    locked_running_task,
+                )
+
+                try:
+                    task = locked_running_task(task_id)
+                except InactiveTask as exc:
+                    return {
+                        "requeued": 0,
+                        "failed": 0,
+                        "older_than_seconds": stale_seconds,
+                        "inactive_status": exc.status,
+                    }
+            else:
+                task = EvalTask.objects.get(id=task_id)
+            requeued, failed = reap_stale_running(
+                task, older_than_seconds=stale_seconds, max_attempts=max_attempts
+            )
         return {
             "requeued": requeued,
             "failed": failed,
@@ -530,11 +571,35 @@ def _set_task_status_sync(
             qs = qs.filter(status=expected_status)
         changed = qs.update(**fields)
 
-        task = EvalTask.objects.get(id=task_id)
+        starting = (
+            status == EvalTaskStatus.RUNNING
+            and expected_status == EvalTaskStatus.PENDING
+        )
+        if starting:
+            # The filtered UPDATE above cannot revive a soft-deleted task.
+            task = EvalTask.all_objects.using("default").get(id=task_id)
+        else:
+            task = EvalTask.objects.get(id=task_id)
+        deadline = None
+        if (
+            starting
+            and task.run_type == RunType.HISTORICAL
+            and task.sampling_policy
+            and isinstance(task.sampling_policy, dict)
+            and task.sampling_policy.get("mode", "closed") == "closed"
+        ):
+            from tfc.routers import force_primary
+            from tracer.services.eval_tasks.sampling.service import closed_settle_margin
+            from tracer.services.instant_eval_rows import is_instant_task
+
+            with force_primary():
+                if not is_instant_task(task):
+                    deadline = (task.created_at + closed_settle_margin()).isoformat()
         return {
             "task_id": str(task_id),
             "changed": bool(changed),
-            "status": task.status or "",
+            "status": EvalTaskStatus.DELETED if task.deleted else task.status or "",
+            "first_reconcile_at": deadline,
             # Read off the row already reloaded above; retries are deduped by
             # the alert itself (failure_alert._dedupe_key).
             "failed_continuous": bool(changed)
@@ -615,7 +680,7 @@ async def _busy_wait(seconds: float) -> None:
 @activity.defn
 @database_control_activity()
 async def reconcile_eval_task_activity(
-    input: ReconcileActivityInput,
+    input: CheckedReconcileInput,
 ) -> ReconcileActivityOutput:
     from tracer.selectors.eval_tasks.row_resolver import (
         EvalTaskReadBudgetExceeded,
@@ -637,11 +702,16 @@ async def reconcile_eval_task_activity(
                 + reconcile_lease_duration().total_seconds()
                 + _BUSY_LEASE_MARGIN_SECONDS
             )
+            guard = (
+                {"require_running": True}
+                if getattr(input, "require_running", False)
+                else {}
+            )
             while True:
                 try:
                     result = await otel_sync_to_async(
                         _reconcile_sync, thread_sensitive=False
-                    )(input.task_id)
+                    )(input.task_id, **guard)
                     break
                 except SamplingReconcileBusy:
                     if _busy_clock() >= busy_deadline:
@@ -677,6 +747,7 @@ async def reconcile_eval_task_activity(
         created=result["created"],
         requeued=result["requeued"],
         dropped=result["dropped"],
+        inactive_status=result.get("inactive_status"),
     )
 
 
@@ -730,13 +801,17 @@ async def requeue_lost_eval_entry_activity(input: RunEntryInput) -> RunEntryOutp
 
 @activity.defn
 @database_control_activity()
-async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
+async def reap_stale_running_activity(input: CheckedReapInput) -> ReapOutput:
+    guard = (
+        {"require_running": True} if getattr(input, "require_running", False) else {}
+    )
     async with Heartbeater():
         result = await otel_sync_to_async(_reap_sync, thread_sensitive=False)(
             input.task_id,
             input.older_than_seconds,
             input.max_attempts,
             input.workflow_confirmed_stopped,
+            **guard,
         )
     logger.info(
         "eval_task_reaped",
@@ -745,7 +820,11 @@ async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
         failed=result["failed"],
         older_than_seconds=result["older_than_seconds"],
     )
-    return ReapOutput(requeued=result["requeued"], failed=result["failed"])
+    return ReapOutput(
+        requeued=result["requeued"],
+        failed=result["failed"],
+        inactive_status=result.get("inactive_status"),
+    )
 
 
 @activity.defn
@@ -805,6 +884,7 @@ async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutpu
         task_id=result["task_id"],
         changed=result["changed"],
         status=result["status"],
+        first_reconcile_at=result.get("first_reconcile_at"),
     )
 
 

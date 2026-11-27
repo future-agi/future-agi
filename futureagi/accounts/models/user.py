@@ -7,6 +7,7 @@ from django.contrib.auth.models import (
     PermissionsMixin,
 )
 from django.db import models, transaction
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from accounts.models.organization import Organization
@@ -120,6 +121,28 @@ class User(AbstractBaseUser, PermissionsMixin):
     def save(self, *args, **kwargs):
         return super().save(*args, **kwargs)
 
+    def update_config(self, **changes) -> None:
+        """Set these top-level ``config`` keys, merged into the stored row in
+        one UPDATE, and on this object.
+
+        A request's user object can be older than its row (the auth cache
+        hands out the one loaded at sign-in), so saving its whole ``config``
+        would put back keys other requests have changed since, such as the
+        email opt-outs.
+        """
+        stored = Coalesce(
+            models.F("config"), models.Value({}, output_field=models.JSONField())
+        )
+        merged = models.Func(
+            stored,
+            models.Value(changes, output_field=models.JSONField()),
+            arg_joiner=" || ",
+            template="(%(expressions)s)",
+            output_field=models.JSONField(),
+        )
+        type(self).objects.filter(pk=self.pk).update(config=merged)
+        self.config = {**(self.config or {}), **changes}
+
     # --- Multi-org helpers ---
 
     def get_membership(self, organization):
@@ -146,7 +169,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Users with deactivated memberships should NOT get this fallback.
         if self.organization_id and self.organization_id == organization.id:
             # Only use fallback if user has no membership records at all for this org
-            has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+            has_any_membership = OrganizationMembership._base_manager.filter(
                 user=self, organization=organization
             ).exists()
             if not has_any_membership:
@@ -185,7 +208,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Users with deactivated memberships should NOT get this fallback.
         if self.organization_id and self.organization_id == target_org.id:
             # Only use fallback if user has no membership records at all for this org
-            has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+            has_any_membership = OrganizationMembership._base_manager.filter(
                 user=self, organization=target_org
             ).exists()
             if not has_any_membership:

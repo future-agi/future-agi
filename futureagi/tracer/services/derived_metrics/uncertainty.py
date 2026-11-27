@@ -194,7 +194,9 @@ def t_quantile_975(df: int) -> float:
         raise ValueError("Degrees of freedom must be at least 1.")
     if df <= len(T_975):
         return T_975[df - 1]
-    return _Z + sum(term / df ** (power + 1) for power, term in enumerate(_G))
+    # int ** int is typed Any (a negative power is a float); this is a float.
+    value: float = _Z + sum(term / df ** (power + 1) for power, term in enumerate(_G))
+    return value
 
 
 def t_quantile_975_sql(df: str) -> str:

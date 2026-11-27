@@ -385,7 +385,7 @@
     {
       "pattern": "futureagi/conftest.py",
       "reason": "Inspected pytest collection and disposable database fixtures, not product startup.",
-      "sha256": "8913dc51a719dc94677182ba400cf89d0fec32cadedd3c724c90ee8d03588267"
+      "sha256": "9917fbc5c3bc0630555485dc37fbf706b0ace207537e9b893c3dd961a2ae324f"
     },
     {
       "pattern": "futureagi/tracer/services/clickhouse/v2/test_property_catalog_schema_contract.py",
@@ -425,7 +425,7 @@
     {
       "pattern": "futureagi/tfc/settings/test.py",
       "reason": "Test settings initialize disposable PostgreSQL databases, not product ClickHouse bootstrap.",
-      "sha256": "7d345e110e8f176a510cd9aa671732e9eb8d64015725562cc41b184efaabdaed"
+      "sha256": "bcfd9f8454a26c1ee2bb5f2372c273e04d746f9e097b3ee44d9d913714f49ea4"
     },
     {
       "pattern": "futureagi/model_hub/utils/SQL_queries.py",
@@ -434,8 +434,8 @@
     },
     {
       "pattern": "futureagi/tfc/utils/error_codes.py",
-      "reason": "Inspected old and new blobs: CREATE USER occurs only in the user-evaluation-template error text returned by get_error_message to the API response; the added Jev error mapping and API key expiry messages do not execute SQL. No removed ClickHouse operation.",
-      "sha256": "b74ce57a9a4cefeb8010898f4d26e925d9e0f89902eb5be1570c593d8fd6147e"
+      "reason": "Inspected old and new blobs: CREATE USER occurs only in the user-evaluation-template error text returned by get_error_message to the API response; the added FILTER_VALUES_UNAVAILABLE and Jev error mappings, Viewer read-only message and API key expiry messages and the removed duplicate MEMBER_NOT_IN_ORG entry do not execute SQL. No removed ClickHouse operation.",
+      "sha256": "97868116b0d0c3faad9c8d9209f2bf51133f9f10a084ebfd1c24572c28e471db"
     },
     {
       "pattern": "fi-collector/pkg/ingestbench/bench_test.go",
@@ -455,7 +455,7 @@
     {
       "pattern": "e2e/lib/harness_environment_seed.py",
       "reason": "Inspected E2E seed: the literal is the SQLite schema file packed into a fixture world archive, never run against a platform database.",
-      "sha256": "6d8201f4f4d5f2491eccb27a2802fef6fcf72c9dc61f1e3436f2ff3675749963"
+      "sha256": "1f40a478cc25f793892be3d34ce27a6b1d8497fa7010cc02f7ba4e022ca77168"
     }
   ]
 }

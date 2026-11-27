@@ -1,5 +1,7 @@
-import { test as base, expect, request as pwRequest } from '@playwright/test';
+import { request as pwRequest } from '@playwright/test';
+import { test as base, expect } from './backend-request';
 import type { APIRequestContext, Browser, BrowserContext } from '@playwright/test';
+import { firstHopOptions } from './backend-transport';
 import { ApiClient, Tokens } from './api-client';
 import { authInitScript } from './auth';
 import { E2E } from './env';
@@ -37,16 +39,18 @@ export class ScopeActors {
   private readonly requests = new Map<string, APIRequestContext>();
   private readonly contexts = new Set<BrowserContext>();
 
-  constructor(readonly prefix: string) {
+  constructor(readonly prefix: string, readonly provisionOwner = provisionActor,
+    readonly invitationFromLocalMail?: (email: string) => Promise<string>) {
     // This fixture is approved for the owned local stack only.
     for (const endpoint of [E2E.apiUrl, E2E.appUrl]) {
       if (new URL(endpoint).hostname !== 'localhost') throw new Error('H1 requires localhost endpoints');
     }
   }
 
-  headers(actor: ScopeActor): Record<string, string> {
-    return { Authorization: `Bearer ${actor.tokens.access}`,
-      'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId };
+  headers(actor?: ScopeActor): Record<string, string> {
+    const headers: Record<string, string> = actor ? { Authorization: `Bearer ${actor.tokens.access}`,
+      'X-Organization-Id': actor.organizationId, 'X-Workspace-Id': actor.workspaceId } : {};
+    return firstHopOptions(E2E.apiUrl, E2E.apiUrl, { headers }).headers;
   }
 
   withWorkspace(actor: ScopeActor, workspaceId: string): ScopeActor {
@@ -65,7 +69,7 @@ export class ScopeActors {
     actor?: ScopeActor, params?: Record<string, string | number>): Promise<ScopeResponse<T>> {
     if (!path.startsWith('/') || path.startsWith('//')) throw new Error('H1 needs a relative public API path');
     const response = await req.fetch(`${E2E.apiUrl}${path}`, {
-      method, data, params, headers: actor ? this.headers(actor) : {}, maxRedirects: 0,
+      method, data, params, headers: this.headers(actor), maxRedirects: 0,
     });
     this.receipts.push({ method, path: path.replace(/accept-invitation\/.+/, 'accept-invitation/<redacted>/'),
       status: response.status(), organizationId: actor?.organizationId ?? null,
@@ -81,7 +85,7 @@ export class ScopeActors {
 
   private async owner(label: string): Promise<ScopeActor> {
     const req = await this.newRequest(label);
-    const owner = await provisionActor(req, label);
+    const owner = await this.provisionOwner(req, label);
     this.requests.delete(label);
     this.requests.set(owner.email, req);
     this.owners.push(owner);
@@ -106,13 +110,13 @@ export class ScopeActors {
     expect(invited.status).toBe(200);
     expect(invited.body.result.invited).toEqual([email]);
     const links = invited.body.result.invites?.filter(item => item.email === email);
-    if (links?.length !== 1) throw new Error('H1 blocked: public OSS invite link missing; no SQL/mail shortcut');
+    if (links?.length !== 1 && !this.invitationFromLocalMail) throw new Error('H1 blocked: public OSS invite link missing; no SQL/mail shortcut');
     // accounts/utils.py:394 supplies this public link; never derive tokens.
     // Only its route parameters are used against E2E.apiUrl, never its origin.
     // The current local stack has APP_URL=None, yielding the literal prefix
     // "None/auth/...". Retain that direct-navigation defect as evidence, while
     // using the public response's unchanged token on the public API endpoint.
-    const link = links[0].invite_link;
+    const link = links?.length === 1 ? links[0].invite_link : await this.invitationFromLocalMail!(email);
     if (link.startsWith('None/auth/')) this.limitations.push('APP_URL unset: public invite link starts None/auth/; direct link navigation not qualified');
     const match = new URL(link.startsWith('None/auth/') ? link.slice(4) : link, E2E.appUrl).pathname
       .match(/^\/auth\/jwt\/invitation\/accept\/([^/]+)\/([^/]+)\/?$/);
@@ -162,7 +166,9 @@ export class ScopeActors {
   }
 
   async openContext(browser: Browser, actor: ScopeActor): Promise<BrowserContext> {
-    const context = await browser.newContext({ baseURL: E2E.appUrl });
+    // These flows exercise API writes and use page.route for transport-failure
+    // checks. A service worker can bypass Playwright's routing entirely.
+    const context = await browser.newContext({ baseURL: E2E.appUrl, serviceWorkers: 'block' });
     this.contexts.add(context);
     context.on('close', () => this.contexts.delete(context));
     await context.addInitScript(authInitScript, { access: actor.tokens.access, refresh: actor.tokens.refresh,
