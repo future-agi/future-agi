@@ -89,7 +89,9 @@ test(
   async ({ page, actor, probe }, testInfo) => {
     // Seeding + seven UI_READY browser steps (grid, two ticks, dialog, import, review, reload).
     test.setTimeout(420_000);
-    const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
+    // Hex, not base 36 or decimal: the redaction model reads base-36 letter runs as names and
+    // 13-digit runs as phone numbers, which would add findings the assertion below does not expect.
+    const suffix = `${testInfo.workerIndex}-${Date.now().toString(16)}`;
     const asks = [`e2e-ask-${suffix}-a`, `e2e-ask-${suffix}-b`];
     const email = `e2e-${suffix}@example.com`;
     const expected = [`e2e-expected-${suffix}-a`, `e2e-expected-${suffix}-b`];

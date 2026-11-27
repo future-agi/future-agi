@@ -505,12 +505,69 @@ supported yet.
 
 AWS S3, Google Cloud Storage (HMAC keys) or any S3-compatible service, with
 an access key and secret key: IAM roles for service accounts, Workload
-Identity and Entra ID are not supported. On GCS, create the bucket
-(`objectStorage.bucket`) in advance and let anyone read objects by URL;
-elsewhere the app creates it on the first upload with that policy (anonymous
-reads of an object by its URL; no listing, no writes). Browsers download
-stored files by plain object URLs, so the bucket's endpoint must be
-reachable from your users' browsers.
+Identity and Entra ID are not supported. Browsers download stored files by
+plain object URLs, so the bucket's endpoint must be reachable from your users'
+browsers.
+
+On S3 and S3-compatible services, the app creates the bucket on the first
+upload with a policy that lets anyone read an object by its URL, except what
+the app reads only with its own keys: agent code under `agent-fix/`,
+`harness-sources/`, `code-archives/`, `harness-conversations/` and
+`agent-contracts/`, and the harness archives and records under
+`harness-environments/`, `harness-suites/`, `harness-authoring/`,
+`harness-sealed/`, `harness-assembled/`, `harness-bundles/`,
+`harness-releases/` and `harness-diagnostics/`. Those stay private to the
+app's own credentials. Nobody can list or write without the app's keys.
+
+With `objectStorage.mode=bundled`, the app also keeps the policy of an
+existing bucket current. Each backend and worker process checks it once, on
+its first upload that checks the bucket (a dataset file, agent source and
+most other uploads), and again after a failed attempt. To apply it right
+after an upgrade, upload a file to a dataset, then check the policy as below.
+
+The app does not add to the policy of an existing bucket you run yourself
+(`objectStorage.mode=external`). Add this statement to its `Statement` list,
+with your bucket's name in place of `futureagi`. If it already has a
+`PrivateObjectsNotAnonymous` statement, replace it with this one:
+
+```json
+{
+  "Sid": "PrivateObjectsNotAnonymous",
+  "Effect": "Deny",
+  "Principal": {"AWS": ["*"]},
+  "Action": ["s3:GetObject"],
+  "Resource": [
+    "arn:aws:s3:::futureagi/agent-fix/*",
+    "arn:aws:s3:::futureagi/harness-sources/*",
+    "arn:aws:s3:::futureagi/code-archives/*",
+    "arn:aws:s3:::futureagi/harness-conversations/*",
+    "arn:aws:s3:::futureagi/agent-contracts/*",
+    "arn:aws:s3:::futureagi/harness-environments/*",
+    "arn:aws:s3:::futureagi/harness-suites/*",
+    "arn:aws:s3:::futureagi/harness-authoring/*",
+    "arn:aws:s3:::futureagi/harness-sealed/*",
+    "arn:aws:s3:::futureagi/harness-assembled/*",
+    "arn:aws:s3:::futureagi/harness-bundles/*",
+    "arn:aws:s3:::futureagi/harness-releases/*",
+    "arn:aws:s3:::futureagi/harness-diagnostics/*"
+  ],
+  "Condition": {"StringEquals": {"aws:principaltype": ["Anonymous"]}}
+}
+```
+
+Keep the condition key in lowercase: MinIO refuses `aws:PrincipalType`.
+
+To check a bucket, read its policy and look for the
+`PrivateObjectsNotAnonymous` statement: `mc anonymous get-json <alias>/<bucket>`
+on MinIO, `aws s3api get-bucket-policy --bucket <bucket>` on S3.
+
+A GCS bucket (`objectStorage.bucket`) must be created in advance.
+
+On GCS, bucket policies can't restrict anonymous reads by prefix: a bucket
+with public read serves every object in it, including agent source archives.
+The app serves stored files by plain object URLs, so a private bucket breaks
+those downloads; until source archives move to a bucket of their own, choose
+between them.
 
 ### Bundled datastores
 
