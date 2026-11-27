@@ -995,6 +995,9 @@ const EvalPickerList = ({ onSelectEval }) => {
                           checked={added || !!selectedIds?.has(evalItem.id)}
                           onClick={(e) => e.stopPropagation()}
                           onChange={() => onToggleSelect?.(evalItem)}
+                          inputProps={{
+                            "aria-label": `Select ${evalItem.name}`,
+                          }}
                           sx={{ p: 0.25 }}
                         />
                       </TableCell>
