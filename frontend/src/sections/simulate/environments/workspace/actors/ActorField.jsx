@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { MenuItem, TextField } from "@mui/material";
+import { MenuItem, TextField, Typography } from "@mui/material";
 import { ACTOR_FORM_SHAPE, OPTIONS_SHAPE } from "./actors.shapes";
 import { withStart } from "./actorUtils";
 
@@ -26,8 +26,25 @@ export default function ActorField({
   return (
     <TextField select SelectProps={{ displayEmpty: true }} {...common}>
       {withStart(options, form.initial[name], startLabel).map((one) => (
-        <MenuItem key={one.value || "empty"} value={one.value}>
+        <MenuItem
+          key={one.value || "empty"}
+          value={one.value}
+          disabled={Boolean(one.disabled)}
+          sx={one.note ? { display: "block", whiteSpace: "normal" } : undefined}
+        >
           {one.label}
+          {one.note && (
+            <Typography
+              component="span"
+              sx={{
+                display: "block",
+                typography: "s3",
+                color: "text.secondary",
+              }}
+            >
+              {one.note}
+            </Typography>
+          )}
         </MenuItem>
       ))}
     </TextField>

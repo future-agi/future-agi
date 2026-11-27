@@ -39,6 +39,14 @@ const contextOf = (data) => ({
   others: data.actors,
 });
 
+// A world with one record collection, so "Once a record exists" can be picked.
+const WITH_RECORDS = cast([], {
+  knowledge_sources: {
+    files: [],
+    records: [{ store: "crm", collection: "approvals" }],
+  },
+});
+
 // A new actor as the panel opens it: the cast's `new_actor` on its side.
 const newActor = (side, channel = null, data = cast([])) => ({
   ...data.new_actor,
@@ -135,7 +143,7 @@ describe("ActorForm", () => {
 
   it("offers the join presets the chosen way takes, and asks what brings them in when a preset covers several", () => {
     verdict = CLEAN;
-    renderForm(newActor("world"));
+    renderForm(newActor("world", null, WITH_RECORDS), { data: WITH_RECORDS });
     fireEvent.mouseDown(screen.getByLabelText(starred("Comes in")));
     expect(screen.getAllByRole("option").map((one) => one.textContent)).toEqual(
       [
@@ -154,6 +162,50 @@ describe("ActorForm", () => {
       screen.getByRole("option", { name: "Once a record exists" }),
     );
     expect(screen.getByLabelText(starred("Records of"))).toBeInTheDocument();
+  });
+
+  it("marks a way in the environment can't use as unavailable, says why, and starts a preset on one it can", async () => {
+    verdict = CLEAN;
+    const data = cast([], { actions: [] });
+    const { unmount } = renderForm(newActor("world"), { data });
+    fireEvent.mouseDown(screen.getByLabelText(starred("Comes in")));
+    const partway = screen.getByRole("option", { name: /Joins partway/ });
+    expect(partway).toHaveAttribute("aria-disabled", "true");
+    expect(partway).toHaveTextContent("Not available in this environment");
+    unmount();
+    renderForm(newActor("caller", "audio_mix"), { data });
+    fireEvent.mouseDown(screen.getByLabelText(starred("Comes in")));
+    fireEvent.click(screen.getByRole("option", { name: "Joins partway" }));
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(
+      screen.getByLabelText(starred("What brings them in")),
+    ).toHaveTextContent("When the agent says a word");
+    fireEvent.mouseDown(screen.getByLabelText(starred("What brings them in")));
+    const call = screen.getByRole("option", {
+      name: /When the agent calls an action/,
+    });
+    expect(call).toHaveAttribute("aria-disabled", "true");
+    expect(call).toHaveTextContent("This environment has no world actions");
+    expect(
+      screen.getByRole("option", { name: /Once a record exists/ }),
+    ).toHaveTextContent("This world has no record collections yet");
+  });
+
+  it("keeps a stored action trigger on screen but disabled, saying why, when the environment has no world actions", () => {
+    verdict = CLEAN;
+    renderForm(
+      typedActor({
+        id: "ops",
+        name: "Ops",
+        trigger: { kind: "on_tool", tool: "crm.request_approval" },
+      }),
+      { data: cast([], { actions: [] }) },
+    );
+    const action = screen.getByLabelText(starred("The action"));
+    expect(action).toHaveAttribute("aria-disabled", "true");
+    expect(action).toHaveAccessibleDescription(
+      "This environment has no world actions, so pick another way they come in.",
+    );
   });
 
   it("offers a chance on each call where the cast takes one, and sends the percent as a share", () => {
@@ -307,7 +359,9 @@ describe("ActorForm", () => {
       screen
         .getByText(starred(text), { selector: "label" })
         .querySelector(".MuiFormLabel-asterisk");
-    const { unmount } = renderForm(newActor("world"));
+    const { unmount } = renderForm(newActor("world", null, WITH_RECORDS), {
+      data: WITH_RECORDS,
+    });
     expect(star("Name")).not.toBeNull();
     expect(star("Role (optional)")).toBeNull();
     fireEvent.mouseDown(screen.getByLabelText(starred("Comes in")));

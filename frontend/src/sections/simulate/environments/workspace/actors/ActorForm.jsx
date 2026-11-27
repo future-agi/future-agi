@@ -150,8 +150,18 @@ export default function ActorForm({
   if (problemInFold && !advanced) setAdvanced(true);
   const foldOpen = advanced || problemInFold;
   const shown = screenOf(foldOpen);
-  const fieldOf = (one) =>
-    shown.has(PROBLEM_FIELDS[one.field]) ? PROBLEM_FIELDS[one.field] : null;
+  // The server names the whole trigger; its problem shows under the trigger's first required input left empty.
+  const emptyTriggerInput = () => {
+    const key = (triggerKeys[value("mode")] || [])
+      .filter((one) => !OPTIONAL_TRIGGER_KEYS.includes(one))
+      .find((one) => isEmpty(TRIGGER_INPUTS[one]));
+    return key ? TRIGGER_INPUTS[key] : null;
+  };
+  const fieldOf = (one) => {
+    const name = PROBLEM_FIELDS[one.field];
+    if (name === "mode") return emptyTriggerInput() || "mode";
+    return shown.has(name) ? name : null;
+  };
   const form = {
     value,
     set,

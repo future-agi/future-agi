@@ -123,6 +123,12 @@ const { default: axios } = await import("src/utils/axios");
 const { actorsKey } = await import("src/api/simulate-environments/versions");
 const { default: WorldActorsPanel } = await import("../WorldActorsPanel");
 
+// A world with one record collection, so "Once a record exists" can be picked.
+const WITH_RECORDS = {
+  files: [],
+  records: [{ store: "crm", collection: "approvals" }],
+};
+
 const MANAGER = typedActor({
   id: "manager",
   name: "Priya Raman",
@@ -1361,7 +1367,7 @@ describe("WorldActorsPanel", () => {
     expect(sent().changes).toEqual({ name: "Priya R." });
   });
 
-  it("shows the server's problem with how an actor comes in under Comes in", async () => {
+  it("shows the server's problem with how an actor comes in under the trigger input left empty", async () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     answer = {
@@ -1373,16 +1379,21 @@ describe("WorldActorsPanel", () => {
     comeIn("Joins partway", "When the agent calls an action");
     fireEvent.click(saveButton());
     refusesSave();
+    // The trigger's own empty input carries the problem, not Comes in.
     expect(
-      screen.getByText("Pick the action that brings them in"),
-    ).toBeInTheDocument();
+      screen.getByLabelText(starred("The action")),
+    ).toHaveAccessibleDescription("Pick the action that brings them in");
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    expect(
+      screen.getByLabelText(starred("Comes in")),
+    ).not.toHaveAccessibleDescription("Pick the action that brings them in");
     answer = CLEAN;
     choose("The action", "crm.approve_discount");
     expect(saveButton()).not.toBeDisabled();
   });
 
   it("keeps the form open and Save off while the record match is half-typed JSON, and asks the server nothing", () => {
+    actorsData = cast([MANAGER], { knowledge_sources: WITH_RECORDS });
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
     fireEvent.change(screen.getByLabelText(starred("Name")), {
@@ -1442,6 +1453,7 @@ describe("WorldActorsPanel", () => {
   });
 
   it("never crashes on a record match of only spaces, and sends it as no match", () => {
+    actorsData = cast([MANAGER], { knowledge_sources: WITH_RECORDS });
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
     fireEvent.change(screen.getByLabelText(starred("Name")), {

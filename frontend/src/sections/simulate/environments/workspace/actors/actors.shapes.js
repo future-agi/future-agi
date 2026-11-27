@@ -10,5 +10,11 @@ export const ACTOR_FORM_SHAPE = PropTypes.shape({
 });
 
 export const OPTIONS_SHAPE = PropTypes.arrayOf(
-  PropTypes.shape({ value: PropTypes.string, label: PropTypes.string }),
+  PropTypes.shape({
+    value: PropTypes.string,
+    label: PropTypes.string,
+    // An option shown but not pickable, with a line saying why.
+    disabled: PropTypes.bool,
+    note: PropTypes.string,
+  }),
 );

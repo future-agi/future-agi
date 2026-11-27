@@ -198,6 +198,13 @@ export const ACTORS_COPY = {
         moment: "At a set moment",
       },
       presetWay: "What brings them in",
+      presetUnavailable: "Not available in this environment",
+      kindNoActions: "This environment has no world actions",
+      kindNoCollections: "This world has no record collections yet",
+      triggerToolNone:
+        "This environment has no world actions, so pick another way they come in.",
+      triggerCollectionNone:
+        "This world has no record collections yet, so pick another way they come in.",
       triggerChance: "Chance (%)",
       triggerChanceHelp: "Drawn once per call, from 1 to 100",
       triggerCall: "Which call of the action (optional)",

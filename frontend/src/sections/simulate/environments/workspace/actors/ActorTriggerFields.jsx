@@ -30,7 +30,13 @@ export default function ActorTriggerFields({
   const mode = form.value("mode");
   const current = presets.find((one) => one.id === presetOf(mode, presets));
   const several = Boolean(current) && current.kinds.length > 1;
-  // Picking a preset keeps the way already picked inside it, else the stored one, else its first.
+  // Ways in this environment can't use, each with why: there is nothing for them to name.
+  const missing = {
+    ...(actionIds.length ? {} : { on_tool: F.kindNoActions }),
+    ...(collections.length ? {} : { conditional: F.kindNoCollections }),
+  };
+  const usable = (preset) => preset.kinds.filter((kind) => !missing[kind]);
+  // Picking a preset keeps the way already picked inside it, else the stored one, else its first usable one.
   const choosePreset = (id) => {
     if (id === KEPT) {
       form.put("mode", KEPT);
@@ -38,10 +44,8 @@ export default function ActorTriggerFields({
     }
     const next = presets.find((one) => one.id === id);
     if (!next || next.kinds.includes(mode)) return;
-    form.put(
-      "mode",
-      next.kinds.includes(initial.mode) ? initial.mode : next.kinds[0],
-    );
+    const ways = usable(next);
+    form.put("mode", ways.includes(initial.mode) ? initial.mode : ways[0]);
   };
   const presetForm = {
     ...form,
@@ -66,6 +70,9 @@ export default function ActorTriggerFields({
         options={presets.map((one) => ({
           value: one.id,
           label: one.label || F.presets[one.id],
+          ...(usable(one).length
+            ? {}
+            : { disabled: true, note: F.presetUnavailable }),
         }))}
         helperText={F.triggerHelp}
         startLabel={startModeLabel}
@@ -82,9 +89,13 @@ export default function ActorTriggerFields({
           }}
           name="mode"
           label={F.presetWay}
-          options={triggerOptions.filter((one) =>
-            current.kinds.includes(one.value),
-          )}
+          options={triggerOptions
+            .filter((one) => current.kinds.includes(one.value))
+            .map((one) =>
+              missing[one.value]
+                ? { ...one, disabled: true, note: missing[one.value] }
+                : one,
+            )}
         />
       )}
       {takes("p") &&
@@ -97,6 +108,8 @@ export default function ActorTriggerFields({
       {takes("tool") &&
         field("triggerTool", F.triggerTool, {
           required: true,
+          disabled: actionIds.length === 0,
+          ...(actionIds.length ? {} : { helperText: F.triggerToolNone }),
           options: actionIds.map((id) => ({ value: id, label: id })),
           startLabel: initial.triggerTool,
         })}
@@ -126,6 +139,10 @@ export default function ActorTriggerFields({
       {takes("collection") &&
         field("triggerCollection", F.triggerCollection, {
           required: true,
+          disabled: collections.length === 0,
+          ...(collections.length
+            ? {}
+            : { helperText: F.triggerCollectionNone }),
           options: collections.map((one) => ({ value: one, label: one })),
           startLabel: initial.triggerCollection,
         })}
