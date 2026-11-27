@@ -111,21 +111,66 @@ def _usage_eval_latest_projection(alias: str, *, include_config: bool = False) -
 
 
 def eval_result_belongs_to_trace_project_sql(
-    stamped_project_expr: str, trace_project_expr: str
+    stamped_project_expr: str, trace_project_expr: str, trace_project_count_expr: str
 ) -> str:
     """Ownership rule for a trace-attached eval result (TH-10545).
 
-    Writers stamp ``config.project_id`` on usage rows from v1.59 on. A row
-    without a stamp (older history, SDK and other writers) is attributed
-    through its trace exactly as before. A stamped row counts only when the
-    stamp names the trace's own project. Keep this the single place that
-    decides ownership so the rule can change in one spot.
+    Writers stamp ``config.project_id`` on usage rows from v1.59 on. A stamped
+    row belongs to the live (trace, project) pair its stamp names, even when
+    another selected project holds the same trace UUID. A row without a stamp
+    (older history, SDK and other writers) is attributed through its trace
+    only when exactly one selected project holds that trace, as before; a
+    UUID shared by two selected projects cannot say whose result it is. Keep
+    this the single place that decides ownership.
     """
 
     return (
-        f"({stamped_project_expr} = '' "
-        f"OR toUUIDOrZero({stamped_project_expr}) = {trace_project_expr})"
+        f"(({stamped_project_expr} = '' AND {trace_project_count_expr} = 1) "
+        f"OR ({stamped_project_expr} != '' "
+        f"AND toUUIDOrZero({stamped_project_expr}) = {trace_project_expr}))"
     )
+
+
+def _live_trace_project_pairs_sql(
+    *, candidate_trace_ids_sql: str, include_created_at: bool
+) -> str:
+    """Every live (trace, project) pair of the candidate traces in the selection.
+
+    Unlike ``latest_live_trace_projects_sql`` a trace UUID held by two selected
+    projects is kept, once per project, so a stamped result can still find
+    its own project's copy. ``trace_project_count`` counts the selected
+    projects holding the UUID (live or tombstoned), which is what the old
+    relation used to call a UUID ambiguous. Liveness is the latest version
+    per (trace, project), so one project's tombstone never hides the other's.
+    """
+
+    created = (
+        ",\n                       argMax(trace_pair_scan.created_at, "
+        "trace_pair_scan._version) AS trace_created_at"
+        if include_created_at
+        else ""
+    )
+    created_out = ", trace_created_at" if include_created_at else ""
+    return f"""
+        SELECT trace_id, project_id, trace_project_count{created_out}
+        FROM (
+            SELECT trace_id, project_id, latest_is_deleted{created_out},
+                   count() OVER (PARTITION BY trace_id) AS trace_project_count
+            FROM (
+                SELECT trace_pair_scan.id AS trace_id,
+                       trace_pair_scan.project_id AS project_id,
+                       argMax(trace_pair_scan.is_deleted,
+                              trace_pair_scan._version) AS latest_is_deleted{created}
+                FROM traces AS trace_pair_scan
+                PREWHERE trace_pair_scan.project_id IN %(project_ids)s
+                  AND trace_pair_scan.id IN (
+                      SELECT trace_id FROM ({candidate_trace_ids_sql})
+                  )
+                GROUP BY trace_pair_scan.id, trace_pair_scan.project_id
+            ) AS trace_pair_state
+        ) AS trace_pair_counted
+        WHERE latest_is_deleted = 0
+    """
 
 
 def _eval_window_subjects_sql(*, include_spanless: bool = False) -> str:
@@ -160,6 +205,7 @@ def _eval_trace_dates_sql(live_traces: str, subjects: str) -> str:
     return f"""
         SELECT eval_live_trace.trace_id AS trace_id,
                eval_live_trace.project_id AS project_id,
+               eval_live_trace.trace_project_count AS trace_project_count,
                coalesce(eval_trace_start.span_start, eval_live_trace.trace_created_at) AS trace_start
         FROM ({live_traces}) AS eval_live_trace
         LEFT JOIN (
@@ -198,7 +244,9 @@ def _latest_recorded_eval_sql(
       replaces the earlier result in every range). ``processing``,
       ``not_started`` and the denied statuses are not recorded results.
     * A stamped row of another project is dropped before the election
-      (``eval_result_belongs_to_trace_project_sql``).
+      (``eval_result_belongs_to_trace_project_sql``). A trace UUID held by two
+      selected projects keeps each project's stamped results, and each
+      (project, trace) pair elects its own winner and its own trace start.
     * Winner: a trace-level result (``target_type='trace'``) first, then the
       latest span-level result by ``created_at``; ``id`` breaks ties.
     * Callers keep ``status = 'success'`` after the election, so a failed
@@ -211,7 +259,7 @@ def _latest_recorded_eval_sql(
     collapse because a CDC update may change the trace in the config.
     """
     subjects = f"{scan_alias}_subjects"
-    trace_relation = latest_live_trace_projects_sql(
+    trace_relation = _live_trace_project_pairs_sql(
         candidate_trace_ids_sql=f"SELECT trace_id FROM {subjects}",
         include_created_at=dated,
     )
@@ -232,7 +280,9 @@ def _latest_recorded_eval_sql(
         )
     stamped_project = f"{latest_alias}.eval_stamped_project_id"
     owned = eval_result_belongs_to_trace_project_sql(
-        stamped_project, f"{trace_alias}.project_id"
+        stamped_project,
+        f"{trace_alias}.project_id",
+        f"{trace_alias}.trace_project_count",
     )
     trace_member = f"{trace_alias}.project_id IN %(project_ids)s"
     if dated:
@@ -247,7 +297,9 @@ def _latest_recorded_eval_sql(
             f"if(\n"
             f"                    {latest_alias}.eval_trace_id = '',\n"
             f"                    concat('row:', toString({latest_alias}.id)),\n"
-            f"                    concat('trace:', {latest_alias}.eval_trace_id)\n"
+            f"                    concat('trace:', "
+            f"toString({trace_alias}.project_id),\n"
+            f"                           ':', {latest_alias}.eval_trace_id)\n"
             f"                )"
         )
         dated_projection = (
@@ -257,7 +309,7 @@ def _latest_recorded_eval_sql(
         )
     else:
         candidate = f"{latest_alias}.eval_trace_id != '' AND {trace_member}"
-        election_key = f"{latest_alias}.eval_trace_id"
+        election_key = f"{trace_alias}.project_id, {latest_alias}.eval_trace_id"
         dated_projection = ""
     config = f"JSONExtractString({scan_alias}.config)"
     # Preselect immutable row ids with a narrow lookup, not physical versions
@@ -2437,8 +2489,11 @@ class DashboardQueryBuilder:
                   AND s.parent_span_id = ''
                   AND s._peerdb_is_deleted = 0
             ) AS s"""
+            # Join the root of the result's own (project, trace) pair: another
+            # selected project may hold the same trace UUID.
             joins.append(
-                f"LEFT JOIN {bounded_spans_join} ON s.trace_id = {_trace_id_expr}"
+                f"LEFT JOIN {bounded_spans_join} ON s.trace_id = {_trace_id_expr} "
+                "AND s.project_id = e.eval_project_id"
             )
 
         _join_scope = (
@@ -2468,6 +2523,9 @@ class DashboardQueryBuilder:
             joins.append(
                 f"LEFT JOIN {cross_source} "
                 f"ON {ev_alias}.eval_trace_id = {_trace_id_expr} "
+                # A trace UUID shared by two selected projects elects one
+                # winner per project; join each project's own.
+                f"AND {ev_alias}.eval_project_id = e.eval_project_id "
                 f"AND {ev_alias}.source_id = %({param_key})s "
                 f"{_join_scope.format(alias=ev_alias)} "
                 f"AND {ev_alias}.status = 'success' "
@@ -3566,6 +3624,7 @@ class DashboardQueryBuilder:
                 join_clause = (
                     f"LEFT JOIN ({latest_recorded}) AS {alias} "
                     f"ON {alias}.eval_trace_id = s.trace_id "
+                    f"AND {alias}.eval_project_id = s.project_id "
                     f"AND {alias}.status = 'success'"
                 )
                 result.append(

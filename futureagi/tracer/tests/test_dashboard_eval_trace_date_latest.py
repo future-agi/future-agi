@@ -162,14 +162,15 @@ class _Seed:
         self.span_ids: list[str] = []
         self._next_usage_id = 1000
 
-    def trace(self, project, start, *, children=(), root_span=True):
+    def trace(self, project, start, *, children=(), root_span=True, trace_id=None):
         """One trace: a root span at ``start`` plus optional child spans.
 
         ``children`` items are ``(offset, model, total_tokens)``; a child may
-        start outside the window its root started in.
+        start outside the window its root started in. ``trace_id`` reuses a
+        UUID another project already holds.
         """
 
-        trace_id = str(uuid4())
+        trace_id = trace_id or str(uuid4())
         root_id = uuid4().hex[:16]
         rows = (
             [self._span(project, trace_id, root_id, None, start, None, 0)]
@@ -804,6 +805,69 @@ def test_unstamped_history_counts_and_foreign_stamped_result_is_excluded(
             day0 + timedelta(days=2): 0.25,
         }
     )
+
+
+def test_stamped_result_survives_a_trace_uuid_shared_by_two_selected_projects(
+    observe_project, organization, workspace, seed
+):
+    """Dev and the previous PR head fail: a trace UUID held by two selected
+    projects was treated as ambiguous and dropped, so project A's stamped
+    result vanished from the A+B dashboard (``{}``).
+    Fixed (gilfoyle's item 1 acceptance):
+    * A+B selected: the A-stamped result counts, is attributed to A and is
+      dated by A's spans (day 0), not B's (day 1);
+    * the unstamped result on the shared UUID stays ambiguous and is dropped;
+    * B alone: the A-stamped result does not appear. B is then the only
+      holder, so the unstamped result is B's, on B's day.
+    """
+
+    other_project = Project.objects.create(
+        name="TH-10545 shared-uuid project",
+        organization=organization,
+        workspace=workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    template = str(uuid4())
+    day0 = _day(datetime.now(UTC) - timedelta(days=6))
+    in_a = seed.trace(observe_project, day0 + timedelta(hours=10))
+    in_b = seed.trace(
+        other_project, day0 + timedelta(days=1, hours=10), trace_id=in_a.id
+    )
+    seed.result(in_a, template, day0 + timedelta(days=2, hours=9), value=0.8)
+    seed.result(
+        in_b, template, day0 + timedelta(days=2, hours=10), value=0.3, stamp=None
+    )
+    window = _custom(day0 - timedelta(days=1), day0 + timedelta(days=4))
+
+    both = _run_worker(
+        seed,
+        _config([observe_project, other_project], window, [_eval_metric(template)]),
+    )
+    assert _points(both) == pytest.approx({day0: 0.8})
+
+    by_project = _run_worker(
+        seed,
+        _config(
+            [observe_project, other_project],
+            window,
+            [_eval_metric(template)],
+            breakdowns=[{"name": "project", "type": "system_metric"}],
+        ),
+    )
+    series = {
+        line["name"]
+        for line in _metric(by_project, "trace_eval_score")["series"]
+        if any(point["value"] is not None for point in line["data"])
+    }
+    # One series, project A's (the formatter shows its name, or the UUID when
+    # no name map is passed).
+    assert series in ({observe_project.name}, {str(observe_project.id)})
+
+    only_b = _run_worker(
+        seed, _config([other_project], window, [_eval_metric(template)])
+    )
+    assert _points(only_b) == pytest.approx({day0 + timedelta(days=1): 0.3})
 
 
 # ---------------------------------------------------------------------------
