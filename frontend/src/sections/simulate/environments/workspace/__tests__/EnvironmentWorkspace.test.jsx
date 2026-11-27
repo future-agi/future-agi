@@ -485,8 +485,9 @@ describe("EnvironmentWorkspace route shell", () => {
 
     // The row opens the designer-style RunDetail as its own full page: its
     // identity header names the ordinal + agent version and the run status.
-    expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
-    expect(screen.getByText("Passed")).toBeInTheDocument();
+    expect(await screen.findByText("Run 1")).toBeInTheDocument();
+    expect(screen.getByText(/^agent v1/)).toBeInTheDocument();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/dashboard/simulate/environments/job-done/runs/rt1/ex1",
     );
@@ -700,7 +701,7 @@ describe("EnvironmentWorkspace route shell", () => {
     renderWorkspace("/dashboard/simulate/environments/job-done/runs/rt1/ex1");
 
     // The run detail is shown (its identity header names the ordinal + agent).
-    expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
+    expect(await screen.findByText("Run 1")).toBeInTheDocument();
 
     // ...and the environment-workspace chrome around it is gone: no tab rail and
     // no header "Run simulation" button. The run page owns the viewport.

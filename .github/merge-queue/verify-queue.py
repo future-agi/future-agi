@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only preflight/readback for the two-build dev pilot. No settings writes."""
+"""Read-only preflight/readback for the dev merge queue. No settings writes."""
 
 import argparse
 import json
@@ -18,11 +18,11 @@ RULE = {
     "type": "merge_queue",
     "parameters": {
         "merge_method": "MERGE",
-        "max_entries_to_build": 2,
+        "max_entries_to_build": 10,
         "min_entries_to_merge": 1,
-        "max_entries_to_merge": 1,
+        "max_entries_to_merge": 5,
         "min_entries_to_merge_wait_minutes": 0,
-        "grouping_strategy": "ALLGREEN",
+        "grouping_strategy": "HEADGREEN",
         "check_response_timeout_minutes": 240,
     },
 }

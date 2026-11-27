@@ -2,6 +2,7 @@
 body both take them from here, so the two never say different things: plain sentences,
 which the pull request only escapes as Markdown."""
 
+from collections.abc import Mapping
 from functools import cached_property
 from math import floor
 from typing import Any
@@ -247,11 +248,14 @@ def _check_words(row: dict, names: FixNames) -> str:
 
 
 def caveats(
-    candidate: AgentFixCandidate, review: EvalReview | None, names: FixNames
+    candidate: AgentFixCandidate,
+    review: EvalReview | None,
+    names: FixNames,
+    verdict: Mapping[str, Any],
 ) -> list[str]:
-    """What the checks could not hold the candidate to: the must-pass checks that dropped
-    within normal noise, and for a winner, platform evals that did not finish."""
-    verdict = candidate.verdict or {}
+    """What the checks could not hold the candidate to: the must-pass checks of
+    ``verdict`` that dropped within normal noise, and for a winner, platform evals that
+    did not finish."""
     named = [
         must_pass_check(check, names)
         for check in verdict.get("must_pass_within_noise") or []
@@ -290,15 +294,19 @@ def candidate_wording(
     review: EvalReview | None,
     files: list[ChangedFile] | None,
     names: FixNames,
+    verdict: Mapping[str, Any] | None = None,
 ) -> CandidateWording:
     """Everything the page and the pull request say about the candidate, from its verdict,
     its fix's plan, the files of the patch that ships, the fix's eval review and its
-    names."""
-    verdict: dict[str, Any] = candidate.verdict or {}
+    names. ``verdict`` replaces the stored one: a read not given the held-back cases words
+    the candidate from its verdict without them (agent_fix_outside.hidden_verdict)."""
+    shown: dict[str, Any] = dict(
+        (candidate.verdict or {}) if verdict is None else verdict
+    )
     return CandidateWording(
-        headline=headline(verdict, tiers),
-        must_pass=must_pass_line(verdict, candidate.fix_run.plan or {}, tiers),
-        must_pass_broken=_scenarios(verdict.get("must_pass_regressions")),
+        headline=headline(shown, tiers),
+        must_pass=must_pass_line(shown, candidate.fix_run.plan or {}, tiers),
+        must_pass_broken=_scenarios(shown.get("must_pass_regressions")),
         changes=None if files is None else changes_line(files),
-        caveats=caveats(candidate, review, names),
+        caveats=caveats(candidate, review, names, shown),
     )

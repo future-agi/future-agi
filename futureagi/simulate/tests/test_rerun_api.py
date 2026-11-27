@@ -2986,12 +2986,19 @@ class TestEvalExplanationSummaryRefreshView:
 class TestOptimiserAnalysisRefreshView:
     URL_TEMPLATE = "/simulate/test-executions/{}/optimiser-analysis/refresh/"
 
+    # A one-call run: let it past Debug failures' rule, which
+    # test_optimiser_analysis_refusals.py covers.
+    @patch(
+        "tracer.services.simulation_investigation.debug_failures_refusal",
+        return_value=None,
+    )
     @patch("simulate.utils.agent_optimiser.prepare_simulation_analysis_input")
     @patch("simulate.tasks.agent_optimiser_tasks.execute_optimiser_run")
     def test_optimiser_analysis_refresh_marks_failed_when_dispatch_fails(
         self,
         mock_task,
         mock_prepare,
+        _mock_rule,
         auth_client,
         test_execution,
         call_execution,

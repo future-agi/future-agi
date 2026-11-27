@@ -20,6 +20,8 @@ const VOICE_FIELDS = ["gender", "age_group", "accent"];
 // The form field each trigger key the cast's `trigger_fields` names is typed in.
 export const TRIGGER_INPUTS = {
   tool: "triggerTool",
+  on_call: "triggerOnCall",
+  p: "triggerChance",
   words: "triggerWords",
   turn: "triggerTurn",
   seconds: "triggerSeconds",
@@ -34,8 +36,12 @@ const orNull = (text) => (String(text).trim() === "" ? null : text);
 const numberOrNull = (text) =>
   String(text).trim() === "" ? null : Number(text);
 
-// How each trigger key's input becomes its value: words as a list, numbers as typed (emptied is null), a match as
-// JSON (only read once `whereProblem` is "").
+// A chance is typed as a percent and stored from 0 to 1.
+const PERCENT = 100;
+
+// How each trigger key's input becomes its value: words as a list, numbers as typed (emptied is null), a chance as
+// a share of 1, a match as JSON (only read once `whereProblem` is ""). An emptied call of the action is left out:
+// it means the first.
 const TRIGGER_VALUES = {
   words: (text) =>
     String(text)
@@ -44,6 +50,11 @@ const TRIGGER_VALUES = {
       .filter(Boolean),
   turn: numberOrNull,
   seconds: numberOrNull,
+  on_call: (text) => numberOrNull(text) ?? undefined,
+  p: (text) => {
+    const percent = numberOrNull(text);
+    return percent === null ? null : percent / PERCENT;
+  },
   where: (text) => (String(text).trim() ? JSON.parse(text) : {}),
 };
 
@@ -51,10 +62,15 @@ const TRIGGER_VALUES = {
 export const triggerOf = (read, keys) => ({
   kind: read("mode"),
   ...Object.fromEntries(
-    keys.map((key) => {
-      const typedIn = read(TRIGGER_INPUTS[key]);
-      return [key, TRIGGER_VALUES[key] ? TRIGGER_VALUES[key](typedIn) : typedIn];
-    }),
+    keys
+      .map((key) => {
+        const typedIn = read(TRIGGER_INPUTS[key]);
+        return [
+          key,
+          TRIGGER_VALUES[key] ? TRIGGER_VALUES[key](typedIn) : typedIn,
+        ];
+      })
+      .filter(([, value]) => value !== undefined),
   ),
 });
 
@@ -96,6 +112,8 @@ const triggerInput = (trigger, key) => {
     return Object.keys(trigger.where).length
       ? JSON.stringify(trigger.where)
       : "";
+  // Rounded, so 0.07 reads as 7, not 7.000000000000001.
+  if (key === "p") return Math.round(trigger.p * PERCENT * 1e6) / 1e6;
   return trigger[key];
 };
 

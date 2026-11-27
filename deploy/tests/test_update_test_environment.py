@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 
+import update_unit_chunks
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/update-ci.yml"
 
@@ -40,6 +42,8 @@ class UnitTemporaryAncestryTests(unittest.TestCase):
         probe.write_text(
             "#!" + sys.executable + "\n"
             "import json, os, pathlib, sys, tempfile\n"
+            "if sys.argv[1:2] == ['deploy/tests/update_unit_chunks.py']:\n"
+            "    os.execv(" + repr(sys.executable) + ", [" + repr(sys.executable) + ", *sys.argv[1:]])\n"
             "sys.path.insert(0, " + repr(str(ROOT)) + ")\n"
             "from deploy.update.host_facts import safe_path\n"
             "with tempfile.TemporaryDirectory() as name:\n"
@@ -57,7 +61,8 @@ class UnitTemporaryAncestryTests(unittest.TestCase):
             ["/bin/bash", "-e", "-c", unit_script()], cwd=ROOT,
             env={**os.environ, "HOME": str(home or self.directory), "TMPDIR": "/tmp",
                  "PATH": str(self.bin) + os.pathsep + os.defpath,
-                 "FIXTURE_RESULT": str(self.result), "FIXTURE_EXIT": str(exit_code)},
+                 "FIXTURE_RESULT": str(self.result), "FIXTURE_EXIT": str(exit_code),
+                 "CHUNK": "1", "CHUNKS": "3"},
             capture_output=True, text=True, timeout=10,
         )
 
@@ -70,8 +75,10 @@ class UnitTemporaryAncestryTests(unittest.TestCase):
                 parent = Path(record["parent"])
                 self.assertEqual(parent.parent, self.directory)
                 self.assertEqual(record["mode"], 0o700)
-                self.assertEqual(record["argv"], ["-m", "unittest", "discover", "-s", "deploy/tests",
-                                                  "-p", "test_update_*.py", "-v"])
+                # The leg runs its chunk's modules (update_unit_chunks.py).
+                durations = json.loads(update_unit_chunks.DURATIONS.read_text())
+                chunk = update_unit_chunks.plan(update_unit_chunks.modules(), durations, 3)[0]
+                self.assertEqual(record["argv"], ["-m", "unittest", "-v", *chunk])
                 self.assertFalse(parent.exists(), "the CI-owned temp directory leaked")
 
     def test_temp_creation_failure_stops_before_tests(self):

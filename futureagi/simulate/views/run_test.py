@@ -52,6 +52,11 @@ from simulate.models.test_execution import (
     CallExecutionSnapshot,
     EvalExplanationSummaryStatus,
 )
+from simulate.selectors.debug_failures import (
+    connected_call_count,
+    failing_call_count,
+    has_debug_failures_analysis,
+)
 from simulate.selectors.runs import user_executions
 from simulate.serializers.requests.call_execution import (
     CallExecutionFilterSerializer,
@@ -130,6 +135,7 @@ from simulate.serializers.test_execution import (
     TestExecutionBulkDeleteSerializer,
     TestExecutionColumnOrderResponseSerializer,
     TestExecutionColumnOrderSerializer,
+    TestExecutionDebugAnalysisErrorSerializer,
     TestExecutionDetailResponseSerializer,
     TestExecutionListQuerySerializer,
     TestExecutionRerunResponseSerializer,
@@ -241,6 +247,7 @@ from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExc
 from tracer.services.clickhouse.span_attribute_lookups import (
     spans_by_eval_attribute_call_execution_ids,
 )
+from tracer.services.simulation_investigation import SimulationInvestigationConflict
 
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
@@ -1926,6 +1933,13 @@ def _flat_kpi_evals(
     return {keys[metric]: value for metric, value in values.items()}
 
 
+_FINISHED_EXECUTION_STATUSES = (
+    TestExecution.ExecutionStatus.COMPLETED,
+    TestExecution.ExecutionStatus.FAILED,
+    TestExecution.ExecutionStatus.CANCELLED,
+)
+
+
 class RunTestKPIsView(APIView):
     """
     API View to get combined KPI values for a specific run test
@@ -2208,6 +2222,27 @@ class RunTestKPIsView(APIView):
                 "avg_turn_count": avg_turn_count,
                 "avg_csat_score": avg_csat_score,
                 "failed_calls": failed_calls if failed_calls else 0,
+                # Debug failures' own counts, read once the run finishes; a live
+                # run's would change, so they are not counted on every poll. The
+                # connected count is the rule's: per call and live calls only,
+                # which `connected_calls` above is not.
+                "debug_failures_connected_calls": (
+                    connected_call_count(test_executor)
+                    if test_executor.status in _FINISHED_EXECUTION_STATUSES
+                    else None
+                ),
+                "failing_calls": (
+                    failing_call_count(test_executor)
+                    if test_executor.status in _FINISHED_EXECUTION_STATUSES
+                    else None
+                ),
+                # Debug failures opens a run's earlier analysis even when the rule
+                # would refuse a new one.
+                "has_debug_failures_analysis": (
+                    has_debug_failures_analysis(test_executor)
+                    if test_executor.status in _FINISHED_EXECUTION_STATUSES
+                    else None
+                ),
                 "total_duration": total_duration,
             }
 
@@ -6578,6 +6613,7 @@ class TestExecutionOptimiserAnalysisView(APIView):
         responses={
             200: OptimiserAnalysisResponseSerializer,
             404: ApiTextErrorResponseSerializer,
+            409: TestExecutionDebugAnalysisErrorSerializer,
             500: ApiTextErrorResponseSerializer,
         },
     )
@@ -6605,6 +6641,10 @@ class TestExecutionOptimiserAnalysisView(APIView):
 
             return self._gm.success_response(result_data)
 
+        except SimulationInvestigationConflict as refusal:
+            return self._gm.custom_error_response(
+                status.HTTP_409_CONFLICT, str(refusal), code=refusal.code
+            )
         except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
@@ -6629,6 +6669,7 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
             200: OptimiserAnalysisRefreshResponseSerializer,
             400: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
+            409: TestExecutionDebugAnalysisErrorSerializer,
             500: ApiTextErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -6670,6 +6711,10 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                     "Unable to prepare input data. Ensure test execution has completed calls."
                 )
 
+        except SimulationInvestigationConflict as refusal:
+            return self._gm.custom_error_response(
+                status.HTTP_409_CONFLICT, str(refusal), code=refusal.code
+            )
         except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:

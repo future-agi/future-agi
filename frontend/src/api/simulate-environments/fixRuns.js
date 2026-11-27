@@ -15,6 +15,18 @@ import { fetchRunCalls, mapCallRow } from "./runCalls";
 export const FIX_LIVE_STATES = new Set(["queued", "running", "stopping"]);
 export const FIX_POLL_MS = 5000;
 
+// Failures that are ours, not the agent's: the user can only retry.
+export const OUR_FAILURES = new Set([
+  "fix_engine_failed",
+  "fix_engine_died",
+  "fix_watch_failed",
+  "fix_workflow_lost",
+  "fix_dispatch_failed",
+  "fix_variations_failed",
+  "fix_variations_timeout",
+  "scheduler_unavailable",
+]);
+
 export const FIX_RUNS_PAGE_SIZE = 25;
 
 // The page, size and states sit after the env id, so invalidating

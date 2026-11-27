@@ -8,21 +8,27 @@ only succeeds with a valid key. Adding a provider means adding a row, nothing el
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import requests
 import structlog
 from google.protobuf import json_format
 
+from agentcc.services.url_safety import (
+    ensure_public_http_url,
+    private_provider_urls_allowed,
+)
 from tfc.utils.lazy_extras import load_extra
-from tfc.utils.ssrf_guard import SsrfBlocked, assert_url_host_public
+from tfc.utils.ssrf_guard import SsrfBlocked, assert_url_host_public, safe_fetch
 
 logger = structlog.get_logger(__name__)
 
@@ -33,6 +39,23 @@ LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
 LIVEKIT_PROBE_BUDGET_SECONDS = 20
 LIVEKIT_MAX_RESPONSE_BYTES = 1024 * 1024
 LIVEKIT_TOKEN_TTL = timedelta(seconds=60)
+# The variables an SDK reads to reach the provider through a compatible gateway, first wins.
+OPENAI_BASE_ALIASES = ("OPENAI_BASE_URL", "OPENAI_API_BASE")
+ANTHROPIC_BASE_ALIASES = ("ANTHROPIC_BASE_URL",)
+
+
+class BaseUrlRefused(ValueError):
+    """A configured base URL the probe will not call; the message names its variable."""
+
+
+def number_spelled_host(host: str) -> bool:
+    """A host that is an address spelled other than canonically (2130706433,
+    0x7f000001, 0177.0.0.1): no egress list names it, so a base URL may not use it.
+    A canonical IP address and a name (its last label a word) are fine."""
+    try:
+        return str(ipaddress.ip_address(host)) != host
+    except ValueError:
+        return not re.fullmatch(r"[a-z][a-z0-9-]*", host.rsplit(".", 1)[-1].lower())
 
 
 @dataclass(frozen=True)
@@ -49,6 +72,7 @@ class ProviderProbe:
     build: Callable[[Mapping[str, str]], ProbeRequest]
     # Statuses that mean "the key is wrong" rather than "the request is wrong".
     rejected_statuses: frozenset[int] = frozenset({401, 403})
+    base_aliases: tuple[str, ...] = ()
 
     def applies(self, values: Mapping[str, str]) -> bool:
         return all(str(values.get(alias) or "").strip() for alias in self.aliases)
@@ -78,21 +102,88 @@ class ProbeResult:
         return result
 
 
-def _bearer(url: str, alias: str, **extra_headers: str):
+def configured_base(
+    values: Mapping[str, str], names: tuple[str, ...]
+) -> tuple[str, str]:
+    """The first base variable the agent sets, and its value without a trailing slash."""
+    for name in names:
+        base = str(values.get(name) or "").strip().rstrip("/")
+        if base:
+            return name, base
+    return "", ""
+
+
+def _at_base(default_base: str, path: str, base_aliases: tuple[str, ...]):
+    """The probe URL, under the agent's own base when it sets one.
+
+    A configured base often already ends in ``/v1``, so the version is not added twice.
+    """
+
+    def url(values: Mapping[str, str]) -> str:
+        name, base = configured_base(values, base_aliases)
+        if not name:
+            return default_base + path
+        try:
+            parsed = urlparse(base)
+            parsed.port  # noqa: B018 - raises on a malformed port
+        except ValueError:
+            parsed = None
+        if (
+            parsed is None
+            or parsed.scheme not in ("http", "https")
+            or not parsed.hostname
+        ):
+            raise BaseUrlRefused(f"{name} is not an http(s) URL")
+        if parsed.fragment or base.endswith("#"):
+            raise BaseUrlRefused(f"{name} has a fragment (#...); remove it")
+        if number_spelled_host(parsed.hostname):
+            raise BaseUrlRefused(
+                f"{name} spells its host as a number; use a name or a plain IP address"
+            )
+        try:
+            ensure_public_http_url(
+                base, name, allow_private=private_provider_urls_allowed()
+            )
+        except ValueError:
+            raise BaseUrlRefused(
+                f"{name} does not resolve to an address this check may call"
+            ) from None
+        base_path = parsed.path.rstrip("/")
+        tail, _, query = path.partition("?")
+        if base_path.endswith("/v1") and tail.startswith("/v1/"):
+            tail = tail[len("/v1") :]
+        # The path goes into the path; the base's query and the probe's follow it.
+        return urlunparse(
+            parsed._replace(
+                path=base_path + tail,
+                query="&".join(one for one in (parsed.query, query) if one),
+            )
+        )
+
+    return url
+
+
+def _url(
+    url: str | Callable[[Mapping[str, str]], str], values: Mapping[str, str]
+) -> str:
+    return url(values) if callable(url) else url
+
+
+def _bearer(url, alias: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
         return ProbeRequest(
             "GET",
-            url,
+            _url(url, values),
             {"Authorization": f"Bearer {values[alias].strip()}", **extra_headers},
         )
 
     return build
 
 
-def _header(url: str, alias: str, header: str, **extra_headers: str):
+def _header(url, alias: str, header: str, **extra_headers: str):
     def build(values: Mapping[str, str]) -> ProbeRequest:
         return ProbeRequest(
-            "GET", url, {header: values[alias].strip(), **extra_headers}
+            "GET", _url(url, values), {header: values[alias].strip(), **extra_headers}
         )
 
     return build
@@ -210,17 +301,26 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
     "openai": ProviderProbe(
         "OpenAI",
         ("OPENAI_API_KEY",),
-        _bearer("https://api.openai.com/v1/models", "OPENAI_API_KEY"),
+        _bearer(
+            _at_base("https://api.openai.com/v1", "/models", OPENAI_BASE_ALIASES),
+            "OPENAI_API_KEY",
+        ),
+        base_aliases=OPENAI_BASE_ALIASES,
     ),
     "anthropic": ProviderProbe(
         "Anthropic",
         ("ANTHROPIC_API_KEY",),
         _header(
-            "https://api.anthropic.com/v1/models?limit=1",
+            _at_base(
+                "https://api.anthropic.com",
+                "/v1/models?limit=1",
+                ANTHROPIC_BASE_ALIASES,
+            ),
             "ANTHROPIC_API_KEY",
             "x-api-key",
             **{"anthropic-version": "2023-06-01"},
         ),
+        base_aliases=ANTHROPIC_BASE_ALIASES,
     ),
     "gemini": ProviderProbe(
         "Gemini",
@@ -261,19 +361,59 @@ PROVIDER_PROBES: dict[str, ProviderProbe] = {
 }
 
 
+def _request(
+    method: str, url: str, *, base_name: str, timeout: float, **kwargs: Any
+) -> Any:
+    """Send one probe. A URL under a base the agent set (``base_name``) is resolved
+    again on the same rules and the connection goes to that checked address, the
+    host kept for TLS and ``Host``, never redirected. Without a base, the provider's
+    own URL is sent as is."""
+    if not base_name:
+        return requests.request(method, url, timeout=timeout, **kwargs)
+    try:
+        return safe_fetch(
+            url,
+            method=method,
+            timeout=timeout,
+            headers=dict(kwargs.get("headers") or {}),
+            follow_redirects=False,
+            allow_private=private_provider_urls_allowed(),
+        )
+    except SsrfBlocked:
+        raise BaseUrlRefused(
+            f"{base_name} does not resolve to an address this check may call"
+        ) from None
+    except ValueError as exc:
+        # The connection itself failed (``safe_fetch`` reports it so).
+        raise requests.ConnectionError(str(exc)) from None
+
+
 def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
     """Exercise one provider's credentials. Callers pass only providers that ``applies``."""
     spec = PROVIDER_PROBES[provider]
     named = " + ".join(spec.aliases)
+    base_name, _ = configured_base(values, spec.base_aliases)
+    at = f" at {base_name}" if base_name else ""
+    # A base that cannot be called or answers off the API is the base's fault, not the key's.
+    base_fault = (base_name,) if base_name else spec.aliases
     try:
         request = spec.build(values)
-        response = requests.request(
+        response = _request(
             request.method,
             request.url,
+            base_name=base_name,
             headers=dict(request.headers),
             json={} if request.method == "POST" else None,
             timeout=PROBE_TIMEOUT_SECONDS,
             allow_redirects=False,
+        )
+    except (BaseUrlRefused, ConnectionError) as exc:
+        return ProbeResult(
+            provider,
+            spec.label,
+            base_fault,
+            False,
+            f"{spec.label} check could not run: {exc}",
         )
     except SsrfBlocked as exc:
         return ProbeResult(
@@ -288,11 +428,13 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
         return ProbeResult(
             provider,
             spec.label,
-            spec.aliases,
+            base_fault,
             False,
-            f"{spec.label} is unreachable ({type(exc).__name__}); check {named}",
+            f"{spec.label} is unreachable{at} ({type(exc).__name__}); "
+            f"check {base_name or named}",
         )
-    except Exception as exc:  # noqa: BLE001 - a malformed URL/secret must not 500 preflight
+    # A malformed URL/secret must not 500 preflight.
+    except Exception as exc:  # noqa: BLE001
         return ProbeResult(
             provider,
             spec.label,
@@ -304,10 +446,10 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
         return ProbeResult(
             provider,
             spec.label,
-            spec.aliases,
+            base_fault,
             False,
-            f"{spec.label} redirected the check (HTTP {response.status_code});"
-            f" check {named}",
+            f"{spec.label}{at} redirected the check (HTTP {response.status_code});"
+            f" check {base_name or named}",
         )
     if response.status_code in spec.rejected_statuses:
         return ProbeResult(
@@ -315,18 +457,18 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             spec.label,
             spec.aliases,
             False,
-            f"{spec.label} rejected {named} (HTTP {response.status_code})",
+            f"{spec.label}{at} rejected {named} (HTTP {response.status_code})",
         )
     if response.status_code >= 400:
         return ProbeResult(
             provider,
             spec.label,
-            spec.aliases,
+            base_fault,
             False,
-            f"{spec.label} returned HTTP {response.status_code} for {named}",
+            f"{spec.label}{at} returned HTTP {response.status_code} for {named}",
         )
     return ProbeResult(
-        provider, spec.label, spec.aliases, True, f"{spec.label} accepted {named}"
+        provider, spec.label, spec.aliases, True, f"{spec.label}{at} accepted {named}"
     )
 
 
