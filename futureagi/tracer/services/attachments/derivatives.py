@@ -204,9 +204,12 @@ def peaks_descriptor(selection):
     rate, channels, frames = (
         facts.get(k) for k in ("sample_rate", "channels", "frame_count")
     )
+    # Exact ints only (a bool is not a sample count); spelled out so the
+    # checker narrows each value before the arithmetic below.
+    if type(rate) is not int or type(channels) is not int or type(frames) is not int:
+        return None
     if (
-        any(type(v) is not int for v in (rate, channels, frames))
-        or not 8000 <= rate <= 96000
+        not 8000 <= rate <= 96000
         or channels not in (1, 2)
         or not 0 < frames <= rate * 30
     ):

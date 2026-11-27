@@ -161,7 +161,9 @@ def for_binding(
         binding = model.objects.get(pk=binding_id)
         if binding.provider == "gcs" and operation == "erase":
             failure_code = "cleanup_unavailable"
-        adapter = _registry(settings).historical(binding, settings, operation=operation)
+        adapter: PrivateMediaStorage = _registry(settings).historical(
+            binding, settings, operation=operation
+        )
         adapter.verify_identity(operation=operation)
         if operation in ("admit", "write"):
             adapter.verify_readiness()

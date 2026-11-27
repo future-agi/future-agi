@@ -6,6 +6,8 @@ shapes for Swagger and the generated frontend contracts. Keep them in step
 with ``tracer/services/attachments/f01/contract.schema.json``.
 """
 
+from typing import Any
+
 from rest_framework import serializers
 
 from tracer.services.attachments import wire as _attachment_wire
@@ -448,7 +450,7 @@ class AttachmentProviderFileSerializer(serializers.Serializer):
 _SWAGGER2_ALTERNATIVES = {"oneOf": "x-oneOf", "anyOf": "x-anyOf"}
 
 
-def _swagger2(value):
+def _swagger2(value: Any) -> Any:
     """Spell JSON Schema alternatives in a form Swagger 2 accepts.
 
     Swagger 2 has no oneOf, anyOf or const. Keep alternatives as the vendor
@@ -459,14 +461,15 @@ def _swagger2(value):
         return [_swagger2(item) for item in value]
     if not isinstance(value, dict):
         return value
-    converted = {}
+    converted: dict[str, Any] = {}
     for key, item in value.items():
         if key == "const":
             if "enum" in value:
                 raise ValueError("attachment schema has both const and enum")
             converted["enum"] = [item]
         else:
-            converted[_SWAGGER2_ALTERNATIVES.get(key, key)] = _swagger2(item)
+            name = _SWAGGER2_ALTERNATIVES[key] if key in _SWAGGER2_ALTERNATIVES else key
+            converted[name] = _swagger2(item)
     return converted
 
 

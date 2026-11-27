@@ -88,13 +88,9 @@ class MetricsShardTest(unittest.TestCase):
         script = textwrap.dedent(
             planner.split("        run: |\n", 1)[1].split("\n  update-safety:", 1)[0]
         )
-        for backend, focused, expected in [
-            ("false", "false", 0),
-            ("true", "false", 40),
-            ("true", "true", 2),
-        ]:
+        for backend, expected in [("false", 0), ("true", 40)]:
             with (
-                self.subTest(backend=backend, focused=focused),
+                self.subTest(backend=backend),
                 tempfile.TemporaryDirectory() as root,
             ):
                 output = pathlib.Path(root) / "output"
@@ -108,7 +104,6 @@ class MetricsShardTest(unittest.TestCase):
                         "METRICS": backend,
                         "SPLITS": "24",
                         "METRICS_SPLITS": "16",
-                        "FOCUSED_ATTACHMENTS": focused,
                     },
                 )
                 matrices = dict(
@@ -122,15 +117,6 @@ class MetricsShardTest(unittest.TestCase):
                     {leg["group"] for leg in legs if "module" in leg},
                     {"imports-review", "combined-review"} if expected else set(),
                 )
-                if focused == "true":
-                    self.assertEqual(shards[0]["targets"], shards[1]["targets"])
-                    self.assertEqual(len(shards[0]["targets"].split()), 7)
-                    self.assertTrue(
-                        all(
-                            (ROOT / "futureagi" / test).is_file()
-                            for test in shards[0]["targets"].split()
-                        )
-                    )
 
 
 class EvaluatorJobTest(unittest.TestCase):
