@@ -275,7 +275,7 @@ def build_trajectory_items_query(
         SELECT
             scope_id,
             item_hash,
-            argMax(content, first_seen_at) AS content
+            argMax(content, persisted_at) AS content
         FROM trajectory_items
         PREWHERE project_id = %(traj_project_id)s
           AND scope_id IN %(traj_scope_ids)s
@@ -340,7 +340,14 @@ def restore_promoted_attributes(
     span_input: str | None = None,
     span_output: str | None = None,
 ) -> dict[str, Any]:
-    """Pop Phase 0 compaction sentinels and re-inject original promoted attributes."""
+    """Pop Phase 0 compaction sentinels and re-inject original promoted attributes.
+
+    With the trajectory-store read flag off the attributes are returned untouched:
+    the collector writes no sentinels then, and a customer key that merely shares
+    a sentinel name must keep its value.
+    """
+    if not is_trajectory_store_read_enabled():
+        return attrs
     in_key = attrs.pop(SENTINEL_PROMOTED_INPUT_KEY, None)
     in_was_json = bool(attrs.pop(SENTINEL_PROMOTED_INPUT_JSON, False))
     out_key = attrs.pop(SENTINEL_PROMOTED_OUTPUT_KEY, None)
@@ -376,6 +383,8 @@ def restore_promoted_in_attributes_extra(
     Fast-paths in O(1) when no sentinel marker is present so legacy spans incur
     zero JSON parsing overhead.
     """
+    if not is_trajectory_store_read_enabled():
+        return raw_extra
     if isinstance(raw_extra, dict):
         if not any(
             k in raw_extra

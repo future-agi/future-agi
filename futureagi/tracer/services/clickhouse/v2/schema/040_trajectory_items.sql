@@ -18,10 +18,23 @@
 --      rows (`payload_encoding = 'inline'`) and legacy collectors continue
 --      working with zero downtime and zero part rewrites.
 --
--- No TTL is declared here: retention stays owned by ee/usage/tasks/retention.py
--- (per 020_remove_ttls.sql); cold storage tiering is deferred to a later phase.
+-- No TTL and no time partitioning: items are content-addressed and shared by
+-- every span that references them, so their age says nothing about whether a
+-- span inside retention still needs them. Retention and erasure must be
+-- reference-aware and are not part of this file (the store ships disabled).
+-- Partitions are a stable identity bucket (as in 036/038) so a re-sent item
+-- always lands in the same partition and merges collapse it.
 --
--- cluster-shard-key: trajectory_items = cityHash64(project_id, scope_id, item_hash)
+-- `persisted_at` is the ReplacingMergeTree version: the copy persisted last
+-- wins among rows with the same key (canonical-equal content).
+--
+-- Topology: like `spans`, this is created local or Keeper-replicated by
+-- apply_schema (--replicated adds ON CLUSTER and the Replicated engine). No v2
+-- table has a Distributed facade yet; a multi-shard layout must add local
+-- storage plus a Distributed table for trajectory_items and alter spans on
+-- every shard, together with the sharding of spans itself.
+--
+-- cluster-shard-key: trajectory_items = cityHash64(project_id)
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS trajectory_items
@@ -32,10 +45,10 @@ CREATE TABLE IF NOT EXISTS trajectory_items
     item_type       LowCardinality(String) DEFAULT 'raw',
     role            LowCardinality(String) DEFAULT '',
     content         String                 CODEC(ZSTD(3)),
-    first_seen_at   DateTime64(6, 'UTC')   DEFAULT now64(6, 'UTC')
+    persisted_at    DateTime64(6, 'UTC')   DEFAULT now64(6, 'UTC')
 )
-ENGINE = ReplacingMergeTree(first_seen_at)
-PARTITION BY toYYYYMM(first_seen_at)
+ENGINE = ReplacingMergeTree(persisted_at)
+PARTITION BY cityHash64(project_id) % 32
 PRIMARY KEY (project_id, scope_id, item_hash)
 ORDER BY    (project_id, scope_id, item_hash)
 SETTINGS

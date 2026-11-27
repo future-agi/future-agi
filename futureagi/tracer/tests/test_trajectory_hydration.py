@@ -269,7 +269,8 @@ def test_hydrate_span_dicts_zero_queries_for_inline_and_single_batch_for_mixed()
 # 3. Phase 0 sentinel restoration (string vs JSON-decoded map/list)
 # --------------------------------------------------------------------------- #
 @pytest.mark.unit
-def test_merge_span_attributes_and_chspan_restore_phase0_sentinels():
+def test_merge_span_attributes_and_chspan_restore_phase0_sentinels(settings):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
     extra = json.dumps(
         {
             "keep": 1,
@@ -296,6 +297,15 @@ def test_merge_span_attributes_and_chspan_restore_phase0_sentinels():
     # Fast-path untouched string when no sentinel exists
     raw = '{"plain":"no_sentinel"}'
     assert restore_promoted_in_attributes_extra(raw, span_input="x") is raw
+
+    # Read flag off: a customer key that shares a sentinel name keeps its value.
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = False
+    assert restore_promoted_in_attributes_extra(extra, span_input="x") is extra
+    off = span_reader.merge_span_attributes(
+        {}, {}, {}, extra, span_input="in", span_output="out"
+    )
+    assert off[SENTINEL_PROMOTED_INPUT_KEY] == "input.value"
+    assert "output.value" not in off
 
 
 # --------------------------------------------------------------------------- #
@@ -592,7 +602,7 @@ def test_migration_028_replicated_rewriter_and_no_ttl():
         in rewritten_create
     )
     assert (
-        "ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/trajectory_items', '{replica}', first_seen_at)"
+        "ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/trajectory_items', '{replica}', persisted_at)"
         in rewritten_create
     )
 
@@ -669,13 +679,17 @@ def test_session_detail_sql_projects_trajectory_pointers_and_list_strips_sentine
             "attrs_bool": {"vip": 1},
         }
     )
+    # Session attribute aggregation is unchanged from dev: no sentinel handling.
     assert merged == {
         "custom.env": "prod",
+        SENTINEL_PROMOTED_INPUT_KEY: "input.value",
+        SENTINEL_PROMOTED_INPUT_JSON: True,
+        SENTINEL_PROMOTED_OUTPUT_KEY: "output.value",
+        SENTINEL_PROMOTED_OUTPUT_JSON: False,
         "team": "payments",
         "score": 9.5,
         "vip": True,
     }
-    assert not any(k.startswith("__fi_promoted_") for k in merged)
 
 
 @pytest.mark.unit
@@ -719,8 +733,10 @@ def test_trajectory_query_chunking_three_key_pk_and_prewhere():
 
 
 @pytest.mark.unit
-def test_hydrate_chspans_restores_extra_sentinels_and_prompt_template_metadata_stays_in_attrs_string():
-    from tracer.services.clickhouse.attribute_reads import AttributeReadSelector
+def test_hydrate_chspans_restores_extra_sentinels_and_prompt_template_metadata_stays_in_attrs_string(
+    settings,
+):
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
     from tracer.services.clickhouse.v2.adapter import split_attributes
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
@@ -785,19 +801,6 @@ def test_hydrate_chspans_restores_extra_sentinels_and_prompt_template_metadata_s
         "custom": "ok",
         "input.value": {"hello": "world"},
     }
-
-    # 3. attribute_reads._browse_row_keys never leaks __fi_promoted_* into EvalPicker.
-    keys, _ = AttributeReadSelector._browse_row_keys(
-        {
-            "string_keys": ["env"],
-            "number_keys": [],
-            "boolean_keys": [],
-            "attributes_extra": raw_extra,
-        },
-        json_attribute_mode="all",
-    )
-    assert "env" in keys and "custom" in keys
-    assert not any(k.startswith("__fi_promoted_") for k in keys)
 
 
 @pytest.mark.unit
@@ -1116,97 +1119,6 @@ def test_eval_loader_handles_value_error_on_huge_int_json():
     obs = _construct_from_chspan(sp)
     assert obs.input == huge_int
     assert obs.output == huge_int
-
-
-@pytest.mark.unit
-def test_trajectory_retention_and_project_delete():
-    from tracer.services.clickhouse.v2.trajectory_retention import (
-        delete_project_trajectory_items,
-        purge_expired_trajectory_items,
-    )
-
-    class _FakeCH:
-        def __init__(self, exists: bool):
-            self.exists = exists
-            self.commands: list[tuple[str, dict]] = []
-
-        def query(self, sql, parameters=None):
-            return SimpleNamespace(result_rows=[(1 if self.exists else 0,)])
-
-        def command(self, sql, parameters=None):
-            self.commands.append((sql, dict(parameters or {})))
-
-    # Pre-040: safe no-op when trajectory_items table does not exist.
-    pre040 = _FakeCH(exists=False)
-    assert delete_project_trajectory_items([PROJECT_ID], client=pre040) == 0
-    assert (
-        purge_expired_trajectory_items(
-            project_id=PROJECT_ID,
-            cutoff=datetime(2026, 11, 1, tzinfo=UTC),
-            client=pre040,
-        )
-        is False
-    )
-    assert pre040.commands == []
-
-    # Post-040: issues targeted DELETE mutations.
-    post040 = _FakeCH(exists=True)
-    assert delete_project_trajectory_items([PROJECT_ID], client=post040) == 1
-    assert "ALTER TABLE trajectory_items DELETE" in post040.commands[0][0]
-    assert post040.commands[0][1]["pids"] == (PROJECT_ID,)
-
-    assert (
-        purge_expired_trajectory_items(
-            project_id=PROJECT_ID,
-            cutoff=datetime(2026, 11, 1, tzinfo=UTC),
-            client=post040,
-        )
-        is True
-    )
-    assert "first_seen_at < toDateTime64" in post040.commands[1][0]
-    assert post040.commands[1][1]["pid"] == PROJECT_ID
-
-
-@pytest.mark.unit
-def test_trajectory_retention_opens_writable_client_not_readonly_reader(monkeypatch):
-    """_open_client(None) opens a writable CH client, not readonly get_reader()."""
-    import clickhouse_connect
-
-    from tracer.services.clickhouse import v2 as ch_v2
-    from tracer.services.clickhouse.v2.trajectory_retention import _open_client
-
-    captured: dict = {}
-    sentinel = object()
-
-    def _fake_get_client(**kwargs):
-        captured.update(kwargs)
-        return sentinel
-
-    def _forbid_get_reader():
-        raise AssertionError("trajectory_retention must not use readonly get_reader()")
-
-    monkeypatch.setattr(
-        ch_v2,
-        "get_v2_config",
-        lambda: {
-            "host": "127.0.0.1",
-            "http_port": 18123,
-            "user": "default",
-            "password": "",
-            "database": "test_db",
-            "server_enforced_readonly": False,
-        },
-    )
-    monkeypatch.setattr(ch_v2, "get_reader", _forbid_get_reader)
-    monkeypatch.setattr(clickhouse_connect, "get_client", _fake_get_client)
-
-    client, should_close = _open_client(None)
-    assert client is sentinel
-    assert should_close is True
-    assert captured["host"] == "127.0.0.1"
-    assert captured["port"] == 18123
-    assert captured["database"] == "test_db"
-    assert "readonly" not in (captured.get("settings") or {})
 
 
 @pytest.mark.unit

@@ -94,6 +94,13 @@ _PHYSICAL_SPAN_COLUMNS = (
     "updated_at",
     "is_deleted",
     "_version",
+)
+
+# Trajectory-store pointer columns (040_trajectory_items.sql). They exist only
+# once 040 is applied, so they join the packed set only while the read flag is
+# on; with it off a dotted filter key such as ``metadata.payload_encoding`` must
+# never pull a bare pointer column into the collapse.
+_TRAJECTORY_POINTER_COLUMNS = (
     "input_item_hashes",
     "output_item_hashes",
     "tool_def_hashes",
@@ -129,6 +136,9 @@ _PHYSICAL_SPAN_FLOOR_COLUMNS = frozenset(
 )
 _PHYSICAL_SPAN_COLUMN_REFERENCE_RE = re.compile(
     r"\b(" + "|".join(_PHYSICAL_SPAN_COLUMNS) + r")\b"
+)
+_TRAJECTORY_POINTER_REFERENCE_RE = re.compile(
+    r"\b(" + "|".join(_TRAJECTORY_POINTER_COLUMNS) + r")\b"
 )
 
 
@@ -778,16 +788,23 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
         names here before reading the reference set; the rewritten copy is used
         for that decision alone and never emitted.
         """
-        referenced = set(
-            _PHYSICAL_SPAN_COLUMN_REFERENCE_RE.findall(
-                rewrite_v1_sql_to_v2(consumer_sql)
-            )
-        )
-        return tuple(
+        rewritten = rewrite_v1_sql_to_v2(consumer_sql)
+        referenced = set(_PHYSICAL_SPAN_COLUMN_REFERENCE_RE.findall(rewritten))
+        packed = tuple(
             column
             for column in _PHYSICAL_SPAN_COLUMNS
             if column not in _PHYSICAL_SPAN_KEY_COLUMNS
             and (column in _PHYSICAL_SPAN_FLOOR_COLUMNS or column in referenced)
+        )
+        from tracer.services.clickhouse.v2.trajectory_hydration import (
+            is_trajectory_store_read_enabled,
+        )
+
+        if not is_trajectory_store_read_enabled():
+            return packed
+        pointers = set(_TRAJECTORY_POINTER_REFERENCE_RE.findall(rewritten))
+        return packed + tuple(
+            column for column in _TRAJECTORY_POINTER_COLUMNS if column in pointers
         )
 
     def _latest_state_source_sql(self, alias, *, scope_sql, consumer_sql):

@@ -1907,3 +1907,42 @@ def test_source_owned_source_read_failure_has_no_canonical_fallback():
     with pytest.raises(PermissionError):
         run_source(client)
     assert client.writes == []
+
+
+def _add_040_span_columns(client, names=None):
+    for name in names or core._TRAJECTORY_SPAN_COLUMNS:
+        typ, kind, expr = core._column(
+            core._tokens(core._TRAJECTORY_SPAN_COLUMNS[name])
+        )
+        client.columns["spans"][name] = (" ".join(typ), kind, " ".join(expr))
+
+
+def test_spans_with_all_six_hand_applied_040_columns_are_accepted():
+    """An operator may apply 040 by hand; the next OSS boot must still pass."""
+    client = MemoryClient(complete=True, ledger=True)
+    client.mappings = tuple((f"mirror_{name}", name) for name in LANDING_NAMES)
+    _add_040_span_columns(client)
+    assert run(client) == core.BootstrapResult((), False)
+    assert client.writes == []
+
+
+@pytest.mark.parametrize(
+    "names", [("payload_encoding",), tuple(core._TRAJECTORY_SPAN_COLUMNS)[:5]]
+)
+def test_spans_with_partial_040_columns_fail_closed(names):
+    client = MemoryClient(complete=True, ledger=True)
+    client.mappings = tuple((f"mirror_{name}", name) for name in LANDING_NAMES)
+    _add_040_span_columns(client, names)
+    with pytest.raises(core.BootstrapError, match="partial 040"):
+        run(client)
+    assert client.writes == []
+
+
+def test_spans_040_column_with_a_different_definition_fails_closed():
+    client = MemoryClient(complete=True, ledger=True)
+    client.mappings = tuple((f"mirror_{name}", name) for name in LANDING_NAMES)
+    _add_040_span_columns(client)
+    client.columns["spans"]["payload_encoding"] = ("String", "DEFAULT", "'x'")
+    with pytest.raises(core.BootstrapError, match="spans"):
+        run(client)
+    assert client.writes == []

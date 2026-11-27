@@ -558,11 +558,6 @@ def _merge_session_attribute_sources(attr_row: dict) -> dict:
             if map_name == "attrs_bool":
                 value = bool(value)
             attrs.setdefault(key, value)
-    from tracer.services.clickhouse.v2.trajectory_hydration import (
-        restore_promoted_attributes,
-    )
-
-    restore_promoted_attributes(attrs)
     return attrs
 
 

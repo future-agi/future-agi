@@ -937,7 +937,7 @@ class CHSpanReader:
 
         Issues ZERO queries when all spans use ``payload_encoding == 'inline'``.
         """
-        if not spans:
+        if not spans or not is_trajectory_store_read_enabled():
             return spans
         return hydrate_chspans(
             spans,
@@ -951,7 +951,7 @@ class CHSpanReader:
         project_id_fallback: str | None = None,
         attr_key: str = "attributes_extra",
     ) -> list[dict[str, Any]]:
-        if not rows:
+        if not rows or not is_trajectory_store_read_enabled():
             return rows
 
         def _query(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1827,7 +1827,9 @@ class CHSpanReader:
             # Never alias an aggregate to the bare key column name (`project_id`),
             # or ClickHouse 25.3's analyzer rejects `PREWHERE project_id = ...`
             # with Code 184 ILLEGAL_AGGREGATION.
-            sql_alias = f"{alias}_str" if alias == "project_id" else alias
+            sql_alias = (
+                f"{alias}_str" if include_traj and alias == "project_id" else alias
+            )
             select_exprs.append(
                 f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {sql_alias}"
             )
@@ -1863,7 +1865,7 @@ class CHSpanReader:
                 project_id_fallback=str(project_id) if project_id else None,
                 attr_key="attributes_extra",
             )
-        elif "attributes_extra" in columns and dicts:
+        elif include_traj and "attributes_extra" in columns and dicts:
             # Avoid scanning full input/output on span_attributes-only exports
             # unless a returned row actually carries a Phase 0 promotion sentinel.
             sentinel_rows = [
@@ -3969,6 +3971,13 @@ class CHSpanReader:
 
     @staticmethod
     def attributes_extra_as_dict(span: CHSpan) -> dict:
+        if not is_trajectory_store_read_enabled():
+            try:
+                return (
+                    json.loads(span.attributes_extra) if span.attributes_extra else {}
+                )
+            except json.JSONDecodeError:
+                return {}
         try:
             parsed = json.loads(span.attributes_extra) if span.attributes_extra else {}
         except json.JSONDecodeError:

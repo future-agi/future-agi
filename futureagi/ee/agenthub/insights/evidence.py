@@ -2186,15 +2186,13 @@ _CONTENT_HEAVY_DERIVED = f""",
                         AS output_value_full,
                     if(
                         (position(latest_attributes_extra, '"input.value"') > 0
-                         OR position(latest_attributes_extra, '"output.value"') > 0
-                         OR position(latest_attributes_extra, '"__fi_promoted_') > 0)
+                         OR position(latest_attributes_extra, '"output.value"') > 0)
                         AND isValidJSON(latest_attributes_extra)
                         AND JSONType(latest_attributes_extra) = 'Object',
                         concat('{{', arrayStringConcat(arrayMap(
                             kv -> concat(toJSONString(kv.1), ':', kv.2),
                             arrayFilter(
-                                kv -> kv.1 NOT IN ('input.value', 'output.value')
-                                  AND NOT startsWith(kv.1, '__fi_promoted_'),
+                                kv -> kv.1 NOT IN ('input.value', 'output.value'),
                                 JSONExtractKeysAndValuesRaw(latest_attributes_extra))),
                             ','), '}}'),
                         latest_attributes_extra
@@ -2922,8 +2920,6 @@ def _span_sources(
     parsed = _parse_json(extra.value) if extra.value.strip() else {}
     if isinstance(parsed, dict):
         for key, value in parsed.items():
-            if str(key).startswith("__fi_promoted_"):
-                continue
             name = str(key) if str(key) not in attributes else f"{key} (extra)"
             attributes[name] = value
     elif parsed is _UNPARSED:

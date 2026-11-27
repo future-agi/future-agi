@@ -350,7 +350,7 @@ class TestGoldenOutputForShippedFiles:
             ),
             (
                 "trajectory_items",
-                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/trajectory_items', '{replica}', first_seen_at)",
+                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/trajectory_items', '{replica}', persisted_at)",
             ),
         ],
     )

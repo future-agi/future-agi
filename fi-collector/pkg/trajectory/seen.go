@@ -35,13 +35,13 @@ func (it Item) Key() ItemKey {
 // ToRow converts the Item to the JSONEachRow map matching schema 040_trajectory_items.sql.
 func (it Item) ToRow(now time.Time) map[string]any {
 	return map[string]any{
-		"project_id":    it.ProjectID,
-		"scope_id":      it.ScopeID,
-		"item_hash":     it.ItemHash,
-		"item_type":     it.ItemType,
-		"role":          it.Role,
-		"content":       it.Content,
-		"first_seen_at": now.UTC().Format("2006-01-02 15:04:05.000000"),
+		"project_id":   it.ProjectID,
+		"scope_id":     it.ScopeID,
+		"item_hash":    it.ItemHash,
+		"item_type":    it.ItemType,
+		"role":         it.Role,
+		"content":      it.Content,
+		"persisted_at": now.UTC().Format("2006-01-02 15:04:05.000000"),
 	}
 }
 
