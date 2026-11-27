@@ -1682,6 +1682,42 @@ def test_system_metric_eval_filter_scopes_workspace_scan_by_org(observe_project,
     ) in query
 
 
+def test_system_metric_eval_breakdown_elects_in_the_filters_tenant_scope(
+    observe_project, seed
+):
+    """Previous PR head: the system-metric eval breakdown elected in the
+    workspace alone while the eval metric and the eval filter elect in the
+    organization and the workspace. Fixed: one tenant scope for every
+    election, so a breakdown and a filter on the same template agree.
+    """
+
+    template = str(uuid4())
+    start = _day(datetime.now(UTC) - timedelta(days=5))
+    trace = seed.trace(observe_project, start)
+    seed.result(trace, template, start, value=0.8)
+    breakdown = {
+        "name": template,
+        "type": "eval_metric",
+        "config_id": template,
+        "output_type": "SCORE",
+    }
+    result = _run_worker(
+        seed,
+        _config(
+            [observe_project],
+            _custom(start, start + timedelta(days=1)),
+            [_system_metric("trace_count", "count")],
+            breakdowns=[breakdown],
+        ),
+    )
+    assert _points(result, "trace_count", series="80") == {start: 1}
+    query = "\n".join(seed.usage.queries)
+    assert (
+        "usage_sys_bd_ev0_scan.organization_id = toUUID(%(_ev_bd_org_scope_0)s) "
+        "AND usage_sys_bd_ev0_scan.workspace_id = toUUID(%(_ev_bd_scope_0)s)"
+    ) in query
+
+
 def test_legacy_filter_template_metadata_respects_visibility(observe_project):
     from accounts.models import Organization, Workspace
     from model_hub.models.choices import OwnerChoices

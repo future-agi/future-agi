@@ -3607,6 +3607,15 @@ class DashboardQueryBuilder:
                 if self.workspace_id:
                     bd_scope = f"{scan_alias}.workspace_id = toUUID(%({scope_key})s)"
                     params[scope_key] = self.workspace_id
+                    if self.organization_id:
+                        # The same tenant scope as the eval metric and the eval
+                        # filter elect in (TH-10545).
+                        org_key = f"_ev_bd_org_scope_{ann_idx}"
+                        bd_scope = (
+                            f"{scan_alias}.organization_id = toUUID(%({org_key})s) "
+                            f"AND {bd_scope}"
+                        )
+                        params[org_key] = self.organization_id
                 else:
                     bd_scope = f"{scan_alias}.organization_id = toUUID(%({scope_key})s)"
                     params[scope_key] = self.organization_id

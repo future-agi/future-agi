@@ -11781,11 +11781,15 @@ class TestDashboardV2RewriteRouting:
             assert "LEFT JOIN usage_apicalllog AS ev0" not in compact_sql
             assert ") AS ev0 ON ev0.eval_trace_id = s.trace_id AND " in compact_sql
             assert "ev0.status = 'success'" in compact_sql
+            # Same tenant scope as the eval metric and eval filter elect in.
             assert (
-                "PREWHERE usage_sys_bd_ev0_scan.workspace_id = "
+                "PREWHERE usage_sys_bd_ev0_scan.organization_id = "
+                "toUUID(%(_ev_bd_org_scope_0)s) AND "
+                "usage_sys_bd_ev0_scan.workspace_id = "
                 "toUUID(%(_ev_bd_scope_0)s)" in compact_sql
             )
             assert params["_ev_bd_scope_0"] == config["workspace_id"]
+            assert params["_ev_bd_org_scope_0"] == config["organization_id"]
             assert params["_ev_bd_cfg_0"] == template_id
             assert (
                 "usage_sys_bd_ev0_scan.id IN ( SELECT usage_sys_bd_ev0_scan_candidate.id"
