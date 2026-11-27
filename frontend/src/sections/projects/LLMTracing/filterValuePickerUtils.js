@@ -5,7 +5,10 @@ export function usesFreeTextValue(fieldType, source) {
   return fieldType === "string" && !OBSERVE_FILTER_SOURCES.includes(source);
 }
 
-export function getPickerOptionValue(option) {
+export function getPickerOptionValue(
+  option,
+  { preserveWhitespace = false } = {},
+) {
   let value;
   if (
     typeof option === "string" ||
@@ -16,10 +19,11 @@ export function getPickerOptionValue(option) {
   } else {
     value = option?.value ?? option?.label ?? "";
   }
-  // Applied picker values are normalized by `normalizePickerValues`. Do the
-  // same at the option boundary so retained/catalog values such as `"True "`
-  // compare equal to the applied `"True"` value and render as selected.
-  return typeof value === "string" ? value.trim() : value;
+  // Stored categorical choices use exact membership; their display labels
+  // may omit whitespace that must remain in the selected value.
+  return typeof value === "string" && !preserveWhitespace
+    ? value.trim()
+    : value;
 }
 
 export function getPickerOptionType(option) {
@@ -46,7 +50,10 @@ export function getPickerOptionLabel(option) {
   return option?.label ?? option?.value ?? "";
 }
 
-export function getPickerOptionSecondaryLabel(option, { showType = false } = {}) {
+export function getPickerOptionSecondaryLabel(
+  option,
+  { showType = false } = {},
+) {
   if (typeof option === "string") return "";
   const label = getPickerOptionLabel(option);
   const email = option?.email || option?.description || "";
@@ -100,15 +107,17 @@ export function getPickerOptionExactMatches(option) {
     .map(String);
 }
 
-export function normalizePickerValues(values) {
+export function normalizePickerValues(
+  values,
+  { preserveWhitespace = false } = {},
+) {
   const rawValues = Array.isArray(values)
     ? values
     : values !== undefined && values !== null && values !== ""
       ? [values]
       : [];
   const cleanValues = rawValues
-    .map((item) => getPickerOptionValue(item))
-    .map((item) => (typeof item === "string" ? item.trim() : item))
+    .map((item) => getPickerOptionValue(item, { preserveWhitespace }))
     .filter(
       (item) =>
         (typeof item === "string" && item.length > 0) ||
