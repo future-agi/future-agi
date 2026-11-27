@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.59.2](https://github.com/future-agi/future-agi/compare/v1.59.1...v1.59.2) (2026-11-27)
+
+
+### Bug Fixes
+
+* **ci:** devflow never withdraws the admin rule's approval ([7efb6b0](https://github.com/future-agi/future-agi/commit/7efb6b0e6df13adff277e24ef6b78d3969637d0c))
+* **ci:** devflow never withdraws the admin rule's approval ([acf971a](https://github.com/future-agi/future-agi/commit/acf971aeee6927c5b44b98f3b8b27449218df742))
+
 ## [1.59.1](https://github.com/future-agi/future-agi/compare/v1.59.0...v1.59.1) (2026-11-19)
 
 
