@@ -329,3 +329,32 @@ def test_a_diagnosis_stays_readable_whatever_the_run_does_next(
     assert asked_again.status_code == 202
     assert asked_again.json()["status"] == "completed"
     assert _jobs(execution) == before
+
+
+@pytest.mark.parametrize(
+    "duration", [None, 12], ids=["never_connected", "cut_off_after_it_connected"]
+)
+def test_a_stopped_runs_diagnosis_measures_no_cancelled_call(
+    auth_client, organization, workspace, duration
+):
+    execution = _eligible_run(
+        organization, workspace, TestExecution.ExecutionStatus.CANCELLED
+    )
+    cancelled = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=execution.calls.first().scenario,
+        simulation_call_type=CallExecution.SimulationCallType.VOICE,
+        status=CallExecution.CallStatus.CANCELLED,
+        duration_seconds=duration,
+    )
+    failed = execution.calls.get(status=CallExecution.CallStatus.FAILED)
+
+    auth_client.post(_url(execution))
+    _read_every_call()
+    summary = auth_client.get(_url(execution)).json()["summary"]
+
+    # The 14 completed calls. The failed call errored, and a cancelled call is
+    # never graded, so neither is measured.
+    assert summary["measured_call_count"] == 14
+    assert summary["excluded_call_ids"] == [str(failed.id)]
+    assert str(cancelled.id) not in summary["unanalyzed_call_ids"]
