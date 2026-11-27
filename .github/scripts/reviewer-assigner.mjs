@@ -184,6 +184,7 @@ const SWEEP_QUERY = `query($owner: String!, $repo: String!, $after: String) {
       nodes {
         number
         isDraft
+        isCrossRepository
         author { login }
         reviewRequests(first: 20) {
           nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
@@ -204,6 +205,7 @@ function normalise(n) {
   return {
     number: n.number,
     draft: n.isDraft,
+    fork: n.isCrossRepository,
     author: n.author?.login,
     requested_reviewers: asked
       .filter((r) => r.__typename === "User")
@@ -396,8 +398,10 @@ async function reassign(pr, current) {
 
 // Writes only when this PR needs them: no reviewer and never assigned → assign;
 // the assigned reviewer is overdue → reassign. Anything else is read-only.
+// Only the team's own pull requests rotate: an outside contributor has no
+// write access, so their branch is always on a fork.
 async function sweepPr(pr, now) {
-  if (pr.draft) return;
+  if (pr.draft || pr.fork) return;
   const current = findAssignment(pr.comments);
   if (!hasHumanReviewRequest(pr)) {
     // A marker without a request means someone removed the reviewer by hand.

@@ -41,6 +41,7 @@ function pr(number, over = {}) {
   return {
     number,
     isDraft: false,
+    isCrossRepository: false,
     author: { login: "some-author" },
     reviewRequests: { nodes: [] },
     latestReviews: { nodes: [] },
@@ -147,6 +148,20 @@ test("a sweep with nothing to assign makes no write", () => {
         comments: { nodes: [marker("cdileep23", now)] },
       }),
     );
+  const { run, calls } = sweep(prs);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(calls, [{ method: "POST", path: "/graphql" }]);
+});
+
+test("an outside contributor's fork PR is never assigned or reassigned", () => {
+  const prs = [
+    pr(1, { isCrossRepository: true }),
+    pr(2, {
+      isCrossRepository: true,
+      reviewRequests: requestedFrom("khushalsonawat"),
+      comments: { nodes: [marker("khushalsonawat", "2020-01-06T05:00:00Z")] },
+    }),
+  ];
   const { run, calls } = sweep(prs);
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(calls, [{ method: "POST", path: "/graphql" }]);
