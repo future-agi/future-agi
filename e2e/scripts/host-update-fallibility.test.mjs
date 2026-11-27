@@ -1470,12 +1470,20 @@ test("workflow opt-in is dispatch-only, validates before builds, follows the unc
     exported.with["cache-to"],
     "type=registry,ref=${{ env.CACHE_REPO }}:${{ matrix.tag }},mode=max",
   );
+  // Every image the cache publisher warms is one the e2e bake builds: the same
+  // context and Dockerfile, so the bake's cache-from can hit it.
+  const baked = targets.map(([, , body]) => {
+    const context = body.match(/^\s*context\s*=\s*"([^"]+)"/m)[1];
+    const dockerfile = body.match(/^\s*dockerfile\s*=\s*"([^"]+)"/m)[1];
+    return { context, file: `${context}/${dockerfile}` };
+  });
   for (const entry of publisher.strategy.matrix.include) {
     assert.ok(
-      builds.some(
-        (step) =>
-          step.with.context === entry.context && step.with.file === entry.file,
+      baked.some(
+        (target) =>
+          target.context === entry.context && target.file === entry.file,
       ),
+      entry.tag,
     );
   }
   assert.equal(
