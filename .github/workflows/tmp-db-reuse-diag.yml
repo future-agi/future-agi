@@ -45,27 +45,17 @@ jobs:
           set -euo pipefail
           pg=(docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db)
           d=$RUNNER_TEMP/diag; mkdir -p "$d"
-          t=$SECONDS
-          CI_PRESEED_DIGEST=$d/int.digest CI_PRESEED_DUMP=$d/int.sql.gz uv run pytest .ci/migrated_db.py --create-db -q
-          echo "internal fresh migrate: $((SECONDS-t)) s"
           mv ee/cloud "$RUNNER_TEMP/held"
-          for n in 1 2; do
-            t=$SECONDS
-            CI_PRESEED_DIGEST=$d/pub$n.digest CI_PRESEED_DUMP=$d/pub$n.sql.gz PG_TEST_DB=test_ci_public uv run pytest .ci/migrated_db.py --create-db -q
-            echo "public fresh migrate $n: $((SECONDS-t)) s"
-          done
-          mv "$RUNNER_TEMP/held" ee/cloud
-          t=$SECONDS
+          CI_PRESEED_DIGEST=$d/pub1.digest CI_PRESEED_DUMP=$d/pub1.sql.gz PG_TEST_DB=test_ci_public uv run pytest .ci/migrated_db.py --create-db -q
           "${pg[@]}" createdb -U test_user test_ci_roundtrip
           python3 -I .ci/db_dump.py restore "$d/pub1.sql.gz" test_user test_ci_roundtrip "${pg[@]}"
-          echo "restore: $((SECONDS-t)) s"
-          t=$SECONDS
+          python3 -I .ci/db_dump.py dump "$d/rt0.sql.gz" test_user test_ci_roundtrip "${pg[@]}"
+          python3 -I .ci/db_dump.py seed-digest test_user test_ci_roundtrip "${pg[@]}" > "$d/rt0.digest"
           CI_PRESEED_DIGEST=$d/rt.digest CI_PRESEED_DUMP=$d/rt.sql.gz PG_TEST_DB=test_ci_roundtrip uv run pytest .ci/migrated_db.py -q
-          echo "replay migrate on restored db (with overlay): $((SECONDS-t)) s"
-          for a in int pub2 rt; do cmp -s "$d/pub1.digest" "$d/$a.digest" && echo "digest pub1 == $a" || echo "digest pub1 != $a"; done
+          mv "$RUNNER_TEMP/held" ee/cloud
           cd .. && python3 -I .github/tmp-db-diag.py "$d"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: diag-public-dump
-          path: ${{ runner.temp }}/diag/pub1.sql.gz
+          path: ${{ runner.temp }}/diag/*.sql.gz
           retention-days: 1
