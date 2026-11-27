@@ -46,10 +46,10 @@ async function ensureTypesafeKey(actor: TestActor): Promise<void> {
   expect(await typesafe()).toEqual([expect.objectContaining({ has_key: true })]);
 }
 
-test('SIM-E2E-045: Ask a question about the calls I ticked in a run and read each call\'s answer', {
+test('SIM-E2E-048: Ask a question about the calls I ticked in a run and read each call\'s answer', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-045', area: 'simulate',
+    id: 'SIM-E2E-048', area: 'simulate',
     userGoal: 'Tick some calls in a finished run, ask a yes/no question about them, and read how each ticked '
       + 'call was answered, with the counts adding up and the unticked call left out',
     steps: [
