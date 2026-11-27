@@ -1,5 +1,15 @@
+import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { act, renderHook } from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, renderHook as render } from "src/utils/test-utils";
+
+const renderHook = (hook) => {
+  const client = new QueryClient();
+  return render(hook, {
+    wrapper: ({ children }) =>
+      createElement(QueryClientProvider, { client }, children),
+  });
+};
 
 // The drafts answer the hook reads, set per test; every mutation is idle.
 const state = {};
@@ -13,6 +23,7 @@ const idle = (mutate = vi.fn()) => ({
 const saveMutate = vi.fn();
 const validateMutate = vi.fn();
 const saveValidatedMutate = vi.fn();
+const discardMutate = vi.fn();
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -20,7 +31,7 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
     useDrafts: () => ({ data: actual.toDrafts(state.drafts) }),
     useDraftReview: () => ({ data: { review_digest: "d1", changes: [] } }),
     useSaveDrafts: () => idle(saveMutate),
-    useDiscardDraft: () => idle(),
+    useDiscardDraft: () => idle(discardMutate),
     useValidateDrafts: () => ({ ...idle(validateMutate), ...state.validate }),
     useSaveCandidates: () => idle(saveValidatedMutate),
   };
@@ -67,17 +78,23 @@ describe("useDraftSaveFlow", () => {
       ...digest,
     });
     flow.onSaveValidated(" v2 ");
-    expect(saveValidatedMutate).toHaveBeenCalledWith({
-      candidates: { environmentVersionId: "c1", suiteVersionId: null },
-      ...digest,
-      name: "v2",
-    });
+    expect(saveValidatedMutate).toHaveBeenCalledWith(
+      {
+        candidates: { environmentVersionId: "c1", suiteVersionId: null },
+        ...digest,
+        name: "v2",
+      },
+      expect.anything(),
+    );
     flow.onSave();
-    expect(saveMutate).toHaveBeenCalledWith({
-      drafts: [{ piece: "environment", parentId: "v1", revision: 3 }],
-      reviewDigest: "d1",
-      name: undefined,
-    });
+    expect(saveMutate).toHaveBeenCalledWith(
+      {
+        drafts: [{ piece: "environment", parentId: "v1", revision: 3 }],
+        reviewDigest: "d1",
+        name: undefined,
+      },
+      expect.anything(),
+    );
   });
 
   it("keeps a refused Validate over the drafts it refetched, until a decision or the drafts go", () => {
@@ -165,5 +182,32 @@ describe("useDraftSaveFlow", () => {
     expect(flow.validating).toBe(false);
     expect(flow.pending).toBe(false);
     expect(flow.validationNote).toMatch(note);
+  });
+
+  it("forgets the source review once its draft is saved or discarded, not when the save fails", () => {
+    const key = "harness-environment-source-review:env-1";
+    const flow = flowFor(null, { candidates: CANDIDATES });
+    const answer = (mutate, outcome) =>
+      mutate.mock.calls.at(-1)[1]?.[outcome]?.();
+
+    sessionStorage.setItem(key, "review-1");
+    flow.onSave("v2");
+    act(() => answer(saveMutate, "onError"));
+    expect(sessionStorage.getItem(key)).toBe("review-1");
+    const onSuccess = vi.fn();
+    flow.onSave("v2", { onSuccess });
+    act(() => answer(saveMutate, "onSuccess"));
+    expect(sessionStorage.getItem(key)).toBeNull();
+    expect(onSuccess).toHaveBeenCalled();
+
+    for (const [run, mutate] of [
+      [() => flow.onSaveValidated("v2"), saveValidatedMutate],
+      [() => flow.onDiscard(), discardMutate],
+    ]) {
+      sessionStorage.setItem(key, "review-1");
+      run();
+      act(() => answer(mutate, "onSuccess"));
+      expect(sessionStorage.getItem(key)).toBeNull();
+    }
   });
 });

@@ -9,6 +9,7 @@ import {
   useValidateDrafts,
 } from "src/api/simulate-environments/versions";
 import { useRunningScenarioValidation } from "src/api/simulate-environments/scenariosHooks";
+import { useActiveEnvironmentSourceReview } from "src/api/simulate-environments/sourceImports";
 import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY as COPY } from "../workspace.constants";
 
@@ -49,6 +50,15 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
   const discard = useDiscardDraft(env?.id);
   const validate = useValidateDrafts(env?.id);
   const saveValidated = useSaveCandidates(env?.id);
+  // A saved or discarded draft ends the source review that fed it. Save waits for its scenarios on the server.
+  const { setReviewId } = useActiveEnvironmentSourceReview(env?.id);
+  const forgetReview = (options) => ({
+    ...options,
+    onSuccess: (...args) => {
+      setReviewId(null);
+      options?.onSuccess?.(...args);
+    },
+  });
   // The server refuses a Save, never a run, while scenarios are validated on the saved versions.
   const { data: running } = useRunningScenarioValidation(
     enabled && reviewEnabled && drafts?.any ? env?.id : null,
@@ -169,8 +179,7 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
         expectedReviewDigest: digest,
         name: name.trim(),
       };
-      if (options) saveValidated.mutate(vars, options);
-      else saveValidated.mutate(vars);
+      saveValidated.mutate(vars, forgetReview(options));
     },
     // A plain Save; from the review it carries the digest the person saw and the version's name.
     onSave: (name, options) => {
@@ -184,14 +193,12 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
         reviewDigest: digest,
         name: name?.trim() || undefined,
       };
-      if (options) save.mutate(vars, options);
-      else save.mutate(vars);
+      save.mutate(vars, forgetReview(options));
     },
     clearRefusals,
     onDiscard: (options) => {
       clearRefusals();
-      if (options) discard.mutate(drafts.pieces, options);
-      else discard.mutate(drafts.pieces);
+      discard.mutate(drafts.pieces, forgetReview(options));
     },
   };
 }

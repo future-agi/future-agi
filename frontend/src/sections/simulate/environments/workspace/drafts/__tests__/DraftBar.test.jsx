@@ -58,6 +58,14 @@ vi.mock(
   }),
 );
 
+vi.mock(
+  "src/api/simulate-environments/sourceImports",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useActiveEnvironmentSourceReview: () => ({ setReviewId: vi.fn() }),
+  }),
+);
+
 const { default: DraftBar } = await import("../DraftBar");
 const { DRAFTS_COPY, REVIEW_COPY } = await import("../../workspace.constants");
 
@@ -311,7 +319,10 @@ describe("DraftBar", () => {
       within(dialog).getByRole("button", { name: DRAFTS_COPY.discard }),
     );
     expect(discardMutate).toHaveBeenCalledTimes(1);
-    expect(discardMutate).toHaveBeenCalledWith(["environment", "suite"]);
+    expect(discardMutate).toHaveBeenCalledWith(
+      ["environment", "suite"],
+      expect.anything(),
+    );
   });
 
   it("discards nothing when the question is closed", async () => {
