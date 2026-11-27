@@ -9,6 +9,7 @@ import math
 import os
 import tarfile
 from contextlib import ExitStack, nullcontext
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -32,7 +33,13 @@ from simulate.models import (
     CallExecution,
     HostedHarnessJob,
 )
-from simulate.pydantic_schemas.agent_fix import FixRequest, LaunchScenario, Surface
+from simulate.pydantic_schemas.agent_fix import (
+    EngineReport,
+    FixRequest,
+    LaunchScenario,
+    Surface,
+)
+from simulate.selectors import agent_fix as fix_selectors
 from simulate.selectors.agent_fix import (
     VERDICT_TIERS,
     base_commit,
@@ -52,6 +59,7 @@ from simulate.services.agent_fix_runs import (
     refuse_outside_the_epoch,
     split_held_back,
 )
+from simulate.services.harness_run_evals import EVAL_QUEUE_STAMP_WINDOW
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.harness_validation import settle_validations
 from simulate.tests.test_agent_fix_api import ENGINE_MODEL, _armed, _engine
@@ -62,7 +70,9 @@ from simulate.tests.test_agent_fix_services import (
     KEYS,
     _candidate,
     _check,
+    _degraded,
     _executions,
+    _finished_and_sealed,
     _fix_run,
     _receipts,
     _run,
@@ -82,6 +92,7 @@ from simulate.tests.test_harness_agent_versions import (
     _passing,
     _preflight,
 )
+from simulate.tests.test_harness_environment_regrade import _mapped_eval
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
@@ -1008,6 +1019,12 @@ class TestLineage:
             _grade(first, won.id, evals=evals)
         baseline.refresh_from_db()
         assert (baseline.graded_at is not None) is graded
+        if graded:
+            # Its verdicts landed: nothing is left for a later winner to top up.
+            self._calls(baseline).update(
+                status=CallExecution.CallStatus.COMPLETED,
+                eval_outputs={"relevance": {"output": True}},
+            )
         close_fix_run(first.id, State.READY if first_won else State.NO_IMPROVEMENT)
         other = {**FIXED, "agent.py": b"PROMPT = 'x'\n"}
         second = _running(
@@ -1063,58 +1080,288 @@ class TestLineage:
         baseline.refresh_from_db()
         assert (baseline.graded_at is not None) is graded
 
-    def test_a_baseline_whose_dispatch_reached_only_some_calls_is_not_graded(
-        self, auth_client, source_run
-    ):
-        """A dispatch that failed partway puts back the calls it did not reach: the run
-        reads graded only once every finished call holds its evals, so the next winner
-        grades the rest."""
-        attempt = _running(
+    @staticmethod
+    def _calls(run):
+        return CallExecution.objects.filter(
+            test_execution_id=run.test_execution_id
+        ).order_by("id")
+
+    def _graded_first(self, auth_client, source_run):
+        """Attempt 1 with a winner and a baseline that finished both cases, its calls'
+        own evals done, on an environment with one eval."""
+        config = _mapped_eval(source_run)
+        first = _running(
             AgentFixRun.no_workspace_objects.get(
                 id=_submit(auth_client, source_run).json()["id"]
             )
         )
-        winner = _add(attempt)
-        baseline = _check(attempt, label="baseline-r1", keys=KEYS)
+        won = _add(first)
+        baseline = _check(first, label="baseline-r1", keys=KEYS)
         HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
             state="completed"
         )
-        AgentFixCandidate.no_workspace_objects.filter(id=winner.id).update(
-            outcome="winner"
-        )
-        calls = CallExecution.objects.filter(
-            test_execution_id=baseline.test_execution_id
-        ).order_by("id")
-        calls.update(status=CallExecution.CallStatus.COMPLETED)
-        reached = calls.first()
-        assert calls.count() == 2
+        _finished_and_sealed(baseline)
+        assert self._calls(baseline).count() == 2
+        return first, won, baseline, str(config.id)
 
-        def queue(execution, chosen):
-            CallExecution.objects.filter(id=reached.id).update(
-                eval_outputs={one.id: {"status": "pending"} for one in chosen}
-            )
-            return {one.id: {"queued": 2, "skipped_existing": 0} for one in chosen}
-
+    @staticmethod
+    def _won(fix_run, candidate, dispatch=None):
+        """The winner's grading through the real queue, to its commit: only the hand-off
+        to the broker is faked, with ``dispatch`` as its side effect. Returns the
+        configs each call's job carried, by call."""
         with (
-            patch.object(
-                engine,
-                "runnable_eval_configs",
-                return_value=_Configs([SimpleNamespace(id="relevance")]),
-            ),
-            patch.object(engine, "queue_evals_for_finished_calls", side_effect=queue),
+            patch(
+                "simulate.services.harness_run_evals._dispatch_one",
+                side_effect=dispatch,
+            ) as dispatched,
             TestCase.captureOnCommitCallbacks(execute=True),
         ):
-            engine._grade_winner(attempt, winner.id)
+            engine.apply_report(
+                fix_run,
+                EngineReport(stage="Select", winner_candidate_id=str(candidate.id)),
+            )
+        return {one.args[0]: sorted(one.args[1]) for one in dispatched.call_args_list}
+
+    def _second(self, auth_client, source_run, first, baseline):
+        """Attempt 2 on the run, with a winner, after attempt 1 closed: it reads the
+        baseline again."""
+        close_fix_run(first.id, State.READY)
+        other = {**FIXED, "agent.py": b"PROMPT = 'x'\n"}
+        second = _running(
+            AgentFixRun.no_workspace_objects.get(
+                id=_submit(auth_client, source_run, other).json()["id"]
+            )
+        )
+        winner = _add(second, other)
+        assert _check(second, label="baseline-r1", keys=KEYS).id == baseline.id
+        return second, winner
+
+    @staticmethod
+    def _graded_failed(calls, config_id):
+        """What the eval worker leaves on a grading that failed: a `Failed` row, the
+        call's eval side closed, and the job's stamp older than the queue's window."""
+        old = timezone.now() - EVAL_QUEUE_STAMP_WINDOW - timedelta(minutes=1)
+        for call in calls:
+            call.eval_outputs = {config_id: {"status": "Failed", "error": "error"}}
+            call.call_metadata = {
+                **call.call_metadata,
+                "eval_completed": True,
+                "eval_queued": {config_id: old.isoformat()},
+            }
+            call.save(update_fields=["eval_outputs", "call_metadata"])
+
+    def test_a_claimed_baseline_whose_dispatch_failed_is_graded_by_the_next_winner(
+        self, auth_client, source_run, temporal
+    ):
+        first, won, baseline, config_id = self._graded_first(auth_client, source_run)
+        failed = {config_id: {"status": "Failed", "error": "error"}}
+        self._calls(baseline).update(eval_outputs=failed)
+
+        def broker_down(*_args):
+            raise RuntimeError("broker unreachable")
+
+        self._won(first, won, dispatch=broker_down)
+        baseline.refresh_from_db()
+        # Its grading reached the run, so attempt 1 claimed it; the failed hand-off put
+        # each call back as it was, `Failed`.
+        assert baseline.graded_at is not None
+        assert [call.eval_outputs for call in self._calls(baseline)] == [failed] * 2
+        second, winner = self._second(auth_client, source_run, first, baseline)
+
+        dispatched = self._won(second, winner)
+
+        assert dispatched == {
+            str(call.id): [config_id] for call in self._calls(baseline)
+        }
+        baseline.refresh_from_db()
+        assert baseline.graded_for_id is None
+
+    def test_a_claimed_baseline_whose_grading_failed_is_graded_by_the_next_winner(
+        self, auth_client, source_run, temporal
+    ):
+        first, won, baseline, config_id = self._graded_first(auth_client, source_run)
+        assert len(self._won(first, won)) == 2
+        self._graded_failed(self._calls(baseline), config_id)
+        second, winner = self._second(auth_client, source_run, first, baseline)
+
+        dispatched = self._won(second, winner)
+
+        assert dispatched == {
+            str(call.id): [config_id] for call in self._calls(baseline)
+        }
+        baseline.refresh_from_db()
+        assert baseline.graded_for_id is None
+
+    def test_a_claimed_baseline_still_being_graded_is_not_graded_twice(
+        self, auth_client, source_run, temporal
+    ):
+        first, won, baseline, config_id = self._graded_first(auth_client, source_run)
+        assert len(self._won(first, won)) == 2
+        # Its jobs were handed off just now and no verdict landed yet.
+        assert all(
+            call.eval_outputs == {config_id: {"status": "pending"}}
+            for call in self._calls(baseline)
+        )
+        second, winner = self._second(auth_client, source_run, first, baseline)
+
+        assert self._won(second, winner) == {}
+        baseline.refresh_from_db()
+        assert baseline.graded_for_id is None
+
+    def test_an_eval_added_after_a_claimed_baseline_is_graded_on_it_alone(
+        self, auth_client, source_run, temporal
+    ):
+        first, won, baseline, first_id = self._graded_first(auth_client, source_run)
+        self._won(first, won)
+        sealed = {first_id: {"status": "completed", "output": True}}
+        for call in self._calls(baseline):
+            call.eval_outputs = sealed
+            call.call_metadata = {**call.call_metadata, "eval_completed": True}
+            call.save(update_fields=["eval_outputs", "call_metadata"])
+        added = str(
+            _mapped_eval(
+                source_run, name="Accuracy", template_name="accuracy_regrade"
+            ).id
+        )
+        second, winner = self._second(auth_client, source_run, first, baseline)
+
+        dispatched = self._won(second, winner)
+
+        # One job per call, carrying only the eval its verdicts lack.
+        assert dispatched == {str(call.id): [added] for call in self._calls(baseline)}
+        # The calls the queue graded are the calls the read reads: once the added
+        # eval's verdicts land on them, the run lacks nothing.
+        both = [first_id, added]
+        assert len(fix_selectors._graded_calls([baseline])) == len(dispatched)
+        assert fix_selectors.runs_lacking_verdicts([baseline], both) == {baseline.id}
+        CallExecution.objects.filter(id__in=list(dispatched)).update(
+            eval_outputs={**sealed, added: {"status": "completed", "output": False}}
+        )
+        assert fix_selectors.runs_lacking_verdicts([baseline], both) == set()
+
+    def test_a_dispatch_that_reached_some_calls_claims_and_the_next_winner_tops_up(
+        self, auth_client, source_run, temporal
+    ):
+        """A dispatch that failed partway put back the call it did not reach. The run is
+        claimed, so attempt 1 keeps it; the next winner grades only the call left."""
+        first, won, baseline, config_id = self._graded_first(auth_client, source_run)
+        handed = []
+
+        def second_hand_off_fails(call_id, _config_ids):
+            handed.append(call_id)
+            if len(handed) > 1:
+                raise RuntimeError("broker unreachable")
+
+        self._won(first, won, dispatch=second_hand_off_fails)
+        _reached, unreached = handed
+        baseline.refresh_from_db()
+        assert baseline.graded_at is not None
+        second, winner = self._second(auth_client, source_run, first, baseline)
+        baseline.refresh_from_db()
+        assert baseline.graded_for_id is None
+
+        assert self._won(second, winner) == {unreached: [config_id]}
+        baseline.refresh_from_db()
+        assert baseline.graded_for_id is None
+
+    def test_a_claimed_baseline_read_again_keeps_its_bill_with_its_claim(
+        self, auth_client, source_run, temporal
+    ):
+        first, won, baseline, config_id = self._graded_first(auth_client, source_run)
+        self._won(first, won)
+        # What its grading billed attempt 1, and a verdict that failed.
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            fix_eval_cost_usd=Decimal("0.04")
+        )
+        self._graded_failed(self._calls(baseline), config_id)
+        second, winner = self._second(auth_client, source_run, first, baseline)
+        hold = outside_attempt_hold_usd(
+            source_run, FixRequest.model_validate(second.request), first
+        )
+
+        self._won(second, winner)
 
         baseline.refresh_from_db()
-        assert baseline.graded_at is None
+        assert baseline.graded_for_id is None
+        assert engine.committed_usd(second) <= hold
+
+    @pytest.mark.parametrize(
+        ("verdicts", "holds_evals"),
+        [("sealed", False), ("failed", True), ("pending", True), ("new-eval", True)],
+    )
+    def test_a_claimed_baseline_holds_its_evals_only_while_it_lacks_a_verdict(
+        self, source_run, temporal, verdicts, holds_evals
+    ):
+        config_id = str(_mapped_eval(source_run).id)
+        first = _attempt(source_run, 1, state=State.RUNNING)
+        baseline = _check(first, label="baseline-r1", keys=KEYS)
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed", graded_at=timezone.now()
+        )
+        _finished_and_sealed(baseline)
+        row = {
+            "sealed": {"status": "completed", "output": True},
+            "failed": {"status": "Failed", "error": "error"},
+            "pending": {"status": "pending"},
+            "new-eval": {"status": "completed", "output": True},
+        }[verdicts]
+        self._calls(baseline).update(eval_outputs={config_id: row})
+        evals = 1
+        if verdicts == "new-eval":
+            _mapped_eval(source_run, name="Accuracy", template_name="accuracy_regrade")
+            evals = 2
+        request = FixRequest.model_validate(first.request)
+        every = fix_selectors.inventory_size(source_run)
+        ungraded = Decimal("0.05")
+        graded = ungraded + evals * Decimal("0.02")
+
+        # Read again, the repeat holds no simulation; its evals only when it lacks one.
+        assert outside_attempt_hold_usd(
+            source_run, request, first
+        ) == outside_attempt_hold_usd(source_run, request, None) - every * (
+            ungraded if holds_evals else graded
+        )
+
+    def test_the_hold_reuses_only_the_baselines_the_next_attempt_reads_again(
+        self, source_run, settings, temporal
+    ):
+        """The hold and start_check_run agree on what is read again: the same scenarios
+        and trials, at the parallelism the next attempt runs at."""
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 2
+        _mapped_eval(source_run)
+        first = _attempt(source_run, 1, state=State.RUNNING)
+        repeats = [
+            _check(first, label=f"baseline-r{n}", keys=KEYS, repeat=n)
+            for n in (1, 2, 3)
+        ]
+        HostedHarnessJob.no_workspace_objects.filter(
+            id__in=[run.id for run in repeats]
+        ).update(state="completed")
+        request = FixRequest.model_validate(first.request)
+        nothing = outside_attempt_hold_usd(source_run, request, None)
+        # Each repeat read again holds its evals only, not its simulation.
+        saved = fix_selectors.inventory_size(source_run) * Decimal("0.05")
+        assert (
+            outside_attempt_hold_usd(source_run, request, first) == nothing - 3 * saved
+        )
+        # The newest repeat ran at 1, so the next attempt runs at 1: only it is read
+        # again, and the others run again at their full hold.
+        _degraded(repeats[2], to=1)
+
+        assert outside_attempt_hold_usd(source_run, request, first) == nothing - saved
+        second = _attempt(source_run, 2, previous=first, state=State.RUNNING)
+        read_again = [
+            _check(second, label=f"baseline-r{n}", keys=KEYS, repeat=n).id == run.id
+            for n, run in enumerate(repeats, start=1)
+        ]
+        assert read_again == [False, False, True]
 
     def test_a_later_winner_prices_only_the_runs_it_grades(
         self, auth_client, source_run
     ):
-        """A baseline an earlier winner graded is read, not graded again, so the later
-        winner's evals are priced on its own runs only: its limit, which holds nothing
-        for that baseline, still grades them."""
+        """A baseline an earlier winner graded, every verdict landed, is read, not graded
+        again, so the later winner's evals are priced on its own runs only: its limit,
+        which holds nothing for that baseline, still grades them."""
         first = _running(
             AgentFixRun.no_workspace_objects.get(
                 id=_submit(auth_client, source_run).json()["id"]
@@ -1129,6 +1376,10 @@ class TestLineage:
             outcome="winner"
         )
         _grade(first, won.id)
+        self._calls(baseline).update(
+            status=CallExecution.CallStatus.COMPLETED,
+            eval_outputs={"relevance": {"output": True}},
+        )
         close_fix_run(first.id, State.READY)
         other = {**FIXED, "agent.py": b"PROMPT = 'x'\n"}
         second = _running(
@@ -1187,8 +1438,9 @@ class TestLineage:
         _finished(first, "baseline-r2-again", key="r2-again")
         _finished(first, "baseline-r3")
         assert hold(second) == Decimal("17.20")
-        # A repeat a winner graded keeps its grading (start_check_run): read again, it
-        # holds nothing more. Each holds $1.20 of evals until then.
+        # A repeat a winner claimed keeps its claim (start_check_run): with no finished
+        # call that lacks a verdict, read again, it holds nothing more. Each holds $1.20
+        # of evals until then.
         HostedHarnessJob.no_workspace_objects.filter(
             fix_run=first, fix_label__in=["baseline-r1", "baseline-r2-again"]
         ).update(graded_at=timezone.now())
