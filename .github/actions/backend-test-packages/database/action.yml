@@ -1,19 +1,18 @@
 name: Fresh backend database control
-description: Qualify a schema-only recipe before it can be reused by a shard.
+description: Migrate from zero, check the saved dump this run's shards restored, and save a public dump on dev pushes.
 inputs:
   profile:
     description: Backend setup profile
     default: baseline
-  handoff:
-    description: Transfer a qualified recipe to shards of this run
-    default: 'false'
-outputs:
   artifact:
-    description: Immutable same-run artifact name, empty unless a dump qualified
-    value: ${{ steps.result.outputs.artifact }}
+    description: The plan job's same-run copy of the saved dump, empty when it found none
+    default: ""
   recipe:
-    description: Runtime and checkout identity of the qualified dump
-    value: ${{ steps.result.outputs.recipe }}
+    description: The recipe of that saved dump
+    default: ""
+  save:
+    description: Publish a qualified public dump for later runs (dev pushes only)
+    default: "false"
 runs:
   using: composite
   steps:
@@ -26,37 +25,32 @@ runs:
       run: |
         key=$(bash "$GITHUB_ACTION_PATH/key.sh")
         echo "key=$key" >> "$GITHUB_OUTPUT"
-    - id: cached
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        # The recipe without its runtime part: the migrate inputs alone.
+        echo "name=${key%-*}" >> "$GITHUB_OUTPUT"
+    - if: inputs.artifact != '' && inputs.recipe == steps.key.outputs.key
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
       with:
-        key: ${{ steps.key.outputs.key }}
+        name: ${{ inputs.artifact }}
         path: ${{ runner.temp }}/migrated-db
     - shell: bash
       working-directory: futureagi
       env:
-        CACHE_HIT: ${{ steps.cached.outputs.cache-hit }}
+        FOUND: ${{ inputs.artifact != '' && inputs.recipe == steps.key.outputs.key }}
+        PRODUCE: ${{ inputs.save }}
         RECIPE: ${{ steps.key.outputs.key }}
       run: bash "$GITHUB_ACTION_PATH/producer.sh"
-    - if: steps.cached.outputs.cache-hit != 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main')
-      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-      with:
-        key: ${{ steps.key.outputs.key }}
-        path: ${{ runner.temp }}/migrated-db
-    - id: result
-      if: inputs.handoff == 'true'
+    - id: record
+      if: inputs.save == 'true'
       shell: bash
-      env:
-        RECIPE: ${{ steps.key.outputs.key }}
-      run: |
-        if [[ ! -f "$RUNNER_TEMP/migrated-db/cold-only" ]]; then
-          echo "artifact=backend-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
-          echo "recipe=$RECIPE" >> "$GITHUB_OUTPUT"
-        fi
-    - if: steps.result.outputs.artifact != ''
+      run: if [[ -f $RUNNER_TEMP/migrated-db/recipe ]]; then echo "saved=true" >> "$GITHUB_OUTPUT"; fi
+    # Every successful dev push carries a record, a reused one included, so
+    # the newest dev push always has one while the migrate inputs are unchanged.
+    - if: steps.record.outputs.saved == 'true'
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
-        name: ${{ steps.result.outputs.artifact }}
+        name: ${{ steps.key.outputs.name }}
         path: ${{ runner.temp }}/migrated-db/
         if-no-files-found: error
-        retention-days: 1
+        overwrite: true
+        retention-days: 7
         compression-level: 0

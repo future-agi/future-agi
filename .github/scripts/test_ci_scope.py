@@ -736,9 +736,7 @@ class CandidateScope(unittest.TestCase):
             for s in steps
             if "secrets.EE_REPO_READ_TOKEN" in s or "with: *ee_checkout" in s
         ]
-        self.assertEqual(
-            len(token_steps), 3
-        )  # cold producer, shards, independent control
+        self.assertEqual(len(token_steps), 2)  # shards, independent control
         guards = [
             next(
                 line.strip()
@@ -750,9 +748,8 @@ class CandidateScope(unittest.TestCase):
         self.assertCountEqual(
             guards,
             [
-                "if: inputs.backend_cold_fanout && env.IS_INTERNAL_RUN == 'true'",
                 "if: env.IS_INTERNAL_RUN == 'true'",
-                "if: needs.plan.outputs.cold_control != 'success' && env.IS_INTERNAL_RUN == 'true'",
+                "if: env.IS_INTERNAL_RUN == 'true'",
             ],
         )
         for step in token_steps:

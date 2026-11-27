@@ -277,11 +277,11 @@ def restore(path, user, database, prefix):
 
 
 def seed_digest(user, database, prefix):
-    """Private comparison only. No seed value, per-row hash or data dump is saved.
+    """An exact digest of every row except the ledger, and all sequence state.
 
-    Compare every other table (including unknown tables) and all sequence state.
-    Physical COPY order and random psql restriction tokens are not data. Even a
-    volatile value makes this recipe cold-only unless proven reconstructible.
+    It proves a restore reproduces the dumped database byte for byte at the
+    post_migrate boundary. Physical COPY order and random psql restriction
+    tokens are not data. Only the digest is printed, never a row.
     """
     output = subprocess.run(
         [
