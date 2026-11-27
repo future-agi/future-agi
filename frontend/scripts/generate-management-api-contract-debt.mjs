@@ -7,18 +7,23 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(frontendRoot, "..");
-const swaggerPath = path.join(
-  repoRoot,
-  "api_contracts",
-  "openapi",
-  "swagger.json",
-);
-const outputPath = path.join(
-  repoRoot,
-  "api_contracts",
-  "openapi",
-  "management-api-contract-debt.generated.json",
-);
+// --swagger=<path> and --out=<path> exist for scripts/contract-debt.test.mjs.
+function argValue(name) {
+  const prefix = `--${name}=`;
+  const arg = process.argv.find((value) => value.startsWith(prefix));
+  return arg ? path.resolve(arg.slice(prefix.length)) : null;
+}
+const swaggerPath =
+  argValue("swagger") ??
+  path.join(repoRoot, "api_contracts", "openapi", "swagger.json");
+const outputPath =
+  argValue("out") ??
+  path.join(
+    repoRoot,
+    "api_contracts",
+    "openapi",
+    "management-api-contract-debt.generated.json",
+  );
 
 const MUTATION_METHODS = new Set(["post", "put", "patch"]);
 const NON_RESPONSE_OPTIONAL_METHODS = new Set(["delete"]);
@@ -282,24 +287,19 @@ if (process.argv.includes("--print-error-details")) {
   process.exit(0);
 }
 
+// The report holds debt counters only. Path and operation totals change on
+// every API PR, so committing them made every two API PRs conflict here.
 const byGroup = {};
 for (const pathName of Object.keys(paths).sort()) {
-  const group = groupForPath(pathName);
-  byGroup[group] ||= {
-    paths: 0,
-    operations: 0,
+  byGroup[groupForPath(pathName)] ||= {
     mutation_endpoints_without_body_schema: 0,
     operations_without_response_schema: 0,
     broad_success_response_schemas: 0,
     operations_without_error_response_schema: 0,
     broad_error_response_schemas: 0,
   };
-  byGroup[group].paths += 1;
 }
 
-for (const record of operations) {
-  byGroup[record.group].operations += 1;
-}
 for (const record of mutationEndpointsWithoutBodySchema) {
   byGroup[record.group].mutation_endpoints_without_body_schema += 1;
 }
@@ -319,8 +319,6 @@ for (const record of broadErrorResponseSchemas) {
 const report = {
   generated_from: path.relative(repoRoot, swaggerPath),
   summary: {
-    paths: Object.keys(paths).length,
-    operations: operations.length,
     mutation_endpoints_without_body_schema:
       mutationEndpointsWithoutBodySchema.length,
     operations_without_response_schema: operationsWithoutResponseSchema.length,

@@ -121,9 +121,11 @@ def workspace_read_only(view_cls):
 class ViewerReadOnly(PermissionDenied):
     default_code = VIEWER_READ_ONLY_CODE
 
-    def __init__(self, action=None):
+    def __init__(self, action=None, advice=None):
         self.action = action
-        super().__init__(viewer_denied_message(action), code=VIEWER_READ_ONLY_CODE)
+        super().__init__(
+            viewer_denied_message(action, advice), code=VIEWER_READ_ONLY_CODE
+        )
 
 
 WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
@@ -173,9 +175,13 @@ def _with_viewer_refusal(schema):
     }
 
 
-def viewer_denied(action):
+def viewer_denied(action, *, advice=None):
+    """Name what a Viewer tried. ``advice`` says who can do it when the Member role
+    isn't enough."""
+
     def mark(handler):
         handler._viewer_denied_action = action
+        handler._viewer_denied_advice = advice
         schema = getattr(handler, "_swagger_auto_schema", None) or {}
         methods = [method for method in _WRITE_METHODS if method in schema]
         if methods:
@@ -194,11 +200,20 @@ def workspace_write_denied(request) -> PermissionDenied:
     """The refusal of a write the user's role doesn't allow: simulation routes say
     what a Viewer tried; every other route keeps its original response."""
     if request.path.startswith(_VIEWER_REASON_PREFIX):
-        return ViewerReadOnly(_viewer_denied_action(request))
+        handler = _write_handler(request)
+        return ViewerReadOnly(
+            _handler_text(handler, "_viewer_denied_action"),
+            _handler_text(handler, "_viewer_denied_advice"),
+        )
     return PermissionDenied(WORKSPACE_WRITE_DENIED)
 
 
-def _viewer_denied_action(request):
+def _handler_text(handler, name):
+    value = getattr(handler, name, None)
+    return value if isinstance(value, str) else None
+
+
+def _write_handler(request):
     view_cls = _resolve_view_class(request)
     if view_cls is None:
         return None
@@ -211,10 +226,7 @@ def _viewer_denied_action(request):
         handler_name = method
     if not isinstance(handler_name, str):
         return None
-    action = getattr(
-        getattr(view_cls, handler_name, None), "_viewer_denied_action", None
-    )
-    return action if isinstance(action, str) else None
+    return getattr(view_cls, handler_name, None)
 
 
 def _resolve_view_class(request):

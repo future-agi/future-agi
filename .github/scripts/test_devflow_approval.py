@@ -579,7 +579,9 @@ class WorkflowTests(unittest.TestCase):
 
     def test_3a_the_default_mode_approves_admins_only(self):
         admin, devflow = job(APPROVAL, "admin"), job(APPROVAL, "devflow")
-        self.assertIn("vars.APPROVAL_MODE != 'devflow' &&", admin)
+        # Into dev, devflow mode replaces the admin rule; into main it never does.
+        self.assertIn("(vars.APPROVAL_MODE != 'devflow' || github.event.pull_request.base.ref == 'main') &&", admin)
+        self.assertIn("github.event.pull_request.base.ref == 'dev' &&", devflow)
         self.assertIn('contains(fromJSON(\'["opened", "reopened", "synchronize", "ready_for_review"]\'), github.event.action)', admin)
         self.assertIn("(vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe')", devflow)
         self.assertIn("vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe'", job(SWEEP, "sweep"))
