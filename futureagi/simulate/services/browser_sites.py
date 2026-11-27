@@ -62,6 +62,26 @@ _LOCAL_SUFFIXES = (
 _LONGEST_HOST = 253
 
 
+def _ascii_form(host: str) -> str | None:
+    """The form a browser asks for, or ``None`` when a label has none.
+
+    IDNA 2008 as UTS 46 reads it, non-transitional, so the list names the host a page is on:
+    straße.de stays itself, never strasse.de. The host is mapped whole, then only the labels outside
+    ASCII or starting xn-- are encoded; a plain ASCII label is left to the host-name rule, as a
+    browser leaves it (``ab--cd`` is a name a browser opens, though IDNA 2008 would refuse it).
+    """
+    try:
+        mapped = idna.uts46_remap(host, std3_rules=True, transitional=False)
+        return ".".join(
+            idna.encode(label, uts46=False).decode("ascii")
+            if not label.isascii() or label.startswith("xn--")
+            else label
+            for label in mapped.split(".")
+        )
+    except UnicodeError:
+        return None
+
+
 def _one_form(value: Any) -> str | None:
     """The site in its one form, or ``None`` when it is not a public host name."""
     from simulate.services.hosted_harness import HostedHarnessError
@@ -76,13 +96,8 @@ def _one_form(value: Any) -> str | None:
     # too, so a label that is not a valid ASCII form (xn--zz) is refused rather than kept.
     if not site.isascii() or any(label.startswith("xn--") for label in site.split(".")):
         wildcard = site.startswith("*.")
-        try:
-            # The form a browser asks for (IDNA 2008 as UTS 46 reads it, non-transitional), so
-            # the list names the host a page is on: straße.de stays itself, never strasse.de.
-            ascii_form = idna.encode(
-                site[2:] if wildcard else site, uts46=True, transitional=False
-            ).decode("ascii")
-        except UnicodeError:
+        ascii_form = _ascii_form(site[2:] if wildcard else site)
+        if ascii_form is None:
             return None
         site = f"*.{ascii_form}" if wildcard else ascii_form
     # The egress list's own rules first: every site joins it.
