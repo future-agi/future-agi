@@ -2024,6 +2024,28 @@
 - historical append rerun admits late rows only for the frozen contact without reranking
 - edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
 
+### EVAL-E2E-021 — custom evaluation tags survive draft reopening and repeated version saves
+
+**Goal:** Keep preset and custom evaluation labels when reopening a draft and repeatedly saving a version
+
+**Spec:** `flows/evals/custom-tags.spec.ts:10`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a draft with preset and custom tags through the API
+2. reopen the draft, add a trimmed custom tag, reject its duplicate and leave another pending
+3. publish through Save Evaluation and reopen the saved default version
+4. remove a tag, save pending text as a version, then remove that tag and save again
+5. reload the saved version and inspect the remaining labels
+
+**Backend state verified:**
+
+- draft detail returns the exact seeded tags
+- publishing retains existing tags and includes confirmed and pending entries exactly once
+- repeated version saves retain the exact remaining tags without resurrecting removed pending input
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
@@ -2229,7 +2251,7 @@
 
 **Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
 
-**Spec:** `flows/gateway/provider-model-selection.spec.ts:28`
+**Spec:** `flows/gateway/provider-model-selection.spec.ts:29`
 
 **Tags:** —
 
@@ -2242,12 +2264,14 @@
 5. edit the provider, hover a selected and an unselected listed model and click away
 6. type another model ID and press Save Changes directly
 7. reopen the provider and see exactly the picked and typed models
+8. in the isolated legacy case, edit only the model list of a provider with stored negative concurrency, then exercise positive, typed-negative and zero controls
 
 **Backend state verified:**
 
 - the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200
 - the gateway config API returns the added provider with models exactly [listedA, typedOne]
 - the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree
+- legacy concurrency is read without mutation, saved as explicit zero on the wire, persisted in PG, and inherited in the pushed tenant config; a new negative returns a field error without changing positive nine
 
 ## knowledge-base
 
@@ -3678,7 +3702,7 @@
 
 **Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu, and can debug the failures of a finished Run Simulation run once it has 15 connected calls
 
-**Spec:** `flows/simulate/existing-customer-pages.spec.ts:89`
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:103`
 
 **Tags:** —
 
@@ -3688,6 +3712,7 @@
 2. open Scenarios and Run Simulation from the menu
 3. open a finished Run Simulation run with 14 connected calls and point at Debug failures
 4. open a finished Run Simulation run with 15 connected calls and 14 completed calls
+5. click Debug failures
 
 **Backend state verified:**
 
@@ -3699,6 +3724,7 @@
 - each of those two items opens its page by URL and title, never /404
 - at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."
 - at 15 connected calls and 14 completed calls Debug failures is enabled
+- clicking it opens the Debug failures drawer, with its subtitle and its no-analysis-yet text
 
 ### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
 
@@ -3803,21 +3829,23 @@
 
 **Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
 
-**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:228`
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:241`
 
 **Tags:** —
 
 **User steps:**
 
-1. open a finished run of the environment
-2. open Debug failures
-3. press Run Epoch
-4. read the Scenarios row of the launch form
-5. press Run Epoch in the form
-6. read the epoch page
+1. open a finished run of the environment with 14 connected calls and point at Debug failures
+2. open it again with 15 connected calls
+3. open Debug failures
+4. press Run Epoch
+5. read the Scenarios row of the launch form
+6. press Run Epoch in the form
+7. read the epoch page
 
 **Browser observations:**
 
+- at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."
 - the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
 - the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned

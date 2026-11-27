@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from minio import Minio
+from minio.error import S3Error
 
 PROXY_ENV_KEYS = tuple(
     name
@@ -555,6 +556,45 @@ def test_new_bucket_is_readable_by_url_but_not_writable_or_listable(monkeypatch)
     (statement,) = _anonymous_statements(policy)
     assert statement["Action"] == ["s3:GetObject"]
     assert statement["Resource"] == ["arn:aws:s3:::futureagi/*"]
+
+
+class RacedBucketClient(FakeBucketClient):
+    """The bucket appears between bucket_exists and make_bucket."""
+
+    def __init__(self, code):
+        super().__init__(exists=False)
+        self.code = code
+
+    def make_bucket(self, bucket_name):
+        raise S3Error(
+            code=self.code,
+            message="bucket taken",
+            resource=f"/{bucket_name}",
+            request_id="request",
+            host_id="host",
+            response=None,
+        )
+
+
+def test_bucket_a_racing_worker_created_counts_as_created(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = RacedBucketClient("BucketAlreadyOwnedByYou")
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    assert [s["Action"] for s in _anonymous_statements(policy)] == [["s3:GetObject"]]
+
+
+def test_bucket_owned_by_someone_else_still_fails(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = RacedBucketClient("BucketAlreadyExists")
+
+    with pytest.raises(S3Error) as raised:
+        storage_client.ensure_bucket(client, "futureagi")
+
+    assert raised.value.code == "BucketAlreadyExists"
+    assert client.set_calls == []
 
 
 def test_existing_minio_bucket_with_the_old_policy_is_cut_back_to_reads(monkeypatch):

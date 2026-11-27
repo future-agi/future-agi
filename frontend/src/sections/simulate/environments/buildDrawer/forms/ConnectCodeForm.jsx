@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Box, Typography } from "@mui/material";
 import GitHubConnectFlow from "src/sections/agent-playground/connect/GitHubConnectFlow";
 import UploadConnectFlow from "src/sections/agent-playground/connect/UploadConnectFlow";
@@ -77,6 +78,11 @@ export default function ConnectCodeForm({ kind, item, onBusyChange }) {
   const [picked, setPicked] = useState(saved?.picked || null);
   const [form, setForm] = useState(() => restoredForm(saved));
   const build = usePanelBuild();
+  const { pathname, search } = useLocation();
+  // The GitHub install comes back to this drawer, adding its own `github` outcome.
+  const query = new URLSearchParams(search);
+  const outcome = query.get("github") || undefined;
+  query.delete("github");
 
   useEffect(() => {
     if (!picked || !form) {
@@ -92,6 +98,8 @@ export default function ConnectCodeForm({ kind, item, onBusyChange }) {
     return (
       <Flow
         draftKey={buildDraftKey(way, "flow")}
+        outcome={outcome}
+        returnTo={`${pathname}?${query}`}
         onComplete={(next) => {
           build.resetPreflight();
           setPicked(next);
