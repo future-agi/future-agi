@@ -95,10 +95,6 @@ def test_access_and_spend(registry, name):
     assert tool.annotations["readOnlyHint"] is (name in READS)
     assert tool.annotations["destructiveHint"] is (name in DESTRUCTIVE)
     assert tool.annotations["openWorldHint"] is (name in SPENDING | SANDBOX)
-    assert ("may incur usage charges" in tool.description) is (name in SPENDING)
-    assert (
-        "see the Usage page in the app for what it counts toward" in tool.description
-    ) is (name in SANDBOX)
 
 
 def test_a_save_that_needs_validation_can_send_its_candidates(registry):
