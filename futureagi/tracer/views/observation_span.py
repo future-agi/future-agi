@@ -2262,6 +2262,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 org_project_ids=org_project_ids,
                 org=org,
                 read_deadline=kwargs.get("read_deadline"),
+                bounded_export=bool(kwargs.get("bounded_export")),
             )
 
         except ListCursorError as exc:
@@ -2307,6 +2308,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         org_project_ids=None,
         org=None,
         read_deadline=None,
+        bounded_export=False,
     ):
         """List spans from the direct-write ClickHouse 25 schema."""
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
@@ -2747,9 +2749,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         def _fetch_content():
             if not span_identities:
                 return _stats([], [], False)
-            content_query, content_params = builder.build_content_query(
-                span_ids, span_identities=span_identities
-            )
+            is_bounded_export = bool(bounded_export)
+            if is_bounded_export:
+                content_query, content_params = builder.build_content_query(
+                    span_ids,
+                    span_identities=span_identities,
+                    include_trajectory=True,
+                )
+            else:
+                content_query, content_params = builder.build_content_query(
+                    span_ids, span_identities=span_identities
+                )
             if not content_query:
                 return _stats([], [], False)
             content_result = analytics.execute_ch_query(
@@ -2758,6 +2768,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
                 settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
+            if is_bounded_export and content_result.data:
+                from tracer.services.clickhouse.v2.trajectory_hydration import (
+                    hydrate_span_dicts,
+                    is_trajectory_store_read_enabled,
+                )
+
+                if is_trajectory_store_read_enabled():
+                    hydrate_span_dicts(
+                        content_result.data,
+                        lambda traj_sql, traj_params: list(
+                            analytics.execute_ch_query(
+                                traj_sql,
+                                traj_params,
+                                timeout_ms=read_deadline.remaining_ms(
+                                    SPAN_LIST_ENRICHMENT_TIMEOUT_MS
+                                ),
+                                settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
+                            ).data
+                            or []
+                        ),
+                        project_id_fallback=None if org_scope else str(project_id),
+                        attr_key="attributes_extra",
+                    )
             return _stats(content_result.data, content_result.data, True)
 
         def _fetch_count():

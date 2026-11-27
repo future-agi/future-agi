@@ -668,7 +668,12 @@ class _TraceRootReplayV2:
         """
 
     def _root_replay_query(
-        self, identities: list[tuple], *, content: bool, trace_rollup: bool = False
+        self,
+        identities: list[tuple],
+        *,
+        content: bool,
+        trace_rollup: bool = False,
+        include_trajectory: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Replay the finite page by immutable coordinates, with no time/version prefilter.
 
@@ -732,6 +737,14 @@ class _TraceRootReplayV2:
         ]
         if content:
             fields += self._root_replay_content_fields()
+            if include_trajectory:
+                from tracer.services.clickhouse.v2.trajectory_hydration import (
+                    TRAJECTORY_SPAN_COLUMNS,
+                    is_trajectory_store_read_enabled,
+                )
+
+                if is_trajectory_store_read_enabled():
+                    fields += [(col, col) for col in TRAJECTORY_SPAN_COLUMNS]
         else:
             fields += [
                 ("trace_name", "trace_name"),
@@ -827,6 +840,7 @@ class _TraceRootReplayV2:
         *,
         root_identities: list[tuple] | None = None,
         include_trace_rollup: bool = False,
+        include_trajectory: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         if not trace_ids:
             return "", {}
@@ -865,7 +879,10 @@ class _TraceRootReplayV2:
         if {identity[1] for identity in identities} != set(map(str, trace_ids)):
             raise ValueError("v2 content replay identity escaped requested traces")
         return self._root_replay_query(
-            identities, content=True, trace_rollup=include_trace_rollup
+            identities,
+            content=True,
+            trace_rollup=include_trace_rollup,
+            include_trajectory=include_trajectory,
         )
 
 

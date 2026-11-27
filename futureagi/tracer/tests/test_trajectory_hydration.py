@@ -1207,3 +1207,52 @@ def test_trajectory_retention_opens_writable_client_not_readonly_reader(monkeypa
     assert captured["port"] == 18123
     assert captured["database"] == "test_db"
     assert "readonly" not in (captured.get("settings") or {})
+
+
+@pytest.mark.unit
+def test_bounded_export_content_queries_gate_trajectory_columns(settings):
+    """Export content queries include trajectory columns only when export + flag are ON."""
+    from datetime import UTC, datetime
+
+    from tracer.services.clickhouse.v2.query_builders.span_list import (
+        SpanListQueryBuilderV2,
+    )
+    from tracer.services.clickhouse.v2.query_builders.trace_list import (
+        TraceListQueryBuilderV2,
+    )
+
+    pid = PROJECT_ID
+    tid = "00000000-0000-0000-0000-000000000010"
+    sid = "abcdef0123456789"
+    ts_us = int(datetime(2026, 11, 1, 12, 0, 0, tzinfo=UTC).timestamp() * 1_000_000)
+
+    span_builder = SpanListQueryBuilderV2(project_id=pid)
+    trace_builder = TraceListQueryBuilderV2(project_id=pid)
+    root_id = (pid, tid, sid, ts_us, "llm", "svc", ts_us, 1)
+
+    # Flag OFF -> zero trajectory columns even when include_trajectory=True.
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = False
+    sql_span_off, _ = span_builder.build_content_query([sid], include_trajectory=True)
+    sql_trace_off, _ = trace_builder.build_content_query(
+        [tid], root_identities=[root_id], include_trajectory=True
+    )
+    assert "payload_encoding" not in sql_span_off
+    assert "payload_encoding" not in sql_trace_off
+
+    # Flag ON, default list view (include_trajectory=False) -> zero trajectory columns.
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    sql_span_list, _ = span_builder.build_content_query([sid])
+    sql_trace_list, _ = trace_builder.build_content_query(
+        [tid], root_identities=[root_id]
+    )
+    assert "payload_encoding" not in sql_span_list
+    assert "payload_encoding" not in sql_trace_list
+
+    # Flag ON + include_trajectory=True (bounded CSV export) -> all 6 trajectory columns.
+    sql_span_exp, _ = span_builder.build_content_query([sid], include_trajectory=True)
+    sql_trace_exp, _ = trace_builder.build_content_query(
+        [tid], root_identities=[root_id], include_trajectory=True
+    )
+    for col in ("input_item_hashes", "output_item_hashes", "payload_encoding"):
+        assert col in sql_span_exp
+        assert col in sql_trace_exp

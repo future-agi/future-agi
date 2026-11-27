@@ -959,7 +959,9 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             else ""
         )
 
-    def build_content_query(self, span_ids, *, span_identities=None):
+    def build_content_query(
+        self, span_ids, *, span_identities=None, include_trajectory: bool = False
+    ):
         identities = self._normalize_span_identities(span_identities)
         ids = tuple(dict.fromkeys(str(value) for value in span_ids if value))
         if not ids or identities == ():
@@ -985,6 +987,16 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
             "service_name, _version, input, output, attributes_extra, "
             "attrs_string, attrs_number, attrs_bool"
         )
+        if include_trajectory:
+            from tracer.services.clickhouse.v2.trajectory_hydration import (
+                TRAJECTORY_SPAN_COLUMNS,
+                is_trajectory_store_read_enabled,
+            )
+
+            if is_trajectory_store_read_enabled():
+                content_columns_sql = (
+                    f"{content_columns_sql}, {', '.join(TRAJECTORY_SPAN_COLUMNS)}"
+                )
         source = self._filter_match_source_sql(
             scope, consumer_sql=f"{content_columns_sql} {project_version}"
         )
