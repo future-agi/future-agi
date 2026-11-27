@@ -4,11 +4,13 @@ import copy
 import inspect
 import json
 import logging
+import socket
 import uuid
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 from simulate.models import (
     AgentVersion,
@@ -3027,6 +3029,113 @@ class TestAgentDefaultMove:
         assert default["id"] == str(a2.id)
         environment.refresh_from_db()
         assert environment.payload == after
+
+
+GATEWAY = "https://gateway.example.com/v1"
+
+
+@pytest.fixture
+def gateway_provider():
+    """A gateway that takes one key, providers that take every key, and the DNS behind them."""
+    calls = []
+
+    def resolve(host, *_args, **_kwargs):
+        if host != "gateway.example.com":
+            raise socket.gaierror(socket.EAI_NONAME, "no such host")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 0))]
+
+    def answer(method, url, headers=None, **_kwargs):
+        calls.append((url, dict(headers or {})))
+        if url.startswith("https://gateway.example.com/"):
+            accepted = (headers or {}).get("x-api-key") == "val-gateway-key"
+            return Mock(status_code=200 if accepted else 401)
+        return Mock(status_code=200)
+
+    with (
+        patch("agentcc.services.url_safety.socket.getaddrinfo", resolve),
+        # The fixture's LiveKit host is not real; this journey is about the model gateway.
+        patch("simulate.services.harness_credential_probes.assert_url_host_public"),
+        patch(
+            "simulate.services.harness_credential_probes._request",
+            side_effect=answer,
+        ),
+    ):
+        yield calls
+
+
+def test_preflight_base_url_journey(
+    user, workspace, storage, scheduled, gateway_provider
+):
+    """Add an agent version behind a gateway, then a wrong key, then an unreachable gateway."""
+    [environment] = _shared(user, workspace, storage, "av-gateway", count=1)
+    a1 = _a1(environment)
+    old = _non_secret_fields(_side(a1))
+    real_probe = [
+        patch(
+            "simulate.services.harness_provider._preflight_source_connectors",
+            return_value=([], [], 3),
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.platform_dialer_status",
+            return_value={"available": True, "missing": []},
+        ),
+    ]
+
+    a2 = _create(
+        a1,
+        environment,
+        secret_values={
+            "ANTHROPIC_API_KEY": "val-gateway-key",
+            "ANTHROPIC_BASE_URL": GATEWAY,
+        },
+    )
+    passed = _preflight(a2, real_probe)
+
+    assert passed.status == "passed", passed.report
+    anthropic = [(url, h) for url, h in gateway_provider if "x-api-key" in h]
+    assert anthropic == [
+        (
+            "https://gateway.example.com/v1/models?limit=1",
+            {"x-api-key": "val-gateway-key", "anthropic-version": "2023-06-01"},
+        )
+    ]
+    assert not any("api.anthropic.com" in url for url, _ in gateway_provider)
+    # New names change the bundle key, so the default moves only after a rebuild.
+    (default,) = _defaults(environment)
+
+    a3 = _create(a2, environment, secret_values={"ANTHROPIC_API_KEY": "val-wrong-key"})
+    wrong = _preflight(a3, real_probe)
+
+    assert wrong.status == "failed"
+    assert wrong.report["invalid"] == ["ANTHROPIC_API_KEY"]
+    accepted = next(c for c in wrong.report["checks"] if c["id"] == "credentials_valid")
+    assert (accepted["status"], accepted["missing"]) == (
+        "failed",
+        ["ANTHROPIC_API_KEY"],
+    )
+
+    a4 = _create(
+        a2,
+        environment,
+        secret_values={"ANTHROPIC_BASE_URL": "https://gateway.example.com/down"},
+    )
+
+    def gateway_down(method, url, **_kwargs):
+        if url.startswith("https://gateway.example.com/"):
+            raise requests.ConnectionError("refused")
+        return Mock(status_code=200)
+
+    with patch(
+        "simulate.services.harness_credential_probes._request",
+        side_effect=gateway_down,
+    ):
+        down = _preflight(a4, real_probe)
+
+    assert down.status == "failed"
+    assert down.report["invalid"] == ["ANTHROPIC_BASE_URL"]
+    assert _defaults(environment) == [default]
+    assert _non_secret_fields(_side(a1)) == old
+    _no_values(json.dumps([wrong.report, down.report]))
 
 
 class TestDocumentReading:

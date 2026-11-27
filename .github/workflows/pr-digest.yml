@@ -4,24 +4,37 @@ on:
   workflow_dispatch:
   schedule:
     # 10:00 IST (UTC+5:30) → 04:30 UTC
-    - cron: '30 4 * * *'
+    - cron: "30 4 * * *"
     # 18:00 IST (UTC+5:30) → 12:30 UTC
-    - cron: '30 12 * * *'
+    - cron: "30 12 * * *"
+  # Heartbeat for the dev-flow tick (breaker, escape rate, hourly digest).
+  # Scheduled runs use main's copy of this file; a push to dev uses dev's.
+  push:
+    branches: [dev]
+  pull_request:
+    paths:
+      - ".github/scripts/devflow_tick.py"
+      - ".github/scripts/test_devflow_tick.py"
+      - ".github/workflows/pr-digest.yml"
+
+concurrency:
+  group: pr-digest-${{ github.event_name == 'push' && 'tick' || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   digest:
     # Skip on forks — secrets aren't available there and the run would just spam Actions logs.
-    if: github.repository == 'future-agi/future-agi'
+    if: github.repository == 'future-agi/future-agi' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Build and post PR digest
         env:
@@ -31,3 +44,84 @@ jobs:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node .github/scripts/pr-digest.mjs
+
+  tick:
+    # Breaker on every push; digest at most once an hour: the cache key is the
+    # UTC hour, so later pushes in the same hour skip it. See .github/scripts/devflow_tick.py.
+    if: github.repository == 'future-agi/future-agi' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      issues: write
+    defaults:
+      run:
+        # bash -eo pipefail: a tick that fails is not hidden by its tee.
+        shell: bash
+    steps:
+      - name: Script from the pushed commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Hour bucket
+        id: hour
+        run: echo "key=devflow-tick-$(date -u +%Y%m%d%H)" >> "$GITHUB_OUTPUT"
+
+      - name: Already ticked this hour?
+        id: seen
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tick-marker
+          key: ${{ steps.hour.outputs.key }}
+          lookup-only: true
+
+      # Every push: the breaker is API-only and cheap. It files a new trip once.
+      - name: Base-health breaker
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Issues and Slack posts only when "live"; otherwise the summary only.
+          DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
+          DEVFLOW_TRAIN_LOGIN: ${{ vars.DEVFLOW_TRAIN_LOGIN }}
+        run: python3 -I .github/scripts/devflow_tick.py --breaker-only | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.seen.outputs.cache-hit != 'true'
+        with:
+          ref: dev
+          fetch-depth: 500
+
+      - name: Run tick
+        if: steps.seen.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DEVFLOW_HEARTBEAT: ${{ vars.DEVFLOW_HEARTBEAT }}
+          DEVFLOW_TRAIN_LOGIN: ${{ vars.DEVFLOW_TRAIN_LOGIN }}
+          # Read only: the current hysteresis state (on above 2%, off below
+          # 1.5%). The tick warns when it should change; a person sets it.
+          APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}
+        run: |
+          git fetch origin dev
+          python3 -I .github/scripts/devflow_tick.py | tee -a "$GITHUB_STEP_SUMMARY"
+          date -u > .tick-marker
+
+      - name: Mark the hour as done
+        if: steps.seen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .tick-marker
+          key: ${{ steps.hour.outputs.key }}
+
+  tick-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: python3 -I .github/scripts/test_devflow_tick.py -v

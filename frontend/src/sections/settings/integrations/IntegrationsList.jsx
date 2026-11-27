@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Alert, Box, Button, Chip, Grid, Typography, useTheme } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  Grid,
+  Typography,
+  useTheme,
+} from "@mui/material";
 import ErrorState from "src/components/error-state";
 import PageHeader from "src/components/page-header";
 import Section from "src/components/section";
@@ -37,7 +45,8 @@ export default function IntegrationsList() {
     useStartSlackInstall();
   const { mutate: startGitHubInstall, isPending: connectingGitHub } =
     useStartGitHubInstall();
-  const { mutate: completeGitHubInstall } = useCompleteGitHubInstall();
+  const { mutate: completeGitHubInstall, isPending: finishingGitHub } =
+    useCompleteGitHubInstall();
   const completingGitHub = useRef(false);
   const autoStartedInstall = useRef(false);
   const [installMessage, setInstallMessage] = useState(null);
@@ -211,10 +220,16 @@ export default function IntegrationsList() {
           {installMessage.text}
         </Alert>
       )}
-      {(connectingSlack || connectingGitHub) && (
+      {finishingGitHub ? (
         <Alert severity="info" sx={{ mb: 2 }}>
-          Starting {connectingGitHub ? "GitHub" : "Slack"} authorization…
+          Connecting GitHub… You&apos;ll be taken back when it&apos;s done.
         </Alert>
+      ) : (
+        (connectingSlack || connectingGitHub) && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Starting {connectingGitHub ? "GitHub" : "Slack"} authorization…
+          </Alert>
+        )
       )}
       {/* Header */}
       <PageHeader

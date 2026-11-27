@@ -587,6 +587,29 @@ export interface TimezoneResponseApi {
   timezone: string;
 }
 
+export type EmailUnsubscribeRequestApiAction =
+  (typeof EmailUnsubscribeRequestApiAction)[keyof typeof EmailUnsubscribeRequestApiAction];
+
+export const EmailUnsubscribeRequestApiAction = {
+  unsubscribe: "unsubscribe",
+  resubscribe: "resubscribe",
+} as const;
+
+export interface EmailUnsubscribeRequestApi {
+  action?: EmailUnsubscribeRequestApiAction;
+}
+
+export type SnoozeRequestApiAction =
+  (typeof SnoozeRequestApiAction)[keyof typeof SnoozeRequestApiAction];
+
+export const SnoozeRequestApiAction = {
+  snooze: "snooze",
+} as const;
+
+export interface SnoozeRequestApi {
+  action?: SnoozeRequestApiAction;
+}
+
 export interface UserOnboardingResultApi {
   role: string;
   goals: string[];
@@ -4040,6 +4063,7 @@ export interface CapabilitiesResponseApi {
   license_state: CapabilitiesResponseApiLicenseState;
   features: CapabilitiesResponseApiFeatures;
   metrics_enabled?: boolean;
+  coding_agent_attempts_enabled?: boolean;
   license?: LicenseDetailsApi;
   instance_id?: string;
 }
@@ -19517,6 +19541,15 @@ export const AgentFixRunApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
+export interface AgentFixOutsideCandidateApi {
+  summary: string;
+  /**
+   * @minimum 1
+   * @maximum 4
+   */
+  number: number;
+}
+
 export type AgentFixRequestApiVariationParents = { [key: string]: string };
 
 export interface AgentFixRequestApi {
@@ -19533,18 +19566,17 @@ export interface AgentFixRequestApi {
   allowed_models?: string[];
   reply_latency_margin_pct?: number;
   cost_margin_pct?: number;
-  cost_limit_usd?: number;
+  cost_limit_usd?: number | null;
   observes_models?: boolean;
   meters_agent_cost?: boolean;
   measured_automatically?: boolean;
+  outside_candidate?: AgentFixOutsideCandidateApi | null;
 }
 
 export interface AgentFixReportApi {
-  /** @minLength 1 */
-  ending: string;
+  ending: string | null;
   summary: string;
-  /** @minLength 1 */
-  winner_candidate_id: string;
+  winner_candidate_id: string | null;
   flaky_protected?: AgentFixFlakyProtectedApi[];
 }
 
@@ -19629,6 +19661,8 @@ export interface AgentFixRunApi {
   failure: AgentFixFailureApi | null;
   retried_from_id: string | null;
   readonly retryable?: boolean;
+  attempt_of_id: string | null;
+  counted?: boolean | null;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
   /** Run from an Error Feed issue, even once the issue is gone. */
@@ -19712,6 +19746,54 @@ export interface AgentFixLaunchEnvironmentApi {
   /** @minLength 1 */
   name: string;
   version: number | null;
+}
+
+export interface AgentFixCodingAgentTargetApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  name: string;
+  failing_sub_goals: string[];
+}
+
+export type AgentFixCodingAgentFailureApiSubGoals = { [key: string]: boolean };
+
+export type AgentFixCodingAgentFailureApiReasons = { [key: string]: string };
+
+export interface AgentFixCodingAgentFailureApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  trial: number;
+  sub_goals: AgentFixCodingAgentFailureApiSubGoals;
+  reasons: AgentFixCodingAgentFailureApiReasons;
+  transcript: string;
+}
+
+export interface AgentFixOutsideAttemptsApi {
+  used: number;
+  max: number;
+}
+
+export interface AgentFixCodingAgentBriefApi {
+  source_run: AgentFixLaunchSourceRunApi;
+  environment: AgentFixLaunchEnvironmentApi;
+  agent: AgentFixAgentApi | null;
+  /** The commit a GitHub agent's change must start from; blank for an uploaded agent. */
+  base_commit: string;
+  /** The agent's files as the run ran them. The submitted tree holds each one it keeps, changed or not, and may add new files; one left out is deleted. */
+  files: string[];
+  targets: AgentFixCodingAgentTargetApi[];
+  protected_scenario_keys: string[];
+  /** The paths earlier attempts on the run locked: every later attempt keeps them, and may lock more. */
+  locked_paths: string[];
+  failures: AgentFixCodingAgentFailureApi[];
+  attempts: AgentFixOutsideAttemptsApi;
+  blocked: AgentFixFailureApi | null;
+  /**
+   * The prompt the coding agent follows, in markdown.
+   * @minLength 1
+   */
+  instructions: string;
 }
 
 export interface AgentFixLaunchScenarioApi {
@@ -19880,6 +19962,8 @@ export interface AgentFixRunDetailApi {
   failure: AgentFixFailureApi | null;
   retried_from_id: string | null;
   readonly retryable?: boolean;
+  attempt_of_id: string | null;
+  counted?: boolean | null;
   readonly limited_validation?: boolean;
   issue?: AgentFixEpochIssueApi | null;
   /** Run from an Error Feed issue, even once the issue is gone. */
@@ -19908,6 +19992,60 @@ export interface AgentFixMakeDefaultApi {
 
 export interface AgentFixPullRequestApi {
   /** @minLength 1 */
+  pull_request_url: string;
+}
+
+export type AgentFixAttemptVerdictApiState =
+  (typeof AgentFixAttemptVerdictApiState)[keyof typeof AgentFixAttemptVerdictApiState];
+
+export const AgentFixAttemptVerdictApiState = {
+  queued: "queued",
+  running: "running",
+  stopping: "stopping",
+  ready: "ready",
+  no_improvement: "no_improvement",
+  not_reproduced: "not_reproduced",
+  out_of_budget: "out_of_budget",
+  stopped: "stopped",
+  failed: "failed",
+  too_few_cases: "too_few_cases",
+} as const;
+
+export type AgentFixAttemptTierApiStatus =
+  (typeof AgentFixAttemptTierApiStatus)[keyof typeof AgentFixAttemptTierApiStatus];
+
+export const AgentFixAttemptTierApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  pending: "pending",
+  skipped: "skipped",
+} as const;
+
+export interface AgentFixAttemptTierApi {
+  /** @minLength 1 */
+  name: string;
+  status: AgentFixAttemptTierApiStatus;
+  detail: string;
+}
+
+export interface AgentFixAttemptVerdictApi {
+  id: string;
+  number: number;
+  state: AgentFixAttemptVerdictApiState;
+  step: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  ending:
+    | "ready"
+    | "no_improvement"
+    | "not_reproduced"
+    | "out_of_budget"
+    | "failed"
+    | null;
+  failure: AgentFixFailureApi | null;
+  summary: string;
+  tiers: AgentFixAttemptTierApi[];
+  counted: boolean;
+  must_pass_regressions: string[];
+  patch_available: boolean;
   pull_request_url: string;
 }
 
@@ -22127,6 +22265,31 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export interface HarnessLockRefusalApi {
+  /**
+   * lock_not_ready, version_already_locked, lock_too_few_test, lock_too_few_train, version_locked, version_conflict or rebuild_running.
+   * @minLength 1
+   */
+  error: string;
+  /** @minLength 1 */
+  message: string;
+  retryable: boolean;
+  piece?: string | null;
+  /** lock_too_few_*: the train tasks a lock gives. */
+  train?: number;
+  /** lock_too_few_*: the test tasks a lock gives. */
+  test?: number;
+  /** version_locked: the locked version to unlock first. */
+  locked_version_id?: string;
+  /**
+   * version_locked: that locked version's label.
+   * @minLength 1
+   */
+  label?: string;
+  environment_label?: string | null;
+  suite_label?: string | null;
+}
+
 /**
  * The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.
  */
@@ -24201,10 +24364,27 @@ export type HarnessDraftSaveResponseApiNotActiveItem = {
   [key: string]: string;
 };
 
+export interface HarnessLockedVersionApi {
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  environment_version_id: string;
+  environment_label: string | null;
+  suite_version_id: string;
+  suite_label: string | null;
+  locked_at: string;
+  locked_by: HarnessVersionPersonApi | null;
+  unlocked_at: string | null;
+  unlocked_by: HarnessVersionPersonApi | null;
+  train: number;
+  test: number;
+}
+
 export interface HarnessVersionsApi {
   agent: HarnessVersionApi[];
   environment: HarnessVersionApi[];
   suite: HarnessVersionApi[];
+  locked_versions: HarnessLockedVersionApi[];
 }
 
 export interface HarnessDraftSaveResponseApi {
@@ -25660,6 +25840,32 @@ export interface HarnessSourceChangesApi {
   truncated: boolean;
 }
 
+export interface HarnessRefusalApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface HarnessLockPreviewApi {
+  environment_version_id: string | null;
+  suite_version_id: string | null;
+  /** The suite version passed its proofs against this environment version. */
+  proved: boolean;
+  can_lock: boolean;
+  refusal: HarnessRefusalApi | null;
+  train: number | null;
+  test: number | null;
+  test_target: number | null;
+}
+
+export interface HarnessLockVersionApi {
+  /** The default environment version the caller saw. */
+  environment_version_id: string;
+  /** The default suite version the caller saw. */
+  suite_version_id: string;
+}
+
 export interface HarnessSuiteMemberApi {
   /** @minLength 1 */
   scenario_key: string;
@@ -25669,6 +25875,55 @@ export interface HarnessSuiteMemberApi {
   /** @minLength 1 */
   issue_cluster_id: string;
   issue_project_id: string;
+}
+
+export interface HarnessUnlockVersionApi {
+  locked_version_id: string;
+}
+
+export type HarnessUnlockForbiddenApiType =
+  (typeof HarnessUnlockForbiddenApiType)[keyof typeof HarnessUnlockForbiddenApiType];
+
+export const HarnessUnlockForbiddenApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type HarnessUnlockForbiddenApiCode =
+  (typeof HarnessUnlockForbiddenApiCode)[keyof typeof HarnessUnlockForbiddenApiCode];
+
+export const HarnessUnlockForbiddenApiCode = {
+  viewer_read_only: "viewer_read_only",
+} as const;
+
+export type HarnessUnlockForbiddenApiDetails = { [key: string]: string[] };
+
+export interface HarnessUnlockForbiddenApi {
+  status?: boolean;
+  type?: HarnessUnlockForbiddenApiType;
+  code?: HarnessUnlockForbiddenApiCode;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  /** @minLength 1 */
+  error?: string;
+  attr?: string;
+  details?: HarnessUnlockForbiddenApiDetails;
+  action?: string;
+  retryable?: boolean;
 }
 
 export interface HarnessDefaultMoveApi {
@@ -30651,6 +30906,12 @@ export interface RunTestKPIsResponseApi {
   readonly avg_turn_count?: number;
   readonly avg_csat_score?: number;
   readonly failed_calls?: number;
+  /** Connected calls as Debug failures counts them: per call and live calls only. Null until the run finishes. Unlike connected_calls, it counts a completed chat on a voice run and skips a deleted call. */
+  readonly debug_failures_connected_calls?: number;
+  /** Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals. */
+  readonly failing_calls?: number;
+  /** Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes. */
+  readonly has_debug_failures_analysis?: boolean;
   readonly total_duration?: number;
 }
 
@@ -32874,6 +33135,8 @@ export interface RunExecutionApi {
   selected_scenario_keys?: string[];
   /** @minimum 1 */
   trials?: number;
+  /** Calls that connected: a chat that completed, a voice call that ran for any time. Debug failures needs enough of them. */
+  connected_calls: number;
   /** @minLength 1 */
   seed?: string;
   /** @minLength 1 */
@@ -47080,6 +47343,49 @@ export type AccountsGcpMarketplaceVerifyTokenCreateBody = {
   "x-gcp-marketplace-token": string;
 };
 
+export type AccountsNotificationsEmailUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsEmailUnsubscribeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
+export type AccountsNotificationsSnoozeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsSnoozeCreateParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+  /**
+   * Days to pause realtime digests, 1 to 30 (default 7).
+   */
+  days?: number;
+};
+
+export type AccountsNotificationsUnsubscribeListParams = {
+  /**
+   * Signed token from the emailed link.
+   */
+  token: string;
+};
+
 export type AccountsOrganizationMembersListParams = {
   /**
    * @minimum 1
@@ -49697,6 +50003,22 @@ export type SimulateApiAgentFixRunsListParams = {
    * @minLength 1
    */
   state?: string;
+};
+
+export type SimulateApiAgentFixRunsSubmitAttemptBody = {
+  source_run_id: string;
+  /** A `source/`-rooted tar.gz: each file of the brief it keeps, changed or not, and any new file. A file of the brief left out is deleted. */
+  tree: Blob;
+  summary?: string;
+  /** A GitHub agent's change is refused unless this is the brief's base_commit. */
+  base_commit?: string;
+  locked_paths?: string[];
+  /** The attempt's limit in credits. Left out, the attempt's hold × 1.25, capped at 50,000 credits. Its hold is the most its check runs can hold at once. */
+  budget_credits?: number;
+};
+
+export type SimulateApiAgentFixRunsBriefParams = {
+  source_run_id: string;
 };
 
 export type SimulateApiAgentFixRunsLaunchOptionsParams = {

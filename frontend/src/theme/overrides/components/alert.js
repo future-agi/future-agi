@@ -27,7 +27,8 @@ export function alert(theme) {
       [`& .${alertClasses.icon}`]: {
         padding: 0,
         marginRight: 10,
-        marginTop: 2,
+        // A 16px icon centred on the message's first 18px line.
+        marginTop: 1,
         fontSize: 16,
         opacity: 1,
         color: s.fg,

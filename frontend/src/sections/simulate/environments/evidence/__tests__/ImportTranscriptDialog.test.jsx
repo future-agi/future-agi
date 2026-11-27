@@ -59,7 +59,7 @@ describe("ImportTranscriptDialog", () => {
     await openDialog();
     expect(
       screen.getByText(
-        /Emails, phone, card and ID numbers become placeholders; an import keeps 60,000 characters, shared by its files\.$/,
+        "Emails, phone and card numbers, SSNs and API keys become placeholders. Up to 60,000 characters per import.",
       ),
     ).toBeInTheDocument();
   });
@@ -100,7 +100,7 @@ describe("ImportTranscriptDialog", () => {
     });
     await userEvent.click(
       screen.getByRole("checkbox", {
-        name: "These transcripts come from production",
+        name: "From production",
       }),
     );
     await userEvent.click(
@@ -121,7 +121,8 @@ describe("ImportTranscriptDialog", () => {
     await openDialog();
     const csv = "role,text\nuser,Where is it?\nassistant,On its way.\n";
 
-    fireEvent.change(screen.getByTestId("transcript-file-input"), {
+    // The drop zone's own file input, the one Browse files opens.
+    fireEvent.change(document.querySelector('input[type="file"]'), {
       target: {
         files: [
           file(csv, "calls.csv", "text/csv"),
@@ -152,6 +153,45 @@ describe("ImportTranscriptDialog", () => {
         production: false,
       }),
     );
+  });
+
+  it("offers a drop zone that names the files it takes", async () => {
+    await openDialog();
+    expect(
+      screen.getByText("Choose files or drag & drop them here"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "JSON messages (.json), User: / Agent: lines (.txt) or CSV with role and text (.csv)",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Up to 20 files, 500,000 characters each"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Browse files" }),
+    ).toBeInTheDocument();
+  });
+
+  it("adds dropped files to the ones already there, and removes one", async () => {
+    await openDialog();
+    const input = () => document.querySelector('input[type="file"]');
+
+    fireEvent.change(input(), {
+      target: { files: [file(PASTED, "one.txt", "text/plain")] },
+    });
+    await screen.findByText("one.txt");
+    fireEvent.change(input(), {
+      target: { files: [file(PASTED, "two.txt", "text/plain")] },
+    });
+    await screen.findByText("two.txt");
+    expect(screen.getByText("one.txt")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove one.txt" }),
+    );
+    expect(screen.queryByText("one.txt")).toBeNull();
+    expect(screen.getByText("two.txt")).toBeInTheDocument();
   });
 
   it("shows the line the backend could not read, and keeps the text", async () => {
