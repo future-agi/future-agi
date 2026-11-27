@@ -345,7 +345,7 @@ def test_a_run_that_ended_without_completing_can_still_be_summarised(
 @pytest.mark.django_db
 @pytest.mark.parametrize("has_optimiser", [False, True])
 def test_opening_fix_my_agent_creates_nothing(
-    auth_client, finished_run, finished_call, no_paid_work, has_optimiser
+    auth_client, finished_run, finished_call, debuggable, no_paid_work, has_optimiser
 ):
     """Opening the Fix My Agent drawer on a run never analysed returns the
     "trigger a refresh" message. It creates no optimiser and no optimiser
