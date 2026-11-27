@@ -55171,6 +55171,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "variations_blocked",
         "held_back_scenario_keys",
         "ship",
+        "held_back_from",
+        "locked_version_label",
       ],
       type: "object",
       properties: {
@@ -55212,7 +55214,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         held_back_scenario_keys: {
           description:
-            "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+            "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: on a locked version, the failing ones in its test split; otherwise empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
           type: "array",
           items: {
             type: "string",
@@ -55222,6 +55224,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         ship: {
           $ref: "#/definitions/AgentFixShipReadiness",
+        },
+        held_back_from: {
+          title: "Held back from",
+          description:
+            "What chooses the held-back cases: the run's locked version's test split, or a sample of the run's failing cases.",
+          type: "string",
+          enum: ["locked_version", "sample"],
+        },
+        locked_version_label: {
+          title: "Locked version label",
+          description:
+            "The label of the run's locked version; null off a locked version.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -103598,6 +103615,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "passed",
         "failing_sub_goals",
         "evidence_import_id",
+        "split",
       ],
       type: "object",
       properties: {
@@ -103629,6 +103647,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "The evidence import that added this scenario to the suite; null for any other scenario. A failing one offers Run Epoch from that evidence.",
           type: "string",
           format: "uuid",
+          "x-nullable": true,
+        },
+        split: {
+          title: "Split",
+          description:
+            "Its split in the run's locked version; null off a locked version, or when it can't be scored. A test-split case is never must-pass, and a failing one is held back.",
+          type: "string",
+          enum: ["train", "test"],
           "x-nullable": true,
         },
       },
