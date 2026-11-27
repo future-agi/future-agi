@@ -1256,3 +1256,52 @@ def test_bounded_export_content_queries_gate_trajectory_columns(settings):
     for col in ("input_item_hashes", "output_item_hashes", "payload_encoding"):
         assert col in sql_span_exp
         assert col in sql_trace_exp
+
+
+@pytest.mark.unit
+def test_040_schema_has_no_materialized_columns_or_ttls():
+    """040_trajectory_items.sql must stay purely additive: no MATERIALIZED, ALIAS, or TTL."""
+    import re
+    from pathlib import Path
+
+    from tracer.services.clickhouse.v2 import apply_schema
+
+    schema_file = (
+        Path(apply_schema.__file__).parent / "schema" / "040_trajectory_items.sql"
+    )
+    stmts = apply_schema.split_statements(schema_file.read_text())
+    assert len(stmts) == 2
+    combined = "\n".join(stmts)
+    assert not re.search(r"\bMATERIALIZED\b", combined, re.IGNORECASE)
+    assert not re.search(r"\bALIAS\b", combined, re.IGNORECASE)
+    assert not re.search(r"\bTTL\b", combined, re.IGNORECASE)
+    assert not re.search(r"\bMATERIALIZE\b", combined, re.IGNORECASE)
+    assert "content_bytes" not in combined
+
+
+@pytest.mark.unit
+def test_trace_list_content_query_preserves_legacy_root_replay_signature(settings):
+    """Subclasses overriding _root_replay_query without include_trajectory stay compatible."""
+    from datetime import UTC, datetime
+
+    from tracer.services.clickhouse.v2.query_builders.trace_list import (
+        TraceListQueryBuilderV2,
+    )
+
+    class LegacyRootReplay(TraceListQueryBuilderV2):
+        def _root_replay_query(self, identities, *, content, trace_rollup=False):
+            return super()._root_replay_query(
+                identities, content=content, trace_rollup=trace_rollup
+            )
+
+    settings.FI_TRAJECTORY_STORE_READ_ENABLED = True
+    pid = PROJECT_ID
+    tid = "00000000-0000-0000-0000-000000000011"
+    sid = "abcdef0123456780"
+    ts_us = int(datetime(2026, 11, 1, 12, 0, 0, tzinfo=UTC).timestamp() * 1_000_000)
+    root_id = (pid, tid, sid, ts_us, "llm", "svc", ts_us, 1)
+
+    sql, _params = LegacyRootReplay(project_id=pid).build_content_query(
+        [tid], root_identities=[root_id]
+    )
+    assert "payload_encoding" not in sql

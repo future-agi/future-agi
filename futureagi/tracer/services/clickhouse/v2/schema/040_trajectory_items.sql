@@ -32,7 +32,6 @@ CREATE TABLE IF NOT EXISTS trajectory_items
     item_type       LowCardinality(String) DEFAULT 'raw',
     role            LowCardinality(String) DEFAULT '',
     content         String                 CODEC(ZSTD(3)),
-    content_bytes   UInt32                 MATERIALIZED length(content),
     first_seen_at   DateTime64(6, 'UTC')   DEFAULT now64(6, 'UTC')
 )
 ENGINE = ReplacingMergeTree(first_seen_at)

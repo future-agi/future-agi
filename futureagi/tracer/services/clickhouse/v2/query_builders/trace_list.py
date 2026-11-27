@@ -878,11 +878,14 @@ class _TraceRootReplayV2:
         identities = self.content_root_identities_for_rows(rows)
         if {identity[1] for identity in identities} != set(map(str, trace_ids)):
             raise ValueError("v2 content replay identity escaped requested traces")
+        extra_kwargs: dict[str, Any] = {}
+        if include_trajectory:
+            extra_kwargs["include_trajectory"] = True
         return self._root_replay_query(
             identities,
             content=True,
             trace_rollup=include_trace_rollup,
-            include_trajectory=include_trajectory,
+            **extra_kwargs,
         )
 
 
