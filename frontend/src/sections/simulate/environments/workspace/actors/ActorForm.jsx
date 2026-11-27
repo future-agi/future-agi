@@ -76,10 +76,9 @@ export default function ActorForm({
   const request = actor ? requestOf() : null;
   const check = useActorCheck(envId, request);
   const { verdict } = check;
-  // Problems wait until something is edited or Save is tried, so a form opens clean.
-  const [tried, setTried] = useState(false);
-  // Until Save is tried, a problem shows only on a field the person changed and filled; an empty required field
-  // waits for Save. Save is the final check and shows every problem.
+  // A problem shows live only on a field the person changed and filled. Save is the final check: it reveals every
+  // problem there is then, and those keep following edits; a field that appears later waits for the next Save.
+  const [revealed, setRevealed] = useState(() => new Set());
   const isEmpty = (name) => {
     const typed = value(name);
     return Array.isArray(typed)
@@ -100,12 +99,23 @@ export default function ActorForm({
     const name = PROBLEM_FIELDS[one.field];
     return Boolean(name) && touched(name) && filled(name);
   };
+  // The server names the whole trigger; its problem shows under the trigger's first required input left empty.
+  const emptyTriggerInput = () => {
+    const key = (triggerKeys[value("mode")] || [])
+      .filter((one) => !OPTIONAL_TRIGGER_KEYS.includes(one))
+      .find((one) => isEmpty(TRIGGER_INPUTS[one]));
+    return key ? TRIGGER_INPUTS[key] : null;
+  };
+  // Where a problem belongs: its form field, or the line above Save for one with none.
+  const keyOf = (one) => {
+    const name = PROBLEM_FIELDS[one.field];
+    if (name === "mode") return emptyTriggerInput() || "mode";
+    return name || `above:${one.message}`;
+  };
   const problems = verdict
-    ? tried
-      ? verdict.problems
-      : verdict.problems.filter(live)
+    ? verdict.problems.filter((one) => live(one) || revealed.has(keyOf(one)))
     : [];
-  const overBy = verdict && tried ? verdict.over_by : 0;
+  const overBy = verdict && revealed.has("over_by") ? verdict.over_by : 0;
   // Escape, the close button and a click outside ask before discarding; Cancel never asks.
   const [leaving, setLeaving] = useState(false);
   const leave = () => {
@@ -150,16 +160,9 @@ export default function ActorForm({
   if (problemInFold && !advanced) setAdvanced(true);
   const foldOpen = advanced || problemInFold;
   const shown = screenOf(foldOpen);
-  // The server names the whole trigger; its problem shows under the trigger's first required input left empty.
-  const emptyTriggerInput = () => {
-    const key = (triggerKeys[value("mode")] || [])
-      .filter((one) => !OPTIONAL_TRIGGER_KEYS.includes(one))
-      .find((one) => isEmpty(TRIGGER_INPUTS[one]));
-    return key ? TRIGGER_INPUTS[key] : null;
-  };
   const fieldOf = (one) => {
     const name = PROBLEM_FIELDS[one.field];
-    if (name === "mode") return emptyTriggerInput() || "mode";
+    if (name === "mode") return keyOf(one);
     return shown.has(name) ? name : null;
   };
   const form = {
@@ -186,7 +189,12 @@ export default function ActorForm({
   // on the button for a check still running.
   const [saveAsked, setSaveAsked] = useState(false);
   const submit = () => {
-    setTried(true);
+    setRevealed(
+      new Set([
+        ...(verdict?.problems || []).map(keyOf),
+        ...(verdict?.over_by > 0 ? ["over_by"] : []),
+      ]),
+    );
     if (existing && !changed) {
       onClose();
       return;
@@ -206,7 +214,6 @@ export default function ActorForm({
   const attemptSave = () => {
     if (busy || saveAsked) return;
     if (check.pending) {
-      setTried(true);
       setSaveAsked(true);
       return;
     }

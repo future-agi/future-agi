@@ -171,7 +171,9 @@ describe("ActorForm", () => {
     fireEvent.mouseDown(screen.getByLabelText(starred("Comes in")));
     const partway = screen.getByRole("option", { name: /Joins partway/ });
     expect(partway).toHaveAttribute("aria-disabled", "true");
-    expect(partway).toHaveTextContent("Not available in this environment");
+    expect(partway).toHaveTextContent(
+      "Needs a world action, and this environment has none",
+    );
     unmount();
     renderForm(newActor("caller", "audio_mix"), { data });
     fireEvent.mouseDown(screen.getByLabelText(starred("Comes in")));
@@ -185,10 +187,14 @@ describe("ActorForm", () => {
       name: /When the agent calls an action/,
     });
     expect(call).toHaveAttribute("aria-disabled", "true");
-    expect(call).toHaveTextContent("This environment has no world actions");
+    expect(call).toHaveTextContent(
+      "Needs a world action, and this environment has none",
+    );
     expect(
       screen.getByRole("option", { name: /Once a record exists/ }),
-    ).toHaveTextContent("This world has no record collections yet");
+    ).toHaveTextContent(
+      "Needs a record collection, and this world has none yet",
+    );
   });
 
   it("keeps a stored action trigger on screen but disabled, saying why, when the environment has no world actions", () => {

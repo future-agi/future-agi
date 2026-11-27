@@ -1392,6 +1392,37 @@ describe("WorldActorsPanel", () => {
     expect(saveButton()).not.toBeDisabled();
   });
 
+  it("keeps a field that appears after Save quiet until the next Save", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    answer = {
+      ...CLEAN,
+      problems: [
+        { field: "trigger", message: "Pick the action that brings them in" },
+      ],
+    };
+    comeIn("Joins partway", "When the agent calls an action");
+    fireEvent.click(saveButton());
+    expect(
+      screen.getByText("Pick the action that brings them in"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
+    answer = {
+      ...CLEAN,
+      problems: [{ field: "trigger", message: "Give the seconds after the start" }],
+    };
+    comeIn("At a set moment");
+    expect(screen.getByLabelText(starred("Seconds after the start"))).not.toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.queryByText("Give the seconds after the start")).toBeNull();
+    fireEvent.click(saveButton());
+    expect(
+      screen.getByLabelText(starred("Seconds after the start")),
+    ).toHaveAccessibleDescription("Give the seconds after the start");
+  });
+
   it("keeps the form open and Save off while the record match is half-typed JSON, and asks the server nothing", () => {
     actorsData = cast([MANAGER], { knowledge_sources: WITH_RECORDS });
     render(<WorldActorsPanel envId="env-1" />);

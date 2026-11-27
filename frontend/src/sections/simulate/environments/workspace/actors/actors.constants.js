@@ -198,9 +198,9 @@ export const ACTORS_COPY = {
         moment: "At a set moment",
       },
       presetWay: "What brings them in",
-      presetUnavailable: "Not available in this environment",
-      kindNoActions: "This environment has no world actions",
-      kindNoCollections: "This world has no record collections yet",
+      kindNoActions: "Needs a world action, and this environment has none",
+      kindNoCollections:
+        "Needs a record collection, and this world has none yet",
       triggerToolNone:
         "This environment has no world actions, so pick another way they come in.",
       triggerCollectionNone:

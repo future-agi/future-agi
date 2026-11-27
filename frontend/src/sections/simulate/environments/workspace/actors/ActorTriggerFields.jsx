@@ -72,7 +72,12 @@ export default function ActorTriggerFields({
           label: one.label || F.presets[one.id],
           ...(usable(one).length
             ? {}
-            : { disabled: true, note: F.presetUnavailable }),
+            : {
+                disabled: true,
+                note: [...new Set(one.kinds.map((kind) => missing[kind]))].join(
+                  ". ",
+                ),
+              }),
         }))}
         helperText={F.triggerHelp}
         startLabel={startModeLabel}
