@@ -333,6 +333,12 @@ jobs:
       BUILD_GATEWAY: "true"
       E2E_LAST_SHARD: ${{ matrix.shard == matrix.total }}
       E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
+      # The builder of the stack images, chosen on this one line. "default" is
+      # Docker's own builder: each image is written straight into the store
+      # the stack runs from. Empty brings back the buildx container builder,
+      # which packs every image into an archive, loads it, and keeps a second
+      # copy for a later step to delete (55 to 173 s per leg on 27 Nov 2026).
+      BUILDX_BUILDER: default
     steps:
       - uses: actions/checkout@v4
         with:
@@ -365,6 +371,7 @@ jobs:
         run: scripts/reclaim-runner-disk.sh
 
       - uses: docker/setup-buildx-action@v3
+        if: env.BUILDX_BUILDER != 'default'
 
       - name: ghcr login for read-only cache imports
         # Fork PRs and queue groups do not log in; they build cold if the
@@ -454,6 +461,8 @@ jobs:
           if [ "$BUILD_BACKEND" = true ]; then targets+=(backend fi-collector); fi
           if [ "$BUILD_FRONTEND" = true ]; then targets+=(frontend); fi
           if [ "$BUILD_GATEWAY" = true ]; then targets+=(gateway); fi
+          # For the record of which builder and image store built this leg.
+          docker info --format 'Docker {{.ServerVersion}}, storage driver {{.Driver}} {{.DriverStatus}}'
           docker buildx bake -f e2e/stack/docker-bake.hcl --print "${targets[@]}"
           docker buildx bake -f e2e/stack/docker-bake.hcl "${targets[@]}"
 
@@ -486,10 +495,17 @@ jobs:
         run: bin/e2e build standalone-app
 
       - name: Drop the buildkit copy of the built images
-        # buildx holds a second copy of every loaded image; the cross-run
-        # cache lives in the registry, so the local one is free to drop.
+        # The buildx container builder holds a second copy of every loaded
+        # image; the cross-run cache lives in the registry, so the local one
+        # is free to drop. Docker's own builder stores each image once.
+        if: env.BUILDX_BUILDER != 'default'
+        run: docker buildx prune -af || true
+
+      - name: Record the built images and the free disk
+        # Fails here, before the boot, if an image built above is not in the
+        # local store. The check after the boot reads the same file.
         run: |
-          docker buildx prune -af || true
+          node e2e/scripts/built-images.mjs record "$RUNNER_TEMP/built-images.json"
           df -h / /mnt
 
       - uses: actions/setup-node@v4
@@ -601,6 +617,13 @@ jobs:
           retention-days: 3
           overwrite: true
           if-no-files-found: warn
+
+      - name: The stack ran the images this job built
+        # Fails the leg if a container of the stack was started from another
+        # image under a built tag (a pull, or a later rebuild), whatever the
+        # suite's outcome. After the suite: the steps around it stay adjacent.
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        run: node e2e/scripts/built-images.mjs verify "$RUNNER_TEMP/built-images.json"
 
       - name: Record the stack's pulled images
         # The report combines shards from different attempts (a re-run of failed
