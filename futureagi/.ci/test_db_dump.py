@@ -743,6 +743,10 @@ class BackendWorkflowTest(unittest.TestCase):
         self.assertNotIn("ImageVersion", runtime)
         for recipe_input in ("$ids", "$config", '"$(uname -m)"', '"$tools"'):
             self.assertIn(recipe_input, runtime)
+        # The Compose file's bytes are the whole service definition only while
+        # it interpolates nothing from the environment.
+        self.assertIn("config=$(sha256sum < docker-compose.test.yml)\n", key_text)
+        self.assertNotIn("${", (ROOT / "futureagi/docker-compose.test.yml").read_text())
 
         # Exercise key.sh's exact recipe output against a stable, synthetic
         # service snapshot. Changing only the runner release must not change
@@ -770,9 +774,9 @@ class BackendWorkflowTest(unittest.TestCase):
                         print("postgres:16-alpine")
                     elif args[:2] == ["image", "inspect"]:
                         print("sha256:" + "a" * 64)
-                    elif args[0] == "compose" and args[-1] == "config":
-                        print("services:\\n  test-db:\\n    image: postgres:16-alpine")
                     else:
+                        # Includes a bare `compose config`: its rendering
+                        # varies by Compose release, so the key never reads it.
                         raise SystemExit(2)
                     """
                 )
