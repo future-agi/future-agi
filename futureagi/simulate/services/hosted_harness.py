@@ -1815,14 +1815,15 @@ def _goal_names(sub_goals: object) -> list[str] | None:
     ]
 
 
-def grades_nothing(sub_goals: object, catalogue: frozenset[str]) -> bool:
+def grades_nothing(sub_goals: object, catalogue: Collection[str]) -> bool:
     """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
     cannot score it. A scenario without the field predates sub-goals and an empty
-    catalogue grades anything: neither is refused."""
+    catalogue grades anything: neither is refused. The catalogue is any collection
+    of goal names, a mapping keyed by name included."""
     names = _goal_names(sub_goals)
     if not catalogue or names is None:
         return False
-    return catalogue.isdisjoint(names)
+    return not any(name in catalogue for name in names)
 
 
 def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
@@ -1854,19 +1855,6 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
             + " no sub-goal of this environment version, so the run cannot score it",
             status_code=422,
         )
-
-
-def grades_nothing(sub_goals: Any, catalogue: Collection[str]) -> bool:
-    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
-    cannot score it. A scenario without the field predates sub-goals and an empty
-    catalogue grades anything: neither is refused."""
-    if not catalogue or not isinstance(sub_goals, list):
-        return False
-    names = {
-        str(goal.get("name") if isinstance(goal, Mapping) else goal)
-        for goal in sub_goals
-    }
-    return not names & set(catalogue)
 
 
 def _member_registrations(
