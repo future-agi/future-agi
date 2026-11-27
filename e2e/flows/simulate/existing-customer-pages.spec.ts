@@ -61,14 +61,15 @@ async function stubFinishedRun(page: Page, run: FinishedRun) {
       },
     }),
   );
-  // GET /simulate/test-executions/<id>/kpis/ (RunTestKPIsView kpi_data): the count
-  // the guard reads is `connected_calls`. Both runs report 14 completed calls,
-  // so the 15-call run opens only because the guard reads connected, not completed.
+  // GET /simulate/test-executions/<id>/kpis/ (RunTestKPIsView kpi_data): the counts
+  // the guard reads are `connected_calls` and `failing_calls`. Both runs report 14
+  // completed calls, so the 15-call run opens only because the guard reads connected,
+  // not completed. Both runs have a failing call, so only the call count can block.
   await page.route(endsWith(`/simulate/test-executions/${run.executionId}/kpis/`), (route) =>
     route.fulfill({
       json: {
         agent_type: 'voice', total_calls: 20, completed_calls: MIN_CONNECTED_CALLS - 1,
-        calls_attempted: 20, connected_calls: run.connectedCalls,
+        calls_attempted: 20, connected_calls: run.connectedCalls, failing_calls: 1,
         calls_connected_percentage: (run.connectedCalls / 20) * 100, scenario_graphs: {},
       },
     }),
@@ -105,17 +106,17 @@ test('SIM-E2E-002: an org from before the Simulate cutoff keeps Scenarios and Ru
   annotation: flowAnnotation({
     id: 'SIM-E2E-002', area: 'simulate',
     userGoal: 'An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu, '
-      + 'and can debug the failures of a finished Run Simulation run once it has 15 connected calls',
+      + 'and can debug the failures of a finished Run Simulation run once it has 15 connected calls and a failing call',
     steps: ['read the Simulate menu', 'open Scenarios and Run Simulation from the menu',
             'open a finished Run Simulation run with 14 connected calls and point at Debug failures',
-            'open a finished Run Simulation run with 15 connected calls and 14 completed calls',
+            'open a finished Run Simulation run with 15 connected calls, 14 completed calls and a failing call',
             'click Debug failures'],
     backendChecks: ["user-info for the actor's org reports restrict_simulate_to_environments: false"],
     browserChecks: ['the Simulate menu is exactly Environment, Scenarios, Run Simulation',
                     'each of those two items opens its page by URL and title, never /404',
                     'at 14 connected calls Debug failures is disabled, and its tooltip reads exactly '
                       + '"You need at least 15 connected calls to debug failures."',
-                    'at 15 connected calls and 14 completed calls Debug failures is enabled',
+                    'at 15 connected calls, 14 completed calls and a failing call Debug failures is enabled',
                     'clicking it opens the Debug failures drawer, with its subtitle and its no-analysis-yet text'],
   }),
 }, async ({ page, actor }, testInfo) => {

@@ -63748,6 +63748,12 @@
                             "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TestExecutionDebugAnalysisError"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -63805,6 +63811,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TestExecutionDebugAnalysisError"
                         }
                     },
                     "500": {
@@ -173016,6 +173028,13 @@
                     "title": "Failed calls",
                     "type": "integer",
                     "readOnly": true
+                },
+                "failing_calls": {
+                    "title": "Failing calls",
+                    "description": "Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "total_duration": {
                     "title": "Total duration",

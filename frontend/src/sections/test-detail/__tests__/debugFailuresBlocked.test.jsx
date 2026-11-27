@@ -15,6 +15,8 @@ vi.mock("src/hooks/useKpis", async (importOriginal) => ({
 
 const BLOCKED_REASON =
   "You need at least 15 connected calls to debug failures.";
+const NOTHING_FAILED_REASON =
+  "Nothing failed in this run, so there’s nothing to debug.";
 
 // Decides for e1 with the given store, after one KPI read of `kpis` landed.
 const decide = (store, kpis) => {
@@ -104,6 +106,39 @@ describe("Debug failures on a finished run", () => {
         connected_calls: 15,
       }),
     ).toEqual({ disabled: false, reason: "" });
+  });
+
+  it("is blocked on a completed run with 15 connected calls and none failing", () => {
+    expect(
+      run("completed", {
+        agent_type: "voice",
+        total_calls: 20,
+        connected_calls: 15,
+        failing_calls: 0,
+      }),
+    ).toEqual({ disabled: true, reason: NOTHING_FAILED_REASON });
+  });
+
+  it("is open on a completed run with 15 connected calls and one failing", () => {
+    expect(
+      run("completed", {
+        agent_type: "voice",
+        total_calls: 20,
+        connected_calls: 15,
+        failing_calls: 1,
+      }),
+    ).toEqual({ disabled: false, reason: "" });
+  });
+
+  it("names the call count first on a run with 14 connected calls and none failing", () => {
+    expect(
+      run("completed", {
+        agent_type: "voice",
+        total_calls: 20,
+        connected_calls: 14,
+        failing_calls: 0,
+      }),
+    ).toEqual({ disabled: true, reason: BLOCKED_REASON });
   });
 
   it("does not block on a count it was never sent", () => {

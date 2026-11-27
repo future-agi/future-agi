@@ -68415,6 +68415,12 @@ export const SimulateTestExecutionsKpisListResponse = zod.object({
   avg_turn_count: zod.number().optional(),
   avg_csat_score: zod.number().optional(),
   failed_calls: zod.number().optional(),
+  failing_calls: zod
+    .number()
+    .optional()
+    .describe(
+      "Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals.",
+    ),
   total_duration: zod.number().optional(),
 });
 

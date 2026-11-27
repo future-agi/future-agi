@@ -34987,6 +34987,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/TestExecutionDebugAnalysisError",
+          },
           500: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
@@ -35016,6 +35019,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             },
             404: {
               $ref: "#/definitions/ApiTextErrorResponse",
+            },
+            409: {
+              $ref: "#/definitions/TestExecutionDebugAnalysisError",
             },
             500: {
               $ref: "#/definitions/ApiTextErrorResponse",
@@ -90570,6 +90576,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failed calls",
           type: "integer",
           readOnly: true,
+        },
+        failing_calls: {
+          title: "Failing calls",
+          description:
+            "Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals.",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
         },
         total_duration: {
           title: "Total duration",

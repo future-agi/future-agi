@@ -14,7 +14,7 @@ import ToolEvaluationCellRenderer from "./CellRenderers/ToolEvaluationCellRender
 import { getLabel } from "./PerformanceMetrics/common";
 import EvalReasonCellRenderer from "./CellRenderers/EvalReasonCellRenderer";
 import ToolReasonCellRenderer from "./CellRenderers/ToolReasonCellRenderer";
-import { MIN_CONNECTED_CALLS, TOO_FEW_CALLS_REASON } from "./debugFailuresRule";
+import { debugFailuresBlockedReason } from "./debugFailuresRule";
 import {
   reorderMenuList,
   setMenuIcons,
@@ -691,6 +691,8 @@ const IGNORED_KEYS = [
   // would paint a phantom eval. The simulate harness reads
   // `kpis.completed_calls` directly and never comes through here.
   "completed_calls",
+  // Debug failures' count, read by useFixMyAgentBlocked; no card shows it.
+  "failing_calls",
   "avg_response",
   "avg_user_interruption_count",
   "avg_ai_interruption_rate",
@@ -1022,12 +1024,13 @@ export const useFixMyAgentBlocked = (executionId) => {
           }
         : CHECKING;
     }
-    // An older backend sends no count: undefined < 15 is false, so it stays open.
-    if (kpis?.connected_calls < MIN_CONNECTED_CALLS) {
-      return {
-        disabled: true,
-        reason: TOO_FEW_CALLS_REASON,
-      };
+    // An older backend sends no count, and a count it did not send blocks nothing.
+    const blockedReason = debugFailuresBlockedReason({
+      connectedCalls: kpis?.connected_calls,
+      failingCalls: kpis?.failing_calls,
+    });
+    if (blockedReason) {
+      return { disabled: true, reason: blockedReason };
     }
   }
 

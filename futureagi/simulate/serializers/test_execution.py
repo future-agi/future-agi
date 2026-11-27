@@ -1430,6 +1430,15 @@ class RunTestKPIsResponseSerializer(serializers.Serializer):
     avg_turn_count = serializers.FloatField(read_only=True)
     avg_csat_score = serializers.FloatField(read_only=True)
     failed_calls = serializers.IntegerField(read_only=True)
+    failing_calls = serializers.IntegerField(
+        read_only=True,
+        allow_null=True,
+        help_text=(
+            "Calls whose outcome is failed or error, as Debug failures counts "
+            "them. Null until the run finishes. Unlike failed_calls, it counts "
+            "a completed call that failed its evals."
+        ),
+    )
     total_duration = serializers.FloatField(read_only=True)
 
 

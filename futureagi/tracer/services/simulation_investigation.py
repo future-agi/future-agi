@@ -103,7 +103,7 @@ def ensure_simulation_investigation(
                 workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
             )
         )
-        refusal = _refusal(execution)
+        refusal = debug_failures_refusal(execution)
         # The rule stops new spend, not a diagnosis already made: that one stays
         # readable as it is, with no call read again.
         if refusal is not None and earlier:
@@ -136,8 +136,11 @@ def ensure_simulation_investigation(
         return jobs
 
 
-def _refusal(execution: TestExecution) -> SimulationInvestigationConflict | None:
-    """Why a new diagnosis of this run would find nothing, or None."""
+def debug_failures_refusal(
+    execution: TestExecution,
+) -> SimulationInvestigationConflict | None:
+    """Why a new diagnosis of this run would find nothing, or None. Run
+    Simulation's optimiser analysis refuses the same runs."""
     if connected_call_count(execution) < MIN_CONNECTED_CALLS:
         return SimulationInvestigationConflict(
             TOO_FEW_CALLS, code="investigation_too_few_calls"

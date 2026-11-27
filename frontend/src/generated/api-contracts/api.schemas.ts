@@ -30674,6 +30674,8 @@ export interface RunTestKPIsResponseApi {
   readonly avg_turn_count?: number;
   readonly avg_csat_score?: number;
   readonly failed_calls?: number;
+  /** Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals. */
+  readonly failing_calls?: number;
   readonly total_duration?: number;
 }
 

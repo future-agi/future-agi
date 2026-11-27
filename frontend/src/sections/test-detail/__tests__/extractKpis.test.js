@@ -32,19 +32,37 @@ describe("extractKpis", () => {
   it.each([AGENT_TYPES.VOICE, AGENT_TYPES.CHAT])(
     "keeps completed_calls out of every bucket (%s)",
     (agentType) => {
-      const { evalMetrics, callDetails, systemMetrics, deterministicEvals } = extractKpis(
-        { completed_calls: 16, total_calls: 20, avg_turn_count: 4 },
-        agentType,
-      );
+      const { evalMetrics, callDetails, systemMetrics, deterministicEvals } =
+        extractKpis(
+          { completed_calls: 16, total_calls: 20, avg_turn_count: 4 },
+          agentType,
+        );
 
       expect(evalMetrics).not.toHaveProperty("completed_calls");
       expect(callDetails).not.toHaveProperty("completed_calls");
       expect(systemMetrics).not.toHaveProperty("completed_calls");
-      expect(deterministicEvals.map((e) => e.id)).not.toContain("completed_calls");
+      expect(deterministicEvals.map((e) => e.id)).not.toContain(
+        "completed_calls",
+      );
       // The neighbouring keys still route as they did — this excludes one key,
       // it does not switch the classifier off.
       expect(callDetails).toHaveProperty("total_calls", 20);
       expect(systemMetrics).toHaveProperty("avg_turn_count", 4);
     },
   );
+
+  // `failing_calls` is Debug failures' count, null while the run is live. A
+  // number would paint a phantom eval, and null a phantom choice chart.
+  it.each([
+    [AGENT_TYPES.VOICE, 3],
+    [AGENT_TYPES.CHAT, null],
+  ])("keeps failing_calls out of every bucket (%s, %s)", (agentType, count) => {
+    const { evalMetrics, callDetails, systemMetrics, deterministicEvals } =
+      extractKpis({ failing_calls: count, total_calls: 20 }, agentType);
+
+    expect(evalMetrics).not.toHaveProperty("failing_calls");
+    expect(callDetails).not.toHaveProperty("failing_calls");
+    expect(systemMetrics).not.toHaveProperty("failing_calls");
+    expect(deterministicEvals.map((e) => e.id)).not.toContain("failing_calls");
+  });
 });

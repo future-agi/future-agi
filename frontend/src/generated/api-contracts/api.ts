@@ -74238,6 +74238,11 @@ export type simulateTestExecutionsOptimiserAnalysisListResponse404 = {
   status: 404;
 };
 
+export type simulateTestExecutionsOptimiserAnalysisListResponse409 = {
+  data: TestExecutionDebugAnalysisErrorApi;
+  status: 409;
+};
+
 export type simulateTestExecutionsOptimiserAnalysisListResponse500 = {
   data: ApiTextErrorResponseApi;
   status: 500;
@@ -74245,7 +74250,7 @@ export type simulateTestExecutionsOptimiserAnalysisListResponse500 = {
 
 export type simulateTestExecutionsOptimiserAnalysisListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409 | 500>;
 };
 
 export type simulateTestExecutionsOptimiserAnalysisListResponseSuccess =
@@ -74254,6 +74259,7 @@ export type simulateTestExecutionsOptimiserAnalysisListResponseSuccess =
   };
 export type simulateTestExecutionsOptimiserAnalysisListResponseError = (
   | simulateTestExecutionsOptimiserAnalysisListResponse404
+  | simulateTestExecutionsOptimiserAnalysisListResponse409
   | simulateTestExecutionsOptimiserAnalysisListResponse500
   | simulateTestExecutionsOptimiserAnalysisListResponseDefault
 ) & {
@@ -74302,6 +74308,11 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404 = {
   status: 404;
 };
 
+export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse409 = {
+  data: TestExecutionDebugAnalysisErrorApi;
+  status: 409;
+};
+
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500 = {
   data: ApiTextErrorResponseApi;
   status: 500;
@@ -74310,7 +74321,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500 = {
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500>;
   };
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseSuccess =
@@ -74321,6 +74332,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseError =
   (
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse400
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404
+    | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse409
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500
     | simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseDefault
   ) & {
