@@ -17,6 +17,7 @@ import uuid
 import zlib
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -2074,7 +2075,6 @@ def test_a_number_under_its_own_secrets_name_is_masked(execution, scenario):
 @pytest.mark.parametrize(
     "rule",
     [
-        "Never ask for a password: it is against policy.",
         "When asked about the secret: e.g. a PIN, never say it.",
     ],
 )
@@ -2229,7 +2229,7 @@ def _text_masked(text):
         (
             f"Your new password: {FAKE_WORD}. Please change it after you log in.",
             FAKE_WORD,
-            "Please change it after you log in.",
+            "Your new password:",
         ),
         (f"Use secret: {FAKE_WORD} to log in.", FAKE_WORD, "Use secret:"),
         (f"The api_key: {FAKE_WORD} is for staging only", FAKE_WORD, "is for staging"),
@@ -2290,7 +2290,6 @@ def test_an_authorization_credential_inside_a_sentence_is_masked(scheme, credent
         "token: explain codes expire.",
         "Token: refuse to read it aloud.",
         "Agent: Your password: we never ask for it on a call.",
-        "Ask for the password: then verify it.",
         # A contraction is one word: "don't" is read whole, not cut at its quote.
         "Password: don't ask the caller for it.",
         "The password: it's not something we ask for.",
@@ -2395,3 +2394,114 @@ def test_bulleted_rules_in_the_instructions_reach_the_reader_whole(
 
     assert evidence.content == rules
     assert evidence.marks == ()
+
+
+# --- high-only check: every earlier masked value stays masked ---------------------
+
+_REPLAY = json.loads(
+    (Path(__file__).parent / "fixtures" / "masking_replay.json").read_text()
+)["rows"]
+
+
+@pytest.mark.parametrize(
+    "row", _REPLAY, ids=[f"replay{index}" for index in range(len(_REPLAY))]
+)
+def test_every_value_an_earlier_round_masked_is_still_masked(row):
+    sent = json.dumps(reader._masked(row["value"])[0])
+
+    assert not [needle for needle in row["needles"] if needle in sent]
+
+
+FAKE_SHORT_KEY = "Fake" + "9x" * 3  # digits, under 16 characters
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        f"password: is {FAKE_SHORT_KEY}",
+        f"Password: it is {FAKE_SHORT_KEY}",
+        f"token: the {FAKE_SHORT_KEY}{FAKE_SHORT_KEY}",
+        f"secret: a {FAKE_SHORT_KEY}",
+        f"Authorization: the {FAKE_SHORT_KEY}{FAKE_SHORT_KEY}",
+        f"token: staging {FAKE_SHORT_KEY}{FAKE_SHORT_KEY} for the demo",
+        f"password: admin {FAKE_SHORT_KEY} for the new staff",
+        f"Authorization: Bearer staging {FAKE_SHORT_KEY}{FAKE_SHORT_KEY} for the api",
+        f"Authorization: Hawk {FAKE_SHORT_KEY}{FAKE_SHORT_KEY} for the api",
+        f"The staging token: the {FAKE_SHORT_KEY}{FAKE_SHORT_KEY} one",
+        f"Never read the token: say no and move on then use {FAKE_SHORT_KEY} later",
+        f"token: the new one for all of the staff will be {FAKE_SHORT_KEY}",
+    ],
+)
+def test_a_key_shaped_word_anywhere_after_a_secrets_name_is_masked(said):
+    masked, marks = _text_masked(said)
+
+    assert FAKE_SHORT_KEY not in masked
+    assert marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "The wifi password: the blue door",
+        "The wifi password: my dog rex",
+        "The wifi password: it is raining",
+        "password: the blue door",
+        "- password: all good things",
+        "Your new passphrase: all good things",
+        # The four words are counted to the end of the first sentence.
+        "password: blue sky. Please change it after you log in.",
+        "The wifi password: open the gates. Then log in.",
+        "Your new password: blue sky. Please change it after you log in.",
+    ],
+)
+def test_four_words_or_fewer_after_a_passwords_name_are_masked_whatever_they_start_with(
+    said,
+):
+    masked, marks = _text_masked(said)
+
+    assert masked.endswith(": [REDACTED]")
+    assert "sky" not in masked and "gates" not in masked
+    assert marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "Never ask for a password: it is against policy.",
+        "Ask for the password: then verify it.",
+    ],
+)
+def test_a_short_rule_after_a_passwords_name_is_masked_with_the_mark(rule):
+    # The price of masking short passphrases whole: such a rule loses its tail,
+    # and says so with the mark.
+    masked, marks = _text_masked(rule)
+
+    assert masked.endswith(": [REDACTED]")
+    assert marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "If the caller asks about a token: explain that one-time codes expire "
+        "after 5 minutes and never read one aloud.",
+        "Token: say no, and tell them codes last 10 minutes.",
+    ],
+)
+def test_a_small_number_in_a_rule_is_not_read_as_a_key(rule):
+    assert _text_masked(rule) == (rule, ())
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "said",
+    [f"Password: it is {FAKE_SHORT_KEY}", "The wifi password: the blue door"],
+)
+def test_a_secret_after_a_rule_word_lead_is_masked_by_the_reader(voice_call, said):
+    _turn(voice_call, "user", said, 0)
+
+    evidence = _one(voice_call, Kind.TRANSCRIPT)
+
+    assert FAKE_SHORT_KEY not in json.dumps(evidence.content)
+    assert "blue door" not in json.dumps(evidence.content)
+    assert evidence.marks == (reader.SECRETS_MASKED,)
