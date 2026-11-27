@@ -48,7 +48,10 @@ from tracer.tests.test_simulation_investigation import (
     _ready_features,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("_debug_failures_readable"),
+]
 
 
 @pytest.fixture

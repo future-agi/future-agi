@@ -148,11 +148,16 @@ export default function useSQLExecution(
             )
               throw e;
             setWaitingForAdmission(true);
-            await admissionDelay(
-              Math.min(1000 * 2 ** Math.min(attempt, 3), 5000, remaining),
-              controller.signal,
+            const wait = Math.min(
+              1000 * 2 ** Math.min(attempt, 3),
+              5000,
+              remaining,
             );
-            if (Date.now() >= deadline) throw e;
+            await admissionDelay(wait, controller.signal);
+            // A wait that used the rest of the budget ends the retries, even
+            // if the timer fired a millisecond before Date.now() reached the
+            // deadline.
+            if (wait >= remaining || Date.now() >= deadline) throw e;
           }
         }
       } catch (e) {
