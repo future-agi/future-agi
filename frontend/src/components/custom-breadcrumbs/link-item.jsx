@@ -92,5 +92,5 @@ BreadcrumbsLink.propTypes = {
     name: PropTypes.string,
     onClick: PropTypes.func,
   }),
-  lastLink: PropTypes.object,
+  lastLink: PropTypes.string,
 };
