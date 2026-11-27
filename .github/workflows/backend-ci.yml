@@ -425,7 +425,6 @@ jobs:
           name: ${{ steps.saved-db.outputs.artifact }}
           path: ${{ runner.temp }}/migrated-db/
           if-no-files-found: error
-          retention-days: 1
           compression-level: 0
 
       - name: Distribute pinned Temporal archive to shards

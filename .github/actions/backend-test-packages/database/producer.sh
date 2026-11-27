@@ -7,7 +7,7 @@ fresh="$RUNNER_TEMP/fresh-db"
 stage="$RUNNER_TEMP/migrated-db"
 mkdir -p "$fresh" "$stage"
 if [[ $FOUND == true ]]; then
-  bash "$(dirname "$0")/verify-record.sh" "$stage" "$RECIPE"
+  bash "$(dirname "$0")/verify-record.sh" "$stage" "$SAVED"
 else
   # A partial or unexpected download is not a clean staging directory.
   [[ -z $(find "$stage" -mindepth 1 -print -quit) ]]

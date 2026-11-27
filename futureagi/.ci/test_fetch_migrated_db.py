@@ -55,7 +55,12 @@ def artifact(artifact_id, run_id, raw, day, **overrides):
         "created_at": f"2026-11-{day:02d}T00:00:00Z",
         "size_in_bytes": len(raw),
         "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
-        "workflow_run": {"id": run_id},
+        "workflow_run": {
+            "id": run_id,
+            "head_branch": "dev",
+            "repository_id": 7,
+            "head_repository_id": 7,
+        },
         **overrides,
     }
 
@@ -162,6 +167,62 @@ class FetchTest(unittest.TestCase):
         self.assertEqual((self.target / "dump.sql.gz").read_bytes(), b"dump")
         self.assertNotIn(f"{API}/runs/103", calls)
         self.assertNotIn(f"{API}/artifacts/12/zip", calls)
+
+    def test_other_names_forks_and_other_branches_are_dropped_before_any_lookup(self):
+        good = record()
+        fork = {
+            "id": 109,
+            "head_branch": "dev",
+            "repository_id": 7,
+            "head_repository_id": 8,
+        }
+        branch = {
+            "id": 108,
+            "head_branch": "feature",
+            "repository_id": 7,
+            "head_repository_id": 7,
+        }
+        crowd = [
+            artifact(20 + i, 200 + i, good, 10 + i, workflow_run=fork)
+            for i in range(fetcher.CANDIDATES)
+        ]
+        calls = self.serve(
+            {
+                LISTING: {
+                    "artifacts": [
+                        *crowd,
+                        artifact(19, 108, good, 9, workflow_run=branch),
+                        artifact(18, 107, good, 8, name=NAME + "0"),
+                        artifact(10, 100, good, 1),
+                    ]
+                },
+                f"{API}/runs/100": run_row(100),
+                f"{API}/artifacts/10/zip": good,
+            }
+        )
+        self.assertEqual(fetcher.fetch(self.target)[0], RECIPE)
+        self.assertEqual(calls, [LISTING, f"{API}/runs/100", f"{API}/artifacts/10/zip"])
+
+    def test_only_the_newest_candidates_are_looked_up_and_size_is_capped(self):
+        good = record()
+        older = [
+            artifact(30 + i, 300 + i, good, 20 - i) for i in range(fetcher.CANDIDATES)
+        ]
+        responses = {LISTING: {"artifacts": [*older, artifact(10, 100, good, 1)]}}
+        responses.update(
+            {
+                f"{API}/runs/{300 + i}": run_row(300 + i, conclusion="failure")
+                for i in range(fetcher.CANDIDATES)
+            }
+        )
+        calls = self.serve(responses)
+        with self.assertRaisesRegex(fetcher.FetchError, "no dump"):
+            fetcher.fetch(self.target)
+        self.assertNotIn(f"{API}/runs/100", calls)
+        big = artifact(10, 100, good, 1, size_in_bytes=fetcher.MAX_BYTES + 1)
+        self.serve({LISTING: {"artifacts": [big]}, f"{API}/runs/100": run_row(100)})
+        with self.assertRaisesRegex(fetcher.FetchError, "too large"):
+            fetcher.fetch(self.target)
 
     def test_no_eligible_dump_is_a_notice_and_never_a_failure_of_the_gate(self):
         self.serve(

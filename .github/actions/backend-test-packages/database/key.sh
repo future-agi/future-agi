@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# Run in futureagi, with the test services running. Hash the actual image IDs
-# of the running containers rather than the floating tags; assume nothing
-# about a different runner.
+# Run in futureagi, with the test services running. Hash the actual image ID
+# of the running database container rather than its floating tag; assume
+# nothing about a different runner.
 set -euo pipefail
 compose=(docker compose -f docker-compose.test.yml -p futureagi-test)
-services=$("${compose[@]}" config --services | sort)
-[[ -n $services ]]
-ids=$(while IFS= read -r service; do
-  container=$("${compose[@]}" ps -q "$service") || exit 1
-  id=$(docker inspect --format '{{.Image}}' "$container") || exit 1
-  [[ $id =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
-  printf '%s:%s\n' "$service" "$id"
-done <<< "$services")
+# Only the database service makes and loads the dump; the other services'
+# floating tags would only add misses.
+container=$("${compose[@]}" ps -q test-db)
+id=$(docker inspect --format '{{.Image}}' "$container")
+[[ $id =~ ^sha256:[0-9a-f]{64}$ ]]
+ids="test-db:$id"
 # The Compose file's own bytes, not `docker compose config`: the rendered form
 # changes with the Compose release a runner image ships, and that alone
 # missed the cache. The file interpolates no variables, so its bytes are the

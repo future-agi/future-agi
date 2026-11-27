@@ -448,6 +448,10 @@ class KeyTest(Workspace):
             "futureagi/tfc/settings/test.py",
             "futureagi/conftest.py",
             "futureagi/.ci/db_dump.py",
+            "futureagi/.ci/migrated_db.py",
+            "futureagi/pyproject.toml",
+            "futureagi/pytest.ini",
+            "futureagi/tfc/ee_loader.py",
             # Data a migration reads before post_migrate.
             "futureagi/ee/falcon_ai/builtin_skills/cluster-rca.yaml",
             "futureagi/ee/falcon_ai/builtin_skills_loader.py",
@@ -596,6 +600,7 @@ class ProducerTest(Workspace):
             FOUND="false",
             PRODUCE="true",
             RECIPE="recipe",
+            SAVED="recipe",
             RUNNER_TEMP=str(self.dir),
             DIGEST="a" * 64,
             REPLAYED="a" * 64,
@@ -725,7 +730,7 @@ class ProducerTest(Workspace):
             db_dump.COMPARE_DIFFERENT,
         )
         self.assertNotEqual(self.produce(FOUND="true", REPLAYED="b" * 64).returncode, 0)
-        self.assertNotEqual(self.produce(FOUND="true", RECIPE="other").returncode, 0)
+        self.assertNotEqual(self.produce(FOUND="true", SAVED="other").returncode, 0)
         # Not found, but something is staged: not a clean directory.
         self.assertNotEqual(self.produce().returncode, 0)
 
@@ -854,6 +859,15 @@ class BackendWorkflowTest(unittest.TestCase):
         upload = self.control.split("- if: steps.record.outputs.saved == 'true'")[1]
         self.assertIn("name: ${{ steps.key.outputs.name }}", upload)
         self.assertIn("if: inputs.save == 'true'", self.control)
+        # The control checks every dump the plan handed out, whatever its own
+        # recipe: a shard of this run (or of a re-run) may have restored it.
+        self.assertIn("- if: inputs.artifact != ''\n", self.control)
+        self.assertIn("FOUND: ${{ inputs.artifact != '' }}", self.control)
+        self.assertIn('verify-record.sh" "$stage" "$SAVED"', self.producer)
+        # Same-run copies live as long as a re-run of failed jobs can need them.
+        plan = self.workflow.split("\n  plan:\n", 1)[1].split("\n  test:\n", 1)[0]
+        handoff = plan.split("name: ${{ steps.saved-db.outputs.artifact }}", 1)[1]
+        self.assertNotIn("retention-days", handoff.split("\n      - ", 1)[0])
 
     def test_the_from_zero_job_creates_its_database_as_a_shard_does(self):
         control_job = self.workflow.split("\n  migrated-database:\n")[1].split(
@@ -918,7 +932,6 @@ class BackendWorkflowTest(unittest.TestCase):
                 bin_dir / "docker": textwrap.dedent(
                     """\
                     case "$*" in
-                      *"config --services") echo test-db ;;
                       *"ps -q test-db") echo container-1 ;;
                       "inspect --format {{.Image}} container-1") echo "sha256:$(printf 'a%.0s' $(seq 64))" ;;
                       # Includes a bare `compose config`: its rendering

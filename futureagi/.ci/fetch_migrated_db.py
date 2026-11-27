@@ -43,6 +43,20 @@ def eligible(run, repository):
     )
 
 
+def listed(artifact):
+    """Before any run lookup: an artifact of a dev run of this repository.
+
+    Any run, a fork's included, can upload an artifact under this name; drop
+    those first so they cannot crowd the dev dumps out of CANDIDATES.
+    """
+    run = artifact.get("workflow_run") or {}
+    return (
+        run.get("head_branch") == "dev"
+        and run.get("repository_id") is not None
+        and run.get("head_repository_id") == run.get("repository_id")
+    )
+
+
 def unpack(raw, digest, name, destination):
     """Extract a verified record; returns its recipe."""
     if digest != "sha256:" + hashlib.sha256(raw).hexdigest():
@@ -82,7 +96,11 @@ def fetch(destination):
     ).stdout.strip()
     listing = json.loads(api(f"{root}/artifacts?name={name}&per_page=100"))
     artifacts = sorted(
-        (a for a in listing["artifacts"] if a["name"] == name and not a["expired"]),
+        (
+            a
+            for a in listing["artifacts"]
+            if a["name"] == name and not a["expired"] and listed(a)
+        ),
         key=lambda a: (a["created_at"], a["id"]),
         reverse=True,
     )
