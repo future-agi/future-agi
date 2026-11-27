@@ -1,18 +1,11 @@
 /* eslint-env node */
 /* eslint-disable no-console */
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const frontendRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(frontendRoot, "..");
-const reportPath = path.join(
-  repoRoot,
-  "api_contracts",
-  "openapi",
-  "runtime-management-api-contract-debt.generated.json",
-);
+import {
+  analyzeTargets,
+  countSummary,
+  PRODUCT_VIEW_TARGETS,
+  STRICT_VIEW_TARGETS,
+} from "./generate-runtime-management-api-contract-debt.mjs";
 
 const MIN_RUNTIME_BACKED_VALIDATED_REQUEST_DECORATORS = 317;
 const MAX_DIRECT_SWAGGER_AUTO_SCHEMA_DECORATORS = 137;
@@ -23,9 +16,10 @@ const MAX_APP_WIDE_DIRECT_SWAGGER_AUTO_SCHEMA_DECORATORS = 288;
 const MAX_APP_WIDE_DOC_ONLY_INPUT_CONTRACT_DECORATORS = 0;
 const MAX_APP_WIDE_BROAD_REQUEST_CONTRACT_DECORATORS = 0;
 
-const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
-const summary = report.summary || {};
-const appWideSummary = report.app_wide_summary || {};
+// Counted from the view sources in memory: the committed debt report keeps only
+// the debt counters, not these totals.
+const summary = countSummary(analyzeTargets(STRICT_VIEW_TARGETS));
+const appWideSummary = countSummary(analyzeTargets(PRODUCT_VIEW_TARGETS));
 const failures = [];
 
 function assertAtMost(name, actual, max) {
