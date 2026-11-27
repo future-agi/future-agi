@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0124_agent_fix_outside_attempts"),
+        ("simulate", "0125_merge_eval_config_keys_and_agent_fix_outside_attempts"),
     ]
 
     operations = [
