@@ -29,6 +29,7 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
+from simulate.selectors.agent_environments import OWNER, listed_environment_jobs
 from simulate.selectors.runs import user_executions
 from simulate.services.harness_environment import environment_name, run_summaries
 
@@ -60,18 +61,9 @@ class _JobOwner(TypedDict):
 
 
 def _environment_jobs() -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
-    # An environment of a deleted test is gone from the page, so it is not
-    # counted, as recent runs leave its runs out. One not yet given a test
-    # still holds the agent through the version it pins.
-    return HostedHarnessJob.no_workspace_objects.filter(
-        environment__isnull=True, deleted=False
-    ).annotate(
-        _owner=Case(
-            When(run_test__isnull=True, then=F("agent_version__agent_definition_id")),
-            When(run_test__deleted=False, then=F("run_test__agent_definition_id")),
-            default=None,
-        )
-    )
+    # The environments the list shows, each with the agent it tests: an agent counts
+    # exactly the rows its Environments tab lists.
+    return listed_environment_jobs().annotate(_owner=OWNER)
 
 
 def _environments() -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
@@ -209,16 +201,6 @@ def observe_project(agent: AgentDefinition, kind: str | None) -> dict[str, str] 
     else:
         return None
     return {"id": str(project.id), "name": project.name}
-
-
-def agent_environment_ids(agent_id: UUID) -> "QuerySet[HostedHarnessJob]":
-    """The ids of the environments that test an agent, by the rule its count uses.
-
-    A build holds its agent through the version it was made from until its scenarios are
-    submitted and it is linked to a test, so one that fails or is cancelled before then is still
-    the agent's. For a subquery: the caller's queryset scopes the organization and workspace.
-    """
-    return _environment_jobs().filter(_owner=agent_id).values("id")
 
 
 def environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:

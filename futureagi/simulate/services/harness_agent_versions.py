@@ -31,6 +31,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models.agent_definition import ProviderCredentials
+from simulate.selectors.agent_environments import environment_jobs, owned_by
 from simulate.serializers.harness_job import CONNECTOR_ALIASES, present_provider_aliases
 from simulate.services.harness_credentials import (  # noqa: F401 - re-exported
     agent_version_secret_ref,
@@ -2506,14 +2507,10 @@ POLICY_PINNED = "pinned"
 
 
 def bound_environments(definition_id: Any) -> list[HostedHarnessJob]:
-    """The live environments that test this agent, oldest first."""
+    """The live environments that test this agent, oldest first: a build not yet
+    linked to a test included, through the version it was made from."""
     return list(
-        HostedHarnessJob.no_workspace_objects.filter(
-            run_test__agent_definition_id=definition_id,
-            run_test__deleted=False,
-            environment__isnull=True,
-            deleted=False,
-        ).order_by("created_at")
+        environment_jobs().filter(owned_by(definition_id)).order_by("created_at")
     )
 
 
