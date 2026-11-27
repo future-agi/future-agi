@@ -505,12 +505,12 @@ def test_a_launch_key_used_for_other_questions_is_refused_unspent(
 
 @pytest.mark.django_db
 def test_the_same_launch_sent_twice_at_once_saves_one_ask(
-    auth_client, run, calls, gate_passes, queued
+    auth_client, run, calls, priced, queued
 ):
     from simulate.views import run_asks as view
 
     key = uuid.uuid4()
-    first = _launch(auth_client, run, requested=3, launch_key=key)
+    first = _launch(auth_client, run, requested=3, credits=4.0, launch_key=key)
     real = view.earlier_launch
     looked = []
 
@@ -520,12 +520,14 @@ def test_the_same_launch_sent_twice_at_once_saves_one_ask(
         return None if len(looked) == 1 else real(*args, **kwargs)
 
     with patch.object(view, "earlier_launch", side_effect=miss_first_time):
-        again = _launch(auth_client, run, requested=3, launch_key=key)
+        again = _launch(auth_client, run, requested=3, credits=4.0, launch_key=key)
 
     assert again.status_code == status.HTTP_200_OK, again.data
     assert again.data["id"] == first.data["id"]
     assert len(looked) == 2
     assert SimulateAsk.objects.count() == 1
+    assert SimulateEvalResult.objects.filter(ask_id=first.data["id"]).count() == 3
+    # The charge is the queued job's: one job, so one charge.
     queued.assert_called_once()
 
 
