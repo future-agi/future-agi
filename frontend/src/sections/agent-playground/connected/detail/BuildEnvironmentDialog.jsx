@@ -1,10 +1,11 @@
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useSnackbar } from "notistack";
 import {
+  Alert,
   Box,
   Button,
+  Collapse,
   MenuItem,
   Stack,
   TextField,
@@ -32,6 +33,7 @@ import BuildSourceFields from "src/sections/simulate/environments/buildDrawer/fo
 import useBuildSources from "src/sections/simulate/environments/buildDrawer/forms/shared/useBuildSources";
 import ParallelismField from "src/sections/simulate/environments/panels/ParallelismField";
 import { clampParallelism } from "src/sections/simulate/environments/parallelism.constants";
+import usePrefersReducedMotion from "src/sections/simulate/environments/components/usePrefersReducedMotion";
 import { LabeledField } from "./bits";
 import { MONO } from "./format";
 import { buildFromAgentPayload, readyToBuild } from "./buildPayload";
@@ -76,7 +78,7 @@ const LOAD_OLDER = "load-older-versions";
 
 export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const navigate = useNavigate();
-  const { enqueueSnackbar } = useSnackbar();
+  const reduceMotion = usePrefersReducedMotion();
   const list = useAgentDefinitionVersions({ selectedAgentId: agent.id });
   const versions = useMemo(
     () =>
@@ -97,6 +99,9 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const sources = useBuildSources();
   const [testFocus, setTestFocus] = useState("");
   const [building, setBuilding] = useState(false);
+  // The text outlives `errorOpen` so the alert keeps it while it collapses.
+  const [error, setError] = useState("");
+  const [errorOpen, setErrorOpen] = useState(false);
   const chosen =
     versionId || versions.find((v) => v.isActive)?.id || versions[0]?.id || "";
   // The chosen version may be past the first page of the list: its own read
@@ -132,6 +137,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
 
   const build = async () => {
     setBuilding(true);
+    setErrorOpen(false);
     try {
       const dto = await createHarnessJob(
         buildFromAgentPayload({
@@ -149,7 +155,8 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
       navigate(paths.dashboard.simulate.environments.detail(dto.job.job_id));
     } catch (e) {
       setBuilding(false);
-      enqueueSnackbar(errorMessage(e), { variant: "error" });
+      setError(errorMessage(e));
+      setErrorOpen(true);
     }
   };
 
@@ -324,6 +331,17 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
             channel, market, language or product line. Not one per version.
           </Typography>
         </Stack>
+        <Collapse
+          in={errorOpen}
+          timeout={reduceMotion ? 0 : "auto"}
+          unmountOnExit
+          // The gap lives inside, so the closed alert adds no Stack gap.
+          sx={{ mt: -2 }}
+        >
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {error}
+          </Alert>
+        </Collapse>
       </Stack>
     </ModalWrapper>
   );

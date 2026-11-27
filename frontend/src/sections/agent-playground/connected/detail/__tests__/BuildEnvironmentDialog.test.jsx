@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import BuildEnvironmentDialog from "../BuildEnvironmentDialog";
 
 const mockNavigate = vi.fn();
@@ -131,20 +137,20 @@ describe("BuildEnvironmentDialog", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("says why a build was refused and stays open", async () => {
+  it("a refused build shows the backend message in the dialog", async () => {
     preflight.current = { data: { ok: true, checks: [] } };
     mockCreateJob.mockRejectedValue({
-      response: { data: { detail: "Usage limit reached" } },
+      statusCode: 409,
+      message: "This agent version can't be built from here",
     });
     const onClose = renderDialog();
 
     fireEvent.click(buildButton());
 
-    await waitFor(() =>
-      expect(mockSnackbar).toHaveBeenCalledWith("Usage limit reached", {
-        variant: "error",
-      }),
-    );
+    expect(
+      await within(screen.getByRole("dialog")).findByRole("alert"),
+    ).toHaveTextContent("This agent version can't be built from here");
+    expect(mockSnackbar).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
