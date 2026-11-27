@@ -14,6 +14,7 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import Iconify from "../../iconify";
 import PropTypes from "prop-types";
 import { useQuery } from "@tanstack/react-query";
+import { useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import AddExistingDataset from "./AddExistingDataset";
 import AddNewDataset from "./AddNewDataset";
@@ -40,6 +41,10 @@ const AddDataset = ({
     useState("existing");
 
   const theme = useTheme();
+  const { observeId, projectId } = useParams();
+  // Observation fields are project-scoped; these route params name the active project
+  // across different Observe surfaces. Keep legacy callers on one unscoped bucket.
+  const observationFieldsScopeId = observeId || projectId || "unscoped";
 
   const { data: availableDatasets = [] } = useQuery({
     queryKey: ["datasets"],
@@ -52,7 +57,7 @@ const AddDataset = ({
   });
 
   const { data: observationFields = EMPTY_ARRAY } = useQuery({
-    queryKey: ["observationFields"],
+    queryKey: ["observationFields", observationFieldsScopeId],
     queryFn: () =>
       axios
         .get(endpoints.project.getObservationSpanField)
