@@ -66,6 +66,7 @@ const formOf = (actor, { voiceEnv, surface }) => {
         : kindValueOf(actor),
     id: actor?.id || "",
     name: actor?.name || "",
+    speaksAs: actor?.speaksAs || "",
     role: actor?.role || (actor?.id ? roleOf(actor) : ""),
     blurb: actor?.blurb || "",
     pressure: actor?.pressure || "competing",
@@ -209,9 +210,13 @@ function ActorForm({
   takenIds = [],
 }) {
   const voiceEnv = effectiveModality(env, envState) === "voice";
-  const [form, setForm] = useState(() =>
-    formOf(actor, { voiceEnv, surface: env?.surface }),
-  );
+  const [form, setForm] = useState(() => {
+    const start = formOf(actor, { voiceEnv, surface: env?.surface });
+    /* Another person in a role starts with the role's details and a free id. */
+    return !existing && start.name && !start.id
+      ? { ...start, id: freeIdFrom(start.name, takenIds) }
+      : start;
+  });
   const [more, setMore] = useState(false);
   /* Until they edit the id by hand, it follows the name. */
   const [idTouched, setIdTouched] = useState(false);
@@ -262,6 +267,7 @@ function ActorForm({
     kind: caller ? form.kind : form.actorKind,
     ...(caller && { actorKind: form.actorKind }),
     name: form.name.trim(),
+    speaksAs: form.speaksAs.trim(),
     role: form.role.trim(),
     blurb: form.blurb.trim(),
     pressure: form.pressure,
@@ -343,7 +349,11 @@ function ActorForm({
       >
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-            {existing ? actor.name : "Add actor"}
+            {existing
+              ? [actor.name, actor.speaksAs].filter(Boolean).join(" · ")
+              : actor.addingTo
+                ? `Add a person to ${actor.addingTo}`
+                : "Add actor"}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {existing
@@ -442,6 +452,18 @@ function ActorForm({
           error={nameTouched && !!problems.name}
           helperText={nameTouched ? problems.name : ""}
           inputProps={{ "aria-label": "Name" }}
+          fullWidth
+        />
+        {/* Who they are in the conversation. People who share a name sit
+            under it as one role on the Actors tab. */}
+        <TextField
+          size="small"
+          label="Speaks as"
+          value={form.speaksAs}
+          onChange={set("speaksAs")}
+          autoFocus={!!actor.addingTo}
+          helperText="The person's name in the conversation, e.g. Maya Patel"
+          inputProps={{ "aria-label": "Speaks as" }}
           fullWidth
         />
         <TextField

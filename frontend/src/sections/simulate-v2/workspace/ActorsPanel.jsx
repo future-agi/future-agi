@@ -10,8 +10,6 @@ import {
   IconButton,
   Tooltip,
   Collapse,
-  MenuItem,
-  Menu,
 } from "@mui/material";
 import PersonasInUseDrawer from "./PersonasInUseDrawer";
 import { useSimStore } from "../store";
@@ -24,17 +22,13 @@ import { paths } from "src/routes/paths";
 import { envChangePatch } from "../_mock/versions";
 import {
   ACTOR_LIBRARY,
-  SIDES,
   NOT_A_WORLD_ACTION,
   actorsOf,
   castOf,
-  castBySide,
   sideOf,
-  roleOf,
   arrivalLineOf,
   actorActionsOf,
   actorViewOf,
-  getPressure,
   getEntry,
   createActorPatch,
   relationsOf,
@@ -47,6 +41,7 @@ import {
   approvalActionsOf,
   kindValueOf,
   KIND_OPTIONS,
+  roleGroupsOf,
 } from "../_mock/actors";
 import { callerCastOf, scenarioCountsByActor } from "../_mock/subActors";
 import ActorEditor from "./ActorEditor";
@@ -189,7 +184,6 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
     ...cast,
     ...(envState.customActors || []).map((a) => a.id),
   ];
-  const bySide = castBySide(inCast);
   /* How many scenarios include each sub-actor (the caller-side group). */
   const subActorUse = useMemo(
     () =>
@@ -200,7 +194,6 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
       ),
     [env, envState],
   );
-  const [addAnchor, setAddAnchor] = useState(null);
   /* Actors are read from the environment; "loading" and "failed" are the
      states the card has to be able to say. */
   const loadState = envState.actorsLoad || "ready";
@@ -209,17 +202,41 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
      actor reads only the ones ticked for it; grading-only files never. */
   const worldFiles = (envState.sources || []).filter((x) => !x.archived);
 
-  /* One actor's row, with what it takes to edit, reset or remove it. */
-  const renderRow = (a) => (
-    <Box key={a.id} sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
+  /* The short tags on a row: how they take part, when they come in, and how
+     many scenarios use them (caller-side people are bound per scenario). */
+  const tagsFor = (a) => {
+    const n = sideOf(a) === "caller" ? subActorUse.get(a.id) ?? 0 : null;
+    const comes = arrivalLineOf(a) || getEntry(a.entry).label.toLowerCase();
+    return [
+      sideOf(a) === "caller"
+        ? CALLER_KINDS.find((k) => k.id === a.kind)?.label || "With the user"
+        : a.kind === "external-agent"
+          ? "Another company's system"
+          : "Acts in the world",
+      comes.charAt(0).toUpperCase() + comes.slice(1),
+      n == null ? null : `In ${n} scenario${n === 1 ? "" : "s"}`,
+    ].filter(Boolean);
+  };
+
+  /* One person's row, with what it takes to edit, reset or remove it. In a
+     role group the role is the group's line, so the row leads with the person
+     and leaves out what everyone in the role shares. */
+  const renderRow = (a, group = null) => (
+    <Box
+      key={a.id}
+      sx={
+        group
+          ? { "& + &": { borderTop: "1px solid", borderColor: "divider" } }
+          : { borderBottom: "1px solid", borderColor: "divider" }
+      }
+    >
       <ActorRow
         actor={a}
+        tags={tagsFor(a)}
+        group={group}
         env={env}
         envState={envState}
         cast={inCast}
-        scenarioCount={
-          sideOf(a) === "caller" ? subActorUse.get(a.id) ?? 0 : null
-        }
         onEdit={locked ? null : () => setEditing(a)}
         onReset={locked || !a.edited ? null : () => reset(a.id)}
         onBranches={locked ? null : () => proposeBranches(a)}
@@ -271,7 +288,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
           <Typography
             sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}
           >
-            Everyone simulated in this world, the customer included. Your
+            Everyone simulated in this world, the user included. Your
             agent&apos;s own workers aren&apos;t actors.
           </Typography>
         </Box>
@@ -280,58 +297,25 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
         {/* No "Add existing" library: the builder proposes the cast from
             the description and files, and Add actor makes one for this
             world (world.md "the harness proposes the actor configuration"). */}
+        {/* One Add actor button that opens the form straight away; where
+            they are is the form's first field. */}
         {!locked && (
-          <>
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              onClick={(e) => setAddAnchor(e.currentTarget)}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-              sx={{ flexShrink: 0 }}
-            >
-              Add actor
-            </Button>
-            <Menu
-              anchorEl={addAnchor}
-              open={!!addAnchor}
-              onClose={() => setAddAnchor(null)}
-              slotProps={{ paper: { sx: { width: 320 } } }}
-            >
-              {[
-                [
-                  "caller",
-                  "Someone nearby, who takes the phone, or a second person in the chat",
-                ],
-                [
-                  "world",
-                  "A manager who approves, a teammate on Slack, another company's system",
-                ],
-              ].map(([side, note]) => (
-                <MenuItem
-                  key={side}
-                  onClick={() => {
-                    setAddAnchor(null);
-                    setEditing({ side });
-                  }}
-                  sx={{ display: "block", whiteSpace: "normal" }}
-                >
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    {SIDES.find((x) => x.id === side).label}
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {note}
-                  </Typography>
-                </MenuItem>
-              ))}
-            </Menu>
-          </>
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            onClick={() => setEditing({ side: "world" })}
+            startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+            sx={{ flexShrink: 0 }}
+          >
+            Add actor
+          </Button>
         )}
       </Stack>
 
       <SectionCard
         title={`Actors (${inCast.length + 1})`}
-        subtitle="In every run"
+        subtitle="In this environment"
         sx={{ mb: 2 }}
       >
         {loadState === "loading" && (
@@ -365,11 +349,9 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
         )}
         {loadState === "ready" && (
           <>
-            <GroupHeader
-              title={SIDES[0].label}
-              count={bySide.caller.length + 1}
-            />
-            {/* The customer is an actor too: the one each scenario's task belongs to. */}
+            {/* One list (Karthik's review, 26 Nov): the user first, then every
+                role in cast order. The user is an actor too: the one each
+                scenario's task belongs to. */}
             <Stack
               direction="row"
               spacing={1.5}
@@ -382,8 +364,8 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
               }}
             >
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography sx={{ typography: "s2_1", fontWeight: 500 }}>
-                  Customer
+                <Typography sx={{ typography: "s2_1", fontWeight: 600 }}>
+                  User
                 </Typography>
                 <Typography
                   component="div"
@@ -414,16 +396,39 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
                 From the start
               </Typography>
             </Stack>
-            {bySide.caller.map((a) => renderRow(a))}
-            <GroupHeader title={SIDES[1].label} count={bySide.world.length} />
-            {bySide.world.length === 0 ? (
+            {inCast.length === 0 ? (
               <EmptyState
                 icon="solar:users-group-two-rounded-linear"
-                title="No one in the world yet"
+                title="No one else yet"
                 body="A manager who approves, a teammate on Slack, another company's system — add one and see what it sees."
               />
             ) : (
-              bySide.world.map((a) => renderRow(a))
+              roleGroupsOf(inCast).map((g) =>
+                g.people.length === 1 ? (
+                  renderRow(g.people[0])
+                ) : (
+                  <RoleGroup
+                    key={g.key}
+                    group={g}
+                    tagsFor={tagsFor}
+                    renderPerson={renderRow}
+                    onAddPerson={
+                      locked
+                        ? null
+                        : () => {
+                            const like = g.people[0];
+                            setEditing({
+                              ...like,
+                              id: undefined,
+                              speaksAs: "",
+                              edited: false,
+                              addingTo: g.label,
+                            });
+                          }
+                    }
+                  />
+                ),
+              )
             )}
           </>
         )}
@@ -443,7 +448,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
       {inCast.length > 0 && (
         <SectionCard
           title="How they connect"
-          subtitle={`Who can reach whom in a run. ${first === "agent" ? "Your agent" : "The caller"} speaks first — set in Settings.`}
+          subtitle={`Who can reach whom in a run. ${first === "agent" ? "Your agent" : "The user"} speaks first — set in Settings.`}
           sx={{ mb: 2 }}
         >
           <Box>
@@ -524,13 +529,13 @@ function ActorRow({
   onEdit,
   onReset,
   onBranches,
-  scenarioCount = null,
+  tags = [],
+  group = null,
   files = [],
   readable = [],
   onToggleFile = null,
 }) {
   const [open, setOpen] = useState(false);
-  const pressure = getPressure(actor.pressure);
   const entry = getEntry(actor.entry);
   /* When they come in, as this side says it. */
   const comes = arrivalLineOf(actor) || entry.label.toLowerCase();
@@ -542,6 +547,7 @@ function ActorRow({
       {/* One quiet line of facts: the icon box, the coloured kind chip and
           "New" made every row shout. */}
       <Stack
+        className="actor-row-head"
         direction="row"
         alignItems="center"
         spacing={1.5}
@@ -557,18 +563,23 @@ function ActorRow({
           sx={{ ...focusRing, cursor: "pointer" }}
         >
           <Stack direction="row" alignItems="center" spacing={0.75}>
-            <Typography noWrap sx={{ typography: "s2_1", fontWeight: 500 }}>
-              {actor.name}
-            </Typography>
-            {/* Skip the role when the name already says it. */}
-            {!actor.name
-              .toLowerCase()
-              .includes(roleOf(actor).toLowerCase()) && (
-              <Typography
-                noWrap
-                sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-              >
-                · {roleOf(actor)}
+            {/* Role first, then who they speak as (Karthik, 26 Nov). Under a
+                role group the role is the group's line, so the person leads. */}
+            {group ? (
+              <Typography noWrap sx={{ typography: "s2_1", fontWeight: 600 }}>
+                {actor.speaksAs || actor.name}
+              </Typography>
+            ) : (
+              <Typography noWrap sx={{ typography: "s2_1", fontWeight: 600 }}>
+                {actor.name}
+                {actor.speaksAs && (
+                  <Box
+                    component="span"
+                    sx={{ color: "text.secondary", fontWeight: 400 }}
+                  >
+                    {` · speaks as ${actor.speaksAs}`}
+                  </Box>
+                )}
               </Typography>
             )}
             {actor.kind === "external-agent" && (
@@ -621,39 +632,28 @@ function ActorRow({
               </Typography>
             )}
           </Stack>
-          {/* What they know and may do is in the open row. */}
-          <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
-            {actor.blurb || actorKindOf(actor).label}
-            {actions.some((x) => !x.known) && (
-              <Box component="span" sx={{ color: "status.danger.fg" }}>
-                {` · ${actions
-                  .filter((x) => !x.known)
-                  .map((x) => x.name)
-                  .join(", ")}: ${NOT_A_WORLD_ACTION}`}
-              </Box>
-            )}
-          </Typography>
+          {/* What they push for — left to the group's line when everyone in
+              the role pushes for the same. What they know is in the open row. */}
+          {!(group?.sharedGoal && actor.goal) && (
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.secondary" }}
+            >
+              {actor.goal
+                ? `Pushes for: ${actor.goal}`
+                : actor.blurb || actorKindOf(actor).label}
+              {actions.some((x) => !x.known) && (
+                <Box component="span" sx={{ color: "status.danger.fg" }}>
+                  {` · ${actions
+                    .filter((x) => !x.known)
+                    .map((x) => x.name)
+                    .join(", ")}: ${NOT_A_WORLD_ACTION}`}
+                </Box>
+              )}
+            </Typography>
+          )}
+          <Tags tags={tags.filter((t) => !group?.sharedTags.includes(t))} />
         </Box>
-
-        <Tooltip arrow title={pressure.blurb}>
-          <Typography
-            noWrap
-            sx={{
-              typography: "s3",
-              color: "text.tertiary",
-              flexShrink: 0,
-              display: { xs: "none", md: "block" },
-            }}
-          >
-            {[
-              pressure.label,
-              comes.charAt(0).toUpperCase() + comes.slice(1),
-              scenarioCount == null
-                ? `Used by ${actor.usedBy}`
-                : `${scenarioCount} scenario${scenarioCount === 1 ? "" : "s"}`,
-            ].join(" · ")}
-          </Typography>
-        </Tooltip>
 
         <Stack
           className="row-tools"
@@ -802,7 +802,9 @@ function ActorRow({
               </SpecRow>
             )}
           </SpecCard>
-          <SpecCard title={`What ${actor.name || "they"} sees`}>
+          <SpecCard
+            title={`What ${actor.speaksAs || actor.name || "they"} sees`}
+          >
             {view.sees
               .filter(
                 (r) =>
@@ -841,6 +843,138 @@ function ActorRow({
     </Box>
   );
 }
+/* The short facts on a row, as quiet tags. */
+function Tags({ tags }) {
+  if (!tags.length) return null;
+  return (
+    <Stack
+      direction="row"
+      flexWrap="wrap"
+      useFlexGap
+      spacing={0.5}
+      sx={{ mt: 0.5 }}
+    >
+      {tags.map((t) => (
+        <Box
+          key={t}
+          component="span"
+          sx={{
+            px: 0.75,
+            height: 20,
+            display: "inline-flex",
+            alignItems: "center",
+            borderRadius: "4px",
+            bgcolor: "background.neutral",
+            typography: "s3",
+            color: "text.secondary",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {t}
+        </Box>
+      ))}
+    </Stack>
+  );
+}
+Tags.propTypes = { tags: PropTypes.arrayOf(PropTypes.string) };
+
+/*
+  A role with more than one person (Karthik, 26 Nov: "say 3 teammates"). The
+  role leads, with how many people and their names; what they all share —
+  what they push for and the tags — sits once on the role's line. Opening it
+  lists each person with only what differs, and their own edit and remove.
+  Add person starts a new actor with the role's details. There is no remove
+  for the whole role: people are removed one at a time.
+*/
+function RoleGroup({ group, tagsFor, renderPerson, onAddPerson }) {
+  const [open, setOpen] = useState(false);
+  const { people, label } = group;
+  const lists = people.map(tagsFor);
+  const sharedTags = lists[0].filter((t) => lists.every((l) => l.includes(t)));
+  const goals = new Set(people.map((p) => p.goal || ""));
+  const sharedGoal = goals.size === 1 ? people[0].goal || "" : "";
+  const list = people.map((p) => p.speaksAs || p.name);
+  const names = `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+  return (
+    <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{ px: 2.5, py: 1 }}
+      >
+        <Box
+          flex={1}
+          minWidth={0}
+          {...clickable(() => setOpen((o) => !o), { expanded: open })}
+          sx={{ ...focusRing, cursor: "pointer" }}
+        >
+          <Stack direction="row" alignItems="center" spacing={0.75}>
+            <Typography noWrap sx={{ typography: "s2_1", fontWeight: 600 }}>
+              {label}
+              <Box
+                component="span"
+                sx={{ color: "text.secondary", fontWeight: 400 }}
+              >
+                {` · ${people.length} people`}
+              </Box>
+            </Typography>
+            <Iconify
+              icon="solar:alt-arrow-down-linear"
+              width={14}
+              sx={{
+                color: "text.tertiary",
+                flexShrink: 0,
+                transform: open ? "rotate(180deg)" : "none",
+                transition: "transform 150ms ease-out",
+              }}
+            />
+          </Stack>
+          <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
+            {sharedGoal ? `Pushes for: ${sharedGoal}` : `Speak as ${names}`}
+          </Typography>
+          {sharedGoal && !open && (
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >
+              {`Speak as ${names}`}
+            </Typography>
+          )}
+          <Tags tags={sharedTags} />
+        </Box>
+        {onAddPerson && (
+          <TextAction onClick={onAddPerson}>Add person</TextAction>
+        )}
+      </Stack>
+      <Collapse in={open} unmountOnExit>
+        <Box
+          sx={{
+            ml: 5,
+            mr: 2.5,
+            mb: 1.5,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            overflow: "hidden",
+            "& .actor-row-head": { px: 1.5 },
+          }}
+        >
+          {people.map((p) =>
+            renderPerson(p, { sharedTags, sharedGoal: !!sharedGoal }),
+          )}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+}
+RoleGroup.propTypes = {
+  group: PropTypes.object.isRequired,
+  tagsFor: PropTypes.func.isRequired,
+  renderPerson: PropTypes.func.isRequired,
+  onAddPerson: PropTypes.func,
+};
+
 /* A titled key-value table — the spec-sheet layout used across the env. */
 function SpecCard({ title, children }) {
   return (
@@ -982,7 +1116,11 @@ ActorRow.propTypes = {
   onEdit: PropTypes.func,
   onReset: PropTypes.func,
   onBranches: PropTypes.func,
-  scenarioCount: PropTypes.number,
+  tags: PropTypes.arrayOf(PropTypes.string),
+  group: PropTypes.shape({
+    sharedTags: PropTypes.arrayOf(PropTypes.string),
+    sharedGoal: PropTypes.bool,
+  }),
 };
 
 function Label({ children }) {
@@ -1002,31 +1140,3 @@ function Label({ children }) {
   );
 }
 Label.propTypes = { children: PropTypes.node };
-
-function GroupHeader({ title, count }) {
-  return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={1}
-      sx={{
-        px: 2.5,
-        py: 0.75,
-        bgcolor: "background.neutral",
-        borderBottom: "1px solid",
-        borderColor: "divider",
-      }}
-    >
-      <Typography sx={{ typography: "s3", fontWeight: 600 }}>
-        {title}
-      </Typography>
-      <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-        {count}
-      </Typography>
-    </Stack>
-  );
-}
-GroupHeader.propTypes = {
-  title: PropTypes.string,
-  count: PropTypes.number,
-};
