@@ -170,7 +170,7 @@ export default function ConnectSteps({
         {(build || preflight) && (
           <Stack spacing={1.25} sx={{ mt: 1.75 }}>
             {/* The same build section everywhere: what to test, how many
-                scenarios, your files, then preflight. */}
+                scenarios, your files, the tracing project, then preflight. */}
             {build?.setRequest && (
               <BuildTestField
                 value={build.request}
@@ -191,6 +191,14 @@ export default function ConnectSteps({
             {build?.setFiles && (
               <BuildFilesField files={build.files} onChange={build.setFiles} />
             )}
+            {/* Every agent is saved with a tracing project. It's chosen
+                before preflight, so the check is the last step above the
+                button (preflight doesn't depend on the project). */}
+            <ConnectProjectLine
+              agentName={agentName}
+              codeProject={codeProject}
+              traced={traced}
+            />
             {preflight && (
               /* FoundAgentsList scrolls here once an agent is picked. */
               <Box
@@ -209,12 +217,14 @@ export default function ConnectSteps({
             )}
           </Stack>
         )}
-        {/* Every agent is saved with a tracing project — said last, by the button. */}
-        <ConnectProjectLine
-          agentName={agentName}
-          codeProject={codeProject}
-          traced={traced}
-        />
+        {/* No build or preflight section: the project line still sits by the button. */}
+        {!(build || preflight) && (
+          <ConnectProjectLine
+            agentName={agentName}
+            codeProject={codeProject}
+            traced={traced}
+          />
+        )}
       </Box>
 
       {/* In a drawer the submit row stays pinned to its bottom edge while a

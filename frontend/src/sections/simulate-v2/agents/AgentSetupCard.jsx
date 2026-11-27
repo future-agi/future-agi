@@ -506,7 +506,7 @@ export default function AgentSetupCard({
                     : `Its traces look like they land in ${suggested.name}${suggested.traces ? ` (${suggested.traces.split(" · ")[0]})` : ""}.`
                 }${suggested.owner ? ` It's linked to ${suggested.owner} now — review moving it here.` : " Confirm it, or pick another project."}`
               : noProject
-                ? "Once its tracing project is linked above: add traceAI where it runs, or link a project it already sends to."
+                ? "No tracing project yet. Link one first — create a new one or pick the one it already sends to — then add traceAI where it runs."
                 : tracesHow,
       unlocks: tracesDone
         ? null
@@ -514,9 +514,17 @@ export default function AgentSetupCard({
           ? "Error Feed starts watching with the first trace."
           : "Error Feed finds issues in real calls, and Fix can repair them.",
       done: tracesDone,
-      action:
-        choosing || noProject
-          ? null
+      action: choosing
+        ? null
+        : /* The same as the Link step above — here too, where the path starts. */
+          noProject
+          ? {
+              label: "Link a tracing project",
+              onClick: () => {
+                setObserveChoice(null);
+                setChoosing(true);
+              },
+            }
           : tracesDone
             ? {
                 label: "Change",
