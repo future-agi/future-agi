@@ -392,17 +392,31 @@ def test_kpis_say_a_finished_run_has_an_analysis(auth_client, organization, work
     assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is True
 
 
+@pytest.mark.parametrize(
+    "has_optimiser",
+    [False, True],
+    ids=["no_optimiser", "optimiser_with_no_run"],
+)
 def test_kpis_say_a_refused_read_left_no_analysis(
-    auth_client, organization, workspace, dispatch
+    auth_client, organization, workspace, dispatch, has_optimiser
 ):
     execution = _run(organization, workspace, NONE_FAILING)
+    if has_optimiser:
+        # A refresh that could not prepare its input commits an optimiser with
+        # no run, and earlier reads left such rows.
+        execution.agent_optimiser = AgentOptimiser.objects.create(name="Empty")
+        execution.save(update_fields=["agent_optimiser"])
+    optimiser_before = execution.agent_optimiser_id
 
     refused = auth_client.get(_analysis_url(execution))
     execution.refresh_from_db()
 
-    assert refused.status_code == 409
+    # A run with no analysis yet meets the rule on opening, optimiser or not.
+    _refused(refused, "investigation_nothing_failed", NOTHING_FAILED)
     # A read creates nothing, refused or not.
-    assert execution.agent_optimiser_id is None
+    assert execution.agent_optimiser_id == optimiser_before
+    assert _runs(execution) == 0
+    dispatch.assert_not_called()
     assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is False
 
 
