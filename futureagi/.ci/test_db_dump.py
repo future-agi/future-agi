@@ -1009,14 +1009,22 @@ class BackendWorkflowTest(unittest.TestCase):
         self.assertNotIn("continue-on-error", self.shard + self.control)
         self.assertIn("        migrated-database,", self.workflow)
 
-    def test_e2e_and_saml_are_not_dump_consumers(self):
+    def test_saml_uses_no_dump_and_e2e_never_this_one(self):
         e2e = (ROOT / ".github/workflows/e2e-ci.yml").read_text()
         saml = self.workflow.split("\n  saml-multiworker:\n")[1].split(
             "\n  migrated-database:"
         )[0]
         self.assertIn("--create-db", saml)
-        for job in (e2e, saml):
-            self.assertNotIn("db_dump.py", job)
+        self.assertNotIn("db_dump.py", saml)
+        # E2E has a dump of its own (.ci/e2e_db.py): the stack's image, the
+        # stack's settings, after post_migrate. This workflow's dump is
+        # pytest's database before post_migrate and must never reach a stack.
+        self.assertNotIn("backend-db-", e2e)
+        self.assertNotIn("inputs-key", e2e)
+        fetches = [line for line in e2e.split("\n") if 'fetch_migrated_db.py"' in line]
+        self.assertTrue(fetches)
+        for line in fetches:
+            self.assertIn("--workflow .github/workflows/e2e-ci.yml", line)
 
 
 if __name__ == "__main__":

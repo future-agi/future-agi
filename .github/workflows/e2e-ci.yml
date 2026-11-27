@@ -87,6 +87,8 @@ jobs:
       stacks: ${{ steps.stacks.outputs.stacks }}
       shard_totals: ${{ steps.shards.outputs.totals }}
       today: ${{ steps.shards.outputs.today }}
+      db_key: ${{ steps.db.outputs.key }}
+      db_artifact: ${{ steps.db.outputs.artifact }}
     steps:
       - name: Validate host update fallibility opt-in
         if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
@@ -275,6 +277,47 @@ jobs:
           created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
           [[ $created =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2})T ]]
           echo "today=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+      - name: Find the saved database dump for this commit
+        id: db
+        # One leg of a dev push migrates a scratch database with the stack's
+        # own image and saves a dump of it, named by what that migrate reads
+        # (futureagi/.ci/e2e_db.py). The next dev push with the same inputs
+        # compares that dump with its own fresh migrate. Nothing restores it
+        # yet: these runs show whether a migrate here can be reproduced.
+        #
+        # Only a dump saved by a successful dev push of this workflow is
+        # fetched. No dump, or any failure here, means there is nothing to
+        # compare; it never fails the plan.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/e2e-db-tools" record="$RUNNER_TEMP/e2e-db-record"
+          mkdir "$tools"
+          for tool in e2e_db.py db_dump.py fetch_migrated_db.py; do
+            git show "$GITHUB_SHA:futureagi/.ci/$tool" > "$tools/$tool"
+          done
+          key=$(python3 -I "$tools/e2e_db.py" key --root "$GITHUB_WORKSPACE")
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          if python3 -I "$tools/fetch_migrated_db.py" "$record" --workflow .github/workflows/e2e-ci.yml --name "$key"; then
+            if python3 -I "$tools/e2e_db.py" verify "$record" "$key"; then
+              echo "artifact=e2e-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+      - name: Hand the saved database dump to the leg that compares it
+        if: steps.db.outputs.artifact != ''
+        # The plan must not fail for this either. The leg then finds no
+        # artifact to download and fails on the dev push, where it is seen.
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.db.outputs.artifact }}
+          path: ${{ runner.temp }}/e2e-db-record
+          if-no-files-found: error
+          retention-days: 1
 
   lock-wheels:
     # The URL-pinned wheels of uv.lock (en-core-web-sm, a GitHub release
@@ -826,6 +869,43 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+      # The scratch control (futureagi/.ci/e2e-db-control.sh), on one
+      # Distributed leg of a dev push and after its suite, so no pull request
+      # or queue run waits for it. Not shard 1, which always gets the longest
+      # spec file, and not the last, which runs the once-per-stack steps.
+      # It runs when the suite failed too: a wrong dump is one reason a suite
+      # fails. The step's environment holds no secret; the migrate runs with
+      # the stack's committed settings (e2e/stack/e2e.env).
+      - name: Download the saved database dump
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.stack == 'distributed' && matrix.shard == 3 && needs.changes.outputs.db_artifact != '' }}
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.changes.outputs.db_artifact }}
+          path: ${{ runner.temp }}/e2e-db-record
+      - name: Compare the saved database dump with a fresh migrate, and save one
+        id: db-control
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.stack == 'distributed' && matrix.shard == 3 }}
+        # Two migrates from zero when there is no saved dump yet (about 6
+        # minutes each), one when there is.
+        timeout-minutes: 30
+        env:
+          KEY: ${{ needs.changes.outputs.db_key }}
+          FOUND: ${{ needs.changes.outputs.db_artifact != '' }}
+          PRODUCE: "true"
+          RECORD: ${{ runner.temp }}/e2e-db-record
+          OUT: ${{ runner.temp }}/e2e-db-out
+        run: bash futureagi/.ci/e2e-db-control.sh
+      - name: Save the database dump for later dev runs
+        if: ${{ !cancelled() && steps.db-control.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.stack == 'distributed' && matrix.shard == 3 }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          # Named by its migrate inputs. Public: the E2E image holds no
+          # private code, and the migrate ran with no secret.
+          name: ${{ needs.changes.outputs.db_key }}
+          path: ${{ runner.temp }}/e2e-db-out
+          if-no-files-found: ignore
+          retention-days: 7
+          overwrite: true
       - name: Capture backend lifecycle on failure
         if: failure() && steps.boot.outcome == 'success'
         run: |
