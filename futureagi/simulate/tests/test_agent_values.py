@@ -3,6 +3,7 @@ environment makes itself refused at save and before any build or run, a missing
 required value named, and the environments following production moved with a
 values-only change."""
 
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -576,9 +577,55 @@ def test_the_page_marks_a_provider_key(auth_client, agent, production):
     assert flags == {alias: True, "DB_URL": False}
 
 
-def test_another_agents_version_is_not_found(auth_client, agent, production):
+def test_an_unknown_version_is_not_found(auth_client, agent, production):
     response = auth_client.get(
         f"{AGENTS}{agent.id}/versions/00000000-0000-0000-0000-000000000000/values/"
     )
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_another_agents_version_is_not_found_through_this_one(
+    auth_client, organization, workspace, agent, production
+):
+    other = AgentDefinition.objects.create(
+        agent_name="billing",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        organization=organization,
+        workspace=workspace,
+    )
+    theirs = _connect(other)
+    with patch(NUDGE):
+        _preflight(theirs)
+    HarnessAgentVersionRuntime.objects.filter(agent_version=theirs).update(
+        credential_names=["THEIR_SECRET_NAME"]
+    )
+    own = auth_client.get(f"{AGENTS}{other.id}/versions/{theirs.id}/values/")
+    assert "THEIR_SECRET_NAME" in own.content.decode()
+
+    response = auth_client.get(f"{AGENTS}{agent.id}/versions/{theirs.id}/values/")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert "THEIR_SECRET_NAME" not in response.content.decode()
+
+
+def test_an_agent_of_another_workspace_is_not_found_and_shows_nothing(
+    auth_client, organization, user, agent, production
+):
+    from accounts.models.workspace import Workspace
+
+    HarnessAgentVersionRuntime.objects.filter(agent_version=production).update(
+        credential_names=["ELSEWHERE_NAME"]
+    )
+    url = f"{AGENTS}{agent.id}/versions/{production.id}/values/"
+    assert "ELSEWHERE_NAME" in auth_client.get(url).content.decode()
+    elsewhere = Workspace.objects.create(
+        name=f"ws-{uuid.uuid4().hex[:6]}", organization=organization, created_by=user
+    )
+    AgentDefinition.objects.filter(id=agent.id).update(workspace=elsewhere)
+
+    response = auth_client.get(url)
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert "ELSEWHERE_NAME" not in response.content.decode()
