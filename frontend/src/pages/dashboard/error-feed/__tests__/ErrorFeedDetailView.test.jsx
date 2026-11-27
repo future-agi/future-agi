@@ -138,8 +138,17 @@ describe("Error Feed detail: Export", () => {
     await userEvent.click(screen.getByRole("menuitem", { name: item }));
   };
 
+  it("opens the menus with focus on the first item, not the section label", async () => {
+    render(<ErrorFeedDetailView />);
+    await userEvent.click(screen.getByRole("button", { name: "Export" }));
+    expect(document.activeElement).toHaveAttribute("role", "menuitem");
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.getByRole("menuitem", { name: "Resolve" })).toHaveFocus();
+  });
+
   it("downloads the traces as CSV", async () => {
-    await choose(/Traces/);
+    await choose(/^Traces/);
 
     expect(exportMutate).toHaveBeenCalledWith(
       { clusterId: CLUSTER_ID },
@@ -153,7 +162,7 @@ describe("Error Feed detail: Export", () => {
   });
 
   it("downloads the stored analysis as Markdown", async () => {
-    await choose(/Analysis/);
+    await choose(/^Analysis/);
 
     expect(exportMutate).toHaveBeenCalledWith(
       { clusterId: CLUSTER_ID, repLimit: 10 },

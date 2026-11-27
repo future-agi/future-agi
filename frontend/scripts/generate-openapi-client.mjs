@@ -137,10 +137,18 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   // failed one has a failure.
   AgentFixRun: EPOCH_NULLABLE_REFS,
   AgentFixRunDetail: EPOCH_NULLABLE_REFS,
+  // Only an attempt from a person's own coding agent has an outside candidate.
+  AgentFixRequest: ["outside_candidate"],
+  // An Epoch that ended with no winner names none.
+  AgentFixReport: [],
   AgentFixCandidate: ["verdict"],
   AgentFixOverride: ["by"],
   // A candidate whose patch could not be read has no change line.
   AgentFixCandidateWording: ["changes"],
+  // A coding agent's brief nothing refuses has no refusal; a run with no agent version
+  // has no agent. An attempt's verdict has no ending or failure before it ends.
+  AgentFixCodingAgentBrief: ["agent", "blocked"],
+  AgentFixAttemptVerdict: ["failure"],
 };
 // A locked version's locker and unlocker, and a lock preview's refusal, are sent as null.
 // A lock refusal has no nested ref; it is listed so its scalar fields keep their null.
@@ -232,6 +240,29 @@ function normalizeHostStatusSpec(spec) {
       ),
     },
   };
+}
+
+// Orval's Swagger 2 upgrade (@scalar/openapi-upgrader) keeps only a formData
+// field's type, format and description, so an array field loses its items and
+// generates an untyped zod.array(). Put the items back from the source spec.
+function withFormDataArrayItems(spec, swagger) {
+  Object.entries(swagger.paths || {}).forEach(([pathName, pathSpec]) => {
+    Object.entries(pathSpec || {}).forEach(([method, operation]) => {
+      if (!HTTP_METHODS.has(method)) return;
+      const content = spec.paths?.[pathName]?.[method]?.requestBody?.content;
+      (operation.parameters || [])
+        .filter((one) => one.in === "formData" && one.items)
+        .forEach((param) => {
+          Object.values(content || {}).forEach((media) => {
+            const field = media.schema?.properties?.[param.name];
+            if (field?.type === "array" && !field.items) {
+              field.items = param.items;
+            }
+          });
+        });
+    });
+  });
+  return spec;
 }
 
 function buildManagementApiSwagger(swagger) {
@@ -336,6 +367,9 @@ function normalizeGeneratedQueryParamSerialization() {
 async function runGeneration(schemaPath) {
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
+  const source = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
+  const transformer = (spec) =>
+    normalizeHostStatusSpec(withFormDataArrayItems(spec, source));
 
   const baseOverride = {
     header: (info) => [
@@ -358,7 +392,7 @@ async function runGeneration(schemaPath) {
   await generate({
     input: {
       target: schemaPath,
-      override: { transformer: normalizeHostStatusSpec },
+      override: { transformer },
     },
     output: {
       target: apiOutputPath,
@@ -372,7 +406,7 @@ async function runGeneration(schemaPath) {
   await generate({
     input: {
       target: schemaPath,
-      override: { transformer: normalizeHostStatusSpec },
+      override: { transformer },
     },
     output: {
       target: zodOutputPath,

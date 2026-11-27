@@ -1,0 +1,853 @@
+import type { ReactElement } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { SnackbarProvider } from "notistack";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
+import { BUDGET_CREDITS_MAX } from "src/api/simulate-environments/codingAgent";
+
+import {
+  ATTEMPT_ID,
+  BLOCKED_BRIEFS,
+  ENGINE_STATIC_DETAIL,
+  ENGINE_TARGET_DETAIL,
+  HELD_BACK_KEYS,
+  SOURCE_RUN_ID,
+  fixtureBlockedBrief,
+  fixtureBrief,
+  fixtureVerdict,
+  outsideAttemptFix,
+} from "src/api/simulate-environments/__tests__/fixtures/codingAgent";
+import type { BlockedCode } from "src/api/simulate-environments/__tests__/fixtures/codingAgent";
+import { fixtureFixRun } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+import type {
+  AgentFixAttemptVerdictApi,
+  AgentFixCodingAgentBriefApi,
+  AgentFixRunDetailApi,
+} from "src/generated/api-contracts/api.schemas";
+
+// The deployment's setting, as the capabilities read carries it.
+const caps = vi.hoisted(() => ({ codingAgent: true }));
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("src/hooks/useCapabilities")>();
+  return {
+    ...actual,
+    useCapabilities: () => ({
+      data: { coding_agent_attempts_enabled: caps.codingAgent },
+      isLoading: false,
+      isError: false,
+    }),
+    useFeatureAllowed: () => ({ allowed: true, isLoading: false }),
+  };
+});
+
+// The two coding-agent routes, answered from the fixtures; anything else is a bug.
+const api = vi.hoisted(() => ({
+  brief: null as AgentFixCodingAgentBriefApi | null,
+  briefStatus: 200,
+  verdict: null as AgentFixAttemptVerdictApi | null,
+  // How many verdict reads fail before one answers.
+  verdictFailures: 0,
+  get: vi.fn<
+    (url: string, config?: { params?: unknown }) => Promise<{ data: unknown }>
+  >(),
+}));
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("src/utils/axios")>();
+  const routes = actual.endpoints.agentFixRuns;
+  api.get.mockImplementation((url, config = {}) => {
+    if (url === routes.codingAgentBrief()) {
+      expect(config.params).toEqual({ source_run_id: SOURCE_RUN_ID });
+      // The app's axios rejects with the body spread plus statusCode.
+      if (api.briefStatus === 404) {
+        return Promise.reject({ detail: "Not found", statusCode: 404 });
+      }
+      return Promise.resolve({ data: api.brief });
+    }
+    if (url === routes.verdict(ATTEMPT_ID)) {
+      if (api.verdictFailures > 0) {
+        api.verdictFailures -= 1;
+        return Promise.reject(new Error("network"));
+      }
+      return Promise.resolve({ data: api.verdict });
+    }
+    return Promise.reject(new Error(`unexpected GET ${url}`));
+  });
+  return { ...actual, default: { ...actual.default, get: api.get } };
+});
+
+const clipboard = vi.hoisted(() => ({
+  copy: vi.fn(async (_text: unknown) => true),
+}));
+vi.mock("src/utils/copyToClipboard", () => ({
+  copyToClipboard: clipboard.copy,
+}));
+
+// The launch form is the engine's; an attempt never opens it.
+vi.mock("../LaunchFixDialog", () => ({ default: () => null }));
+
+const { default: EpochMoreMenu } = await import("../EpochMoreMenu");
+const { default: CopyForCodingAgentButton } = await import(
+  "../CopyForCodingAgentButton"
+);
+const { default: FixFinishedView } = await import("../FixFinishedView");
+const { candidateGroups, headline, stageLabel, stepRows } = await import(
+  "../fixRunView"
+);
+const { default: OutsideAttemptVerdict } = await import(
+  "../OutsideAttemptVerdict"
+);
+const { codingAgentSetup } = await import(
+  "src/api/simulate-environments/codingAgent"
+);
+const { attemptNote, isUncountedAttempt } = await import(
+  "../attemptVerdictView"
+);
+
+const SETUP_URL = `${window.location.origin}/dashboard/settings/mcp-server`;
+const attemptFix = (): AgentFixRunDetailApi =>
+  outsideAttemptFix(structuredClone(fixtureFixRun("fix-ready-archive")));
+
+// The candidates' chart reads theme.palette.data, so render with the app theme. The
+// palette's mode reads as a string from its JS, so it is named again here.
+const appTheme = createTheme({
+  palette: { ...palette("light"), mode: "light" },
+});
+
+function renderUi(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <ThemeProvider theme={appTheme}>
+      <QueryClientProvider client={client}>
+        <SnackbarProvider>
+          <MemoryRouter>{ui}</MemoryRouter>
+        </SnackbarProvider>
+      </QueryClientProvider>
+    </ThemeProvider>,
+  );
+}
+
+const briefCalls = () =>
+  api.get.mock.calls.filter(([url]) => url.includes("coding-agent-brief"));
+
+beforeEach(() => {
+  caps.codingAgent = true;
+  api.brief = fixtureBrief();
+  api.briefStatus = 200;
+  api.verdict = fixtureVerdict();
+  api.verdictFailures = 0;
+  api.get.mockClear();
+  clipboard.copy.mockClear();
+});
+
+describe("Copy for coding agent on the Epoch page's ⋯ menu", () => {
+  async function openMenu(fix = attemptFix()) {
+    const user = userEvent.setup();
+    renderUi(<EpochMoreMenu fix={fix} />);
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    return user;
+  }
+
+  it("is not on the menu, and reads no brief, while the setting is off", async () => {
+    caps.codingAgent = false;
+    await openMenu();
+    expect(screen.getByText("Copy epoch ID")).toBeInTheDocument();
+    expect(screen.queryByText("Copy for coding agent")).not.toBeInTheDocument();
+    expect(briefCalls()).toHaveLength(0);
+  });
+
+  it("copies the setup, then the brief's instructions exactly, and says so", async () => {
+    const user = await openMenu();
+    await user.click(screen.getByText("Copy for coding agent"));
+    await waitFor(() => expect(clipboard.copy).toHaveBeenCalledTimes(1));
+    const [copied] = clipboard.copy.mock.calls[0];
+    expect(copied).toBe(
+      `${codingAgentSetup(SETUP_URL)}\n\n---\n\n${api.brief?.instructions}`,
+    );
+    expect(copied).toContain("npx @future-agi/cli");
+    expect(copied).toContain("fagi login");
+    expect(copied).toContain(SETUP_URL);
+    for (const key of HELD_BACK_KEYS) expect(copied).not.toContain(key);
+    expect(
+      await screen.findByText("Copied. Paste it into your coding agent."),
+    ).toBeInTheDocument();
+  });
+
+  it.each(Object.keys(BLOCKED_BRIEFS) as BlockedCode[])(
+    "says why a brief blocked by %s can't be used, in the platform's words, and copies nothing",
+    async (code) => {
+      api.brief = fixtureBlockedBrief(code);
+      const user = await openMenu();
+      await user.click(screen.getByText("Copy for coding agent"));
+      expect(await screen.findByText(BLOCKED_BRIEFS[code])).toBeInTheDocument();
+      expect(document.body).not.toHaveTextContent(code);
+      expect(clipboard.copy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("is disabled, with why, on an epoch that has no run to brief from", async () => {
+    await openMenu({ ...attemptFix(), source_run_id: null });
+    const item = screen.getByText("Copy for coding agent").closest("li");
+    if (!item) throw new Error("Copy for coding agent is not a menu item");
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(
+      within(item).getByText(
+        "Only an epoch started from a run has a brief to copy",
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("An attempt from a person's coding agent on its Epoch page", () => {
+  it("shows nothing, and reads no verdict, while the setting is off", () => {
+    caps.codingAgent = false;
+    const { container } = renderUi(
+      <OutsideAttemptVerdict fix={attemptFix()} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("shows nothing on an Epoch the engine made", () => {
+    const { container } = renderUi(
+      <OutsideAttemptVerdict fix={fixtureFixRun("fix-ready-archive")} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it("marks it as the coding agent's and shows each check, held-back as a status only", async () => {
+    renderUi(<OutsideAttemptVerdict fix={attemptFix()} />);
+    const panel = screen.getByTestId("outside-attempt");
+    expect(
+      within(panel).getByText("Attempt 2 from your coding agent"),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByText(
+        "Ask a supervisor before refunding a late cancellation.",
+      ),
+    ).toBeInTheDocument();
+    const checks = await within(panel).findByTestId("outside-attempt-checks");
+    const rows = Array.from(checks.children);
+    expect(rows.map((row) => row.getAttribute("data-check"))).toEqual([
+      "passed",
+      "passed",
+      "failed",
+      "passed",
+      "not-run",
+    ]);
+    expect(rows[2]).toHaveTextContent(
+      "Held-back scenariosDid not pass on cases your agent wasn't given.",
+    );
+    expect(rows[4]).toHaveTextContent(
+      "Not run: an earlier check failed (Held-back scenarios)",
+    );
+    // Nothing of the engine's own words, and no held-back case, reaches the page.
+    const text = panel.textContent;
+    expect(text).not.toContain(ENGINE_STATIC_DETAIL);
+    expect(text).not.toContain(ENGINE_TARGET_DETAIL);
+    for (const key of HELD_BACK_KEYS) expect(text).not.toContain(key);
+    expect(api.get).toHaveBeenCalledWith(
+      expect.stringContaining(`/agent-fix-runs/${ATTEMPT_ID}/verdict/`),
+    );
+  });
+
+  it("promises no check on unseen cases when the run held none back", () => {
+    const fix = attemptFix();
+    renderUi(
+      <OutsideAttemptVerdict
+        fix={{
+          ...fix,
+          request: { ...fix.request, held_back_scenario_keys: [] },
+        }}
+      />,
+    );
+    const panel = screen.getByTestId("outside-attempt");
+    expect(
+      within(panel).queryByText(
+        "Your coding agent wrote this change. Future AGI checks every fix on cases your agent wasn't given.",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).getByText(
+        "Your coding agent wrote this change. Future AGI checks it on the run's failing cases and on the cases that pass today.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("offers Retry when the verdict read fails, and reads it again", async () => {
+    api.verdictFailures = 1;
+    const user = userEvent.setup();
+    renderUi(<OutsideAttemptVerdict fix={attemptFix()} />);
+    const panel = screen.getByTestId("outside-attempt");
+    await user.click(
+      await within(panel).findByRole("button", { name: /Retry/ }),
+    );
+    expect(
+      await within(panel).findByTestId("outside-attempt-checks"),
+    ).toBeInTheDocument();
+    expect(
+      api.get.mock.calls.filter(([url]) => url.includes("/verdict/")),
+    ).toHaveLength(2);
+  });
+
+  it("says Future AGI is still checking while the attempt runs with no check yet", async () => {
+    api.verdict = fixtureVerdict({
+      state: "running",
+      step: "verify",
+      ending: null,
+      tiers: [],
+      patch_available: false,
+    });
+    renderUi(
+      <OutsideAttemptVerdict fix={{ ...attemptFix(), state: "running" }} />,
+    );
+    expect(
+      await screen.findByText(
+        "Future AGI is checking this attempt. Its checks show here when they have run.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("reads a skip with no failed check before it as unmeasured, not as not run", async () => {
+    api.verdict = fixtureVerdict({
+      tiers: [
+        { name: "static", status: "passed", detail: ENGINE_STATIC_DETAIL },
+        { name: "target", status: "passed", detail: ENGINE_TARGET_DETAIL },
+        { name: "ceilings", status: "skipped", detail: "" },
+      ],
+    });
+    renderUi(<OutsideAttemptVerdict fix={attemptFix()} />);
+    const checks = await screen.findByTestId("outside-attempt-checks");
+    const ceilings = checks.children[2];
+    expect(ceilings).toHaveAttribute("data-check", "unmeasured");
+    expect(ceilings).toHaveTextContent("Couldn't measure");
+    expect(ceilings).not.toHaveTextContent("not run");
+  });
+
+  it("says a change refused before any check failed the first one, without the engine's words", async () => {
+    const refusal = "patch touches locked path spec.json";
+    api.verdict = fixtureVerdict({
+      tiers: [{ name: "static", status: "failed", detail: refusal }],
+      summary: refusal,
+      patch_available: false,
+    });
+    renderUi(<OutsideAttemptVerdict fix={attemptFix()} />);
+    const checks = await screen.findByTestId("outside-attempt-checks");
+    expect(checks.children).toHaveLength(1);
+    expect(checks.children[0]).toHaveAttribute("data-check", "failed");
+    expect(checks.children[0]).toHaveTextContent(
+      "Change is validThe change did not apply, was too large, or changed a locked file.",
+    );
+    expect(
+      screen.getByText(
+        "Future AGI checked nothing else. Fix the change, then submit it again with fagi epoch submit.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("outside-attempt")).not.toHaveTextContent(
+      refusal,
+    );
+  });
+
+  // The verdict's summary of a failed attempt is the platform's words for its failure
+  // (selectors/agent_fix_outside.shown_summary), never a static refusal.
+  it("says an attempt that failed before any check does not use one of the run's attempts, and never calls it refused", async () => {
+    const failure = {
+      code: "fix_engine_failed",
+      message: "The Epoch stopped because of a problem on our side.",
+    };
+    api.verdict = fixtureVerdict({
+      state: "failed",
+      step: "done",
+      ending: "failed",
+      failure,
+      tiers: [],
+      summary: failure.message,
+      counted: false,
+      patch_available: false,
+    });
+    renderUi(
+      <OutsideAttemptVerdict fix={{ ...attemptFix(), state: "failed" }} />,
+    );
+    expect(
+      await screen.findByText(
+        "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.",
+      ),
+    ).toBeInTheDocument();
+    const panel = screen.getByTestId("outside-attempt");
+    expect(panel).not.toHaveTextContent("fix_engine_failed");
+    expect(panel).not.toHaveTextContent("did not apply");
+    expect(
+      screen.queryByTestId("outside-attempt-checks"),
+    ).not.toBeInTheDocument();
+  });
+
+  // Only the static check's own refusal blames the change: an attempt that ended with
+  // no improvement and no check, whatever the reason, is not read as one.
+  // A stopped attempt has no ending (the verdict's ending has no "stopped").
+  it.each<
+    [
+      AgentFixAttemptVerdictApi["state"],
+      AgentFixAttemptVerdictApi["ending"],
+      boolean,
+    ]
+  >([
+    ["no_improvement", "no_improvement", true],
+    ["out_of_budget", "out_of_budget", false],
+    ["not_reproduced", "not_reproduced", false],
+    ["stopped", null, false],
+  ])(
+    "never says the change did not apply when the %s attempt has no static refusal",
+    async (state, ending, counted) => {
+      api.verdict = fixtureVerdict({
+        state,
+        ending,
+        tiers: [],
+        summary: "",
+        counted,
+        patch_available: state === "no_improvement",
+      });
+      renderUi(<OutsideAttemptVerdict fix={{ ...attemptFix(), state }} />);
+      const panel = await screen.findByTestId("outside-attempt");
+      await screen.findByText(
+        counted
+          ? "No check ran on this attempt."
+          : `This attempt ended before Future AGI checked the change. It does not use one of the run's attempts.${
+              // Of these endings, only the budget's sends the tree again.
+              state === "out_of_budget"
+                ? " Submit it again with a larger budget: fagi epoch submit --budget-credits."
+                : ""
+            }`,
+      );
+      expect(panel).not.toHaveTextContent("did not apply");
+      expect(panel).not.toHaveTextContent("Future AGI checked nothing else");
+    },
+  );
+});
+
+describe("Copy for coding agent reads the brief fresh", () => {
+  it("reads the brief again on each copy, so attempts submitted meanwhile show", async () => {
+    const user = userEvent.setup();
+    renderUi(<CopyForCodingAgentButton sourceRunId={SOURCE_RUN_ID} />);
+    const button = screen.getByRole("button", {
+      name: /Copy for coding agent/,
+    });
+    await user.click(button);
+    await waitFor(() => expect(clipboard.copy).toHaveBeenCalledTimes(1));
+    api.brief = fixtureBrief({
+      attempts: { used: 2, max: 4 },
+      instructions: `${fixtureBrief().instructions}\nThis run has 2 left.`,
+    });
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Copied|Copy for coding agent/,
+      }),
+    );
+    await waitFor(() => expect(clipboard.copy).toHaveBeenCalledTimes(2));
+    expect(briefCalls()).toHaveLength(2);
+    expect(clipboard.copy.mock.calls[1][0]).toContain("This run has 2 left.");
+  });
+
+  it("says plainly that a run has no brief when the route answers 404", async () => {
+    api.briefStatus = 404;
+    const user = userEvent.setup();
+    renderUi(<CopyForCodingAgentButton sourceRunId={SOURCE_RUN_ID} />);
+    await user.click(
+      screen.getByRole("button", { name: /Copy for coding agent/ }),
+    );
+    expect(
+      await screen.findByText(
+        "Future AGI has no brief for this run. The run may have been deleted. Reload the page and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("Not found");
+    expect(clipboard.copy).not.toHaveBeenCalled();
+  });
+});
+
+describe("The candidates table of an attempt", () => {
+  // One candidate the held-back check stopped, as the engine records it.
+  const heldBackRejected = (fix: AgentFixRunDetailApi) => ({
+    ...fix,
+    state: "no_improvement",
+    candidates: [
+      {
+        ...fix.candidates[0],
+        outcome: "rejected",
+        verdict: {
+          ...fix.candidates[0].verdict,
+          accepted: false,
+          target_pass_rate: [0.25, 0.92],
+          held_back_pass_rate: [0.25, 0.25],
+          tiers: [
+            { name: "static", status: "passed", detail: "" },
+            { name: "target", status: "passed", detail: "" },
+            { name: "held-back", status: "failed", detail: "" },
+          ],
+        },
+      },
+    ],
+  });
+
+  it("names the coding agent's change and the scenarios it wasn't given", () => {
+    const [group] = candidateGroups(heldBackRejected(attemptFix()));
+    expect(group.label).toBe(
+      "Your coding agent's change didn't hold on scenarios it wasn't given",
+    );
+    expect(group.rows[0].result).toBe(
+      "25% → 25% on scenarios your coding agent wasn't given, not a clear gain.",
+    );
+    expect(JSON.stringify(group)).not.toMatch(/never saw/);
+  });
+
+  it("keeps the engine's words for an Epoch the engine made", () => {
+    const engineFix = structuredClone(fixtureFixRun("fix-ready-archive"));
+    const [group] = candidateGroups(heldBackRejected(engineFix));
+    expect(group.label).toBe("Didn't hold on the held-back scenarios");
+    expect(group.rows[0].result).toBe(
+      "25% → 25% on scenarios the epoch never saw, not a clear gain.",
+    );
+  });
+});
+
+describe("An attempt's running stages and ending", () => {
+  it("runs through its own stages, never diagnosing or proposing", () => {
+    const fix = {
+      ...attemptFix(),
+      state: "running",
+      step: "search",
+      diagnosis: null,
+      candidates: [],
+    };
+    expect(stepRows(fix).map((row) => row.label)).toEqual([
+      "Measuring",
+      "Checking the change",
+      "Checking held-back",
+    ]);
+    expect(stageLabel(fix)).toBe("Checking the change");
+    const text = stepRows(fix)
+      .flatMap((row) => row.lines)
+      .join(" ");
+    expect(text).not.toMatch(
+      /diagnos|propos|Tries changes|Reads the failures/i,
+    );
+  });
+
+  it("names no unseen cases in its stages when the run held none back", () => {
+    const base = attemptFix();
+    const fix = {
+      ...base,
+      state: "running",
+      step: "verify",
+      candidates: [],
+      request: { ...base.request, held_back_scenario_keys: [] },
+    };
+    const text = stepRows(fix)
+      .flatMap((row) => [row.label, ...row.lines])
+      .join(" ");
+    expect(text).not.toMatch(/held-back|wasn't given/i);
+    expect(stageLabel(fix)).toBe("Checking must-pass");
+  });
+
+  it("tells the run's last counted attempt to run the environment again, not to submit", () => {
+    const base = attemptFix();
+    const last = {
+      ...base,
+      state: "no_improvement",
+      counted: true,
+      request: {
+        ...base.request,
+        outside_candidate: { summary: "", number: 4 },
+      },
+    };
+    const runAgain =
+      "This run has had its 4 attempts. Run the environment again, then fix the new run.";
+    expect(headline(last)).toContain(runAgain);
+    expect(headline(last)).not.toContain("fagi epoch submit");
+    // The static check's refusal of the last attempt, under its checks.
+    const refused = fixtureVerdict({
+      number: 4,
+      counted: true,
+      tiers: [{ name: "static", status: "failed", detail: "" }],
+    });
+    expect(attemptNote(refused, last.request)).toContain(runAgain);
+    expect(attemptNote(refused, last.request)).not.toContain(
+      "fagi epoch submit",
+    );
+    // Attempt 4 that ended before a verdict did not count: it may be sent again.
+    expect(
+      headline({ ...last, state: "out_of_budget", counted: false }),
+    ).toContain("fagi epoch submit");
+  });
+
+  it("tells an attempt that ran out at the budget cap to run fewer scenarios, not to raise a budget the API refuses", () => {
+    const base = attemptFix();
+    const ran = (budget_credits: number) =>
+      headline({
+        ...base,
+        state: "out_of_budget",
+        counted: false,
+        request: { ...base.request, budget_credits },
+      });
+    const fewer =
+      "Run the environment on fewer scenarios, then fix the new run.";
+    expect(ran(BUDGET_CREDITS_MAX)).toContain(fewer);
+    expect(ran(BUDGET_CREDITS_MAX)).not.toContain("larger budget");
+    expect(ran(BUDGET_CREDITS_MAX - 1)).toContain(
+      "Submit it again with a larger budget: fagi epoch submit --budget-credits.",
+    );
+    expect(ran(BUDGET_CREDITS_MAX - 1)).not.toContain(fewer);
+  });
+
+  // A counted attempt's tree was checked: the platform refuses it again
+  // (fix_outside_tree_checked).
+  it.each([
+    ["failed", { code: "fix_engine_failed", message: "x" }, 1500],
+    ["failed", { code: "fix_deadline", message: "x" }, 1500],
+    ["out_of_budget", null, 1500],
+  ])(
+    "never tells a counted %s attempt to send the same tree again",
+    (state, failure, budget_credits) => {
+      const base = attemptFix();
+      const text = headline({
+        ...base,
+        state,
+        failure,
+        counted: true,
+        request: { ...base.request, budget_credits },
+      });
+      expect(text).toContain("Change the fix, then submit again.");
+      expect(text).not.toContain("Submit it again");
+    },
+  );
+
+  // The note under the checks and the ending below them name one next step.
+  it.each<
+    [
+      AgentFixAttemptVerdictApi["state"],
+      AgentFixAttemptVerdictApi["failure"],
+      number,
+      number,
+      string,
+    ]
+  >([
+    [
+      "out_of_budget",
+      null,
+      BUDGET_CREDITS_MAX,
+      2,
+      "Run the environment on fewer scenarios, then fix the new run.",
+    ],
+    [
+      "out_of_budget",
+      null,
+      1500,
+      2,
+      "Submit it again with a larger budget: fagi epoch submit --budget-credits.",
+    ],
+    [
+      "failed",
+      { code: "fix_engine_failed", message: "x" },
+      1500,
+      4,
+      "Submit it again with fagi epoch submit.",
+    ],
+    [
+      "failed",
+      { code: "fix_deadline", message: "x" },
+      BUDGET_CREDITS_MAX,
+      2,
+      "Submit it again with fagi epoch submit.",
+    ],
+  ])(
+    "says the same next step under the checks and in the ending of an uncounted %s attempt",
+    (state, failure, budget_credits, number, next) => {
+      const base = attemptFix();
+      const request = {
+        ...base.request,
+        budget_credits,
+        outside_candidate: { summary: "", number },
+      };
+      const note = attemptNote(
+        fixtureVerdict({ state, failure, number, counted: false, tiers: [] }),
+        request,
+      );
+      const ending = headline({
+        ...base,
+        state,
+        failure,
+        counted: false,
+        request,
+      });
+      expect(note?.slice(-next.length)).toBe(next);
+      expect(ending?.slice(-next.length)).toBe(next);
+    },
+  );
+
+  // These endings name their own step, or none: the note under the checks names none.
+  it.each<
+    [AgentFixAttemptVerdictApi["state"], AgentFixAttemptVerdictApi["failure"]]
+  >([
+    [
+      "failed",
+      {
+        code: "engine_exited",
+        message: "The engine stopped: the model provider refused the key.",
+      },
+    ],
+    ["not_reproduced", null],
+    ["stopped", null],
+  ])(
+    "names no next step under the checks of an uncounted %s attempt",
+    (state, failure) => {
+      const base = attemptFix();
+      const request = {
+        ...base.request,
+        budget_credits: 1500,
+        outside_candidate: { summary: "", number: 2 },
+      };
+      const note = attemptNote(
+        fixtureVerdict({
+          state,
+          failure,
+          number: 2,
+          counted: false,
+          tiers: [],
+        }),
+        request,
+      );
+      const ending = headline({
+        ...base,
+        state,
+        failure,
+        counted: false,
+        request,
+      });
+      expect(note).toBe(
+        "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts.",
+      );
+      expect(ending).not.toContain("fagi epoch submit");
+    },
+  );
+
+  it("offers no Copy for coding agent once the run's last counted attempt is used", () => {
+    const base = attemptFix();
+    const fourth = (counted: boolean) => ({
+      ...base,
+      counted,
+      request: {
+        ...base.request,
+        outside_candidate: { summary: "", number: 4 },
+      },
+    });
+    const { unmount } = renderUi(
+      <FixFinishedView fix={fourth(true)} tab="trials" onTab={() => {}} />,
+    );
+    expect(
+      screen.queryByTestId("attempt-copy-for-coding-agent"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("fix-finished-view")).toHaveTextContent(
+      "This run has had its 4 attempts. Run the environment again, then fix the new run.",
+    );
+    unmount();
+    // Attempt 4 that ended before a verdict did not count: the run has one left.
+    renderUi(
+      <FixFinishedView
+        fix={{ ...fourth(false), state: "stopped" }}
+        tab="trials"
+        onTab={() => {}}
+      />,
+    );
+    expect(
+      screen.getByTestId("attempt-copy-for-coding-agent"),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["failed", { code: "fix_engine_failed", message: "x" }, true],
+    ["failed", { code: "fix_deadline", message: "x" }, false],
+    ["no_improvement", null, false],
+    ["out_of_budget", null, false],
+  ])(
+    "ends %s in attempt words, with the coding agent's next step",
+    (state, failure, retryable) => {
+      const fix = {
+        ...attemptFix(),
+        state,
+        failure,
+        retryable,
+        retried_from_id: null,
+      };
+      const text = headline(fix);
+      expect(text).toMatch(/attempt|coding agent/i);
+      expect(text).not.toMatch(
+        /retried|Run a new epoch|Run Epoch|Debug failures/i,
+      );
+    },
+  );
+
+  it("offers Copy for coding agent as the failed attempt's one way on, never Retry or Run Epoch", () => {
+    const fix = {
+      ...attemptFix(),
+      state: "failed",
+      retryable: true,
+      failure: { code: "fix_engine_failed", message: "x" },
+      candidates: [],
+      // Failed before a verdict: its tree may be sent again.
+      counted: false,
+    };
+    renderUi(<FixFinishedView fix={fix} tab="trials" onTab={() => {}} />);
+    expect(
+      screen.getByTestId("attempt-copy-for-coding-agent"),
+    ).toHaveTextContent("Copy for coding agent");
+    expect(
+      screen.queryByRole("button", { name: /Retry/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Run Epoch again|Run a new epoch/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("fix-finished-view")).toHaveTextContent(
+      "Submit it again with fagi epoch submit.",
+    );
+  });
+
+  it("gives a no-improvement attempt the same way on, not the engine's what-to-try-next", () => {
+    const fix = { ...attemptFix(), state: "no_improvement" };
+    renderUi(<FixFinishedView fix={fix} tab="trials" onTab={() => {}} />);
+    expect(
+      screen.getByTestId("attempt-copy-for-coding-agent"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("what-to-try-next")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Run Epoch again|Run a new epoch/),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("Which attempts the Epochs list marks as not counted", () => {
+  it("is the one the platform says does not count, whatever its state and candidates", () => {
+    const fix = attemptFix();
+    for (const state of ["out_of_budget", "stopped", "failed"] as const) {
+      expect(
+        isUncountedAttempt({ ...fix, state, candidates: [], counted: false }),
+      ).toBe(true);
+    }
+    // A failed attempt with no verdict that the platform counts is counted.
+    expect(
+      isUncountedAttempt({
+        ...fix,
+        state: "failed",
+        candidates: [],
+        counted: true,
+      }),
+    ).toBe(false);
+    // An Epoch the engine made is no attempt.
+    expect(isUncountedAttempt({ ...fix, counted: null })).toBe(false);
+  });
+});
