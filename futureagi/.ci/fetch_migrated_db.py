@@ -29,9 +29,13 @@ class FetchError(ValueError):
 
 
 def eligible(run, repository):
+    # TEMPORARY proof scaffold (reverted before review): dispatches of this branch.
+    scaffold = (
+        run["event"] == "workflow_dispatch"
+        and run["head_branch"] == "perf/ci-backend-db-reuse"
+    )
     return (
-        run["event"] == "push"
-        and run["head_branch"] == "dev"
+        (scaffold or run["event"] == "push" and run["head_branch"] == "dev")
         and run["conclusion"] == "success"
         and run["path"] == WORKFLOW
         and (run.get("head_repository") or {}).get("full_name") == repository
