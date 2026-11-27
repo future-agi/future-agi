@@ -48,6 +48,9 @@ if (!GITHUB_REPOSITORY) die("GITHUB_REPOSITORY is required");
 const [OWNER, REPO] = GITHUB_REPOSITORY.split("/");
 const GH_API = "https://api.github.com";
 const PING_AGE_DAYS = 3;
+// Only pull requests opened in the last week rotate, so turning the sweep on
+// never assigns the backlog.
+const NEW_PR_MS = 7 * 24 * 3600 * 1000;
 const dryRun = DRY_RUN === "true";
 
 const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
@@ -185,6 +188,7 @@ const SWEEP_QUERY = `query($owner: String!, $repo: String!, $after: String) {
         number
         isDraft
         isCrossRepository
+        createdAt
         author { login }
         reviewRequests(first: 20) {
           nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } }
@@ -206,6 +210,7 @@ function normalise(n) {
     number: n.number,
     draft: n.isDraft,
     fork: n.isCrossRepository,
+    created_at: n.createdAt,
     author: n.author?.login,
     requested_reviewers: asked
       .filter((r) => r.__typename === "User")
@@ -314,11 +319,12 @@ function owningTeams(pr) {
 async function assign(pr) {
   log(`\n— PR #${pr.number} —`);
   const matchedTeams = owningTeams(pr);
+  const team = await writers();
   const candidates = candidatesFor(
     [...matchedTeams.values()],
     config,
     pr.author,
-  );
+  ).filter((c) => team.has(c.toLowerCase()));
   const reviewer = pickLeastLoaded(candidates, loads, { seed: pr.number });
   if (!reviewer) {
     log("  no reviewer to assign (the author is the only configured member)");
@@ -360,11 +366,12 @@ async function assign(pr) {
 }
 
 async function reassign(pr, current) {
+  const team = await writers();
   const candidates = candidatesFor(
     [...owningTeams(pr).values()],
     config,
     pr.author,
-  );
+  ).filter((c) => team.has(c.toLowerCase()));
   const next = pickLeastLoaded(candidates, loads, {
     exclude: [current.login],
     seed: pr.number + current.round,
@@ -396,22 +403,39 @@ async function reassign(pr, current) {
   });
 }
 
+// Internal means write access here: lower-case logins with push or higher,
+// read once per sweep and only when a write is due. Only internal authors'
+// pull requests rotate (external ones have their own flow), and only
+// internal reviewers are requested (GitHub refuses anyone else).
+let writersRead = null;
+function writers() {
+  writersRead ??= ghPaginated(
+    `/repos/${OWNER}/${REPO}/collaborators?permission=push&per_page=100`,
+  ).then((users) => new Set(users.map((u) => u.login.toLowerCase())));
+  return writersRead;
+}
+
+async function isInternal(login) {
+  return Boolean(login) && (await writers()).has(login.toLowerCase());
+}
+
 // Writes only when this PR needs them: no reviewer and never assigned → assign;
 // the assigned reviewer is overdue → reassign. Anything else is read-only.
-// Only the team's own pull requests rotate: an outside contributor has no
-// write access, so their branch is always on a fork.
+// A fork is always external: without write access a branch cannot live here.
 async function sweepPr(pr, now) {
-  if (pr.draft || pr.fork) return;
+  if (pr.draft || pr.fork || now - Date.parse(pr.created_at) > NEW_PR_MS)
+    return;
   const current = findAssignment(pr.comments);
   if (!hasHumanReviewRequest(pr)) {
     // A marker without a request means someone removed the reviewer by hand.
-    if (!current) await assign(pr);
+    if (!current && (await isInternal(pr.author))) await assign(pr);
     return;
   }
   if (!current) return; // assigned before this rotation existed, or by hand
   const requested = pr.requested_reviewers.map((r) => r.login.toLowerCase());
   if (!requested.includes(current.login.toLowerCase())) return; // reviewed, or changed by hand
-  if (reassignDue(current, pr.reviews, now)) await reassign(pr, current);
+  if (reassignDue(current, pr.reviews, now) && (await isInternal(pr.author)))
+    await reassign(pr, current);
 }
 
 // A cancelled run (a newer dev push) finishes the PR it is writing, so a request

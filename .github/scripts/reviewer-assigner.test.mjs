@@ -13,23 +13,30 @@ import { renderAssignment } from "./reviewer-rotation.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const BOT = "approver-app[bot]";
 
-// Preloaded into the sweep: replaces fetch, logs every call, serves one GraphQL page.
+// Preloaded into the sweep: replaces fetch, logs every call, serves one GraphQL
+// page and the write-access collaborators.
 const FAKE_GITHUB = `
 import { appendFileSync, readFileSync } from "node:fs";
 const log = (c) => appendFileSync(process.env.CALL_LOG, JSON.stringify(c) + "\\n");
 globalThis.fetch = async (url, init = {}) => {
   const path = String(url).replace("https://api.github.com", "");
   const method = init.method || "GET";
-  log({ method, path });
-  const reply = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => "" });
+  log(path === "/graphql" ? { method, path } : { method, path, body: init.body });
+  const reply = (body) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => "" });
   if (method === "POST" && path === "/graphql") {
     const nodes = JSON.parse(readFileSync(process.env.FAKE_PRS, "utf8"));
     return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: false }, nodes } } } });
   }
+  if (method === "GET" && path === "/repos/o/r/collaborators?permission=push&per_page=100")
+    return reply(JSON.parse(process.env.FAKE_WRITERS).map((login) => ({ login })));
   if (method !== "GET") return reply({});
   return { ok: false, status: 500, text: async () => "unexpected read " + path };
 };
 `;
+const config = JSON.parse(
+  readFileSync(resolve(here, "..", "reviewer-config.json"), "utf8"),
+);
+const WRITERS = [...Object.keys(config.users), "some-author"];
 
 const marker = (login, at) => ({
   databaseId: 1,
@@ -42,6 +49,7 @@ function pr(number, over = {}) {
     number,
     isDraft: false,
     isCrossRepository: false,
+    createdAt: new Date().toISOString(),
     author: { login: "some-author" },
     reviewRequests: { nodes: [] },
     latestReviews: { nodes: [] },
@@ -54,7 +62,7 @@ const requestedFrom = (login) => ({
   nodes: [{ requestedReviewer: { __typename: "User", login } }],
 });
 
-function sweep(prs) {
+function sweep(prs, writers = WRITERS) {
   const dir = mkdtempSync(join(tmpdir(), "assigner-"));
   try {
     const preload = join(dir, "fake-github.mjs");
@@ -76,6 +84,7 @@ function sweep(prs) {
           ASSIGNER_LOGIN: BOT,
           CALL_LOG: join(dir, "calls.jsonl"),
           FAKE_PRS: join(dir, "prs.json"),
+          FAKE_WRITERS: JSON.stringify(writers),
         },
         encoding: "utf8",
       },
@@ -151,6 +160,41 @@ test("a sweep with nothing to assign makes no write", () => {
   const { run, calls } = sweep(prs);
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(calls, [{ method: "POST", path: "/graphql" }]);
+});
+
+test("an external author's PR is never assigned or reassigned", () => {
+  const prs = [
+    pr(1, { author: { login: "outsider" } }),
+    pr(2, {
+      author: { login: "outsider" },
+      reviewRequests: requestedFrom("khushalsonawat"),
+      comments: { nodes: [marker("khushalsonawat", "2020-01-06T05:00:00Z")] },
+    }),
+  ];
+  const { run, calls } = sweep(prs);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(
+    calls.filter((c) => c.method !== "GET" && c.path !== "/graphql"),
+    [],
+  );
+});
+
+test("a PR opened more than a week ago is left alone, so the backlog never rotates", () => {
+  const old = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+  const { run, calls } = sweep([pr(1, { createdAt: old })]);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(calls, [{ method: "POST", path: "/graphql" }]);
+});
+
+test("only a reviewer with write access is requested", () => {
+  // The owning team has five members; only cdileep23 can push here.
+  const { run, calls } = sweep([pr(1)], ["some-author", "cdileep23"]);
+  assert.equal(run.status, 0, run.stderr);
+  const requests = calls.filter((c) => c.path.endsWith("/requested_reviewers"));
+  assert.deepEqual(
+    requests.map((c) => JSON.parse(c.body).reviewers),
+    [["cdileep23"]],
+  );
 });
 
 test("an outside contributor's fork PR is never assigned or reassigned", () => {
