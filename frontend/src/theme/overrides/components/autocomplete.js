@@ -12,6 +12,9 @@ export function autocomplete(theme) {
     MuiAutocomplete: {
       styleOverrides: {
         root: {
+          // MUI drops the typing space to 0 on hover and focus, so a field full of tags jumps a row; it keeps 30px.
+          [`&.${autocompleteClasses.focused} .${autocompleteClasses.input}, &:hover .${autocompleteClasses.input}`]:
+            { minWidth: 30 },
           [`& span.${autocompleteClasses.tag}`]: {
             ...theme.typography.subtitle2,
             height: 24,
