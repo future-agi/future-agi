@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -11,8 +11,9 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
-
-const MONO = "ui-monospace, Menlo, monospace";
+import LogExcerpt from "../components/logs/LogExcerpt";
+import LogsDrawer from "../components/logs/LogsDrawer";
+import { buildLogOf, firstErrorOf } from "../_mock/sandboxLogs";
 
 const linkSx = {
   typography: "s3",
@@ -33,10 +34,16 @@ const MARK = {
  * epoch that stopped reads (EpochEnding): the neutral status, one sentence on
  * what stopped and why, what's kept and spent, one way on and at most one
  * change that can fix it. Under it the three phases: done (kept), the one
- * that stopped, and the ones not run. The engine's log is behind Show details.
+ * that stopped, and the ones not run. The sandbox log excerpt is behind Show details.
  */
-export default function BuildStopStrip({ view, onRetry, onFix }) {
+export default function BuildStopStrip({ view, build, agent, onRetry, onFix }) {
   const [open, setOpen] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const log = useMemo(
+    () => (build ? buildLogOf({ build, agent }) : null),
+    [build, agent],
+  );
+  const focusLineId = firstErrorOf(log)?.line?.id;
   const { fix } = view;
   return (
     <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
@@ -212,40 +219,18 @@ export default function BuildStopStrip({ view, onRetry, onFix }) {
               py: 1.25,
             }}
           >
-            <Typography
-              sx={{ typography: "s3", color: "text.tertiary", mb: 0.75 }}
-            >
-              {`Build log · ${view.where}`}
-            </Typography>
-            <Box
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "6px",
-                bgcolor: "background.neutral",
-                px: 1.5,
-                py: 1,
-                maxHeight: 200,
-                overflow: "auto",
-              }}
-            >
-              <Typography
-                component="pre"
-                sx={{
-                  typography: "s3",
-                  fontFamily: MONO,
-                  color: "text.primary",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  m: 0,
-                }}
-              >
-                {view.log}
-              </Typography>
-            </Box>
+            <LogExcerpt log={log} onViewAll={() => setLogsOpen(true)} />
           </Box>
         </Collapse>
       </Box>
+      <LogsDrawer
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        log={log}
+        title={log?.title}
+        subtitle={view.where}
+        focusLineId={focusLineId}
+      />
     </Box>
   );
 }
@@ -253,6 +238,9 @@ export default function BuildStopStrip({ view, onRetry, onFix }) {
 BuildStopStrip.propTypes = {
   /* buildStopOf(): sentence, kept, spent, phases, retry, fix, log. */
   view: PropTypes.object.isRequired,
+  /* The stopped versionBuild and the environment's agent: the sandbox log. */
+  build: PropTypes.object,
+  agent: PropTypes.object,
   onRetry: PropTypes.func,
   onFix: PropTypes.func,
 };

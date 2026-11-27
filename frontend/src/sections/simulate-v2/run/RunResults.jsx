@@ -172,6 +172,9 @@ import logger from "src/utils/logger";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { proofKindOf } from "../_mock/rsiModel";
 import { stopChipOf, stopNoteOf, stopTipOf } from "../_mock/runStop";
+import RunLogsTab from "./RunLogsTab";
+import AgentLogsPane from "./AgentLogsPane";
+import { runLogOf, trialLogOf } from "../_mock/sandboxLogs";
 
 /**
  * Run results.
@@ -2641,6 +2644,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             <Tab value="cost" label="Cost" />
             <Tab value="evaluate" label="Evaluate" />
             {!SHOW_INSIGHTS && <Tab value="insights" label="Insights" />}
+            <Tab value="logs" label="Logs" />
           </CustomTabs>
 
           {/* Wraps both tab bodies so it survives a tab switch: errors thrown
@@ -3164,6 +3168,18 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                     setEvalFocus(null);
                     setOpenTask(t);
                   } else openTrace(t);
+                }}
+              />
+            )}
+
+            {tab === "logs" && (
+              <RunLogsTab
+                run={sourceRun}
+                agent={envState?.agent}
+                tasks={tasks}
+                onOpenTrial={(taskId) => {
+                  const t = tasks.find((x) => x.id === taskId);
+                  if (t) setOpenTask(t);
                 }}
               />
             )}
@@ -3988,6 +4004,30 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                               <ExtraEvalsHeading />
                             </Stack>
                           ),
+                          /* This trial's slice of the run sandbox's log. */
+                          simLogs: (() => {
+                            const trialLog = trialLogOf(
+                              runLogOf({
+                                run,
+                                agent: envState?.agent,
+                                tasks: [openTask],
+                              }),
+                              openTask.id,
+                              trialIdx,
+                            );
+                            const cause = causeOf(trial);
+                            return trialLog ? (
+                              <AgentLogsPane
+                                trialLog={trialLog}
+                                padded={false}
+                                infraFailed={
+                                  trial.status !== "passed" &&
+                                  (cause === "inc-infra" ||
+                                    cause === "inc-transport")
+                                }
+                              />
+                            ) : null;
+                          })(),
                           /* What the call recorded and didn't — with a platform
                              agent's own events for this call — in one tab. */
                           simEvidence: (

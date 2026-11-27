@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -8,6 +8,8 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import LogsDrawer from "../../components/logs/LogsDrawer";
+import { scanLogOf } from "../../_mock/sandboxLogs";
 import { Field } from "../../environments/StartEnvironment";
 import FoundAgentsList from "./FoundAgentsList";
 import { HintLine } from "./replicationBits";
@@ -42,6 +44,37 @@ export default function RepoAgentScan({
   /* Found agents, but not the one meant: its entry file, named by hand. */
   const [naming, setNaming] = useState(false);
   const agents = repo?.agents || [];
+  const [logsOpen, setLogsOpen] = useState(false);
+  /* Our sandbox read the code: its log, for a read that finished. */
+  const log = useMemo(
+    () =>
+      repo && (status === "found" || status === "none")
+        ? scanLogOf({
+            agent: {
+              definition: {
+                kind: "repo",
+                repoUrl: `https://github.com/${repo.name}`,
+                ref: branch || "main",
+              },
+              values: {},
+            },
+            found: agents.map((a) => a.entry || a.id).filter(Boolean),
+          })
+        : null,
+    [repo?.name, branch, status], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const logsLink = log && (
+    <>
+      <TextLink onClick={() => setLogsOpen(true)}>Logs</TextLink>
+      <LogsDrawer
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        log={log}
+        title={log.title}
+        subtitle={`${repo?.name} @ ${branch || "main"}`}
+      />
+    </>
+  );
 
   /* A different repository starts its tries over. */
   useEffect(() => {
@@ -202,12 +235,19 @@ export default function RepoAgentScan({
           </HintLine>
         </Typography>
         {entryField}
+        <Box sx={{ mt: 0.75 }}>{logsLink}</Box>
       </Box>
     );
   }
 
   return (
     <Box>
+      {/* How the read went, above a list that can run long. */}
+      {logsLink && (
+        <Stack direction="row" justifyContent="flex-end" sx={{ mb: 0.5 }}>
+          {logsLink}
+        </Stack>
+      )}
       <FoundAgentsList
         agents={agents}
         agentId={agentId}

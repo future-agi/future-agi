@@ -493,6 +493,7 @@ export default function RepoAgentFlow({
       privateVia,
       savedAccessRef,
     ],
+    { sandbox: true },
   );
 
   /* The agent is chosen: its environment values are asked for — prefilled
@@ -566,8 +567,14 @@ export default function RepoAgentFlow({
   return (
     <ConnectSteps
       agentName={pickedAgent?.name || ""}
-      codeProject={pickedAgent ? pickedAgent.tracing?.project || null : undefined}
-      traced={pickedAgent ? frameworkTuningOf(pickedAgent.framework)?.traced : undefined}
+      codeProject={
+        pickedAgent ? pickedAgent.tracing?.project || null : undefined
+      }
+      traced={
+        pickedAgent
+          ? frameworkTuningOf(pickedAgent.framework)?.traced
+          : undefined
+      }
       title={title}
       subtitle={`${
         !initial?.host || initial?.direct
@@ -581,6 +588,23 @@ export default function RepoAgentFlow({
       next={next}
       preflight={{
         state: preflight,
+        /* Where its sandbox log reads from. */
+        logAgent: repo
+          ? {
+              definition: {
+                kind: "repo",
+                repoUrl: `https://github.com/${repo.name}`,
+                ref: branch.trim() || "main",
+                entry: entryPoint || undefined,
+              },
+              /* The keys the check loads, as filled in above. */
+              values: {
+                envNames: envValues
+                  .filter((v) => v.ref || v.value)
+                  .map((v) => v.name),
+              },
+            }
+          : null,
         canRun: ready && !mismatch,
         blockedReason: !ready
           ? "Pick the repository and the agent — then preflight reads it and checks its credentials."

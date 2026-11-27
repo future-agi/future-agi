@@ -1308,9 +1308,9 @@ export default function TraceTable({
                     zIndex: 2,
                     height: BAND_H,
                     py: 0,
-                    /* The section band reads as its own strip, so where
-                       Scenario details end and Evaluations begin is plain. */
-                    bgcolor: "background.neutral",
+                    /* No fill: the dividers mark where each section starts.
+                       Opaque paper so rows scroll under the sticky band. */
+                    bgcolor: "background.paper",
                     whiteSpace: "nowrap",
                     typography: "s1",
                     fontWeight: 600,

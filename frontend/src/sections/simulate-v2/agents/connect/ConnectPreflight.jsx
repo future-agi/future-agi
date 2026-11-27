@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -7,6 +8,10 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import LogExcerpt from "../../components/logs/LogExcerpt";
+import LogsDrawer from "../../components/logs/LogsDrawer";
+import { agentHostOf, checkLogOf, firstErrorOf } from "../../_mock/sandboxLogs";
+import { sandboxFailOf } from "./preflight";
 
 const OK = "status.success.fg";
 const STATE_WORD = {
@@ -28,8 +33,20 @@ export default function ConnectPreflight({
   canRun = true,
   blockedReason = null,
   summary = null,
+  logAgent = null,
 }) {
   const { status, results, ready, run } = preflight;
+  const [logsOpen, setLogsOpen] = useState(false);
+  /* A log exists only where our sandbox ran the code. */
+  const sandboxed = !!logAgent && agentHostOf(logAgent).kind === "sandbox";
+  const failAt = sandboxed ? sandboxFailOf() : null;
+  const log = useMemo(
+    () =>
+      sandboxed && status === "done"
+        ? checkLogOf({ agent: logAgent, failAt })
+        : null,
+    [sandboxed, status, logAgent, failAt],
+  );
 
   if (status !== "done") {
     const running = status === "running";
@@ -136,6 +153,15 @@ export default function ConnectPreflight({
             </Typography>
           )}
         </Box>
+        {log && (
+          <Button
+            size="small"
+            onClick={() => setLogsOpen(true)}
+            sx={{ color: "text.primary", flexShrink: 0 }}
+          >
+            Logs
+          </Button>
+        )}
         <Button
           variant="outlined"
           size="small"
@@ -186,6 +212,26 @@ export default function ConnectPreflight({
           </Typography>
         </Stack>
       ))}
+      {log && failAt && (
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <LogExcerpt log={log} onViewAll={() => setLogsOpen(true)} />
+        </Box>
+      )}
+      <LogsDrawer
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        log={log}
+        title={log?.title}
+        subtitle="Sandbox · removed after the check"
+        focusLineId={failAt ? firstErrorOf(log)?.line?.id : undefined}
+      />
     </Box>
   );
 }
@@ -201,4 +247,6 @@ ConnectPreflight.propTypes = {
   canRun: PropTypes.bool,
   blockedReason: PropTypes.string,
   summary: PropTypes.string,
+  /* The code agent being connected: its sandbox log opens from the result. */
+  logAgent: PropTypes.object,
 };

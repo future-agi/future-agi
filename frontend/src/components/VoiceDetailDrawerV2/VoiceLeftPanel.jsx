@@ -18,6 +18,7 @@ const TABS = {
   APPROVALS: "approvals",
   EVIDENCE: "evidence",
   EVENTS: "events",
+  LOGS: "logs",
 };
 
 /**
@@ -108,6 +109,13 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false, initialTab }) => {
         value: TABS.EVENTS,
         icon: "solar:list-check-linear",
       });
+    /* The sandbox log of this trial (simulate only). */
+    if (isSimulate && data?.simLogs)
+      t.push({
+        label: "Agent logs",
+        value: TABS.LOGS,
+        icon: "solar:document-text-linear",
+      });
     if (isSimulate && data?.simEvidence)
       t.push({
         label: "Evidence",
@@ -122,6 +130,7 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false, initialTab }) => {
     data?.simApprovals,
     data?.simEvidence,
     data?.simEvents,
+    data?.simLogs,
   ]);
 
   const isTranscriptTab = currentTab === TABS.TRANSCRIPT;
@@ -237,6 +246,9 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false, initialTab }) => {
             </ShowComponent>
             <ShowComponent condition={currentTab === TABS.EVENTS}>
               {data?.simEvents}
+            </ShowComponent>
+            <ShowComponent condition={currentTab === TABS.LOGS}>
+              {data?.simLogs}
             </ShowComponent>
             <ShowComponent condition={currentTab === TABS.EVIDENCE}>
               {data?.simEvidence}

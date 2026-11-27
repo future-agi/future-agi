@@ -212,6 +212,7 @@ export default function ConnectSteps({
                   canRun={preflight.canRun !== false}
                   blockedReason={preflight.blockedReason}
                   summary={preflight.summary}
+                  logAgent={preflight.logAgent}
                 />
               </Box>
             )}

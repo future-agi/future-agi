@@ -1,5 +1,12 @@
 import PropTypes from "prop-types";
-import { Fragment, createElement, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  createElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
@@ -14,6 +21,8 @@ import {
 } from "../_mock/versionBuild";
 import { buildStopOf, isBuildStopped } from "../_mock/buildStop";
 import BuildStopStrip from "./BuildStopStrip";
+import LogsDrawer from "../components/logs/LogsDrawer";
+import { buildLogOf } from "../_mock/sandboxLogs";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { checksStateOf, runChecksPatch } from "../_mock/release";
 import { designSourcesSummary } from "../_mock/designSources";
@@ -33,11 +42,13 @@ export default function VersionBuildStrip({
   onGo,
   onRetry,
   onFix,
+  onOpenLogs,
 }) {
   const build = envState.versionBuild || null;
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   const [now, setNow] = useState(Date.now());
   const finished = useRef(null);
+  const [logsOpen, setLogsOpen] = useState(false);
   useEffect(() => {
     if (!build) return undefined;
     const t = setInterval(() => setNow(Date.now()), 500);
@@ -45,6 +56,14 @@ export default function VersionBuildStrip({
   }, [build]);
 
   const prog = versionBuildProgress(build, now);
+  /* The sandbox log, re-read on the clock while the drawer is open. */
+  const log = useMemo(
+    () =>
+      logsOpen && build
+        ? buildLogOf({ build, agent: envState.agent, now })
+        : null,
+    [logsOpen, build, envState.agent, now],
+  );
   /* The moment a first build reaches the step it stops at, the stop is
      stored — the header, the run button and the list all read it. */
   useEffect(() => {
@@ -143,7 +162,13 @@ export default function VersionBuildStrip({
       { scenarios: envState.scenarios || [], agent: envState.agent },
     );
     return view ? (
-      <BuildStopStrip view={view} onRetry={onRetry} onFix={onFix} />
+      <BuildStopStrip
+        view={view}
+        build={isBuildStopped(build) ? build : { ...build, stoppedAt: now }}
+        agent={envState.agent}
+        onRetry={onRetry}
+        onFix={onFix}
+      />
     ) : null;
   }
   const secs = Math.ceil(prog.leftMs / 1000);
@@ -186,6 +211,13 @@ export default function VersionBuildStrip({
                 : `Then you review and save it · about ${secs} s left`
               : `Runs start once it's ready · about ${secs} s left`}
           </Typography>
+          <Button
+            size="small"
+            onClick={() => (onOpenLogs ? onOpenLogs() : setLogsOpen(true))}
+            sx={{ color: "text.primary", flexShrink: 0 }}
+          >
+            Logs
+          </Button>
         </Stack>
         {!build.first && (
           <Stack spacing={0.5} sx={{ mt: 1, pl: 0.5 }}>
@@ -229,6 +261,13 @@ export default function VersionBuildStrip({
           </Stack>
         )}
       </Box>
+      <LogsDrawer
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        log={log}
+        title={log?.title}
+        subtitle="Live while it builds"
+      />
     </Box>
   );
 }
@@ -240,6 +279,8 @@ VersionBuildStrip.propTypes = {
   /* A stopped first build: Try again, and the change that can fix it. */
   onRetry: PropTypes.func,
   onFix: PropTypes.func,
+  /* Opens the build's log on the page, so it stays open when the build ends. */
+  onOpenLogs: PropTypes.func,
 };
 
 /* The one line a tab shows while a new version writes its part — the

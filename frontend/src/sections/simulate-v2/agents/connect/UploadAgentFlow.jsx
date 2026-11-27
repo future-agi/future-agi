@@ -104,6 +104,7 @@ export default function UploadAgentFlow({ title, onSave, initial = null }) {
       ...(egress.length ? [egressCheck(egress)] : []),
     ],
     [files.map((f) => f.name).join(","), entry, envValues, egressText],
+    { sandbox: true },
   );
 
   const next = {
@@ -136,6 +137,11 @@ export default function UploadAgentFlow({ title, onSave, initial = null }) {
       next={next}
       preflight={{
         state: preflight,
+        /* Where its sandbox log reads from. */
+        logAgent: {
+          definition: { kind: "upload", entry: entry.trim() },
+          values: { folderName: files[0]?.name?.replace(/\.zip$/, "") },
+        },
         canRun: ready,
         blockedReason: !ready
           ? "Add the files and name the entry file — then preflight checks them and their credentials."

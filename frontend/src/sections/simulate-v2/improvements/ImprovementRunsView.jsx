@@ -87,6 +87,11 @@ import {
   evidenceRowsOf,
 } from "./epochCandidates";
 import EpochEnding from "./EpochEnding";
+import LogExcerpt from "../components/logs/LogExcerpt";
+import LogsDrawer from "../components/logs/LogsDrawer";
+import LogViewer from "../components/logs/LogViewer";
+import useLogClock from "../components/logs/useLogClock";
+import { engineLogOf } from "../_mock/sandboxLogs";
 import EpochMoreMenu from "./EpochMoreMenu";
 import EpochSearchDetails from "./EpochSearchDetails";
 import IssueScenarioEditor from "./IssueScenarioEditor";
@@ -619,8 +624,36 @@ export default function ImprovementRunsView({
       return { primary: { label: "Add scenarios", onClick: openScenarios } };
     return {};
   })();
+  /* The improvement engine's sandbox: live while it runs. Failed on our side,
+     it stops on an error and the ending shows that excerpt. */
+  const [logsOpen, setLogsOpen] = useState(false);
+  const logNow = useLogClock(running, 2000);
+  const infraEnded = ending === "failed" && outcome?.reason?.key !== "yours";
+  const engineLog = useMemo(
+    () =>
+      engineLogOf({
+        improvement: record,
+        candidates,
+        startedAt: record.startedAt || record.createdAt,
+        live: running,
+        failed: infraEnded,
+        now: logNow,
+      }),
+    [record, candidates, running, infraEnded, logNow],
+  );
   /* The ⋯ menu: everything that isn't the page's one primary. */
   const moreItems = [
+    /* Finished epochs have a Logs tab; a running one opens its live log here. */
+    ...(tabbed
+      ? []
+      : [
+          {
+            label: "Logs",
+            hint: "What the engine did in its sandbox.",
+            icon: "solar:document-text-linear",
+            onClick: () => setLogsOpen(true),
+          },
+        ]),
     {
       label: "Copy epoch ID",
       hint: experimentId,
@@ -1097,6 +1130,14 @@ export default function ImprovementRunsView({
         </Stack>
       </Box>
 
+      <LogsDrawer
+        open={logsOpen}
+        onClose={() => setLogsOpen(false)}
+        log={engineLog}
+        title={`${row?.name || record.name || "Epoch"} · logs`}
+        subtitle={`Improvement engine sandbox ${engineLog.sandbox.id}`}
+      />
+
       {rebaseFirst && (
         <ClosableDialog
           open={rebaseOpen}
@@ -1191,6 +1232,11 @@ export default function ImprovementRunsView({
           links={endingActions.links}
         >
           <DiagnosisLine diagnosis={epochDiagnosis} />
+          {infraEnded && (
+            <Box sx={{ px: 2, py: 1.25 }}>
+              <LogExcerpt log={engineLog} onViewAll={() => setLogsOpen(true)} />
+            </Box>
+          )}
           {ending === "no-fix" ? (
             /* Never a dead end: what to try instead, one way on each. */
             <NextSteps
@@ -1308,6 +1354,7 @@ export default function ImprovementRunsView({
             }
           />
           <Tab value="cost" label="Cost" />
+          <Tab value="logs" label="Logs" />
         </Tabs>
       )}
 
@@ -1384,6 +1431,12 @@ export default function ImprovementRunsView({
             groups={candidateGroups}
             onSeeChange={setChangeOf}
           />
+        </Box>
+      )}
+
+      {view === "logs" && (
+        <Box sx={{ flexShrink: 0 }}>
+          <LogViewer log={engineLog} />
         </Box>
       )}
 

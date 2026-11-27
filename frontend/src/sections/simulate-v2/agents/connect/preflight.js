@@ -44,15 +44,26 @@ export const egressCheck = (domains) => {
   return factCheck({ id: "egress", label: "Egress domains", ok: true, okText: `${domains.length} allowed: ${domains.join(", ")} — everything else is blocked while the agent runs.` });
 };
 
+/** The demo knob: ?sandbox=install | start fails the sandbox check there. */
+export const sandboxFailOf = () => {
+  if (typeof window === "undefined") return null;
+  const v = new URLSearchParams(window.location.search).get("sandbox");
+  return v === "install" || v === "start" ? v : null;
+};
+const sandboxCheck = (failAt) => factCheck({ id: "sandbox", label: "Start the agent", ok: false, failText: failAt === "install" ? "Couldn't install its dependencies in the sandbox." : "It exited before it was ready." });
+
 /**
  * Run a flow's checks: `checks` are what to verify now, `key` is what they
  * were computed from — when it changes, the last result is cleared.
  *   → { status: "idle" | "running" | "done", results, ready, run }
  */
-export function usePreflight(checks, key) {
+export function usePreflight(checks, key, { sandbox = false } = {}) {
   const [state, setState] = useState({ status: "idle", results: null });
   const latest = useRef(checks);
-  latest.current = checks;
+  /* Code that runs in our sandbox is also installed and started there.
+     ?sandbox=install | start shows that check failing. */
+  const failAt = sandbox ? sandboxFailOf() : null;
+  latest.current = failAt ? [...checks, sandboxCheck(failAt)] : checks;
   const keyStr = JSON.stringify(key);
   const timer = useRef(null);
   useEffect(() => {

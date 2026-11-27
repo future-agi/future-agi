@@ -4,6 +4,7 @@ import { alpha } from "@mui/material/styles";
 import {
   Box,
   Button,
+  ButtonBase,
   Stack,
   Typography,
   IconButton,
@@ -28,6 +29,10 @@ import TwinRequestStream from "./TwinRequestStream";
 import EvalsTabView from "src/components/traceDetail/EvalsTabView";
 import { localizeEval } from "../_mock/errorLocalization";
 import TraceWaterfall from "./TraceWaterfall";
+import LogExcerpt from "../components/logs/LogExcerpt";
+import AgentLogsPane from "./AgentLogsPane";
+import useLogClock from "../components/logs/useLogClock";
+import { errorTurnsOf, runLogOf, trialLogOf } from "../_mock/sandboxLogs";
 import { VERDICT_CAUSES } from "../_mock/decoupled";
 import { STALE_LABEL, verdictLineOf } from "../_mock/runCauses";
 import { textTone } from "../components/textTone";
@@ -148,6 +153,33 @@ export default function CallDrawer({
     [scenarioTask, trialIdx],
   );
   const run = (envState?.runs || []).find((r) => r.id === runId) || null;
+  /* This trial's lines out of the run sandbox's log. Each trial's lines come
+     from its own key, so one scenario alone reads the same as on the run page. */
+  const logNow = useLogClock(run?.status === "running", 2000);
+  const trialLog = useMemo(() => {
+    if (!run) return null;
+    return trialLogOf(
+      runLogOf({
+        run,
+        agent: envState?.agent,
+        tasks: [scenarioTask],
+        now: logNow,
+      }),
+      scenarioTask.id,
+      trialIdx,
+    );
+  }, [run, envState?.agent, scenarioTask, trialIdx, logNow]);
+  const errorTurns = useMemo(() => errorTurnsOf(trialLog), [trialLog]);
+  const [logFocus, setLogFocus] = useState(null);
+  useEffect(() => setLogFocus(null), [scenarioTask.id, trialIdx]);
+  const openLog = (lineId) => {
+    setLogFocus(lineId || null);
+    setPane("logs");
+  };
+  const causeShown =
+    task.status === "passed" ? null : verdict || task.verdictCause;
+  const infraFailed =
+    causeShown?.cause === "inc-infra" || causeShown?.cause === "inc-transport";
   /* Falcon's read of this trial, once asked for; each trial starts unasked. */
   const [analysisAsked, setAnalysisAsked] = useState(false);
   useEffect(() => setAnalysisAsked(false), [scenarioTask.id, trialIdx]);
@@ -425,6 +457,7 @@ export default function CallDrawer({
                   with the evals on the right (drawer audit, 12 Nov). */}
               <Tab value="graph" label="Expected steps" />
               <Tab value="trace" label="Trace" />
+              {trialLog && <Tab value="logs" label="Agent logs" />}
               {membersOf(envState?.agent).length > 1 && (
                 <Tab value="handoffs" label="Participants" />
               )}
@@ -441,6 +474,17 @@ export default function CallDrawer({
           </Box>
 
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            {infraFailed && trialLog && pane !== "logs" && (
+              <Box sx={{ p: 2, pb: 0 }}>
+                <LogExcerpt
+                  log={trialLog}
+                  onViewAll={() => openLog(Object.values(errorTurns)[0])}
+                />
+              </Box>
+            )}
+            {pane === "logs" && trialLog && (
+              <AgentLogsPane trialLog={trialLog} focusLineId={logFocus} />
+            )}
             {pane === "handoffs" && (
               <HandoffTimeline
                 agent={envState?.agent}
@@ -549,6 +593,35 @@ export default function CallDrawer({
                           <Typography sx={{ typography: "s1", mt: 0.25 }}>
                             {s.text}
                           </Typography>
+                          {s.role === "agent" &&
+                            errorTurns[
+                              turns.filter((t) => t.role === "agent").indexOf(s)
+                            ] && (
+                              <ButtonBase
+                                onClick={() =>
+                                  openLog(
+                                    errorTurns[
+                                      turns
+                                        .filter((t) => t.role === "agent")
+                                        .indexOf(s)
+                                    ],
+                                  )
+                                }
+                                sx={{
+                                  mt: 0.5,
+                                  gap: 0.5,
+                                  color: "status.danger.fg",
+                                  typography: "s3",
+                                  "&:hover": { textDecoration: "underline" },
+                                }}
+                              >
+                                <Iconify
+                                  icon="solar:danger-triangle-linear"
+                                  width={12}
+                                />
+                                Error in log
+                              </ButtonBase>
+                            )}
                         </Box>
                         {subLinesAfter(turns.indexOf(s))}
                         {/* A world actor's action, at the turn it followed. */}

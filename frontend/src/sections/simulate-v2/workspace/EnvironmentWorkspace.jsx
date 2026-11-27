@@ -244,6 +244,9 @@ import {
   PAIR_CHECK_LIMIT_MIN,
 } from "../_mock/compatibility";
 import { buildableAgentsOf } from "../environments/worldSource";
+import LogsDrawer from "../components/logs/LogsDrawer";
+import useLogClock from "../components/logs/useLogClock";
+import { buildLogOf } from "../_mock/sandboxLogs";
 
 /**
  * `setup` marks the items that gate a run — those carry a completion tick and
@@ -448,6 +451,28 @@ export default function EnvironmentWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [env, envState.envVersions, envState.activeEnvVersion],
   );
+  /* The last build, for its log: the one on record, or — once a finished
+     build has been cleared — this world's own first build, rebuilt. */
+  const seenBuild = useRef(null);
+  if (envState?.versionBuild?.steps?.length)
+    seenBuild.current = { envId: env?.id, build: envState.versionBuild };
+  const lastBuild = useMemo(() => {
+    if (envState?.versionBuild?.steps?.length) return envState.versionBuild;
+    /* A build that just finished here keeps its own record (and sandbox). */
+    if (seenBuild.current && env?.id && seenBuild.current.envId === env.id)
+      return seenBuild.current.build;
+    const tools = worldEnv?.tools || [];
+    const scenarios = envState?.scenarios || [];
+    if (!tools.length && !scenarios.length) return null;
+    const at = Date.parse(env?.createdAt || env?.updatedAt || "");
+    return firstBuildOf({
+      tables: schemaFor(worldEnv, envState) || [],
+      tools,
+      scenarios: scenarios.map((r) => r.id),
+      now: Number.isFinite(at) ? at : Date.now() - 86400000,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [envState?.versionBuild, worldEnv, envState?.scenarios]);
   /* Every new run asks first when the agent calls a tool the world can't answer. */
   /* A run waiting on Review changes: it starts once the edits are saved,
      and is dropped if the review closes without a save. */
@@ -699,6 +724,17 @@ export default function EnvironmentWorkspace() {
   const [inbox, setInbox] = useState({ open: false, focus: null });
   /* "Check what we found" for a newly connected code agent, opened here. */
   const [foundOpen, setFoundOpen] = useState(false);
+  /* The last build's sandbox log, from the ⋯ menu. */
+  const [buildLogOpen, setBuildLogOpen] = useState(false);
+  const buildLogNow = useLogClock(buildLogOpen, 1000);
+  const buildLog =
+    buildLogOpen && lastBuild
+      ? buildLogOf({
+          build: lastBuild,
+          agent: envState?.agent,
+          now: buildLogNow,
+        })
+      : null;
   /* Make a copy: null, or { version } when a History entry preselects one. */
   const [copyOpen, setCopyOpen] = useState(null);
   /* A newer release of the world this environment came from. */
@@ -3764,160 +3800,121 @@ export default function EnvironmentWorkspace() {
               onClose={() => setActionsAnchor(null)}
               anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
               transformOrigin={{ vertical: "top", horizontal: "right" }}
-              slotProps={{ paper: { sx: { width: 300, mt: 0.5 } } }}
+              slotProps={{ paper: { sx: { minWidth: 260, mt: 0.5 } } }}
             >
-              <MenuItem
-                onClick={() => {
-                  setActionsAnchor(null);
-                  setCopyOpen({});
-                }}
-                sx={{
-                  gap: 1,
-                  py: 1,
-                  alignItems: "flex-start",
-                  whiteSpace: "normal",
-                }}
-              >
-                <Iconify
-                  icon="solar:copy-linear"
-                  width={16}
-                  sx={{ flexShrink: 0, mt: "2px", color: "text.secondary" }}
-                />
-                <Box>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    Make a copy
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Opens a copy to change freely, for this agent or another.
-                    The original stays as it is.
-                  </Typography>
-                </Box>
-              </MenuItem>
-              <MenuItem
-                onClick={() => {
-                  setActionsAnchor(null);
-                  navigate(
-                    `${paths.dashboard.simulate.environmentStep(envId, "world")}?sandbox=1`,
-                  );
-                }}
-                sx={{
-                  gap: 1,
-                  py: 1,
-                  alignItems: "flex-start",
-                  whiteSpace: "normal",
-                }}
-              >
-                <Iconify
-                  icon="solar:play-circle-linear"
-                  width={16}
-                  sx={{ flexShrink: 0, mt: "2px", color: "text.secondary" }}
-                />
-                <Box>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    Try the tools yourself
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Opens World &amp; tools: call a tool as the agent would and
-                    see the records change. Nothing is run or scored.
-                  </Typography>
-                </Box>
-              </MenuItem>
-              {!releaseUpdateOf(env, envState) &&
-                releaseUpdateOf(env, envState, { includeSkipped: true }) && (
-                  <MenuItem
-                    onClick={() => {
-                      setActionsAnchor(null);
-                      setReviewOpen(true);
-                    }}
-                    sx={{
-                      gap: 1,
-                      py: 1,
-                      alignItems: "flex-start",
-                      whiteSpace: "normal",
-                    }}
-                  >
-                    <Iconify
-                      icon="solar:refresh-linear"
-                      width={16}
-                      sx={{ flexShrink: 0, mt: "2px", color: "text.secondary" }}
-                    />
-                    <Box>
-                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                        {`Review release ${releaseUpdateOf(env, envState, { includeSkipped: true }).to}`}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.tertiary" }}
-                      >
-                        Opens the catalogue update you skipped: see what
-                        changed, then take it or keep your version.
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                )}
-              <Divider sx={{ my: 0.5 }} />
               {[
+                lastBuild && {
+                  id: "log",
+                  icon: "solar:document-text-linear",
+                  label: "Build log",
+                  hint: "What the last build ran",
+                  meta: lastBuild.shownLabel || lastBuild.label,
+                  onClick: () => setBuildLogOpen(true),
+                },
+                {
+                  id: "copy",
+                  icon: "solar:copy-linear",
+                  label: "Make a copy",
+                  hint: "Edit freely; the original stays",
+                  onClick: () => setCopyOpen({}),
+                },
+                {
+                  id: "try",
+                  icon: "solar:play-circle-linear",
+                  label: "Try the tools",
+                  hint: "Call them yourself; nothing is scored",
+                  onClick: () =>
+                    navigate(
+                      `${paths.dashboard.simulate.environmentStep(envId, "world")}?sandbox=1`,
+                    ),
+                },
+                !releaseUpdateOf(env, envState) &&
+                  releaseUpdateOf(env, envState, { includeSkipped: true }) && {
+                    id: "review",
+                    icon: "solar:refresh-linear",
+                    label: `Review release ${releaseUpdateOf(env, envState, { includeSkipped: true }).to}`,
+                    hint: "The update you skipped",
+                    onClick: () => setReviewOpen(true),
+                  },
+                "divider",
                 {
                   id: "package",
                   icon: "solar:box-linear",
-                  title: "Save an environment release",
-                  body: "Opens the commands that save this version as a private release, so other agents run exactly the same tasks.",
+                  label: "Save as a release",
+                  hint: "Other agents run the same tasks",
+                  onClick: () => setCodeOpen("package"),
                 },
-              ].map((m) => (
-                <MenuItem
-                  key={m.id}
-                  onClick={() => {
-                    setActionsAnchor(null);
-                    setCodeOpen(m.id);
-                  }}
-                  sx={{
-                    gap: 1,
-                    py: 1,
-                    alignItems: "flex-start",
-                    whiteSpace: "normal",
-                  }}
-                >
-                  <Iconify
-                    icon={m.icon}
-                    width={16}
-                    sx={{ flexShrink: 0, mt: "2px", color: "text.secondary" }}
-                  />
-                  <Box>
-                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                      {m.title}
-                    </Typography>
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary" }}
+                "divider",
+                {
+                  id: "delete",
+                  icon: "solar:trash-bin-trash-linear",
+                  label: "Delete environment",
+                  danger: true,
+                  onClick: () => setConfirmDelete(env),
+                },
+              ]
+                .filter(Boolean)
+                .map((m, i) =>
+                  m === "divider" ? (
+                    <Divider key={`d${i}`} sx={{ my: 0.5 }} />
+                  ) : (
+                    <MenuItem
+                      key={m.id}
+                      onClick={() => {
+                        setActionsAnchor(null);
+                        m.onClick();
+                      }}
+                      sx={{
+                        gap: 1,
+                        py: 0.75,
+                        alignItems: "flex-start",
+                        ...(m.danger && { color: "status.danger.fg" }),
+                      }}
                     >
-                      {m.body}
-                    </Typography>
-                  </Box>
-                </MenuItem>
-              ))}
-              <Divider sx={{ my: 0.5 }} />
-              <MenuItem
-                onClick={() => {
-                  setConfirmDelete(env);
-                  setActionsAnchor(null);
-                }}
-                // eslint-disable-next-line no-restricted-syntax -- ds: destructive menu item
-                sx={{ gap: 1, py: 1, color: "status.danger.fg" }}
-              >
-                <Iconify
-                  icon="solar:trash-bin-trash-linear"
-                  width={16}
-                  sx={{ flexShrink: 0 }}
-                />
-                <Box>
-                  <Typography
-                    sx={{ typography: "s2", fontWeight: 600, color: "inherit" }}
-                  >
-                    Delete environment
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Asks you to confirm first.
-                  </Typography>
-                </Box>
-              </MenuItem>
+                      <Iconify
+                        icon={m.icon}
+                        width={16}
+                        sx={{
+                          flexShrink: 0,
+                          mt: "2px",
+                          color: m.danger ? "inherit" : "text.secondary",
+                        }}
+                      />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Stack
+                          direction="row"
+                          alignItems="baseline"
+                          spacing={1}
+                        >
+                          <Typography
+                            sx={{
+                              typography: "s2",
+                              fontWeight: 500,
+                              color: "inherit",
+                              flex: 1,
+                            }}
+                          >
+                            {m.label}
+                          </Typography>
+                          {m.meta && (
+                            <Typography
+                              sx={{ typography: "s3", color: "text.tertiary" }}
+                            >
+                              {m.meta}
+                            </Typography>
+                          )}
+                        </Stack>
+                        {m.hint && (
+                          <Typography
+                            sx={{ typography: "s3", color: "text.tertiary" }}
+                          >
+                            {m.hint}
+                          </Typography>
+                        )}
+                      </Box>
+                    </MenuItem>
+                  ),
+                )}
             </Menu>
           </>
         )}
@@ -3959,6 +3956,16 @@ export default function EnvironmentWorkspace() {
               />
             );
           })()}
+        <LogsDrawer
+          open={buildLogOpen}
+          onClose={() => setBuildLogOpen(false)}
+          log={buildLog}
+          subtitle={
+            buildLog?.live
+              ? "Live while it builds"
+              : "The last build of this environment"
+          }
+        />
         <MakeCopyDialog
           open={!!copyOpen}
           env={env}
@@ -4538,6 +4545,7 @@ export default function EnvironmentWorkspace() {
         onGo={go}
         onRetry={gates.canEdit ? retryStoppedBuild : undefined}
         onFix={gates.canEdit ? fixStoppedBuild : undefined}
+        onOpenLogs={() => setBuildLogOpen(true)}
       />
       {readOnlyEnv && (
         <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
