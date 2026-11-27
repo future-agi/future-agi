@@ -90577,6 +90577,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           readOnly: true,
         },
+        debug_failures_connected_calls: {
+          title: "Debug failures connected calls",
+          description:
+            "Connected calls as Debug failures counts them: per call and live calls only. Null until the run finishes. Unlike connected_calls, it counts a completed chat on a voice run and skips a deleted call.",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
         failing_calls: {
           title: "Failing calls",
           description:

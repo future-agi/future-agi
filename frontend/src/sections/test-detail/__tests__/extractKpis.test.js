@@ -51,12 +51,14 @@ describe("extractKpis", () => {
     },
   );
 
-  // Debug failures' count and analysis flag, both null while the run is live.
+  // Debug failures' counts and analysis flag, all null while the run is live.
   // A value would paint a phantom eval, and null a phantom choice chart.
   it.each([
     ["failing_calls", AGENT_TYPES.VOICE, 3],
     ["failing_calls", AGENT_TYPES.CHAT, null],
     ["has_debug_failures_analysis", AGENT_TYPES.VOICE, true],
+    ["debug_failures_connected_calls", AGENT_TYPES.VOICE, 15],
+    ["debug_failures_connected_calls", AGENT_TYPES.CHAT, null],
     ["has_debug_failures_analysis", AGENT_TYPES.CHAT, null],
   ])("keeps %s out of every bucket (%s, %s)", (key, agentType, value) => {
     const { evalMetrics, callDetails, systemMetrics, deterministicEvals } =

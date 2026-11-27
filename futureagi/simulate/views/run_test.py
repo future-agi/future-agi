@@ -53,6 +53,7 @@ from simulate.models.test_execution import (
     EvalExplanationSummaryStatus,
 )
 from simulate.selectors.debug_failures import (
+    connected_call_count,
     failing_call_count,
     has_debug_failures_analysis,
 )
@@ -2214,8 +2215,15 @@ class RunTestKPIsView(APIView):
                 "avg_turn_count": avg_turn_count,
                 "avg_csat_score": avg_csat_score,
                 "failed_calls": failed_calls if failed_calls else 0,
-                # Debug failures reads it once the run finishes; a live run's
-                # count would change, so it is not counted on every poll.
+                # Debug failures' own counts, read once the run finishes; a live
+                # run's would change, so they are not counted on every poll. The
+                # connected count is the rule's: per call and live calls only,
+                # which `connected_calls` above is not.
+                "debug_failures_connected_calls": (
+                    connected_call_count(test_executor)
+                    if test_executor.status in _FINISHED_EXECUTION_STATUSES
+                    else None
+                ),
                 "failing_calls": (
                     failing_call_count(test_executor)
                     if test_executor.status in _FINISHED_EXECUTION_STATUSES

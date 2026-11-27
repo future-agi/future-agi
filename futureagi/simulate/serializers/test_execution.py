@@ -1430,6 +1430,15 @@ class RunTestKPIsResponseSerializer(serializers.Serializer):
     avg_turn_count = serializers.FloatField(read_only=True)
     avg_csat_score = serializers.FloatField(read_only=True)
     failed_calls = serializers.IntegerField(read_only=True)
+    debug_failures_connected_calls = serializers.IntegerField(
+        read_only=True,
+        allow_null=True,
+        help_text=(
+            "Connected calls as Debug failures counts them: per call and live "
+            "calls only. Null until the run finishes. Unlike connected_calls, it "
+            "counts a completed chat on a voice run and skips a deleted call."
+        ),
+    )
     failing_calls = serializers.IntegerField(
         read_only=True,
         allow_null=True,

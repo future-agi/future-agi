@@ -68415,6 +68415,12 @@ export const SimulateTestExecutionsKpisListResponse = zod.object({
   avg_turn_count: zod.number().optional(),
   avg_csat_score: zod.number().optional(),
   failed_calls: zod.number().optional(),
+  debug_failures_connected_calls: zod
+    .number()
+    .optional()
+    .describe(
+      "Connected calls as Debug failures counts them: per call and live calls only. Null until the run finishes. Unlike connected_calls, it counts a completed chat on a voice run and skips a deleted call.",
+    ),
   failing_calls: zod
     .number()
     .optional()

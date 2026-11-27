@@ -76,7 +76,7 @@ def ensure_simulation_investigation(
 
     Refuses to start a diagnosis of a run with too few connected calls or no
     failing call: it would spend credits and find nothing. A diagnosis such a run
-    already has is returned unchanged.
+    already has is returned unchanged while any of its calls is read or in flight.
     """
     if execution.status != TestExecution.ExecutionStatus.COMPLETED:
         raise SimulationInvestigationConflict("Test execution is not completed")
@@ -105,8 +105,9 @@ def ensure_simulation_investigation(
         )
         refusal = debug_failures_refusal(execution)
         # The rule stops new spend, not a diagnosis already made: that one stays
-        # readable as it is, with no call read again.
-        if refusal is not None and earlier:
+        # readable as it is, with no call read again. One with no call read or
+        # in flight has nothing to show, so it is refused like a new one.
+        if refusal is not None and any(not _unread(job) for job in earlier):
             return earlier
         if refusal is not None:
             raise refusal

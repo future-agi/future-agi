@@ -30674,6 +30674,8 @@ export interface RunTestKPIsResponseApi {
   readonly avg_turn_count?: number;
   readonly avg_csat_score?: number;
   readonly failed_calls?: number;
+  /** Connected calls as Debug failures counts them: per call and live calls only. Null until the run finishes. Unlike connected_calls, it counts a completed chat on a voice run and skips a deleted call. */
+  readonly debug_failures_connected_calls?: number;
   /** Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals. */
   readonly failing_calls?: number;
   /** Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes. */

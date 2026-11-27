@@ -511,7 +511,10 @@ export default function RunDetail({
                   color="primary"
                   size="small"
                   onClick={() => setDebugging(true)}
-                  disabled={!access.canRun || live || !!debugBlocked}
+                  // Until the run's counts arrive, the rule can't be judged.
+                  disabled={
+                    !access.canRun || live || !!debugBlocked || !identity
+                  }
                   startIcon={
                     <Iconify icon="solar:magnifer-linear" width={15} />
                   }

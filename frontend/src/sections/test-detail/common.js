@@ -691,7 +691,8 @@ const IGNORED_KEYS = [
   // would paint a phantom eval. The simulate harness reads
   // `kpis.completed_calls` directly and never comes through here.
   "completed_calls",
-  // Debug failures' count and flag, read by useFixMyAgentBlocked; no card shows them.
+  // Debug failures' counts and flag, read by useFixMyAgentBlocked; no card shows them.
+  "debug_failures_connected_calls",
   "failing_calls",
   "has_debug_failures_analysis",
   "avg_response",
@@ -1031,7 +1032,8 @@ export const useFixMyAgentBlocked = (executionId) => {
     }
     // An older backend sends no count, and a count it did not send blocks nothing.
     const blockedReason = debugFailuresBlockedReason({
-      connectedCalls: kpis?.connected_calls,
+      // The rule's own count, not the Connected card's.
+      connectedCalls: kpis?.debug_failures_connected_calls,
       failingCalls: kpis?.failing_calls,
     });
     if (blockedReason) {

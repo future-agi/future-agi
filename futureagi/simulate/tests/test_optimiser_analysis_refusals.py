@@ -7,15 +7,22 @@ from unittest.mock import patch
 import pytest
 
 from model_hub.models.evals_metric import EvalTemplate
-from simulate.models import AgentOptimiser, AgentOptimiserRun, Scenarios
+from simulate.models import (
+    AgentDefinition,
+    AgentOptimiser,
+    AgentOptimiserRun,
+    Scenarios,
+)
 from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
 from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.selectors.debug_failures import connected_call_count
 from simulate.tasks.agent_optimiser_tasks import execute_optimiser_run
 
 pytestmark = pytest.mark.django_db
 
 VOICE = CallExecution.SimulationCallType.VOICE
+TEXT = CallExecution.SimulationCallType.TEXT
 COMPLETED = CallExecution.CallStatus.COMPLETED
 FAILED = CallExecution.CallStatus.FAILED
 
@@ -255,3 +262,57 @@ def test_kpis_send_no_analysis_flag_for_a_live_run(
     _analysed(execution)
 
     assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is None
+
+
+@pytest.mark.parametrize(
+    ("last_call", "rule_count", "card_count"),
+    [
+        # The voice run's card counts calls that ran for some time; the rule also
+        # counts a chat that completed.
+        ({"simulation_call_type": TEXT, "duration_seconds": None}, 15, 14),
+        # The card reads deleted calls too; the rule reads live calls only.
+        (
+            {"simulation_call_type": VOICE, "duration_seconds": 30, "deleted": True},
+            14,
+            15,
+        ),
+    ],
+    ids=["completed_chat", "deleted_call"],
+)
+def test_kpis_send_the_connected_count_the_rule_reads(
+    auth_client, organization, workspace, last_call, rule_count, card_count
+):
+    execution = _run(organization, workspace, [(COMPLETED, 30)] * 14)
+    execution.run_test.agent_definition = AgentDefinition.objects.create(
+        organization=organization,
+        workspace=workspace,
+        agent_name="Voice agent",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+12025550100",
+        inbound=True,
+        languages=["en"],
+    )
+    execution.run_test.save(update_fields=["agent_definition"])
+    CallExecution.objects.create(
+        test_execution=execution,
+        scenario=execution.calls.first().scenario,
+        status=COMPLETED,
+        **last_call,
+    )
+
+    kpis = _kpis(auth_client, execution)
+
+    assert kpis["debug_failures_connected_calls"] == rule_count
+    assert connected_call_count(execution) == rule_count
+    # The Connected card keeps its own count.
+    assert kpis["connected_calls"] == card_count
+
+
+def test_kpis_send_no_rule_connected_count_for_a_live_run(
+    auth_client, organization, workspace
+):
+    execution = _run(
+        organization, workspace, ELIGIBLE, status=TestExecution.ExecutionStatus.RUNNING
+    )
+
+    assert _kpis(auth_client, execution)["debug_failures_connected_calls"] is None

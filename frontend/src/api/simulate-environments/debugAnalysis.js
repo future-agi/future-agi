@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { DEBUG_FAILURES_REFUSALS } from "src/sections/test-detail/debugFailuresRule";
+import { runResultsKey } from "./runEvals";
 
 /**
  * The Debug-failures data source.
@@ -124,6 +126,12 @@ export function useDebugAnalysis(executionId) {
     // this request; if it landed after, it would overwrite the new status.
     onMutate: () => queryClient.cancelQueries({ queryKey }),
     onSuccess: (data) => queryClient.setQueryData(queryKey, data),
+    // A refusal means the header's counts were stale; read them again.
+    onError: (error) => {
+      if (DEBUG_FAILURES_REFUSALS[error?.code]) {
+        queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) });
+      }
+    },
     // The drawer shows every refusal and failure itself; no second, global toast.
     meta: { errorHandled: true },
   });
