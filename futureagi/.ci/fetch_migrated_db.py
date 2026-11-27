@@ -51,7 +51,8 @@ def listed(artifact):
     """
     run = artifact.get("workflow_run") or {}
     return (
-        run.get("head_branch") == "dev"
+        # TEMPORARY proof scaffold (reverted before review): this branch too.
+        run.get("head_branch") in ("dev", "perf/ci-backend-db-reuse")
         and run.get("repository_id") is not None
         and run.get("head_repository_id") == run.get("repository_id")
     )
