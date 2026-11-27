@@ -128,14 +128,23 @@ def _read_every_call():
 
 
 def _eligible_run(organization, workspace, status):
-    """A run the counts let through, 14 completed calls and one failed, in `status`."""
+    """A run the counts let through, 14 completed calls and one failed, in `status`.
+    A cancel also closed one call before it connected."""
     execution = _small_run(organization, workspace, calls=14)
+    scenario = execution.calls.first().scenario
     CallExecution.objects.create(
         test_execution=execution,
-        scenario=execution.calls.first().scenario,
+        scenario=scenario,
         simulation_call_type=CallExecution.SimulationCallType.VOICE,
         status=CallExecution.CallStatus.FAILED,
         duration_seconds=30,
+    )
+    CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        simulation_call_type=CallExecution.SimulationCallType.VOICE,
+        status=CallExecution.CallStatus.CANCELLED,
+        duration_seconds=0,
     )
     execution.status = status
     execution.save(update_fields=["status"])
@@ -196,17 +205,75 @@ def test_a_stopped_runs_calls_are_read_to_a_diagnosis(
     auth_client, organization, workspace, status
 ):
     execution = _eligible_run(organization, workspace, status)
+    never_connected = execution.calls.get(status=CallExecution.CallStatus.CANCELLED)
+    connected = {
+        str(call_id)
+        for call_id in execution.calls.exclude(id=never_connected.id).values_list(
+            "id", flat=True
+        )
+    }
 
     started = auth_client.post(_url(execution))
     served = _read_every_call()
     diagnosis = auth_client.get(_url(execution)).json()
 
     assert started.status_code == 202
-    assert served == {
-        str(call_id) for call_id in execution.calls.values_list("id", flat=True)
-    }
+    # A call that never connected has nothing to read, so it costs no read.
+    assert not TraceInvestigationJob.no_workspace_objects.filter(
+        call_execution=never_connected
+    ).exists()
+    assert served == connected
+    # The diagnosis does not wait on it: every call that has a read is read.
     assert diagnosis["status"] == "completed"
+    assert diagnosis["report"]["coverage"]["observed_call_count"] == len(connected)
+    assert diagnosis["report"]["coverage"]["read_complete"] is True
+    # Nothing was read of it, and nothing failed reading it.
+    assert str(never_connected.id) not in diagnosis["summary"]["unanalyzed_call_ids"]
     assert diagnosis["findings"]
+
+
+_VOICE = CallExecution.SimulationCallType.VOICE
+_TEXT = CallExecution.SimulationCallType.TEXT
+_CANCELLED = CallExecution.CallStatus.CANCELLED
+
+
+@pytest.mark.parametrize(
+    ("call_type", "call_status", "duration", "read"),
+    [
+        # A call a cancel closed before it started keeps no duration.
+        (_VOICE, _CANCELLED, None, False),
+        # A chat connected only when it completed.
+        (_TEXT, _CANCELLED, None, False),
+        (_VOICE, _CANCELLED, 12, True),
+        (_VOICE, CallExecution.CallStatus.FAILED, 0, True),
+    ],
+    ids=[
+        "cancelled_before_it_started",
+        "cancelled_chat",
+        "cancelled_after_it_connected",
+        "failed_before_it_connected",
+    ],
+)
+def test_which_calls_of_a_stopped_run_are_read(
+    auth_client, organization, workspace, call_type, call_status, duration, read
+):
+    execution = _eligible_run(
+        organization, workspace, TestExecution.ExecutionStatus.CANCELLED
+    )
+    call = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=execution.calls.first().scenario,
+        simulation_call_type=call_type,
+        status=call_status,
+        duration_seconds=duration,
+    )
+
+    auth_client.post(_url(execution))
+
+    assert (
+        TraceInvestigationJob.no_workspace_objects.filter(call_execution=call).exists()
+        is read
+    )
 
 
 @pytest.mark.parametrize(

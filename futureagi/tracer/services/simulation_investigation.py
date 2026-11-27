@@ -2,12 +2,16 @@ import json
 import uuid
 
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.utils import timezone
 
 from simulate.models import SimulateEvalConfig
 from simulate.models.test_execution import CallExecution, CallTranscript, TestExecution
-from simulate.selectors.debug_failures import connected_call_count, failing_call_count
+from simulate.selectors.debug_failures import (
+    CONNECTED,
+    connected_call_count,
+    failing_call_count,
+)
 from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.services.run_results_v3 import build_evaluation_catalog, eval_rows
 from tracer.models.project import Project, ProjectSourceChoices
@@ -83,7 +87,8 @@ FINISHED_RUN_STATUSES = (
 def ensure_simulation_investigation(
     execution: TestExecution,
 ) -> list[TraceInvestigationJob]:
-    """Create one durable job per call of a finished execution; re-arm failed ones.
+    """Create one durable job per readable call of a finished execution; re-arm
+    failed ones.
 
     Refuses to start a diagnosis of a run that debug_failures_refusal refuses. A
     diagnosis such a run already has is returned unchanged while any of its calls
@@ -120,9 +125,18 @@ def ensure_simulation_investigation(
             for job in earlier
             if job.project_id == project.id
         }
+        # A cancel closes the calls it stopped before they began. One that never
+        # connected has nothing to read, so it gets no paid read. A chat connects
+        # only when it completes, so a chat the cancel closed mid-run loses its
+        # read on purpose; a voice call that ran for any time keeps it.
+        readable = calls.exclude(
+            Q(status=CallExecution.CallStatus.CANCELLED) & ~CONNECTED
+        )
         now = timezone.now()
         jobs = []
-        for call_id in calls.order_by("created_at", "id").values_list("id", flat=True):
+        for call_id in readable.order_by("created_at", "id").values_list(
+            "id", flat=True
+        ):
             job = existing.get(call_id)
             if job is None:
                 job = TraceInvestigationJob.objects.create(
