@@ -89,7 +89,6 @@ export default function ActorForm({
     const id = String(value("id")).trim();
     return { op: "create", changes, ...(id ? { id } : {}) };
   };
-  const set = (name) => (event) => put(name, event.target.value);
   const changed = hasEdits(actor, fields);
   const request = actor ? requestOf() : null;
   const check = useActorCheck(envId, request);
@@ -193,7 +192,6 @@ export default function ActorForm({
   };
   const form = {
     value,
-    set,
     put,
     initial,
     problems: Object.fromEntries(

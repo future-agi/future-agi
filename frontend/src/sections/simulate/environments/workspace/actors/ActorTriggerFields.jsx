@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import ActorField from "./ActorField";
+import ActorField, { ActorFieldView } from "./ActorField";
 import { ACTORS_COPY } from "./actors.constants";
 import { ACTOR_FORM_SHAPE, OPTIONS_SHAPE } from "./actors.shapes";
 import { KEPT, presetOf, presetsFor, whereProblem, words } from "./actorUtils";
@@ -47,11 +47,9 @@ export default function ActorTriggerFields({
     const ways = usable(next);
     form.put("mode", ways.includes(initial.mode) ? initial.mode : ways[0]);
   };
+  // "Comes in" is worked out from the trigger kind, so it is not a form value of its own.
   const presetForm = {
     ...form,
-    value: (name) =>
-      name === "preset" ? presetOf(mode, presets) : form.value(name),
-    set: () => (event) => choosePreset(event.target.value),
     initial: { ...initial, preset: presetOf(initial.mode, presets) },
     // With a second select, a problem with how they come in shows under that one.
     problems: several
@@ -63,9 +61,11 @@ export default function ActorTriggerFields({
   );
   return (
     <>
-      <ActorField
+      <ActorFieldView
         form={presetForm}
         name="preset"
+        value={presetOf(mode, presets)}
+        onChange={(event) => choosePreset(event.target.value)}
         label={F.trigger}
         options={presets.map((one) => ({
           value: one.id,

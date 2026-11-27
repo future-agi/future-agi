@@ -496,6 +496,23 @@ describe("WorldActorsPanel", () => {
     asked = undefined;
   });
 
+  it("sends only a value edited in Advanced settings after Advanced is hidden again", async () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
+    fireEvent.change(
+      screen.getByLabelText("May agree to (optional, one per line)"),
+      { target: { value: "A refund under $50" } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Hide advanced settings" }),
+    );
+    await settle();
+    fireEvent.click(saveButton());
+    expect(sent().op).toBe("replace");
+    expect(sent().changes).toEqual({ may_agree: ["A refund under $50"] });
+  });
+
   it("keeps Enter in a field from saving or closing the form", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
