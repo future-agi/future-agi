@@ -651,9 +651,11 @@ def _not_outside_the_epoch(
     the candidate is: still being checked, passed but not picked, or refused."""
     named = f"This version is Candidate {candidate.attempt} of Epoch {number}"
     ships = ships_only_with_a_reason(candidate)
-    unchecked = (
-        candidate.outcome == AgentFixCandidate.Outcome.PENDING
-        and candidate.verdict is None
+    # An ended Epoch relabels the pending candidates its report never named REJECTED,
+    # with no verdict: unchecked as much as one still pending.
+    unchecked = candidate.verdict is None and candidate.outcome in (
+        AgentFixCandidate.Outcome.PENDING,
+        AgentFixCandidate.Outcome.REJECTED,
     )
     if candidate.fix_run.state in AgentFixRun.ACTIVE_STATES:
         code = "fix_candidate_still_checking"

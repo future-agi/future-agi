@@ -35,6 +35,7 @@ from simulate.pydantic_schemas.agent_fix import (
     OutsideCandidate,
 )
 from simulate.selectors.agent_fix import (
+    FINISHED_RUN_STATES,
     base_commit,
     default_max_minutes,
     fix_step,
@@ -193,7 +194,10 @@ def _failing_cases(ran: list[LaunchScenario], seed: str) -> dict[str, list[str]]
 def run_held_back(source_run: HostedHarnessJob, ran: list[LaunchScenario]) -> set[str]:
     """Every case an Epoch on a run holds back, or an outside attempt on it would: the
     split of the run's failing cases ``ran`` (its scenario_results), and the held-back
-    cases of each Epoch on it already, whoever started it."""
+    cases of each Epoch on it already, whoever started it. While the run is still going,
+    every failing case: the split changes as more cases fail."""
+    if source_run.state not in FINISHED_RUN_STATES:
+        return {one.key for one in ran if one.failing_sub_goals}
     seed = str(source_run.id)
     held = set(split_held_back(seed, _failing_cases(ran, seed)))
     for request in AgentFixRun.no_workspace_objects.filter(
@@ -318,7 +322,8 @@ def attempt_budget_credits(
 
 def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
     """What a person's own coding agent reads to fix a finished run: its failing cases
-    (never a held-back one), the agent's files, the rules, and how to submit."""
+    (never a held-back one), the agent's files, the rules, and how to submit. A run still
+    going names no case: the split changes as more cases fail, and launch refuses it."""
     options = launch_options(source_run)
     attempts = list(outside_attempts(source_run))
     used = len(used_attempts(source_run))
@@ -326,8 +331,9 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
     blocked = options.blocked
     request, files = None, []
     try:
-        request = _attempt_scope(source_run, previous)
-        attempt_budget_credits(source_run, request, previous)
+        if source_run.state in FINISHED_RUN_STATES:
+            request = _attempt_scope(source_run, previous)
+            attempt_budget_credits(source_run, request, previous)
         files = sorted(archive_files(run_source_archive(source_run)))
     except HostedHarnessError as exc:
         blocked = blocked or LaunchBlocked(code=exc.code, message=exc.message)

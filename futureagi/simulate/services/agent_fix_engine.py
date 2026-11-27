@@ -12,6 +12,7 @@ import os
 import subprocess
 import tarfile
 import tempfile
+import zlib
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any, NamedTuple
@@ -438,7 +439,8 @@ def archive_files(body: bytes) -> dict[str, bytes]:
                 if extracted is not None:
                     path = member.name.removeprefix("./").removeprefix("source/")
                     files[path] = extracted.read()
-    except tarfile.TarError as exc:
+    # A truncated or corrupt gzip raises past TarError.
+    except (tarfile.TarError, EOFError, zlib.error, OSError) as exc:
         raise HostedHarnessError(
             "fix_tree_invalid", "the candidate's tree is not a tar.gz", status_code=400
         ) from exc

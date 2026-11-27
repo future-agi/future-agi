@@ -35,6 +35,7 @@ from simulate.selectors.agent_fix import (
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
 from simulate.selectors.agent_fix_outside import (
+    BUDGET_HEADROOM,
     counts_as_attempt,
     hidden_epoch,
     hidden_verdict,
@@ -974,8 +975,9 @@ class AgentFixCodingAgentAttemptSerializer(serializers.Serializer):
         min_value=1,
         max_value=BUDGET_CREDITS_MAX,
         required=False,
-        help_text="The attempt's limit in credits. Left out, the most its check runs "
-        "can hold at once: a hold on the budget, not spend.",
+        help_text=f"The attempt's limit in credits. Left out, the attempt's hold × "
+        f"{BUDGET_HEADROOM}, capped at {BUDGET_CREDITS_MAX:,} credits. Its hold is the "
+        "most its check runs can hold at once.",
     )
 
 

@@ -273,6 +273,14 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         source_run = self._source_run(request, data["source_run_id"])
         if source_run is None:
             return _not_found()
+        limit = settings.AGENT_FIX_MAX_UPLOAD_BYTES
+        if data["tree"].size > limit:
+            raise HostedHarnessError(
+                "fix_tree_too_large",
+                f"The tree is too large. An attempt takes a tree of at most"
+                f" {limit // (1024 * 1024)} MB.",
+                status_code=413,
+            )
         fix_run = submit_outside_attempt(
             source_run,
             tree=data["tree"].read(),

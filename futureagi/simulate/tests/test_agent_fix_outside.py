@@ -45,8 +45,10 @@ from simulate.selectors.agent_fix_outside import (
     outside_attempt_request,
 )
 from simulate.selectors.agent_fix_wording import FixNames
+from simulate.serializers.agent_fix import AgentFixCodingAgentAttemptSerializer
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_engine import store_outside_trees
+from simulate.services.agent_fix_outside import submit_outside_attempt
 from simulate.services.agent_fix_runs import (
     close_fix_run,
     refuse_outside_the_epoch,
@@ -325,6 +327,12 @@ class TestSubmit:
         assert hold == Decimal("1.00")
         assert response.json()["request"]["budget_credits"] == math.ceil(
             hold * Decimal("1.25") * 100
+        )
+        # The submit route's docs state the same default.
+        budget = AgentFixCodingAgentAttemptSerializer().fields["budget_credits"]
+        assert (
+            "Left out, the attempt's hold × 1.25, capped at 50,000 credits."
+            in budget.help_text
         )
 
     def test_an_attempt_too_large_for_an_epoch_is_refused_not_cut_short(
@@ -679,6 +687,48 @@ class TestSubmit:
             400,
             "fix_tree_invalid",
         )
+
+    def test_a_truncated_tree_is_refused_as_unreadable(self, auth_client, source_run):
+        """A gzip cut off mid-stream raises EOFError, which is not a TarError."""
+        body = _tree({**FIXED, "big.bin": os.urandom(200_000)})
+
+        response = _submit(
+            auth_client,
+            source_run,
+            tree=SimpleUploadedFile("tree.tar.gz", body[: len(body) // 2]),
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            400,
+            "fix_tree_invalid",
+        )
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_a_tree_over_the_upload_limit_is_refused_before_it_is_read(
+        self, auth_client, source_run, settings
+    ):
+        settings.AGENT_FIX_MAX_UPLOAD_BYTES = 1024 * 1024
+        tree = _tree({**FIXED, "big.bin": os.urandom(1024 * 1024)})
+        assert len(tree) > settings.AGENT_FIX_MAX_UPLOAD_BYTES
+
+        with patch(
+            "simulate.views.agent_fix.submit_outside_attempt",
+            wraps=submit_outside_attempt,
+        ) as submitted:
+            response = _submit(
+                auth_client,
+                source_run,
+                tree=SimpleUploadedFile("tree.tar.gz", tree),
+            )
+
+        assert (response.status_code, response.json()["error"]) == (
+            413,
+            "fix_tree_too_large",
+        )
+        assert response.json()["message"] == (
+            "The tree is too large. An attempt takes a tree of at most 1 MB."
+        )
+        submitted.assert_not_called()
 
     @pytest.mark.parametrize("kind", [tarfile.REGTYPE, tarfile.DIRTYPE])
     def test_a_flood_of_empty_entries_is_refused_before_it_is_expanded(
@@ -1264,6 +1314,19 @@ class TestBrief:
         assert "not given" not in instructions
         assert "This run holds no case back." in instructions
         assert "too few failing cases" not in instructions
+
+    def test_a_run_still_going_names_no_case(self, auth_client, source_run):
+        """Its split changes as more cases fail: a case it names now may be held back."""
+        HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+            state="running"
+        )
+
+        body = _source_route(auth_client, "brief", source_run.test_execution_id).json()
+
+        assert body["blocked"]["code"] == "fix_source_running"
+        assert (body["targets"], body["failures"]) == ([], [])
+        assert KEYS[0] not in json.dumps(body)
+        assert "Held-back cases" not in body["instructions"]
 
     def test_says_when_the_run_s_attempts_are_used(self, auth_client, source_run):
         previous = None
@@ -2093,6 +2156,27 @@ class TestLaunchOptionsHoldBack:
         text = json.dumps(options)
         assert [key for key in held if f'"{key}"' in text] == []
 
+    @pytest.mark.parametrize(
+        "client", ["auth_client", "key_client"], ids=["mcp", "key"]
+    )
+    def test_a_run_still_going_names_no_failing_case_to_a_caller_that_is_not_a_session(
+        self, request, source_run, browser_client, client
+    ):
+        """Its split changes as more cases fail: any failing case may end up held back."""
+        HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+            state="running"
+        )
+
+        options = self._options(request.getfixturevalue(client), source_run)
+        session = self._options(browser_client, source_run)
+
+        assert options["blocked"]["code"] == "fix_source_running"
+        assert options["scenarios"] == []
+        assert options["suggested"]["target_scenario_keys"] == []
+        text = json.dumps(options)
+        assert [key for key in self.FAILING if f'"{key}"' in text] == []
+        assert {one["key"] for one in session["scenarios"]} == set(self.FAILING)
+
     def test_a_signed_in_session_reads_every_case(self, browser_client, source_run):
         options = self._options(browser_client, source_run)
 
@@ -2253,14 +2337,16 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
             " for the Epoch to finish.",
         )
 
+    # An ended Epoch relabels a pending candidate its report never named rejected.
+    @pytest.mark.parametrize("outcome", ["pending", "rejected"])
     @pytest.mark.parametrize("state", [State.STOPPED, State.FAILED])
     def test_a_candidate_its_ended_epoch_never_checked_says_so(
-        self, browser_client, planted, state
+        self, browser_client, planted, state, outcome
     ):
         """An Epoch that ended never finishes checking: no one is told to wait for it."""
         AgentFixRun.no_workspace_objects.filter(id=planted.id).update(state=state)
         AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
-            outcome="pending", verdict=None
+            outcome=outcome, verdict=None
         )
 
         response = _move(
