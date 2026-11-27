@@ -1,8 +1,7 @@
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
 import {
-  BUDGET_CREDITS_MAX,
   RUN_AGAIN,
-  RUN_FEWER_SCENARIOS,
+  attemptNextStep,
   isOutsideAttempt,
   usedTheRunsLastAttempt,
 } from "src/api/simulate-environments/codingAgent";
@@ -210,27 +209,21 @@ const sentence = (text) =>
 // last counted attempt, that step is a new run.
 function attemptEndingText(fix) {
   const code = fix.failure?.code;
-  const last = usedTheRunsLastAttempt(
-    fix.request?.outside_candidate?.number,
-    fix.counted,
-  );
-  const submitAgain = last
-    ? RUN_AGAIN
-    : "Submit it again with fagi epoch submit.";
+  const number = fix.request?.outside_candidate?.number;
+  const last = usedTheRunsLastAttempt(number, fix.counted);
+  const submitAgain = attemptNextStep({
+    state: fix.state,
+    number,
+    counted: fix.counted,
+    budgetCredits: fix.request?.budget_credits,
+  });
   switch (fix.state) {
     case "no_improvement":
       return `Your coding agent's change did not pass every check, so nothing changed. The checks above say which. ${last ? RUN_AGAIN : "Fix the change, then submit it again with fagi epoch submit."}`;
     case "not_reproduced":
       return "The run's failing cases did not fail often enough on the current version to check a fix. Nothing changed.";
     case "out_of_budget":
-      // At the cap a larger budget is refused: the run is what has to shrink.
-      return `This attempt reached its budget. Nothing changed. ${
-        last
-          ? RUN_AGAIN
-          : fix.request?.budget_credits >= BUDGET_CREDITS_MAX
-            ? RUN_FEWER_SCENARIOS
-            : "Submit it again with a larger budget: fagi epoch submit --budget-credits."
-      }`;
+      return `This attempt reached its budget. Nothing changed. ${submitAgain}`;
     case "stopped":
       return "You stopped this attempt. Nothing changed.";
     case "failed":

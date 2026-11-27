@@ -33,7 +33,7 @@ export default function OutsideAttemptVerdict({
   if (!candidate) return null;
   const { number, summary } = candidate;
   const checks = attemptChecks(verdict, fix.request);
-  const said = attemptNote(verdict);
+  const said = attemptNote(verdict, fix.request);
   return (
     <Box sx={{ px: 3, pt: 2.5 }}>
       <Section

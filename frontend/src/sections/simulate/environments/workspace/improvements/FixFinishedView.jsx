@@ -9,6 +9,7 @@ import { paths } from "src/routes/paths";
 import {
   isOutsideAttempt,
   useCodingAgentAttemptsEnabled,
+  usedTheRunsLastAttempt,
 } from "src/api/simulate-environments/codingAgent";
 
 import ViewerLock from "../../components/ViewerLock";
@@ -184,10 +185,15 @@ WhatToTryNext.propTypes = {
 // no-safe ending offers only the issue's: its run's is in What to try next.
 // A viewer sees each one locked, with why.
 // An attempt from a person's own coding agent goes on in that agent: its one way on
-// is the brief to paste there, never a retry or Run Epoch.
+// is the brief to paste there, never a retry or Run Epoch. After the run's last
+// counted attempt the brief is refused: the ending says to run the environment again.
 function AttemptPrimary({ fix }) {
   const enabled = useCodingAgentAttemptsEnabled();
   if (!enabled || !fix.source_run_id) return null;
+  if (
+    usedTheRunsLastAttempt(fix.request?.outside_candidate?.number, fix.counted)
+  )
+    return null;
   return (
     <CopyForCodingAgentButton
       sourceRunId={fix.source_run_id}

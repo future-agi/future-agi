@@ -56,8 +56,9 @@ export default function CodingAgentSetup() {
         ))}
         <Typography sx={{ typography: "s1", color: "text.secondary" }}>
           Each fix your agent submits with fagi epoch submit is an attempt.
-          Future AGI runs it as a short Epoch, checks it on cases your agent
-          wasn&apos;t given, and sends back a verdict.
+          Future AGI runs it as a short Epoch, sends back a verdict, and checks
+          each fix on cases your agent wasn&apos;t given, when the run holds
+          some back.
         </Typography>
       </Stack>
     </Section>

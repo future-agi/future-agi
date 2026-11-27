@@ -77,8 +77,9 @@ describe("IDE & coding agents", () => {
     expect(section).toHaveTextContent("npm install -g @future-agi/cli");
     expect(section).toHaveTextContent("npx @future-agi/cli");
     expect(section).toHaveTextContent("fagi login");
+    // A run with too few failing cases holds none back.
     expect(section).toHaveTextContent(
-      "checks it on cases your agent wasn't given",
+      "Future AGI runs it as a short Epoch, sends back a verdict, and checks each fix on cases your agent wasn't given, when the run holds some back.",
     );
     expect(section).not.toHaveTextContent(/can't read|cannot read/i);
   });

@@ -418,7 +418,11 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
       await screen.findByText(
         counted
           ? "No check ran on this attempt."
-          : "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.",
+          : `This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. ${
+              state === "out_of_budget"
+                ? "Submit it again with a larger budget: fagi epoch submit --budget-credits."
+                : "Submit it again with fagi epoch submit."
+            }`,
       );
       expect(panel).not.toHaveTextContent("did not apply");
       expect(panel).not.toHaveTextContent("Future AGI checked nothing else");
@@ -571,8 +575,10 @@ describe("An attempt's running stages and ending", () => {
       counted: true,
       tiers: [{ name: "static", status: "failed", detail: "" }],
     });
-    expect(attemptNote(refused)).toContain(runAgain);
-    expect(attemptNote(refused)).not.toContain("fagi epoch submit");
+    expect(attemptNote(refused, last.request)).toContain(runAgain);
+    expect(attemptNote(refused, last.request)).not.toContain(
+      "fagi epoch submit",
+    );
     // Attempt 4 that ended before a verdict did not count: it may be sent again.
     expect(
       headline({ ...last, state: "out_of_budget", counted: false }),
@@ -596,6 +602,124 @@ describe("An attempt's running stages and ending", () => {
       "Submit it again with a larger budget: fagi epoch submit --budget-credits.",
     );
     expect(ran(BUDGET_CREDITS_MAX - 1)).not.toContain(fewer);
+  });
+
+  // A counted attempt's tree was checked: the platform refuses it again
+  // (fix_outside_tree_checked).
+  it.each([
+    ["failed", { code: "fix_engine_failed", message: "x" }, 1500],
+    ["failed", { code: "fix_deadline", message: "x" }, 1500],
+    ["out_of_budget", null, 1500],
+  ])(
+    "never tells a counted %s attempt to send the same tree again",
+    (state, failure, budget_credits) => {
+      const base = attemptFix();
+      const text = headline({
+        ...base,
+        state,
+        failure,
+        counted: true,
+        request: { ...base.request, budget_credits },
+      });
+      expect(text).toContain("Change the fix, then submit again.");
+      expect(text).not.toContain("Submit it again");
+    },
+  );
+
+  // The note under the checks and the ending below them name one next step.
+  it.each<
+    [
+      AgentFixAttemptVerdictApi["state"],
+      AgentFixAttemptVerdictApi["failure"],
+      number,
+      number,
+      string,
+    ]
+  >([
+    [
+      "out_of_budget",
+      null,
+      BUDGET_CREDITS_MAX,
+      2,
+      "Run the environment on fewer scenarios, then fix the new run.",
+    ],
+    [
+      "out_of_budget",
+      null,
+      1500,
+      2,
+      "Submit it again with a larger budget: fagi epoch submit --budget-credits.",
+    ],
+    [
+      "failed",
+      { code: "fix_engine_failed", message: "x" },
+      1500,
+      4,
+      "Submit it again with fagi epoch submit.",
+    ],
+    [
+      "failed",
+      { code: "fix_deadline", message: "x" },
+      BUDGET_CREDITS_MAX,
+      2,
+      "Submit it again with fagi epoch submit.",
+    ],
+  ])(
+    "says the same next step under the checks and in the ending of an uncounted %s attempt",
+    (state, failure, budget_credits, number, next) => {
+      const base = attemptFix();
+      const request = {
+        ...base.request,
+        budget_credits,
+        outside_candidate: { summary: "", number },
+      };
+      const note = attemptNote(
+        fixtureVerdict({ state, failure, number, counted: false, tiers: [] }),
+        request,
+      );
+      const ending = headline({
+        ...base,
+        state,
+        failure,
+        counted: false,
+        request,
+      });
+      expect(note?.slice(-next.length)).toBe(next);
+      expect(ending?.slice(-next.length)).toBe(next);
+    },
+  );
+
+  it("offers no Copy for coding agent once the run's last counted attempt is used", () => {
+    const base = attemptFix();
+    const fourth = (counted: boolean) => ({
+      ...base,
+      counted,
+      request: {
+        ...base.request,
+        outside_candidate: { summary: "", number: 4 },
+      },
+    });
+    const { unmount } = renderUi(
+      <FixFinishedView fix={fourth(true)} tab="trials" onTab={() => {}} />,
+    );
+    expect(
+      screen.queryByTestId("attempt-copy-for-coding-agent"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("fix-finished-view")).toHaveTextContent(
+      "This run has had its 4 attempts. Run the environment again, then fix the new run.",
+    );
+    unmount();
+    // Attempt 4 that ended before a verdict did not count: the run has one left.
+    renderUi(
+      <FixFinishedView
+        fix={{ ...fourth(false), state: "stopped" }}
+        tab="trials"
+        onTab={() => {}}
+      />,
+    );
+    expect(
+      screen.getByTestId("attempt-copy-for-coding-agent"),
+    ).toBeInTheDocument();
   });
 
   it.each([
@@ -628,6 +752,8 @@ describe("An attempt's running stages and ending", () => {
       retryable: true,
       failure: { code: "fix_engine_failed", message: "x" },
       candidates: [],
+      // Failed before a verdict: its tree may be sent again.
+      counted: false,
     };
     renderUi(<FixFinishedView fix={fix} tab="trials" onTab={() => {}} />);
     expect(

@@ -1,5 +1,6 @@
 import {
   RUN_AGAIN,
+  attemptNextStep,
   usedTheRunsLastAttempt,
 } from "src/api/simulate-environments/codingAgent";
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
@@ -128,9 +129,11 @@ export const refusedBeforeChecks = (
   verdict.tiers.some((t) => t.name === "static" && t.status === "failed");
 
 // The line under the checks while there is nothing, or not everything, to show. How
-// an ended attempt came out is the Epoch's own ending, further down the page.
+// an ended attempt came out is the Epoch's own ending, further down the page; the
+// note names the same next step (attemptNextStep).
 export function attemptNote(
   verdict: AgentFixAttemptVerdictApi | undefined,
+  request: Pick<AgentFixRequestApi, "budget_credits">,
 ): string | null {
   if (!verdict) return null;
   if (FIX_LIVE_STATES.has(verdict.state)) {
@@ -149,7 +152,13 @@ export function attemptNote(
   // An attempt that ended before a verdict on its change told its coding agent
   // nothing, so the platform does not count it against the run's attempts.
   if (verdict.counted === false) {
-    return "This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.";
+    const next = attemptNextStep({
+      state: verdict.state,
+      number: verdict.number,
+      counted: verdict.counted,
+      budgetCredits: request.budget_credits,
+    });
+    return `This attempt ended before Future AGI checked the change. It does not use one of the run's attempts. ${next}`;
   }
   return verdict.tiers.length ? null : "No check ran on this attempt.";
 }

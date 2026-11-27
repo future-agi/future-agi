@@ -130,3 +130,30 @@ export const RUN_FEWER_SCENARIOS =
   "Run the environment on fewer scenarios, then fix the new run.";
 
 export const RUN_AGAIN = `This run has had its ${OUTSIDE_ATTEMPTS_MAX} attempts. Run the environment again, then fix the new run.`;
+
+interface EndedAttempt {
+  state: string;
+  number: number | undefined;
+  counted: boolean | null | undefined;
+  budgetCredits: number | undefined;
+}
+
+// The next step after an attempt that ended out of budget, past its time limit or on
+// our side: the same in its ending and under its checks. At the budget cap a larger
+// budget is refused, so the run has to shrink. A counted attempt's tree was checked,
+// and the platform refuses the same tree again.
+export function attemptNextStep({
+  state,
+  number,
+  counted,
+  budgetCredits,
+}: EndedAttempt): string {
+  if (usedTheRunsLastAttempt(number, counted)) return RUN_AGAIN;
+  if (state === "out_of_budget" && (budgetCredits ?? 0) >= BUDGET_CREDITS_MAX) {
+    return RUN_FEWER_SCENARIOS;
+  }
+  if (counted) return "Change the fix, then submit again.";
+  return state === "out_of_budget"
+    ? "Submit it again with a larger budget: fagi epoch submit --budget-credits."
+    : "Submit it again with fagi epoch submit.";
+}
