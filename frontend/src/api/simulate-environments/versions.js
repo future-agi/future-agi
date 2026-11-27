@@ -35,6 +35,18 @@ const suiteMembersPath = (envId, versionId) =>
     { id: envId, version_id: versionId },
   );
 
+const lockPreviewPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/versions/lock-preview/", {
+    id: envId,
+  });
+const lockVersionPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/versions/lock/", {
+    id: envId,
+  });
+const unlockVersionPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/versions/unlock/", {
+    id: envId,
+  });
 const moveDefaultPath = (envId, piece, versionId) =>
   apiPath(
     "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/",
@@ -140,6 +152,9 @@ export const versionPickFields = (picks = {}) =>
 export const getEnvironmentVersions = async (envId) =>
   (await axios.get(versionsPath(envId))).data;
 
+export const getLockPreview = async (envId) =>
+  (await axios.get(lockPreviewPath(envId))).data;
+
 export const getVersionDiff = async (envId, piece, versionId, against) =>
   (
     await axios.get(versionDiffPath(envId, piece, versionId), {
@@ -155,6 +170,25 @@ export const moveDefault = async (envId, piece, versionId, expectedDefaultId) =>
   (
     await axios.post(moveDefaultPath(envId, piece, versionId), {
       expected_default_id: expectedDefaultId ?? null,
+    })
+  ).data;
+
+// The default pair the user saw rides along; a newer one refuses the lock (409).
+export const lockVersion = async (
+  envId,
+  { environmentVersionId, suiteVersionId },
+) =>
+  (
+    await axios.post(lockVersionPath(envId), {
+      environment_version_id: environmentVersionId,
+      suite_version_id: suiteVersionId,
+    })
+  ).data;
+
+export const unlockVersion = async (envId, lockedVersionId) =>
+  (
+    await axios.post(unlockVersionPath(envId), {
+      locked_version_id: lockedVersionId,
     })
   ).data;
 
@@ -378,6 +412,13 @@ export const suiteMembersKey = (envId, versionId) => [
   versionId,
 ];
 
+// Under the versions, so whatever refreshes them (a default move, a draft save)
+// refreshes the preview too.
+export const lockPreviewKey = (envId) => [
+  ...environmentVersionsKey(envId),
+  "lock-preview",
+];
+
 export const nudgesKey = (envId) => [
   ...environmentVersionsKey(envId),
   "nudges",
@@ -445,6 +486,33 @@ export const versionFromApi = (item = {}) => ({
   pickable: Boolean(item.pickable),
   discardable: Boolean(item.discardable),
   savedWithoutCheck: Boolean(item.saved_without_check),
+});
+
+export const lockedVersionFromApi = (item = {}) => ({
+  id: item.id,
+  label: item.label,
+  environmentVersionId: item.environment_version_id,
+  environmentLabel: item.environment_label || null,
+  suiteVersionId: item.suite_version_id,
+  suiteLabel: item.suite_label || null,
+  lockedAt: item.locked_at || null,
+  lockedBy: item.locked_by?.name || null,
+  unlockedAt: item.unlocked_at || null,
+  unlockedBy: item.unlocked_by?.name || null,
+  train: item.train ?? 0,
+  test: item.test ?? 0,
+});
+
+// Whether the default pair can be locked now, why not, and its splits.
+export const lockFromApi = (item = {}) => ({
+  environmentVersionId: item.environment_version_id || null,
+  suiteVersionId: item.suite_version_id || null,
+  proved: Boolean(item.proved),
+  canLock: Boolean(item.can_lock),
+  refusal: item.refusal || null,
+  train: item.train ?? null,
+  test: item.test ?? null,
+  testTarget: item.test_target ?? null,
 });
 
 // A check still pending after this long is stuck: offered again, not polled.
@@ -525,7 +593,10 @@ export const toVersions = (data = {}) => {
     ]),
   );
   const empty = VERSION_PIECES.every((piece) => lists[piece].length === 0);
-  return { ...lists, defaults, empty };
+  const lockedVersions = (
+    Array.isArray(data?.locked_versions) ? data.locked_versions : []
+  ).map(lockedVersionFromApi);
+  return { ...lists, defaults, empty, lockedVersions };
 };
 
 export function useEnvironmentVersions(envId, { enabled = true } = {}) {
@@ -539,6 +610,19 @@ export function useEnvironmentVersions(envId, { enabled = true } = {}) {
       if (awaitsCheck(query.state.data)) return PREFLIGHT_POLL_MS;
       return awaitsMove(query.state.data) ? MOVE_POLL_MS : false;
     },
+    meta: { errorHandled: true },
+  });
+}
+
+// Whether the default pair can be locked now: its own read, since it plans
+// as the lock does and so costs more than the versions list.
+export function useLockPreview(envId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: lockPreviewKey(envId),
+    queryFn: () => getLockPreview(envId),
+    select: lockFromApi,
+    enabled: Boolean(envId) && enabled,
+    retry: retryUnlessNotFound,
     meta: { errorHandled: true },
   });
 }
@@ -645,6 +729,35 @@ export function useMoveDefault(envId) {
   });
 }
 
+// Lock or unlock a version. The answer is every version and locked version, so it seeds
+// the list; the preview is asked again. A conflict or a refusal means what the user
+// saw is out of date: refresh so the card shows the current state and its reason.
+const useLockAction = (envId, action) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (args) => action(envId, args),
+    onSuccess: (data) => {
+      if (data) queryClient.setQueryData(environmentVersionsKey(envId), data);
+      queryClient.invalidateQueries({ queryKey: lockPreviewKey(envId) });
+    },
+    onError: (error) => {
+      if ([404, 409, 422].includes(errorStatus(error))) {
+        queryClient.invalidateQueries({
+          queryKey: environmentVersionsKey(envId),
+        });
+      }
+    },
+  });
+};
+
+export const useLockVersion = (envId) => useLockAction(envId, lockVersion);
+
+export const useUnlockVersion = (envId) =>
+  useLockAction(envId, (id, { lockedVersionId }) =>
+    unlockVersion(id, lockedVersionId),
+  );
+
 // The agent version actions answer with every version: seed the list with it,
 // then ask again for the queries nested under it.
 const useAgentVersionAction = (envId, action) => {
@@ -729,6 +842,8 @@ export function useRefreshWhenChecked(envId, agentVersions) {
       });
       queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
       queryClient.invalidateQueries({ queryKey: nudgesKey(envId) });
+      // The lock preview plans with the default agent's bundle.
+      queryClient.invalidateQueries({ queryKey: lockPreviewKey(envId) });
     }
     wasPending.current = pending;
   }, [pending, envId, queryClient]);

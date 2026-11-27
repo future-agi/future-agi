@@ -722,6 +722,9 @@ import type {
   HarnessJobCreateApi,
   HarnessJobExtendApi,
   HarnessJobReadApi,
+  HarnessLockPreviewApi,
+  HarnessLockRefusalApi,
+  HarnessLockVersionApi,
   HarnessManifestApi,
   HarnessNudgeAnswerApi,
   HarnessNudgeApi,
@@ -761,6 +764,8 @@ import type {
   HarnessStartingRecordReworkWriteApi,
   HarnessStartingRecordsApi,
   HarnessSuiteMemberApi,
+  HarnessUnlockForbiddenApi,
+  HarnessUnlockVersionApi,
   HarnessUsageRequestApi,
   HarnessUsageResponseApi,
   HarnessVerifyCreateApi,
@@ -62525,9 +62530,14 @@ export type simulateApiHarnessEnvironmentsDeleteResponse403 = {
   status: 403;
 };
 
+export type simulateApiHarnessEnvironmentsDeleteResponse409 = {
+  data: HarnessLockRefusalApi;
+  status: 409;
+};
+
 export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204 | 403>;
+  status: Exclude<HTTPStatusCodes, 204 | 403 | 409>;
 };
 
 export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
@@ -62536,6 +62546,7 @@ export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
   };
 export type simulateApiHarnessEnvironmentsDeleteResponseError = (
   | simulateApiHarnessEnvironmentsDeleteResponse403
+  | simulateApiHarnessEnvironmentsDeleteResponse409
   | simulateApiHarnessEnvironmentsDeleteResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -65861,6 +65872,124 @@ export const simulateApiHarnessEnvironmentsSourceChanges = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponse200 = {
+  data: HarnessLockPreviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsLockPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponseError =
+  simulateApiHarnessEnvironmentsVersionsLockPreviewResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsLockPreviewResponse =
+  | simulateApiHarnessEnvironmentsVersionsLockPreviewResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsLockPreviewResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsLockPreviewUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/lock-preview/`;
+};
+
+/**
+ * Whether the default environment and suite versions can be locked now, why
+not, and the train and test splits a lock would give. It plans as the lock does,
+so it reads the default run's environment contract and scenario documents by
+design, and the agent version's facts its bundle key needs, never its
+credential blob; the versions list stays off them.
+ */
+export const simulateApiHarnessEnvironmentsVersionsLockPreview = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsLockPreviewResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsLockPreviewResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsLockPreviewUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse200 = {
+  data: HarnessVersionsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse409 = {
+  data: HarnessLockRefusalApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse422 = {
+  data: HarnessLockRefusalApi;
+  status: 422;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 409 | 422>;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsLockVersionResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponseError = (
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponse403
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponse409
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponse422
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsLockVersionResponse =
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsLockVersionResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsLockVersionUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/lock/`;
+};
+
+/**
+ * Lock the default environment and suite versions with train and test splits;
+returns every version and the locked-version history: every locked one plus
+the newest unlocked ones.
+ */
+export const simulateApiHarnessEnvironmentsVersionsLockVersion = async (
+  id: string,
+  harnessLockVersionApi: HarnessLockVersionApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsLockVersionResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsLockVersionResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsLockVersionUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessLockVersionApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersResponse200 =
   {
     data: HarnessSuiteMemberApi[];
@@ -65911,6 +66040,64 @@ export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse200 = {
+  data: HarnessVersionsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse403 = {
+  data: HarnessUnlockForbiddenApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
+  };
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseSuccess =
+  simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseError = (
+  | simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse403
+  | simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse =
+  | simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseSuccess
+  | simulateApiHarnessEnvironmentsVersionsUnlockVersionResponseError;
+
+export const getSimulateApiHarnessEnvironmentsVersionsUnlockVersionUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/versions/unlock/`;
+};
+
+/**
+ * Unlock a locked version, as a workspace admin or owner. Its versions, splits and
+scores stay; returns every version and the locked-version history: every
+locked one plus the newest unlocked ones.
+ */
+export const simulateApiHarnessEnvironmentsVersionsUnlockVersion = async (
+  id: string,
+  harnessUnlockVersionApi: HarnessUnlockVersionApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsVersionsUnlockVersionResponse>(
+    getSimulateApiHarnessEnvironmentsVersionsUnlockVersionUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessUnlockVersionApi),
     },
   );
 };

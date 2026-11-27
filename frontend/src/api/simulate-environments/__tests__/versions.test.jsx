@@ -19,6 +19,10 @@ vi.mock("src/api/harness/harness", async (importOriginal) => ({
 const { default: axios } = await import("src/utils/axios");
 const {
   useEnvironmentVersions,
+  useLockPreview,
+  useLockVersion,
+  useUnlockVersion,
+  lockPreviewKey,
   useVersionDiff,
   useSuiteMembers,
   useRunPlan,
@@ -244,6 +248,130 @@ describe("useEnvironmentVersions", () => {
     });
     renderHook(() => useEnvironmentVersions(undefined), { wrapper });
     expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("useLockPreview", () => {
+  const PREVIEW = {
+    environment_version_id: "e2",
+    suite_version_id: "s3",
+    proved: false,
+    can_lock: true,
+    refusal: null,
+    train: 14,
+    test: 6,
+    test_target: 6,
+  };
+  // A read of the preview, cached and fresh, to see which actions mark it stale.
+  const cachedPreview = () => {
+    client.setQueryData(lockPreviewKey("env-1"), PREVIEW);
+    return () => client.getQueryState(lockPreviewKey("env-1")).isInvalidated;
+  };
+
+  it("reads the preview from lock-preview, under the versions", async () => {
+    axios.get.mockResolvedValue({ data: PREVIEW });
+    const { result } = renderHook(() => useLockPreview("env-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/versions/lock-preview/",
+    );
+    expect(result.current.data).toEqual({
+      environmentVersionId: "e2",
+      suiteVersionId: "s3",
+      proved: false,
+      canLock: true,
+      refusal: null,
+      train: 14,
+      test: 6,
+      testTarget: 6,
+    });
+    expect(lockPreviewKey("env-1")).toEqual([
+      ...environmentVersionsKey("env-1"),
+      "lock-preview",
+    ]);
+  });
+
+  it("asks nothing while versioning is off or without an id", () => {
+    renderHook(() => useLockPreview("env-1", { enabled: false }), { wrapper });
+    renderHook(() => useLockPreview(undefined), { wrapper });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it("leaves the preview out of the versions", () => {
+    expect(toVersions({ ...RESPONSE, lock: PREVIEW })).not.toHaveProperty(
+      "lock",
+    );
+  });
+
+  it.each([
+    [
+      "a lock",
+      () => useLockVersion("env-1"),
+      { environmentVersionId: "e2", suiteVersionId: "s3" },
+    ],
+    ["an unlock", () => useUnlockVersion("env-1"), { lockedVersionId: "l1" }],
+  ])(
+    "%s seeds the versions and asks for the preview again",
+    async (_action, hook, variables) => {
+      axios.post.mockResolvedValue({ data: RESPONSE });
+      const stale = cachedPreview();
+      const { result } = renderHook(hook, { wrapper });
+
+      await act(() => result.current.mutateAsync(variables));
+
+      expect(client.getQueryData(environmentVersionsKey("env-1"))).toEqual(
+        RESPONSE,
+      );
+      expect(stale()).toBe(true);
+    },
+  );
+
+  it("a default move asks for the preview again", async () => {
+    axios.post.mockResolvedValue({ data: RESPONSE });
+    const stale = cachedPreview();
+    const { result } = renderHook(() => useMoveDefault("env-1"), { wrapper });
+
+    await act(() =>
+      result.current.mutateAsync({
+        piece: "suite",
+        versionId: "s1",
+        expectedDefaultId: "s3",
+      }),
+    );
+
+    expect(stale()).toBe(true);
+  });
+
+  it("a draft save asks for the preview again", async () => {
+    axios.post.mockResolvedValue({ data: { saved: {}, versions: RESPONSE } });
+    const stale = cachedPreview();
+    const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
+
+    await act(() =>
+      result.current.mutateAsync({
+        drafts: [{ piece: "suite", parentId: "s3" }],
+      }),
+    );
+
+    expect(stale()).toBe(true);
+  });
+
+  it("a refused lock asks for the preview again, for the current reason", async () => {
+    axios.post.mockRejectedValue({
+      statusCode: 409,
+      error: "version_already_locked",
+    });
+    const stale = cachedPreview();
+    const { result } = renderHook(() => useLockVersion("env-1"), { wrapper });
+
+    await act(() =>
+      result.current
+        .mutateAsync({ environmentVersionId: "e2", suiteVersionId: "s3" })
+        .catch(() => {}),
+    );
+
+    expect(stale()).toBe(true);
   });
 });
 
@@ -793,7 +921,7 @@ describe("agent version checks", () => {
     },
   );
 
-  it("refreshes the detail and the job once the last check lands", () => {
+  it("refreshes the detail, the job and the lock preview once the last check lands", () => {
     const spy = vi.spyOn(client, "invalidateQueries");
     const pending = [
       versionFromApi(
@@ -811,9 +939,12 @@ describe("agent version checks", () => {
       { queryKey: harnessEnvironmentKey("env-1") },
       { queryKey: harnessJobQuery("env-1").queryKey },
       { queryKey: nudgesKey("env-1") },
+      // The landed check may have moved the default agent, whose bundle the
+      // lock preview plans with.
+      { queryKey: lockPreviewKey("env-1") },
     ]);
     rerender({ versions: passed });
-    expect(spy).toHaveBeenCalledTimes(3);
+    expect(spy).toHaveBeenCalledTimes(4);
   });
 
   const moving = (overrides) =>
