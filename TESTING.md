@@ -397,7 +397,7 @@ bin/e2e down    # stop it (add -v to wipe volumes)
 
 End-to-end flows that drive a real browser against the production frontend image and assert both what the user sees **and** the backend state behind it (Postgres, ClickHouse, the CDC mirrors). The stack is the Distributed setup, `docker-compose.distributed.yml`, trimmed and moved onto its own ports (app 3100, API 8100, everything else 2xxxx), with separate default ports from dev and `futureagi-test`. The project name is fixed to `futureagi-e2e`; check ownership and ports before startup. The only mocked component is the LLM provider, behind the real gateway.
 
-A cold first boot takes about 8–9 minutes — most of it the backend's first-run migrations — and warm boots are far quicker. Covered flows are cataloged in [`e2e/FLOWS.md`](e2e/FLOWS.md), which is generated from the specs (`cd e2e && yarn catalog`). The authoring guide, the attach and local-code workflows, and the quarantine rules are in [`e2e/README.md`](e2e/README.md). Two agent skills ship with the repo: `writing-e2e-flows` authors a flow from the feature's ticket and design doc, and `reviewing-prs` reviews a PR against the coding standards with an E2E-coverage gate (`cd e2e && yarn coverage`).
+A cold first boot takes about 8–9 minutes — most of it the backend's first-run migrations — and warm boots are far quicker. Covered flows are cataloged in `e2e/FLOWS.md`, which `cd e2e && yarn catalog` generates from the specs; it is not committed, and CI renders it into the job summary. The authoring guide, the attach and local-code workflows, and the quarantine rules are in [`e2e/README.md`](e2e/README.md). Two agent skills ship with the repo: `writing-e2e-flows` authors a flow from the feature's ticket and design doc, and `reviewing-prs` reviews a PR against the coding standards with an E2E-coverage gate (`cd e2e && yarn coverage`).
 
 ---
 
@@ -505,7 +505,7 @@ pytest discovers them automatically. Use `bin/test path/to/tests/test_foo.py::te
 
 ## What we're still missing
 
-- Broader E2E flow coverage — the harness and CI job ship today; [`e2e/FLOWS.md`](e2e/FLOWS.md) is the current list
+- Broader E2E flow coverage — the harness and CI job ship today; `cd e2e && yarn catalog` writes the current list to `e2e/FLOWS.md`
 - Visual regression testing (Chromatic or Percy)
 - Accessibility testing (axe-core in CI)
 - Performance budgets with automated alerts
