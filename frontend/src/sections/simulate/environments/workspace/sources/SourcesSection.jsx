@@ -5,7 +5,11 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
+  Chip,
   Collapse,
+  Fade,
+  FormControlLabel,
   Stack,
   Tooltip,
   Typography,
@@ -38,6 +42,7 @@ import SourcesTable from "./SourcesTable";
 import {
   missingSnapshotMessage,
   overUploadLimit,
+  POLICY_LABEL,
   SOURCES_COPY,
   uploadOff,
 } from "./sources.constants";
@@ -56,6 +61,10 @@ export default function SourcesSection({ env, locked }) {
   const [anchor, setAnchor] = useState(null);
   const [kbOpen, setKbOpen] = useState(false);
   const [limitError, setLimitError] = useState("");
+  // Purposes are fixed when the review is created, so a batch with a PDF waits for Read files.
+  const [started, setStarted] = useState(false);
+  const isPdf = (file) => file.name.toLowerCase().endsWith(".pdf");
+  const held = !started && sources.uploads.files.some(isPdf);
   const request = useRef(null);
   const consumedSelection = useRef(null);
   const create = useCreateSourceReview();
@@ -110,6 +119,7 @@ export default function SourcesSection({ env, locked }) {
     request.current = null;
     create.reset();
     setLimitError("");
+    setStarted(false);
     setReviewOpen(true);
     setSelecting(true);
   }
@@ -138,6 +148,7 @@ export default function SourcesSection({ env, locked }) {
   useEffect(() => {
     if (
       !selecting ||
+      held ||
       !writable ||
       reviewId ||
       sources.blocked ||
@@ -181,6 +192,7 @@ export default function SourcesSection({ env, locked }) {
     setReviewId(null);
     setReviewOpen(false);
     setSelecting(false);
+    setStarted(false);
     sources.clear();
   }
 
@@ -379,8 +391,45 @@ export default function SourcesSection({ env, locked }) {
                     ? `Upload failed: ${file.name}`
                     : file.status === "uploading"
                       ? `Uploading ${file.name}…`
-                      : `Reading ${file.name}…`}
+                      : held
+                        ? file.name
+                        : `Reading ${file.name}…`}
                 </Typography>
+                {file.status === "done" && isPdf(file) && (
+                  <Fade in appear timeout={reduceMotion ? 0 : undefined}>
+                    <FormControlLabel
+                      label={SOURCES_COPY.usePolicy}
+                      disabled={started}
+                      sx={{
+                        m: 0,
+                        "& .MuiFormControlLabel-label": { typography: "s1" },
+                      }}
+                      control={
+                        <Checkbox
+                          size="small"
+                          sx={{ p: 0.5 }}
+                          checked={Boolean(sources.policy[file.documentId])}
+                          inputProps={{
+                            "aria-label": `Use ${file.name} as policy`,
+                          }}
+                          onChange={(event) =>
+                            sources.setPolicy((current) => ({
+                              ...current,
+                              [file.documentId]: event.target.checked,
+                            }))
+                          }
+                        />
+                      }
+                    />
+                  </Fade>
+                )}
+                <Fade
+                  in={Boolean(sources.policy[file.documentId])}
+                  timeout={reduceMotion ? 0 : undefined}
+                  unmountOnExit
+                >
+                  <Chip size="small" variant="outlined" label={POLICY_LABEL} />
+                </Fade>
                 {file.status === "failed" && (
                   <>
                     <Button onClick={() => sources.uploads.retry(file.id)}>
@@ -423,6 +472,24 @@ export default function SourcesSection({ env, locked }) {
                 </Typography>
               )
             )}
+            <Collapse
+              in={held}
+              timeout={reduceMotion ? 0 : "auto"}
+              unmountOnExit
+            >
+              <Stack spacing={1} alignItems="flex-start">
+                <Typography variant="s3" color="text.secondary">
+                  {SOURCES_COPY.policyHint}
+                </Typography>
+                <Button
+                  variant="contained"
+                  disabled={sources.blocked}
+                  onClick={() => setStarted(true)}
+                >
+                  {SOURCES_COPY.readFiles}
+                </Button>
+              </Stack>
+            </Collapse>
             {!create.isPending && <Button onClick={closeReview}>Cancel</Button>}
           </Stack>
         )}

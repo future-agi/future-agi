@@ -12,6 +12,9 @@ export const missingSnapshotMessage = (generation) =>
 export const uploadOff = (capabilities) =>
   capabilities?.upload?.enabled === false ? capabilities.upload.reason : null;
 
+// What a PDF ticked "Use as policy" is labelled everywhere it's listed.
+export const POLICY_LABEL = "Policy · graded during design";
+
 const MB = 1024 * 1024;
 export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -248,6 +251,10 @@ export const SOURCES_COPY = {
   restore: "Restore",
   restored: (name) => `Restored ${name}.`,
   readFailed: "Couldn't read these files. Try again in a moment.",
+  usePolicy: "Use as policy",
+  policyHint:
+    'Only sentences like “The response must contain "X"” become checkable rules. The rest stays background.',
+  readFiles: "Read files",
   menu: {
     upload: "Upload files",
     uploadLimit: (limits) =>

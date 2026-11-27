@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { extOf } from "./buildFiles";
 import { useFileUploads } from "./useFileUploads";
+import { POLICY_LABEL } from "../../../workspace/sources/sources.constants";
 
 export default function useBuildSources() {
   const uploads = useFileUploads();
@@ -30,7 +31,7 @@ export default function useBuildSources() {
       files: uploads.files.map((file) => ({
         ...file,
         roleLabel: policy[file.documentId]
-          ? "Policy"
+          ? POLICY_LABEL
           : ["csv", "tsv", "json", "jsonl", "xlsx"].includes(extOf(file.name))
             ? "Records"
             : "Background",

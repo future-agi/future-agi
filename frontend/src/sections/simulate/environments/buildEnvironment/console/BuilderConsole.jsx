@@ -40,6 +40,7 @@ import { Turn } from "./ConsoleTurn";
 // with a server-side transcription path. Kept for that follow-up.
 // import VoiceInput from "./VoiceInput";
 import { subscribeComposerScaffold } from "./composerScaffoldBus";
+import { POLICY_LABEL } from "../../workspace/sources/sources.constants";
 
 const INITIAL = { draft: "", scaffolds: [], files: [], policyFiles: [] };
 
@@ -601,7 +602,7 @@ export default function BuilderConsole({
                     borderRadius: "4px",
                     border: "1px solid",
                     borderColor: "divider",
-                    maxWidth: 260,
+                    maxWidth: 360, // room for the policy label beside a PDF name
                   }}
                 >
                   <Iconify
@@ -629,9 +630,17 @@ export default function BuilderConsole({
                       <FormControlLabel
                         label={
                           state.policyFiles.includes(file)
-                            ? "Policy"
+                            ? POLICY_LABEL
                             : "Reference"
                         }
+                        sx={{
+                          m: 0,
+                          flexShrink: 0,
+                          "& .MuiFormControlLabel-label": {
+                            typography: "s3",
+                            whiteSpace: "nowrap",
+                          },
+                        }}
                         control={
                           <Checkbox
                             size="small"

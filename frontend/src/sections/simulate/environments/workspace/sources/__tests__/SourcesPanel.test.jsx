@@ -232,7 +232,7 @@ describe("SourcesSection", () => {
     });
   });
 
-  it("automatically prepares uploaded files and keeps the same request on a transport retry", async () => {
+  it("a PDF upload waits for Read files, sends a ticked PDF as policy and keeps the same request on a transport retry", async () => {
     api.upload.mockImplementation(async (file, { onProgress }) => {
       onProgress(42);
       return { id: `uploaded-${file.name}` };
@@ -266,6 +266,13 @@ describe("SourcesSection", () => {
     const csv = new File(["email\nalice@example.test"], "orders.csv");
     const policy = new File(["15-day policy"], "policy.pdf");
     pickFiles([csv, policy]);
+    // A batch with a PDF waits for the policy choice before it is read.
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Use policy.pdf as policy" }),
+    );
+    expect(api.post).not.toHaveBeenCalled();
+    expect(screen.getByText("Policy · graded during design")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Read files" }));
     expect(await screen.findByText("The request timed out")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
@@ -281,7 +288,7 @@ describe("SourcesSection", () => {
         expected_draft: basis.draft,
       },
       document_ids: ["uploaded-orders.csv", "uploaded-policy.pdf"],
-      document_purposes: {},
+      document_purposes: { "uploaded-policy.pdf": "policy" },
       knowledge_base: [],
       idempotency_key: expect.any(String),
     });
@@ -327,6 +334,29 @@ describe("SourcesSection", () => {
       }),
     );
     expect(api.post).toHaveBeenCalledTimes(3);
+  });
+
+  it("an upload without PDFs starts the review at once", async () => {
+    api.upload.mockImplementation(async (file) => ({
+      id: `uploaded-${file.name}`,
+    }));
+    api.post.mockImplementation(async () => {
+      serverReview = ready;
+      return { data: ready };
+    });
+    mount();
+    const add = screen.getByRole("button", { name: "Add source" });
+    await waitFor(() => expect(add).toBeEnabled());
+    fireEvent.click(add);
+    fireEvent.click(screen.getByRole("menuitem", { name: /Upload files/ }));
+    pickFiles([new File(["email\nalice@example.test"], "orders.csv")]);
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledExactlyOnceWith(
+        indexPath,
+        expect.objectContaining({ document_ids: ["uploaded-orders.csv"] }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Read files" })).toBeNull();
   });
 
   it("polls a reading review after reload and cancels with the server revision", async () => {
