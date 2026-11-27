@@ -1500,6 +1500,8 @@ def graded_check_runs(
         ).order_by("created_at")
     )
     labels = {run.fix_label for run in [*own, *adopted]}
+    # Newest first, as _finished_earlier reads again: parallelism only falls along
+    # a lineage, so each repeat's newest claimed run is the one this fix compared.
     graded_earlier = [
         run
         for run in HostedHarnessJob.no_workspace_objects.filter(
@@ -1510,7 +1512,7 @@ def graded_check_runs(
             deleted=False,
         )
         .exclude(fix_label__in=labels)
-        .order_by("created_at")
+        .order_by("-created_at")
         if _BASELINE_LABEL.match(run.fix_label)
     ]
     base = _each_repeat([*own, *adopted, *graded_earlier], _BASELINE_LABEL)

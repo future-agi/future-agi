@@ -28,6 +28,7 @@ from accounts.models import Organization, OrgApiKey
 from conftest import WorkspaceAwareAPIClient
 from simulate.authentication import CODING_AGENT_ROUTES
 from simulate.models import (
+    AgentDefinition,
     AgentFixCandidate,
     AgentFixRun,
     AgentVersion,
@@ -62,6 +63,8 @@ from simulate.services.agent_fix_runs import (
     refuse_outside_the_epoch,
     split_held_back,
 )
+from simulate.services.agent_setup import store_agent
+from simulate.services.agent_versions import set_production
 from simulate.services.harness_run_evals import EVAL_QUEUE_STAMP_WINDOW
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.harness_validation import settle_validations
@@ -89,11 +92,21 @@ from simulate.tests.test_agent_fix_services import environment as environment
 from simulate.tests.test_agent_fix_services import source_run as source_run
 from simulate.tests.test_agent_fix_services import temporal as temporal
 from simulate.tests.test_agent_fix_services import versioning_on as versioning_on
+from simulate.tests.test_agent_overview_api import _environment as _agent_environment
+from simulate.tests.test_agent_setup_service import source_agent
+from simulate.tests.test_agent_versions_api import AGENTS, NUDGE
 from simulate.tests.test_harness_agent_source_api import _archive
 from simulate.tests.test_harness_agent_versions import (
     _environment,
     _passing,
     _preflight,
+)
+from simulate.tests.test_harness_connected_versions import (
+    Trigger,
+    _built_from,
+    _completed,
+    _connect,
+    _following,
 )
 from simulate.tests.test_harness_environment_regrade import _mapped_eval
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
@@ -1436,6 +1449,44 @@ class TestLineage:
         ]
         assert read_again == [False, False, True]
 
+    def test_a_claimed_repeat_is_graded_as_the_attempt_read_it_again(
+        self, source_run, settings, temporal
+    ):
+        """Grading reads the claimed repeat the attempt compared: the newest at its
+        parallelism, not the first an earlier winner claimed."""
+        settings.AGENT_FIX_CHECK_RUN_PARALLELISM = 2
+        first = _attempt(source_run, 1, state=State.RUNNING)
+        repeats = [
+            _check(first, label=f"baseline-r{n}", keys=KEYS, repeat=n)
+            for n in (1, 2, 3)
+        ]
+        HostedHarnessJob.no_workspace_objects.filter(
+            id__in=[run.id for run in repeats]
+        ).update(state="completed", graded_at=timezone.now())
+        # The first repeat ran at 2, the later ones at 1; its winner claimed all three.
+        _degraded(repeats[1], to=1)
+        _degraded(repeats[2], to=1)
+        AgentFixRun.no_workspace_objects.filter(id=first.id).update(
+            state=State.NO_IMPROVEMENT
+        )
+        second = _attempt(source_run, 2, previous=first, state=State.RUNNING)
+        # Asked at 1, the first repeat runs again; its winner claims it.
+        own = _check(second, label="baseline-r1", keys=KEYS, repeat=1)
+        assert own.id != repeats[0].id
+        HostedHarnessJob.no_workspace_objects.filter(id=own.id).update(
+            state="completed", graded_at=timezone.now()
+        )
+        AgentFixRun.no_workspace_objects.filter(id=second.id).update(
+            state=State.NO_IMPROVEMENT
+        )
+        third = _attempt(source_run, 3, previous=second, state=State.RUNNING)
+        assert _check(third, label="baseline-r1", keys=KEYS, repeat=1).id == own.id
+
+        # Only the base repeats are read: a winner with no final check.
+        base, _final = graded_check_runs(third, SimpleNamespace(agent_version_id=None))
+
+        assert [run.id for run in base] == [own.id, repeats[1].id, repeats[2].id]
+
     def test_a_later_winner_prices_only_the_runs_it_grades(
         self, auth_client, source_run
     ):
@@ -2526,10 +2577,54 @@ def _refused(response, refused_by):
     ]
 
 
+@pytest.fixture
+def connected(planted, organization, workspace, settings):
+    """A connected agent in production, an environment that follows it, and a passed
+    second version that is the planted Epoch's candidate."""
+    settings.HARNESS_BUNDLE_CERTIFY_ENABLED = False
+    agent = AgentDefinition.objects.create(
+        agent_name="support",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        organization=organization,
+        workspace=workspace,
+    )
+    production = _connect(agent)
+    with patch(NUDGE):
+        _preflight(production)
+    following = _following(
+        _built_from(
+            _completed(_agent_environment(agent, 1), production),
+            production,
+            source_agent(),
+        )
+    )
+    candidate = _connect(agent, parent=production, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=candidate.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(NUDGE):
+        _preflight(candidate)
+    AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
+        agent_version_id=candidate.id
+    )
+    return SimpleNamespace(
+        agent=agent, production=production, candidate=candidate, following=following
+    )
+
+
+def _still_on_production(connected):
+    connected.production.refresh_from_db()
+    connected.following.refresh_from_db()
+    assert connected.production.status == "active"
+    assert connected.following.agent_version_id == connected.production.id
+
+
 class TestARefusedCandidateShipsOnlyInItsEpoch:
     """Only an Epoch's winner becomes the default outside its Epoch. A candidate only its
     must-pass check refused ships in the Epoch, on a person's reason; any other refused
-    candidate never does. No move, pin or upload does it, whoever asks."""
+    candidate never does. No move, pin, upload or production change does it, whoever
+    asks."""
 
     def test_only_a_must_pass_refusal_is_shipped_in_its_epoch(
         self, browser_client, planted, refused_by
@@ -2566,6 +2661,42 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
         )
 
         _refused(response, refused_by)
+
+    def test_making_it_production_is_refused(self, connected, refused_by):
+        with patch(NUDGE), pytest.raises(HostedHarnessError) as refused:
+            set_production(connected.candidate)
+
+        assert (refused.value.code, refused.value.message) == REFUSALS[refused_by]
+        _still_on_production(connected)
+
+    def test_the_production_route_refuses_it_to_an_api_key(
+        self, key_client, connected, refused_by
+    ):
+        with patch(NUDGE):
+            response = key_client.post(
+                f"{AGENTS}{connected.agent.id}/versions/{connected.candidate.id}"
+                "/production/"
+            )
+
+        assert response.status_code == 409, response.content
+        assert (response.json()["code"], response.json()["message"]) == REFUSALS[
+            refused_by
+        ]
+        _still_on_production(connected)
+
+    def test_the_winner_becomes_production(self, connected, planted):
+        AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
+            outcome="winner"
+        )
+
+        with patch(NUDGE):
+            moved = set_production(connected.candidate)
+
+        connected.candidate.refresh_from_db()
+        connected.following.refresh_from_db()
+        assert connected.candidate.status == "active"
+        assert [str(one) for one in moved] == [str(connected.following.id)]
+        assert connected.following.agent_version_id == connected.candidate.id
 
     def test_another_organization_s_same_archive_id_is_not_matched(
         self, planted, refused_by
