@@ -35,6 +35,7 @@ from django.utils import timezone
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
+from agentcc.services.url_safety import ensure_public_http_url
 from integrations.services.github_app import (
     GitHubAppError,
     installation_credential,
@@ -55,6 +56,12 @@ from simulate.services.agent_contracts import store_build_contract
 from simulate.services.code_archives import (
     store_commit_archive,
     stored_commit_archive,
+)
+from simulate.services.harness_credential_probes import (
+    ANTHROPIC_BASE_ALIASES,
+    OPENAI_BASE_ALIASES,
+    configured_base,
+    number_spelled_host,
 )
 from simulate.services.harness_versioning.hashing import INDEX_ONLY_FIELDS
 from simulate.services.hosted_harness import (
@@ -721,25 +728,6 @@ def _platform_simulator_material() -> dict[str, str]:
     return values
 
 
-def _add_scoped_guest_pin_policy(values: dict[str, str], job: HostedHarnessJob) -> bool:
-    """Release the private POC policy only for its exact phone target."""
-    target = str(os.environ.get("ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER") or "").strip()
-    pin = str(os.environ.get("ALK_CAB_GUEST_POC_PIN") or "").strip()
-    agent = (job.payload or {}).get("agent") or {}
-    config = agent.get("config") or {}
-    submitted_target = str(config.get("phone_number") or "").strip()
-    if (
-        str(agent.get("connector") or "").strip().lower() != "phone"
-        or submitted_target != target
-        or not target
-        or not pin
-    ):
-        return False
-    values["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER"] = target
-    values["ALK_CAB_GUEST_POC_PIN"] = pin
-    return True
-
-
 def _scenario_delta(instruction: str) -> int | None:
     number_words = {
         "one": 1,
@@ -787,9 +775,7 @@ def _adjustment_stage(instruction: str, current_stage: str) -> str:
     }.get(current_stage, "scenarios")
 
 
-def _scenarios_cli_command(
-    *, name: str, count: int, guidance: list[str], include_job: bool = False
-) -> str:
+def _scenarios_cli_command(*, name: str, count: int, guidance: list[str]) -> str:
     """A non-interactive invocation of the harness's own scenario CLI against the reused
     ``/work/authoring``: reach exactly ``count`` scenarios, preserving existing ones, steered
     by ``guidance``. Uses the harness's public CLI contract (``alk-harness scenarios``) rather
@@ -802,8 +788,6 @@ def _scenarios_cli_command(
         f"--count {int(count)}",
         "--once",
     ]
-    if include_job:
-        parts.insert(-1, "--job /work/job.json")
     for item in guidance:
         text = str(item).strip()
         if text:
@@ -811,9 +795,7 @@ def _scenarios_cli_command(
     return " ".join(parts)
 
 
-def _hosted_scenario_repair_command(
-    *, name: str, expected: int, actual: int, include_job: bool = False
-) -> str:
+def _hosted_scenario_repair_command(*, name: str, expected: int, actual: int) -> str:
     """Non-interactive scenario-only repair: reach the exact ``expected`` count, preserving
     existing coverage, so Bundle V2's exact-cardinality gate is satisfied without a privileged
     in-sandbox updater."""
@@ -832,7 +814,6 @@ def _hosted_scenario_repair_command(
         name=name,
         count=expected,
         guidance=[instruction],
-        include_job=include_job,
     )
 
 
@@ -840,7 +821,7 @@ _SCENARIO_EXTEND_REPAIR_PASSES = 2
 
 
 def _hosted_scenario_extend_command(
-    *, name: str, target_count: int, guidance: list[str], include_job: bool = False
+    *, name: str, target_count: int, guidance: list[str]
 ) -> str:
     """Chat-driven 'add N scenarios': re-run scenario generation against the reused world to
     reach ``target_count`` total, preserving existing scenarios, steered by the caller's
@@ -854,9 +835,7 @@ def _hosted_scenario_extend_command(
     archive) could never do.
     """
     target = int(target_count)
-    extend = _scenarios_cli_command(
-        name=name, count=target, guidance=guidance, include_job=include_job
-    )
+    extend = _scenarios_cli_command(name=name, count=target, guidance=guidance)
     repair = _scenarios_cli_command(
         name=name,
         count=target,
@@ -865,7 +844,6 @@ def _hosted_scenario_extend_command(
             f"scenario exactly and add only new distinct validated scenarios until exactly "
             f"{target} are saved."
         ],
-        include_job=include_job,
     )
     passes = " ".join(str(i) for i in range(1, _SCENARIO_EXTEND_REPAIR_PASSES + 1))
     return (
@@ -875,9 +853,7 @@ def _hosted_scenario_extend_command(
     )
 
 
-def _extend_command_for(
-    job: HostedHarnessJob, payload: dict, *, include_job: bool = False
-) -> str | None:
+def _extend_command_for(job: HostedHarnessJob, payload: dict) -> str | None:
     """Return the reused-authoring scenario-extension CLI command when the job carries a
     pending chat-driven 'add scenarios' request (a target count), else None for a normal run.
     Guidance is optional — the count alone drives the add; guidance only steers the new ones.
@@ -900,7 +876,6 @@ def _extend_command_for(
         name=name,
         target_count=int(target_count),
         guidance=guidance,
-        include_job=include_job,
     )
 
 
@@ -2320,12 +2295,34 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
     if aliases & {"OPENAI_API_KEY"} and (
         not selected_llm_provider or selected_llm_provider == "openai"
     ):
-        domains.add("api.openai.com")
+        domains.add(_base_url_host(values, OPENAI_BASE_ALIASES) or "api.openai.com")
     if aliases & {"ANTHROPIC_API_KEY"} and (
         not selected_llm_provider or selected_llm_provider == "anthropic"
     ):
-        domains.add("api.anthropic.com")
+        domains.add(
+            _base_url_host(values, ANTHROPIC_BASE_ALIASES) or "api.anthropic.com"
+        )
     return domains
+
+
+def _base_url_host(values: Mapping[str, Any], names: tuple[str, ...]) -> str | None:
+    """The host of the base URL the agent calls its provider at (a gateway or proxy), opened in egress in place
+    of the provider's own host. ``None`` when it sets none, or when its host is private or resolves to a private
+    address: egress never opens one, so the launch keeps the provider's own host as before. A host that does not
+    resolve from here is still the one the agent calls, so it is kept, never swapped for the provider's."""
+    _name, base = configured_base(
+        {name: str(values.get(name) or "") for name in names}, names
+    )
+    host = _hostname_from_url(base) if base else None
+    # The credential check refuses the same hosts, so the two agree.
+    if not host or number_spelled_host(host):
+        return None
+    try:
+        _validate_egress_host(host)
+        ensure_public_http_url(base, "base URL", allow_unresolvable=True)
+    except (HostedHarnessError, ValueError):
+        return None
+    return host
 
 
 def _resolved_egress_domains(
@@ -2741,7 +2738,6 @@ class HostedHarnessGateway:
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
         simulator_env = _platform_simulator_material()
-        guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
 
         allowed_domains = _authoring_egress_domains(
             simulator_env, connector, provider_profile=bool(authoring_target_secrets)
@@ -2882,7 +2878,6 @@ class HostedHarnessGateway:
                             ),
                             expected=job.scenario_count,
                             actual=produced,
-                            include_job=guest_pin_policy_released,
                         )
                         repair = sandbox.process.exec(
                             repair_command,
@@ -3008,16 +3003,13 @@ class HostedHarnessGateway:
         if release is not None:
             # The manifest froze these at submission; a run never uses later settings.
             apply_frozen_simulator(simulator_env, release.simulator)
-        guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         # A chat-driven "add N scenarios" request replays the frozen world but re-runs
         # scenario-gen (extend) against it. The marker persists across infra retries and
         # is cleared only once the extended authoring is stored
         # (freeze_authoring_archive), so a mid-flight retry re-extends to the same total
         # instead of replaying the old set.
         extend_command = (
-            _extend_command_for(job, payload, include_job=guest_pin_policy_released)
-            if authoring_archive is not None
-            else None
+            _extend_command_for(job, payload) if authoring_archive is not None else None
         )
         source = dict(payload["source"])
         if source["kind"] == "github":
@@ -3369,8 +3361,6 @@ class HostedHarnessGateway:
                     "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
-                    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
-                    "ALK_CAB_GUEST_POC_PIN",
                 }
             }
             authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
@@ -3651,7 +3641,6 @@ class HostedHarnessGateway:
     ) -> HostedHarnessConversationLease:
         """Start the conversation process beside the job's existing harness process."""
         simulator_env = _platform_simulator_material()
-        _add_scoped_guest_pin_policy(simulator_env, job)
         capability = issue_conversation_capability(
             conversation,
             endpoint_base_url=endpoint_base_url,
@@ -3729,8 +3718,6 @@ class HostedHarnessGateway:
                 "ALK_CLAUDE_GATEWAY_URL",
                 "ALK_CLAUDE_GATEWAY_API_KEY",
                 "CLAUDE_CODE_USE_VERTEX",
-                "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
-                "ALK_CAB_GUEST_POC_PIN",
             }
         }
         chat_exports["PATH"] = _CHAT_RUNTIME_PATH
@@ -4012,7 +3999,6 @@ class HostedHarnessGateway:
             job.payload = payload
         source_archive, _commit_sha = HostedSourceAcquirer().acquire(job)
         simulator_env = _platform_simulator_material()
-        _add_scoped_guest_pin_policy(simulator_env, job)
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
             job.payload,
@@ -4143,8 +4129,6 @@ class HostedHarnessGateway:
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "CLAUDE_CODE_USE_VERTEX",
-                    "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
-                    "ALK_CAB_GUEST_POC_PIN",
                 }
             }
             chat_exports["PATH"] = _CHAT_RUNTIME_PATH
