@@ -237,6 +237,60 @@ def test_production_offers_an_environment_that_never_chose_to_follow(agent):
     }
 
 
+def test_production_reaches_a_build_not_yet_linked_to_a_test(agent):
+    # An environment holds its agent through the version it pins until its scenarios are
+    # submitted and it is linked to a test. The agent's page lists it, so production reaches
+    # it as it reaches a linked one in the same state: a finished follower moves, an
+    # unfinished one waits as busy, a pinned one is offered.
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+
+    def built(minutes, state, *, linked=False):
+        environment = _environment(agent, minutes)
+        fields = {"state": state, "agent_version": first}
+        if not linked:
+            fields["run_test"] = None
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(**fields)
+        environment.refresh_from_db()
+        return _built_from(environment, first, source_agent())
+
+    State = HostedHarnessJob.State
+    follows = _following(built(1, State.COMPLETED))
+    failed = _following(built(2, State.FAILED))
+    failed_linked = _following(built(3, State.FAILED, linked=True))
+    pinned = _pinned(built(4, State.CANCELED))
+
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
+        _preflight(second)
+        set_production(second)
+
+    for environment in (follows, failed, pinned):
+        environment.refresh_from_db()
+    assert follows.agent_version_id == second.id
+    assert failed.agent_version_id == first.id
+    assert pinned.agent_version_id == first.id
+    assert (str(pinned.id), False) in {
+        (str(call.args[0]), call.kwargs.get("default_moved"))
+        for call in nudge.call_args_list
+    }
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(follows.id): "activated",
+        str(failed.id): "environment_busy",
+        str(failed_linked.id): "environment_busy",
+        str(pinned.id): "pinned",
+    }
+
+
 def test_a_later_version_that_passes_is_offered_and_waits_for_production(agent):
     first = _connect(agent)
     with patch(

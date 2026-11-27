@@ -1680,17 +1680,24 @@ def test_the_agent_tab_lists_every_build_of_the_agent_and_its_count_agrees(
     HostedHarnessJob.all_objects.filter(id=orphan.id).update(
         run_test=None, agent_version=None
     )
+    # Deleted builds, linked or not, are neither listed nor counted.
+    removed = _environment(agent, 9)
+    removed_early = _environment(agent, 10)
+    HostedHarnessJob.all_objects.filter(id=removed.id).update(deleted=True)
+    HostedHarnessJob.all_objects.filter(id=removed_early.id).update(
+        run_test=None, agent_version=version, deleted=True
+    )
 
     listed = {row["id"] for row in _list(auth_client, agent)}
     detail = auth_client.get(f"{AGENTS}{agent.id}/").json()
+    rows = _rows(auth_client)
 
     assert listed == {str(job.id) for job in (*early.values(), linked)}
     assert detail["environment_count"] == len(listed)
-    assert _rows(auth_client)["Tabbed"]["environment_count"] == len(listed)
-    assert {row["id"] for row in _list(auth_client, other)} == {
-        str(others.id),
-        str(others_early.id),
-    }
+    assert rows["Tabbed"]["environment_count"] == len(listed)
+    listed_other = {row["id"] for row in _list(auth_client, other)}
+    assert listed_other == {str(others.id), str(others_early.id)}
+    assert rows["Elsewhere"]["environment_count"] == len(listed_other)
     # The main Environments page, with no agent asked for, is unchanged: every build.
     everything = {
         row["id"]
@@ -1698,6 +1705,47 @@ def test_the_agent_tab_lists_every_build_of_the_agent_and_its_count_agrees(
     }
     assert listed | {str(others.id), str(others_early.id), str(gone.id)} <= everything
     assert str(orphan.id) in everything
+
+
+@pytest.mark.django_db
+def test_an_adaptation_the_list_hides_is_not_counted_either(
+    auth_client, organization, workspace
+):
+    # An adaptation is followed as a job: only one in review and not yet done is listed. The
+    # agent's count follows the same rule, whether the adaptation holds the agent through a
+    # test or through its version.
+    agent = _agent(organization, workspace, "Adapted")
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+
+    def adaptation(minutes, adaptation, state, *, linked):
+        job = _environment(agent, minutes)
+        fields = {
+            "payload": {**job.payload, "metadata": {"adaptation": adaptation}},
+            "state": state,
+        }
+        if not linked:
+            fields.update(run_test=None, agent_version=version)
+        HostedHarnessJob.all_objects.filter(id=job.id).update(**fields)
+        return job
+
+    State = HostedHarnessJob.State
+    shown = [
+        _environment(agent, 1),
+        adaptation(2, {"mode": "review"}, State.RUNNING, linked=True),
+        adaptation(3, {"mode": "review"}, State.FAILED, linked=False),
+    ]
+    for minutes, linked in ((4, True), (5, False)):
+        adaptation(minutes, {"mode": "run"}, State.RUNNING, linked=linked)
+        adaptation(minutes + 2, {}, State.RUNNING, linked=linked)
+        adaptation(minutes + 4, {"mode": "review"}, State.COMPLETED, linked=linked)
+
+    listed = {row["id"] for row in _list(auth_client, agent)}
+
+    assert listed == {str(job.id) for job in shown}
+    assert _detail(auth_client, agent)["environment_count"] == len(listed)
+    assert _rows(auth_client)["Adapted"]["environment_count"] == len(listed)
 
 
 @pytest.mark.django_db
