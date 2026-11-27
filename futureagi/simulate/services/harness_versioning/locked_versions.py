@@ -443,16 +443,13 @@ def run_locked_version(run: HostedHarnessJob) -> LockedVersionSplits | None:
         )
         suite_version_id = locked_version.suite_version_id
     else:
-        environment_version_id, suite_version_id = (
-            run.environment_version_id,
-            run.suite_version_id,
-        )
-        if environment_version_id is None or suite_version_id is None:
+        if run.environment_version_id is None or run.suite_version_id is None:
             return None
-        found = _locked_version(environment_version_id, suite_version_id)
+        found = _locked_version(run.environment_version_id, run.suite_version_id)
         if found is None:
             return None
         locked_version = found
+        suite_version_id = run.suite_version_id
     # The lock's roster, as it locked them: a later rule, an edit or a new default
     # never moves a scenario into or out of its test split.
     members = locked_version_members(locked_version.id)
