@@ -1,7 +1,8 @@
 """Dev-flow heartbeat: base-health breaker, escape rate and the merge digest.
 
-Runs from pr-digest.yml on every push to dev. The breaker never runs in a
-merge_group workflow: that workflow file is the candidate's, so it gets no
+Runs from pr-digest.yml on every push to dev, and the breaker also runs on
+every live batch-train tick (devflow_train.py), so rollup-only traffic trips
+it too. The breaker never runs in a merge_group workflow: that workflow file is the candidate's, so it gets no
 write scope. The breaker (--breaker-only) runs every time; the full digest at most once an hour (the workflow gates it). It reads
 the Actions and git history, decides three things and says them in one
 Slack message:

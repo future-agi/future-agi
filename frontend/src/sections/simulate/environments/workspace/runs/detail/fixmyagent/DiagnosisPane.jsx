@@ -11,11 +11,20 @@ import {
 
 import Iconify from "src/components/iconify";
 import EmptyState from "../../../../components/EmptyState";
-import GoalCard, { OneOffRow } from "./GoalCard";
+import GoalCard, { OneOffGroup } from "./GoalCard";
+import { groupOneOffs, plural } from "./oneOffs";
+
+// One bordered list, a hairline between rows.
+const listFrame = {
+  border: "1px solid",
+  borderColor: "divider",
+  borderRadius: "8px",
+  "& > * + *": { borderTop: "1px solid", borderColor: "divider" },
+};
 
 /**
  * The run's diagnosis: which goals the evals say broke, what the broken calls
- * have in common (Omega, one call at a time), and agent issues seen only once.
+ * have in common (Omega, one call at a time), and agent issues no broken goal covers, grouped by name.
  */
 
 // Shown while the investigation runs; the report arrives in one piece.
@@ -81,11 +90,9 @@ function ThinkingLoader() {
   );
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-function summaryOf({ summary }, visibleGoalCount) {
+function summaryOf({ summary }, visibleGoalCount, oneOffs) {
   if (!summary) return "No results for this run yet.";
-  const { brokenGoals, brokenCalls, measuredCalls, oneOffs } = summary;
+  const { brokenGoals, brokenCalls, measuredCalls } = summary;
   const also = oneOffs ? `, plus ${plural(oneOffs, "one-off issue")}` : "";
   if (visibleGoalCount < brokenGoals) {
     const diagnosis = visibleGoalCount
@@ -163,12 +170,12 @@ export default function DiagnosisPane({
     (goal) => goal.ways?.length > 0,
   );
 
+  const oneOffGroups = groupOneOffs(analysis.oneOffs);
+
   return (
-    <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+    <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0, px: 2.5, py: 2 }}>
       <Box
         sx={{
-          mx: 2.5,
-          mt: 2.5,
           px: 1.75,
           py: 1.5,
           borderRadius: "8px",
@@ -183,7 +190,11 @@ export default function DiagnosisPane({
           />
           <Box>
             <Typography sx={{ typography: "s2" }}>
-              {summaryOf(analysis, goalsWithFindings.length)}
+              {summaryOf(
+                analysis,
+                goalsWithFindings.length,
+                oneOffGroups.length,
+              )}
             </Typography>
             {analysis.groupingPending && (
               <Typography
@@ -197,25 +208,31 @@ export default function DiagnosisPane({
       </Box>
 
       {goalsWithFindings.length > 0 && (
-        <Stack spacing={1.25} sx={{ px: 2.5, pt: 2.5 }}>
+        <Box sx={{ ...listFrame, mt: 2 }}>
           {goalsWithFindings.map((goal) => (
             <GoalCard key={goal.goal} goal={goal} onViewCalls={onViewCalls} />
-          ))}
-        </Stack>
-      )}
-
-      {analysis.oneOffs.length > 0 && (
-        <Box sx={{ px: 2.5, pt: 2.5 }}>
-          <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.5 }}>
-            Also seen, 1 call each
-          </Typography>
-          {analysis.oneOffs.map((way) => (
-            <OneOffRow key={way.id} way={way} onViewCalls={onViewCalls} />
           ))}
         </Box>
       )}
 
-      <Box sx={{ height: 20 }} />
+      {oneOffGroups.length > 0 && (
+        <Box sx={{ mt: 2.5 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 500, mb: 1 }}>
+            Also seen
+          </Typography>
+          <Box sx={{ ...listFrame, py: 0.5 }}>
+            {oneOffGroups.map((group) => (
+              <OneOffGroup
+                key={group.phrase}
+                phrase={group.phrase}
+                ways={group.ways}
+                callIds={group.callIds}
+                onViewCalls={onViewCalls}
+              />
+            ))}
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 }
@@ -232,7 +249,6 @@ DiagnosisPane.propTypes = {
       measuredCalls: PropTypes.number,
       brokenGoals: PropTypes.number,
       brokenCalls: PropTypes.number,
-      oneOffs: PropTypes.number,
     }),
     goals: PropTypes.array,
     oneOffs: PropTypes.array,

@@ -213,3 +213,77 @@ export const CHECKLIST_COPY = {
 // aren't the agent's world, so they stay out of Seeded data.
 export const isHarnessTable = (name = "") => name.startsWith("_") || name.startsWith("harness_");
 export const worldTables = (env) => (env?.seed?.tables || []).filter((t) => !isHarnessTable(t.name));
+
+// The locked-version card: lock the default versions so scores on them stay comparable.
+// A locked pair as the copy names it: "environment v3, scenarios v2".
+export const lockPair = (environmentLabel, suiteLabel) =>
+  [
+    environmentLabel && `environment ${environmentLabel}`,
+    suiteLabel && `scenarios ${suiteLabel}`,
+  ]
+    .filter(Boolean)
+    .join(", ") || "these versions";
+
+export const LOCK_COPY = {
+  title: (pair, locked) => (locked ? `Locked: ${pair}` : `Lock ${pair}`),
+  subtitleLocked: "Edits make a new, unlocked version.",
+  subtitleOpen:
+    "Lock these versions to freeze their scenarios, splits and scorer environment.",
+  status: { ready: "Ready", blocked: "Can't lock yet" },
+  head: { check: "Check", proves: "What it proves", result: "Result" },
+  reference: {
+    label: "Reference passes",
+    proves: "The reference solution passes every scenario.",
+    passed: "Passed",
+    unproved: "Not proved",
+  },
+  // Mapped judges stay editable, so the line names the scorer environment rather
+  // than claim the scorer is frozen.
+  lockedLine: (label, at, train, test, environmentLabel) =>
+    [
+      `Lock ${label}`,
+      at,
+      `Train ${train}`,
+      `Test ${test} scenarios`,
+      environmentLabel && `scorer environment ${environmentLabel}`,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+  readyLine: (train, test) =>
+    `Train ${train} · Test ${test} scenarios once locked.`,
+  lock: "Lock versions",
+  addScenarios: "Add scenarios",
+  viewer: "You don't have permission to lock versions.",
+  unlock: "Unlock",
+  lockTitle: (pair) => `Lock ${pair}?`,
+  lockBody:
+    "The scenarios, their train and test splits and the scorer environment freeze. Each scenario keeps its split in every later lock. Edits make a new, unlocked version.",
+  lockAction: "Lock versions",
+  unlockTitle: (pair) => `Unlock ${pair}?`,
+  // Earlier locks lists only the newest unlocked ones, so the body promises no place there.
+  unlockBody: (label) =>
+    `Lock ${label} is kept; its scores stay, but they're no longer a locked comparison. Each scenario keeps its train and test split.`,
+  unlockAction: "Unlock versions",
+  earlier: "Earlier locks",
+  // An unlocked row says so; a locked one adds nothing.
+  earlierLine: (lockedVersion, at) =>
+    `Lock ${lockedVersion.label} · ${lockPair(lockedVersion.environmentLabel, lockedVersion.suiteLabel)} · ${at}${lockedVersion.unlockedAt ? " · unlocked" : ""}`,
+};
+
+// agent vN · repo@ref · commit · environment vN · scenarios vN
+export const versionLine = (defaults) => {
+  const source = defaults?.agent?.source || {};
+  const repo = source.repository
+    ? [source.repository, source.ref].filter(Boolean).join("@")
+    : null;
+  return [
+    defaults?.agent?.label && `agent ${defaults.agent.label}`,
+    repo,
+    source.commit_sha?.slice(0, 7),
+    defaults?.environment?.label &&
+      `environment ${defaults.environment.label}`,
+    defaults?.suite?.label && `scenarios ${defaults.suite.label}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+};

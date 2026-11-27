@@ -997,7 +997,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data) -> bool
                 call_execution.save(update_fields=["eval_outputs"])
 
                 eval_config.status = StatusType.FAILED.value
-                eval_config.save()
+                eval_config.save(update_fields=["status", "updated_at"])
                 raise ValueError(error_message)
 
         # A recording variable that resolved empty (e.g. stereo on a
@@ -1116,7 +1116,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data) -> bool
                     )
 
             eval_config.status = StatusType.COMPLETED.value
-            eval_config.save()
+            eval_config.save(update_fields=["status", "updated_at"])
 
     except EvaluationDenied as denial:
         record_evaluation_denial(call_execution, eval_config, denial)
@@ -1150,7 +1150,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data) -> bool
         call_execution.save(update_fields=["eval_outputs"])
 
         eval_config.status = StatusType.FAILED.value
-        eval_config.save()
+        eval_config.save(update_fields=["status", "updated_at"])
         raise
     return True
 

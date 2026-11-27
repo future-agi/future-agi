@@ -162,6 +162,22 @@ def finished_call(db, finished_run, scenario):
 
 
 @pytest.fixture
+def debuggable(db, finished_run, scenario):
+    """Fifteen connected calls, one of them failing: a run Debug failures' rule
+    lets a refresh analyse."""
+    for call_status in [CallExecution.CallStatus.COMPLETED] * 14 + [
+        CallExecution.CallStatus.FAILED
+    ]:
+        CallExecution.objects.create(
+            test_execution=finished_run,
+            scenario=scenario,
+            simulation_call_type=CallExecution.SimulationCallType.VOICE,
+            status=call_status,
+            duration_seconds=30,
+        )
+
+
+@pytest.fixture
 def no_paid_work():
     """Spies on every way the summary or the analysis could start or run."""
     with (
@@ -329,7 +345,7 @@ def test_a_run_that_ended_without_completing_can_still_be_summarised(
 @pytest.mark.django_db
 @pytest.mark.parametrize("has_optimiser", [False, True])
 def test_opening_fix_my_agent_creates_nothing(
-    auth_client, finished_run, finished_call, no_paid_work, has_optimiser
+    auth_client, finished_run, finished_call, debuggable, no_paid_work, has_optimiser
 ):
     """Opening the Fix My Agent drawer on a run never analysed returns the
     "trigger a refresh" message. It creates no optimiser and no optimiser
@@ -391,7 +407,7 @@ def test_opening_fix_my_agent_shows_the_latest_analysis(
 
 @pytest.mark.django_db
 def test_fix_my_agent_refresh_queues_the_job_and_runs_no_model_inline(
-    auth_client, finished_run, finished_call, no_paid_work
+    auth_client, finished_run, finished_call, debuggable, no_paid_work
 ):
     """The Fix My Agent refresh is the person asking. On a run with no
     summary the request stores the analysis input without one and queues the
@@ -475,7 +491,7 @@ def test_a_second_fix_my_agent_refresh_while_one_is_on_its_way_starts_nothing(
 
 @pytest.mark.django_db
 def test_an_analysis_stuck_past_its_time_limit_does_not_block_a_refresh(
-    auth_client, finished_run, finished_call, no_paid_work
+    auth_client, finished_run, finished_call, debuggable, no_paid_work
 ):
     """A job killed at its time limit leaves its run running for ever; once
     that limit has passed, a refresh starts a new analysis."""
@@ -1304,7 +1320,7 @@ def test_a_fix_my_agent_run_whose_job_is_gone_is_answered_failed(
 
 @pytest.mark.django_db(transaction=True)
 def test_two_fix_my_agent_refreshes_at_once_start_one_analysis(
-    user, workspace, finished_run, finished_call
+    user, workspace, finished_run, finished_call, debuggable
 ):
     """Two presses at the same moment: the second waits for the first to
     create its run, then finds it on its way and starts nothing."""

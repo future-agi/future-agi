@@ -1,0 +1,64 @@
+name: Devflow approval sweep
+
+# A review starts no base-controlled run, so this re-decides every ten
+# minutes each open pull request into dev labelled devflow:reviewed or
+# devflow:train, and each open pull request with a live approval by the
+# approver App (a retarget away from dev starts no run in
+# admin-pr-approval.yml). Schedules run main's copy with main's scripts; the
+# approver App key is in the devflow-approver environment. Only in
+# APPROVAL_MODE devflow or observe. See .github/scripts/devflow_approval.py.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devflow-approval-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: devflow-approver
+      deployment: false
+    permissions:
+      contents: read
+    steps:
+      - name: Fail without the approver App
+        env:
+          CLIENT_ID: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+          BOT: ${{ vars.DEVFLOW_APPROVER_BOT }}
+        run: |
+          if [[ -z $CLIENT_ID || -z $PRIVATE_KEY || $BOT != *"[bot]" ]]; then
+            echo "::error::DEVFLOW_APPROVER_CLIENT_ID, DEVFLOW_APPROVER_PRIVATE_KEY or DEVFLOW_APPROVER_BOT is not set. Nothing was decided; this workflow never approves with GITHUB_TOKEN."
+            exit 1
+          fi
+      - name: Mint the approver App token
+        id: approver
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
+          private-key: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+          permission-pull-requests: write # approve and dismiss
+          permission-issues: write # needs-human and devflow:train labels
+          permission-contents: read # the risk scan reads changed files
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Re-decide every candidate pull request
+        env:
+          GH_TOKEN: ${{ steps.approver.outputs.token }}
+          REPO: ${{ github.repository }}
+          APPROVAL_MODE: ${{ vars.APPROVAL_MODE }}
+          APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}
+          DEVFLOW_APPROVER_BOT: ${{ vars.DEVFLOW_APPROVER_BOT }}
+        run: python3 -I .github/scripts/devflow_approval.py --repo "$REPO" --sweep --mode "$APPROVAL_MODE"

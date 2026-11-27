@@ -61,6 +61,8 @@ function TabPanel({ children, value, index }) {
   return <Box sx={{ pt: 2 }}>{children}</Box>;
 }
 
+const CODEX_LOGIN = "codex mcp login futureagi";
+
 const STEPS = [
   {
     title: "Install",
@@ -104,6 +106,9 @@ export default function ClientSetupGuide({ config }) {
         2,
       ),
       claudeCode: `claude mcp add futureagi --transport http ${mcpUrl}`,
+      // https://developers.openai.com/codex/mcp: one [mcp_servers.<name>] table
+      // per server; a remote one needs only its url, and signs in with OAuth.
+      codex: `[mcp_servers.futureagi]\nurl = "${mcpUrl}"`,
       vscode: JSON.stringify(
         { "mcp.servers": { futureagi: { type: "http", url: mcpUrl } } },
         null,
@@ -174,6 +179,16 @@ export default function ClientSetupGuide({ config }) {
       copyCommand: true,
       actionLabel: "Copy command",
       actionIcon: "solar:programming-linear",
+    },
+    {
+      label: "Codex",
+      icon: "simple-icons:openai",
+      filePath: "~/.codex/config.toml",
+      code: configs.codex,
+      then: {
+        text: "Then sign in from your terminal. Codex opens the login in your browser.",
+        code: CODEX_LOGIN,
+      },
     },
     {
       label: "VS Code",
@@ -329,7 +344,8 @@ export default function ClientSetupGuide({ config }) {
         <Tabs
           value={tab}
           onChange={(_, v) => setTab(v)}
-          sx={{ boxShadow: "none",
+          sx={{
+            boxShadow: "none",
             "& .MuiTab-root": {
               gap: 0.75,
             },
@@ -425,6 +441,19 @@ export default function ClientSetupGuide({ config }) {
             <CopyButton text={item.code} />
             {item.code}
           </Box>
+          {item.then && (
+            <>
+              <Typography
+                sx={{ typography: "s2", color: "text.secondary", mt: 2, mb: 1 }}
+              >
+                {item.then.text}
+              </Typography>
+              <Box sx={codeBlockSx}>
+                <CopyButton text={item.then.code} />
+                {item.then.code}
+              </Box>
+            </>
+          )}
         </TabPanel>
       ))}
     </Section>
