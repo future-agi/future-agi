@@ -69,6 +69,9 @@ export const AlertConfigValidationSchema = z
           .array(z.string().email("Invalid email address"))
           .max(5, "To add more email id's contact sales")
           .optional(),
+        // Set by allowStoredNoEmails for an edit of an alert stored without
+        // recipients.
+        keepNoEmails: z.boolean().optional(),
         slack: z
           .object({
             webhookUrl: z.string().optional(),
@@ -82,7 +85,7 @@ export const AlertConfigValidationSchema = z
           .optional(),
       })
       .superRefine((notif, ctx) => {
-        if (notif.method === "email") {
+        if (notif.method === "email" && !notif.keepNoEmails) {
           if (!notif.emails || notif.emails.length === 0) {
             ctx.addIssue({
               path: ["emails"],
@@ -401,11 +404,7 @@ export function getDefaultAlertConfigValues(existingConfig = {}) {
       scaleDefaults.warning,
     ),
     notification: {
-      method: webhookUrl
-        ? "webhook"
-        : slackWebhookUrl
-          ? "slack"
-          : "email",
+      method: webhookUrl ? "webhook" : slackWebhookUrl ? "slack" : "email",
       emails: notificationEmails || [],
       slack: {
         webhookUrl: slackWebhookUrl || "",

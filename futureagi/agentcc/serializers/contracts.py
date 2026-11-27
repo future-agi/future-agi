@@ -1,12 +1,13 @@
-from rest_framework import serializers
+from decimal import Decimal, InvalidOperation
 
-from tfc.utils.serializer_fields import JsonValueField
+from rest_framework import serializers
 
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
     EmptyRequestSerializer,
     StrictInputSerializer,
 )
+from tfc.utils.serializer_fields import JsonValueField
 
 API_FORMAT_HELP_TEXT = (
     "Gateway protocol adapter name. This intentionally remains a string because "
@@ -361,6 +362,60 @@ class GatewayConfigPatchRequestSerializer(serializers.Serializer):
 class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
     config = serializers.DictField(child=JsonValueField())
+
+    def validate_config(self, config):
+        # If the name field rejects its input, there can be no stored row to
+        # compare against. Report the config error alongside the name error.
+        name_field = self.fields["name"]
+        try:
+            name_field.run_validation(name_field.get_value(self.initial_data))
+        except serializers.ValidationError:
+            if errors := self.limit_errors(config, None):
+                raise serializers.ValidationError(errors["config"]) from None
+        return config
+
+    def validate(self, attrs):
+        # Unknown fields stop the request before the view's row-aware check.
+        # Include its diagnostic in that response, but not for a stored echo.
+        if self.initial_data.keys() - self.fields.keys():
+            config = attrs["config"]
+            if errors := self.limit_errors(config, None):
+                providers = self.context.get("active_providers")
+                if providers is not None:
+                    stored = providers.filter(provider_name=attrs["name"]).first()
+                    errors = self.limit_errors(config, stored)
+                if errors:
+                    raise serializers.ValidationError(errors)
+        return attrs
+
+    @staticmethod
+    def limit_errors(config, stored):
+        """Allow a negative only when the same provider already stores it."""
+        for key in (
+            "default_timeout",
+            "default_timeout_seconds",
+            "max_concurrent",
+            "conn_pool_size",
+        ):
+            value = config.get(key)
+            if isinstance(value, str):
+                try:
+                    value = Decimal(value)
+                except InvalidOperation:
+                    continue
+                if not value.is_finite():
+                    continue
+            if isinstance(value, (int, float, Decimal)) and value < 0:
+                column = "default_timeout_seconds" if key == "default_timeout" else key
+                if stored is None or value != getattr(stored, column):
+                    return {
+                        "config": serializers.ValidationError(
+                            {key: "Must be greater than or equal to zero."}
+                        ).detail
+                    }
+                # Persist the already-stored integer, not a raw JSON number/string.
+                config[key] = getattr(stored, column)
+        return None
 
 
 class GatewayNameRequestSerializer(serializers.Serializer):

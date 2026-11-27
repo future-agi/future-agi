@@ -20,15 +20,9 @@ import {
   focusRing,
 } from "./drawerStyles";
 import { SectionHead } from "./starts/startBits";
-import { SaasSandboxRow } from "./starts/worldCards";
 import ReadyEnvironmentCard from "./starts/ReadyEnvironmentCard";
 import BuildEnvironmentDialog from "src/sections/agent-playground/connected/detail/BuildEnvironmentDialog";
-import {
-  FROM_CODE_ITEM,
-  MCP_ITEM,
-  SANDBOX_ITEM,
-  worldItem,
-} from "./starts/startItems";
+import { FROM_CODE_ITEM, MCP_ITEM, worldItem } from "./starts/startItems";
 import { agentIconOf, agentMetaOf } from "./starts/startUtils";
 
 const AGENTS_LIMIT = 100;
@@ -127,9 +121,6 @@ function PrebuiltSection({ onPick, onBrowse }) {
           ))}
         </Box>
       )}
-      <Box sx={{ mt: 1.5 }}>
-        <SaasSandboxRow onOpen={() => onPick(SANDBOX_ITEM)} />
-      </Box>
     </Box>
   );
 }
@@ -343,10 +334,8 @@ export default function DrawerCatalog({
           <BuildFromCode onOpen={() => onPick(FROM_CODE_ITEM)} />
         </Box>
       )}
-      {SHOW_PREBUILT_WORLDS ? (
+      {SHOW_PREBUILT_WORLDS && (
         <PrebuiltSection onPick={onPick} onBrowse={onBrowseWorlds} />
-      ) : (
-        <SaasSandboxRow disabled onOpen={() => onPick(SANDBOX_ITEM)} />
       )}
       <ConnectSection
         onPick={onPick}

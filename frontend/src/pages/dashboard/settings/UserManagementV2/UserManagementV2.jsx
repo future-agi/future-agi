@@ -34,7 +34,7 @@ import BackButton from "src/sections/develop-detail/Common/BackButton";
 import { LEVELS } from "./constant";
 import { useUserManagementStore } from "./UserManagementStore";
 import { endpoints } from "src/utils/axios";
-import { gridSortModelToMemberListSort } from "./memberListGridQuery";
+import { safeGridSortModelToMemberListSort } from "./memberListGridQuery";
 
 const UserManagementV2 = ({ workspaceScope = false }) => {
   const { workspaceId: workspaceIdParam } = useParams();
@@ -84,6 +84,8 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
         colId: "org_level",
         flex: 1,
         cellRenderer: OrgRoleCell,
+        // The workspace member endpoint cannot sort by organisation role.
+        ...(workspaceScope ? { sortable: false } : {}),
       },
       // Org-level view: show workspace chips; workspace-scoped view: show single role
       ...(workspaceScope
@@ -173,7 +175,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
       getRows: async (params) => {
         const { request } = params;
         const pageNumber = Math.floor(request.startRow / 20);
-        const sort = gridSortModelToMemberListSort(request?.sortModel, {
+        const sort = safeGridSortModelToMemberListSort(request?.sortModel, {
           workspaceScope,
         });
         const search = searchQuery || "";

@@ -45,7 +45,10 @@ from tracer.services.trace_investigation import (
 )
 from tracer.tests.test_grouping_runtime import FakeFeatureStore, _feature_rows
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("_debug_failures_readable"),
+]
 
 
 def _execution(organization, workspace, scenario, name, call_status):

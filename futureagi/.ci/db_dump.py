@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""A cached dump of pytest's freshly migrated test database, for Backend CI.
+"""A saved dump of pytest's freshly migrated test database, for Backend CI.
 
-Only schema and the migration ledger are transferable. The fresh producer also
-checks the data a restore + pytest-django setup actually reconstruct, in a
-second disposable database. Non-equivalent recipes migrate locally; test order
-or eventual transactional truncation is not evidence of seed parity.
+The dump is the whole database (schema and rows) at the moment migrate has
+applied every migration and has not yet sent post_migrate (.ci/migrated_db.py
+takes it there). A restore followed by pytest-django's migrate applies nothing
+and sends post_migrate, so seed rows from signal handlers come from the code
+under test. Only a dump made without the private overlay is ever published.
 """
 
 import argparse
@@ -18,21 +19,45 @@ import sys
 from pathlib import Path
 
 # Raise this to stop using every existing dump, for example after `compare`
-# reports that a cached dump no longer equals a fresh migrate.
-VERSION = 2
+# reports that a saved dump no longer equals a fresh migrate.
+VERSION = 3
 # Reserved for a completed comparison of two valid, different dumps. Ordinary
 # tool failures (including an unexpected Python exception) must not mean drift.
 COMPARE_DIFFERENT = 3
 ROOT = Path(__file__).resolve().parents[2]
-# A migration can import any helper or read a fixture outside migrations/.
-# Hash the candidate tree (not the commit, branch name or untracked .venv).
-INPUTS = ["."]
-OVERLAY = "futureagi/ee/cloud"
+BACKEND = "futureagi/"
+# What a migrate reads before post_migrate, relative to futureagi/: every
+# migrations package, the settings that pick the apps, the locked
+# dependencies, this tool, and the helpers and data files that migrations
+# import or open. Any other file can change without a new dump. When one
+# does change what migrate writes, the control job's compare fails the run:
+# add that path here (or raise VERSION) in the same pull request.
+KEY_FILES = frozenset(
+    {
+        "uv.lock",
+        "pyproject.toml",
+        "pytest.ini",
+        "conftest.py",
+        "tfc/ee_loader.py",
+        ".ci/db_dump.py",
+        ".ci/migrated_db.py",
+        # falcon_ai 0008 seeds the builtin skills from YAML.
+        "ee/falcon_ai/builtin_skills_loader.py",
+    }
+)
+KEY_DIRS = ("tfc/settings/", "ee/falcon_ai/builtin_skills/")
 LEDGER = "COPY public.django_migrations (id, app, name, applied) FROM stdin;"
-# pg_dump ends each of the two parts of a dump with this line.
+# pg_dump ends a dump with this line.
 COMPLETE = "-- PostgreSQL database dump complete"
-PARTS = 2
-MIGRATIONS_TABLE = "django_migrations"
+# Values two correct migrates write differently: generated ids and the time
+# the row was written. Two dumps are compared with these masked.
+GENERATED = (
+    (re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"), "<uuid>"),
+    (
+        re.compile(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)?(?:[+-]\d\d(?::\d\d)?)?"),
+        "<time>",
+    ),
+)
 
 
 class DumpError(Exception):
@@ -49,20 +74,35 @@ def _git(cwd, *args):
     ).stdout
 
 
+def key_input(path):
+    """Whether a path under futureagi/ is a migrate input (see KEY_FILES)."""
+    return (
+        "migrations" in path.split("/")[:-1]
+        or path in KEY_FILES
+        or path.startswith(KEY_DIRS)
+    )
+
+
+def inputs_key(root):
+    """The committed migrate inputs: the name a saved dump is published under.
+
+    Never the whole tree (every commit would miss), never the private overlay
+    (a published dump holds only what the public tree migrates).
+    """
+    digest = hashlib.sha256(f"{VERSION}\0".encode())
+    listing = _git(root, "ls-tree", "-r", "-z", "--full-tree", "HEAD", "--", BACKEND)
+    for entry in listing.split(b"\0"):
+        path = entry.partition(b"\t")[2].decode("utf-8", "surrogateescape")
+        if path.startswith(BACKEND) and key_input(path[len(BACKEND) :]):
+            digest.update(entry + b"\0")
+    return f"migrated-db-v{VERSION}-{digest.hexdigest()[:40]}"
+
+
 def cache_key(root, runtime):
-    """Exact tree, overlay revision (including worktree checkouts), and tools."""
+    """The exact recipe: the migrate inputs plus the service images and tools."""
     if not runtime.strip():
         raise DumpError("missing runtime fingerprint")
-    digest = hashlib.sha256(f"{VERSION}\0{runtime}\0".encode())
-    digest.update(_git(root, "ls-tree", "-z", "HEAD", "--", *INPUTS))
-    overlay = Path(root) / OVERLAY
-    if overlay.exists():
-        if not (overlay / ".git").exists():
-            raise DumpError("overlay is present without checkout metadata")
-        digest.update(b"overlay\0" + _git(overlay, "rev-parse", "--verify", "HEAD"))
-    else:
-        digest.update(b"public-only")
-    return f"migrated-db-pytest-v{VERSION}-{digest.hexdigest()[:40]}"
+    return f"{inputs_key(root)}-{hashlib.sha256(runtime.encode()).hexdigest()[:16]}"
 
 
 def read_dump(path):
@@ -75,42 +115,61 @@ def read_dump(path):
     except (OSError, EOFError) as exc:
         raise DumpError(f"{path}: not a readable gzip dump ({exc})") from exc
     lines = text.split("\n")
-    if lines.count(COMPLETE) != PARTS or COMPLETE not in lines[-12:]:
-        raise DumpError(
-            f"{path}: the dump is incomplete (it must hold {PARTS} finished pg_dump parts)"
-        )
+    if lines.count(COMPLETE) != 1 or COMPLETE not in lines[-12:]:
+        raise DumpError(f"{path}: the dump is incomplete (one finished pg_dump)")
     return text
 
 
+def _masked(row):
+    fields = row.split("\t")
+    for index, field in enumerate(fields):
+        for pattern, mark in GENERATED:
+            if pattern.fullmatch(field):
+                fields[index] = mark
+    return "\t".join(fields)
+
+
 def normalise(text, *, identities=None):
-    """Compare exact migration identities, not their wall-clock timestamps."""
+    """The dump as comparable lines, and the exact migration identities.
+
+    The ledger keeps (app, name) and drops its id and applied time. Rows of
+    other tables are sorted (COPY order is physical) with generated values
+    masked. Every other line, schema included, is compared as written.
+    """
     out = []
     rows = None
+    ledger = False
     seen = False
     for line in text.split("\n"):
         if rows is not None:
-            if line == "\\.":
+            if line != "\\.":
+                if ledger:
+                    fields = line.split("\t")
+                    if len(fields) != 4 or not all(fields):
+                        raise DumpError("invalid migration ledger row")
+                    line = "\t".join(fields[1:3])
+                else:
+                    line = _masked(line)
+                rows.append(line)
+                continue
+            if ledger:
                 if not rows or len(set(rows)) != len(rows):
                     raise DumpError("missing or duplicate migration identity")
                 if identities is not None:
                     identities.extend(sorted(rows))
-                out.extend(sorted(rows))
-                out.append(line)
-                rows = None
-            else:
-                fields = line.split("\t")
-                if len(fields) != 4 or not all(fields):
-                    raise DumpError("invalid migration ledger row")
-                rows.append("\t".join(fields[1:3]))
+            out.extend(sorted(rows))
+            out.append(line)
+            rows = None
             continue
         if line.startswith(("\\restrict ", "\\unrestrict ")):
             continue
         out.append(line)
         if line.startswith("COPY ") and line.endswith(" FROM stdin;"):
-            if line != LEDGER or seen:
-                raise DumpError("unexpected data in schema and migration ledger dump")
+            ledger = line == LEDGER
+            if ledger and seen:
+                raise DumpError("two migration ledgers in one dump")
+            seen = seen or ledger
             rows = []
-            seen = True
     if rows is not None or not seen:
         raise DumpError("missing or unfinished migration ledger")
     return out
@@ -122,7 +181,7 @@ def compare(cached, fresh):
         difflib.unified_diff(
             normalise(read_dump(cached)),
             normalise(read_dump(fresh)),
-            "cached dump",
+            "saved dump",
             "fresh migrate",
             lineterm="",
             n=1,
@@ -130,26 +189,35 @@ def compare(cached, fresh):
     )
 
 
+def tables(path):
+    """(table, rows) for every table that holds a row. Names and counts only."""
+    counts = {}
+    table = None
+    for line in read_dump(path).split("\n"):
+        if table is not None:
+            if line == "\\.":
+                table = None
+            else:
+                counts[table] = counts.get(table, 0) + 1
+        elif line.startswith("COPY ") and line.endswith(" FROM stdin;"):
+            table = line.split(" ", 2)[1]
+    return sorted(counts.items())
+
+
 def dump(path, user, database, prefix):
     """Dump `database` through `prefix` (for example `docker compose exec -T db`).
 
-    Two pg_dump parts in one file: the whole schema, then the rows of
-    django_migrations (with the value of its sequence).
+    One plain pg_dump: the schema, every row, and the value of every sequence.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".partial")
-    base = [*prefix, "pg_dump", "-U", user, "--no-owner", "--no-privileges"]
-    parts = (
-        [*base, "--schema-only", database],
-        [*base, "--data-only", f"--table={MIGRATIONS_TABLE}", database],
-    )
+    command = [*prefix, "pg_dump", "-U", user, "--no-owner", "--no-privileges"]
     with gzip.open(partial, "wb") as out:
-        for command in parts:
-            with subprocess.Popen(command, stdout=subprocess.PIPE) as proc:
-                shutil.copyfileobj(proc.stdout, out)
-            if proc.returncode != 0:
-                raise DumpError(f"pg_dump exited {proc.returncode}")
+        with subprocess.Popen([*command, database], stdout=subprocess.PIPE) as proc:
+            shutil.copyfileobj(proc.stdout, out)
+        if proc.returncode != 0:
+            raise DumpError(f"pg_dump exited {proc.returncode}")
     normalise(read_dump(partial))
     partial.replace(path)
 
@@ -211,11 +279,11 @@ def restore(path, user, database, prefix):
 
 
 def seed_digest(user, database, prefix):
-    """Private comparison only. No seed value, per-row hash or data dump is saved.
+    """An exact digest of every row except the ledger, and all sequence state.
 
-    Compare every other table (including unknown tables) and all sequence state.
-    Physical COPY order and random psql restriction tokens are not data. Even a
-    volatile value makes this recipe cold-only unless proven reconstructible.
+    It proves a restore reproduces the dumped database byte for byte at the
+    post_migrate boundary. Physical COPY order and random psql restriction
+    tokens are not data. Only the digest is printed, never a row.
     """
     output = subprocess.run(
         [
@@ -237,33 +305,40 @@ def seed_digest(user, database, prefix):
 
 
 def fingerprint_rows(output):
-    digest = hashlib.sha256()
-    rows = None
+    """Every line counts, in any order: a data-only pg_dump orders its tables
+    by foreign keys and breaks ties by object id, which a restore renumbers."""
+    blocks = []
+    other = []
+    header = rows = None
     complete = False
     for line in output.split(b"\n"):
         if rows is not None:
             if line != b"\\.":
                 rows.append(hashlib.sha256(line).digest())
                 continue
-            for row in sorted(rows):
-                digest.update(row)
+            blocks.append(hashlib.sha256(header + b"".join(sorted(rows))).digest())
             rows = None
         elif line.startswith(b"COPY ") and line.endswith(b" FROM stdin;"):
+            header = line + b"\n"
             rows = []
         elif re.fullmatch(rb"\\(?:un)?restrict [A-Za-z0-9]+", line):
             continue
-        elif line == COMPLETE.encode():
-            complete = True
-        digest.update(line + b"\n")
+        else:
+            complete = complete or line == COMPLETE.encode()
+            other.append(hashlib.sha256(line).digest())
     if rows is not None or not complete:
         raise DumpError("incomplete seed comparison")
-    return digest.hexdigest()
+    return hashlib.sha256(
+        b"".join(sorted(other)) + b"\0" + b"".join(sorted(blocks))
+    ).hexdigest()
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("key").add_argument("runtime")
+    commands.add_parser("inputs-key")
+    commands.add_parser("tables").add_argument("path")
     for name in ("dump", "restore", "seed-digest"):
         sub = commands.add_parser(name)
         if name != "seed-digest":
@@ -286,11 +361,16 @@ def main(argv=None):
     try:
         if args.command == "key":
             _say(cache_key(ROOT, args.runtime))
+        elif args.command == "inputs-key":
+            _say(inputs_key(ROOT))
+        elif args.command == "tables":
+            for table, rows in tables(args.path):
+                _say(f"{rows}\t{table}")
         elif args.command == "seed-digest":
             _say(seed_digest(args.user, args.database, args.prefix))
         elif args.command == "dump":
             dump(args.path, args.user, args.database, args.prefix)
-            _say(f"dumped the schema of {args.database} to {args.path}")
+            _say(f"dumped {args.database} to {args.path}")
         elif args.command == "restore":
             applied = restore(args.path, args.user, args.database, args.prefix)
             _say(
@@ -299,15 +379,16 @@ def main(argv=None):
         else:
             difference = compare(args.cached, args.fresh)
             if difference:
-                # SQL defaults or functions may contain non-public configuration.
+                # Never print the lines: the fresh side can hold the private
+                # overlay's schema or rows.
                 _say(
-                    "::error title=Cached database dump differs from a fresh migrate::"
-                    "Something outside the key's inputs changed the migrated schema. "
-                    "Raise VERSION in futureagi/.ci/db_dump.py in this pull request so no job restores the old dump."
+                    "::error title=Saved database dump differs from a fresh migrate::"
+                    f"{len(difference)} diff lines. A file outside the key's inputs changed what migrate writes. "
+                    "Add it to KEY_FILES or KEY_DIRS, or raise VERSION, in futureagi/.ci/db_dump.py in this pull request."
                 )
                 return COMPARE_DIFFERENT
             _say(
-                "the cached dump equals a fresh migrate: same schema, same applied migrations"
+                "the saved dump equals a fresh migrate: same schema, same rows up to generated ids and times"
             )
     except (DumpError, subprocess.CalledProcessError) as exc:
         _say(f"::error title=Database dump::{exc}")

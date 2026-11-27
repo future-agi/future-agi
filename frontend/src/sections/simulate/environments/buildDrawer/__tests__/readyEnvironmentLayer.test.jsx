@@ -159,9 +159,6 @@ describe("how many ready environments there are", () => {
       "Ready environments4",
     );
     expect(screen.getByText("4 of 4 environments")).toBeInTheDocument();
-    // The sandbox keeps its card; it isn't counted.
-    expect(
-      screen.getByRole("listitem", { name: "SaaS sandbox" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("listitem", { name: "SaaS sandbox" })).toBeNull();
   });
 });

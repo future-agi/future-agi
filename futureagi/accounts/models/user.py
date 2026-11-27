@@ -7,6 +7,7 @@ from django.contrib.auth.models import (
     PermissionsMixin,
 )
 from django.db import models, transaction
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from accounts.models.organization import Organization
@@ -119,6 +120,28 @@ class User(AbstractBaseUser, PermissionsMixin):
     @pg_response_save
     def save(self, *args, **kwargs):
         return super().save(*args, **kwargs)
+
+    def update_config(self, **changes) -> None:
+        """Set these top-level ``config`` keys, merged into the stored row in
+        one UPDATE, and on this object.
+
+        A request's user object can be older than its row (the auth cache
+        hands out the one loaded at sign-in), so saving its whole ``config``
+        would put back keys other requests have changed since, such as the
+        email opt-outs.
+        """
+        stored = Coalesce(
+            models.F("config"), models.Value({}, output_field=models.JSONField())
+        )
+        merged = models.Func(
+            stored,
+            models.Value(changes, output_field=models.JSONField()),
+            arg_joiner=" || ",
+            template="(%(expressions)s)",
+            output_field=models.JSONField(),
+        )
+        type(self).objects.filter(pk=self.pk).update(config=merged)
+        self.config = {**(self.config or {}), **changes}
 
     # --- Multi-org helpers ---
 

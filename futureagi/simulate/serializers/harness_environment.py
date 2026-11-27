@@ -43,7 +43,10 @@ from simulate.types import (
     WorkerBinding,
     WorkerEnforcement,
 )
-from tfc.utils.api_serializers import StrictInputSerializer
+from tfc.utils.api_serializers import (
+    StrictInputSerializer,
+    ViewerReadOnlyErrorSerializer,
+)
 from tfc.utils.serializer_fields import JsonValueField, StringOrArrayField
 
 
@@ -1616,12 +1619,119 @@ class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
     agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
 
 
+class HarnessLockedVersionSerializer(serializers.Serializer):
+    """A locked environment and suite version pair, with its split counts."""
+
+    id = serializers.UUIDField()
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label, as DRF Field's own
+    environment_version_id = serializers.UUIDField()
+    environment_label = serializers.CharField(allow_null=True)
+    suite_version_id = serializers.UUIDField()
+    suite_label = serializers.CharField(allow_null=True)
+    locked_at = serializers.DateTimeField()
+    locked_by = HarnessVersionPersonSerializer(allow_null=True)
+    unlocked_at = serializers.DateTimeField(allow_null=True)
+    unlocked_by = HarnessVersionPersonSerializer(allow_null=True)
+    train = serializers.IntegerField()
+    test = serializers.IntegerField()
+
+
+class HarnessRefusalSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    message = serializers.CharField()
+
+
+class HarnessLockPreviewSerializer(serializers.Serializer):
+    """Whether the default pair can be locked now, and the splits it would get."""
+
+    environment_version_id = serializers.UUIDField(allow_null=True)
+    suite_version_id = serializers.UUIDField(allow_null=True)
+    proved = serializers.BooleanField(
+        help_text="The suite version passed its proofs against this environment version."
+    )
+    can_lock = serializers.BooleanField()
+    refusal = HarnessRefusalSerializer(allow_null=True)
+    train = serializers.IntegerField(allow_null=True)
+    test = serializers.IntegerField(allow_null=True)
+    test_target = serializers.IntegerField(allow_null=True)
+
+
 class HarnessVersionsSerializer(serializers.Serializer):
     """Every version of an environment's three pieces, newest first."""
 
     agent = HarnessVersionSerializer(many=True)
     environment = HarnessVersionSerializer(many=True)
     suite = HarnessVersionSerializer(many=True)
+    locked_versions = HarnessLockedVersionSerializer(many=True)
+
+
+class HarnessLockVersionSerializer(StrictInputSerializer):
+    environment_version_id = serializers.UUIDField(
+        help_text="The default environment version the caller saw."
+    )
+    suite_version_id = serializers.UUIDField(
+        help_text="The default suite version the caller saw."
+    )
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class HarnessUnlockVersionSerializer(StrictInputSerializer):
+    locked_version_id = serializers.UUIDField()
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class HarnessLockRefusalSerializer(serializers.Serializer):
+    """A refused lock, unlock, or delete of an environment with a locked version."""
+
+    error = serializers.CharField(
+        help_text=(
+            "lock_not_ready, version_already_locked, lock_too_few_test,"
+            " lock_too_few_train, version_locked, version_conflict or"
+            " rebuild_running."
+        )
+    )
+    message = serializers.CharField()
+    retryable = serializers.BooleanField()
+    piece = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_conflict: the piece whose default moved.",
+    )
+    train = serializers.IntegerField(
+        required=False, help_text="lock_too_few_*: the train tasks a lock gives."
+    )
+    test = serializers.IntegerField(
+        required=False, help_text="lock_too_few_*: the test tasks a lock gives."
+    )
+    locked_version_id = serializers.UUIDField(
+        required=False, help_text="version_locked: the locked version to unlock first."
+    )
+    label = serializers.CharField(  # type: ignore[assignment]  # the API field is named label, as DRF Field's own
+        required=False, help_text="version_locked: that locked version's label."
+    )
+    environment_label = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_locked: its environment version's label.",
+    )
+    suite_label = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_locked: its suite version's label.",
+    )
+
+
+class HarnessUnlockForbiddenSerializer(ViewerReadOnlyErrorSerializer):
+    """A Viewer's refusal (``code``, ``detail``, ``action``), or a Member's
+    unlock_admin_only refusal (``error``, ``message``, ``retryable``)."""
+
+    detail = serializers.CharField(required=False, allow_blank=True)
+    error = serializers.CharField(required=False)
+    retryable = serializers.BooleanField(required=False)
 
 
 class HarnessPairValidationSerializer(serializers.Serializer):

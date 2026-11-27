@@ -23,6 +23,7 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
+from simulate.services.agent_fix_runs import refuse_outside_the_epoch
 from simulate.services.harness_agent_versions import (
     POLICY_FOLLOW,
     POLICY_KEY,
@@ -775,6 +776,9 @@ def set_production(version: AgentVersion) -> list[Any]:
             "An environment manages this agent; change its version from there",
             status_code=409,
         )
+    refuse_outside_the_epoch(
+        organization_id=version.organization_id, agent_version_id=version.id
+    )
     runtime = _runtime(version)
     if runtime is not None and runtime.preflight_status not in (
         Status.PASSED,

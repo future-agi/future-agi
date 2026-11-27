@@ -1506,6 +1506,20 @@ def check_all_components(docs: list[dict]) -> list[str]:
     return failed
 
 
+def check_storage_bundled(name: str, docs: list[dict], bundled: bool) -> list[str]:
+    """STORAGE_BUNDLED follows objectStorage.mode, never the backend: the app
+    owns the bucket policy of the bundled MinIO only, not of an external one."""
+    expected = "true" if bundled else "false"
+    return [
+        f"{name}: {doc['metadata']['name']}/{container['name']} sets STORAGE_BUNDLED="
+        f"{env_values(container).get('STORAGE_BUNDLED')!r}, expected {expected!r}"
+        for doc in app_workloads(docs)
+        for container in containers(doc)
+        if "DJANGO_SETTINGS_MODULE" in env_values(container)
+        and env_values(container).get("STORAGE_BUNDLED") != expected
+    ]
+
+
 def check_dockerhub_mirror(docs: list[dict]) -> list[str]:
     """ci/dockerhub-mirror.yaml: a Docker Hub pull-through cache named per
     image; the bundled MinIO stays on ghcr.io; the digest pins stay."""
@@ -1745,6 +1759,10 @@ def main() -> int:
         failed += check_all_components(renders["all-components"])
     if "dockerhub-mirror" in renders:
         failed += check_dockerhub_mirror(renders["dockerhub-mirror"])
+    # ci/all-components.yaml is an external MinIO (backend minio, mode external).
+    for render, bundled in (("bundled", True), ("all-components", False)):
+        if render in renders:
+            failed += check_storage_bundled(render, renders[render], bundled)
     for render in ("bundled", "external", "local"):
         if render in renders:
             failed += check_defaults_opt_in(render, renders[render])

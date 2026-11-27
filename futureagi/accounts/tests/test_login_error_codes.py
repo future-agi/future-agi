@@ -856,3 +856,30 @@ class TestErrorResponseEnvelope:
         data = resp.json()
         assert data["status"] is False
         assert "error_code" in data["result"]
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("non_oss_mode")
+class TestMiddlewareCacheOutage:
+    """An unreachable cache skips the IP throttle instead of raising a 500."""
+
+    def _call(self, path, error):
+        from accounts.authentication import AuthMonitoringMiddleware
+
+        request = RequestFactory().post(path, content_type="application/json")
+        middleware = AuthMonitoringMiddleware(lambda r: HttpResponse("OK", status=200))
+        with patch("accounts.authentication.cache.get", side_effect=error):
+            return middleware(request)
+
+    @pytest.mark.parametrize(
+        "path", ["/api/accounts/token/", "/api/accounts/password-reset-initiate/"]
+    )
+    def test_unreachable_cache_lets_the_request_through(self, path):
+        # django-redis raises ConnectionInterrupted from the redis-py error.
+        error = ConnectionInterrupted(connection=None)
+        error.__cause__ = RedisConnectionError("Error 111 connecting to redis:6379")
+        assert self._call(path, error).status_code == 200
+
+    def test_other_cache_errors_still_raise(self):
+        with pytest.raises(ConnectionInterrupted):
+            self._call("/api/accounts/login/", ConnectionInterrupted(connection=None))

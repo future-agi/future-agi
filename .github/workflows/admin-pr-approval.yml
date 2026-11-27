@@ -11,35 +11,79 @@ name: Admin PR approval
 # ignored. Both the author and the event's sender must be admins, so a push by
 # a non-admin to an admin's branch keeps the normal review. Dev dismisses stale
 # approvals on push, so each new head is approved again.
+#
+# The approval comes from the devflow approver GitHub App, never from
+# GITHUB_TOKEN: any workflow on any branch acts as github-actions[bot], so
+# that login's approval proves nothing. The App key is in the environment
+# devflow-approver, which admits only the protected branches main and dev,
+# so only merged code mints it; a pull_request_target run presents main to
+# it. Without the key the approve job fails and approves nothing.
+#
+# The repository variable APPROVAL_MODE picks the rule:
+#
+# - admin (the default, also when unset): the admin and approve jobs above.
+# - observe: the admin rule keeps approving; the devflow job only writes what
+#   it would do to the job summary.
+# - devflow: the devflow job runs .github/scripts/devflow_approval.py from
+#   this commit (main's), which reads the pull request through the API and
+#   decides by the assigned reviewer's devflow verdict and tier. A review
+#   starts no base-controlled run, so the reviewer tool re-adds
+#   devflow:reviewed, and devflow-approval-sweep.yml re-decides every ten
+#   minutes.
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, ready_for_review]
-    branches: [dev]
+    types:
+      [
+        opened,
+        reopened,
+        synchronize,
+        ready_for_review,
+        converted_to_draft,
+        edited,
+        labeled,
+        unlabeled,
+      ]
+    branches: [dev, main]
 
 permissions:
   contents: read
-  pull-requests: write
-
-concurrency:
-  group: admin-pr-approval-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
 
 jobs:
-  approve:
-    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+  admin:
+    # The admin rule's own four events: a label or an edit by an admin must
+    # not approve a non-admin's push.
+    if: >-
+      (vars.APPROVAL_MODE != 'devflow' || github.event.pull_request.base.ref == 'main') &&
+      contains(fromJSON('["opened", "reopened", "synchronize", "ready_for_review"]'), github.event.action) &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: admin-pr-approval-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      approve: ${{ steps.check.outputs.approve }}
     steps:
-      - name: Approve the head commit when the author is a repository admin
+      - name: Check that the author and the sender are repository admins
+        id: check
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           SENDER: ${{ github.event.sender.login }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+          # Into main, only an admin's hotfix branch skips the second reviewer.
+          if [[ $BASE == main && $HEAD_REF != *hotfix* ]]; then
+            echo "$HEAD_REF is not a hotfix branch; normal review applies to main."
+            exit 0
+          fi
           # Both the author and whoever triggered this event (on synchronize, the
           # pusher) must be admins: a non-admin push to an admin's branch is
           # reviewed normally.
@@ -50,6 +94,47 @@ jobs:
               exit 0
             fi
           done
+          echo "approve=true" >> "$GITHUB_OUTPUT"
+
+  approve:
+    needs: admin
+    if: needs.admin.outputs.approve == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: admin-pr-approval-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    # Only admin pull requests reach the key. No deployment record per run.
+    environment:
+      name: devflow-approver
+      deployment: false
+    permissions:
+      contents: read
+    steps:
+      - name: Fail without the approver App key
+        env:
+          CLIENT_ID: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+        run: |
+          if [[ -z $CLIENT_ID || -z $PRIVATE_KEY ]]; then
+            echo "::error::DEVFLOW_APPROVER_CLIENT_ID or DEVFLOW_APPROVER_PRIVATE_KEY is not set in the devflow-approver environment. Nothing was approved; this workflow never approves with GITHUB_TOKEN."
+            exit 1
+          fi
+      - name: Mint the approver App token
+        id: approver
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
+          private-key: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+          permission-pull-requests: write
+      - name: Approve the head commit
+        env:
+          GH_TOKEN: ${{ steps.approver.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
           # Approve only the commit this event is about; a later push gets its own run.
           current=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
           if [[ $current != "$HEAD_SHA" ]]; then
@@ -58,5 +143,61 @@ jobs:
           fi
           gh api -X POST "repos/$REPO/pulls/$PR/reviews" \
             -f commit_id="$HEAD_SHA" -f event=APPROVE \
-            -f body="Approved automatically: the author is a repository admin. The change still lands only through the dev merge queue and its required checks." \
+            -f body="Approved automatically: the author is a repository admin. The change still lands only through its branch's required checks." \
             --jq '"approved \(.commit_id)"'
+
+  devflow:
+    # A bot's label change (the train's, or this job's own) starts no
+    # decision; the sweep reads it.
+    if: >-
+      github.event.pull_request.base.ref == 'dev' &&
+      (vars.APPROVAL_MODE == 'devflow' || vars.APPROVAL_MODE == 'observe') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !(contains(fromJSON('["labeled", "unlabeled"]'), github.event.action) && github.event.sender.type == 'Bot')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: devflow-approver
+      deployment: false
+    # Each run reads the pull request live, so the newest queued run is enough.
+    concurrency:
+      group: devflow-approval-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Fail without the approver App
+        env:
+          CLIENT_ID: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+          BOT: ${{ vars.DEVFLOW_APPROVER_BOT }}
+        run: |
+          if [[ -z $CLIENT_ID || -z $PRIVATE_KEY || $BOT != *"[bot]" ]]; then
+            echo "::error::DEVFLOW_APPROVER_CLIENT_ID, DEVFLOW_APPROVER_PRIVATE_KEY or DEVFLOW_APPROVER_BOT is not set. Nothing was decided; this workflow never approves with GITHUB_TOKEN."
+            exit 1
+          fi
+      - name: Mint the approver App token
+        id: approver
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
+          private-key: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+          permission-pull-requests: write # approve and dismiss
+          permission-issues: write # needs-human and devflow:train labels
+          permission-contents: read # the risk scan reads changed files
+      # Main's scripts, never the pull request's: pull_request_target's
+      # workflow_sha is the default branch's commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Approve, ask for a person, or wait
+        env:
+          GH_TOKEN: ${{ steps.approver.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          APPROVAL_MODE: ${{ vars.APPROVAL_MODE }}
+          APPROVAL_MODE_TIGHT: ${{ vars.APPROVAL_MODE_TIGHT }}
+          DEVFLOW_APPROVER_BOT: ${{ vars.DEVFLOW_APPROVER_BOT }}
+        run: python3 -I .github/scripts/devflow_approval.py --repo "$REPO" --pr "$PR" --mode "$APPROVAL_MODE"
