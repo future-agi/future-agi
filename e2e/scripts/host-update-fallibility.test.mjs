@@ -1403,14 +1403,36 @@ test("workflow opt-in is dispatch-only, validates before builds, follows the unc
     Object.values(workflow.jobs).filter((job) => job.permissions).length,
     3,
   );
-  const builds = steps.filter(
-    (step) => step.uses === "docker/build-push-action@v5",
+  // The five stack images build in one bake (e2e/stack/docker-bake.hcl). Each
+  // target must load into the local daemon only: never push, never write a cache.
+  assert.equal(
+    steps.filter((step) => step.uses?.startsWith("docker/build-push-action@"))
+      .length,
+    0,
   );
-  assert.equal(builds.length, 5);
-  for (const step of builds) {
-    assert.equal(step.with.push, undefined);
-    assert.equal(step.with.load, true);
-    assert.equal(step.with["cache-to"], undefined);
+  const bake = steps.find(
+    (step) => step.name === "Build the stack images from PR code",
+  );
+  assert.match(
+    bake.run,
+    /docker buildx bake -f e2e\/stack\/docker-bake\.hcl "\$\{targets\[@\]\}"/,
+  );
+  assert.doesNotMatch(bake.run, /--push|--set|cache-to/);
+  const hcl = await readFile(
+    new URL("../../e2e/stack/docker-bake.hcl", import.meta.url),
+    "utf8",
+  );
+  const targets = [...hcl.matchAll(/^target "([^"]+)" \{([\s\S]*?)^\}/gm)];
+  assert.deepEqual(targets.map(([, name]) => name).sort(), [
+    "backend",
+    "code-executor",
+    "fi-collector",
+    "frontend",
+    "gateway",
+  ]);
+  for (const [, name, body] of targets) {
+    assert.match(body, /^\s*output\s*=\s*\["type=docker"\]\s*$/m, name);
+    assert.doesNotMatch(body, /cache-to|\bpush\b/, name);
   }
   for (const job of Object.values(workflow.jobs)) {
     for (const step of job.steps.filter((step) =>
