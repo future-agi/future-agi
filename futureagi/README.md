@@ -24,11 +24,11 @@ Validation checks the configuration without installing a Git hook.
 
 ### Type Checking with MyPy
 
-CI runs mypy on the whole backend in the "Python types (advisory)" workflow.
-Known errors are listed in `mypy-baseline.txt`, one line per error, with line
-numbers set to 0 so moving code does not change them. The check fails when a
-file has more errors of a kind than the baseline lists, including errors a
-change causes in files it did not touch. It is advisory for now.
+CI runs mypy on the whole backend in the "Python types" workflow, on every PR,
+push to `dev` and merge group. Known errors are listed in `mypy-baseline.txt`,
+one line per error, with line numbers set to 0 so moving code does not change
+them. The check fails when a file has more errors of a kind than the baseline
+lists, including errors a change causes in files it did not touch.
 
 ```bash
 make mypy                # whole-repo mypy, compared with mypy-baseline.txt

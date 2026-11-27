@@ -42,7 +42,7 @@ class AcceptancePlanTests(unittest.TestCase):
             setup = next(step['run'] for step in job['steps']
                          if 'fagi-upd-e2e-real-tools.' in step.get('run',''))
             self.assertIn('.ClientInfo.Plugins', setup)
-            self.assertIn('test -n "$plugin" && test -f "$plugin" && test -x "$plugin"', setup)
+            self.assertIn('[[ -n $plugin && -f $plugin && -x $plugin ]] || exit 1', setup)
             self.assertIn('ln -s "$plugin" "$dir/docker-compose"', setup)
             self.assertNotIn('exec docker --context', setup)
 
