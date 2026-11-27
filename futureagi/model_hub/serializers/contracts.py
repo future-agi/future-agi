@@ -3350,6 +3350,7 @@ class DatasetAddRowsRequestSerializer(StrictInputSerializer):
 class DatasetAddRowsFromExistingRequestSerializer(serializers.Serializer):
     source_dataset_id = serializers.UUIDField()
     column_mapping = serializers.DictField(child=serializers.UUIDField())
+    num_rows = serializers.IntegerField(required=False, min_value=1)
 
 
 class DatasetUpdateColumnNameRequestSerializer(serializers.Serializer):

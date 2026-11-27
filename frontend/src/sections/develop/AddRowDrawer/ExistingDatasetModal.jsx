@@ -39,6 +39,7 @@ import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectFie
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 import { getExistingDatasetConfigValues } from "./existingDatasetMapping";
+import { getAddRowsFromExistingPayload } from "./existingDatasetPayload";
 import { getCreatedDatasetCopyId } from "./existingDatasetResponse";
 
 function replaceKeys(obj, arr) {
@@ -171,6 +172,7 @@ const ExistingDatasetModal = ({
       name: "",
       value: "",
       dataType: "ImportDataPromptConfiguration",
+      num_rows: "",
       config: {
         mapping: {},
       },
@@ -370,10 +372,11 @@ const ExistingDatasetModal = ({
     );
 
     if (dataset) {
-      payload = {
-        source_dataset_id: selectedValue,
-        column_mapping: output,
-      };
+      payload = getAddRowsFromExistingPayload({
+        sourceDatasetId: selectedValue,
+        columnMapping: output,
+        numRows: formData.num_rows,
+      });
     } else {
       const columns = {};
       const outputcheckbox = replaceKeys(
@@ -537,6 +540,18 @@ const ExistingDatasetModal = ({
                     error={""}
                     helperText={""}
                   />
+                  {dataset && (
+                    <FormTextFieldV2
+                      control={control}
+                      fieldName="num_rows"
+                      fieldType="number"
+                      label="No. of rows"
+                      size="small"
+                      placeholder="All rows"
+                      helperText="Leave blank to import every row"
+                      fullWidth
+                    />
+                  )}
                   <RadioField
                     control={control}
                     fieldName={"dataType"}
@@ -593,7 +608,7 @@ const ExistingDatasetModal = ({
                       padding: theme.spacing(1.5),
                       overflow: "auto",
                       // As tall as its rows, up to the space available.
-                      maxHeight: `calc(100vh - ${dataset ? "330" : "380"}px)`,
+                      maxHeight: `calc(100vh - ${dataset ? "410" : "380"}px)`,
                     }}
                   >
                     <ShowComponent

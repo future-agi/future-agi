@@ -40,6 +40,16 @@ export const existingDatasetValidationSchema = (datasetId, checkboxHandle) =>
       }),
     value: z.string().min(1, "Value is required"),
     dataType: z.string().min(1, "Data type is required"),
+    // Blank imports every row; otherwise a whole number of at least 1.
+    num_rows: z
+      .any()
+      .refine(
+        (value) =>
+          value === undefined ||
+          value === "" ||
+          (Number.isInteger(value) && value >= 1),
+        { message: "Enter a whole number of 1 or more" },
+      ),
     config: z.object({
       mapping: z
         .record(z.string())
