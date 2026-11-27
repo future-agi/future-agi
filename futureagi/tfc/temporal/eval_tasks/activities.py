@@ -392,9 +392,17 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
         from tracer.models.observation_span import EvalEntryStatus, EvalLogger
         from tracer.services.eval_tasks.config_hash import resolved_config_hash
         from tracer.services.eval_tasks.entries import mark_terminal
+        from tracer.services.instant_eval_answers import _lock_retained_run, _uuid
 
         with transaction.atomic():
-            entry = EvalLogger.objects.select_for_update().filter(id=entry_id).first()
+            # The owning task is fixed at entry creation. Read just its id,
+            # without locking the entry: mark_terminal may copy an Instant
+            # answer, and project deletion locks the run before its entries.
+            entries = EvalLogger.objects.using("default").filter(id=entry_id)
+            task_id = _uuid(entries.values_list("eval_task_id", flat=True).first())
+            if task_id is not None:
+                _lock_retained_run(task_id)
+            entry = entries.select_for_update().first()
             if entry is None:
                 return {"entry_id": str(entry_id), "status": "deleted"}
             if entry.status != EvalEntryStatus.RUNNING:

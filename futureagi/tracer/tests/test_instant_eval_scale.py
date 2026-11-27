@@ -1052,6 +1052,54 @@ def test_retry_failed_requeues_only_the_failures(
     assert started[-1][1] == {"replace_existing": True}
 
 
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("operation", ["retry", "lost_worker"])
+def test_run_is_locked_before_the_entry(auth_client, observe_project, answered_run, operation):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import OperationalError, connection, connections, transaction
+
+    from tfc.temporal.eval_tasks.activities import _requeue_lost_entry_sync
+    from tracer.models.instant_eval import InstantEvalAnswer
+    from tracer.services.instant_eval_summary import ERROR
+
+    task, _ = answered_run
+    entry = EvalLogger.objects.get(eval_task_id=str(task.pk), status=EvalEntryStatus.ERRORED)
+    answer = InstantEvalAnswer.objects.filter(task=task, row__row_id=entry.trace_session_id, config_id=entry.custom_eval_config_id)
+    if operation == "lost_worker":
+        EvalLogger.objects.filter(pk=entry.pk).update(status=EvalEntryStatus.RUNNING, attempts=1)
+        answer.delete()
+
+    def probe_run():
+        try:
+            with transaction.atomic():
+                InstantEvalRun.objects.select_for_update(nowait=True).get(eval_task=task)
+        except OperationalError as exc:
+            return exc.__cause__.sqlstate
+        finally:
+            connections.close_all()
+        return "unlocked"
+
+    seen = []
+    def before_entry_write(execute, sql, params, many, context):
+        if not seen and "tracer_eval_logger" in sql and (sql.startswith("UPDATE") or "FOR UPDATE" in sql):
+            # Deletion would take the run and then wait for this entry. Check
+            # from its own connection without creating an actual deadlock.
+            seen.append(pool.submit(probe_run).result(timeout=10))
+        return execute(sql, params, many, context)
+
+    with ThreadPoolExecutor(max_workers=1) as pool, connection.execute_wrapper(before_entry_write):
+        if operation == "retry":
+            response = _control(auth_client, observe_project, task, "retry_failed")
+            assert response.status_code == 200, response.content
+            assert response.json()["result"]["retried"] == 1
+            assert not answer.exists()
+        else:
+            assert _requeue_lost_entry_sync(str(entry.pk))["status"] == EvalEntryStatus.ERRORED
+            assert answer.get().label == ERROR
+    assert seen == ["55P03"]  # lock_not_available
+
+
 def _half_answered_run(auth_client, observe_project, yes_no, status_):
     """A 6-row run: one row failed, one answered, four never read."""
     result = _start(auth_client, observe_project, [yes_no], sample_size=6).json()[

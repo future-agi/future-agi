@@ -1709,6 +1709,12 @@ class InstantEvalControlView(InstantEvalLicenseRequired, APIView):
         with transaction.atomic():
             if not running and (busy := self._busy_locked(request, task)):
                 return busy
+            # Project deletion locks the run before its entries. A cancellation
+            # that won this lock also wins over the earlier preflight check.
+            if run is not None and not InstantEvalRun.objects.select_for_update().filter(
+                pk=run.pk, cancelled_at__isnull=True
+            ).exists():
+                return self._cancelled()
             # A worker may fail another entry after the check. Forget exactly
             # the answers for entries this statement actually requeued.
             with connection.cursor() as cur:
