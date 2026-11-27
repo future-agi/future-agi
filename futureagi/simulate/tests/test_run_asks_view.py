@@ -299,6 +299,50 @@ def test_a_run_of_another_workspace_is_not_found(
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
+def _elsewhere(organization, user, run):
+    """Moves the run's test to another workspace of the same organization."""
+    from accounts.models.workspace import Workspace
+
+    elsewhere = Workspace.objects.create(
+        name=f"ws-{uuid.uuid4().hex[:6]}", organization=organization, created_by=user
+    )
+    RunTest.objects.filter(id=run.run_test_id).update(workspace=elsewhere)
+
+
+@pytest.mark.django_db
+def test_a_launch_on_a_run_of_another_workspace_is_not_found_and_starts_nothing(
+    auth_client, organization, user, run, calls, gate_passes, queued, no_model
+):
+    _elsewhere(organization, user, run)
+    before = _nothing_written()
+
+    response = _launch(auth_client, run, requested=len(calls))
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert "id" not in response.data
+    assert QUESTION["question"] not in response.content.decode()
+    assert _nothing_written() == before
+    queued.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_an_ask_on_a_run_of_another_workspace_is_not_found_and_shows_nothing(
+    auth_client, organization, user, run, calls, gate_passes, queued, no_model
+):
+    ask = _ask_with_states(
+        auth_client, run, calls, [(RESULT.ANSWERED, "Yes")] * len(calls)
+    )
+    _elsewhere(organization, user, run)
+
+    response = auth_client.get(ASK.format(run.id, ask.id))
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    body = response.content.decode()
+    assert QUESTION["question"] not in body
+    assert "Because Yes" not in body
+    assert not any(str(call.id) in body for call in calls)
+
+
 @pytest.mark.django_db
 def test_a_call_still_running_is_refused_with_how_many(
     auth_client, run, calls, scenario, gate_passes
