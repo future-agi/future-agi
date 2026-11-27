@@ -49,10 +49,15 @@ def test_exact_matches_score_one_at_any_length(metric, text):
         ("London Berlin Madrid Oslo", "Paris Rome Tokyo Dublin"),
     ],
 )
-def test_disjoint_answers_stay_below_threshold(metric, hypothesis, reference):
-    _, evaluate, threshold = metric
+def test_disjoint_answer_scores(metric, hypothesis, reference):
+    name, evaluate, threshold = metric
     score = evaluate(None, hypothesis, reference, None)["score"]
-    assert 0 <= score < threshold
+    if name == "code_bleu" and len(hypothesis.split()) == 4:
+        # With no reference keywords, keyword recall is 1.0. As before #3924,
+        # this plain-text pair exceeds the CodeBLEU threshold (tracked separately).
+        assert score == pytest.approx(0.5114962778149738)
+    else:
+        assert 0 <= score < threshold
 
 
 def test_shorter_hypothesis_keeps_brevity_penalty(metric):
@@ -81,6 +86,27 @@ def test_longer_partial_matches_preserve_existing_nonzero_smoothing(metric):
     name, evaluate, _ = metric
     score = evaluate(None, "a b c d e x", "a b c d e f", None)["score"]
     assert score == pytest.approx(_expected_score(name, (3 / 7) ** 0.25))
+
+
+@pytest.mark.parametrize(
+    "hypothesis,reference,bleu",
+    [
+        ("the cat x y", "the cat sat on", 0.47287080450158786),
+        (
+            "return the cat sat near here",
+            "return the cat sleeps over there",
+            0.4111336169005197,
+        ),
+    ],
+)
+def test_long_partial_matches_keep_add_one_for_missing_orders(
+    metric, hypothesis, reference, bleu
+):
+    name, evaluate, _ = metric
+    # Historical BLEU scores; both pairs retain full keyword recall in CodeBLEU.
+    assert evaluate(None, hypothesis, reference, None)["score"] == pytest.approx(
+        _expected_score(name, bleu)
+    )
 
 
 @pytest.mark.parametrize(

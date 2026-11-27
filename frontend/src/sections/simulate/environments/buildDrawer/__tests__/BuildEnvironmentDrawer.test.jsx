@@ -8,10 +8,22 @@ import {
   within,
 } from "src/utils/test-utils";
 
+const mockNavigate = vi.hoisted(() => vi.fn());
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
-  return { ...actual, useNavigate: () => vi.fn() };
+  return { ...actual, useNavigate: () => mockNavigate };
 });
+
+vi.mock("src/auth/hooks", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAuthContext: () => ({ role: "Member" }),
+}));
+
+vi.mock("src/api/integrations", () => ({
+  useGitHubConnection: () => ({ data: null, isLoading: false }),
+  useSourceRepositories: () => ({ data: [] }),
+  useSourceBranches: () => ({ data: [] }),
+}));
 
 vi.mock("src/api/agents/connectedAgents", () => ({
   useConnectedAgents: () => ({
@@ -184,6 +196,8 @@ describe("BuildEnvironmentDrawer catalog", () => {
     expect(
       within(card).getByRole("button", { name: "Customize" }),
     ).toBeEnabled();
+    expect(screen.queryByText("SaaS sandbox")).toBeNull();
+    expect(screen.queryByText("UI only")).toBeNull();
   });
 
   it("lists the connected agents, filtered by type", () => {
@@ -323,6 +337,22 @@ describe("BuildEnvironmentDrawer setup", () => {
     );
     expect(row("GitHub")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("comes back to this drawer after installing the GitHub App", () => {
+    window.history.pushState(
+      {},
+      "",
+      "/dashboard/simulate/environments?build=github&github=denied",
+    );
+    render();
+    connect("GitHub");
+    fireEvent.click(screen.getByRole("button", { name: "Install GitHub App" }));
+    const target = new URL(mockNavigate.mock.lastCall[0], "https://x.test");
+    expect(target.searchParams.get("return_to")).toBe(
+      "/dashboard/simulate/environments?build=github",
+    );
+    window.history.pushState({}, "", "/");
   });
 
   it("opens Vapi on the prod form, without the type and platform pickers", () => {
