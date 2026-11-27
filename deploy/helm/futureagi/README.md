@@ -510,9 +510,13 @@ plain object URLs, so the bucket's endpoint must be reachable from your users'
 browsers.
 
 On S3 and S3-compatible services, the app creates the bucket on the first
-upload with a policy that lets anyone read an object by its URL, except agent
-source archives under `agent-fix/`, `harness-sources/`,
-`harness-conversations/` and `agent-contracts/`: those stay private to the
+upload with a policy that lets anyone read an object by its URL, except what
+the app reads only with its own keys: agent code under `agent-fix/`,
+`harness-sources/`, `code-archives/`, `harness-conversations/` and
+`agent-contracts/`, and the harness archives and records under
+`harness-environments/`, `harness-suites/`, `harness-authoring/`,
+`harness-sealed/`, `harness-assembled/`, `harness-bundles/`,
+`harness-releases/` and `harness-diagnostics/`. Those stay private to the
 app's own credentials. Nobody can list or write without the app's keys.
 
 With `objectStorage.mode=bundled`, the app also keeps the policy of an
@@ -523,7 +527,8 @@ after an upgrade, upload a file to a dataset, then check the policy as below.
 
 The app does not add to the policy of an existing bucket you run yourself
 (`objectStorage.mode=external`). Add this statement to its `Statement` list,
-with your bucket's name in place of `futureagi`:
+with your bucket's name in place of `futureagi`. If it already has a
+`PrivateObjectsNotAnonymous` statement, replace it with this one:
 
 ```json
 {
@@ -534,8 +539,17 @@ with your bucket's name in place of `futureagi`:
   "Resource": [
     "arn:aws:s3:::futureagi/agent-fix/*",
     "arn:aws:s3:::futureagi/harness-sources/*",
+    "arn:aws:s3:::futureagi/code-archives/*",
     "arn:aws:s3:::futureagi/harness-conversations/*",
-    "arn:aws:s3:::futureagi/agent-contracts/*"
+    "arn:aws:s3:::futureagi/agent-contracts/*",
+    "arn:aws:s3:::futureagi/harness-environments/*",
+    "arn:aws:s3:::futureagi/harness-suites/*",
+    "arn:aws:s3:::futureagi/harness-authoring/*",
+    "arn:aws:s3:::futureagi/harness-sealed/*",
+    "arn:aws:s3:::futureagi/harness-assembled/*",
+    "arn:aws:s3:::futureagi/harness-bundles/*",
+    "arn:aws:s3:::futureagi/harness-releases/*",
+    "arn:aws:s3:::futureagi/harness-diagnostics/*"
   ],
   "Condition": {"StringEquals": {"aws:principaltype": ["Anonymous"]}}
 }

@@ -530,12 +530,30 @@ def _anonymous_statements(policy):
     ]
 
 
-# Agent source, and what is kept of it, which nobody may read by URL.
+# An earlier four-prefix denial, which an existing bucket may still carry.
+EARLIER_PRIVATE_PREFIXES = (
+    "agent-fix/",
+    "harness-sources/",
+    "harness-conversations/",
+    "agent-contracts/",
+)
+# Connected repository checkouts and the harness archives and records built
+# around the agent.
+ADDED_PRIVATE_PREFIXES = (
+    "code-archives/",
+    "harness-environments/",
+    "harness-authoring/",
+    "harness-sealed/",
+    "harness-assembled/",
+    "harness-bundles/",
+    "harness-releases/",
+    "harness-suites/",
+    "harness-diagnostics/",
+)
+# Everything the app reads only with its own keys, which nobody may read by URL.
 PRIVATE_RESOURCES = {
-    "arn:aws:s3:::futureagi/agent-fix/*",
-    "arn:aws:s3:::futureagi/harness-sources/*",
-    "arn:aws:s3:::futureagi/harness-conversations/*",
-    "arn:aws:s3:::futureagi/agent-contracts/*",
+    f"arn:aws:s3:::futureagi/{prefix}*"
+    for prefix in EARLIER_PRIVATE_PREFIXES + ADDED_PRIVATE_PREFIXES
 }
 
 
@@ -814,6 +832,57 @@ def test_a_stale_denial_is_replaced_not_duplicated(monkeypatch):
 
     (policy,) = client.set_calls
     _assert_agent_source_is_private(policy)
+
+
+def test_an_earlier_four_prefix_denial_is_brought_up_to_date(monkeypatch):
+    """A bundled bucket that already carries the four-prefix denial gets the
+    current one in its place: one write, one denial, every prefix."""
+    storage_client = _bundled(monkeypatch)
+    earlier = _current_policy_as_minio_stores_it()
+    earlier["Statement"][1]["Resource"] = [
+        f"arn:aws:s3:::futureagi/{prefix}*" for prefix in EARLIER_PRIVATE_PREFIXES
+    ]
+    client = FakeBucketClient(exists=True, policy=json.dumps(earlier))
+
+    storage_client.ensure_bucket(client, "futureagi")
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    _assert_agent_source_is_private(policy)
+    assert _anonymous_statements(policy) == _read_only_policy()["Statement"]
+
+
+@pytest.mark.parametrize("prefix", ADDED_PRIVATE_PREFIXES)
+def test_the_denial_covers_agent_code_kept_under(prefix, monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+
+    denial = storage_client._private_objects_statement("futureagi")
+
+    assert f"arn:aws:s3:::futureagi/{prefix}*" in denial["Resource"]
+
+
+@pytest.mark.parametrize("prefix", ADDED_PRIVATE_PREFIXES)
+def test_a_new_bucket_keeps_agent_code_private_under(prefix, monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = FakeBucketClient(exists=False)
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    (denial,) = _ours(policy)
+    assert f"arn:aws:s3:::futureagi/{prefix}*" in denial["Resource"]
+
+
+@pytest.mark.parametrize("prefix", ADDED_PRIVATE_PREFIXES)
+def test_an_existing_bundled_bucket_keeps_agent_code_private_under(prefix, monkeypatch):
+    storage_client = _bundled(monkeypatch)
+    client = FakeBucketClient(exists=True, policy=json.dumps(_read_only_policy()))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    (denial,) = _ours(policy)
+    assert f"arn:aws:s3:::futureagi/{prefix}*" in denial["Resource"]
 
 
 def test_existing_bucket_policy_is_checked_once_per_process(monkeypatch):

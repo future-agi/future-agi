@@ -315,14 +315,27 @@ def extract_object_key(file_url: str, bucket_name: str) -> str:
 
 ANONYMOUS_READ_ACTION = "s3:GetObject"
 
-# Agent source, its patches and workspaces, and the contracts read from it: read
-# only with the backend's own credentials, never by URL. No get_object_url() is
-# ever built for these keys.
+# Everything the app reads only with its own keys is private; prefixes served by
+# public URL (get_object_url) are the exceptions: run recordings and artifacts
+# (alk-harness/, alk-sim/), Falcon attachments (falcon-ai/) and user uploads. A
+# new prefix read only with the app's keys goes here.
 PRIVATE_PREFIXES = (
+    # Agent code: fix runs, uploaded sources, connected repository checkouts,
+    # chat workspaces and the contracts read from them.
     "agent-fix/",
     "harness-sources/",
+    "code-archives/",
     "harness-conversations/",
     "agent-contracts/",
+    # Harness archives and records built around the agent.
+    "harness-environments/",
+    "harness-suites/",
+    "harness-authoring/",
+    "harness-sealed/",
+    "harness-assembled/",
+    "harness-bundles/",
+    "harness-releases/",
+    "harness-diagnostics/",
 )
 PRIVATE_OBJECTS_SID = "PrivateObjectsNotAnonymous"
 
