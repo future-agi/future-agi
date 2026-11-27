@@ -45,6 +45,7 @@ import CopyCommandButton from "../../components/CopyCommandButton";
 import { TextLink } from "../../agents/connect/connectBits";
 import { relativeTime } from "../../_mock/scenarioProvenance";
 import { PersonalDataTag } from "./ScenarioStateBits";
+import { FAKE_CLOSE, FAKE_OPEN } from "../../_mock/rsiModel";
 import { clickable, focusRing } from "../../components/clickable";
 
 const CHECKBOX_SX = {
@@ -59,7 +60,7 @@ const fmtDuration = (s) =>
 /**
  * Production traces to scenarios (roadmap traces.md, Week 2), in two steps.
  * Pick: exact traces from the agent's Observe project — each with its trace
- * ID, agent version, outcome and the evidence it actually holds; "select all
+ * ID, agent version, outcome and the evidence it lacks, as columns; "select all
  * matching" is its own counted choice. Freeze: the picked IDs are fixed (new
  * traces or a changed filter don't change the import), then what the new
  * scenarios should represent and where they go. Drafts then wait for review.
@@ -719,7 +720,7 @@ export default function ProductionReplayImport({
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {src === "observe"
-              ? `${project ? `Observe project ${project}` : "The agent's Observe traces"} · ${rangeOf(traces)} · pick the exact traces — personal data is already replaced`
+              ? `${project || "The agent's Observe traces"} · ${rangeOf(traces)} · personal data already replaced`
               : src === "transcript"
                 ? "Upload transcripts with Customer: / Agent: lines — personal data is replaced at review"
                 : "Upload CSV or JSON with a prompt column (and expected, if you have it) — a row isn't a whole conversation"}
@@ -728,19 +729,11 @@ export default function ProductionReplayImport({
             direction="row"
             spacing={0.5}
             alignItems="center"
-            sx={{ mt: 0.75, flexWrap: "wrap" }}
+            sx={{
+              mt: kinds.length > 1 || src !== "observe" ? 0.75 : 0,
+              flexWrap: "wrap",
+            }}
           >
-            {/* Picking in Observe itself: its table, filters and sessions —
-                Create environment test there brings the pick back here. */}
-            {mode === "observe" && observeProjectId && (
-              <TextLink
-                onClick={() =>
-                  navigate(`${paths.dashboard.observe}/${observeProjectId}`)
-                }
-              >
-                Pick traces or sessions in Observe
-              </TextLink>
-            )}
             {kinds.length > 1 &&
               kinds
                 .map((id) => [id, EVIDENCE_KINDS[id]])
@@ -799,6 +792,17 @@ export default function ProductionReplayImport({
             )}
           </Stack>
         </Box>
+        {/* Picking in Observe itself: its table, filters and sessions —
+            Create environment test there brings the pick back here. */}
+        {mode === "observe" && observeProjectId && (
+          <TextLink
+            onClick={() =>
+              navigate(`${paths.dashboard.observe}/${observeProjectId}`)
+            }
+          >
+            Pick in Observe
+          </TextLink>
+        )}
         <Button
           variant="contained"
           color="primary"
@@ -836,22 +840,22 @@ export default function ProductionReplayImport({
             ? `${chosen.length} of ${traces.length} picked`
             : `${traces.length} ${noun}${traces.length === 1 ? "" : "s"}${src === "observe" ? " in this range" : ""}`}
         </Typography>
-        <Button
-          variant="outlined"
-          size="small"
-          disabled={traces.every((c) => picked[c.id])}
-          onClick={() =>
-            setPicked(Object.fromEntries(traces.map((c) => [c.id, true])))
-          }
-          sx={{
-            color: "primary.main",
-            minWidth: 0,
-            "&.Mui-disabled": {},
-          }}
-        >
-          {`Select all ${traces.length} matching`}
-        </Button>
+        {traces.length > 0 &&
+          (traces.every((c) => picked[c.id]) ? (
+            <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+              {`All ${traces.length} picked`}
+            </Typography>
+          ) : (
+            <TextLink
+              onClick={() =>
+                setPicked(Object.fromEntries(traces.map((c) => [c.id, true])))
+              }
+            >
+              {`Select all ${traces.length} matching`}
+            </TextLink>
+          ))}
       </Stack>
+      {traces.length > 0 && <RowHeader />}
       {/* Saved draft imports — finish them later. */}
       {drafts0.length > 0 && (
         <Box
@@ -936,20 +940,72 @@ ProductionReplayImport.propTypes = {
   selected: PropTypes.array,
 };
 
+/* One grid for the column header and every row, so the columns line up. */
+const ROW_GRID = {
+  display: "grid",
+  gridTemplateColumns:
+    "28px minmax(0, 1fr) 64px 56px 64px minmax(0, 190px) 48px 72px 28px",
+  columnGap: 1.5,
+  alignItems: "center",
+  px: 1.5,
+};
+const CELL = { typography: "s3", color: "text.secondary", minWidth: 0 };
+const NUM = { ...CELL, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+
+function RowHeader() {
+  const head = { ...CELL, color: "text.tertiary", fontWeight: 500 };
+  return (
+    <Box
+      sx={{
+        ...ROW_GRID,
+        py: 0.75,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        flexShrink: 0,
+      }}
+    >
+      <span />
+      <Typography sx={head}>Conversation</Typography>
+      <Typography sx={head}>Trace</Typography>
+      <Typography sx={head}>Agent</Typography>
+      <Typography sx={head}>Result</Typography>
+      <Typography sx={head}>Missing</Typography>
+      <Typography sx={{ ...head, textAlign: "right" }}>Length</Typography>
+      <Typography sx={{ ...head, textAlign: "right" }}>When</Typography>
+      <span />
+    </Box>
+  );
+}
+
 function ConversationRow({ conv, draft, added, picked, onToggle }) {
   const [open, setOpen] = useState(false);
   const turns = draft.productionReplay?.turns || [];
+  const failed = conv.outcome === "failed";
+  const result = added
+    ? "Added"
+    : conv.sourceKind
+      ? failed
+        ? "Failed"
+        : "—"
+      : failed
+        ? "Failed"
+        : "Passed";
+  /* The evidence it holds, said by what's missing — a transcript is always there. */
+  const missing = [
+    !conv.evidence.startingState && "Starting state",
+    !conv.evidence.tools && "tool calls",
+  ].filter(Boolean);
+  const missingText = missing.length
+    ? missing.join(", ").replace(/^./, (c) => c.toUpperCase())
+    : "—";
   return (
     <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.25}
+      <Box
         {...clickable(() => setOpen((o) => !o), { expanded: open })}
         sx={{
+          ...ROW_GRID,
           ...focusRing,
-          px: 1.5,
-          py: 1,
+          py: 0.75,
           cursor: "pointer",
           "&:hover": { bgcolor: "action.hover" },
         }}
@@ -960,81 +1016,58 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
             checked={picked || added}
             disabled={added}
             onChange={onToggle}
+            inputProps={{ "aria-label": `Pick ${conv.topic}` }}
             sx={CHECKBOX_SX}
           />
         </Box>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography
-            noWrap
-            sx={{
-              typography: "s2",
-              fontWeight: 500,
-              color: added ? "text.disabled" : "text.primary",
-            }}
-          >
-            {conv.topic}
-          </Typography>
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={0.75}
-            sx={{ mt: 0.25, minWidth: 0 }}
-          >
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-            >
-              {[
-                conv.traceId,
-                conv.agentVersion ? `agent ${conv.agentVersion}` : null,
-                conv.channel,
-                conv.durationS ? fmtDuration(conv.durationS) : null,
-                relativeTime(conv.at),
-                conv.spans ? `${conv.spans} spans` : null,
-                conv.sourceKind
-                  ? conv.outcome === "failed"
-                    ? "failed in simulation"
-                    : conv.expected
-                      ? `expected: ${conv.expected}`
-                      : null
-                  : conv.outcome === "failed"
-                    ? "failed in production"
-                    : "passed",
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </Typography>
-            <PersonalDataTag row={draft} />
-            {/* What this trace actually holds — missing evidence named up front. */}
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
-            >
-              {[
-                "transcript",
-                conv.evidence.tools ? "tool calls" : null,
-                conv.evidence.startingState ? "starting state" : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-              {!conv.evidence.startingState && (
-                <Box component="span" sx={{ color: "status.warning.fg" }}>
-                  {` · no starting state${conv.evidence.tools ? "" : " or tool calls"}`}
-                </Box>
-              )}
-            </Typography>
-            {added && (
-              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                · already added
-              </Typography>
-            )}
-          </Stack>
-        </Box>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s2",
+            fontWeight: 500,
+            color: added ? "text.disabled" : "text.primary",
+          }}
+        >
+          {conv.topic}
+        </Typography>
+        <Typography noWrap sx={{ ...CELL, fontFamily: MONO }}>
+          {conv.traceId || "—"}
+        </Typography>
+        <Typography noWrap sx={CELL}>
+          {conv.agentVersion || "—"}
+        </Typography>
+        <Typography
+          noWrap
+          sx={{
+            ...CELL,
+            color: failed && !added ? "status.danger.fg" : CELL.color,
+          }}
+        >
+          {result}
+        </Typography>
+        <Typography
+          noWrap
+          title={
+            missing.length ? `No ${missing.join(" or ")} in this trace` : ""
+          }
+          sx={{
+            ...CELL,
+            color: missing.length ? "status.warning.fg" : "text.disabled",
+          }}
+        >
+          {missingText}
+        </Typography>
+        <Typography noWrap sx={NUM}>
+          {conv.durationS ? fmtDuration(conv.durationS) : "—"}
+        </Typography>
+        <Typography noWrap sx={NUM}>
+          {relativeTime(conv.at)}
+        </Typography>
         <Tooltip
           title={open ? "Hide the caller's turns" : "Show the caller's turns"}
           arrow
         >
-          <IconButton size="small">
+          <IconButton size="small" tabIndex={-1}>
             <Iconify
               icon={
                 open
@@ -1046,12 +1079,39 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
             />
           </IconButton>
         </Tooltip>
-      </Stack>
+      </Box>
       <Collapse in={open} unmountOnExit>
         <Stack
           spacing={0.5}
           sx={{ px: 6, py: 1.5, bgcolor: "background.neutral" }}
         >
+          {/* The rest of what the trace holds, kept off the row. */}
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.75}
+            sx={{ pb: 0.5, flexWrap: "wrap" }}
+          >
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {[
+                conv.channel,
+                conv.spans ? `${conv.spans} spans` : null,
+                conv.sourceKind && !failed && conv.expected
+                  ? `expected: ${conv.expected}`
+                  : null,
+                [
+                  "transcript",
+                  conv.evidence.tools ? "tool calls" : null,
+                  conv.evidence.startingState ? "starting state" : null,
+                ]
+                  .filter(Boolean)
+                  .join(", "),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+            <PersonalDataTag row={draft} />
+          </Stack>
           {turns.map((t) => (
             <Stack
               key={t.n}
@@ -1071,7 +1131,7 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
                 {`Caller ${t.n}`}
               </Typography>
               <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {t.text}
+                <MarkedFakes text={t.marked || t.text} />
               </Typography>
             </Stack>
           ))}
@@ -1085,6 +1145,34 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
     </Box>
   );
 }
+/* A replayed turn with each fake value (put in place of personal data)
+   underlined, so it doesn't read as the real caller's details. */
+function MarkedFakes({ text }) {
+  const parts = String(text).split(
+    new RegExp(`${FAKE_OPEN}(.*?)${FAKE_CLOSE}`, "g"),
+  );
+  return parts.map((part, i) =>
+    i % 2 ? (
+      <Box
+        key={i}
+        component="span"
+        title="Replaced with a fake value"
+        sx={{
+          color: "text.primary",
+          textDecoration: "underline dotted",
+          textUnderlineOffset: "3px",
+          cursor: "help",
+        }}
+      >
+        {part}
+      </Box>
+    ) : (
+      part
+    ),
+  );
+}
+MarkedFakes.propTypes = { text: PropTypes.string };
+
 ConversationRow.propTypes = {
   conv: PropTypes.object,
   draft: PropTypes.object,

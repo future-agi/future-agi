@@ -124,6 +124,8 @@ export const scrubScenario = (row, { names = [] } = {}) => {
       turns: row.productionReplay.turns.map((t) => ({
         ...t,
         text: take(t.text),
+        /* The same text with each fake value marked, to show what was replaced. */
+        marked: scrubPersonalData(t.text, { names, mark: true }).text,
       })),
     };
   }

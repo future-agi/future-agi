@@ -538,12 +538,19 @@ const fakeName = (n) => {
  * first and last names — and any `names` the caller knows are replaced first.
  * Returns { text, replaced } where replaced counts by kind.
  */
-export const scrubPersonalData = (input, { names = [] } = {}) => {
+/* Private-use markers around a replaced value (scrubPersonalData `mark`). */
+export const FAKE_OPEN = "\uE000";
+export const FAKE_CLOSE = "\uE001";
+
+export const scrubPersonalData = (input, { names = [], mark = false } = {}) => {
   let text = String(input || "");
+  /* `mark`: wrap each fake value in FAKE_OPEN … FAKE_CLOSE (private-use
+     characters), so a screen can show which words were replaced. */
+  const wrap = (v) => (mark ? `${FAKE_OPEN}${v}${FAKE_CLOSE}` : v);
   const replaced = { names: 0, phones: 0, emails: 0, addresses: 0, numbers: 0 };
   const swap = (fake) => {
     replaced.names += 1;
-    return fake;
+    return wrap(fake);
   };
   /* Longest first, so "Priya Kumar" goes before "Priya". */
   [...new Set(names.filter(Boolean).map((n) => String(n).trim()))]
@@ -600,29 +607,31 @@ export const scrubPersonalData = (input, { names = [] } = {}) => {
   );
   text = text.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, (m) => {
     replaced.emails += 1;
-    return `user${(hash(m) % 900) + 100}@example.com`;
+    return wrap(`user${(hash(m) % 900) + 100}@example.com`);
   });
   text = text.replace(/\b(?:\d[ -]?){13,19}\b/g, (m) => {
     replaced.numbers += 1;
-    return `4111 1111 1111 ${String((hash(m) % 9000) + 1000)}`;
+    return wrap(`4111 1111 1111 ${String((hash(m) % 9000) + 1000)}`);
   });
   text = text.replace(
     /(\+?\d{1,3}[ -]?)?\(?\d{3}\)?[ -]?\d{3}[ -]?\d{4}\b/g,
     (m) => {
       replaced.phones += 1;
-      return `+1 555 01${String((hash(m) % 90) + 10)} ${String((hash(m) % 9000) + 1000)}`;
+      return wrap(
+        `+1 555 01${String((hash(m) % 90) + 10)} ${String((hash(m) % 9000) + 1000)}`,
+      );
     },
   );
   text = text.replace(
     /\b\d{1,5}\s+[A-Z][a-z]+(?:\s[A-Z][a-z]+)*\s(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Boulevard|Blvd)\b\.?/g,
     (m) => {
       replaced.addresses += 1;
-      return `${(hash(m) % 900) + 100} Market Street`;
+      return wrap(`${(hash(m) % 900) + 100} Market Street`);
     },
   );
   text = text.replace(/\b(?:acct|account|order)[ #:-]*\d{6,}\b/gi, (m) => {
     replaced.numbers += 1;
-    return m.replace(/\d{6,}/, String((hash(m) % 900000) + 100000));
+    return m.replace(/\d{6,}/, wrap(String((hash(m) % 900000) + 100000)));
   });
   return {
     text,
