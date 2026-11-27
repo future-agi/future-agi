@@ -6,12 +6,14 @@ from typing import Any
 import structlog
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from model_hub.models.develop_dataset import Row
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    HarnessAgentVersionRuntime,
     HarnessSuiteMember,
     HostedHarnessJob,
     HostedHarnessScenario,
@@ -29,6 +31,8 @@ from simulate.selectors.agent_fix import (
     default_max_minutes,
     eval_review,
     fewest_failing_cases,
+    held_back_keys,
+    is_outside_attempt,
     is_retryable,
     launch_blocker,
     measured_automatically,
@@ -51,6 +55,9 @@ from simulate.services.harness_usage import (
     require_agent_fix_usage,
     require_harness_authoring,
 )
+from simulate.services.harness_versioning.locked_versions import (
+    run_locked_version,
+)
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     request_cancellation,
@@ -63,6 +70,28 @@ from simulate.temporal.client import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def locked_test_keys(source_run: HostedHarnessJob) -> frozenset[str]:
+    """The run's scenarios in its locked version's test split; none off one."""
+    locked_version = run_locked_version(source_run)
+    return locked_version.test_keys if locked_version else frozenset()
+
+
+def all_in_test_split(cases: int, *, picked: bool = True) -> HostedHarnessError:
+    """The refusal of a fix whose every failing case is in the test split: it would have
+    nothing to learn from. A user who ``picked`` the cases is told how to pick others."""
+    subject = (
+        "The only failing case is" if cases == 1 else f"All {cases} failing cases are"
+    )
+    message = (
+        f"{subject} in the test split. Pick failing cases from the train split."
+        if picked
+        else f"{subject} in the test split, so the Epoch has nothing to learn from."
+    )
+    return HostedHarnessError(
+        "fix_targets_all_test", message, status_code=422, details={"cases": cases}
+    )
 
 
 def launch_fix_run(
@@ -122,6 +151,15 @@ def launch_fix_run(
             f"{', '.join(unproven)}",
             status_code=400,
         )
+    locked_version = run_locked_version(source_run)
+    # A must-pass case steers the search, so a test-split one would teach the fix.
+    if locked_version and set(protected_scenario_keys) & locked_version.test_keys:
+        raise HostedHarnessError(
+            "fix_protected_in_test",
+            "Cases in the test split can't be must-pass: the Epoch would learn from"
+            " them.",
+            status_code=422,
+        )
     by_scenario = {key: ran[key].failing_sub_goals for key in target_scenario_keys}
     failing = list(
         dict.fromkeys(name for names in by_scenario.values() for name in names)
@@ -133,6 +171,12 @@ def launch_fix_run(
             status_code=422,
         )
     failing_cases = sum(1 for names in by_scenario.values() if names)
+    if locked_version is None:
+        held_back = split_held_back(str(source_run.id), by_scenario)
+    else:
+        held_back = held_back_keys(source_run, by_scenario, locked_version)
+        if len(held_back) == failing_cases:
+            raise all_in_test_split(failing_cases)
     # Below the floor the fix first writes variations of each failing case.
     variations = failing_cases < settings.AGENT_FIX_MIN_FAILING_CASES
     if failing_cases < fewest_failing_cases():
@@ -174,7 +218,8 @@ def launch_fix_run(
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         protected_scenario_keys=list(protected_scenario_keys),
-        held_back_scenario_keys=split_held_back(str(source_run.id), by_scenario),
+        held_back_scenario_keys=held_back,
+        locked_version_id=locked_version.id if locked_version else None,
         failing_sub_goals=failing,
         surfaces=surfaces,
         locked_paths=locked_paths,
@@ -203,7 +248,7 @@ def launch_fix_run(
     if variations:
         # The builder's turn that writes the variations bills as authoring.
         require_harness_authoring(str(environment.organization_id))
-    return _create_fix_run(
+    return create_fix_run(
         source_run,
         base_version_id=base_version_id,
         request=request.model_dump(mode="json"),
@@ -291,7 +336,7 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
         )
         if not is_retryable(locked):
             raise _retry_refused(locked)
-        return _create_fix_run(
+        return create_fix_run(
             source_run,
             base_version_id=original.base_agent_version_id,
             request=original.request,
@@ -307,7 +352,9 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
 def _retry_refused(fix_run: AgentFixRun) -> HostedHarnessError:
     """Why Retry does not start this fix again, as is_retryable decided it."""
     after = " Run a new epoch from the run's Debug failures."
-    if fix_run.state != AgentFixRun.State.FAILED:
+    if is_outside_attempt(fix_run):
+        message = "Your coding agent's attempt is not retried. Submit a new attempt."
+    elif fix_run.state != AgentFixRun.State.FAILED:
         message = "Only a failed epoch can be retried."
     elif was_the_retry(fix_run):
         message = f"This epoch was the retry.{after}"
@@ -316,7 +363,7 @@ def _retry_refused(fix_run: AgentFixRun) -> HostedHarnessError:
     return HostedHarnessError("fix_not_retryable", message, status_code=409)
 
 
-def _create_fix_run(
+def create_fix_run(
     source_run: HostedHarnessJob,
     *,
     base_version_id: Any,
@@ -324,13 +371,17 @@ def _create_fix_run(
     user: Any,
     suite_version_id: Any = None,
     retried_from: AgentFixRun | None = None,
+    attempt_of: AgentFixRun | None = None,
     engine_notes: dict[str, Any] | None = None,
+    fix_run_id: Any = None,
 ) -> AgentFixRun:
-    """The new fix, its workflow started once it is committed; one active fix per environment."""
+    """The new fix, its workflow started once it is committed; one active fix per environment.
+    ``fix_run_id`` is the id when the caller stored the fix's objects before it exists."""
     environment = source_run.environment
     try:
         with transaction.atomic():
             fix_run = AgentFixRun.no_workspace_objects.create(
+                **({"id": fix_run_id} if fix_run_id is not None else {}),
                 organization_id=environment.organization_id,
                 workspace_id=environment.workspace_id,
                 environment=environment,
@@ -338,6 +389,7 @@ def _create_fix_run(
                 base_agent_version_id=base_version_id,
                 suite_version_id=suite_version_id,
                 retried_from=retried_from,
+                attempt_of=attempt_of,
                 created_by=user,
                 request=request,
                 engine_notes=engine_notes,
@@ -356,6 +408,7 @@ def _create_fix_run(
         fix_run=str(fix_run.id),
         environment=str(environment.id),
         retried_from=str(retried_from.id) if retried_from else None,
+        attempt_of=str(attempt_of.id) if attempt_of else None,
     )
     fix_run.refresh_from_db()
     return fix_run
@@ -559,7 +612,7 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
                 status_code=422,
             )
         return
-    if not overridable_regressions(candidate):
+    if not ships_only_with_a_reason(candidate):
         raise HostedHarnessError(
             "fix_candidate_not_proven",
             "only the epoch's winner can ship; a candidate only the must-pass check"
@@ -572,6 +625,112 @@ def require_shippable(candidate: AgentFixCandidate, *, override_reason: str) -> 
             "this candidate regressed on its must-pass check: give the reason to ship it",
             status_code=422,
         )
+
+
+def ships_only_with_a_reason(candidate: AgentFixCandidate) -> bool:
+    """Whether the Epoch ships this candidate only on a person's reason: not its winner,
+    and refused by its must-pass check alone (require_shippable)."""
+    return candidate.outcome != AgentFixCandidate.Outcome.WINNER and bool(
+        overridable_regressions(candidate)
+    )
+
+
+def refuse_outside_the_epoch(
+    *,
+    organization_id: Any,
+    agent_version_id: Any = None,
+    archive_artifact_id: Any = None,
+) -> None:
+    """Refuse to make the default, anywhere but its Epoch's ship route, a version that is
+    an Epoch candidate the Epoch would not ship without a reason, or an upload of the
+    same archive. Only the winner ships without one. A candidate only its must-pass check
+    refused ships in its Epoch, on a person's reason; any other refused one never does.
+
+    Only the organization's own Epochs are matched: uploads are stored per organization,
+    so the same archive id elsewhere is another upload, and its Epoch is never named."""
+    match = Q(pk__in=[])
+    if agent_version_id is not None:
+        match |= Q(agent_version_id=agent_version_id)
+        source = (
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=agent_version_id
+            )
+            .values_list("source", flat=True)
+            .first()
+        )
+        archive_artifact_id = (source or {}).get("archive_artifact_id")
+    if archive_artifact_id:
+        match |= Q(
+            agent_version__harness_runtime__source__archive_artifact_id=str(
+                archive_artifact_id
+            )
+        )
+    candidates = list(
+        AgentFixCandidate.no_workspace_objects.filter(
+            match, fix_run__organization_id=organization_id
+        ).select_related("fix_run")
+    )
+    # The same tree an Epoch proved, whichever candidate made the version.
+    if not candidates or any(
+        one.outcome == AgentFixCandidate.Outcome.WINNER for one in candidates
+    ):
+        return
+    candidate = next(
+        (one for one in candidates if one.agent_version_id == agent_version_id),
+        candidates[0],
+    )
+    number = AgentFixRun.no_workspace_objects.filter(
+        environment_id=candidate.fix_run.environment_id,
+        created_at__lte=candidate.fix_run.created_at,
+    ).count()
+    raise _not_outside_the_epoch(candidate, number)
+
+
+def _not_outside_the_epoch(
+    candidate: AgentFixCandidate, number: int
+) -> HostedHarnessError:
+    """The refusal for a candidate that is not its Epoch's winner, in words that say where
+    the candidate is: still being checked, passed but not picked, or refused."""
+    named = f"This version is Candidate {candidate.attempt} of Epoch {number}"
+    ships = ships_only_with_a_reason(candidate)
+    # An Epoch that ended before checking relabels the pending candidates its report
+    # never named REJECTED, with no verdict: unchecked as much as one still pending. In
+    # any other ending, a rejected candidate with no verdict is the engine's refusal.
+    unchecked = candidate.verdict is None and (
+        candidate.outcome == AgentFixCandidate.Outcome.PENDING
+        or (
+            candidate.outcome == AgentFixCandidate.Outcome.REJECTED
+            and candidate.fix_run.state in AgentFixRun.UNCHECKED_ENDINGS
+        )
+    )
+    if candidate.fix_run.state in AgentFixRun.ACTIVE_STATES:
+        code = "fix_candidate_still_checking"
+        message = f"{named}, which is still checking it. Wait for the Epoch to finish."
+    elif unchecked:
+        # An Epoch that ended never finishes checking it: nothing to wait for.
+        code = "fix_candidate_not_checked"
+        message = (
+            f"{named}, which ended before checking it, so it can't be made the default."
+        )
+    elif candidate.outcome != AgentFixCandidate.Outcome.REJECTED:
+        code = "fix_candidate_not_picked"
+        passed = f"{named}, whose checks passed, but Epoch {number} picked another"
+        message = (
+            f"{passed} candidate. To make it the default, open Epoch {number} and ship"
+            " it there."
+            if ships
+            else f"{passed} candidate, so it can't be made the default."
+        )
+    elif ships:
+        code = "fix_candidate_needs_override"
+        message = (
+            f"{named}, whose checks refused it. To make it the default, open Epoch"
+            f" {number} and ship it there with a reason."
+        )
+    else:
+        code = "fix_candidate_not_shippable"
+        message = f"{named}, whose checks refused it, so it can't be made the default."
+    return HostedHarnessError(code, message, status_code=409)
 
 
 def record_override(candidate: AgentFixCandidate, *, reason: str, user: Any) -> None:

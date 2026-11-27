@@ -121,9 +121,11 @@ def workspace_read_only(view_cls):
 class ViewerReadOnly(PermissionDenied):
     default_code = VIEWER_READ_ONLY_CODE
 
-    def __init__(self, action=None):
+    def __init__(self, action=None, advice=None):
         self.action = action
-        super().__init__(viewer_denied_message(action), code=VIEWER_READ_ONLY_CODE)
+        super().__init__(
+            viewer_denied_message(action, advice), code=VIEWER_READ_ONLY_CODE
+        )
 
 
 WORKSPACE_WRITE_DENIED = "Write access denied to this workspace"
@@ -173,9 +175,13 @@ def _with_viewer_refusal(schema):
     }
 
 
-def viewer_denied(action):
+def viewer_denied(action, *, advice=None):
+    """Name what a Viewer tried. ``advice`` says who can do it when the Member role
+    isn't enough."""
+
     def mark(handler):
         handler._viewer_denied_action = action
+        handler._viewer_denied_advice = advice
         schema = getattr(handler, "_swagger_auto_schema", None) or {}
         methods = [method for method in _WRITE_METHODS if method in schema]
         if methods:
@@ -194,11 +200,20 @@ def workspace_write_denied(request) -> PermissionDenied:
     """The refusal of a write the user's role doesn't allow: simulation routes say
     what a Viewer tried; every other route keeps its original response."""
     if request.path.startswith(_VIEWER_REASON_PREFIX):
-        return ViewerReadOnly(_viewer_denied_action(request))
+        handler = _write_handler(request)
+        return ViewerReadOnly(
+            _handler_text(handler, "_viewer_denied_action"),
+            _handler_text(handler, "_viewer_denied_advice"),
+        )
     return PermissionDenied(WORKSPACE_WRITE_DENIED)
 
 
-def _viewer_denied_action(request):
+def _handler_text(handler, name):
+    value = getattr(handler, name, None)
+    return value if isinstance(value, str) else None
+
+
+def _write_handler(request):
     view_cls = _resolve_view_class(request)
     if view_cls is None:
         return None
@@ -211,10 +226,7 @@ def _viewer_denied_action(request):
         handler_name = method
     if not isinstance(handler_name, str):
         return None
-    action = getattr(
-        getattr(view_cls, handler_name, None), "_viewer_denied_action", None
-    )
-    return action if isinstance(action, str) else None
+    return getattr(view_cls, handler_name, None)
 
 
 def _resolve_view_class(request):
@@ -259,6 +271,20 @@ def is_coding_agent_key(request) -> bool:
     """Whether ``request`` authenticated with a coding agent's key."""
     org_api_key = getattr(request, "org_api_key", None)
     return org_api_key is not None and org_api_key.type == "coding_agent"
+
+
+def is_browser_session(request) -> bool:
+    """Whether ``request`` authenticated as a person's signed-in session: the JWT branch of
+    ``APIKeyAuthentication``, whose ``request.auth`` is the token. An allowlist, so a new
+    way in, a subclass included, is not a session: an API key's ``request.auth`` is None,
+    and an MCP call is forced in (``ForcedAuthentication``) with none either."""
+    authenticator = getattr(request, "successful_authenticator", None)
+    return (
+        type(authenticator) is APIKeyAuthentication
+        and isinstance(getattr(request, "auth", None), str)
+        and bool(request.auth)
+        and getattr(request, "org_api_key", None) is None
+    )
 
 
 class APIKeyAuthentication(BaseAuthentication):
@@ -988,7 +1014,26 @@ class AuthMonitoringMiddleware:
     def __call__(self, request):
         if is_oss():
             return self.get_response(request)
+        try:
+            refused = self._refuse_throttled(request)
+        except _CACHE_UNAVAILABLE_ERRORS as exc:
+            if _cache_transport_category(exc) is None:
+                raise
+            # Fail open, like the access-token cache: an unreachable cache must
+            # not turn every login, token, signup and password-reset request
+            # into a 500. Credentials are still checked against the database;
+            # only the per-IP throttle is skipped until the cache is back.
+            logger.warning(
+                "auth_rate_limit_cache_unavailable",
+                component="auth_rate_limit",
+                fallback="not_throttled",
+                **_cache_unavailable_metadata(exc),
+            )
+            refused = None
+        return refused if refused is not None else self.get_response(request)
 
+    def _refuse_throttled(self, request):
+        """The 403 for a throttled IP, or None to let the request through."""
         client_ip, _ = get_client_ip(request)
 
         if request.path.endswith("password-reset-initiate/"):
@@ -1053,7 +1098,7 @@ class AuthMonitoringMiddleware:
             requests.append(now)
             cache.set(f"ip_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS)
 
-        return self.get_response(request)
+        return None
 
 
 def generate_encrypted_message(key_value_pairs: dict) -> str:

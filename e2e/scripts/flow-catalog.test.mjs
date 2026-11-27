@@ -2,11 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
+  catalogDisagreements,
   collectFlowEntries,
   extractFlows,
   renderCatalog,
 } from "./flow-catalog.mjs";
+import { flowIdsAndAreas, readFlowSpecTexts } from "./flow-ids.mjs";
 
 const entry = (id, area = "observe") => ({
   title: `${id}: does a thing`,
@@ -173,4 +176,43 @@ test("labels browser-only checks without claiming backend verification", () => {
   const md = renderCatalog(extractFlows([browserEntry]));
   assert.match(md, /Browser observations:/);
   assert.doesNotMatch(md, /Backend state verified:/);
+});
+
+test("check passes when spec text and Playwright agree", () => {
+  const flows = extractFlows([
+    entry("OBS-E2E-001"),
+    entry("AUTH-E2E-001", "auth"),
+  ]);
+  assert.deepEqual(
+    catalogDisagreements(flows, {
+      ids: ["AUTH-E2E-001", "OBS-E2E-001"],
+      areas: ["auth", "observe"],
+    }),
+    [],
+  );
+});
+
+test("check names the ids and areas spec text and Playwright disagree on", () => {
+  const flows = extractFlows([
+    entry("OBS-E2E-001"),
+    entry("AUTH-E2E-001", "auth"),
+  ]);
+  const problems = catalogDisagreements(flows, {
+    ids: ["OBS-E2E-001", "OBS-E2E-009"],
+    areas: ["observe", "projects"],
+  });
+  assert.deepEqual(Object.fromEntries(problems), {
+    "flow ids Playwright lists but spec text lacks": ["AUTH-E2E-001"],
+    "flow ids in spec text that Playwright does not list": ["OBS-E2E-009"],
+    "areas Playwright lists but spec text lacks": ["auth"],
+    "areas in spec text that Playwright does not list": ["projects"],
+  });
+});
+
+test("spec text in e2e/flows declares ids and areas in the shape the check reads", () => {
+  const { ids, areas } = flowIdsAndAreas(
+    readFlowSpecTexts(fileURLToPath(new URL("..", import.meta.url))),
+  );
+  assert.ok(ids.length > 0 && areas.length > 0);
+  assert.ok(ids.every((id) => /^[A-Z]+-E2E-\d{3}$/.test(id)));
 });

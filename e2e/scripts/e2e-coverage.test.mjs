@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   AREA_OF_E2E_DIR,
   FE_AREA,
@@ -17,6 +18,7 @@ import {
   renderHuman,
   resolveBase,
 } from "./e2e-coverage.mjs";
+import { flowIdsAndAreas, readFlowSpecTexts } from "./flow-ids.mjs";
 
 const readE2E = (rel) =>
   readFileSync(new URL(`../${rel}`, import.meta.url), "utf8");
@@ -26,7 +28,9 @@ const REAL_SPECS = [
   "flows/observe/span-filter-parity.spec.ts",
   "flows/observe/trace-ingestion.spec.ts",
 ].map((file) => ({ file, text: readE2E(file) }));
-const REAL_CATALOG = readE2E("FLOWS.md");
+const REAL_FLOWS = flowIdsAndAreas(
+  readFlowSpecTexts(fileURLToPath(new URL("..", import.meta.url))),
+);
 
 test("globToRegExp handles **, *, and {a,b}", () => {
   assert.ok(
@@ -56,7 +60,6 @@ test("globToRegExp handles nested {a,{b,c}} groups", () => {
 });
 
 const cases = [
-  ["e2e/FLOWS.md", "E0", null],
   ["api_contracts/openapi/swagger.json", "E0", null],
   ["README.md", "E1", null],
   [".github/workflows/e2e-ci.yml", "E2", null],
@@ -208,8 +211,7 @@ test("a serializer rename plus its frontend API module is not tests-only", () =>
       },
     },
     specs: REAL_SPECS,
-    catalog: REAL_CATALOG,
-    flowsDiffAdded: [],
+    flowCatalog: REAL_FLOWS,
     titleType: "fix",
     body: null,
   });
@@ -328,7 +330,7 @@ test("detectHits ignores generated, docs, tooling and tests-only files", () => {
       added: ["      run: curl /tracer/observation-span/list_spans_observe/"],
       removed: [],
     },
-    "e2e/FLOWS.md": {
+    "frontend/src/generated/flows.json": {
       status: "M",
       added: ['- `col-id="trace_name"`'],
       removed: [],
@@ -514,8 +516,7 @@ test("detectNewSurface: a bug fix plus its regression test is not NEW-FLOW", () 
         { status: "A", added: ["it('x', () => {})"], removed: [] },
     },
     specs: [],
-    catalog: "## observe\n### OBS-E2E-001 — x\n",
-    flowsDiffAdded: [],
+    flowCatalog: { areas: ["observe"], ids: ["OBS-E2E-001"] },
     titleType: "fix",
     body: null,
   });
@@ -599,7 +600,7 @@ test("parseMarker treats the template's unfilled E2E: line as absent", () => {
 });
 
 const base = {
-  flowsDiffAdded: [],
+  newFlowIds: [],
   changedFlowFiles: {},
   catalogIds: ["OBS-E2E-001", "OBS-E2E-002", "EVAL-E2E-001", "AUTH-E2E-001"],
 };
@@ -663,14 +664,14 @@ test("decide: UPDATE-EXISTING needs updated/covered-by", () => {
     "block",
   );
 });
-test("decide: NEW-FLOW needs a new id visible in FLOWS.md; exempt requires override", () => {
+test("decide: NEW-FLOW needs a new flow id under e2e/flows; exempt requires override", () => {
   assert.equal(
     decide({
       ...base,
       classification: "NEW-FLOW",
       hits: [],
       marker: parseMarker("E2E: new ALERT-E2E-001"),
-      flowsDiffAdded: ["### ALERT-E2E-001 — x"],
+      newFlowIds: ["ALERT-E2E-001"],
     }).verdict,
     "pass",
   );
@@ -718,8 +719,7 @@ test("classifyChange end to end on a docs-only diff", () => {
   const r = classifyChange({
     fileDiffs: { "README.md": { status: "M", added: ["x"], removed: [] } },
     specs: [],
-    catalog: "# E2E Flow Catalog\n## observe\n### OBS-E2E-001 — x\n",
-    flowsDiffAdded: [],
+    flowCatalog: { areas: ["observe"], ids: ["OBS-E2E-001"] },
     titleType: "docs",
     body: null,
   });
@@ -732,8 +732,7 @@ test("classifyChange reports no-changes on an empty diff", () => {
   const r = classifyChange({
     fileDiffs: {},
     specs: [],
-    catalog: "# E2E Flow Catalog\n## observe\n### OBS-E2E-001 — x\n",
-    flowsDiffAdded: [],
+    flowCatalog: { areas: ["observe"], ids: ["OBS-E2E-001"] },
     titleType: null,
     body: null,
   });
@@ -752,8 +751,7 @@ test("classifyChange still reports generated when every changed file is generate
       },
     },
     specs: [],
-    catalog: "## observe\n### OBS-E2E-001 — x\n",
-    flowsDiffAdded: [],
+    flowCatalog: { areas: ["observe"], ids: ["OBS-E2E-001"] },
     titleType: null,
     body: null,
   });
@@ -778,8 +776,7 @@ const promptLibraryChange = (body) =>
   classifyChange({
     fileDiffs: PROMPT_LIBRARY_DIFF,
     specs: REAL_SPECS,
-    catalog: REAL_CATALOG,
-    flowsDiffAdded: [],
+    flowCatalog: REAL_FLOWS,
     titleType: "feat",
     body,
   });
@@ -816,8 +813,7 @@ test("classifyChange: behaviour file in a covered area with no hits and no signa
       },
     },
     specs: [],
-    catalog: "## observe\n### OBS-E2E-001 — x\n",
-    flowsDiffAdded: [],
+    flowCatalog: { areas: ["observe"], ids: ["OBS-E2E-001"] },
     titleType: "fix",
     body: null,
   });
@@ -992,8 +988,7 @@ for (const n of [2265, 2182, 1976, 2321, 2358, 2300]) {
     const r = classifyChange({
       fileDiffs,
       specs: fx.specs ?? [],
-      catalog: fx.catalog,
-      flowsDiffAdded: [],
+      flowCatalog: fx.flows,
       titleType: fx.titleType,
       body: null,
     });

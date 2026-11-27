@@ -59,6 +59,9 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     "/simulate/api/harness/conversations/",
     # The fix engine's model calls and callbacks carry the agent's source and transcripts.
     "/simulate/api/agent-fix-engine/",
+    # A coding agent's attempt carries the agent's source tree, refused by size before
+    # the view reads it.
+    "/simulate/api/agent-fix-runs/coding-agent-attempts/",
     # A Langfuse ingestion batch carries the raw trace input and output.
     "/api/public/ingestion",
 )

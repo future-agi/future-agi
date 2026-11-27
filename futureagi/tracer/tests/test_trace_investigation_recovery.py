@@ -45,7 +45,10 @@ from tracer.tests.test_trace_investigation_control import (
     _result,
 )
 
-pytestmark = pytest.mark.django_db
+pytestmark = [
+    pytest.mark.django_db,
+    pytest.mark.usefixtures("_debug_failures_readable"),
+]
 
 WAITING = TraceInvestigationJobState.WAITING
 COMPLETED = TraceInvestigationJobState.COMPLETED

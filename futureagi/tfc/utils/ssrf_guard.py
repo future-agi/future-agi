@@ -140,13 +140,16 @@ def classify_ip(ip: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> IPCl
     return IPClass.PUBLIC
 
 
-def _reject_unsafe_ip(ip_str: str, host: str) -> None:
-    if classify_ip(ip_str) is not IPClass.PUBLIC:
-        raise SsrfBlocked(f"URL host '{host}' resolves to a private/internal address.")
+def _reject_unsafe_ip(ip_str: str, host: str, allow_private: bool = False) -> None:
+    ip_class = classify_ip(ip_str)
+    if ip_class is IPClass.PUBLIC or (allow_private and ip_class is IPClass.PRIVATE):
+        return
+    raise SsrfBlocked(f"URL host '{host}' resolves to a private/internal address.")
 
 
-def _resolve_pinned_ip(host: str) -> str:
-    """Resolve `host` and validate every A/AAAA record. Returns one pinned IP."""
+def _resolve_pinned_ip(host: str, allow_private: bool = False) -> str:
+    """Resolve `host` and validate every A/AAAA record. Returns one pinned IP.
+    ``allow_private`` also lets private/LAN addresses through, never the others."""
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror as e:
@@ -157,7 +160,7 @@ def _resolve_pinned_ip(host: str) -> str:
         raise SsrfBlocked(f"Cannot resolve URL host '{host}'.")
 
     for ip_str in resolved_ips:
-        _reject_unsafe_ip(ip_str, host)
+        _reject_unsafe_ip(ip_str, host, allow_private)
     return resolved_ips[0]
 
 
@@ -191,13 +194,18 @@ def _remaining(deadline):
     return remaining
 
 
-def _resolve_before_deadline(host, deadline):
+def _resolving(host: str, allow_private: bool) -> tuple:
+    """``_resolve_pinned_ip``'s arguments, passing the opt-in only when it is on."""
+    return (host, True) if allow_private else (host,)
+
+
+def _resolve_before_deadline(host, deadline, allow_private=False):
     slots = _RESOLVER_SLOTS
     if not slots.acquire(timeout=_remaining(deadline)):
         raise TimeoutError("URL fetch deadline exceeded.")
     try:
         _remaining(deadline)
-        future = _RESOLVERS.submit(_resolve_pinned_ip, host)
+        future = _RESOLVERS.submit(_resolve_pinned_ip, *_resolving(host, allow_private))
     except BaseException:
         slots.release()
         raise
@@ -325,11 +333,16 @@ def safe_fetch(
     allowed_urls: Collection[str] | None = None,
     allowed_content_encodings: Collection[str] | None = None,
     total_timeout: float | None = None,
+    follow_redirects: bool = True,
+    allow_private: bool = False,
 ) -> SsrfResponse:
     """Fetch `url` with SSRF protection.
 
     Method: HEAD or GET. For GET, the body is buffered up to `max_bytes`.
-    Redirects are followed manually (5 hops max), re-validating each hop.
+    Redirects are followed manually (5 hops max), re-validating each hop, or
+    returned as they are when not `follow_redirects`. The connection goes to the
+    address that was checked, never to a second lookup. `allow_private` also
+    allows private/LAN addresses (an operator's opt-in), never the others.
     Raises ValueError when the URL or response is rejected. Optional total_timeout
     bounds DNS waiting, connection setup, headers and body across all hops;
     None preserves the existing per-operation inactivity timeout. A deadline
@@ -375,9 +388,9 @@ def safe_fetch(
         if allowed_ports is not None and port not in allowed_ports:
             raise SsrfBlocked("URL port is not allowed.")
         pinned_ip = (
-            _resolve_pinned_ip(host)
+            _resolve_pinned_ip(*_resolving(host, allow_private))
             if deadline is None
-            else _resolve_before_deadline(host, deadline)
+            else _resolve_before_deadline(host, deadline, allow_private)
         )
 
         path = parsed.path or "/"
@@ -426,7 +439,7 @@ def safe_fetch(
             ):
                 raise SsrfBlocked("URL content encoding is not allowed.")
 
-            if response.status in (301, 302, 303, 307, 308):
+            if response.status in (301, 302, 303, 307, 308) and follow_redirects:
                 location = response.headers.get("Location")
                 if not location:
                     raise ValueError("Redirect with no Location header.")

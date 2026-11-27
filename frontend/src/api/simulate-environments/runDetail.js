@@ -64,6 +64,8 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?number} csat         `kpis.avg_csat_score`, null if absent.
  * @property {?number} avgTurnCount `kpis.avg_turn_count`, null if absent.
  * @property {?number} connectedPct `kpis.calls_connected_percentage`.
+ * @property {?number} connected    Calls that connected (`execution.connected_calls`),
+ *                                  the count Debug failures needs; null if absent.
  * @property {?string} agentType    `kpis.agent_type` ("voice"|"text") — the
  *                                  run-level voice-vs-chat signal the call drawer
  *                                  falls back to when a row omits its own type.
@@ -190,8 +192,10 @@ export function useRunDetail(
     },
     // The calls table's own polls keep this fresh while it's shown.
     enabled: !!executionId && !callsShown,
+    // Like the calls table, a finished run is read again while calls are scoring.
     refetchInterval: (query) =>
-      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
+      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status) ||
+      query.state.data?.summary?.scoring?.pending > 0
         ? 3000
         : false,
     staleTime: 1000 * 60 * 5,
@@ -244,7 +248,9 @@ export function useRunDetail(
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
       // Must-pass cases this run failed, by name.
-      mustPassFailed: Array.isArray(execution.must_pass_failed) ? execution.must_pass_failed : [],
+      mustPassFailed: Array.isArray(execution.must_pass_failed)
+        ? execution.must_pass_failed
+        : [],
       // How far an interrupted run got and whether it can resume; null when the
       // backend does not say.
       resume: execution.resume
@@ -273,6 +279,7 @@ export function useRunDetail(
       csat: null,
       avgTurnCount: null,
       connectedPct: null,
+      connected: execution?.connected_calls ?? null,
       agentType: execution?.agent_type ?? null,
       tokens: summary?.tokens?.total_value ?? null,
       cost:

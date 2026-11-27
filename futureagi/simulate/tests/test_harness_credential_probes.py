@@ -1,4 +1,5 @@
 import json as jsonlib
+import socket
 from unittest.mock import Mock, patch
 
 import jwt
@@ -372,6 +373,231 @@ def test_preflight_does_not_dispatch_a_livekit_agent_built_from_source(
 ):
     assert _preflight_credential_probe(_livekit_preflight_payload(mode=None)) == []
     probe_agent.assert_not_called()
+
+
+GATEWAY_HOSTS = {
+    "gateway.example.com": "93.184.215.14",
+    "metadata.example.com": "169.254.169.254",
+    "127.0.0.1": "127.0.0.1",
+}
+
+
+@pytest.fixture
+def gateway_dns():
+    def resolve(host, *_args, **_kwargs):
+        if host not in GATEWAY_HOSTS:
+            raise socket.gaierror(socket.EAI_NONAME, "no such host")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (GATEWAY_HOSTS[host], 0))]
+
+    with patch("agentcc.services.url_safety.socket.getaddrinfo", resolve):
+        yield
+
+
+@pytest.fixture
+def provider_request():
+    with patch("simulate.services.harness_credential_probes._request") as request:
+        request.return_value = Mock(status_code=200)
+        yield request
+
+
+@pytest.mark.parametrize(
+    ("provider", "values", "url"),
+    [
+        ("openai", {"OPENAI_API_KEY": "k"}, "https://api.openai.com/v1/models"),
+        (
+            "anthropic",
+            {"ANTHROPIC_API_KEY": "k"},
+            "https://api.anthropic.com/v1/models?limit=1",
+        ),
+    ],
+)
+def test_probe_without_a_base_calls_the_provider(
+    provider_request, provider, values, url
+):
+    result = probe(provider, values)
+
+    assert result.ok is True
+    assert provider_request.call_args.args[1] == url
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("base_values", "url"),
+    [
+        (
+            {"OPENAI_BASE_URL": "https://gateway.example.com/v1"},
+            "https://gateway.example.com/v1/models",
+        ),
+        (
+            {"OPENAI_BASE_URL": "https://gateway.example.com/v1/"},
+            "https://gateway.example.com/v1/models",
+        ),
+        (
+            {"OPENAI_API_BASE": "https://gateway.example.com/v1"},
+            "https://gateway.example.com/v1/models",
+        ),
+        (
+            {"OPENAI_API_BASE": "https://gateway.example.com/api/"},
+            "https://gateway.example.com/api/models",
+        ),
+        (
+            {"OPENAI_BASE_URL": "https://gateway.example.com/v1?tenant=x"},
+            "https://gateway.example.com/v1/models?tenant=x",
+        ),
+        (
+            {
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+                "OPENAI_API_BASE": "https://other.example.com",
+            },
+            "https://gateway.example.com/v1/models",
+        ),
+    ],
+)
+def test_openai_probe_honours_the_agent_base(provider_request, base_values, url):
+    result = probe("openai", {"OPENAI_API_KEY": "gateway-key", **base_values})
+
+    assert result.ok is True
+    name = next(iter(base_values))
+    assert result.message == f"OpenAI at {name} accepted OPENAI_API_KEY"
+    assert provider_request.call_args.args[1] == url
+    assert provider_request.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer gateway-key"
+    }
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://gateway.example.com",
+        "https://gateway.example.com/",
+        "https://gateway.example.com/v1/",
+        "https://gateway.example.com?tenant=x",
+    ],
+)
+def test_anthropic_probe_honours_the_agent_base(provider_request, base):
+    result = probe(
+        "anthropic", {"ANTHROPIC_API_KEY": "gateway-key", "ANTHROPIC_BASE_URL": base}
+    )
+
+    assert result.ok is True
+    expected = "https://gateway.example.com/v1/models?limit=1"
+    if "?" in base:
+        expected = "https://gateway.example.com/v1/models?tenant=x&limit=1"
+    assert provider_request.call_args.args[1] == expected
+    assert provider_request.call_args.kwargs["headers"] == {
+        "x-api-key": "gateway-key",
+        "anthropic-version": "2023-06-01",
+    }
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (401, "OpenAI at OPENAI_BASE_URL rejected OPENAI_API_KEY (HTTP 401)"),
+        (
+            302,
+            "OpenAI at OPENAI_BASE_URL redirected the check (HTTP 302); check OPENAI_BASE_URL",
+        ),
+    ],
+)
+def test_a_gateway_refusal_or_redirect_fails_the_probe(
+    provider_request, status, message
+):
+    provider_request.return_value = Mock(status_code=status)
+
+    result = probe(
+        "openai",
+        {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "https://gateway.example.com/v1"},
+    )
+
+    assert result.ok is False
+    assert result.message == message
+    assert provider_request.call_args.kwargs["allow_redirects"] is False
+
+
+@pytest.mark.usefixtures("gateway_dns")
+def test_an_unreachable_gateway_names_the_base_variable(provider_request):
+    provider_request.side_effect = requests.ConnectionError("refused")
+
+    result = probe(
+        "anthropic",
+        {"ANTHROPIC_API_KEY": "k", "ANTHROPIC_BASE_URL": "https://gateway.example.com"},
+    )
+
+    assert result.ok is False
+    assert result.message == (
+        "Anthropic is unreachable at ANTHROPIC_BASE_URL (ConnectionError); check ANTHROPIC_BASE_URL"
+    )
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("base", "reason"),
+    [
+        ("gateway.example.com/v1", "is not an http(s) URL"),
+        ("ftp://gateway.example.com/v1", "is not an http(s) URL"),
+        ("https://gateway.example.com:port/v1", "is not an http(s) URL"),
+        (
+            "https://unknown.example.com/v1",
+            "does not resolve to an address this check may call",
+        ),
+        (
+            "https://metadata.example.com/v1",
+            "does not resolve to an address this check may call",
+        ),
+        (
+            "http://127.0.0.1:8080/v1",
+            "does not resolve to an address this check may call",
+        ),
+        ("https://gateway.example.com/v1#x", "has a fragment (#...); remove it"),
+        ("https://gateway.example.com/v1#", "has a fragment (#...); remove it"),
+        (
+            "http://0x7f000001/v1",
+            "spells its host as a number; use a name or a plain IP address",
+        ),
+        (
+            "http://2130706433/v1",
+            "spells its host as a number; use a name or a plain IP address",
+        ),
+    ],
+)
+def test_a_malformed_or_refused_base_is_not_called(provider_request, base, reason):
+    result = probe("openai", {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": base})
+
+    assert result.ok is False
+    assert result.message == f"OpenAI check could not run: OPENAI_BASE_URL {reason}"
+    provider_request.assert_not_called()
+
+
+@pytest.mark.usefixtures("gateway_dns")
+@pytest.mark.parametrize(
+    ("base", "answer", "at_fault"),
+    [
+        ("https://gateway.example.com/v1", Mock(status_code=401), ("OPENAI_API_KEY",)),
+        ("https://gateway.example.com/v1", Mock(status_code=404), ("OPENAI_BASE_URL",)),
+        ("https://gateway.example.com/v1", Mock(status_code=302), ("OPENAI_BASE_URL",)),
+        (
+            "https://gateway.example.com/v1",
+            requests.ConnectionError("refused"),
+            ("OPENAI_BASE_URL",),
+        ),
+        ("https://metadata.example.com/v1", None, ("OPENAI_BASE_URL",)),
+    ],
+)
+def test_a_failure_names_the_variable_at_fault(
+    provider_request, base, answer, at_fault
+):
+    if isinstance(answer, Exception):
+        provider_request.side_effect = answer
+    elif answer is not None:
+        provider_request.return_value = answer
+
+    result = probe("openai", {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": base})
+
+    assert result.ok is False
+    assert result.aliases == at_fault
 
 
 NUMBER = "+14844815043"
@@ -776,7 +1002,7 @@ def test_a_livekit_redirect_is_a_failure_not_followed(status):
     ],
 )
 @patch("simulate.services.harness_credential_probes.requests.post")
-@patch("simulate.services.harness_credential_probes.requests.request")
+@patch("simulate.services.harness_credential_probes._request")
 def test_every_livekit_probe_refuses_a_url_that_is_not_https_or_wss(request, post, url):
     values = {**ROUTING_VALUES, "LIVEKIT_URL": url}
 
@@ -793,7 +1019,7 @@ def test_every_livekit_probe_refuses_a_url_that_is_not_https_or_wss(request, pos
 
 
 @patch("simulate.services.harness_credential_probes.requests.post")
-@patch("simulate.services.harness_credential_probes.requests.request")
+@patch("simulate.services.harness_credential_probes._request")
 def test_every_livekit_probe_refuses_an_internal_host(request, post, public_hosts):
     from tfc.utils.ssrf_guard import assert_url_host_public
 
@@ -902,3 +1128,130 @@ def test_preflight_checks_a_phone_target_routing_from_our_caller_number(
     assert _preflight_credential_probe(payload) == [{"provider": "livekit_target"}]
     number, values, caller = probe_routing.call_args.args
     assert (number, values, caller) == (NUMBER, ROUTING_VALUES, CALLER)
+
+
+def _answers(*addresses):
+    """A name that answers each lookup with the next address, the last one after."""
+    answers = iter(addresses)
+
+    def resolve(host, *_args, **_kwargs):
+        address = next(answers, addresses[-1])
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 0))]
+
+    return resolve
+
+
+def test_a_base_that_resolves_privately_at_send_is_refused_after_passing_the_check():
+    """The base is checked again as the probe is sent: a name that answers with a public address at the
+    check and a private one at the send (rebinding) is refused, naming the variable."""
+    with patch(
+        "agentcc.services.url_safety.socket.getaddrinfo",
+        _answers("93.184.215.14", "169.254.169.254"),
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert result.ok is False
+    assert result.message == (
+        "OpenAI check could not run: OPENAI_BASE_URL does not resolve to an address"
+        " this check may call"
+    )
+
+
+def test_the_probe_connects_to_the_address_it_checked_whatever_the_name_answers_next():
+    """Rebinding after both checks: the third lookup would answer a private address, but the connection
+    goes to the address the send checked, with no lookup of its own."""
+    connected = []
+
+    def connect(address, *_args, **_kwargs):
+        connected.append(address)
+        raise OSError("stop here")
+
+    with (
+        patch(
+            "agentcc.services.url_safety.socket.getaddrinfo",
+            _answers("93.184.215.14", "93.184.215.14", "169.254.169.254"),
+        ),
+        patch("urllib3.util.connection.create_connection", connect),
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert connected == [("93.184.215.14", 443)]
+    assert result.ok is False
+    assert result.message == (
+        "OpenAI is unreachable at OPENAI_BASE_URL (ConnectionError); check OPENAI_BASE_URL"
+    )
+
+
+@pytest.mark.parametrize("address", ["10.0.0.5", "169.254.169.254", "fd00:ec2::254"])
+def test_safe_fetch_called_as_before_still_refuses_private_and_metadata(address):
+    """Every other caller passes neither new option: it refuses what it refused before."""
+    from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
+
+    with (
+        patch("agentcc.services.url_safety.socket.getaddrinfo", _answers(address)),
+        pytest.raises(SsrfBlocked),
+    ):
+        safe_fetch("https://files.example.com/a.txt", method="GET")
+
+
+@pytest.mark.parametrize(
+    ("allowed", "address", "connected"),
+    [
+        (False, "10.0.0.5", False),
+        (True, "10.0.0.5", True),
+        (True, "169.254.169.254", False),
+        (True, "fd00:ec2::254", False),
+    ],
+)
+def test_the_private_opt_in_reaches_a_private_gateway_but_never_metadata(
+    monkeypatch, allowed, address, connected
+):
+    """Only the deployment's opt-in (off by default, as on dev) lets a configured base reach a
+    private address; a metadata address is refused at send even then."""
+    from agentcc.services.url_safety import ALLOW_PRIVATE_PROVIDER_URLS_ENV
+
+    if allowed:
+        monkeypatch.setenv(ALLOW_PRIVATE_PROVIDER_URLS_ENV, "true")
+    else:
+        monkeypatch.delenv(ALLOW_PRIVATE_PROVIDER_URLS_ENV, raising=False)
+    reached = []
+
+    def connect(address, *_args, **_kwargs):
+        reached.append(address[0])
+        raise OSError("stop here")
+
+    with (
+        # The check sees a public address; the send's own lookup sees ``address``.
+        patch(
+            "agentcc.services.url_safety.socket.getaddrinfo",
+            _answers("93.184.215.14", address),
+        ),
+        patch("urllib3.util.connection.create_connection", connect),
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert result.ok is False
+    assert reached == ([address] if connected else [])
+    if not connected:
+        assert result.message == (
+            "OpenAI check could not run: OPENAI_BASE_URL does not resolve to an address"
+            " this check may call"
+        )

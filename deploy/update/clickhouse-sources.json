@@ -466,6 +466,16 @@
       "pattern": "e2e/fixtures/skills-r3/support-application/src/ctxhub_support/store.py",
       "reason": "Inspected synthetic E2E support application: a private per-run SQLite thread/receipt store, not product PostgreSQL or ClickHouse schema.",
       "sha256": "a49bc04c12e9da1b11d72b4d105f2940200a0d482ddd601d9fa630518a2989f8"
+    },
+    {
+      "pattern": ".github/scripts/devflow_approval.py",
+      "reason": "Inspected PR approval risk scan: the DROP/RENAME/ALTER keywords are detection regexes (and, in the test, fixture strings) for spotting destructive migrations in a diff; the file never executes SQL and has no ClickHouse connection.",
+      "sha256": "c49ea7e5554640900c25cf1cf01a6579e92d5303b00c7c3e0cfae80680f1898a"
+    },
+    {
+      "pattern": ".github/scripts/test_devflow_approval.py",
+      "reason": "Inspected PR approval risk scan: the DROP/RENAME/ALTER keywords are detection regexes (and, in the test, fixture strings) for spotting destructive migrations in a diff; the file never executes SQL and has no ClickHouse connection.",
+      "sha256": "29255a8cd225a44ffabcddc9dfdce87d2ba801cf1a2edc800830cb6f45734909"
     }
   ]
 }
