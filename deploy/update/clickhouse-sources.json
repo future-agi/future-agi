@@ -456,6 +456,16 @@
       "pattern": "e2e/lib/harness_environment_seed.py",
       "reason": "Inspected E2E seed: the literal is the SQLite schema file packed into a fixture world archive, never run against a platform database. Re-pinned for the environment_needs seed option (TH-10513), which adds a contract key and no statement.",
       "sha256": "198c01c91d71b96604fadf9e30ef0faf0aa808ef3c25090000fb97859ca82f97"
+    },
+    {
+      "pattern": ".github/scripts/devflow_approval.py",
+      "reason": "Inspected PR approval risk scan: the DROP/RENAME/ALTER keywords are detection regexes (and, in the test, fixture strings) for spotting destructive migrations in a diff; the file never executes SQL and has no ClickHouse connection.",
+      "sha256": "1bc22fea60d9774182ac839088c071d8e0dd4b69cc2e6b81e240d1b769103094"
+    },
+    {
+      "pattern": ".github/scripts/test_devflow_approval.py",
+      "reason": "Inspected PR approval risk scan: the DROP/RENAME/ALTER keywords are detection regexes (and, in the test, fixture strings) for spotting destructive migrations in a diff; the file never executes SQL and has no ClickHouse connection.",
+      "sha256": "73b20d4a48ad7811c5215f85776f11deb9e8bd8827566b3191ff386d60fc5817"
     }
   ]
 }
