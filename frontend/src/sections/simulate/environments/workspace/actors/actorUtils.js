@@ -179,7 +179,11 @@ export const initialFields = (actor) => {
     records: actor.records,
     style: behaviour.style,
     timing: behaviour.response_timing.kind,
-    seconds: behaviour.response_timing.seconds,
+    // Answering straight away reads as 0 seconds, which is no delay to show, so the box starts empty.
+    seconds:
+      behaviour.response_timing.kind === "delayed"
+        ? behaviour.response_timing.seconds
+        : "",
     permitted: actor.permitted_actions,
     play: actor.play,
     mode: actor.editable_trigger ? trigger.kind : KEPT,
