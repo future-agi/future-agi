@@ -32,6 +32,9 @@ from requests.utils import (
 logger = structlog.get_logger(__name__)
 
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "s3").lower()
+# The MinIO that the compose files and the Helm chart (bundled mode) run: only
+# there does the app keep agent source private in an existing bucket's policy.
+STORAGE_BUNDLED = os.getenv("STORAGE_BUNDLED", "false").lower() == "true"
 _client = None
 
 
@@ -381,18 +384,23 @@ def _is_anonymous(principal) -> bool:
     return False
 
 
-def _restrict_anonymous_access(policy: dict, bucket_name: str) -> dict | None:
-    """The policy with anonymous access cut down to object reads outside agent
-    source, or None if it already is. Statements for named principals are kept."""
+def _restrict_anonymous_access(
+    policy: dict, bucket_name: str, *, private_objects: bool
+) -> dict | None:
+    """The policy with anonymous access cut down to object reads, or None if it
+    already is. With private_objects, reads of agent source are refused too.
+    Statements for named principals are kept."""
     statements = policy.get("Statement") or []
     if isinstance(statements, dict):
         statements = [statements]
     private = _private_objects_statement(bucket_name)
     ours = [s for s in statements if s.get("Sid") == PRIVATE_OBJECTS_SID]
-    private_current = len(ours) == 1 and _same_statement(ours[0], private)
+    private_current = not private_objects or (
+        len(ours) == 1 and _same_statement(ours[0], private)
+    )
     kept, too_broad = [], False
     for statement in statements:
-        if statement.get("Sid") == PRIVATE_OBJECTS_SID:
+        if private_objects and statement.get("Sid") == PRIVATE_OBJECTS_SID:
             # Put back below with today's prefixes, so there is only ever one.
             continue
         if statement.get("Effect") == "Allow" and _is_anonymous(
@@ -412,39 +420,46 @@ def _restrict_anonymous_access(policy: dict, bucket_name: str) -> dict | None:
         for statement in kept
     ):
         kept.append(_anonymous_read_statement(bucket_name))
-    kept.append(private)
+    if private_objects:
+        kept.append(private)
     return {**policy, "Statement": kept}
 
 
-def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> None:
+def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> bool:
     """Buckets created by earlier releases let anyone list, overwrite and delete
-    every object, or read agent source by URL. Cut that back once per process;
-    never fail the caller."""
+    every object; on the bundled MinIO, also read agent source by URL. Cut that
+    back; never fail the caller. False when the policy could not be read or
+    written for a reason that may pass, so the next call tries again."""
     try:
         current = client.get_bucket_policy(bucket_name)
-    except Exception as exc:  # NoSuchBucketPolicy, or a policy we may not read
+    except Exception as exc:
+        # The storage's own answer (NoSuchBucketPolicy, AccessDenied) stays the
+        # same on the next call; a dropped connection may not.
         logger.debug(
             "storage_bucket_policy_unreadable", bucket=bucket_name, error=str(exc)
         )
-        return
+        return isinstance(exc, S3Error)
     try:
-        restricted = _restrict_anonymous_access(json.loads(current), bucket_name)
+        restricted = _restrict_anonymous_access(
+            json.loads(current), bucket_name, private_objects=STORAGE_BUNDLED
+        )
     except (TypeError, ValueError, AttributeError):
-        return
+        return True
     if restricted is None:
-        return
+        return True
     try:
         client.set_bucket_policy(bucket_name, json.dumps(restricted))
     except Exception as exc:
         logger.warning(
             "storage_bucket_policy_tighten_failed", bucket=bucket_name, error=str(exc)
         )
-        return
+        return False
     logger.warning(
         "storage_bucket_policy_tightened",
         bucket=bucket_name,
-        detail="anonymous access is limited to object reads, never of agent source",
+        detail="anonymous access is limited to object reads",
     )
+    return True
 
 
 def ensure_bucket(client: Minio, bucket_name: str) -> None:
@@ -471,7 +486,11 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
         client.set_bucket_policy(bucket_name, json.dumps(policy))
         _checked_bucket_policies.add(bucket_name)
         return
-    # Only the bundled MinIO: an operator's own S3 bucket policy is theirs.
-    if STORAGE_BACKEND == "minio" and bucket_name not in _checked_bucket_policies:
+    # MinIO only: an operator's own S3 bucket policy is theirs. Once per process,
+    # counted only when the policy is known to be as tight as it gets.
+    if (
+        STORAGE_BACKEND == "minio"
+        and bucket_name not in _checked_bucket_policies
+        and _tighten_existing_bucket_policy(client, bucket_name)
+    ):
         _checked_bucket_policies.add(bucket_name)
-        _tighten_existing_bucket_policy(client, bucket_name)

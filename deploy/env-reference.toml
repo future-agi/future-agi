@@ -1814,6 +1814,12 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     text = "Object storage flavour: `minio`, `s3` or `gcs`. The compose files wire the bundled MinIO; the others need your own `S3_*` values in a compose override."
 
     [[part.section.row]]
+    keys = ["STORAGE_BUNDLED"]
+    default = "`true` in both compose files; Helm: `true` with `objectStorage.mode=bundled`, else `false`; unset: `false`"
+    setups = ["S", "D", "H"]
+    text = "`true` says the MinIO is the bundled one, so the app owns its upload bucket's policy and keeps it current: agent source archives stay private to the app's own credentials. With `false`, the app adds nothing to an existing bucket's policy (on MinIO it still cuts anonymous writes and listings back to reads, as before); see [Object storage](repo:deploy/helm/futureagi/README.md#object-storage) for the statement to add yourself. A compose override that points `S3_*` at your own MinIO sets it `false`."
+
+    [[part.section.row]]
     keys = ["PGSSLMODE"]
     default = "`prefer`"
     setups = ["S", "D", "H"]

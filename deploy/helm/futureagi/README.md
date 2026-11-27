@@ -512,12 +512,40 @@ browsers.
 On S3 and S3-compatible services, the app creates the bucket on the first
 upload with a policy that lets anyone read an object by its URL, except agent
 source archives under `agent-fix/`, `harness-sources/`,
-`harness-conversations/` and `agent-contracts/`. Nobody can list or write
-without the app's keys.
+`harness-conversations/` and `agent-contracts/`: those stay private to the
+app's own credentials. Nobody can list or write without the app's keys.
 
-On a bundled MinIO bucket from an earlier release, the policy changes on the
-next upload: after upgrading, upload one file to apply the new policy to an
-existing bucket.
+With `objectStorage.mode=bundled`, the app also keeps the policy of an
+existing bucket current. Each backend and worker process checks it once, on
+its first upload that checks the bucket (a dataset file, agent source and
+most other uploads), and again after a failed attempt. To apply it right
+after an upgrade, upload a file to a dataset, then check the policy as below.
+
+The app does not add to the policy of an existing bucket you run yourself
+(`objectStorage.mode=external`). Add this statement to its `Statement` list,
+with your bucket's name in place of `futureagi`:
+
+```json
+{
+  "Sid": "PrivateObjectsNotAnonymous",
+  "Effect": "Deny",
+  "Principal": {"AWS": ["*"]},
+  "Action": ["s3:GetObject"],
+  "Resource": [
+    "arn:aws:s3:::futureagi/agent-fix/*",
+    "arn:aws:s3:::futureagi/harness-sources/*",
+    "arn:aws:s3:::futureagi/harness-conversations/*",
+    "arn:aws:s3:::futureagi/agent-contracts/*"
+  ],
+  "Condition": {"StringEquals": {"aws:principaltype": ["Anonymous"]}}
+}
+```
+
+Keep the condition key in lowercase: MinIO refuses `aws:PrincipalType`.
+
+To check a bucket, read its policy and look for the
+`PrivateObjectsNotAnonymous` statement: `mc anonymous get-json <alias>/<bucket>`
+on MinIO, `aws s3api get-bucket-policy --bucket <bucket>` on S3.
 
 A GCS bucket (`objectStorage.bucket`) must be created in advance.
 
