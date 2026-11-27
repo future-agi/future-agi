@@ -364,6 +364,7 @@ class FloorTests(unittest.TestCase):
             "e2e/playwright.config.ts",
             "futureagi/pytest.ini",
             "futureagi/pyproject.toml",
+            "deploy/update/clickhouse-sources.json",
             ".agents/skills/reviewing-prs/SKILL.md",
             ".claude/settings.json",
         ):
@@ -444,6 +445,16 @@ class RenameTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
+    def test_help_survives_a_missing_docstring(self):
+        # python -OO strips docstrings, so __doc__ is None.
+        saved, da.__doc__ = da.__doc__, None
+        try:
+            with self.assertRaises(SystemExit) as raised:
+                da.main(["--help"])
+        finally:
+            da.__doc__ = saved
+        self.assertEqual(raised.exception.code, 0)
+
     def test_devflow_mode_approves_then_admits_to_the_train(self):
         code, calls, decisions = run_main(Case())
         posted = writes(calls)

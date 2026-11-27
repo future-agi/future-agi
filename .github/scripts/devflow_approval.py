@@ -37,6 +37,7 @@ import subprocess
 import sys
 import tomllib
 import urllib.parse
+from typing import Optional, Sequence
 
 REVIEW_MARKER = "<!-- devflow-review:v1 -->"
 JSON_BLOCK = re.compile(r"```json\s*\n(.*?)\n\s*```", re.S)
@@ -60,7 +61,11 @@ FLOOR_PREFIXES = (
     ".agents/skills/",
     ".claude/",
 )
-FLOOR_FILES = ("futureagi/pytest.ini", "futureagi/pyproject.toml")
+FLOOR_FILES = (
+    "futureagi/pytest.ini",
+    "futureagi/pyproject.toml",
+    "deploy/update/clickhouse-sources.json",
+)
 # The deterministic risk scan reads only the pull request's changed files, no
 # model: the floor, destructive Django operations and ClickHouse statements in
 # a migration, any change to a manifest's dependency tables, and any change to
@@ -261,6 +266,7 @@ def manifest_changes(path: str, old: str, new: str) -> list:
     """The dependency tables that differ between two versions of a manifest
     ("" is a missing file). Raise ValueError when a version does not parse."""
     name = path.rsplit("/", 1)[-1]
+    tables: tuple[str, ...]
     if name == "go.mod":
         return ["require/replace"] if go_directives(old) != go_directives(new) else []
     if name == "package.json":
@@ -364,7 +370,7 @@ def decide(
     permissions: dict,
     assigner: str,
     tight: bool = False,
-    scan: list = (),
+    scan: Sequence[str] = (),
 ) -> dict:
     """Return {"action": "skip"|"wait"|"needs-human"|"train"|"approve", "reasons": [...], "head": sha}.
 
@@ -497,7 +503,7 @@ def write_blockers(pr: dict, head: str) -> list:
     return why
 
 
-def gh(*args: str, stdin: str = None) -> str:
+def gh(*args: str, stdin: Optional[str] = None) -> str:
     return subprocess.run(
         ["gh", *args], check=True, capture_output=True, text=True, input=stdin
     ).stdout
@@ -702,7 +708,7 @@ def process(repo: str, number: int, approver: str, observe: bool, dry_run: bool,
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n", 1)[0])
     parser.add_argument("--repo", required=True)
     target = parser.add_mutually_exclusive_group(required=True)
     target.add_argument("--pr", type=int)

@@ -460,12 +460,12 @@
     {
       "pattern": ".github/scripts/devflow_approval.py",
       "reason": "Inspected PR approval risk scan: the DROP/RENAME/ALTER keywords are detection regexes (and, in the test, fixture strings) for spotting destructive migrations in a diff; the file never executes SQL and has no ClickHouse connection.",
-      "sha256": "54c7cbf2419b7619a3f8d52c5b4c59e868cd8ef191118cac939440e26f01e940"
+      "sha256": "1bc22fea60d9774182ac839088c071d8e0dd4b69cc2e6b81e240d1b769103094"
     },
     {
       "pattern": ".github/scripts/test_devflow_approval.py",
       "reason": "Inspected PR approval risk scan: the DROP/RENAME/ALTER keywords are detection regexes (and, in the test, fixture strings) for spotting destructive migrations in a diff; the file never executes SQL and has no ClickHouse connection.",
-      "sha256": "db7420a5e9f2ae33706e7b29787650e08b8648f65b0e6002669c6f1c653078cf"
+      "sha256": "8085b668a4cdacf5ea911f2b4fcde5ee1ea30320f0755031e4950ffbe721aa9e"
     }
   ]
 }
