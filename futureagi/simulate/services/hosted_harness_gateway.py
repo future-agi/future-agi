@@ -867,8 +867,8 @@ class GitHubAppTokenProvider:
             ) from exc
 
 
-# Dependency manifests and code are where a voice framework shows up; prose (README, docs)
-# is skipped so an English "retell" cannot masquerade as the Retell SDK.
+# Dependency manifests, code and config are where a voice framework shows up; README and
+# docs are skipped. Data files are read too, so a connector signature must never match prose.
 _SOURCE_SCAN_SUFFIXES = (
     ".py",
     ".js",
@@ -890,12 +890,49 @@ _SOURCE_SCAN_NAMES = {"dockerfile", "pipfile", "package.json", "pyproject.toml"}
 _SOURCE_SCAN_SKIP_DIRS = ("/node_modules/", "/.git/", "/.venv/", "/venv/", "/dist/")
 _SOURCE_SCAN_MAX_FILE_BYTES = 512 * 1024
 _SOURCE_SCAN_MAX_FILES = 4000
+
+
+def _connector_signature(
+    *, packages: str, modules: str, host: str, env: str
+) -> re.Pattern[str]:
+    """A provider's real footprint: an SDK package, a Python import, its API host or an
+    env name with its prefix. Case-sensitive, so "Vapi" or "retell" in prose never counts."""
+    return re.compile(
+        rf"(?<![\w-])(?:{packages})(?![\w-])"
+        rf"|^\s*(?:from|import)\s+(?:{modules})\b"
+        rf"|{host}"
+        rf"|(?<![A-Za-z0-9]){env}_[A-Z]",
+        re.MULTILINE,
+    )
+
+
 _CONNECTOR_SIGNATURES = {
-    "livekit": re.compile(r"livekit", re.IGNORECASE),
-    # ``vapi_python`` / ``@vapi-ai`` / ``api.vapi.ai`` match; ``vapid`` does not.
-    "vapi": re.compile(r"(?<![a-z0-9])vapi(?![a-z0-9])", re.IGNORECASE),
-    "retell": re.compile(r"retell", re.IGNORECASE),
+    "livekit": _connector_signature(
+        packages=r"livekit[-_](?:agents|api|protocol|plugins[-_][\w-]+)"
+        r"|livekit-server-sdk|livekit-client|@livekit/[\w-]+",
+        modules="livekit",
+        host=r"[\w-]+\.livekit\.cloud\b",
+        env="LIVEKIT",
+    ),
+    "vapi": _connector_signature(
+        packages=r"vapi[-_]server[-_]sdk|vapi[-_]python|@vapi-ai/[\w-]+",
+        modules="vapi|vapi_python",
+        host=r"\bapi\.vapi\.ai\b",
+        env="VAPI",
+    ),
+    "retell": _connector_signature(
+        packages=r"retell[-_]sdk|retell-client-js-sdk",
+        modules="retell",
+        host=r"\bapi\.retellai\.com\b",
+        env="RETELL",
+    ),
 }
+# A Vapi assistant config kept as JSON: a ``firstMessage`` key beside a ``voice`` or
+# ``transcriber`` key, as in Vapi's CreateAssistantDTO.
+_VAPI_ASSISTANT_KEYS = (
+    re.compile(r'"firstMessage"\s*:'),
+    re.compile(r'"(?:voice|transcriber)"\s*:'),
+)
 
 # Strong signals that the submitted agent expects Google Application Default
 # Credentials inside its own process.  Merely importing a Google SDK is not
@@ -962,11 +999,14 @@ def detect_source_credentials(
     required_files: set[str] = set()
     scanned = 0
     try:
-        for _name, text in _source_texts(archive, subfolder):
+        for name, text in _source_texts(archive, subfolder):
             scanned += 1
+            code = _code_only(name, text)
             for connector, signature in _CONNECTOR_SIGNATURES.items():
-                if connector not in found and signature.search(text):
+                if connector not in found and signature.search(code):
                     found.add(connector)
+            if all(key.search(code) for key in _VAPI_ASSISTANT_KEYS):
+                found.add("vapi")
             if any(signature.search(text) for signature in _VERTEX_ADC_SIGNATURES):
                 required_files.add(TARGET_GOOGLE_ADC_ALIAS)
     except (tarfile.TarError, OSError, EOFError):

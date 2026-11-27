@@ -1140,6 +1140,73 @@ def test_source_scan_reads_manifests_and_code_but_not_prose():
     assert detect_source_connectors(b"not a tarball") == ([], 0)
 
 
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"env/feed.json": '[{"body": "For voice agents on Vapi, Retell or LiveKit"}]'},
+        {"prompts/system.txt": "Retell the story. Compare Vapi with LiveKit.\n"},
+        {"config.yaml": "topics: [vapi, retell, livekit]\n"},
+        {"agent.py": 'PROMPT = "You know Vapi, Retell and LiveKit."\n'},
+        {
+            "agent.py": (
+                '"""Port to Vapi later:\n    from vapi import Vapi\n"""\n'
+                "# https://api.retellai.com needs RETELL_API_KEY\n"
+            )
+        },
+    ],
+)
+def test_source_scan_ignores_a_provider_named_in_prose_or_data(files):
+    connectors, _required, _scanned = detect_source_credentials(_source_tarball(files))
+
+    assert connectors == []
+
+
+@pytest.mark.parametrize(
+    ("connector", "name", "text"),
+    [
+        ("vapi", "requirements.txt", "vapi_server_sdk>=3.0.0,<4\n"),
+        ("vapi", "package.json", '{"dependencies": {"@vapi-ai/server-sdk": "^3"}}'),
+        ("vapi", "agent.py", "from vapi import Vapi\n"),
+        ("vapi", "client.py", 'BASE_URL = "https://api.vapi.ai"\n'),
+        ("vapi", "server.ts", "const key = process.env.VAPI_API_KEY;\n"),
+        ("vapi", ".env.example", "NEXT_PUBLIC_VAPI_PUBLIC_KEY=\n"),
+        (
+            "vapi",
+            "assistant.json",
+            '{"name": "Support", "firstMessage": "Hi there!",'
+            ' "model": {"provider": "openai", "model": "gpt-4o"},'
+            ' "voice": {"provider": "vapi", "voiceId": "Elliot"}}',
+        ),
+        ("retell", "requirements.txt", "retell-sdk==4.0.0\n"),
+        ("retell", "package.json", '{"dependencies": {"retell-sdk": "^4"}}'),
+        ("retell", "agent.py", "from retell import Retell\n"),
+        (
+            "retell",
+            "call.py",
+            'URL = "https://api.retellai.com/v2/create-phone-call"\n',
+        ),
+        ("retell", "agent.py", "key = os.environ['RETELL_API_KEY']\n"),
+        (
+            "livekit",
+            "pyproject.toml",
+            'dependencies = ["livekit-agents[openai]~=1.0"]\n',
+        ),
+        ("livekit", "package.json", '{"dependencies": {"@livekit/agents": "^1"}}'),
+        ("livekit", "agent.py", "from livekit.agents import AgentSession\n"),
+        ("livekit", "worker.py", 'URL = "wss://my-app.livekit.cloud"\n'),
+        ("livekit", "docker-compose.yml", "environment:\n  - LIVEKIT_API_SECRET\n"),
+    ],
+)
+def test_source_scan_detects_a_connector_by_its_sdk_host_env_or_config(
+    connector, name, text
+):
+    connectors, _required, _scanned = detect_source_credentials(
+        _source_tarball({name: text})
+    )
+
+    assert connectors == [connector]
+
+
 def test_source_scan_detects_explicit_vertex_adc_requirement():
     connectors, required_files, scanned = detect_source_credentials(
         _source_tarball(
