@@ -10,16 +10,18 @@ same order, so every install path prepares the datastores the same way:
   2. createcachetable (a failure other than an authorization refusal is
      logged, not fatal, as in entrypoint.sh)
   3. migrate, then seed_system_evals
-  4. ClickHouse native schema (``oss_cdc_install --phase native --apply``)
-  5. the Metrics ClickHouse schema (``schema_install --apply``: packaged files
+  4. seed_ready_environments: the ready environments simulate/ready_environments.json
+     pins, downloaded and registered once each (a failure is logged, not fatal)
+  5. ClickHouse native schema (``oss_cdc_install --phase native --apply``)
+  6. the Metrics ClickHouse schema (``schema_install --apply``: packaged files
      009, 011 and 028-038), only while METRICS_ENABLED is on
-  6. observed-attribute index: its ClickHouse database, users and grants
-  7. the eval-task search attributes on the Temporal namespace
-  8. change data capture as FI_CDC_MODE says
+  7. observed-attribute index: its ClickHouse database, users and grants
+  8. the eval-task search attributes on the Temporal namespace
+  9. change data capture as FI_CDC_MODE says
      (``oss_outbox_cdc.ensure_installed``: capture triggers plus the drain
      schedules for ``outbox``, both removed for ``peerdb``/``off``)
-  9. register_temporal_schedules
- 10. the first admin from FAGI_ADMIN_EMAIL, FAGI_ADMIN_NAME and
+ 10. register_temporal_schedules
+ 11. the first admin from FAGI_ADMIN_EMAIL, FAGI_ADMIN_NAME and
      FAGI_ADMIN_PASSWORD, when set (the chart's bootstrap.admin). The
      Standalone bootstrap leaves this one to ./bin/install's create_user.
 
@@ -243,6 +245,19 @@ def migrate_and_seed(log: Callable[[str], None]) -> None:
         log(f"createcachetable failed (continuing): {exc}")
     call("migrate", log, interactive=False, verbosity=1)
     call("seed_system_evals", log)
+
+
+def ready_environments(log: Callable[[str], None]) -> None:
+    """The ready environments simulate/ready_environments.json pins, each downloaded and
+    registered once. Advisory: an environment that cannot be fetched or registered (no egress
+    to GitHub, storage refused) is logged and left off the shelf; the next run tries again,
+    and the rest of the install still starts."""
+    try:
+        call("seed_ready_environments", log)
+    except BootstrapError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - advisory step, logged and retried next run
+        log(f"seed_ready_environments failed (continuing): {exc}")
 
 
 def clickhouse_native_schema(log: Callable[[str], None], timeout: int) -> None:
@@ -524,6 +539,7 @@ class Command(BaseCommand):
 
         attempts = max(1, options["temporal_attempts"])
         migrate_and_seed(self.log)
+        ready_environments(self.log)
         clickhouse_native_schema(self.log, options["clickhouse_timeout"])
         metrics_schema(self.log)
         if options["skip_property_catalog"]:

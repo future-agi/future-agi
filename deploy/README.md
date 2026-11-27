@@ -159,7 +159,10 @@ mirrors existing, which is why it waits rather than assuming.
 Step 1 prints the commands it runs. It must reach `migrate`, `seed_system_evals`
 and `register_temporal_schedules` and exit 0 with "One-shot database bootstrap
 completed successfully"; an install whose step 1 stopped at `migrate` has no
-system evals and no registered schedules.
+system evals and no registered schedules. In between, `seed_ready_environments`
+downloads the ready environments from GitHub and registers them; without egress
+to github.com it logs "seed_ready_environments failed (continuing)" and the
+install starts without them.
 
 Then boot normally. From that point the overlay is check-only for the lifetime of
 the install, and `--confirm-initialized` is your acknowledgement that the steps

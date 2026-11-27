@@ -320,6 +320,10 @@ if [ "$FAST_STARTUP" != "true" ]; then
             run_migrations
             if [ "$SERVICE_TYPE" = "bootstrap" ]; then
                 python manage.py seed_system_evals
+                # Advisory, as in bootstrap_install: a ready environment that cannot be
+                # fetched or registered stays off the shelf until the next run.
+                python manage.py seed_ready_environments \
+                    || echo "seed_ready_environments failed (continuing)"
             fi
             collect_static
             if [ "$ENV_TYPE" = "prod" ] || [ "$ENV_TYPE" = "staging" ]; then

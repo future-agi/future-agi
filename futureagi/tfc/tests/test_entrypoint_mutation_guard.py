@@ -226,7 +226,12 @@ def test_entrypoint_mutation_free_setup_and_schedule_registration_are_guarded():
         'if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then'
     )
     mutating_branch = startup_block.index("    else\n", mutation_free_branch)
-    for mutation in ("create_cache_table", "run_migrations", "seed_system_evals"):
+    for mutation in (
+        "create_cache_table",
+        "run_migrations",
+        "seed_system_evals",
+        "seed_ready_environments",
+    ):
         assert mutation not in startup_block[mutation_free_branch:mutating_branch]
         assert mutation in startup_block[mutating_branch:]
     schedule_block = source[schedule_boundary : source.index("# Start the appropriate")]
@@ -256,6 +261,7 @@ def test_entrypoint_exposes_one_shot_bootstrap_service():
         in source
     )
     assert "python manage.py seed_system_evals" in source
+    assert "python manage.py seed_ready_environments" in source
 
 
 def test_entrypoint_mutation_free_backend_still_collects_static_assets():
