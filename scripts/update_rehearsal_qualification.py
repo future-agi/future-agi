@@ -129,8 +129,9 @@ from scripts.update_rehearsal_milestone import (
     INTEGRITY_CASES, label, record, validate_interruption_results,
 )
 from scripts.update_rehearsal_shipping import (
-    ProductWitnesses, copy_retained_files, retain_source_preimages, wire, REDIS_OPERATION,
+    ProductWitnesses, copy_retained_files, retain_source_preimages, wire, DJANGO_PREFIX, REDIS_OPERATION,
 )
+from scripts.update_rehearsal_investigation_reference import verify_investigation_backfill
 from deploy.tests.update_e2e.real_automatic import ProductHarness
 
 # Interim reference workload for the app-data volume role (not a model change).
@@ -454,6 +455,13 @@ print(json.dumps({'postgres':schema}))
         p.equal(measured, {(row['engine'], row['table']): row for row in self.sink.reference},
                 'reference inventory differs from the prepared reference')
 
+    def assert_large_volume_migrations(self):
+        self.assert_reference_inventory()
+        # Reference fixtures give the pending migrations real work. This one also
+        # reads, read-only on the migrated target, what the investigation backfill
+        # wrote; it does nothing when that family was not in scope.
+        verify_investigation_backfill(self, prefix=DJANGO_PREFIX, producer=p)
+
     def assert_restored_source_ready(self):
         observed = self.verify_restored_source().facts.runtime_observation
         p.need(observed.ready and observed.stable, 'restored source is not ready and stable')
@@ -512,7 +520,7 @@ print(json.dumps({'postgres':schema}))
         self.check(suite, 'migration_resource_measurements', lambda: p.equal(validate_bootstrap_envelope(
             fields, self.corpus, self.target, references), fields['migration_measurements'],
             'validated bootstrap measurement differs'))
-        self.check(suite, 'large_volume_migrations', self.assert_reference_inventory)
+        self.check(suite, 'large_volume_migrations', self.assert_large_volume_migrations)
         old = self.current_source_witnesses()
         for domain in p.topology_profile('standalone', ()).backup_domains:
             self.check(suite, 'new_reads_old:'+domain,

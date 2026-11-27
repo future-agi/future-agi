@@ -124,7 +124,13 @@ function normalizeHostStatusSchema(schema) {
 const EPOCH_NULLABLE_REFS = ["issue", "report", "failure", "plan", "diagnosis"];
 const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   SimulationEvidenceCall: ["goals"],
-  AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios"],
+  // With no environment picked the plan has no ship readiness.
+  AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios", "ship"],
+  // A pull request that can open has no reason it can't.
+  AgentFixShipReadiness: ["blocked"],
+  // A launch nothing refuses has neither refusal; a run whose environment has no
+  // agent version has no agent, and an agent Epoch can't change ships nothing.
+  AgentFixLaunchOptions: ["blocked", "variations_blocked", "agent", "ship"],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
   // The epoch an issue's page opens: before it ends it has no report, and only a
@@ -133,6 +139,8 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixRunDetail: EPOCH_NULLABLE_REFS,
   AgentFixCandidate: ["verdict"],
   AgentFixOverride: ["by"],
+  // A candidate whose patch could not be read has no change line.
+  AgentFixCandidateWording: ["changes"],
 };
 
 function isAgentFixIssueSchema(name) {
@@ -142,7 +150,16 @@ function isAgentFixIssueSchema(name) {
     name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
     name === "AgentFixEpochIssue" ||
     // The launch form's parts of an agent: a part it may change has no reason.
-    name === "AgentFixLaunchSurface"
+    name === "AgentFixLaunchSurface" ||
+    // Only issue_epoch_measuring names an issue; every other refusal sends null.
+    name === "AgentFixLaunchBlocked" ||
+    // An unnumbered or unfinished run, an unversioned environment, a scenario
+    // with no verdict or no evidence import.
+    name === "AgentFixLaunchSourceRun" ||
+    name === "AgentFixLaunchEnvironment" ||
+    name === "AgentFixLaunchScenario" ||
+    // An unnumbered version; an uploaded agent has no ref.
+    name === "AgentFixAgent"
   );
 }
 
@@ -170,7 +187,10 @@ function withNullableFields(name, schema) {
         `${name}.${field} is not in the spec; update the nullable list`,
       );
     }
-    properties[field] = { anyOf: [properties[field], { type: "null" }] };
+    // A scalar's own x-nullable may already have made it a null union above.
+    if (!properties[field].anyOf?.some((one) => one.type === "null")) {
+      properties[field] = { anyOf: [properties[field], { type: "null" }] };
+    }
   }
   return { ...(isAgentFixIssueSchema(name) ? definition : schema), properties };
 }

@@ -57,11 +57,9 @@ export default function NavVertical({ openNav, onCloseNav }) {
     }
   }, [onCloseNav, openNav, pathname]);
 
-  // Sync settings sidebar visibility with URL on page reload
+  // Settings sidebar follows the URL, so a redirect out of settings closes it.
   useEffect(() => {
-    if (pathname.includes("/settings/")) {
-      setSettingOpen(true);
-    }
+    setSettingOpen(pathname.includes("/settings/"));
   }, [pathname, setSettingOpen]);
 
   // Auto-open gateway panel when on gateway routes, close when leaving
