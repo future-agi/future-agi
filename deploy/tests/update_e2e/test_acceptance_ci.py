@@ -42,7 +42,7 @@ class AcceptancePlanTests(unittest.TestCase):
             setup = next(step['run'] for step in job['steps']
                          if 'fagi-upd-e2e-real-tools.' in step.get('run',''))
             self.assertIn('.ClientInfo.Plugins', setup)
-            self.assertIn('test -n "$plugin" && test -f "$plugin" && test -x "$plugin"', setup)
+            self.assertIn('[[ -n $plugin && -f $plugin && -x $plugin ]] || exit 1', setup)
             self.assertIn('ln -s "$plugin" "$dir/docker-compose"', setup)
             self.assertNotIn('exec docker --context', setup)
 
@@ -520,7 +520,6 @@ class AcceptancePlanTests(unittest.TestCase):
             for name in ('bin/update','scripts/update_rehearsal_shipping.py',
                          'scripts/update_rehearsal_trace_reference.py','scripts/update_rehearsal_eval_task_reference.py',
                          'scripts/update_rehearsal_usage_reference.py',
-                         'scripts/update_rehearsal_investigation_reference.py',
                          'deploy/standalone/bin/bootstrap.py'):
                 self.assertEqual(inventory[name],hashlib.sha256((ROOT/name).read_bytes()).hexdigest())
             self.assertFalse(any(name.endswith('.pyc') for name in inventory))

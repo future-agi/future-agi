@@ -1,0 +1,153 @@
+// Run: node --test .github/scripts/reviewer-assigner.test.mjs
+// Runs the sweep as a child process against a fake GitHub and counts its API calls.
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { renderAssignment } from "./reviewer-rotation.mjs";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const BOT = "approver-app[bot]";
+
+// Preloaded into the sweep: replaces fetch, logs every call, serves one GraphQL page.
+const FAKE_GITHUB = `
+import { appendFileSync, readFileSync } from "node:fs";
+const log = (c) => appendFileSync(process.env.CALL_LOG, JSON.stringify(c) + "\\n");
+globalThis.fetch = async (url, init = {}) => {
+  const path = String(url).replace("https://api.github.com", "");
+  const method = init.method || "GET";
+  log({ method, path });
+  const reply = (body) => ({ ok: true, status: 200, json: async () => body, text: async () => "" });
+  if (method === "POST" && path === "/graphql") {
+    const nodes = JSON.parse(readFileSync(process.env.FAKE_PRS, "utf8"));
+    return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: false }, nodes } } } });
+  }
+  if (method !== "GET") return reply({});
+  return { ok: false, status: 500, text: async () => "unexpected read " + path };
+};
+`;
+
+const marker = (login, at) => ({
+  databaseId: 1,
+  body: `${renderAssignment({ login, at, round: 1 })}\nassigned`,
+  author: { login: BOT },
+});
+
+function pr(number, over = {}) {
+  return {
+    number,
+    isDraft: false,
+    author: { login: "some-author" },
+    reviewRequests: { nodes: [] },
+    latestReviews: { nodes: [] },
+    comments: { nodes: [] },
+    files: { nodes: [{ path: "futureagi/simulate/a.py" }] },
+    ...over,
+  };
+}
+const requestedFrom = (login) => ({
+  nodes: [{ requestedReviewer: { __typename: "User", login } }],
+});
+
+function sweep(prs) {
+  const dir = mkdtempSync(join(tmpdir(), "assigner-"));
+  try {
+    const preload = join(dir, "fake-github.mjs");
+    writeFileSync(preload, FAKE_GITHUB);
+    writeFileSync(join(dir, "prs.json"), JSON.stringify(prs));
+    const run = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        pathToFileURL(preload).href,
+        resolve(here, "reviewer-assigner.mjs"),
+      ],
+      {
+        env: {
+          ...process.env,
+          MODE: "sweep",
+          GITHUB_TOKEN: "t",
+          GITHUB_REPOSITORY: "o/r",
+          ASSIGNER_LOGIN: BOT,
+          CALL_LOG: join(dir, "calls.jsonl"),
+          FAKE_PRS: join(dir, "prs.json"),
+        },
+        encoding: "utf8",
+      },
+    );
+    const calls = readFileSync(join(dir, "calls.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    return { run, calls };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("a sweep of 50 open PRs reads once and writes only for the PRs that need it", () => {
+  const prs = [];
+  const now = new Date().toISOString();
+  // 1-3 drafts, 4-7 need an assignment, 8-10 are overdue, 11-50 are settled.
+  for (let n = 1; n <= 3; n++) prs.push(pr(n, { isDraft: true }));
+  for (let n = 4; n <= 7; n++) prs.push(pr(n));
+  for (let n = 8; n <= 10; n++)
+    prs.push(
+      pr(n, {
+        reviewRequests: requestedFrom("khushalsonawat"),
+        comments: { nodes: [marker("khushalsonawat", "2020-01-06T05:00:00Z")] },
+      }),
+    );
+  for (let n = 11; n <= 50; n++)
+    prs.push(
+      pr(n, {
+        reviewRequests: requestedFrom("cdileep23"),
+        comments: { nodes: [marker("cdileep23", now)] },
+      }),
+    );
+
+  const { run, calls } = sweep(prs);
+  assert.equal(run.status, 0, run.stderr);
+
+  const reads = calls.filter(
+    (c) => c.method === "GET" || c.path === "/graphql",
+  );
+  const writes = calls.filter(
+    (c) => c.method !== "GET" && c.path !== "/graphql",
+  );
+  assert.ok(reads.length <= 2, `reads: ${reads.length}`);
+  assert.ok(
+    !calls.some((c) => c.path.startsWith("/search")),
+    "no search calls",
+  );
+
+  const touched = new Set(
+    writes.map((w) => Number(w.path.match(/\/(\d+)\//)?.[1])),
+  );
+  // Comment edits address the comment id, not the PR, so check the PR-addressed writes.
+  const byPr = writes.filter((w) => /\/(pulls|issues)\/\d+\//.test(w.path));
+  for (const n of touched)
+    if (!Number.isNaN(n)) assert.ok(n >= 4 && n <= 10, `PR #${n}`);
+  // 4 assignments x (request + comment) + 3 reassignments x (delete + request + comment edit).
+  assert.equal(writes.length, 4 * 2 + 3 * 3);
+  assert.equal(byPr.length, 4 * 2 + 3 * 2);
+});
+
+test("a sweep with nothing to assign makes no write", () => {
+  const prs = [pr(1, { isDraft: true })];
+  const now = new Date().toISOString();
+  for (let n = 2; n <= 20; n++)
+    prs.push(
+      pr(n, {
+        reviewRequests: requestedFrom("cdileep23"),
+        comments: { nodes: [marker("cdileep23", now)] },
+      }),
+    );
+  const { run, calls } = sweep(prs);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(calls, [{ method: "POST", path: "/graphql" }]);
+});
