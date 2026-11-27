@@ -17,7 +17,8 @@ scan):
 - needs-human (high): the needs-human label; the pull request goes alone.
 - wait: no trusted verdict on this head yet.
 
-Every result but approve withdraws the approver's live approvals; wait and
+Every result but approve withdraws the approver's live approvals, except the
+admin rule's on an admin's pull request (see withdrawable); wait and
 needs-human also remove devflow:train. Before each approval or label it adds,
 it reads the pull request again. In `observe` mode it only writes the
 decision to the job summary.
@@ -47,6 +48,12 @@ STOP_LABEL = "needs-human"
 TRAIN_LABEL = "devflow:train"
 HOLD_LABEL = "train:hold"  # a person took the pull request off the train
 REVIEWED_LABEL = "devflow:reviewed"
+# The admin rule's approval body (admin-pr-approval.yml, approve job). The
+# same App writes it, so only this body tells the two rules apart.
+ADMIN_APPROVAL_BODY = (
+    "Approved automatically: the author is a repository admin. "
+    "The change still lands only through its branch's required checks."
+)
 BASE = "dev"
 MODES = ("devflow", "observe")
 TIERS = ("low", "medium", "high")  # ordinal
@@ -198,12 +205,18 @@ def max_tier(*tiers) -> str:
     return max(tiers, key=TIERS.index)
 
 
-def bot_approvals(reviews: list, approver: str) -> list:
-    """Ids of the approver's reviews that still approve, on any commit."""
+def withdrawable(reviews: list, approver: str, edits: dict, author_admin: bool) -> list:
+    """Ids of the approver's reviews that still approve, on any commit, except
+    the admin rule's own on an admin's pull request: that rule approves the
+    admin's next head again, so withdrawing it only drops the pull request
+    from the queue. An approval is the admin rule's only with its exact body,
+    never edited by another login."""
     return [
         r.get("id")
         for r in reviews
-        if login_key(name_of(r)) == login_key(approver) and r.get("state") == "APPROVED"
+        if login_key(name_of(r)) == login_key(approver)
+        and r.get("state") == "APPROVED"
+        and not (author_admin and r.get("body") == ADMIN_APPROVAL_BODY and not edited_by_others(r, edits))
     ]
 
 
@@ -372,7 +385,9 @@ def decide(
     tight: bool = False,
     scan: Sequence[str] = (),
 ) -> dict:
-    """Return {"action": "skip"|"wait"|"needs-human"|"train"|"approve", "reasons": [...], "head": sha}.
+    """Return {"action": "skip"|"wait"|"needs-human"|"train"|"approve", "reasons": [...], "head": sha,
+    "withdraw": [review ids]}. `withdraw` is what act() dismisses: empty on
+    approve and skip, else withdrawable()'s ids.
 
     `events` are the issue events (review requests); `assigner` is the bot
     login whose requests assign the reviewer. `edits` maps a review id
@@ -388,9 +403,11 @@ def decide(
     """
     head = (pr.get("head") or {}).get("sha") or ""
     author = (pr.get("user") or {}).get("login") or ""
+    live = withdrawable(reviews, assigner, edits, permissions.get(lower(author)) == "admin")
 
     def out(action, *reasons):
-        return {"action": action, "reasons": list(reasons), "head": head}
+        withdraw = [] if action in ("approve", "skip") else live
+        return {"action": action, "reasons": list(reasons), "head": head, "withdraw": withdraw}
 
     if pr.get("state") != "open":
         return out("skip", "not open")
@@ -646,7 +663,7 @@ def act(repo: str, number: int, pr: dict, reviews: list, result: dict, approver:
         return bool(why)
 
     if action != "approve":
-        for review_id in bot_approvals(reviews, approver):
+        for review_id in result["withdraw"]:
             gh(
                 "api",
                 "-X",
