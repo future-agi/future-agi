@@ -12,7 +12,6 @@ import {
   searchCatalog,
 } from "./buildDrawerCatalog";
 import {
-  BUTTON_LOOK_SX,
   CONNECT_BTN_SX,
   LINK_SX,
   PANEL_SX,
@@ -22,6 +21,10 @@ import {
   focusRing,
 } from "./drawerStyles";
 import { SectionHead } from "./starts/startBits";
+import UploadDropZone from "src/sections/agent-playground/connect/UploadDropZone";
+import { saveConnectDraft } from "src/sections/agent-playground/connect/connectDraft";
+import { UPLOAD_SOURCE } from "src/sections/agent-playground/connect/connectSources";
+import { buildDraftKey } from "./buildDraft";
 
 // One way in: a button that opens its setup. A UI-only one says so beside
 // Connect.
@@ -97,7 +100,7 @@ WayRow.propTypes = {
 };
 
 // A bordered group of ways, two to a line, under an optional one-line head.
-function WayGroup({ title, line, items, onPick, compact = false }) {
+function WayGroup({ title, line, items, onPick, compact = false, children }) {
   return (
     <Box sx={PANEL_SX}>
       {title && (
@@ -121,22 +124,24 @@ function WayGroup({ title, line, items, onPick, compact = false }) {
           )}
         </Stack>
       )}
-      <Box
-        component="ul"
-        sx={{
-          listStyle: "none",
-          m: 0,
-          px: 1,
-          py: 1,
-          display: "grid",
-          columnGap: 4,
-          gridTemplateColumns: `repeat(${items.length > 1 ? 2 : 1}, minmax(0, 1fr))`,
-        }}
-      >
-        {items.map((it) => (
-          <WayRow key={it.id} item={it} onPick={onPick} compact={compact} />
-        ))}
-      </Box>
+      {children || (
+        <Box
+          component="ul"
+          sx={{
+            listStyle: "none",
+            m: 0,
+            px: 1,
+            py: 1,
+            display: "grid",
+            columnGap: 4,
+            gridTemplateColumns: `repeat(${items.length > 1 ? 2 : 1}, minmax(0, 1fr))`,
+          }}
+        >
+          {items.map((it) => (
+            <WayRow key={it.id} item={it} onPick={onPick} compact={compact} />
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }
@@ -146,10 +151,11 @@ WayGroup.propTypes = {
   items: PropTypes.array.isRequired,
   onPick: PropTypes.func.isRequired,
   compact: PropTypes.bool,
+  children: PropTypes.node,
 };
 
-// "Without a repository": one wide drop row with its own Upload button.
-function UploadGroup({ item, onPick }) {
+// "Without a repository": the folder drop zone under its one-line head.
+function UploadGroup({ children }) {
   const section = CODE_SECTIONS.find((s) => s.id === "upload");
   return (
     <Box sx={PANEL_SX}>
@@ -171,55 +177,11 @@ function UploadGroup({ item, onPick }) {
           {section.line}
         </Typography>
       </Stack>
-      <Box component="ul" sx={{ listStyle: "none", m: 0, p: 1 }}>
-        <Box component="li" aria-label={item.name}>
-          <ButtonBase
-            onClick={() => onPick(item)}
-            aria-label="Upload a folder"
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 1.5,
-              width: "100%",
-              px: 1,
-              py: 0.75,
-              borderRadius: "6px",
-              textAlign: "left",
-              "&:hover": { bgcolor: "action.hover" },
-              "&.Mui-focusVisible": focusRing,
-            }}
-          >
-            <LogoTile icon={item.icon} />
-            <Box flex={1} minWidth={0}>
-              <Typography sx={{ ...T13, fontWeight: 500 }}>
-                {item.name}
-              </Typography>
-              <Typography sx={{ ...T12, color: "text.secondary" }}>
-                {item.next}
-              </Typography>
-            </Box>
-            <Box
-              component="span"
-              sx={{
-                ...BUTTON_LOOK_SX,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.75,
-              }}
-            >
-              <Iconify icon="solar:upload-minimalistic-linear" width={14} />
-              Upload
-            </Box>
-          </ButtonBase>
-        </Box>
-      </Box>
+      {children}
     </Box>
   );
 }
-UploadGroup.propTypes = {
-  item: PropTypes.object.isRequired,
-  onPick: PropTypes.func.isRequired,
-};
+UploadGroup.propTypes = { children: PropTypes.node };
 
 function SearchBox({ value, onChange }) {
   return (
@@ -254,7 +216,9 @@ SearchBox.propTypes = {
  * `items` narrows the ways (to those for one type of agent); a tab left empty
  * isn't shown. `head` is off where the drawer's header already says what this
  * is, and the MCP link shows only with `onPickMcp`. `aside` sits at the right
- * end of the tabs.
+ * end of the tabs. "Without a repository" is the folder drop zone, which
+ * opens the upload on the agents it found; `uploadSlot` puts the page's own
+ * there instead, and `sdkSlot` replaces the rows under "Through our SDK".
  */
 export default function ConnectSection({
   onPick,
@@ -262,6 +226,8 @@ export default function ConnectSection({
   head = true,
   onPickMcp,
   aside = null,
+  uploadSlot = null,
+  sdkSlot = null,
 }) {
   const inTab = (id) => items.filter((it) => it.tab === id);
   const tabs = CATALOG_TABS.filter((t) => inTab(t.id).length);
@@ -294,10 +260,29 @@ export default function ConnectSection({
               items={ofSection}
               onPick={onPick}
               compact={s.id === "sdk"}
-            />
+            >
+              {s.id === "sdk" ? sdkSlot : null}
+            </WayGroup>
           ) : null;
         })}
-        {upload && <UploadGroup item={upload} onPick={onPick} />}
+        {upload && (
+          <UploadGroup>
+            {uploadSlot || (
+              <UploadDropZone
+                onScanned={({ folder, scanId }) => {
+                  // Opening the upload clears its drafts, so the found agents
+                  // are saved after it, for its form to open on.
+                  onPick(upload);
+                  saveConnectDraft(
+                    { stage: "agents", folder, scanId },
+                    UPLOAD_SOURCE,
+                    buildDraftKey(upload.id, "flow"),
+                  );
+                }}
+              />
+            )}
+          </UploadGroup>
+        )}
       </Stack>
     );
   } else {
@@ -374,4 +359,6 @@ ConnectSection.propTypes = {
   head: PropTypes.bool,
   onPickMcp: PropTypes.func,
   aside: PropTypes.node,
+  uploadSlot: PropTypes.node,
+  sdkSlot: PropTypes.node,
 };
