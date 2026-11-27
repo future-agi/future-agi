@@ -263,16 +263,16 @@ it("stops at the admission deadline when the retry timer fires early", async () 
   // ends while the wall clock still reads just before the deadline.
   let now = 1_000;
   const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
-  sqlApi.runSaved.mockRejectedValue(
-    Object.assign(new Error("busy"), { statusCode: 429 }),
-  );
-  const { result } = renderHook(() =>
-    useSQLExecution("project", {
-      retryAdmission: true,
-      admissionTimeoutMs: 10,
-    }),
-  );
   try {
+    sqlApi.runSaved.mockRejectedValue(
+      Object.assign(new Error("busy"), { statusCode: 429 }),
+    );
+    const { result } = renderHook(() =>
+      useSQLExecution("project", {
+        retryAdmission: true,
+        admissionTimeoutMs: 10,
+      }),
+    );
     await act(async () => {
       const pending = result.current.run({ saved_query_id: "waiting" }, true);
       now += 9;
