@@ -24,6 +24,7 @@ from simulate.models import (
     CallExecution,
     HarnessAgentVersionRuntime,
     HarnessLockedVersion,
+    HarnessLockedVersionMember,
     HarnessSuiteMember,
     HarnessSuiteVersion,
     HarnessTaskSplit,
@@ -308,10 +309,15 @@ def _locked_version(run, *, test=(), train=(), unlocked=False, label="2026.11.1"
         test_count=len(test),
     )
     for member in members:
+        split = TaskSplit.TEST if member.scenario_key in test else TaskSplit.TRAIN
         HarnessTaskSplit.no_workspace_objects.create(
             scenario_id=member.scenario_id,
-            split=TaskSplit.TEST if member.scenario_key in test else TaskSplit.TRAIN,
+            split=split,
             first_locked_version=locked_version,
+        )
+        # The lock's roster, as lock_version writes it.
+        HarnessLockedVersionMember.no_workspace_objects.create(
+            locked_version=locked_version, scenario_id=member.scenario_id, split=split
         )
     return locked_version
 
@@ -575,8 +581,9 @@ class TestALockedVersion:
         # Off a locked version the Epoch samples, as it always has.
         assert run_locked_version(source_run) is None
 
-    def test_a_member_that_cannot_be_scored_has_no_split(self, source_run):
+    def test_a_member_keeps_the_split_its_lock_gave_it(self, source_run):
         _locked_version(source_run, test=[KEYS[0]], train=[KEYS[1]])
+        # A later rule that would no longer score it doesn't move it out of the lock.
         HarnessSuiteMember.no_workspace_objects.filter(
             suite_version_id=source_run.suite_version_id, scenario_key=KEYS[0]
         ).update(content={"name": KEYS[0], "sub_goals": []})
@@ -585,7 +592,25 @@ class TestALockedVersion:
             source_run, {KEYS[0]: ["refunded"]}, run_locked_version(source_run)
         )
 
-        assert held == []
+        assert held == [KEYS[0]]
+
+    def test_a_scenario_outside_the_lock_s_roster_has_no_split(self, source_run):
+        locked = _locked_version(source_run, test=[KEYS[0]])
+        # A split from an earlier lock that this lock's roster doesn't hold.
+        member = HarnessSuiteMember.no_workspace_objects.get(
+            suite_version_id=source_run.suite_version_id, scenario_key=KEYS[1]
+        )
+        member.content = {**(member.content or {}), "sub_goals": [{"name": "refunded"}]}
+        member.save(update_fields=["content"])
+        HarnessTaskSplit.no_workspace_objects.create(
+            scenario_id=member.scenario_id,
+            split=TaskSplit.TEST,
+            first_locked_version=locked,
+        )
+
+        found = run_locked_version(source_run)
+
+        assert dict(found.splits) == {KEYS[0]: TaskSplit.TEST}
 
     def test_a_run_off_any_locked_version_samples_as_before(self, source_run):
         with patch(
@@ -683,6 +708,19 @@ class TestALockedVersion:
             "locked_version",
             "2026.11.1",
         )
+
+    def test_the_launch_form_holds_back_only_the_test_split(self, environment):
+        run = _both_failing(environment)
+        _locked_version(run, test=[KEYS[0]], train=[KEYS[1]])
+
+        # A sample would pick the train case; the lock's test split says which.
+        with patch(
+            "simulate.selectors.agent_fix.split_held_back", return_value=[KEYS[1]]
+        ):
+            options = launch_options(run)
+
+        # Known now, though the Epoch first writes variations of so few cases.
+        assert options.held_back_scenario_keys == [KEYS[0]]
 
     def test_the_launch_form_off_a_locked_version_samples(self, source_run):
         options = launch_options(source_run)
