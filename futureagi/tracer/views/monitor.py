@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import structlog
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.db.models import Count, Exists, Max, Min, OuterRef, Q
 from django.http import Http404
 from django.utils import timezone
@@ -357,11 +358,21 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
     def _update_monitor(self, request, *, partial):
         try:
-            instance = self.get_object()
-            data = self._scope_safe_update_data(request, instance, partial=partial)
+            with transaction.atomic():
+                instance = self.get_object()
+                # Lock and re-read the row: the save below writes every
+                # column, so a recipient removed by an unsubscribe link while
+                # this request ran would otherwise be put back.
+                instance = (
+                    UserAlertMonitor.no_workspace_objects.select_for_update().get(
+                        pk=instance.pk
+                    )
+                )
+                data = self._scope_safe_update_data(request, instance, partial=partial)
 
-            serializer = self.get_serializer(instance, data=data, partial=partial)
-            if serializer.is_valid():
+                serializer = self.get_serializer(instance, data=data, partial=partial)
+                if not serializer.is_valid():
+                    return self._gm.bad_request(serializer.errors)
                 updated_instance = serializer.save()
                 updated_instance.logs.append(
                     {
@@ -372,8 +383,6 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
                 updated_instance.save(update_fields=["logs"])
                 return self._gm.success_response(serializer.data)
-            else:
-                return self._gm.bad_request(serializer.errors)
         except Exception as e:
             traceback.print_exc()
             logger.info(f"Error occurred while updating Alert Monitor: {str(e)}")
