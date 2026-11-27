@@ -72,6 +72,9 @@ class EvalTask(BaseModel):
     status = models.CharField(
         max_length=255, choices=EvalTaskStatus.choices, blank=True, null=True
     )
+    # A control failure can precede every EvalLogger entry. Only a public
+    # selector reason (never an exception chain or a query) belongs here.
+    failure_reason = models.CharField(max_length=255, blank=True, null=True)
     start_time = models.DateTimeField(blank=True, null=True)
     end_time = models.DateTimeField(blank=True, null=True)
     # Forward watermark for continuous tasks: every in-scope row created at/before

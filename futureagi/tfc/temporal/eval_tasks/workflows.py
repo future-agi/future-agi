@@ -57,6 +57,7 @@ from tfc.temporal.eval_tasks.types import (
     TaskStateInput,
     WorkflowLabelsInput,
 )
+from tracer.services.eval_tasks.selection_failure import SelectionFailure
 
 # Control activities are quick PG reads/writes. One exhausted control activity
 # fails the whole workflow, so their retries (~7 min of backoff) outlast a
@@ -273,7 +274,11 @@ def _set_status(status: str) -> None:
 
 
 async def _set_db_status(
-    task_id: str, status: str, expected_status: str | None = None
+    task_id: str,
+    status: str,
+    expected_status: str | None = None,
+    *,
+    failure_reason: str | None = None,
 ) -> dict:
     """Persist ``status`` on the task's DB row (the UI's source of truth).
 
@@ -283,7 +288,12 @@ async def _set_db_status(
     """
     ack: dict = await workflow.execute_activity(
         "set_eval_task_status_activity",
-        SetStatusInput(task_id=task_id, status=status, expected_status=expected_status),
+        SetStatusInput(
+            task_id=task_id,
+            status=status,
+            expected_status=expected_status,
+            failure_reason=failure_reason,
+        ),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
@@ -298,12 +308,28 @@ async def _mark_running(task_id: str) -> dict:
     return await _set_db_status(task_id, STATUS_RUNNING, expected_status=STATUS_PENDING)
 
 
-async def _fail_task(task_id: str) -> None:
-    """Persist FAILED to the DB row (the UI's source of truth) and the Temporal
-    Search Attribute. Forced (unguarded) — the run only reaches here on a genuine
-    error, since paused / deleted exit through the graceful state check."""
+async def _fail_task(task_id: str, exc: Exception | None = None) -> None:
+    """Mark the run failed without publishing arbitrary activity error text."""
+    reason = None
+    if (
+        isinstance(exc, ActivityError)
+        and exc.activity_type == "reconcile_eval_task_activity"
+    ):
+        # Only fixed selector messages may reach task Logs. Other reconcile
+        # failures can contain filter values, query text or internal details.
+        cause = exc.cause
+        if isinstance(cause, ApplicationError) and cause.type in {
+            "EvalTaskSelectionRejected",
+            "EvalTaskReadBudgetExceeded",
+        }:
+            try:
+                reason = SelectionFailure(cause.message).value
+            except ValueError:
+                reason = SelectionFailure.OTHER.value
+        else:
+            reason = SelectionFailure.OTHER.value
     _set_status(STATUS_FAILED)
-    await _set_db_status(task_id, STATUS_FAILED)
+    await _set_db_status(task_id, STATUS_FAILED, failure_reason=reason)
 
 
 async def _reconcile(task_id: str, *, first_closed: bool = False) -> dict:
@@ -597,11 +623,11 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
     async def run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
         try:
             return await self._run(input)
-        except Exception:
+        except Exception as exc:
             # Persist FAILED so a failed run doesn't stay stuck ``running``,
             # then re-raise. continue_as_new / cancellation are BaseException,
             # not caught here.
-            await _fail_task(input.task_id)
+            await _fail_task(input.task_id, exc)
             raise
 
     def _stopped(
@@ -797,9 +823,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
                     self._phase = "waiting_for_database"
                     await self._sleep_or_recheck(max(1, state.poll_interval_seconds))
                     await self._run_with_database_backoff(state)
-        except Exception:
+        except Exception as exc:
             # Same fail-then-reraise as HistoricalEvalTaskWorkflow.run.
-            await _fail_task(state.task_id)
+            await _fail_task(state.task_id, exc)
             raise
 
     async def _run_with_database_backoff(self, state: ContinuousDrainState) -> None:

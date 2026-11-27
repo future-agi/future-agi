@@ -34,6 +34,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.utils.urls import replace_query_param
 from rest_framework.viewsets import ModelViewSet
+from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.service import RPCError, RPCStatusCode
 
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_input_validation import (
@@ -250,6 +252,7 @@ class _EvalTaskListRowResponseSerializer(serializers.Serializer):
     name = serializers.CharField(allow_null=True)
     project_name = serializers.CharField(required=False)
     status = serializers.CharField(allow_null=True)
+    failure_reason = serializers.CharField(allow_null=True, required=False)
     run_type = serializers.CharField(allow_null=True)
     row_type = serializers.CharField(allow_null=True)
     filters_applied = serializers.JSONField(allow_null=True)
@@ -344,6 +347,7 @@ def _bounded_eval_task_compatibility_rows(queryset):
             "project__name",
             "name",
             "status",
+            "failure_reason",
             "run_type",
             "row_type",
             "filters",
@@ -1474,6 +1478,9 @@ def _serialize_eval_task_list_page(tasks, *, include_project_name):
             "id": str(eval_task.id),
             "name": eval_task.name,
             "status": eval_task.status,
+            "failure_reason": eval_task.failure_reason
+            if eval_task.status == EvalTaskStatus.FAILED
+            else None,
             "run_type": eval_task.run_type,
             "row_type": eval_task.row_type,
             "filters_applied": eval_task.filters,
@@ -2145,6 +2152,7 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                     "start_time",
                     "end_time",
                     "status",
+                    "failure_reason",
                     "run_type",
                     "row_type",
                 )
@@ -2255,6 +2263,9 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 # and the fetch that first sees "completed" already carries the
                 # final tallies — no off-by-one-tick stale count.
                 "status": eval_task.status,
+                "failure_reason": eval_task.failure_reason
+                if eval_task.status == EvalTaskStatus.FAILED
+                else None,
                 # Duration is only meaningful for historical runs (which finalize
                 # with an end_time). Continuous tasks never end, so the frontend
                 # hides the Duration card based on this.
@@ -2937,11 +2948,36 @@ class EvalTaskView(SamplingPreviewMixin, BaseModelViewSetMixin, ModelViewSet):
                 status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
             ).count()
             eval_task.status = EvalTaskStatus.PENDING
-            eval_task.save(update_fields=["status"])
-
-            # Pause exits the workflow; resuming starts a fresh run that picks up
-            # the remaining pending/running entries.
-            start_eval_task_workflow_sync(eval_task, replace_existing=True)
+            eval_task.save(update_fields=["status", "updated_at"])
+            pending = EvalTask.objects.filter(
+                pk=eval_task.pk,
+                status=EvalTaskStatus.PENDING,
+                updated_at=eval_task.updated_at,
+            )
+            try:
+                start_eval_task_workflow_sync(eval_task, replace_existing=True)
+            except (
+                RuntimeError,
+                ValueError,
+                WorkflowAlreadyStartedError,
+                RPCError,
+            ) as exc:
+                # Only undo a definite refusal. A timeout can lose the reply
+                # to an accepted start; leave it PENDING for its worker.
+                if not isinstance(exc, RPCError) or exc.status in {
+                    RPCStatusCode.INVALID_ARGUMENT,
+                    RPCStatusCode.FAILED_PRECONDITION,
+                    RPCStatusCode.PERMISSION_DENIED,
+                    RPCStatusCode.UNAUTHENTICATED,
+                    RPCStatusCode.NOT_FOUND,
+                    RPCStatusCode.ALREADY_EXISTS,
+                }:
+                    pending.update(status=recovered_from)
+                raise
+            # Keep the diagnosis until dispatch accepts. If its worker already
+            # advanced the task, that status write owns the reason instead.
+            if eval_task.failure_reason is not None:
+                pending.update(failure_reason=None)
             # Counts and the previous status only — never an entry payload or
             # any tenant-identifying value.
             logger.info(
