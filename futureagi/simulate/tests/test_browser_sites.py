@@ -51,6 +51,12 @@ def test_a_name_outside_ascii_is_kept_in_its_ascii_form():
         # Already in that form: kept as it is, in lower case.
         ("xn--strae-oqa.de", "xn--strae-oqa.de"),
         ("Shop.XN--Strae-OQA.de", "shop.xn--strae-oqa.de"),
+        # A plain ASCII label is held to the host-name rule alone, whatever its neighbours: hyphens
+        # in its third and fourth places are a name a browser opens, beside an ASCII form or not.
+        ("ab--cd.xn--strae-oqa.de", "ab--cd.xn--strae-oqa.de"),
+        ("r3---sn-ab5l6nzr.xn--strae-oqa.de", "r3---sn-ab5l6nzr.xn--strae-oqa.de"),
+        ("ab--cd.straße.de", "ab--cd.xn--strae-oqa.de"),
+        ("ab--cd.example.org", "ab--cd.example.org"),
     ],
 )
 def test_a_name_is_kept_in_the_form_a_browser_asks_for(site, form, monkeypatch):
