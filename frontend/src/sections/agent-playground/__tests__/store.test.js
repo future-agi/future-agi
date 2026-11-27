@@ -77,6 +77,31 @@ describe("useAgentPlaygroundStore", () => {
       expect(nodes[0].data.node_template_id).toBe("tpl-1");
     });
 
+    it("derives JSON response port schema from prompt config", () => {
+      const responseSchema = {
+        type: "object",
+        properties: { answer: { type: "string" } },
+      };
+
+      const result = useAgentPlaygroundStore
+        .getState()
+        .addOptimisticNode(
+          NODE_TYPES.LLM_PROMPT,
+          null,
+          null,
+          "tpl-1",
+          "json_prompt",
+          {
+            outputFormat: "json",
+            modelConfig: { responseSchema },
+          },
+        );
+
+      const { nodes } = useAgentPlaygroundStore.getState();
+      expect(nodes[0].data.ports[0].data_schema).toEqual(responseSchema);
+      expect(result.ports[0].data_schema).toEqual(responseSchema);
+    });
+
     it("is blocked during workflow run", () => {
       useWorkflowRunStore.setState({ isRunning: true });
       const result = useAgentPlaygroundStore

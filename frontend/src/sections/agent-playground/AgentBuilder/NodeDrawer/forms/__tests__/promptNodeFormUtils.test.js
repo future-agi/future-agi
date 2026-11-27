@@ -3,12 +3,21 @@ import {
   extractVariablesFromContent,
   buildPromptNodePayload,
   buildPatchPayload,
+  mapPatchResponseToStoreData,
 } from "../promptNodeFormUtils";
 
 // Mock getRandomId to return deterministic IDs
 vi.mock("src/utils/utils", () => ({
   getRandomId: vi.fn(() => "random-id"),
 }));
+
+const responseSchema = {
+  type: "object",
+  properties: {
+    answer: { type: "string" },
+  },
+  required: ["answer"],
+};
 
 // ---------------------------------------------------------------------------
 // extractVariablesFromContent
@@ -106,6 +115,34 @@ describe("buildPromptNodePayload", () => {
     expect(config.modelDetail).toEqual({ modelName: "GPT-4" });
     expect(config.responseFormat).toBe("text");
     expect(config.toolChoice).toBe("auto");
+  });
+
+  it("preserves the selected output format in the form payload", () => {
+    const payload = buildPromptNodePayload(
+      { ...baseFormData, outputFormat: "json" },
+      null,
+    );
+
+    expect(payload.promptConfig[0].configuration.outputFormat).toBe("json");
+  });
+
+  it("includes separate response schema for schema-backed output formats", () => {
+    const payload = buildPromptNodePayload(
+      {
+        ...baseFormData,
+        modelConfig: {
+          ...baseFormData.modelConfig,
+          responseFormat: "json_schema",
+          responseSchema,
+        },
+      },
+      null,
+    );
+    const config = payload.promptConfig[0].configuration;
+
+    expect(config.responseFormat).toBe("json_schema");
+    expect(config.responseSchema).toEqual(responseSchema);
+    expect(config.response_schema).toEqual(responseSchema);
   });
 
   it("flattens known slider keys from model parameters by id", () => {
@@ -247,5 +284,137 @@ describe("buildPatchPayload", () => {
     });
     expect(patch.prompt_template.tools).toEqual(formData.modelConfig.tools);
     expect(patch.prompt_template.messages).toEqual(formData.messages);
+  });
+
+  it("uses config outputFormat when payload configuration omits output_format", () => {
+    const patch = buildPatchPayload(
+      {
+        label: "imported_prompt",
+        config: {
+          outputFormat: "json",
+          templateFormat: "jinja",
+          modelConfig: {
+            model: "gpt-4o-mini",
+            responseFormat: "json",
+          },
+          messages: [
+            {
+              id: "msg-0",
+              role: "user",
+              content: [{ type: "text", text: "Return JSON for {{topic}}" }],
+            },
+          ],
+          payload: {
+            promptConfig: [
+              {
+                configuration: {
+                  template_format: "jinja",
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        prompt_template_id: null,
+        prompt_version_id: null,
+      },
+    );
+
+    expect(patch.prompt_template.output_format).toBe("json");
+    expect(patch.prompt_template.template_format).toBe("jinja");
+  });
+
+  it("preserves separate response_schema for schema-backed PATCH payloads", () => {
+    const patch = buildPatchPayload(
+      {
+        label: "schema_prompt",
+        config: {
+          outputFormat: "json",
+          templateFormat: "jinja",
+          modelConfig: {
+            model: "gpt-4o-mini",
+            responseFormat: "json_schema",
+            responseSchema,
+          },
+          messages: [
+            {
+              id: "msg-0",
+              role: "user",
+              content: [{ type: "text", text: "Return an answer." }],
+            },
+          ],
+          payload: {
+            promptConfig: [
+              {
+                configuration: {
+                  output_format: "json",
+                  template_format: "jinja",
+                  response_schema: responseSchema,
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        prompt_template_id: null,
+        prompt_version_id: null,
+      },
+    );
+
+    expect(patch.prompt_template.response_format).toBe("json_schema");
+    expect(patch.prompt_template.response_schema).toEqual(responseSchema);
+    expect(patch.prompt_template.output_format).toBe("json");
+    expect(patch.prompt_template.template_format).toBe("jinja");
+  });
+});
+
+describe("mapPatchResponseToStoreData", () => {
+  it("maps separate response_schema from PATCH responses into form config", () => {
+    const mapped = mapPatchResponseToStoreData({
+      name: "schema_prompt",
+      ports: [
+        {
+          id: "port-response",
+          key: "response",
+          display_name: "response",
+          direction: "output",
+          data_schema: { type: "string" },
+          required: true,
+        },
+      ],
+      prompt_template: {
+        prompt_template_id: "prompt-template-id",
+        prompt_version_id: "prompt-version-id",
+        model: "gpt-4o-mini",
+        model_detail: { modelName: "GPT-4o mini" },
+        response_format: "json_schema",
+        response_schema: responseSchema,
+        output_format: "json",
+        template_format: "jinja",
+        tool_choice: "auto",
+        tools: [],
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Return an answer." }],
+          },
+        ],
+      },
+    });
+
+    expect(mapped.config.modelConfig).toMatchObject({
+      responseFormat: "json_schema",
+      responseSchema,
+    });
+    expect(mapped.config.outputFormat).toBe("json");
+    expect(
+      mapped.config.payload.promptConfig[0].configuration.output_format,
+    ).toBe("json");
+    expect(
+      mapped.config.payload.promptConfig[0].configuration.response_schema,
+    ).toEqual(responseSchema);
+    expect(mapped.ports[0].data_schema).toEqual(responseSchema);
   });
 });

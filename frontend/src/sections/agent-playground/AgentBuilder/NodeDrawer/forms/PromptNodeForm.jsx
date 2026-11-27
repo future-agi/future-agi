@@ -92,8 +92,8 @@ export default function PromptNodeForm({ nodeId }) {
       {/* Unsupported output format error */}
       {isUnsupportedOutputFormat && (
         <Alert severity="error" sx={{ mb: 1 }}>
-          This prompt uses an unsupported output format. Only text-based prompts
-          are supported in the agent builder.
+          This prompt uses an unsupported output format. Agent Builder supports
+          string and JSON prompt outputs.
         </Alert>
       )}
 

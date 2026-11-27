@@ -8,6 +8,8 @@ import { addNodeApi } from "src/api/agent-playground/agent-playground";
 import logger from "src/utils/logger";
 import { API_NODE_TYPES, NODE_TYPES } from "../../utils/constants";
 import { useSaveDraftContext } from "../saveDraftContext";
+import { buildPatchPayload } from "../NodeDrawer/forms/promptNodeFormUtils";
+import { normalizePromptOutputPorts } from "../../utils/promptPortUtils";
 
 /**
  * Encapsulates the addNode pattern with optimistic-first approach:
@@ -18,6 +20,29 @@ import { useSaveDraftContext } from "../saveDraftContext";
  * 3. On draft versions, fires the individual addNodeApi call in the background sequentially.
  * 4. Rolls back on any failure.
  */
+function buildPromptTemplatePayload(config) {
+  if (config?.messages?.length) {
+    return buildPatchPayload({ config }, config).prompt_template;
+  }
+
+  return {
+    prompt_template_id: config?.prompt_template_id ?? null,
+    prompt_version_id: config?.prompt_version_id ?? null,
+    messages: [
+      {
+        id: crypto.randomUUID(),
+        role: "system",
+        content: [{ type: "text", text: "" }],
+      },
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: [{ type: "text", text: "" }],
+      },
+    ],
+  };
+}
+
 export default function useAddNodeOptimistic() {
   const { addOptimisticNode, removeOptimisticNode, setSelectedNode } =
     useAgentPlaygroundStoreShallow((state) => ({
@@ -43,6 +68,10 @@ export default function useAddNodeOptimistic() {
 
       const { nodeId, edgeId, position, ports, label } = result;
       const config = payload.config;
+      const apiPorts =
+        payload.type === NODE_TYPES.LLM_PROMPT
+          ? normalizePromptOutputPorts(ports, config)
+          : ports;
 
       // Don't select the node yet — wait until ensureDraft completes
       // to avoid triggering the discard dialog if a drawer is open with dirty form.
@@ -81,32 +110,9 @@ export default function useAddNodeOptimistic() {
           position,
           source_node_id: payload.sourceNodeId,
           ...(payload.sourceNodeId && edgeId && { edge_id: edgeId }),
-          ports,
+          ports: apiPorts,
           ...(payload.type === NODE_TYPES.LLM_PROMPT && {
-            prompt_template: {
-              prompt_template_id: config?.prompt_template_id ?? null,
-              prompt_version_id: config?.prompt_version_id ?? null,
-              messages: config?.messages?.length
-                ? config.messages.map((m) => ({
-                    id: m.id || crypto.randomUUID(),
-                    role: m.role,
-                    content: Array.isArray(m.content)
-                      ? m.content
-                      : [{ type: "text", text: m.content || "" }],
-                  }))
-                : [
-                    {
-                      id: crypto.randomUUID(),
-                      role: "system",
-                      content: [{ type: "text", text: "" }],
-                    },
-                    {
-                      id: crypto.randomUUID(),
-                      role: "user",
-                      content: [{ type: "text", text: "" }],
-                    },
-                  ],
-            },
+            prompt_template: buildPromptTemplatePayload(config),
           }),
         },
       })
