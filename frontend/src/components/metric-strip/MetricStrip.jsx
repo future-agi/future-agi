@@ -12,7 +12,9 @@ import { Box, ButtonBase, Tooltip, Typography } from "@mui/material";
 
 const DELTA = { better: "status.success.fg", worse: "status.danger.fg", flat: "text.tertiary" };
 
-export default function MetricStrip({ items, sx }) {
+// `dense`: one line per cell (label, figure, what it's over), for a strip that
+// sits above a list and shouldn't push it down the page.
+export default function MetricStrip({ items, dense = false, sx }) {
   return (
     <Box
       sx={{
@@ -29,8 +31,8 @@ export default function MetricStrip({ items, sx }) {
           key={m.key || (typeof m.label === "string" ? m.label : i)}
           {...(m.onClick && { component: ButtonBase, onClick: m.onClick })}
           sx={{
-            px: 2,
-            py: 1.5,
+            px: dense ? 1.5 : 2,
+            py: dense ? 1 : 1.5,
             borderLeft: i ? "1px solid" : 0,
             borderColor: "divider",
             minWidth: 0,
@@ -39,6 +41,31 @@ export default function MetricStrip({ items, sx }) {
             ...(m.onClick && { "&:hover": { bgcolor: "action.hover" } }),
           }}
         >
+          {dense ? (
+            <Tooltip title={m.tooltip || ""} disableHoverListener={!m.tooltip} placement="top-start" arrow>
+              <Box sx={{ display: "flex", alignItems: "baseline", gap: 1, minWidth: 0 }}>
+                <Typography noWrap sx={{ fontSize: 12, lineHeight: "20px", color: "text.tertiary", flexShrink: 0 }}>
+                  {m.label}
+                </Typography>
+                <Typography
+                  sx={{ fontSize: 14, lineHeight: "20px", fontWeight: 600, color: "text.primary", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+                >
+                  {m.value}
+                </Typography>
+                {m.change && (
+                  <Typography sx={{ fontSize: 12, fontWeight: 500, flexShrink: 0, color: DELTA[m.trend] || "text.tertiary" }}>
+                    {m.change}
+                  </Typography>
+                )}
+                {m.hint && (
+                  <Typography noWrap sx={{ fontSize: 12, lineHeight: "20px", color: "text.tertiary", minWidth: 0 }}>
+                    {m.hint}
+                  </Typography>
+                )}
+              </Box>
+            </Tooltip>
+          ) : (
+            <>
           <Tooltip title={m.tooltip || ""} disableHoverListener={!m.tooltip} placement="top-start" arrow>
             <Typography noWrap sx={{ fontSize: 12, lineHeight: "16px", color: "text.tertiary" }}>
               {m.label}
@@ -69,6 +96,8 @@ export default function MetricStrip({ items, sx }) {
               {m.hint}
             </Typography>
           )}
+            </>
+          )}
         </Box>
       ))}
     </Box>
@@ -88,5 +117,6 @@ MetricStrip.propTypes = {
       key: PropTypes.string,
     }),
   ).isRequired,
+  dense: PropTypes.bool,
   sx: PropTypes.object,
 };

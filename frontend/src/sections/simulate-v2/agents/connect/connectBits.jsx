@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   IconButton,
+  Radio,
   Stack,
   TextField,
   Tooltip,
@@ -583,7 +584,17 @@ FrameworkTuning.propTypes = {
 };
 
 /** One of two or three ways to do something, as a selectable card with a one-line summary and a hint. */
-export function WhereOption({ icon, label, short, hint, on, onClick }) {
+// `radio`: a leading radio button instead of the icon and trailing check, for
+// a picker whose other choices are radio rows too.
+export function WhereOption({
+  icon,
+  label,
+  short,
+  hint,
+  on,
+  onClick,
+  radio = false,
+}) {
   return (
     <Stack
       direction="row"
@@ -609,11 +620,22 @@ export function WhereOption({ icon, label, short, hint, on, onClick }) {
         bgcolor: on ? "action.selected" : "transparent",
       }}
     >
-      <Iconify
-        icon={icon}
-        width={16}
-        sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }}
-      />
+      {radio ? (
+        <Radio
+          size="small"
+          checked={!!on}
+          tabIndex={-1}
+          disableRipple
+          inputProps={{ "aria-hidden": true }}
+          sx={{ p: 0, mt: 0.125, flexShrink: 0 }}
+        />
+      ) : (
+        <Iconify
+          icon={icon}
+          width={16}
+          sx={{ color: "text.secondary", mt: 0.25, flexShrink: 0 }}
+        />
+      )}
       <Box flex={1} minWidth={0}>
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
           {label}
@@ -625,15 +647,18 @@ export function WhereOption({ icon, label, short, hint, on, onClick }) {
           <HintLine hint={hint}>{short}</HintLine>
         </Typography>
       </Box>
-      <Iconify
-        icon={on ? "solar:check-circle-bold" : "solar:circle-linear"}
-        width={16}
-        sx={{ color: on ? "text.primary" : "text.disabled", flexShrink: 0 }}
-      />
+      {!radio && (
+        <Iconify
+          icon={on ? "solar:check-circle-bold" : "solar:circle-linear"}
+          width={16}
+          sx={{ color: on ? "text.primary" : "text.disabled", flexShrink: 0 }}
+        />
+      )}
     </Stack>
   );
 }
 WhereOption.propTypes = {
+  radio: PropTypes.bool,
   icon: PropTypes.string,
   label: PropTypes.string,
   short: PropTypes.string,

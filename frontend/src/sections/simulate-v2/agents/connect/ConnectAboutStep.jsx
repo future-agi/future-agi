@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { readObserveProjectPage } from "src/api/project/observe-project-list";
-import { Box, Chip, Stack, TextField, Typography } from "@mui/material";
+import { Box, Chip, Radio, Stack, TextField, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useConnectedAgents, useSimStore } from "../../store";
 import {
@@ -186,7 +186,7 @@ export function ObserveProjectStep({
         aria-label="Which project"
       >
         <WhereOption
-          icon="solar:add-circle-linear"
+          radio
           label="Create a new project"
           on={creating}
           short="Its traces don't land anywhere yet — they start once tracing is on"
@@ -199,7 +199,7 @@ export function ObserveProjectStep({
           }
         />
         <WhereOption
-          icon="solar:graph-new-linear"
+          radio
           label="Use an existing project"
           on={!creating}
           short={`${projects.length} project${projects.length === 1 ? "" : "s"} in Tracing — pick the one its traces land in`}
@@ -297,7 +297,6 @@ export function ObserveProjectStep({
                         setLastPicked(p.id);
                         onChange({ mode: "existing", id: p.id });
                       }}
-                      icon="solar:graph-new-linear"
                       title={p.name}
                       mono={p.id}
                       meta={[
@@ -358,7 +357,7 @@ ObserveProjectStep.propTypes = {
   autoName: PropTypes.bool,
 };
 
-function ProjectRow({ on, onClick, icon, title, mono, meta, tag }) {
+function ProjectRow({ on, onClick, title, mono, meta, tag }) {
   return (
     <Stack
       direction="row"
@@ -384,10 +383,14 @@ function ProjectRow({ on, onClick, icon, title, mono, meta, tag }) {
         bgcolor: on ? selectedBg : "transparent",
       }}
     >
-      <Iconify
-        icon={icon}
-        width={16}
-        sx={{ color: "text.secondary", flexShrink: 0 }}
+      {/* The row is the radio (role, keyboard); this only shows it. */}
+      <Radio
+        size="small"
+        checked={!!on}
+        tabIndex={-1}
+        disableRipple
+        inputProps={{ "aria-hidden": true }}
+        sx={{ p: 0, flexShrink: 0 }}
       />
       <Box flex={1} minWidth={0}>
         <Stack
@@ -419,20 +422,12 @@ function ProjectRow({ on, onClick, icon, title, mono, meta, tag }) {
           {meta}
         </Typography>
       </Box>
-      {on && (
-        <Iconify
-          icon="solar:check-circle-bold"
-          width={16}
-          sx={{ color: "text.primary", flexShrink: 0 }}
-        />
-      )}
     </Stack>
   );
 }
 ProjectRow.propTypes = {
   on: PropTypes.bool,
   onClick: PropTypes.func,
-  icon: PropTypes.string,
   title: PropTypes.node,
   mono: PropTypes.string,
   meta: PropTypes.node,
