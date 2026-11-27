@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
+  Autocomplete,
   Box,
   Stack,
   Typography,
@@ -245,6 +246,21 @@ function ActorForm({
   const joins = caller ? callerKindsFor(voiceEnv ? "voice" : "chat") : [];
   const approver = !caller && form.actions.some(isApprovalAction);
 
+  /* The roles already in this environment, so a person joins one by picking
+     it rather than retyping it (a typo or "Sales managers" would start a new
+     group — Nosang, 27 Nov). */
+  const roles = useMemo(() => {
+    const counts = new Map();
+    cast
+      .filter((a) => a.id !== actor?.id && a.name)
+      .forEach((a) => {
+        const key = a.name.trim().toLowerCase().replace(/\s+/g, " ");
+        const had = counts.get(key);
+        counts.set(key, { label: had?.label || a.name, n: (had?.n || 0) + 1 });
+      });
+    return [...counts.values()];
+  }, [cast, actor?.id]);
+
   const onName = (e) => {
     const name = e.target.value;
     setNameTouched(true);
@@ -443,15 +459,45 @@ function ActorForm({
             </MenuItem>
           ))}
         </TextField>
-        <TextField
+        <Autocomplete
+          freeSolo
+          disableClearable
           size="small"
-          label="Name"
-          value={form.name}
-          onChange={onName}
-          onBlur={() => setNameTouched(true)}
-          error={nameTouched && !!problems.name}
-          helperText={nameTouched ? problems.name : ""}
-          inputProps={{ "aria-label": "Name" }}
+          options={roles.map((r) => r.label)}
+          inputValue={form.name}
+          onInputChange={(_, v, reason) => {
+            if (reason === "reset" && v === form.name) return;
+            onName({ target: { value: v } });
+          }}
+          renderOption={(props, label) => {
+            const n = roles.find((r) => r.label === label)?.n || 0;
+            return (
+              <li {...props} key={label}>
+                <Typography sx={{ typography: "s2" }}>
+                  {label}
+                  <Box component="span" sx={{ color: "text.tertiary" }}>
+                    {` · ${n} ${n === 1 ? "person" : "people"}`}
+                  </Box>
+                </Typography>
+              </li>
+            );
+          }}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Name"
+              onBlur={() => setNameTouched(true)}
+              error={nameTouched && !!problems.name}
+              helperText={
+                nameTouched && problems.name
+                  ? problems.name
+                  : roles.length
+                    ? "Pick a role already here to put them under it, or type a new one"
+                    : ""
+              }
+              inputProps={{ ...params.inputProps, "aria-label": "Name" }}
+            />
+          )}
           fullWidth
         />
         {/* Who they are in the conversation. People who share a name sit
