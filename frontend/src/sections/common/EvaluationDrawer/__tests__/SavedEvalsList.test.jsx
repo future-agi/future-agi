@@ -195,3 +195,39 @@ describe("SavedEvalsList — default path (no gating props)", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 });
+
+describe("SavedEvalsList — run drawer options", () => {
+  const done = { ...A, status: "Completed" };
+
+  it("hideRunStatus drops the Completed mark, hideStatus keeps its old reach", () => {
+    const { unmount } = render(
+      <SavedEvalsList evals={[done]} allColumns={[]} hideRunStatus />,
+    );
+    expect(screen.queryByLabelText("Completed")).toBeNull();
+    unmount();
+    render(<SavedEvalsList evals={[done]} allColumns={[]} />);
+    expect(screen.getByLabelText("Completed")).toBeInTheDocument();
+  });
+
+  it("clicking a disabled row checkbox does not open the row's details", async () => {
+    const user = userEvent.setup();
+    render(
+      <SavedEvalsList
+        evals={[A]}
+        allColumns={[]}
+        disabledReason={(_i, action) => (action === "select" ? "no" : "")}
+      />,
+    );
+    await user.click(rowCheckboxes()[0].parentElement.parentElement);
+    expect(screen.getByText("Details")).not.toBeVisible();
+  });
+
+  it("shows Owner only when the eval carries owner fields", async () => {
+    const user = userEvent.setup();
+    const bare = { id: "e9", name: "bare", eval_type: "llm", mapping: {} };
+    render(<SavedEvalsList evals={[bare]} allColumns={[]} />);
+    await user.click(screen.getByText("bare"));
+    expect(screen.getByText("Details")).toBeInTheDocument();
+    expect(screen.queryByText("Owner")).toBeNull();
+  });
+});

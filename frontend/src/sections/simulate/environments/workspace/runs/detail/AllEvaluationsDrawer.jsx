@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import { useQueryClient } from "@tanstack/react-query";
 import { Box, Button, Typography } from "@mui/material";
@@ -60,14 +59,9 @@ export default function AllEvaluationsDrawer({
   onRerun,
   onEdit,
   onAddEvaluations,
+  listKey = 0,
 }) {
   const queryClient = useQueryClient();
-  // Bumped each time the drawer opens, so a reopened list starts unticked
-  // while the list stays mounted through the close animation.
-  const [listKey, setListKey] = useState(0);
-  useEffect(() => {
-    if (open) setListKey((k) => k + 1);
-  }, [open]);
   const access = useSimulationAccess();
 
   const {
@@ -209,7 +203,7 @@ export default function AllEvaluationsDrawer({
             <SavedEvalsList
               key={listKey}
               evals={configs}
-              hideStatus
+              hideRunStatus
               disabledReason={disabledReason}
               onAddClick={() => onAddEvaluations?.()}
               onRunEvalClick={(config) => requestRerun([config])}
@@ -250,4 +244,6 @@ AllEvaluationsDrawer.propTypes = {
   onRerun: PropTypes.func,
   onEdit: PropTypes.func,
   onAddEvaluations: PropTypes.func,
+  // Changes on each open, so a reopened list starts unticked.
+  listKey: PropTypes.number,
 };

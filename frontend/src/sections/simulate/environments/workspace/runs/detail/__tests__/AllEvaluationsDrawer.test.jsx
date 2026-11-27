@@ -218,6 +218,35 @@ describe("AllEvaluationsDrawer", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("selects every runnable eval from the header and leaves the harness-only one out", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Evals (3)" }));
+    expect(screen.getByText("2 of 3 selected")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Evals (3)" })).toBeChecked();
+    expect(
+      screen.getByRole("button", { name: "Run Selected (2)" }),
+    ).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Evals (3)" }));
+    expect(screen.getByText("Evals (3)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run All (2)" })).toBeEnabled();
+  });
+
+  it("disables Run All and says nothing can run when every eval is harness-only", async () => {
+    useEnvironmentRunTest.mockReturnValue({
+      data: [CONFIGS[2], { ...CONFIGS[2], id: "c4", name: "other_claim" }],
+      isPending: false,
+      isError: false,
+    });
+    setup();
+
+    const runAll = screen.getByRole("button", { name: "Run All (0)" });
+    expect(runAll).toBeDisabled();
+    fireEvent.mouseOver(runAll.parentElement);
+    expect(await screen.findByText("Nothing here can run")).toBeInTheDocument();
+  });
+
   it("keeps a harness-only eval listed but unrunnable, and says why", async () => {
     setup();
 
@@ -364,6 +393,24 @@ describe("AllEvaluationsDrawer", () => {
     );
   });
 
+  it("disables an open Remove confirm while a removal is pending", () => {
+    const { rerenderWith } = setup();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove no_misselling" }),
+    );
+    const confirm = screen.getByRole("button", { name: "Remove" });
+    expect(confirm).toBeEnabled();
+
+    // Another removal starts: the open strip can't send a second one.
+    useRemoveAppliedEvaluation.mockReturnValue({
+      mutate: removeMutate,
+      isPending: true,
+    });
+    rerenderWith({});
+    expect(screen.getByRole("button", { name: "Remove" })).toBeDisabled();
+  });
+
   it("asks before removing an eval and keeps it when the ask is dismissed", () => {
     setup();
 
@@ -419,8 +466,9 @@ describe("AllEvaluationsDrawer", () => {
       screen.getByRole("button", { name: "Run Selected (1)" }),
     ).toBeEnabled();
 
+    // The run page bumps listKey each time it opens the drawer.
     rerenderWith({ open: false });
-    rerenderWith({ open: true });
+    rerenderWith({ open: true, listKey: 1 });
 
     expect(
       await screen.findByRole("button", { name: "Run All (2)" }),
@@ -548,11 +596,12 @@ describe("AllEvaluationsDrawer — list behaviour", () => {
     expect(screen.queryByText("1 selected")).toBeNull();
   });
 
-  it("shows no per-eval status, even for an eval whose config says Completed", () => {
+  it("shows no per-eval status, even for evals whose config says Completed, Error or Cancelled", () => {
     useEnvironmentRunTest.mockReturnValue({
       data: [
         { ...CONFIGS[0], status: "Completed" },
-        { ...CONFIGS[1], status: "Failed" },
+        { ...CONFIGS[1], status: "Error" },
+        { ...CONFIGS[2], status: "Cancelled" },
       ],
       isPending: false,
       isError: false,
@@ -561,7 +610,8 @@ describe("AllEvaluationsDrawer — list behaviour", () => {
 
     expect(screen.queryByLabelText("Completed")).toBeNull();
     expect(screen.queryByText("Completed")).toBeNull();
-    expect(screen.queryByText("Error")).toBeNull();
+    expect(screen.queryByLabelText("Error")).toBeNull();
+    expect(screen.queryByLabelText("User stopped evaluation")).toBeNull();
     expect(document.querySelector('[class*="MuiLinearProgress"]')).toBeNull();
   });
 

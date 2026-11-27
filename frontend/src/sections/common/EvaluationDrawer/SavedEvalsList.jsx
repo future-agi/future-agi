@@ -86,6 +86,7 @@ const EvalRow = ({
   onDelete,
   showRun,
   hideStatus,
+  hideRunStatus,
   isProjectEvals,
   allColumns,
   disableDelete,
@@ -133,6 +134,12 @@ const EvalRow = ({
     (v) => v && resolveColumnName(v, allColumns),
   );
   const rc = item.run_config || {};
+  const hasOwner = Boolean(
+    item.owner ||
+      item.eval_owner ||
+      item.template_name ||
+      item.eval_template_tags,
+  );
   const isSystem =
     (item.owner || item.eval_owner) === "system" ||
     (!isComposite && item.template_name && item.eval_template_tags); // heuristic fallback
@@ -168,12 +175,14 @@ const EvalRow = ({
       >
         {showRun && !isProjectEvals && (
           <Tooltip title={selectReason} arrow>
-            <span style={{ display: "flex" }}>
+            <span
+              style={{ display: "flex" }}
+              onClick={(e) => e.stopPropagation()}
+            >
               <Checkbox
                 size="small"
                 checked={selected}
                 disabled={Boolean(selectReason)}
-                onClick={(e) => e.stopPropagation()}
                 onChange={() => onToggle(item)}
                 inputProps={{ "aria-label": `Select ${item.name}` }}
                 sx={{ p: 0 }}
@@ -239,7 +248,7 @@ const EvalRow = ({
             </Box>
           </Tooltip>
         )}
-        {!hideStatus && isCompleted && (
+        {!hideStatus && !hideRunStatus && isCompleted && (
           <Tooltip title="Completed" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
@@ -250,7 +259,7 @@ const EvalRow = ({
             </Box>
           </Tooltip>
         )}
-        {!hideStatus && isError && (
+        {!hideStatus && !hideRunStatus && isError && (
           <Tooltip title="Error" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
@@ -261,7 +270,7 @@ const EvalRow = ({
             </Box>
           </Tooltip>
         )}
-        {!hideStatus && isStopped && (
+        {!hideStatus && !hideRunStatus && isStopped && (
           <Tooltip title="User stopped evaluation" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
@@ -479,6 +488,9 @@ const EvalRow = ({
             size="small"
             variant="contained"
             color={confirmAction === "delete" ? "error" : "primary"}
+            // A removal is already on its way: a second one would replace
+            // the first call's callbacks and lose its error.
+            disabled={confirmAction === "delete" && Boolean(deleteReason)}
             onClick={() => {
               if (confirmAction === "delete")
                 onDelete?.(isProjectEvals ? undefined : item);
@@ -627,13 +639,15 @@ const EvalRow = ({
             {/* ── Meta ── */}
             <Sec title="Details">
               <Box sx={{ display: "flex", flexDirection: "column", gap: 0.3 }}>
-                <Row
-                  label="Template"
-                  value={
-                    item.template_name || item.eval_template_name || item.name
-                  }
-                />
-                <Row label="Owner" value={isSystem ? "System" : "User"} />
+                {(item.template_name || item.eval_template_name) && (
+                  <Row
+                    label="Template"
+                    value={item.template_name || item.eval_template_name}
+                  />
+                )}
+                {hasOwner && (
+                  <Row label="Owner" value={isSystem ? "System" : "User"} />
+                )}
                 {item.evalGroup && <Row label="Group" value={item.evalGroup} />}
                 {item.description && (
                   <Row label="About" value={item.description} />
@@ -740,6 +754,7 @@ const SavedEvalsList = ({
   isProjectEvals = false,
   showRun = true,
   hideStatus = false,
+  hideRunStatus = false,
   hideHeader = false,
   allColumns,
   onClose,
@@ -864,7 +879,7 @@ const SavedEvalsList = ({
               : `Evals (${evals.length})`}
           </Typography>
           <Tooltip title={addReason} arrow>
-            <span>
+            <span tabIndex={addReason ? 0 : undefined}>
               <Button
                 variant="outlined"
                 size="small"
@@ -904,6 +919,7 @@ const SavedEvalsList = ({
             onDelete={onDeleteEvalClick}
             showRun={showRun}
             hideStatus={hideStatus}
+            hideRunStatus={hideRunStatus}
             isProjectEvals={isProjectEvals}
             allColumns={allColumns}
             disableDelete={disableDelete}
@@ -1018,6 +1034,8 @@ SavedEvalsList.propTypes = {
   isProjectEvals: PropTypes.bool,
   showRun: PropTypes.bool,
   hideStatus: PropTypes.bool,
+  // Hides only the Completed / Error / Stopped marks (keeps Running).
+  hideRunStatus: PropTypes.bool,
   hideHeader: PropTypes.bool,
   allColumns: PropTypes.array,
   onClose: PropTypes.func,

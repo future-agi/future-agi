@@ -105,6 +105,8 @@ export default function RunDetail({
   // carried their scenario has none, so it keeps the whole-run Run again.
   const [hasTickableCalls, setHasTickableCalls] = useState(null);
   const [allEvalsOpen, setAllEvalsOpen] = useState(false);
+  // Bumped on each open so the drawer's list starts unticked.
+  const [allEvalsKey, setAllEvalsKey] = useState(0);
   // The exact query the trace table reads, or null when it isn't mounted.
   const [tableQuery, setTableQuery] = useState(null);
   // The open call, where it was opened from ("table", "analytics" or "link")
@@ -390,7 +392,9 @@ export default function RunDetail({
             variant="outlined"
             size="small"
             onClick={() =>
-              backed ? setAllEvalsOpen(true) : setAddingEvals(true)
+              backed
+                ? (setAllEvalsKey((k) => k + 1), setAllEvalsOpen(true))
+                : setAddingEvals(true)
             }
             // A re-grade reads as running, but its evals stay reachable so the
             // drawer can say why they are locked until grading finishes.
@@ -697,6 +701,7 @@ export default function RunDetail({
       {backed && (
         <AllEvaluationsDrawer
           open={allEvalsOpen}
+          listKey={allEvalsKey}
           onClose={() => setAllEvalsOpen(false)}
           env={env}
           runTestId={testId}
