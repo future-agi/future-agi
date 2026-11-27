@@ -1054,6 +1054,56 @@ def test_trace_count_eval_breakdown_uses_latest_recorded_result_in_every_range(
         }, (name, series)
 
 
+def test_eval_breakdown_label_is_the_same_for_every_metric_it_breaks_down(
+    observe_project, seed
+):
+    """Previous PR head fails: a choice eval used as a breakdown with no
+    output-type hint took the template's type only under a system metric
+    ("red"). Under an eval metric of the same template it fell back to the
+    score formatter, and under another template's eval metric too, so the same
+    trace was grouped as "(not set)" or "0" there.
+    Fixed: every breakdown path falls back to the template's configured type.
+    """
+
+    from model_hub.models.choices import OwnerChoices
+    from model_hub.models.evals_metric import EvalTemplate
+
+    choice = EvalTemplate(
+        name=str(uuid4()),
+        organization=observe_project.organization,
+        workspace=observe_project.workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "Choice"},
+    )
+    EvalTemplate.no_workspace_objects.bulk_create([choice])
+    choice_id = str(choice.id)
+    score_id = str(uuid4())
+    day0 = _day(datetime.now(UTC) - timedelta(days=5))
+    trace = seed.trace(observe_project, day0 + timedelta(hours=10))
+    seed.result(trace, choice_id, day0 + timedelta(hours=11), value="red")
+    seed.result(trace, score_id, day0 + timedelta(hours=11), value=0.5)
+    breakdown = {"name": choice_id, "type": "eval_metric", "config_id": choice_id}
+    window = _custom(day0 - timedelta(days=1), day0 + timedelta(days=2))
+
+    for name, metric in {
+        "system metric": _system_metric("trace_count", "count"),
+        "same template": _eval_metric(
+            choice_id, aggregation="count", output_type="CHOICE"
+        ),
+        "other template": _eval_metric(score_id, aggregation="count"),
+    }.items():
+        result = _run_worker(
+            seed,
+            _config([observe_project], window, [metric], breakdowns=[breakdown]),
+        )
+        labels = {
+            line["name"]
+            for line in _metric(result, metric["name"])["series"]
+            if any(point["value"] for point in line["data"])
+        }
+        assert labels == {"red"}, (name, labels)
+
+
 # ---------------------------------------------------------------------------
 # 7. Regression guards for the held candidate's findings (pass on dev)
 # ---------------------------------------------------------------------------

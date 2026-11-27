@@ -2234,6 +2234,11 @@ class DashboardQueryBuilder:
                     )
                     or ""
                 )
+                # Same fallback as the system-metric breakdown: a missing or
+                # unusable hint takes the template's own type, so one eval
+                # gets one label whatever metric it breaks down (TH-10545).
+                if not bd_output_type and ev_tid:
+                    bd_output_type = self._configured_eval_output_type(ev_tid) or ""
 
                 if ev_tid == eval_template_id:
                     if bd_output_type == "PASS_FAIL":
