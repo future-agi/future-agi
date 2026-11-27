@@ -90,7 +90,7 @@ const DIAGNOSIS: Json = {
   status: 'completed',
   report: null,
   error_message: null,
-  summary: { measured_call_count: 12, broken_goal_count: 1, broken_call_count: 6, one_off_count: 0 },
+  summary: { measured_call_count: 12, broken_goal_count: 1, broken_call_count: 6 },
   goals: [
     {
       goal: 'escalated',
@@ -102,7 +102,10 @@ const DIAGNOSIS: Json = {
       unexplained_call_ids: [],
     },
   ],
-  one_offs: [],
+  one_offs: [
+    { id: 'oo-1', title: 'Omits the fare', phrase: 'omits the fare', call_ids: ['call-a', 'call-b'] },
+    { id: 'oo-2', title: 'Omits The Fare', phrase: 'Omits the fare', call_ids: ['call-c'] },
+  ],
 };
 // What the drawer reads when it opens. A finished diagnosis is read, never queued again.
 const DIAGNOSIS_ON_OPEN: Json = DIAGNOSIS;
@@ -252,6 +255,7 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
       'the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit',
       'the browser lands on the environment\'s improvements/<id> URL of the epoch the POST returned',
       'the epoch page\'s stages are Writing variations, Reproducing, Diagnosing, Proposing and Checking, and Writing variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"',
+      'the Also seen list shows the two same-name one-off issues as one "Omits the fare" row with a View',
       'the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)',
     ],
   }),
@@ -289,6 +293,12 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
   await test.step('ui: the diagnosis offers Run Epoch', async () => {
     await page.getByRole('button', { name: 'Debug failures' }).click();
     await expect(page.getByRole('button', { name: 'Run Epoch', exact: true })).toBeVisible({ timeout: UI_READY });
+    // The two same-name one-offs read as one plain row counting their 3 calls, with a View.
+    const fare = page.getByText('Omits the fare', { exact: true });
+    await expect(fare).toHaveCount(1);
+    const fareRow = fare.locator('..');
+    await expect(fareRow.getByText('3', { exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(fareRow.getByRole('button', { name: 'View', exact: true })).toBeVisible({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
   const dialog = page.getByRole('dialog').filter({ hasText: `Run Epoch on ${AGENT_NAME}` });
