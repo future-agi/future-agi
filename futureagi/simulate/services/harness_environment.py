@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
@@ -39,10 +39,12 @@ from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
 from simulate.constants.harness_environment import (
+    ADAPTATION_APPROVAL_PREFIX,
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
     RUN_KIND_SIMULATE,
+    STATUS_AWAITING_APPROVAL,
     STATUS_BUILDING,
     STATUS_COMPLETED,
     STATUS_FAILED,
@@ -53,6 +55,7 @@ from simulate.constants.hosted_harness import WORKER_ENFORCEMENT_LABELS
 from simulate.models import (
     AgentVersion,
     HarnessEnvironmentVersion,
+    HostedHarnessConversation,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -79,6 +82,9 @@ from simulate.services.run_reliability_v3 import trial_passes
 from simulate.types import ContractCallActor, ContractWorker, worker_enforcement
 
 if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
+
+    from simulate.services.agent_fix_agents import EpochPickable
     from simulate.services.harness_actor_rules import ActorRecord, ActorRules
     from simulate.services.scenario_faults import FaultTarget
 from simulate.utils.ended_reason import canonical_ended_reasons
@@ -223,21 +229,49 @@ def _blank_as_null(expression: Any) -> NullIf:
 
 
 def status_counts(queryset: QuerySet[HostedHarnessJob]) -> dict[str, int]:
-    statuses = (STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+    statuses = (
+        STATUS_AWAITING_APPROVAL,
+        STATUS_BUILDING,
+        STATUS_RUNNING,
+        STATUS_COMPLETED,
+        STATUS_FAILED,
+    )
     return queryset.order_by().aggregate(
         **{status: Count("id", filter=_status_q(status)) for status in statuses}
     )
 
 
+def _asked_to_approve() -> QuerySet[HostedHarnessConversation]:
+    """Conversations whose open question is the adaptation's approval: the mapping has been
+    checked on every case and the person is asked whether to build it."""
+    return HostedHarnessConversation.no_workspace_objects.filter(
+        blocking_input__prompt__startswith=ADAPTATION_APPROVAL_PREFIX
+    )
+
+
+def _awaiting_ids() -> QuerySet[HostedHarnessJob, Any]:
+    """Adaptations in review that are awaiting approval: the approval question is open and
+    nobody has answered it, whatever an earlier attempt's was answered. Until it is asked the
+    mapping is still being checked (building), as the design says, and Approve has nothing to
+    answer."""
+    return HostedHarnessJob.no_workspace_objects.filter(
+        payload__metadata__adaptation__mode="review",
+        id__in=_asked_to_approve().values("job_id"),
+    ).values("id")
+
+
 def _status_q(status: str) -> Q:
     known = _TERMINAL_FAILED | _RUN_STATES | {HostedHarnessJob.State.COMPLETED}
+    # By id: a negated JSON lookup is NULL, not true, on a job that has no adaptation.
+    if status == STATUS_AWAITING_APPROVAL:
+        return ~Q(state__in=known) & Q(id__in=_awaiting_ids())
     if status == STATUS_COMPLETED:
         return Q(state=HostedHarnessJob.State.COMPLETED)
     if status == STATUS_FAILED:
         return Q(state__in=_TERMINAL_FAILED)
     if status == STATUS_RUNNING:
         return Q(state__in=_RUN_STATES)
-    return ~Q(state__in=known)
+    return ~Q(state__in=known) & ~Q(id__in=_awaiting_ids())
 
 
 def _voice_q() -> Q:
@@ -320,7 +354,10 @@ def environment_row(
     }
 
 
-def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
+def environment_rows(
+    jobs: Sequence[WithAnnotations[HostedHarnessJob, EpochPickable]],
+) -> list[dict[str, Any]]:
+    """The list's rows, from jobs ``with_epoch_pickable`` annotated."""
     executions = TestExecution.no_workspace_objects.filter(
         id__in=[job.last_execution_id for job in jobs if job.last_execution_id]
     ).select_related("agent_version", "run_test")
@@ -331,12 +368,15 @@ def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
             **environment_row(job),
             "agent": agents.get(job.run_test_id),
             "last_run": last_runs.get(job.last_execution_id),
+            "epoch_pickable": job.epoch_pickable,
         }
         for job in jobs
     ]
 
 
-def _agents_by_run_test(jobs: list[HostedHarnessJob]) -> dict[Any, dict[str, Any]]:
+def _agents_by_run_test(
+    jobs: Sequence[HostedHarnessJob],
+) -> dict[Any, dict[str, Any]]:
     run_tests = RunTest.objects.filter(
         id__in=[job.run_test_id for job in jobs if job.run_test_id],
         deleted=False,
@@ -512,6 +552,13 @@ def status_for(job: HostedHarnessJob) -> str:
         return STATUS_FAILED
     if job.state in _RUN_STATES:
         return STATUS_RUNNING
+    adaptation = ((job.payload or {}).get("metadata") or {}).get("adaptation") or {}
+    if (
+        adaptation.get("mode") == "review"
+        # Only once the approval is asked: before it, the mapping is still being checked.
+        and _asked_to_approve().filter(job=job).exists()
+    ):
+        return STATUS_AWAITING_APPROVAL
     return STATUS_BUILDING
 
 
@@ -733,6 +780,96 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
         "evaluations": {"selected": selected, "results": _results(receipts)},
         "settings": _settings(job),
         "actors_tab": _actors_tab(contract_section),
+        "composition": _composition_section(job),
+    }
+
+
+def _composition_section(job: HostedHarnessJob) -> dict[str, Any] | None:
+    """What a composition is made of (contract §7.6); None for an authored environment."""
+    from simulate.models import (
+        AgentVersion,
+        HarnessEnvironmentRelease,
+        HarnessSuiteRelease,
+    )
+    from simulate.services.harness_releases import _visible, composition_of
+
+    composition = composition_of(job)
+    if composition is None:
+        return None
+    binding = composition["binding"]
+    suite = _visible(
+        HarnessSuiteRelease, job.organization, composition["suite"]["digest"]
+    )
+    manifest = suite.manifest if suite is not None else {}
+    profile = manifest.get("policy_profile") or {}
+    environment = _visible(
+        HarnessEnvironmentRelease,
+        job.organization,
+        composition["environment"][-1]["digest"],
+    )
+    scored = profile.get("scored_agent_rules") or {}
+    version = (
+        AgentVersion.no_workspace_objects.filter(
+            id=binding["agent"]["agent_version_id"]
+        )
+        .select_related("agent_definition")
+        .first()
+    )
+    proof = composition.get("binding_proof")
+    return {
+        "environment": [
+            {"digest": entry["digest"], "name": entry["name"]}
+            for entry in composition["environment"]
+        ],
+        "suite": {
+            "digest": composition["suite"]["digest"],
+            "name": composition["suite"]["name"],
+            "parent_digest": (manifest.get("parent") or {}).get("digest"),
+            "policy_profile": profile,
+            "unscored_agent_rules": [
+                {"id": rule["id"], "text": rule.get("text") or ""}
+                for rule in ((environment.policy if environment else {}) or {}).get(
+                    "rules"
+                )
+                or []
+                if rule.get("class") == "agent_policy" and rule["id"] not in scored
+            ],
+            "scenarios": [
+                {
+                    "key": entry["key"],
+                    "origin": entry["origin"],
+                    "derived_from": entry.get("derived_from"),
+                }
+                for entry in manifest.get("scenarios") or []
+            ],
+        },
+        "binding": {
+            "digest": binding["digest"],
+            "mode": binding["mode"],
+            "agent_tools": binding.get("agent_tools") or [],
+            "tools": binding.get("tools") or [],
+        },
+        "agent": {
+            **{
+                key: binding["agent"][key]
+                for key in ("agent_definition_id", "agent_version_id", "connector")
+            },
+            "name": (
+                version.agent_definition.agent_name or None
+                if version is not None
+                else None
+            ),
+            "version_name": (version.version_name or None) if version else None,
+        },
+        "alignment": composition.get("alignment"),
+        "binding_proof": (
+            {
+                "passed": bool(proof.get("passed")),
+                "scenarios": proof.get("scenarios") or {},
+            }
+            if isinstance(proof, dict)
+            else None
+        ),
     }
 
 
@@ -874,6 +1011,11 @@ def _catalogue_index(catalogue: Any) -> dict[str, dict[str, Any]]:
     return index
 
 
+def environment_sub_goals(environment: HostedHarnessJob) -> dict[str, dict[str, Any]]:
+    """What each sub-goal of an environment checks, by name."""
+    return _catalogue_index(stage_output(environment, "sub_goals"))
+
+
 def sub_goal_catalogue(
     run_test_id, *, test_execution_id=None
 ) -> dict[str, dict[str, Any]]:
@@ -889,7 +1031,7 @@ def sub_goal_catalogue(
     for environment in HostedHarnessJob.no_workspace_objects.filter(
         id__in=list(environment_ids)[:1]
     ):
-        return _catalogue_index(stage_output(environment, "sub_goals"))
+        return environment_sub_goals(environment)
     return {}
 
 

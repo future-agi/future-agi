@@ -7,6 +7,8 @@ import {
   completedStageCount,
   environmentName,
   errorMessage,
+  isAdaptationApproval,
+  isAdaptationYes,
   STAGE_STATE,
   stageState,
   stages,
@@ -352,5 +354,22 @@ describe("environmentName", () => {
         source: { kind: "archive", archive_artifact_id: "abc123" },
       }),
     ).toBe("\u2014");
+  });
+});
+
+describe("isAdaptationApproval", () => {
+  it("knows the workbench's approval question by how it opens", () => {
+    expect(
+      isAdaptationApproval({ prompt: "Use this binding for ShopMate on retail?" }),
+    ).toBe(true);
+    expect(isAdaptationApproval({ prompt: "Which tool cancels?" })).toBe(false);
+    expect(isAdaptationApproval(null)).toBe(false);
+  });
+
+  it("takes only the workbench's own yes answers as approval", () => {
+    for (const yes of ["yes", " Yes ", "y", "approve", "approved", "ok", "true"])
+      expect(isAdaptationYes(yes)).toBe(true);
+    for (const other of ["no", "yes, but change get_order", "", undefined])
+      expect(isAdaptationYes(other)).toBe(false);
   });
 });

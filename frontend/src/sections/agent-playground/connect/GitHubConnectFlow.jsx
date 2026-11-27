@@ -52,12 +52,11 @@ import { LogoTile, OptionCard, TextLink } from "./connectBits";
 import { ACTION_SX, MONO } from "./connectStyles";
 import useConnectPreflight from "./useConnectPreflight";
 
-const INSTALL_PATH = `${paths.dashboard.settings.integrations}?${new URLSearchParams(
-  {
+const installPath = (returnTo) =>
+  `${paths.dashboard.settings.integrations}?${new URLSearchParams({
     platform: GITHUB_SOURCE,
-    return_to: `${CONNECT_AGENT_PATH}?source=${GITHUB_SOURCE}`,
-  },
-)}`;
+    return_to: returnTo,
+  })}`;
 
 const keepAll = (options) => options;
 
@@ -331,7 +330,12 @@ const defaultName = (picked, source) =>
  * find the agents in it, pick one, give it a name and its values, connect. The
  * agent page then shows it being read.
  */
-export default function GitHubConnectFlow({ outcome, onComplete, draftKey }) {
+export default function GitHubConnectFlow({
+  outcome,
+  onComplete,
+  draftKey,
+  returnTo = `${CONNECT_AGENT_PATH}?source=${GITHUB_SOURCE}`,
+}) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const github = useGitHubConnection({ refetchOnWindowFocus: true });
@@ -410,7 +414,7 @@ export default function GitHubConnectFlow({ outcome, onComplete, draftKey }) {
   const canInstall =
     !!RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
   const canConnect = canInstall;
-  const install = () => navigate(INSTALL_PATH);
+  const install = () => navigate(installPath(returnTo));
 
   const pickRepository = (next) => {
     setRepository(next);
@@ -807,4 +811,5 @@ GitHubConnectFlow.propTypes = {
   outcome: PropTypes.string,
   onComplete: PropTypes.func,
   draftKey: PropTypes.string,
+  returnTo: PropTypes.string,
 };

@@ -431,7 +431,7 @@ def scrub_pii_in_value(value: Any, *, strict: bool = False) -> Any:
         return scrub_pii_in_string(value, strict=strict)
     if isinstance(value, dict):
         scrubbed = {}
-        next_suffix = {}
+        next_suffix: dict[str, int] = {}
         for key, item in value.items():
             name = key
             if isinstance(key, str):
