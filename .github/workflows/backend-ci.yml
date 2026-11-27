@@ -59,12 +59,16 @@ env:
   # suite on the same candidates and full controls. The Metrics suite was
   # measured at about 368 test-minutes; its two longest cases run about 19
   # minutes each against the real pass deadline, which bounds every shard.
-  # The main suite was measured at about 196 test-minutes (dev, 21 Nov 2026),
-  # so 24 legs carry about 8 minutes of tests each, on top of about 5.5
-  # minutes that every leg pays (dependency install, and pytest collecting
-  # the whole suite before it deselects).
-  SPLITS: "24"
-  METRICS_SPLITS: "16"
+  # Every leg also pays about 11 minutes before its first test (dependency
+  # install, the database migrate) and about 2.5 more while pytest collects
+  # the whole suite before it deselects. Three queue runs (27 Nov 2026) put
+  # the main suite at about 310 shard-minutes and Metrics at about 345: at
+  # 24 and 16 legs, Metrics legs ran up to 41 minutes and main legs up to 29.
+  # Metrics has one test with a 20.5-minute floor (test_duration_floors.json),
+  # so more than 20 Metrics legs cannot shorten its slowest leg. 20 and 20
+  # keep the job count and bring the slowest leg near that floor.
+  SPLITS: "20"
+  METRICS_SPLITS: "20"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
   # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).
   PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker"
