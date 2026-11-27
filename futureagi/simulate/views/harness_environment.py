@@ -145,6 +145,7 @@ from simulate.services import (
     harness_file_roles,
 )
 from simulate.services.agent_fix_agents import with_epoch_pickable
+from simulate.services.agent_overview import agent_environment_ids
 from simulate.services.evidence_import import (
     TranscriptInput,
     add_to_suite,
@@ -1836,7 +1837,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         )
         agent_definition_id = query.get("agent_definition_id")
         if agent_definition_id is not None:
-            jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
+            # The agent's own environments, as its count has them: a build not yet linked to a
+            # test is the agent's through the version it was made from.
+            jobs = jobs.filter(id__in=agent_environment_ids(agent_definition_id))
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
         response = paginator.get_paginated_response(environment_rows(page or []))

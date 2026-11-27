@@ -211,6 +211,16 @@ def observe_project(agent: AgentDefinition, kind: str | None) -> dict[str, str] 
     return {"id": str(project.id), "name": project.name}
 
 
+def agent_environment_ids(agent_id: UUID) -> "QuerySet[HostedHarnessJob]":
+    """The ids of the environments that test an agent, by the rule its count uses.
+
+    A build holds its agent through the version it was made from until its scenarios are
+    submitted and it is linked to a test, so one that fails or is cancelled before then is still
+    the agent's. For a subquery: the caller's queryset scopes the organization and workspace.
+    """
+    return _environment_jobs().filter(_owner=agent_id).values("id")
+
+
 def environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:
     """How many environments test each agent, keyed by agent id; absent when none."""
     rows = (
