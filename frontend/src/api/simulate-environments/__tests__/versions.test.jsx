@@ -349,7 +349,9 @@ describe("useLockPreview", () => {
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
     await act(() =>
-      result.current.mutateAsync([{ piece: "suite", parentId: "s3" }]),
+      result.current.mutateAsync({
+        drafts: [{ piece: "suite", parentId: "s3" }],
+      }),
     );
 
     expect(stale()).toBe(true);
