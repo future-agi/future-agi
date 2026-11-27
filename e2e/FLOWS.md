@@ -3829,7 +3829,7 @@
 
 **Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
 
-**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:241`
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:244`
 
 **Tags:** —
 
@@ -3850,6 +3850,7 @@
 - the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
 - the epoch page's stages are Writing variations, Reproducing, Diagnosing, Proposing and Checking, and Writing variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the Also seen list shows the two same-name one-off issues as one "Omits the fare" row with a View
 - the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
 
 ### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
