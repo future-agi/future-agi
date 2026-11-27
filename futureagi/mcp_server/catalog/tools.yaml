@@ -524,7 +524,7 @@ tools:
     access: read
   - name: run_debug_failures
     group: epoch
-    description: Start Debug failures on a finished run (test execution), one analysis job per call. It may incur usage charges. A run that has not finished is refused; poll get_debug_failures for the diagnosis.
+    description: Start Debug failures on a finished run (test execution), one analysis job per call. It may incur usage charges. Starting a diagnosis needs a finished run with at least 15 connected calls and a failing call; a run below that is refused with the reason. A diagnosis already made is returned as it is. Poll get_debug_failures for the diagnosis.
     operation: {method: POST, path: "/simulate/test-executions/{test_execution_id}/debug-analysis/"}
     access: write
     open_world: true

@@ -189,6 +189,7 @@ export function checkRunCalls(ids: Ids, executionId: string): Json {
       ordinal: passed ? 9 : 8,
       agent_version: passed ? 'v2' : 'v1',
       agent_type: 'text',
+      connected_calls: 2,
       resume: { resumable: false, finished: 2, unfinished: 0, history: [] },
       summary,
     },
