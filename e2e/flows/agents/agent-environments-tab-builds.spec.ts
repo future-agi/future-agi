@@ -10,6 +10,7 @@ const TAB = (agentId: string) => `/dashboard/agents/connected/${agentId}/environ
 const ENVIRONMENTS = '/simulate/api/harness-environments/';
 // frontend/src/utils/axios.js endpoints.agentDefinitions.detail; AgentDefinitionDetailView.get serves
 // environment_count, which AgentDetailLayout.jsx renders as the tab label `Environments ${environmentCount}`.
+// Its fields are at the top level of the body, with no `result` wrapper.
 const AGENT = (agentId: string) => `/simulate/agent-definitions/${agentId}/`;
 // AgentEnvironmentsTab.jsx: each row's Testing cell is data-testid `testing-${env.id}`.
 const ROW_PREFIX = 'testing-';
@@ -96,8 +97,7 @@ test('AGENT-E2E-005: an agent\'s Environments tab lists its failed build that no
     const replay = await actor.api.get<EnvironmentsPage>(ENVIRONMENTS, {
       agent_definition_id: seed.agentDefinitionId, page: 1, limit: 100,
     });
-    const raw = await actor.api.get<AgentDetail | { result: AgentDetail }>(AGENT(seed.agentDefinitionId));
-    const agent = 'result' in raw ? raw.result : raw;
+    const agent = await actor.api.get<AgentDetail>(AGENT(seed.agentDefinitionId));
     await testInfo.attach('api-replay', { contentType: 'application/json', body: JSON.stringify({ replay, agent }, null, 2) });
     for (const body of [listed, replay]) {
       expect(body.count).toBe(expected.length);
