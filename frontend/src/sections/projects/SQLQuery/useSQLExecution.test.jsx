@@ -237,6 +237,7 @@ it("stops a waiting dashboard submission when cancelled", async () => {
 });
 
 it("bounds admission retries instead of retrying permanently", async () => {
+  vi.useFakeTimers();
   sqlApi.runSaved.mockRejectedValue(
     Object.assign(new Error("busy"), { statusCode: 429 }),
   );
@@ -247,9 +248,40 @@ it("bounds admission retries instead of retrying permanently", async () => {
     }),
   );
   await act(async () => {
-    await result.current.run({ saved_query_id: "waiting" }, true);
+    const pending = result.current.run({ saved_query_id: "waiting" }, true);
+    await vi.advanceTimersByTimeAsync(10);
+    await pending;
   });
   expect(result.current.busy).toBeFalsy();
   expect(result.current.error).toBe("busy");
   expect(sqlApi.runSaved).toHaveBeenCalledTimes(1);
+});
+
+it("stops at the admission deadline when the retry timer fires early", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  // Date.now() lags the timer by 1 ms: the wait for the rest of the budget
+  // ends while the wall clock still reads just before the deadline.
+  let now = 1_000;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    sqlApi.runSaved.mockRejectedValue(
+      Object.assign(new Error("busy"), { statusCode: 429 }),
+    );
+    const { result } = renderHook(() =>
+      useSQLExecution("project", {
+        retryAdmission: true,
+        admissionTimeoutMs: 10,
+      }),
+    );
+    await act(async () => {
+      const pending = result.current.run({ saved_query_id: "waiting" }, true);
+      now += 9;
+      await vi.advanceTimersByTimeAsync(10);
+      expect(sqlApi.runSaved).toHaveBeenCalledTimes(1);
+      await pending;
+    });
+    expect(result.current.error).toBe("busy");
+  } finally {
+    clock.mockRestore();
+  }
 });
