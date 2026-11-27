@@ -41,9 +41,11 @@ KEY_FILES = frozenset(
         "tfc/ee_loader.py",
         ".ci/db_dump.py",
         ".ci/migrated_db.py",
+        # falcon_ai 0008 seeds the builtin skills from YAML.
+        "ee/falcon_ai/builtin_skills_loader.py",
     }
 )
-KEY_DIRS = ("tfc/settings/",)
+KEY_DIRS = ("tfc/settings/", "ee/falcon_ai/builtin_skills/")
 LEDGER = "COPY public.django_migrations (id, app, name, applied) FROM stdin;"
 # pg_dump ends a dump with this line.
 COMPLETE = "-- PostgreSQL database dump complete"
@@ -303,27 +305,32 @@ def seed_digest(user, database, prefix):
 
 
 def fingerprint_rows(output):
-    digest = hashlib.sha256()
-    rows = None
+    """Every line counts, in any order: a data-only pg_dump orders its tables
+    by foreign keys and breaks ties by object id, which a restore renumbers."""
+    blocks = []
+    other = []
+    header = rows = None
     complete = False
     for line in output.split(b"\n"):
         if rows is not None:
             if line != b"\\.":
                 rows.append(hashlib.sha256(line).digest())
                 continue
-            for row in sorted(rows):
-                digest.update(row)
+            blocks.append(hashlib.sha256(header + b"".join(sorted(rows))).digest())
             rows = None
         elif line.startswith(b"COPY ") and line.endswith(b" FROM stdin;"):
+            header = line + b"\n"
             rows = []
         elif re.fullmatch(rb"\\(?:un)?restrict [A-Za-z0-9]+", line):
             continue
-        elif line == COMPLETE.encode():
-            complete = True
-        digest.update(line + b"\n")
+        else:
+            complete = complete or line == COMPLETE.encode()
+            other.append(hashlib.sha256(line).digest())
     if rows is not None or not complete:
         raise DumpError("incomplete seed comparison")
-    return digest.hexdigest()
+    return hashlib.sha256(
+        b"".join(sorted(other)) + b"\0" + b"".join(sorted(blocks))
+    ).hexdigest()
 
 
 def main(argv=None):

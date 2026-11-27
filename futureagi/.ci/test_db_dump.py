@@ -448,6 +448,9 @@ class KeyTest(Workspace):
             "futureagi/tfc/settings/test.py",
             "futureagi/conftest.py",
             "futureagi/.ci/db_dump.py",
+            # Data a migration reads before post_migrate.
+            "futureagi/ee/falcon_ai/builtin_skills/cluster-rca.yaml",
+            "futureagi/ee/falcon_ai/builtin_skills_loader.py",
         ):
             self.edit(root, name, "changed\n")
             self.commit(root)
@@ -516,6 +519,32 @@ class SeedParityTest(unittest.TestCase):
         with self.assertRaises(db_dump.DumpError):
             db_dump.fingerprint_rows(b"COPY public.t (v) FROM stdin;\nx\n")
 
+    def test_table_and_sequence_order_is_not_data(self):
+        # A data-only dump orders tables by foreign keys, ties by object id,
+        # and a restore renumbers object ids.
+        first = self.snapshot(("1\ta",), table="first")
+        second = self.snapshot(("2\tb",), sequence=5, table="second")
+
+        def body(dump):
+            return dump.rsplit(db_dump.COMPLETE.encode(), 1)[0]
+
+        end = db_dump.COMPLETE.encode() + b"\n"
+        self.assertEqual(
+            db_dump.fingerprint_rows(body(first) + body(second) + end),
+            db_dump.fingerprint_rows(body(second) + body(first) + end),
+        )
+        # A row moved to another table is a different database.
+        moved = self.snapshot(("2\tb",), table="first")
+        self.assertNotEqual(
+            db_dump.fingerprint_rows(body(first) + body(second) + end),
+            db_dump.fingerprint_rows(
+                body(self.snapshot((), table="first"))
+                + body(moved)
+                + body(self.snapshot(("1\ta",), sequence=5, table="second"))
+                + end
+            ),
+        )
+
 
 class SetupTest(Workspace):
     def test_service_or_sync_failure_is_not_hidden_and_only_one_up_runs(self):
@@ -583,6 +612,7 @@ class ProducerTest(Workspace):
               if [ -n "${CI_PRESEED_DUMP:-}" ]; then echo "$overlay" > "$CI_PRESEED_DUMP"; fi""",
             "python3": """case "$3" in
               restore) exit "${RESTORE_STATUS:-0}" ;;
+              dump) echo restored > "$4" ;;
               compare) exit "${COMPARE_STATUS:-0}" ;;
               *) exit 1 ;;
             esac""",
@@ -924,7 +954,7 @@ class BackendWorkflowTest(unittest.TestCase):
         self.assertIn("--create-db", self.producer)
         self.assertIn('mv ee/cloud "$RUNNER_TEMP/held-ee-checkout"', self.producer)
         self.assertIn(
-            'compare "$fresh/replayed.sql.gz" "$fresh/fresh.sql.gz"', self.producer
+            'compare "$fresh/replayed.sql.gz" "$fresh/control.sql.gz"', self.producer
         )
         self.assertLess(
             self.producer.index("[[ $PRODUCE == true ]] || exit 0"),

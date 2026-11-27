@@ -32,8 +32,8 @@ def show(a, b, limit=120):
     print(f"== masked compare {a} vs {b}:", len(db_dump.compare(f"{d}/{a}.sql.gz", f"{d}/{b}.sql.gz")), flush=True)
 
 
-show("pub1", "rt0")
-show("rt0", "rt")
-show("pub1", "rt")
+show("pub1", "rt", limit=4)
+show("frt", "rt", limit=40)
+show("frt", "frt2", limit=10)
 for name in ("pub1", "rt0", "rt"):
     print(name, open(f"{d}/{name}.digest").read().strip())

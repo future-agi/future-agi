@@ -18,6 +18,13 @@ fi
 CI_PRESEED_DIGEST="$fresh/preseed" CI_PRESEED_DUMP="$fresh/fresh.sql.gz" \
   CI_MIGRATE_INPUTS="$RUNNER_TEMP/migrate-inputs" PYTHONPATH=.ci \
   uv run pytest -p migrate_inputs .ci/migrated_db.py --create-db -q
+# pg_dump does not print every restored definition as it printed the migrated
+# one (CHECK ... = ANY (ARRAY[...]) comes back with each element cast), and a
+# second round trip changes nothing. So compare dumps of restored databases:
+# the control's, restored once, against the replayed dump.
+"${pg[@]}" createdb -U test_user test_ci_control
+"${tool[@]}" restore "$fresh/fresh.sql.gz" test_user test_ci_control "${pg[@]}"
+"${tool[@]}" dump "$fresh/control.sql.gz" test_user test_ci_control "${pg[@]}"
 # Restore a dump and run pytest's migrate on it, as a shard does. That migrate
 # applies whatever the dump lacks (the overlay's part on internal runs) and
 # records the database again at the post_migrate boundary.
@@ -32,7 +39,7 @@ if [[ $FOUND == true ]]; then
   # checkout migrates, or the run fails: a wrong key is red, never green.
   replay "$stage/dump.sql.gz"
   cmp "$stage/preseed" "$fresh/replayed"
-  "${tool[@]}" compare "$fresh/replayed.sql.gz" "$fresh/fresh.sql.gz"
+  "${tool[@]}" compare "$fresh/replayed.sql.gz" "$fresh/control.sql.gz"
   exit 0
 fi
 [[ $PRODUCE == true ]] || exit 0
@@ -62,7 +69,7 @@ cmp -s "$preseed" "$fresh/replayed" || {
   echo 'Could not compare seed digests.' >&2
   exit "$status"
 }
-"${tool[@]}" compare "$fresh/replayed.sql.gz" "$fresh/fresh.sql.gz" > "$fresh/parity.log" || {
+"${tool[@]}" compare "$fresh/replayed.sql.gz" "$fresh/control.sql.gz" > "$fresh/parity.log" || {
   status=$?
   # db_dump.COMPARE_DIFFERENT; every other nonzero status is a tool failure.
   if [[ $status == 3 ]]; then unqualified 'The public dump plus this checkout differs from a fresh migrate'; fi
