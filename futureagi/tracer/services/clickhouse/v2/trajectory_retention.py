@@ -37,13 +37,30 @@ def _table_exists(client: Any, table_name: str = "trajectory_items") -> bool:
 
 
 def _open_client(client: Any | None) -> tuple[Any | None, bool]:
+    """Return a writable ClickHouse HTTP client for ``ALTER TABLE ... DELETE``.
+
+    Note: ``get_reader()`` opens a ``readonly=1`` client that ClickHouse
+    rejects with ``Code: 164 (READONLY)`` on ``ALTER TABLE DELETE`` mutations.
+    Open a dedicated writable client from ``get_v2_config()`` (matching
+    ``trace_writer._get_client``) and close it after the sweep finishes.
+    """
     if client is not None:
         return client, False
     try:
-        from tracer.services.clickhouse.v2 import get_reader
+        import clickhouse_connect
 
-        reader = get_reader()
-        return reader._client, True
+        from tracer.services.clickhouse.v2 import get_v2_config
+
+        cfg = get_v2_config()
+        ch_client = clickhouse_connect.get_client(
+            host=cfg["host"],
+            port=cfg["http_port"],
+            username=cfg["user"],
+            password=cfg["password"] or "",
+            database=cfg["database"],
+            send_receive_timeout=15,
+        )
+        return ch_client, True
     except Exception:
         logger.warning("trajectory_items_client_open_failed", exc_info=True)
         return None, False

@@ -1165,3 +1165,45 @@ def test_trajectory_retention_and_project_delete():
     )
     assert "first_seen_at < toDateTime64" in post040.commands[1][0]
     assert post040.commands[1][1]["pid"] == PROJECT_ID
+
+
+@pytest.mark.unit
+def test_trajectory_retention_opens_writable_client_not_readonly_reader(monkeypatch):
+    """_open_client(None) opens a writable CH client, not readonly get_reader()."""
+    import clickhouse_connect
+
+    from tracer.services.clickhouse import v2 as ch_v2
+    from tracer.services.clickhouse.v2.trajectory_retention import _open_client
+
+    captured: dict = {}
+    sentinel = object()
+
+    def _fake_get_client(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    def _forbid_get_reader():
+        raise AssertionError("trajectory_retention must not use readonly get_reader()")
+
+    monkeypatch.setattr(
+        ch_v2,
+        "get_v2_config",
+        lambda: {
+            "host": "127.0.0.1",
+            "http_port": 18123,
+            "user": "default",
+            "password": "",
+            "database": "test_db",
+            "server_enforced_readonly": False,
+        },
+    )
+    monkeypatch.setattr(ch_v2, "get_reader", _forbid_get_reader)
+    monkeypatch.setattr(clickhouse_connect, "get_client", _fake_get_client)
+
+    client, should_close = _open_client(None)
+    assert client is sentinel
+    assert should_close is True
+    assert captured["host"] == "127.0.0.1"
+    assert captured["port"] == 18123
+    assert captured["database"] == "test_db"
+    assert "readonly" not in (captured.get("settings") or {})
