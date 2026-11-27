@@ -21,8 +21,12 @@ vi.mock("@xyflow/react", () => ({
 }));
 
 const mockSaveDraft = vi.fn();
+const mockEnsureDraft = vi.fn();
 vi.mock("../saveDraftContext", () => ({
-  useSaveDraftContext: () => ({ saveDraft: mockSaveDraft }),
+  useSaveDraftContext: () => ({
+    saveDraft: mockSaveDraft,
+    ensureDraft: mockEnsureDraft,
+  }),
 }));
 
 vi.mock("../nodes", () => ({
@@ -212,10 +216,126 @@ describe("GraphView – callback logic", () => {
   });
 
   // ---- onNodeDragStop ----
+  // Mirrors GraphView's onNodeDragStop debounced body: ensureDraft() promotes a
+  // saved agent to draft (like onConnect). false → rollback, "created" → done
+  // (position rode along in the draft POST), otherwise PATCH per node.
   describe("onNodeDragStop logic", () => {
-    it("calls saveDraft on node drag stop", () => {
-      mockSaveDraft();
-      expect(mockSaveDraft).toHaveBeenCalled();
+    const dragStopSave = async ({
+      draftResult,
+      nodes,
+      startPositions,
+      onNodesChange,
+      updateNodeApi,
+      notify,
+    }) => {
+      if (draftResult === false) {
+        onNodesChange(
+          nodes.map((n) => ({
+            type: "position",
+            id: n.id,
+            position: startPositions[n.id],
+          })),
+        );
+        notify("Failed to save positions");
+        return "rolled-back";
+      }
+      if (draftResult === "created") return "in-post";
+      try {
+        await Promise.all(nodes.map((n) => updateNodeApi(n.id, n.position)));
+      } catch {
+        onNodesChange(
+          nodes.map((n) => ({
+            type: "position",
+            id: n.id,
+            position: startPositions[n.id],
+          })),
+        );
+        notify("Failed to save positions");
+        return "rolled-back";
+      }
+      return "patched";
+    };
+
+    const nodes = [{ id: "n1", position: { x: 10, y: 20 } }];
+    const startPositions = { n1: { x: 0, y: 0 } };
+
+    it("calls ensureDraft on node drag stop (saved agents get promoted)", async () => {
+      mockEnsureDraft.mockResolvedValue(true);
+      await mockEnsureDraft();
+      expect(mockEnsureDraft).toHaveBeenCalled();
+    });
+
+    it("rolls back when ensureDraft returns false", async () => {
+      const onNodesChange = vi.fn();
+      const updateNodeApi = vi.fn();
+      const notify = vi.fn();
+      const outcome = await dragStopSave({
+        draftResult: false,
+        nodes,
+        startPositions,
+        onNodesChange,
+        updateNodeApi,
+        notify,
+      });
+      expect(outcome).toBe("rolled-back");
+      expect(onNodesChange).toHaveBeenCalledWith([
+        { type: "position", id: "n1", position: { x: 0, y: 0 } },
+      ]);
+      expect(updateNodeApi).not.toHaveBeenCalled();
+      expect(notify).toHaveBeenCalledWith("Failed to save positions");
+    });
+
+    it('skips PATCH when ensureDraft returns "created"', async () => {
+      const onNodesChange = vi.fn();
+      const updateNodeApi = vi.fn();
+      const notify = vi.fn();
+      const outcome = await dragStopSave({
+        draftResult: "created",
+        nodes,
+        startPositions,
+        onNodesChange,
+        updateNodeApi,
+        notify,
+      });
+      expect(outcome).toBe("in-post");
+      expect(updateNodeApi).not.toHaveBeenCalled();
+      expect(onNodesChange).not.toHaveBeenCalled();
+    });
+
+    it("PATCHes positions when already a draft", async () => {
+      const onNodesChange = vi.fn();
+      const updateNodeApi = vi.fn().mockResolvedValue({});
+      const notify = vi.fn();
+      const outcome = await dragStopSave({
+        draftResult: true,
+        nodes,
+        startPositions,
+        onNodesChange,
+        updateNodeApi,
+        notify,
+      });
+      expect(outcome).toBe("patched");
+      expect(updateNodeApi).toHaveBeenCalledWith("n1", { x: 10, y: 20 });
+      expect(onNodesChange).not.toHaveBeenCalled();
+    });
+
+    it("rolls back when PATCH rejects", async () => {
+      const onNodesChange = vi.fn();
+      const updateNodeApi = vi.fn().mockRejectedValue(new Error("boom"));
+      const notify = vi.fn();
+      const outcome = await dragStopSave({
+        draftResult: true,
+        nodes,
+        startPositions,
+        onNodesChange,
+        updateNodeApi,
+        notify,
+      });
+      expect(outcome).toBe("rolled-back");
+      expect(onNodesChange).toHaveBeenCalledWith([
+        { type: "position", id: "n1", position: { x: 0, y: 0 } },
+      ]);
+      expect(notify).toHaveBeenCalledWith("Failed to save positions");
     });
   });
 
