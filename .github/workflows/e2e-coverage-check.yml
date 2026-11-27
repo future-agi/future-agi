@@ -1,0 +1,99 @@
+# Every PR either carries an E2E flow for the behaviour it changes, or says why
+# it does not. `e2e/scripts/e2e-coverage.mjs` classifies the diff and verifies the
+# `E2E:` line in the PR body against that classification; this job is the wall
+# that makes the declaration mechanical instead of a thing reviewers remember.
+#
+# INFORMATIONAL FOR NOW. The job goes red when a behaviour change carries no
+# declaration, but it is deliberately NOT in the `general-branch-protect-approval`
+# ruleset's required checks, so it cannot block a merge yet. Ratchet it by adding
+# "E2E coverage declared" to that ruleset once the red/green signal has been
+# watched for a couple of weeks — no change to this file is needed.
+#
+# `edited` is in the trigger list on purpose: the fix for a missing declaration is
+# a PR-body edit, and without that event the check would stay red until an
+# unrelated push.
+name: e2e-coverage
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+jobs:
+  declared:
+    name: E2E coverage declared
+    runs-on: ubuntu-latest
+    # Bot and integration traffic declares nothing, because none of it is where a
+    # behaviour change is authored: release-please assembles other people's merged
+    # work, dependabot bumps dependencies, and both directions of the dev<->main
+    # sync replay commits that were each classified on the way in. Verified
+    # against real traffic — `chore/merge-main-into-dev-20260825` (#2324) is why
+    # the merge-back pattern is here and not just the dev->main case.
+    if: >-
+      !startsWith(github.head_ref, 'release-please--') &&
+      !startsWith(github.head_ref, 'dependabot/') &&
+      !startsWith(github.head_ref, 'chore/merge-main-into-dev') &&
+      !(github.head_ref == 'dev' && github.base_ref == 'main')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+
+      # The classifier reads the base as a git ref. checkout gives us the PR's
+      # merge commit but not necessarily the base branch, so fetch it by name.
+      - name: Fetch base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+
+      # Through a file and an env var, never interpolated into the shell: a PR
+      # body is attacker-controlled text.
+      - name: Write PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$PR_BODY" > /tmp/pr-body.txt
+
+      # Exits 1 on `block` / `needs-marker`, which fails this step and turns the
+      # check red. pipefail keeps `tee` from swallowing that.
+      - name: Classify the diff and verify the declaration
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          node e2e/scripts/e2e-coverage.mjs \
+            --base "origin/$BASE_REF" \
+            --title "$PR_TITLE" \
+            --body /tmp/pr-body.txt \
+            | tee /tmp/coverage.txt
+
+      # The verdict belongs where the author already is, not four clicks into a
+      # log. Runs on success and failure.
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo '## E2E coverage'
+            echo
+            echo '```'
+            cat /tmp/coverage.txt 2>/dev/null || echo '(classifier produced no output)'
+            echo '```'
+            echo
+            echo 'Declare coverage with one line in the PR body:'
+            echo
+            echo '| line | when |'
+            echo '| --- | --- |'
+            echo '| `E2E: new <ID>` | this PR adds the flow (it must appear in the `e2e/FLOWS.md` diff) |'
+            echo '| `E2E: updated <ID>` | this PR changes an existing flow |'
+            echo '| `E2E: covered-by <ID>` | an existing, unchanged flow already proves it |'
+            echo '| `E2E: exempt (<reason>)` | no flow needed — see `e2e/README.md` for the reasons |'
+            echo
+            echo 'Details: `e2e/README.md` § "Declaring coverage on a PR".'
+          } >> "$GITHUB_STEP_SUMMARY"
