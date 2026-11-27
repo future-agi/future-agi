@@ -97,6 +97,7 @@ except ImportError:
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
+from model_hub.utils.eval_input_validation import MissingEvalInputError
 from model_hub.views.utils.evals import run_eval_func
 from sdk.utils.helpers import _get_api_call_type
 from simulate.constants.persona_prompt_guides import (
@@ -163,6 +164,7 @@ from simulate.temporal.activities.xl import (
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
+    record_missing_eval_input,
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import (
@@ -4494,13 +4496,16 @@ class TestExecutor:
                             continue
                         extra = {"harness_run": True} if harness_run else {}
                         mark_eval_progress(call_execution)
-                        self._run_single_simulate_evaluation(
+                        graded = self._run_single_simulate_evaluation(
                             eval_config, call_execution, transcript_data, **extra
                         )
-                        logger.info(
-                            f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
-                            f"on call execution {call_execution.id}"
-                        )
+                        # A skip was logged by the grader as simulate_eval_input_missing.
+                        if graded:
+                            logger.info(
+                                "simulate_evaluation_ran",
+                                eval_config_id=str(eval_config.id),
+                                call_execution_id=str(call_execution.id),
+                            )
                 except EvaluationDenied as denial:
                     logger.warning("simulation_evaluation_denied", code=denial.code)
                 except Exception as e:
@@ -5051,9 +5056,10 @@ class TestExecutor:
         call_execution: CallExecution,
         transcript_data,
         harness_run=False,
-    ):
+    ) -> bool:
         """
-        Run a single SimulateEvalConfig evaluation
+        Run a single SimulateEvalConfig evaluation. Returns whether it was
+        graded: False when an input was empty, so it was stored as missing.
 
         Args:
             eval_config: SimulateEvalConfig instance
@@ -5434,6 +5440,16 @@ class TestExecutor:
         except EvaluationDenied as denial:
             record_evaluation_denial(call_execution, eval_config, denial)
             raise
+        except MissingEvalInputError as missing:
+            # An empty input on this call: not graded, and not an error.
+            record_missing_eval_input(call_execution, eval_config, missing)
+            logger.info(
+                "simulate_eval_input_missing",
+                call_execution_id=str(call_execution.id),
+                eval_config_id=str(eval_config.id),
+                fields=list(missing.fields),
+            )
+            return False
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 
@@ -5458,6 +5474,7 @@ class TestExecutor:
             eval_config.status = StatusType.FAILED.value
             eval_config.save(update_fields=["status", "updated_at"])
             raise
+        return True
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):
         """

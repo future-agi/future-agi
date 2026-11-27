@@ -76,6 +76,7 @@ from simulate.types import (
     worker_subject_id,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
+from simulate.utils.processing_outcomes import REASON_INPUT_MISSING
 
 OUTCOME_LABELS = {
     "queued": "Queued",
@@ -201,6 +202,21 @@ def _eval_outcome(
     return judge_stored_eval(eval_data, _scoring_spec(config, specs)).outcome
 
 
+def _call_verdict(
+    eval_data: Any,
+    config: SimulateEvalConfig | None,
+    specs: dict[str, EvalScoringSpec] | None,
+) -> str | None:
+    """An eval's verdict as the call's outcome reads it: an eval whose input was
+    empty never ran, so the call is not scored without it."""
+    if (
+        isinstance(eval_data, dict)
+        and eval_data.get("reason_code") == REASON_INPUT_MISSING
+    ):
+        return "error"
+    return _eval_outcome(eval_data, config, specs)
+
+
 def call_outcome(
     call: CallExecution,
     live_eval_configs: dict[str, SimulateEvalConfig],
@@ -250,7 +266,7 @@ def call_outcome(
         )
         # A worker's own check is shown beside the task's verdict, never part of the call's outcome.
         if not (isinstance(data, dict) and is_worker_subject(data.get("subject")))
-        and (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
+        and (verdict := _call_verdict(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:

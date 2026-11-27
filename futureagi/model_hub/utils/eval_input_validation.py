@@ -13,7 +13,14 @@ from agentic_eval.core_evals.fi_utils.exceptions import EvalConfigError
 
 
 class MissingEvalInputError(EvalConfigError):
-    """A declared evaluation input was explicitly supplied empty."""
+    """A declared evaluation input was explicitly supplied empty.
+
+    ``fields`` names the empty inputs, sorted, so a caller can store them.
+    """
+
+    def __init__(self, message: str, *, fields: tuple[str, ...] | list[str] = ()):
+        super().__init__(message)
+        self.fields = tuple(fields)
 
 
 def validate_eval_configuration(eval_id: str, evaluator) -> None:
@@ -123,7 +130,8 @@ def validate_eval_inputs(
         if is_custom_eval and mapped_keys is not None:
             keys_label = ", ".join(f"'{k}'" for k in sorted(declared_keys))
             raise MissingEvalInputError(
-                f"No input received for any of {keys_label}. Please check your inputs."
+                f"No input received for any of {keys_label}. Please check your inputs.",
+                fields=sorted(declared_keys),
             )
         return None, values
 
@@ -140,7 +148,8 @@ def validate_eval_inputs(
         if not nonempty:
             keys_label = ", ".join(f"'{k}'" for k in sorted(keys_to_check))
             raise MissingEvalInputError(
-                f"No input received for any of {keys_label}. Please check your inputs."
+                f"No input received for any of {keys_label}. Please check your inputs.",
+                fields=sorted(keys_to_check),
             )
 
         normalized = dict(values)
@@ -161,6 +170,7 @@ def validate_eval_inputs(
     for key in sorted(k for k in keys_to_check if k in values):
         if is_empty_value(values[key]):
             raise MissingEvalInputError(
-                f"No input received for '{key}'. Please check your input."
+                f"No input received for '{key}'. Please check your input.",
+                fields=(key,),
             )
     return None, values
