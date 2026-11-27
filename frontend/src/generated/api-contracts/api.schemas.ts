@@ -17185,6 +17185,7 @@ export interface AgentDefinitionDetailResponseApi {
   observe_project?: ObserveProjectRefApi;
   readonly connected?: boolean;
   managed_by?: RunEnvironmentRefApi;
+  readonly managed_by_environment?: boolean;
   found_check?: AgentFoundCheckApi;
   readonly source_checked_at?: string;
   readonly source_check_interval_seconds?: number;

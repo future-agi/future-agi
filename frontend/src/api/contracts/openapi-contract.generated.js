@@ -54070,6 +54070,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         managed_by: {
           $ref: "#/definitions/RunEnvironmentRef",
         },
+        managed_by_environment: {
+          title: "Managed by environment",
+          type: "boolean",
+          readOnly: true,
+        },
         found_check: {
           $ref: "#/definitions/AgentFoundCheck",
         },

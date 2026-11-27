@@ -33878,6 +33878,7 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
       name: zod.string().min(1),
     })
     .optional(),
+  managed_by_environment: zod.boolean().optional(),
   found_check: zod
     .object({
       required: zod.boolean(),

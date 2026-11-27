@@ -418,11 +418,14 @@ export default function AgentVersionsTab() {
                         Compare
                       </Button>
                     )}
-                    {canEdit && agent && !agent.managedBy && canPromote(v) && (
-                      <Button {...actionProps(() => setToActivate(v))}>
-                        Set as production
-                      </Button>
-                    )}
+                    {canEdit &&
+                      agent &&
+                      !agent.managedByEnvironment &&
+                      canPromote(v) && (
+                        <Button {...actionProps(() => setToActivate(v))}>
+                          Set as production
+                        </Button>
+                      )}
                     {canEdit && canRetry(v) && (
                       <Button {...actionProps(() => retryCheck(v))}>
                         Retry

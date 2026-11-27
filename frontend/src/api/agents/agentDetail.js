@@ -113,6 +113,8 @@ export const mapAgentDetail = (raw) => ({
   managedBy: raw.managed_by
     ? { id: raw.managed_by.id, name: raw.managed_by.name }
     : null,
+  // Whether an environment manages it; the page may not be able to name which.
+  managedByEnvironment: !!raw.managed_by_environment,
   // An agent connected on its own is built only once what its first reading
   // found was confirmed.
   foundCheck: {

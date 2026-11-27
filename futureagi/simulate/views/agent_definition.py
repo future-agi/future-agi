@@ -484,6 +484,7 @@ class AgentDefinitionDetailView(APIView):
 
             agent_kind = getattr(agent, "_agent_kind", None)
             source = getattr(agent, "_source", None)
+            managed = environment_owned(agent.id)
             return Response(
                 {
                     **agent_data,
@@ -506,9 +507,12 @@ class AgentDefinitionDetailView(APIView):
                             ),
                             None,
                         )
-                        if environment_owned(agent.id)
+                        if managed
                         else None
                     ),
+                    # Whether an environment manages it, even where the page can't name
+                    # that environment: the page then offers no production change.
+                    "managed_by_environment": managed,
                     "found_check": {
                         "required": found_check_required(agent),
                         "done_at": agent.found_checked_at,

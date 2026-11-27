@@ -302,6 +302,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
     observe_project = ObserveProjectRefSerializer(read_only=True, allow_null=True)
     connected = serializers.BooleanField(read_only=True)
     managed_by = RunEnvironmentRefSerializer(read_only=True, allow_null=True)
+    managed_by_environment = serializers.BooleanField(read_only=True)
     found_check = AgentFoundCheckSerializer(read_only=True)
     source_checked_at = serializers.DateTimeField(read_only=True, allow_null=True)
     source_check_interval_seconds = serializers.IntegerField(
@@ -321,6 +322,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
             "observe_project",
             "connected",
             "managed_by",
+            "managed_by_environment",
             "found_check",
             "source_checked_at",
             "source_check_interval_seconds",
