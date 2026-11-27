@@ -3245,6 +3245,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         below.
         """
         instance = self.get_object()
+        if not _is_queue_manager(instance, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can archive queues."
+            )
         self.perform_destroy(instance)
         return self._gm.success_response(
             {"deleted": True, "archived": True, "queue_id": str(instance.pk)}
@@ -3264,6 +3268,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             )
         except AnnotationQueue.DoesNotExist:
             return self._gm.not_found("Queue not found or not archived.")
+
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can restore queues."
+            )
 
         # Resets rule cadence so users don't get a flood of fires on the
         # first scheduler tick after restoring a long-archived queue.
@@ -3286,6 +3295,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         a typo'd request.
         """
         queue = self.get_object()
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can permanently delete queues."
+            )
         data = request.validated_data
         if data.get("force") is not True:
             return self._gm.bad_request(
@@ -4182,6 +4195,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         Queue items are created lazily when someone actually annotates.
         """
         queue = self.get_object()
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can manage queue labels."
+            )
         data = request.validated_data
         label_id = data.get("label_id")
         required = _is_truthy(data.get("required", False))
@@ -4252,6 +4269,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     def remove_label(self, request, pk=None):
         """Remove a label from an annotation queue."""
         queue = self.get_object()
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can manage queue labels."
+            )
         label_id = request.validated_data.get("label_id")
 
         deleted_count = AnnotationQueueLabel.objects.filter(
