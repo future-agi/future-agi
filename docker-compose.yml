@@ -192,6 +192,9 @@ services:
       # Billing usage events (collector and Django): only Future AGI Cloud
       # drains the usage:events stream; here it would only fill Redis.
       USAGE_EVENTS_ENABLED: ${USAGE_EVENTS_ENABLED:-false}
+      # Blank restricts no organization, so "-" and not ":-". The date is the
+      # settings.py default.
+      RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: ${RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF-2026-10-28T00:00:00Z}
       FI_AUTH_REDIS_PASSWORD: ${REDIS_PASSWORD:-local-dev-only-redis-password}
       FI_GRPC_ADDR: ":4317"
       FI_HTTP_ADDR: ":4318"
