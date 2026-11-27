@@ -75,6 +75,11 @@ func registeredRoutes(rt *Router) [][2]string {
 			routes = append(routes, [2]string{route.method, "/" + strings.Join(segments, "/")})
 		}
 	}
+	for _, route := range rt.remainders {
+		for _, value := range []string{"probe", "probe/with/slash"} {
+			routes = append(routes, [2]string{route.method, route.prefix + value})
+		}
+	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i][1]+routes[i][0] < routes[j][1]+routes[j][0] })
 	return routes
 }

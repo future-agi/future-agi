@@ -211,6 +211,11 @@ class HarnessEnvironmentAgentRefSerializer(serializers.Serializer):
 class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
     agent = HarnessEnvironmentAgentRefSerializer(allow_null=True)
     last_run = HarnessRunSummarySerializer(allow_null=True)
+    epoch_pickable = serializers.BooleanField(
+        help_text="Whether Run Epoch can be picked for it: an uploaded or GitHub agent,"
+        " with or without its agent version yet. Once picked, the plan says what is"
+        " still missing."
+    )
 
 
 class HarnessEnvironmentStatusCountsSerializer(serializers.Serializer):

@@ -1,0 +1,26 @@
+name: Reviewer Assigner self-test
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/reviewer-assigner.mjs"
+      - ".github/scripts/reviewer-rotation.mjs"
+      - ".github/scripts/reviewer-rotation.test.mjs"
+      - ".github/workflows/reviewer-assigner-selftest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Reviewer rotation tests
+        run: node --test .github/scripts/reviewer-rotation.test.mjs

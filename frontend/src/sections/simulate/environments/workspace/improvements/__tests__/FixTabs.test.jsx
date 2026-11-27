@@ -119,6 +119,27 @@ describe("Scenarios tab", () => {
     ]);
   });
 
+  it("names each scenario by its stored name, never its key, in the row and its compare", async () => {
+    const user = userEvent.setup();
+    const fix = structuredClone(byId("fix-ready-archive"));
+    // The read stores no name for the refund case.
+    delete fix.scenario_names["refund-window"];
+    wrap(<FixScenariosTab fix={fix} />);
+    const row = within(await screen.findByTestId("scenario-late-cancel"));
+    expect(row.getByText("Late cancellation")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("scenario-refund-window")).getByText(
+        "Unnamed scenario",
+      ),
+    ).toBeInTheDocument();
+    for (const key of ["late-cancel", "on-time-cancel", "refund-window"])
+      expect(screen.queryByText(key)).toBeNull();
+    await user.click(screen.getByTestId("scenario-on-time-cancel"));
+    const drawer = within(await screen.findByTestId("scenario-compare"));
+    expect(drawer.getByText("Cancellation with notice")).toBeInTheDocument();
+    expect(drawer.queryByText("on-time-cancel")).toBeNull();
+  });
+
   it("reads a drop the verdict counted within noise as moved, never Broke", async () => {
     const fix = structuredClone(byId("fix-ready-archive"));
     const winner = fix.candidates.find((c) => c.outcome === "winner");

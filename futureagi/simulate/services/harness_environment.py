@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
@@ -82,6 +82,9 @@ from simulate.services.run_reliability_v3 import trial_passes
 from simulate.types import ContractCallActor, ContractWorker, worker_enforcement
 
 if TYPE_CHECKING:
+    from django_stubs_ext import WithAnnotations
+
+    from simulate.services.agent_fix_agents import EpochPickable
     from simulate.services.harness_actor_rules import ActorRecord, ActorRules
     from simulate.services.scenario_faults import FaultTarget
 from simulate.utils.ended_reason import canonical_ended_reasons
@@ -351,7 +354,10 @@ def environment_row(
     }
 
 
-def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
+def environment_rows(
+    jobs: Sequence[WithAnnotations[HostedHarnessJob, EpochPickable]],
+) -> list[dict[str, Any]]:
+    """The list's rows, from jobs ``with_epoch_pickable`` annotated."""
     executions = TestExecution.no_workspace_objects.filter(
         id__in=[job.last_execution_id for job in jobs if job.last_execution_id]
     ).select_related("agent_version", "run_test")
@@ -362,12 +368,15 @@ def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
             **environment_row(job),
             "agent": agents.get(job.run_test_id),
             "last_run": last_runs.get(job.last_execution_id),
+            "epoch_pickable": job.epoch_pickable,
         }
         for job in jobs
     ]
 
 
-def _agents_by_run_test(jobs: list[HostedHarnessJob]) -> dict[Any, dict[str, Any]]:
+def _agents_by_run_test(
+    jobs: Sequence[HostedHarnessJob],
+) -> dict[Any, dict[str, Any]]:
     run_tests = RunTest.objects.filter(
         id__in=[job.run_test_id for job in jobs if job.run_test_id],
         deleted=False,
@@ -1002,6 +1011,11 @@ def _catalogue_index(catalogue: Any) -> dict[str, dict[str, Any]]:
     return index
 
 
+def environment_sub_goals(environment: HostedHarnessJob) -> dict[str, dict[str, Any]]:
+    """What each sub-goal of an environment checks, by name."""
+    return _catalogue_index(stage_output(environment, "sub_goals"))
+
+
 def sub_goal_catalogue(
     run_test_id, *, test_execution_id=None
 ) -> dict[str, dict[str, Any]]:
@@ -1017,7 +1031,7 @@ def sub_goal_catalogue(
     for environment in HostedHarnessJob.no_workspace_objects.filter(
         id__in=list(environment_ids)[:1]
     ):
-        return _catalogue_index(stage_output(environment, "sub_goals"))
+        return environment_sub_goals(environment)
     return {}
 
 
