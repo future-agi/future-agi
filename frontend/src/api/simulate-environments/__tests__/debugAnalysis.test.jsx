@@ -198,4 +198,39 @@ describe("useDebugAnalysis", () => {
     );
     await waitFor(() => expect(result.current.analysis.status).toBe("pending"));
   });
+
+  it("keeps the new status when a read sent before the request lands after it", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const stable = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    stable.propTypes = { children: PropTypes.node };
+    const later = (ms, data) =>
+      new Promise((resolve) => setTimeout(() => resolve({ data }), ms));
+    axios.get.mockResolvedValueOnce({ data: { status: "not_requested" } });
+
+    const { result, rerender } = renderHook(({ id }) => useDebugAnalysis(id), {
+      wrapper: stable,
+      initialProps: { id: "ex1" },
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    // The drawer closes and reopens: the read starts again, slowly, and the
+    // request goes out before it lands.
+    rerender({ id: null });
+    axios.get.mockImplementation(() => later(300, { status: "not_requested" }));
+    axios.post.mockImplementation(() => later(50, { status: "running" }));
+    rerender({ id: "ex1" });
+    await act(async () => result.current.request());
+    await waitFor(() => expect(result.current.analysis.status).toBe("running"));
+
+    // Past the late read's arrival, the page still reads running, so polling
+    // carries on instead of a loader that never ends.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(result.current.analysis.status).toBe("running");
+  });
 });
