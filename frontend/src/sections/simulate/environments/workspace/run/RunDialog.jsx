@@ -311,9 +311,9 @@ export default function RunDialog({
   if (submitting) runLabel = COPY.starting;
 
   const pick = (piece, id) => {
-    // A pick on the default follows it when the default moves.
+    // While Fix is offered, a pick on the default follows it when the default moves; otherwise a pick stays pinned.
     setOverrides(({ [piece]: _, ...rest }) =>
-      id === defaultId(piece) ? rest : { ...rest, [piece]: id },
+      fixOffered && id === defaultId(piece) ? rest : { ...rest, [piece]: id },
     );
     setDismissedError(error);
     setRerun("done");

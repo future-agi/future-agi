@@ -584,9 +584,7 @@ def _checking(run: ReadinessFixRun) -> bool:
     timed_out = recheck == "unavailable"
     if recheck == "started":
         since = _since(run)
-        late = (
-            since is not None and timezone.now() - since >= validation.check_window()
-        )
+        late = since is not None and timezone.now() - since >= validation.check_window()
         # A job reading the agent's tools leaves a certified bundle reading ready.
         running = _live_check(pairing)
         if running and not late:

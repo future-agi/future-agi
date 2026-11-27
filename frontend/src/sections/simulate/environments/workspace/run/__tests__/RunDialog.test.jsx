@@ -830,7 +830,7 @@ describe("RunDialog", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
-  it("follows the default again once the picker is put back on it", async () => {
+  it("keeps a pick of the default pinned when the default moves, while Fix is off", async () => {
     const user = userEvent.setup();
     const props = { open: true, env: ENV, scenarioIds: ["k1"] };
     const { rerender } = render(<RunDialog {...props} />);
@@ -844,9 +844,9 @@ describe("RunDialog", () => {
       ],
     };
     rerender(<RunDialog {...props} />);
-    expect(
-      screen.getByRole("combobox", { name: "Environment" }),
-    ).toHaveTextContent("v3 (default)");
+    const picker = screen.getByRole("combobox", { name: "Environment" });
+    expect(picker).toHaveTextContent("v2");
+    expect(picker).not.toHaveTextContent("v3");
   });
 
   it("says why Run is off when the picked suite has no scenarios", async () => {
@@ -1445,6 +1445,26 @@ describe("RunDialog", () => {
         suite: null,
         set_aside: [],
       };
+
+      it("follows the default again once the picker is put back on it", async () => {
+        const user = userEvent.setup();
+        state.report = offered();
+        const props = { open: true, env: ENV, scenarioIds: ["k1"] };
+        const { rerender } = render(<RunDialog {...props} />);
+        await pickOption(user, "Environment", "v1");
+        await pickOption(user, "Environment", "v2 (default)");
+        state.versions = {
+          ...VERSIONS,
+          environment: [
+            item({ id: "e3", label: "v3", is_default: true }),
+            item({ id: "e2", label: "v2" }),
+          ],
+        };
+        rerender(<RunDialog {...props} />);
+        expect(
+          screen.getByRole("combobox", { name: "Environment" }),
+        ).toHaveTextContent("v3 (default)");
+      });
 
       it("points unsaved changes to their review, and names a fix's own", async () => {
         const user = userEvent.setup();
