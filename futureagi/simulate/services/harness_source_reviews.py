@@ -409,6 +409,25 @@ def table_choices(captured, table_fields, *, record_shapes=None):
     }
 
 
+def _merged_repairs(previous, latest):
+    """Layer the latest per-source repair answers over the earlier ones.
+
+    A re-prepare answers one question at a time, so the identity column chosen
+    after "treat as text" must not drop the text fields already confirmed.
+    """
+    merged = {repair["source_id"]: dict(repair) for repair in previous}
+    for repair in latest:
+        current = merged.setdefault(
+            repair["source_id"], {"source_id": repair["source_id"]}
+        )
+        for key, value in repair.items():
+            if key == "text_fields":
+                current[key] = list(dict.fromkeys([*current.get(key, ()), *value]))
+            else:
+                current[key] = value
+    return list(merged.values())
+
+
 def _stage(
     row: HarnessSourceReview,
     capture,
@@ -418,6 +437,7 @@ def _stage(
     repair_request=None,
     redact_text_sources=(),
     synthetic_text_sources=(),
+    keep_text_sources=(),
 ) -> HarnessSourceReview:
     reading = HarnessSourceReview.objects.filter(
         pk=row.id, state=State.READING, revision=row.revision
@@ -493,6 +513,8 @@ def _stage(
         options = {}
         if synthetic_text_sources:
             options["synthetic_text_sources"] = synthetic_text_sources
+        if keep_text_sources:
+            options["keep_text_sources"] = keep_text_sources
         if schema_repairs:
             options["schema_repairs"] = schema_repairs
         if redact_text_sources:
@@ -530,6 +552,14 @@ def _stage(
         if blocking or choices:
             staged["retained_inputs"] = _retained_inputs(captured)
             staged["prepare_options"] = options
+        # Kept on its own: clearing the privacy blocker skips prepare_options.
+        text_privacy = {
+            **dict.fromkeys(redact_text_sources, "redact"),
+            **dict.fromkeys(synthetic_text_sources, "synthetic_replace"),
+            **dict.fromkeys(keep_text_sources, "keep"),
+        }
+        if text_privacy:
+            staged["text_privacy"] = text_privacy
         if repair_request is not None:
             staged["repair_request"] = repair_request
         _store_staging(row, staged)
@@ -660,6 +690,8 @@ def create_review(
 ) -> dict:
     owner = _owner(require_source_scope(request, write=True), scope["id"])
     kind = scope["kind"]
+    if kind == Owner.ENVIRONMENT:
+        sources.require_world_snapshot(owner)
     if not document_ids and not knowledge_base:
         raise HostedHarnessError(
             "source_selection_empty",
@@ -894,6 +926,7 @@ def reprepare_review(
     expected_draft=None,
     redact_text_sources=(),
     synthetic_text_sources=(),
+    keep_text_sources=(),
 ):
     scope = require_source_scope(request, write=True)
     if environment:
@@ -906,6 +939,11 @@ def reprepare_review(
             **(
                 {"synthetic_text_sources": sorted(synthetic_text_sources)}
                 if synthetic_text_sources
+                else {}
+            ),
+            **(
+                {"keep_text_sources": sorted(keep_text_sources)}
+                if keep_text_sources
                 else {}
             ),
             "target_table": target_table,
@@ -960,7 +998,11 @@ def reprepare_review(
             kb = authorized_knowledge_base(request, kb_id)
             if kb.files.filter(pk__in=file_ids).count() != len(file_ids):
                 raise _not_found()
-        privacy_sources = set(redact_text_sources) | set(synthetic_text_sources)
+        privacy_sources = (
+            set(redact_text_sources)
+            | set(synthetic_text_sources)
+            | set(keep_text_sources)
+        )
         if privacy_sources:
             flagged = {
                 issue.get("span", {}).get("source_id")
@@ -1002,8 +1044,10 @@ def reprepare_review(
                 row,
                 lambda: captured,
                 schema,
-                schema_repairs
-                or staged.get("prepare_options", {}).get("schema_repairs", ()),
+                _merged_repairs(
+                    staged.get("prepare_options", {}).get("schema_repairs", ()),
+                    schema_repairs,
+                ),
                 repair_request=repair_request,
                 synthetic_text_sources=sorted(
                     set(synthetic_text_sources)
@@ -1017,6 +1061,12 @@ def reprepare_review(
                     set(redact_text_sources)
                     | set(
                         staged.get("prepare_options", {}).get("redact_text_sources", ())
+                    )
+                ),
+                keep_text_sources=sorted(
+                    set(keep_text_sources)
+                    | set(
+                        staged.get("prepare_options", {}).get("keep_text_sources", ())
                     )
                 ),
             )
@@ -1121,12 +1171,35 @@ def _accept(
         result, artifact_digest = sources.accept_checkpoint_review(
             request, owner, staged, decisions
         )
+    accepted_at = timezone.now().isoformat()
+    text_privacy = staged.get("text_privacy", {})
+    kept = sorted(
+        {
+            *(sid for sid, mode in text_privacy.items() if mode == "keep"),
+            *(
+                review["source_id"]
+                for review in decisions.get("record_reviews", [])
+                if review.get("personal_data_mode") == "keep"
+            ),
+        }
+    )
     row.receipt = {
         **result,
         "review_id": str(row.id),
         "accepted_revision": row.revision,
+        # Consent record: who chose to store detected personal data unchanged.
+        **(
+            {
+                "personal_data_kept": {
+                    "source_ids": kept,
+                    "accepted_by": str(request.user.id),
+                    "accepted_at": accepted_at,
+                }
+            }
+            if kept
+            else {}
+        ),
     }
-    accepted_at = timezone.now().isoformat()
     choices = {
         decision["source_id"]: decision
         for key in ("record_reviews", "policy_reviews", "reference_reviews")
@@ -1135,12 +1208,27 @@ def _accept(
     for source in row.preview.get("sources", []):
         decision = choices.get(source["pin"]["source_id"], {})
         source["updated_at"] = accepted_at
+        privacy = text_privacy.get(source["pin"]["source_id"])
+        # Redacted text holds no personal data, so it reads back as "none".
+        mode = decision.get("personal_data_mode") or (
+            "none" if privacy == "redact" else privacy
+        )
+        if mode:
+            source["personal_data_mode"] = mode
         if "audience" in decision:
             source["visibility"] = (
                 "agent_visible"
                 if decision["audience"].get("tested_agent")
                 else "evaluator_only"
             )
+        if "rules" in decision:
+            source["accepted_rule_ids"] = [
+                rule["proposal"]["rule_id"]
+                for rule in decision["rules"]
+                if rule.get("decision") == "accepted"
+                and isinstance(rule.get("proposal"), dict)
+                and "rule_id" in rule["proposal"]
+            ]
         if "fields" in decision:
             source["accepted_mappings"] = [
                 {

@@ -29,6 +29,7 @@ from simulate.services.harness_versioning.review_items import (
     Decision,
     ReviewChange,
     SavedChange,
+    SourceChange,
     compute_changes,
     graded,
     index_in_step,
@@ -160,6 +161,55 @@ def heal_suite_index(locked: Any) -> None:
     draft.save()
 
 
+_SOURCE_MANIFEST = "sources/manifest.json"
+
+
+def _source_changes(
+    environment: Any, before: Mapping[str, bytes], after: Mapping[str, bytes]
+) -> list[SourceChange]:
+    """What adding or removing uploaded sources means, read from their accepted reviews."""
+    from simulate.services.harness_source_summary import accepted_sources, manifest_of
+
+    old_manifest, new_manifest = manifest_of(before), manifest_of(after)
+    old = [one["source_id"] for one in old_manifest.get("sources") or []]
+    new = [one["source_id"] for one in new_manifest.get("sources") or []]
+    actions = {
+        **{sid: "removed" for sid in old if sid not in new},
+        **{sid: "added" for sid in new if sid not in old},
+    }
+    if not actions:
+        return []
+    found = accepted_sources(environment, old_manifest, new_manifest)
+    out: list[SourceChange] = []
+    for sid, action in actions.items():
+        source = found.get(sid) or {}
+        role = (source.get("pin") or {}).get("role")
+        out.append(
+            SourceChange(
+                source_id=sid,
+                action=action,
+                filename=source.get("filename") or "",
+                role=role,
+                rows=source.get("row_count") if role == "seed_records" else None,
+                rules=[
+                    source["rule_titles"][rule_id]
+                    for rule_id in source.get("accepted_rule_ids", [])
+                    if rule_id in source.get("rule_titles", {})
+                ],
+            )
+        )
+    return out
+
+
+def _source_summary_line(changes: list[SourceChange]) -> str:
+    """ "Add sources: a.pdf · Remove sources: b.csv"."""
+    return " · ".join(
+        f"{verb} sources: {', '.join(one['filename'] or 'a source' for one in changes if one['action'] == action)}"
+        for action, verb in (("added", "Add"), ("removed", "Remove"))
+        if any(one["action"] == action for one in changes)
+    )
+
+
 def _piece_changes(environment: Any, piece: str, draft: Any) -> list[ReviewChange]:
 
     before = piece_files(environment, piece, draft.parent) if draft.parent_id else {}
@@ -167,6 +217,11 @@ def _piece_changes(environment: Any, piece: str, draft: Any) -> list[ReviewChang
     changes = compute_changes(before, after)
     for change in changes:
         change["piece"] = piece
+        if change["key"] == _SOURCE_MANIFEST and (
+            described := _source_changes(environment, before, after)
+        ):
+            change["source_changes"] = described
+            change["summary"] = _source_summary_line(described)
     return changes
 
 

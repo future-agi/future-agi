@@ -12,6 +12,14 @@ from simulate.services.hosted_harness import HostedHarnessError
 from simulate.views.harness_environment import HarnessEnvironmentViewSet
 
 
+@pytest.fixture(autouse=True)
+def _world_snapshot_present(monkeypatch):
+    """These stand-in environments have no world snapshot; the refusal has its own test."""
+    monkeypatch.setattr(
+        "simulate.services.harness_sources.world_snapshot_missing", lambda env: False
+    )
+
+
 def test_prepare_upload_accepts_repeated_multipart_files(monkeypatch):
     environment = SimpleNamespace(id=uuid4())
     version_id = uuid4()

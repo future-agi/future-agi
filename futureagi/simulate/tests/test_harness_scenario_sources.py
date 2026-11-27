@@ -221,3 +221,64 @@ def test_a_case_from_real_evidence_says_it_is_not_an_exact_replay():
     label = _label("evidence_case", "evidence:42", "", [], None)
 
     assert label == "Based on evidence case 42, not an exact replay"
+
+
+def test_rule_quote_from_an_approved_reference_passage_is_confirmed(
+    user, workspace, storage, monkeypatch
+):
+    import json
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from simulate.models import HarnessSourceReview
+
+    environment = _environment(user, workspace, storage, "src-passage")
+    version = environment.environment_version
+    source = {
+        "kind": "rule",
+        "ref": "rule:0",
+        "quote": "Refunds above $425 require human escalation with code ORCHID-72.",
+    }
+    HarnessSourceReview.objects.create(
+        organization=environment.organization,
+        workspace=environment.workspace,
+        owner=environment,
+        owner_kind=HarnessSourceReview.Owner.ENVIRONMENT,
+        idempotency_key="passage",
+        state=HarnessSourceReview.State.ACCEPTED,
+        basis={},
+        expires_at=timezone.now() + timedelta(days=1),
+        accepted_artifact_digest="a" * 64,
+        preview={
+            "sources": [
+                {
+                    "pin": {"source_id": "s1", "role": "reference"},
+                    "filename": "acme-refund-policy.pdf",
+                    "statements": [
+                        {
+                            "statement_id": "s1:1",
+                            "page": 1,
+                            "text": "3. Refunds above $425 require human escalation "
+                            "with code ORCHID-72.",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    manifest = {"sources": [], "source_snapshot_digests": {}}
+    monkeypatch.setattr(
+        "simulate.services.harness_versioning.drafts.piece_files",
+        lambda *_args: {"sources/manifest.json": json.dumps(manifest).encode()},
+    )
+    # Accepted, but not a source this version holds: it confirms nothing.
+    assert _one(environment, version, source)["resolved"] is False
+
+    manifest["source_snapshot_digests"] = {"s1": "sha256:" + "a" * 64}
+    view = _one(environment, version, source)
+    assert view["resolved"] is True
+    assert view["problem"] == ""
+    assert view["label"] == "From acme-refund-policy.pdf"
+    other = {**source, "quote": "Refunds above $900 need a manager."}
+    assert _one(environment, version, other)["resolved"] is False

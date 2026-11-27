@@ -364,6 +364,31 @@ def file_path(ref: str) -> str:
     return "" if ".." in name.split("/") else name
 
 
+def _source_passages(
+    environment: Any, environment_version: Any
+) -> list[tuple[str, str]]:
+    """Each approved passage of the sources this version holds, as (file name, normalised text)."""
+    from minio.error import S3Error
+
+    from simulate.services.harness_source_summary import accepted_sources, manifest_of
+    from simulate.services.harness_versioning.drafts import piece_files
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    if getattr(environment, "pk", None) is None or environment_version is None:
+        return []
+    try:
+        files = piece_files(environment, "environment", environment_version)
+    except (S3Error, HostedHarnessError):
+        return []
+    manifest = manifest_of(files)
+    return [
+        (str(source.get("filename") or "Uploaded source"), normalise(statement["text"]))
+        for source in accepted_sources(environment, manifest).values()
+        for statement in source.get("statements", [])
+        if statement.get("text")
+    ]
+
+
 def _rules(environment_version: Any) -> list[str]:
     contract = (getattr(environment_version, "documents", None) or {}).get("contract")
     rules = contract.get("hard_constraints") if isinstance(contract, Mapping) else None
@@ -522,6 +547,7 @@ def resolve(
             ).values("id", "created_at")
         }
     views: dict[str, list[SourceView]] = {}
+    passages: list[tuple[str, str]] | None = None
     for key, sources in by_key.items():
         kept = {
             str(one.get("ref")): one
@@ -598,6 +624,17 @@ def resolve(
             ):
                 resolved = verdict["resolved"] is True
                 problem = "" if resolved else str(verdict.get("problem") or problem)
+            label = _label(kind, ref, quote, rules, matched, created)
+            # A few words could match any passage; only a clause-length quote counts.
+            if kind == "rule" and not resolved and len(normalise(quote).split()) >= 6:
+                # A case may quote an uploaded passage that was kept as reference, not made a rule.
+                if passages is None:
+                    passages = _source_passages(environment, environment_version)
+                held = next(
+                    (name for name, text in passages if normalise(quote) in text), None
+                )
+                if held is not None:
+                    resolved, problem, label = True, "", f"From {held}"
             out.append(
                 SourceView(
                     kind=kind,
@@ -605,7 +642,7 @@ def resolve(
                     quote=quote,
                     supports=str(one.get("supports") or ""),
                     resolved=resolved,
-                    label=_label(kind, ref, quote, rules, matched, created),
+                    label=label,
                     link=link,
                     problem=problem,
                 )

@@ -73724,7 +73724,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         personal_data_mode: {
           title: "Personal data mode",
           type: "string",
-          enum: ["none", "synthetic_replace"],
+          enum: ["none", "synthetic_replace", "keep"],
         },
         modality: {
           title: "Modality",
@@ -76534,6 +76534,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxItems: 100,
         },
         synthetic_text_sources: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 100,
+        },
+        keep_text_sources: {
           type: "array",
           items: {
             type: "string",
@@ -117517,6 +117526,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "x-nullable": true,
         },
+        source_changes: {
+          description:
+            "The uploaded-sources manifest change: each source added or removed, as a person reads it.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReviewSourceChange",
+          },
+        },
       },
     },
     HarnessReviewCounts: {
@@ -143484,6 +143501,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Has older",
           description: "Items before `oldest_sequence` this read leaves out.",
           type: "boolean",
+        },
+      },
+    },
+    HarnessReviewSourceChange: {
+      required: ["source_id", "action", "filename", "role", "rows", "rules"],
+      type: "object",
+      properties: {
+        source_id: {
+          title: "Source id",
+          type: "string",
+          minLength: 1,
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["added", "removed"],
+        },
+        filename: {
+          title: "Filename",
+          type: "string",
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        rows: {
+          title: "Rows",
+          type: "integer",
+          "x-nullable": true,
+        },
+        rules: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },

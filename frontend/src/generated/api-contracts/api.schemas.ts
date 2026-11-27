@@ -20957,6 +20957,7 @@ export type HarnessDesignRequestApiPersonalDataMode =
 export const HarnessDesignRequestApiPersonalDataMode = {
   none: "none",
   synthetic_replace: "synthetic_replace",
+  keep: "keep",
 } as const;
 
 export type HarnessDesignRequestApiModality =
@@ -23892,6 +23893,25 @@ export const HarnessReviewChangeApiDecision = {
   rejected: "rejected",
 } as const;
 
+export type HarnessReviewSourceChangeApiAction =
+  (typeof HarnessReviewSourceChangeApiAction)[keyof typeof HarnessReviewSourceChangeApiAction];
+
+export const HarnessReviewSourceChangeApiAction = {
+  added: "added",
+  removed: "removed",
+} as const;
+
+export interface HarnessReviewSourceChangeApi {
+  /** @minLength 1 */
+  source_id: string;
+  action: HarnessReviewSourceChangeApiAction;
+  filename: string;
+  /** @minLength 1 */
+  role: string;
+  rows: number;
+  rules: string[];
+}
+
 export type HarnessReviewChangeApiPatchItem = {
   [key: string]: { [key: string]: unknown };
 };
@@ -23938,6 +23958,8 @@ export interface HarnessReviewChangeApi {
   revalidate: string[];
   /** A world state change: rows added, removed and changed per table; null when it cannot be read. */
   rows?: HarnessReviewChangeApiRowsItem[];
+  /** The uploaded-sources manifest change: each source added or removed, as a person reads it. */
+  source_changes?: HarnessReviewSourceChangeApi[];
 }
 
 export interface HarnessReviewCountsApi {
@@ -26872,6 +26894,8 @@ export interface HarnessSourceReviewReprepareApi {
   redact_text_sources?: string[];
   /** @maxItems 100 */
   synthetic_text_sources?: string[];
+  /** @maxItems 100 */
+  keep_text_sources?: string[];
 }
 
 export type HarnessManifestApiSchemaVersion =

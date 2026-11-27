@@ -405,6 +405,15 @@ def _apply(generation_id, archive, digest, generated):
             for piece in ("environment", "suite")
         },
         pieces={"suite", "environment"},
+        # Review changes then reads "From <file>" instead of "By hand" for what generation wrote.
+        used_files=[
+            {
+                "file_id": source["pin"]["source_id"],
+                "name": source.get("filename") or "",
+                "row": None,
+            }
+            for source in (generation.review.preview or {}).get("sources", [])
+        ],
     )
     if write is None or write.suite is None:
         raise _conflict()

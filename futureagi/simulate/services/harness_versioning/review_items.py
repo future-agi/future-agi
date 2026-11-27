@@ -85,6 +85,17 @@ class UsedFile(TypedDict):
     name: NotRequired[str]
 
 
+class SourceChange(TypedDict):
+    """One uploaded source the sources manifest change adds or removes, as a person reads it."""
+
+    source_id: str
+    action: Literal["added", "removed"]
+    filename: str
+    role: str | None
+    rows: int | None
+    rules: list[str]
+
+
 class ChangeSource(TypedDict):
     """Where a change came from: who, through what, when, at which draft revision, and what it used."""
 
@@ -119,6 +130,8 @@ class ReviewChange(TypedDict):
     revalidate: NotRequired[list[str]]
     # A scenario renamed: the key it had in the saved version.
     renamed_from: NotRequired[str]
+    # For the uploaded-sources manifest: each source added or removed, as a person reads it.
+    source_changes: NotRequired[list[SourceChange]]
 
 
 class SavedChange(TypedDict):

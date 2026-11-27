@@ -30,6 +30,17 @@ from simulate.tests.test_harness_versioning_rollback import _built, _rows
 pytestmark = pytest.mark.django_db
 
 
+_REAL_WORLD_SNAPSHOT_MISSING = harness_sources.world_snapshot_missing
+
+
+@pytest.fixture(autouse=True)
+def _world_snapshot_present(monkeypatch):
+    """Fixture environments have no world snapshot; the refusal has its own test."""
+    monkeypatch.setattr(
+        "simulate.services.harness_sources.world_snapshot_missing", lambda env: False
+    )
+
+
 @pytest.fixture(autouse=True)
 def versioning_on(settings):
     settings.HARNESS_VERSIONING_ENABLED = True
@@ -388,6 +399,19 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     assert completed["state"] == "completed"
     assert len(completed["generated_scenarios"]) == len(templates)
     environment.refresh_from_db()
+    from simulate.services.harness_versioning.review import draft_review
+
+    generated_changes = [
+        change
+        for change in draft_review(environment)["changes"]
+        if change["kind"] == "scenario"
+    ]
+    assert generated_changes
+    assert all(
+        {"kind": "file", "id": source_id}.items()
+        <= change["sources"][0]["used"][0].items()
+        for change in generated_changes
+    )
     assert environment.suite_version_id == original_suite_id
     suite_draft = drafts.fresh_draft(environment, "suite")
     assert len((suite_draft.documents or {})["scenarios"]) == len(templates) * 2
@@ -1141,3 +1165,92 @@ def test_clipped_policy_rule_can_only_be_retained_as_reference():
     decision["decision"] = "accepted"
     with pytest.raises(HostedHarnessError, match="as reference"):
         harness_sources._checked_review(None, staged, review)
+
+
+def test_preview_titles_checkable_rules_but_not_withheld_ones():
+    from simulate.services.harness_source_preview import safe_source_preview
+
+    def source(sid):
+        return {
+            "pin": {"source_id": sid, "role": "policy"},
+            "pages": [{"page": 1, "text": "Responses must contain approved."}],
+            "statements": [
+                {
+                    "statement_id": f"{sid}:s1",
+                    "text": "Responses must contain approved.",
+                    "span": {"page": 1},
+                }
+            ],
+        }
+
+    def rule(sid, status="supported"):
+        return {
+            "rule_id": f"{sid}-r",
+            "statement_id": f"{sid}:s1",
+            "kind": "required_behavior",
+            "check_type": "contains",
+            "check_arguments": {"value": "approved"},
+            "status": status,
+        }
+
+    draft = {
+        "draft_digest": "sha256:" + "0" * 64,
+        "sources": [source("open"), source("kb"), source("prose")],
+        "proposals": {
+            "policy_rules": [rule("open"), rule("kb"), rule("prose", "unsupported")]
+        },
+    }
+    origins = [
+        {"source_id": "open", "kind": "upload"},
+        {"source_id": "kb", "kind": "knowledge_base"},
+        {"source_id": "prose", "kind": "upload"},
+    ]
+    rules = {
+        item["rule_id"]: item
+        for item in safe_source_preview(draft, origins)["proposals"]["policy_rules"]
+    }
+
+    assert rules["open-r"]["title"] == "Responses must include “approved”"
+    assert "title" not in rules["kb-r"]
+    assert "title" not in rules["prose-r"]
+    assert "check_arguments" not in rules["open-r"]
+
+
+@pytest.mark.django_db
+def test_sources_are_refused_up_front_without_a_world_snapshot(
+    user, workspace, monkeypatch, request
+):
+    from simulate.services.harness_source_writer import MISSING_SNAPSHOT
+    from simulate.tests.test_harness_versioning_rollback import _built
+
+    request.getfixturevalue("_storage_fixture")
+
+    environment = _built(user, workspace, "no-snapshot")
+    monkeypatch.setattr(
+        "simulate.services.harness_sources.world_snapshot_missing", lambda env: True
+    )
+    caps = harness_sources.source_capabilities(environment)
+    assert caps["upload"]["enabled"] is False
+    assert "Build a new environment" in caps["upload"]["reason"]
+    assert caps["knowledge_base"]["enabled"] is False
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_sources.require_world_snapshot(environment)
+    assert refused.value.code == MISSING_SNAPSHOT
+    # The basis check under the accept lock no longer reads archives.
+    harness_sources._require_import_basis(
+        environment,
+        str(environment.environment_version_id),
+        {"id": None, "revision": 0},
+    )
+
+
+@pytest.mark.django_db
+def test_world_snapshot_is_read_from_the_environment_files(user, workspace, request):
+    from simulate.tests.test_harness_versioning_rollback import _built
+
+    request.getfixturevalue("_storage_fixture")
+
+    # The fixture builds have no world manifest, like environments made before snapshots.
+    assert (
+        _REAL_WORLD_SNAPSHOT_MISSING(_built(user, workspace, "snapshot-read")) is True
+    )

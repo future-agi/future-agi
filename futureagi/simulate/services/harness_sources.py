@@ -42,18 +42,48 @@ STAGING_PREFIX = "environment-source-imports"
 SNAPSHOT_PREFIX = "environment-source-snapshots"
 
 
+def world_snapshot_missing(environment) -> bool:
+    """Sources need the world snapshot only a build writes, so the saved environment version answers it."""
+    from minio.error import S3Error
+
+    version = environment.environment_version
+    if version is None:
+        return True
+    try:
+        files = drafts.piece_files(environment, "environment", version)
+    except (S3Error, HostedHarnessError):
+        # An unreadable archive fails the later step with its own error, not this read.
+        return False
+    return "manifest.json" not in files
+
+
+def require_world_snapshot(environment) -> None:
+    """Refuse a new source before any review is staged, not after generation fails."""
+    from simulate.services.harness_source_writer import missing_snapshot_error
+
+    if world_snapshot_missing(environment):
+        raise missing_snapshot_error()
+
+
 def source_capabilities(environment) -> dict[str, Any]:
+    from simulate.services.harness_source_writer import missing_snapshot_error
+
     refs = drafts.draft_refs(environment)
+    blocked = (
+        {"enabled": False, "reason": missing_snapshot_error().message}
+        if world_snapshot_missing(environment)
+        else {"enabled": True}
+    )
     return {
         "upload": {
-            "enabled": True,
+            **blocked,
             "formats": ["pdf", "txt", "csv", "json"],
             "max_files": MAX_SELECTION_FILES,
             "max_file_bytes": 25 * 1024 * 1024,
             "max_total_bytes": MAX_SELECTION_BYTES,
         },
         "knowledge_base": {
-            "enabled": True,
+            **blocked,
             "formats": ["pdf", "docx", "rtf", "txt"],
             "max_files": MAX_SELECTION_FILES,
             "max_file_bytes": 25 * 1024 * 1024,
@@ -226,6 +256,7 @@ def prepare_source_import(
     current_ref = _require_import_basis(
         environment, expected_environment_version_id, expected_draft
     )
+    require_world_snapshot(environment)
     captured = capture_kb(request, selection)
     return _prepare_captured(environment, captured, current_ref, target_table)
 
@@ -285,6 +316,7 @@ def prepare_upload_import(
     current_ref = _require_import_basis(
         environment, expected_environment_version_id, expected_draft
     )
+    require_world_snapshot(environment)
     return _prepare_captured(
         environment, capture_uploads(uploaded, purpose), current_ref, target_table
     )
@@ -556,6 +588,7 @@ def prepare_draft(
     *,
     redact_text_sources=(),
     synthetic_text_sources=(),
+    keep_text_sources=(),
 ) -> dict:
     prepare_request = {
         "version": REQUEST_VERSION,
@@ -585,6 +618,7 @@ def prepare_draft(
             if synthetic_text_sources
             else {}
         ),
+        **({"keep_text_sources": list(keep_text_sources)} if keep_text_sources else {}),
         **({"schema_repairs": schema_repairs} if schema_repairs else {}),
     }
     draft = _alk_result(execute_source_request(prepare_request)).get("draft")

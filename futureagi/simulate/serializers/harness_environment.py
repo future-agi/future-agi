@@ -1896,6 +1896,15 @@ class HarnessDraftValidateResponseSerializer(serializers.Serializer):
     candidates = HarnessCandidatesSerializer(allow_null=True)
 
 
+class HarnessReviewSourceChangeSerializer(serializers.Serializer):
+    source_id = serializers.CharField()
+    action = serializers.ChoiceField(choices=("added", "removed"))
+    filename = serializers.CharField(allow_blank=True)
+    role = serializers.CharField(allow_null=True)
+    rows = serializers.IntegerField(allow_null=True)
+    rules = serializers.ListField(child=serializers.CharField())
+
+
 class HarnessReviewChangeSerializer(serializers.Serializer):
     """One item the drafts change, as an RFC 6902 patch with the values it read, and the decision taken on it."""
 
@@ -1954,6 +1963,11 @@ class HarnessReviewChangeSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text="A world state change: rows added, removed and changed per table; null when it cannot be read.",
+    )
+    source_changes = serializers.ListField(
+        child=HarnessReviewSourceChangeSerializer(),
+        required=False,
+        help_text="The uploaded-sources manifest change: each source added or removed, as a person reads it.",
     )
 
 

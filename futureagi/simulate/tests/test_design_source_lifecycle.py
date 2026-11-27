@@ -37,6 +37,14 @@ from simulate.tests.test_harness_versioning_backfill import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _world_snapshot_present(monkeypatch):
+    """Fixture environments have no world snapshot; the refusal has its own test."""
+    monkeypatch.setattr(
+        "simulate.services.harness_sources.world_snapshot_missing", lambda env: False
+    )
+
+
 @pytest.fixture
 def alk_source_cli(monkeypatch):
     """Point this integration fixture at the stacked ALK interpreter and optional src/ checkout."""
@@ -665,3 +673,193 @@ def test_existing_reference_can_be_accepted_after_text_redaction(
         **selectors,
     )
     assert result["accepted_revision"] == repaired["revision"]
+
+
+def test_schema_repairs_accumulate_across_reprepares():
+    # Choosing the identity column after "treat as text" kept re-asking the text question.
+    text = [{"source_id": "orders", "text_fields": ["2026-07-14", "2026-07-15"]}]
+    identity = [{"source_id": "orders", "identity_fields": ["order_id"]}]
+
+    merged = reviews._merged_repairs(text, identity)
+
+    assert merged == [
+        {
+            "source_id": "orders",
+            "text_fields": ["2026-07-14", "2026-07-15"],
+            "identity_fields": ["order_id"],
+        }
+    ]
+    assert reviews._merged_repairs(merged, []) == merged
+    assert reviews._merged_repairs(
+        merged, [{"source_id": "orders", "text_fields": ["2026-07-15", "notes"]}]
+    )[0]["text_fields"] == ["2026-07-14", "2026-07-15", "notes"]
+
+
+def test_reprepare_accepts_keeping_text_personal_data_as_one_repair():
+    from simulate.serializers.harness_source_review import (
+        HarnessSourceReviewReprepareSerializer as Reprepare,
+    )
+
+    base = {"expected_revision": 2, "idempotency_key": "k"}
+    assert Reprepare(data={**base, "keep_text_sources": ["p"]}).is_valid()
+    both = Reprepare(
+        data={**base, "keep_text_sources": ["p"], "redact_text_sources": ["p"]}
+    )
+    assert not both.is_valid()
+
+
+@pytest.mark.django_db
+def test_existing_reference_can_keep_text_personal_data_with_consent(
+    user, workspace, request, settings, alk_source_cli
+):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from simulate.tests.test_harness_versioning_rollback import _built
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    request.getfixturevalue("_object_storage")
+    req = _request(user, workspace)
+    env = _built(user, workspace, "reference-keep")
+    selectors = {
+        "expected_environment_version_id": str(env.environment_version_id),
+        "expected_draft": {"id": None, "revision": 0},
+    }
+    prepared = harness_sources.prepare_upload_import(
+        env,
+        SimpleUploadedFile("support.txt", b"Escalate returns to support@example.com."),
+        purpose="reference",
+        **selectors,
+    )
+    source_id = prepared["draft"]["sources"][0]["pin"]["source_id"]
+    kept = reviews.reprepare_review(
+        req,
+        prepared["import_ref"],
+        expected_revision=prepared["revision"],
+        idempotency_key="keep",
+        keep_text_sources=[source_id],
+    )
+    assert kept["state"] == "ready"
+    assert "support@example.com" in json.dumps(kept["preview"])
+    harness_sources.accept_source_import(
+        req,
+        env,
+        import_ref=kept["id"],
+        expected_revision=kept["revision"],
+        expected_draft_digest=kept["draft_digest"],
+        review={
+            "reference_reviews": [
+                {
+                    "source_id": source_id,
+                    "audience": {"tested_agent": True, "participant_ids": []},
+                }
+            ]
+        },
+        **selectors,
+    )
+    consent = reviews.HarnessSourceReview.objects.get(id=kept["id"]).receipt[
+        "personal_data_kept"
+    ]
+    assert consent["source_ids"] == [source_id]
+    assert consent["accepted_by"] == str(user.id)
+    accepted = reviews.HarnessSourceReview.objects.get(id=kept["id"]).preview
+    assert accepted["sources"][0]["personal_data_mode"] == "keep"
+
+
+def _pdf(text: str) -> bytes:
+    import io
+
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {
+            NameObject("/Font"): DictionaryObject(
+                {NameObject("/F1"): writer._add_object(font)}
+            )
+        }
+    )
+    content = DecodedStreamObject()
+    content.set_data(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode())
+    page[NameObject("/Contents")] = writer._add_object(content)
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+@pytest.mark.django_db
+def test_accepted_policy_rule_is_titled_and_recorded(
+    user, workspace, request, settings, alk_source_cli
+):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from simulate.tests.test_harness_versioning_rollback import _built
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    request.getfixturevalue("_object_storage")
+    req = _request(user, workspace)
+    env = _built(user, workspace, "policy-rule")
+    selectors = {
+        "expected_environment_version_id": str(env.environment_version_id),
+        "expected_draft": {"id": None, "revision": 0},
+    }
+    prepared = harness_sources.prepare_upload_import(
+        env,
+        SimpleUploadedFile(
+            "refunds.pdf", _pdf('Refund responses must contain "approved".')
+        ),
+        purpose="policy",
+        **selectors,
+    )
+    [rule] = prepared["draft"]["proposals"]["policy_rules"]
+    assert rule["title"] == "Responses must include “approved”"
+    source_id = prepared["draft"]["sources"][0]["pin"]["source_id"]
+    harness_sources.accept_source_import(
+        req,
+        env,
+        import_ref=prepared["import_ref"],
+        expected_revision=prepared["revision"],
+        expected_draft_digest=prepared["draft_digest"],
+        review={
+            "policy_reviews": [
+                {
+                    "source_id": source_id,
+                    "audience": {"tested_agent": True, "participant_ids": []},
+                    "rules": [{"proposal": rule, "decision": "accepted"}],
+                }
+            ]
+        },
+        **selectors,
+    )
+    source = reviews.HarnessSourceReview.objects.get(id=prepared["import_ref"]).preview[
+        "sources"
+    ][0]
+    assert source["accepted_rule_ids"] == [rule["rule_id"]]
+
+    from simulate.services.harness_versioning.review import draft_review
+
+    env.refresh_from_db()
+    [manifest] = [
+        change
+        for change in draft_review(env)["changes"]
+        if change["key"] == "sources/manifest.json"
+    ]
+    assert manifest["summary"] == "Add sources: refunds.pdf"
+    assert manifest["source_changes"] == [
+        {
+            "source_id": source_id,
+            "action": "added",
+            "filename": "refunds.pdf",
+            "role": "policy",
+            "rows": None,
+            "rules": ["Responses must include “approved”"],
+        }
+    ]

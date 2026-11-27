@@ -73,6 +73,51 @@ def resolve_legacy_filenames(rows, scope):
             source["filename"] = name
 
 
+def accepted_sources(environment, *manifests: dict) -> dict[str, dict[str, Any]]:
+    """Each source the given manifests name, as its accepted review saw it, matched by the manifest's
+    snapshot digest the way source_summary does. Adds ``rule_titles`` (rule id → title) from that review."""
+    digests = {
+        sid: str(digest).removeprefix("sha256:")
+        for manifest in manifests
+        for sid, digest in (manifest.get("source_snapshot_digests") or {}).items()
+    }
+    if not digests:
+        return {}
+    scope = {
+        "organization_id": environment.organization_id,
+        "workspace_id": environment.workspace_id,
+    }
+    rows = list(
+        HarnessSourceReview.objects.filter(
+            **scope,
+            owner=environment,
+            state=HarnessSourceReview.State.ACCEPTED,
+            accepted_artifact_digest__in=set(digests.values()),
+        )
+    )
+    resolve_legacy_filenames(rows, scope)
+    found: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        titles = {
+            rule["rule_id"]: rule["title"]
+            for rule in (row.preview.get("proposals") or {}).get("policy_rules", [])
+            if rule.get("title")
+        }
+        for source in row.preview.get("sources", []):
+            sid = source["pin"]["source_id"]
+            if digests.get(sid) == row.accepted_artifact_digest:
+                found[sid] = {**source, "rule_titles": titles}
+    return found
+
+
+def manifest_of(files) -> dict[str, Any]:
+    try:
+        manifest = json.loads((files or {}).get("sources/manifest.json") or b"{}")
+    except (UnicodeDecodeError, ValueError):
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
 def source_summary(environment, *, reviewer_scope=None) -> dict[str, Any]:
     head = environment.__class__.no_workspace_objects.select_related(
         "environment_version", "suite_version"
@@ -161,6 +206,7 @@ def source_summary(environment, *, reviewer_scope=None) -> dict[str, Any]:
                         "updated_at",
                         "visibility",
                         "rejected_count",
+                        "personal_data_mode",
                     )
                     if field in source
                 },

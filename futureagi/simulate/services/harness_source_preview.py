@@ -39,6 +39,22 @@ def _rejected_row_reason(message):
     return "The row could not be read."
 
 
+_RULE_TITLES = {
+    "contains": "Responses must include “{}”",
+    "not_contains": "Responses must not include “{}”",
+    "equals": "Responses must be exactly “{}”",
+}
+
+
+def _rule_title(rule: dict) -> str | None:
+    """A short, plain title for a checkable rule, built from its check."""
+    value = (rule.get("check_arguments") or {}).get("value")
+    template = _RULE_TITLES.get(rule.get("check_type"))
+    if rule.get("status") != "supported" or not template or not isinstance(value, str):
+        return None
+    return template.format(value[:160])
+
+
 def _statement_preview(statement, pages, withheld):
     span = statement.get("span") or {}
     result = {"statement_id": statement["statement_id"], "page": span.get("page")}
@@ -165,6 +181,12 @@ def safe_source_preview(draft: dict, origins: list[dict]) -> dict:
             }
         )
     proposals = draft.get("proposals") or {}
+    hidden_statements = {
+        statement["statement_id"]
+        for item in draft.get("sources", [])
+        if item["pin"]["source_id"] in withheld
+        for statement in item.get("statements", [])
+    }
     return {
         "draft_digest": draft["draft_digest"],
         "sources": display,
@@ -178,16 +200,25 @@ def safe_source_preview(draft: dict, origins: list[dict]) -> dict:
             ],
             "policy_rules": [
                 {
-                    key: item[key]
-                    for key in (
-                        "rule_id",
-                        "statement_id",
-                        "kind",
-                        "check_type",
-                        "conflict_group",
-                        "status",
-                    )
-                    if key in item
+                    **{
+                        key: item[key]
+                        for key in (
+                            "rule_id",
+                            "statement_id",
+                            "kind",
+                            "check_type",
+                            "conflict_group",
+                            "status",
+                        )
+                        if key in item
+                    },
+                    # The literal comes from the file, so withheld files get no title.
+                    **(
+                        {"title": title}
+                        if item.get("statement_id") not in hidden_statements
+                        and (title := _rule_title(item))
+                        else {}
+                    ),
                 }
                 for item in proposals.get("policy_rules", [])
             ],

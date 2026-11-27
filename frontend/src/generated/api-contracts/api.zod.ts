@@ -41460,7 +41460,9 @@ export const SimulateApiHarnessEnvironmentDesignsCreateBody = zod.object({
     .string()
     .min(1)
     .max(simulateApiHarnessEnvironmentDesignsCreateBodyRequirementsMax),
-  personal_data_mode: zod.enum(["none", "synthetic_replace"]).optional(),
+  personal_data_mode: zod
+    .enum(["none", "synthetic_replace", "keep"])
+    .optional(),
   modality: zod
     .enum(["chat", "voice"])
     .default(simulateApiHarnessEnvironmentDesignsCreateBodyModalityDefault),
@@ -49621,6 +49623,21 @@ export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
           .describe(
             "A world state change: rows added, removed and changed per table; null when it cannot be read.",
           ),
+        source_changes: zod
+          .array(
+            zod.object({
+              source_id: zod.string().min(1),
+              action: zod.enum(["added", "removed"]),
+              filename: zod.string(),
+              role: zod.string().min(1),
+              rows: zod.number(),
+              rules: zod.array(zod.string().min(1)),
+            }),
+          )
+          .optional()
+          .describe(
+            "The uploaded-sources manifest change: each source added or removed, as a person reads it.",
+          ),
       }),
     ),
     counts: zod.object({
@@ -49746,6 +49763,21 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResp
           .optional()
           .describe(
             "A world state change: rows added, removed and changed per table; null when it cannot be read.",
+          ),
+        source_changes: zod
+          .array(
+            zod.object({
+              source_id: zod.string().min(1),
+              action: zod.enum(["added", "removed"]),
+              filename: zod.string(),
+              role: zod.string().min(1),
+              rows: zod.number(),
+              rules: zod.array(zod.string().min(1)),
+            }),
+          )
+          .optional()
+          .describe(
+            "The uploaded-sources manifest change: each source added or removed, as a person reads it.",
           ),
       }),
     ),
@@ -59610,6 +59642,10 @@ export const simulateApiHarnessSourceReviewsReprepareBodySyntheticTextSourcesIte
 
 export const simulateApiHarnessSourceReviewsReprepareBodySyntheticTextSourcesMax = 100;
 
+export const simulateApiHarnessSourceReviewsReprepareBodyKeepTextSourcesItemMax = 255;
+
+export const simulateApiHarnessSourceReviewsReprepareBodyKeepTextSourcesMax = 100;
+
 export const SimulateApiHarnessSourceReviewsReprepareBody = zod.object({
   expected_revision: zod.number().min(1),
   idempotency_key: zod
@@ -59682,6 +59718,17 @@ export const SimulateApiHarnessSourceReviewsReprepareBody = zod.object({
         ),
     )
     .max(simulateApiHarnessSourceReviewsReprepareBodySyntheticTextSourcesMax)
+    .optional(),
+  keep_text_sources: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessSourceReviewsReprepareBodyKeepTextSourcesItemMax,
+        ),
+    )
+    .max(simulateApiHarnessSourceReviewsReprepareBodyKeepTextSourcesMax)
     .optional(),
 });
 
