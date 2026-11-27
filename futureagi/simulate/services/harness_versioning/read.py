@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from django.conf import settings
 from django.db.models import (
@@ -35,6 +35,11 @@ from simulate.services.harness_versioning.versions import (
     with_actor_digests,
 )
 from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.locked_versions import (
+        LockedVersionItem,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -577,7 +582,16 @@ def agent_version_item(job: HostedHarnessJob, version: AgentVersion) -> dict[str
 _SAVED_DRAFT = Q(status=VersionStatus.DISCARDED, documents__has_key="saved_version_id")
 
 
-def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
+class VersionsRead(TypedDict):
+    """Every version of an environment's three pieces, newest first, and its locks."""
+
+    agent: list[dict[str, Any]]
+    environment: list[dict[str, Any]]
+    suite: list[dict[str, Any]]
+    locked_versions: list[LockedVersionItem]
+
+
+def list_versions(job: HostedHarnessJob) -> VersionsRead:
     environments = _newest_first(
         HarnessEnvironmentVersion.no_workspace_objects.filter(job=job)
         .exclude(_SAVED_DRAFT)
@@ -595,6 +609,7 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
     )
     from simulate.services.harness_agent_versions import _default_lineage
     from simulate.services.harness_readiness.release import release_checks_for
+    from simulate.services.harness_versioning import locked_versions
 
     # Two documents of each environment version, read in one query; never the rest.
     release = {
@@ -643,6 +658,7 @@ def list_versions(job: HostedHarnessJob) -> dict[str, list[dict[str, Any]]]:
             )
             for version in suites
         ],
+        "locked_versions": locked_versions.locked_version_items(job),
     }
 
 
