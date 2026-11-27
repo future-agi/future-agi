@@ -154,6 +154,10 @@ def test_anything_but_a_list_is_refused(value):
         "shop.xn--zz.com",
         "XN--ZZ.com",
         "xn--a.com",
+        # The ASCII form of a name IDNA 2008 does not allow (an emoji, i❤.ws): refused, as its
+        # Unicode spelling is, though a browser would open it.
+        "xn--i-7iq.ws",
+        "i❤.ws",
         # Special-use names that are never a site on the public internet (RFC 7686, RFC 9476).
         "hidden.onion",
         "shop.alt",
