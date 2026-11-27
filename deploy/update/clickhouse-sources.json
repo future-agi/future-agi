@@ -454,8 +454,8 @@
     },
     {
       "pattern": "e2e/lib/harness_environment_seed.py",
-      "reason": "Inspected E2E seed: the literal is the SQLite schema file packed into a fixture world archive, never run against a platform database. Re-pinned for the environment_needs seed option (TH-10513), which adds a contract key and no statement.",
-      "sha256": "198c01c91d71b96604fadf9e30ef0faf0aa808ef3c25090000fb97859ca82f97"
+      "reason": "Inspected E2E seed: the literal is the SQLite schema file packed into a fixture world archive, never run against a platform database. Re-pinned for the environment_needs seed option (TH-10513), which adds a contract key and no statement, and for the browser trial's stored world_state file, which adds no statement.",
+      "sha256": "de30cd596f51ba9ed5cc1c3482f198ec2e8311e9d72c3b3df13321a9078937c4"
     },
     {
       "pattern": ".github/scripts/devflow_approval.py",

@@ -1,0 +1,155 @@
+{
+ "door": {
+  "action_log": [
+   {
+    "action": "orders.get"
+   }
+  ],
+  "blocked": [
+   {
+    "at": 101.0,
+    "host": "www.example.com",
+    "url": "https://www.example.com/deals",
+    "via": "browser",
+    "what": "navigation"
+   },
+   {
+    "count": 1,
+    "host": "cdn.other.test",
+    "via": "browser",
+    "what": "page_request"
+   }
+  ],
+  "browser": {
+   "blocked_navigations": [
+    {
+     "at": 101.0,
+     "tab": 1,
+     "url": "https://www.example.com/deals"
+    }
+   ],
+   "blocked_page_requests": [
+    {
+     "count": 1,
+     "host": "cdn.other.test"
+    }
+   ],
+   "complete": true,
+   "rows": [
+    {
+     "at": 100.0,
+     "kind": "navigation",
+     "tab": 1,
+     "url": "https://shop.example.com/"
+    }
+   ],
+   "screenshots": [
+    {
+     "artifact_id": "sha256:037f46e891ee55e4f4ff225588793d5a93e949d12ec609c9a9253942f827048d",
+     "at": 102.0,
+     "bytes": 9,
+     "file": "load.jpg",
+     "tab": 1,
+     "url": "https://shop.example.com/",
+     "when": "load"
+    },
+    {
+     "artifact_id": "sha256:905733dcf046e76295b7eaab35681061b336931b643330976557f665dcb451b4",
+     "at": 103.0,
+     "bytes": 8,
+     "file": "end.jpg",
+     "tab": 1,
+     "url": "https://shop.example.com/cart",
+     "when": "end"
+    }
+   ],
+   "screenshots_capped": false,
+   "state": "used",
+   "truncated": false
+  },
+  "schema": "futureagi.world-state.v1",
+  "skipped": [],
+  "tables": {
+   "orders": [
+    {
+     "id": 1
+    }
+   ]
+  }
+ },
+ "no_door": {
+  "blocked": [
+   {
+    "at": 101.0,
+    "host": "www.example.com",
+    "url": "https://www.example.com/deals",
+    "via": "browser",
+    "what": "navigation"
+   },
+   {
+    "count": 1,
+    "host": "cdn.other.test",
+    "via": "browser",
+    "what": "page_request"
+   }
+  ],
+  "browser": {
+   "blocked_navigations": [
+    {
+     "at": 101.0,
+     "tab": 1,
+     "url": "https://www.example.com/deals"
+    }
+   ],
+   "blocked_page_requests": [
+    {
+     "count": 1,
+     "host": "cdn.other.test"
+    }
+   ],
+   "complete": true,
+   "rows": [
+    {
+     "at": 100.0,
+     "kind": "navigation",
+     "tab": 1,
+     "url": "https://shop.example.com/"
+    }
+   ],
+   "screenshots": [
+    {
+     "artifact_id": "sha256:037f46e891ee55e4f4ff225588793d5a93e949d12ec609c9a9253942f827048d",
+     "at": 102.0,
+     "bytes": 9,
+     "file": "load.jpg",
+     "tab": 1,
+     "url": "https://shop.example.com/",
+     "when": "load"
+    },
+    {
+     "artifact_id": "sha256:905733dcf046e76295b7eaab35681061b336931b643330976557f665dcb451b4",
+     "at": 103.0,
+     "bytes": 8,
+     "file": "end.jpg",
+     "tab": 1,
+     "url": "https://shop.example.com/cart",
+     "when": "end"
+    }
+   ],
+   "screenshots_capped": false,
+   "state": "used",
+   "truncated": false
+  },
+  "not_held": [
+   "tables",
+   "action_log"
+  ],
+  "recorded": false,
+  "schema": "futureagi.browser-world-state.v1",
+  "why": "no_world_door"
+ },
+ "shot_bytes": {
+  "end": "shot-end",
+  "load": "shot-load"
+ }
+}

@@ -140,6 +140,11 @@ _ALLOWED_ARTIFACTS = {
 _GAP_TIMEOUT = timedelta(seconds=60)
 
 
+def artifact_kind_kept(level: str, kind: str) -> bool:
+    """Whether a job at this artifact level keeps artifacts of this kind."""
+    return kind in _ALLOWED_ARTIFACTS.get(level, ())
+
+
 _RECORDING_ARTIFACT_KINDS = {
     "recording_combined",
     "recording_stereo",
@@ -1774,9 +1779,11 @@ def _world_change_fields(world: dict[str, Any]) -> dict[str, Any]:
             "skipped": _entries(records.get("skipped")),
             "truncated": truncated + max(len(changes) - MAX_RECORDED_ENTRIES, 0),
         }
-    end_state = world.get("end_state_artifact")
-    if isinstance(end_state, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", end_state):
-        kept["end_state_artifact"] = end_state
+    # The world's end state, and a file holding only the browser's record (no tables) under a name of its own.
+    for key in ("end_state_artifact", "browser_state_artifact"):
+        named = world.get(key)
+        if isinstance(named, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", named):
+            kept[key] = named
     start = world.get("start")
     if isinstance(start, dict) and start.get("state") in _START_STATES:
         kept["start"] = {

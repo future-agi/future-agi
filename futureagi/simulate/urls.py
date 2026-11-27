@@ -156,6 +156,7 @@ from .views.livekit_api import (
 )
 from .views.persona import PersonaDuplicateView, PersonaViewSet
 from .views.run_results_v3 import (
+    CallExecutionV3BrowserView,
     CallExecutionV3DetailView,
     CallExecutionV3WorkersView,
     RunAnalyticsV3View,
@@ -241,6 +242,11 @@ urlpatterns = [
         "v3/call-executions/<uuid:call_execution_id>/workers/",
         CallExecutionV3WorkersView.as_view(),
         name="v3-call-execution-workers",
+    ),
+    path(
+        "v3/call-executions/<uuid:call_execution_id>/browser/",
+        CallExecutionV3BrowserView.as_view(),
+        name="v3-call-execution-browser",
     ),
     path(
         "v3/test-executions/<uuid:test_execution_id>/trial-routes/",

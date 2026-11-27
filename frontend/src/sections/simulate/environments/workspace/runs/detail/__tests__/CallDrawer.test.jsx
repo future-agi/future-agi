@@ -65,6 +65,9 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
       <button type="button" onClick={() => onLeftPanelTabChange("workers")}>
         choose participants
       </button>
+      <button type="button" onClick={() => onLeftPanelTabChange("browser")}>
+        choose browser
+      </button>
       {leftPanelTabs?.find((tab) => tab.value === leftPanelTab)?.content}
       <button type="button" onClick={onPrev} disabled={!hasPrev}>
         prev
@@ -101,6 +104,17 @@ vi.mock("../CallTracesPanel", () => ({
       data-project-id={projectId ?? ""}
       data-count={traces.length}
       data-error={String(isError)}
+    />
+  ),
+}));
+
+// The browser's entry: what it was given, and only once it is opened.
+vi.mock("../TrialBrowserPanel", () => ({
+  default: ({ callExecutionId, attempt }) => (
+    <div
+      data-testid="trial-browser-stub"
+      data-call={callExecutionId}
+      data-attempt={String(attempt)}
     />
   ),
 }));
@@ -1024,6 +1038,66 @@ describe("CallDrawer — the call's traces", () => {
       "data-left-tabs",
       "Traces,Participants,World state",
     );
+  });
+
+  it("gives a voice trial of a browser environment a Browser entry, read only once opened", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-1",
+        transcript: [],
+        actors_enabled: false,
+        browser_environment: true,
+      },
+      isPending: false,
+    });
+    useCallTraces.mockReturnValue({
+      projectId: "hidden-project",
+      traces: [],
+      isError: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("voice-drawer").getAttribute("data-left-tabs"),
+    ).toMatch(/,Browser$/);
+    expect(screen.queryByTestId("trial-browser-stub")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "choose browser" }));
+    const panel = screen.getByTestId("trial-browser-stub");
+    expect(panel).toHaveAttribute("data-call", "voice-1");
+    expect(panel).toHaveAttribute("data-attempt", "null");
+  });
+
+  it("gives a voice trial with no browser no Browser entry", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-1", transcript: [], actors_enabled: false },
+      isPending: false,
+    });
+    useCallTraces.mockReturnValue({
+      projectId: "hidden-project",
+      traces: [],
+      isError: false,
+    });
+
+    render(
+      <CallDrawer
+        task={{ id: "voice-1", simulationCallType: "voice" }}
+        executionId="exec-1"
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("voice-drawer").getAttribute("data-left-tabs"),
+    ).not.toMatch(/Browser/);
   });
 
   it("gives a voice call a Traces tab even when the run has nothing to read", () => {

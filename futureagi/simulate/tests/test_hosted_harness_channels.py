@@ -2130,6 +2130,13 @@ def test_a_trial_s_end_state_is_kept_as_a_world_state_artifact(organization):
         )
         is None
     )
+    # A file holding only the browser's record is kept under its own name, checked the same way.
+    assert _world_change_fields({"browser_state_artifact": f"sha256:{digest}"}) == {
+        "browser_state_artifact": f"sha256:{digest}"
+    }
+    assert "browser_state_artifact" not in _world_change_fields(
+        {"browser_state_artifact": "not-a-digest"}
+    )
     # The job names no platform run; the trial finds its end state by the job that sent its receipt.
     assert "platform_run_id" not in (job.payload.get("metadata") or {})
 

@@ -97,6 +97,9 @@ export const TRIAL_CHANGES_COPY = {
   readLabel: "Read only",
   answerLostLabel: "Answered with a timeout",
   blockedLabel: "Blocked outside the world",
+  blockedPagesLabel: "Pages blocked",
+  blockedPageRequestsLabel: "Page requests blocked",
+  blockedBrowserLabel: "Browser requests blocked",
   blockedCall: (one) =>
     `${one.host}${one.method ? ` ${one.method}` : ""} ×${one.count ?? 1}`,
   endStateHint: "The world's records and action log as this trial ended",
@@ -150,12 +153,14 @@ export const groupNames = (names) => {
   return [...seen].map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
 };
 
-/* Blocked calls to the same host and method as one entry; an older trial
-   sent no count, which means one call. */
+/* Blocked calls to the same host, method and kind as one entry; an older
+   trial sent no count, which means one call. */
 export const groupBlocked = (calls) => {
   const seen = new Map();
   calls.forEach((one) => {
-    const key = `${one.host}\u0000${one.method || ""}`;
+    const key = [one.host, one.method, one.via, one.what]
+      .map((part) => part || "")
+      .join("\u0000");
     const had = seen.get(key);
     seen.set(key, {
       ...one,
@@ -243,3 +248,31 @@ export const TRIAL_UNDER_WAY = new Set(["queued", "in_progress"]);
 // Records shared between a call's participants are not an actors feature: the tab shows them with actors off too.
 export const hasSharedRecords = (trialState) =>
   Boolean(trialState?.shared_records?.length);
+
+/* The blocked list as the page shows it: the agent's own calls, then what
+   the environment's browser was refused: pages the agent tried to open,
+   requests pages made, and requests the browser's record could not tell
+   apart. Each kind keeps only its non-empty entries. */
+export const BLOCKED_KINDS = [
+  { key: "calls", label: "blockedLabel", testId: "blocked-call" },
+  { key: "pages", label: "blockedPagesLabel", testId: "blocked-page" },
+  {
+    key: "pageRequests",
+    label: "blockedPageRequestsLabel",
+    testId: "blocked-page-request",
+  },
+  { key: "browser", label: "blockedBrowserLabel", testId: "blocked-browser" },
+];
+
+const blockedKind = (one) => {
+  if (one.via !== "browser") return "calls";
+  if (one.what === "navigation") return "pages";
+  if (one.what === "page_request") return "pageRequests";
+  return "browser";
+};
+
+export const splitBlocked = (calls) => {
+  const split = { calls: [], pages: [], pageRequests: [], browser: [] };
+  (calls || []).forEach((one) => split[blockedKind(one)].push(one));
+  return split;
+};

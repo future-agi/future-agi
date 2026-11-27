@@ -116,6 +116,17 @@ class BlockedCallSerializer(serializers.Serializer):
         required=False,
         help_text="How many calls to this host were refused; absent on older trials (one).",
     )
+    via = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="`browser` when the environment's browser made the request; absent for the agent's own calls.",
+    )
+    what = serializers.ChoiceField(
+        choices=["navigation", "page_request"],
+        required=False,
+        help_text="For the browser: a page the agent tried to open, or a request a page made. Absent where the "
+        "browser's record could not tell them apart.",
+    )
 
 
 class TrialRefusedActionSerializer(serializers.Serializer):
@@ -534,3 +545,53 @@ class EarlierAttemptSerializer(serializers.Serializer):
         help_text="False when it was snapshotted before attempts kept their worker record and trial state."
     )
     trial_state = TrialStateSerializer(allow_null=True)
+
+
+class BrowserScreenshotSerializer(serializers.Serializer):
+    """One screenshot row of the trial's browser record, in the record's order."""
+
+    when = serializers.CharField(
+        allow_blank=True,
+        help_text="When it was taken, as the record says (`load` or `end`).",
+    )
+    url = serializers.CharField(
+        allow_blank=True,
+        help_text="The page's address as the record wrote it; text, not a link.",
+    )
+    link = serializers.BooleanField(
+        help_text="Whether the address may be shown as a link: http or https only."
+    )
+    tab = serializers.IntegerField(allow_null=True)
+    at = serializers.FloatField(allow_null=True)
+    kept = serializers.BooleanField(
+        help_text="Whether the picture is stored; false when it was not kept."
+    )
+    picture_url = serializers.CharField(allow_null=True)
+
+
+class CallBrowserEvidenceSerializer(serializers.Serializer):
+    """What the trial's browser did, from the trial's own world_state file."""
+
+    state = serializers.ChoiceField(
+        choices=["listed", "not_kept", "unreadable", "no_browser"],
+        help_text="`listed`: the file was read. `not_kept`: the trial names no file, or it is not stored. "
+        "`unreadable`: the file could not be read. `no_browser`: no browser was started in this trial.",
+    )
+    complete = serializers.BooleanField(
+        required=False, help_text="False when the browser's record was not finished."
+    )
+    capped = serializers.BooleanField(
+        help_text="The trial's screenshots reached their limit; the last one is kept."
+    )
+    level_keeps_none = serializers.BooleanField(
+        help_text="The run's artifact level keeps no screenshots."
+    )
+    screenshots = BrowserScreenshotSerializer(many=True)
+    more = serializers.IntegerField(help_text="Screenshot rows past the ones shown.")
+    blocked_source = serializers.ChoiceField(
+        choices=["record", "file", "unreadable"],
+        help_text="Where this trial's blocked list is: `record`, kept with the trial's changes; `file`, in "
+        "`blocked` here; `unreadable`, not known.",
+    )
+    blocked = BlockedCallSerializer(many=True, required=False)
+    blocked_truncated = serializers.BooleanField(required=False)

@@ -132,6 +132,105 @@ describe("TrialChangesPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the pages the browser was refused apart from the requests pages made and from the agent's own calls", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 1,
+              committed: 0,
+              refused: 1,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: [],
+              no_change: true,
+              blocked: [
+                { host: "api.other.test", method: "POST", count: 1 },
+                {
+                  host: "www.example.com",
+                  via: "browser",
+                  what: "navigation",
+                  count: 2,
+                },
+                // A page and the requests pages made to the same host stay apart.
+                {
+                  host: "www.example.com",
+                  via: "browser",
+                  what: "page_request",
+                  count: 4,
+                },
+                {
+                  host: "cdn.other.test",
+                  via: "browser",
+                  what: "page_request",
+                  count: 6,
+                },
+                // A host only the proxy saw: the browser's, not told apart.
+                {
+                  host: "fonts.other.test",
+                  method: "CONNECT",
+                  via: "browser",
+                  count: 3,
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    const line = (testId) =>
+      screen.getAllByTestId(testId).map((one) => one.textContent);
+
+    expect(line("blocked-call")).toEqual(["api.other.test POST ×1"]);
+    expect(line("blocked-page")).toEqual(["www.example.com ×2"]);
+    expect(line("blocked-page-request")).toEqual([
+      "www.example.com ×4",
+      "cdn.other.test ×6",
+    ]);
+    expect(line("blocked-browser")).toEqual(["fonts.other.test CONNECT ×3"]);
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.blockedLabel),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.blockedPagesLabel),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.blockedPageRequestsLabel),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(TRIAL_CHANGES_COPY.blockedBrowserLabel),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no browser lines for a trial with no browser", () => {
+    render(
+      <TrialChangesPanel
+        trialState={{
+          state_changes: [
+            {
+              who: "agent",
+              name: "the agent",
+              attempted: 1,
+              committed: 0,
+              refused: 1,
+              faulted: 0,
+              duplicate: 0,
+              committed_actions: [],
+              blocked: [{ host: "api.other.test", method: "POST", count: 1 }],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.queryByTestId("blocked-page")).toBeNull();
+    expect(screen.queryByTestId("blocked-page-request")).toBeNull();
+    expect(screen.queryByTestId("blocked-browser")).toBeNull();
+  });
+
   it("links the world as the trial ended when its end state was kept, and says nothing of it otherwise", () => {
     const changes = [
       {

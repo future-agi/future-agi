@@ -283,6 +283,7 @@ import type {
   CICDJobApi,
   CallBranchAnalysisResponseApi,
   CallBranchDeviationCreateResponseApi,
+  CallBrowserEvidenceApi,
   CallExecutionApi,
   CallExecutionDeleteResponseApi,
   CallExecutionDetailApi,
@@ -74865,6 +74866,52 @@ export const simulateV3CallExecutionDetail = async (
 ): Promise<simulateV3CallExecutionDetailResponse> => {
   return apiMutator<simulateV3CallExecutionDetailResponse>(
     getSimulateV3CallExecutionDetailUrl(callExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3CallExecutionBrowserResponse200 = {
+  data: CallBrowserEvidenceApi;
+  status: 200;
+};
+
+export type simulateV3CallExecutionBrowserResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3CallExecutionBrowserResponseSuccess =
+  simulateV3CallExecutionBrowserResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateV3CallExecutionBrowserResponseError =
+  simulateV3CallExecutionBrowserResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateV3CallExecutionBrowserResponse =
+  | simulateV3CallExecutionBrowserResponseSuccess
+  | simulateV3CallExecutionBrowserResponseError;
+
+export const getSimulateV3CallExecutionBrowserUrl = (
+  callExecutionId: string,
+) => {
+  return `/simulate/v3/call-executions/${callExecutionId}/browser/`;
+};
+
+/**
+ * What the trial's browser did: its screenshots and, with no world door, its blocked list, read from the trial's
+own world_state file when the entry is opened.
+ */
+export const simulateV3CallExecutionBrowser = async (
+  callExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3CallExecutionBrowserResponse> => {
+  return apiMutator<simulateV3CallExecutionBrowserResponse>(
+    getSimulateV3CallExecutionBrowserUrl(callExecutionId),
     {
       ...options,
       method: "GET",

@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 
 from simulate.constants.run_outcome import OUTCOME_STATUSES
 from simulate.models import CallExecution, TestExecution
+from simulate.selectors.browser_evidence import browser_environment, browser_evidence
 from simulate.selectors.call_detail import (
     call_actors,
     comparability,
@@ -43,6 +44,7 @@ from simulate.selectors.held_back import coding_agent_key
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
 from simulate.serializers.call_detail_v3 import (
+    CallBrowserEvidenceSerializer,
     CallCallActorSerializer,
     CallParticipantSerializer,
     EarlierAttemptSerializer,
@@ -729,6 +731,10 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     )
     trial_state = TrialStateSerializer(allow_null=True)
     earlier_attempts = EarlierAttemptSerializer(many=True)
+    browser_environment = serializers.BooleanField(
+        help_text="The trial ran in an environment with a browser: its job had sites at its pin. What the browser "
+        "did is read only when its entry is opened, from the call's browser endpoint."
+    )
     attempt_number = serializers.IntegerField(
         help_text="Which attempt this call is, counted from 1: one more than its earlier attempts."
     )
@@ -766,6 +772,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "has_customer",
             "trial_state",
             "earlier_attempts",
+            "browser_environment",
             "attempt_number",
             "actors_enabled",
             "comparable",
@@ -1090,6 +1097,8 @@ def build_call_execution_detail(
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
             "trial_state": trial_state(call, calls=calls),
             "earlier_attempts": (attempts := earlier_attempts(call)),
+            # Whether the trial's environment has a browser; what it did loads when its entry is opened.
+            "browser_environment": browser_environment(call),
             "attempt_number": len(attempts) + 1,
             "actors_enabled": actors_enabled(),
             **comparability(call),
@@ -1181,6 +1190,21 @@ class CallExecutionV3WorkersView(APIView):
                 status=reply.status,
             )
         return Response(status=reply.status)
+
+
+class CallExecutionV3BrowserView(APIView):
+    """What the trial's browser did: its screenshots and, with no world door, its blocked list, read from the trial's
+    own world_state file when the entry is opened."""
+
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        responses={200: CallBrowserEvidenceSerializer},
+        operation_id="simulate_v3_call_execution_browser",
+    )
+    def get(self, request, call_execution_id, *args, **kwargs):
+        call = _call_for_request(request, call_execution_id)
+        return Response(CallBrowserEvidenceSerializer(browser_evidence(call)).data)
 
 
 class RunTrialRoutesV3View(APIView):

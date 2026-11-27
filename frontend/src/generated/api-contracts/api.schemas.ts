@@ -31211,6 +31211,17 @@ export interface CallParticipantApi {
 }
 
 /**
+ * For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart.
+ */
+export type BlockedCallApiWhat =
+  (typeof BlockedCallApiWhat)[keyof typeof BlockedCallApiWhat];
+
+export const BlockedCallApiWhat = {
+  navigation: "navigation",
+  page_request: "page_request",
+} as const;
+
+/**
  * Calls to hosts outside the test world, refused before they left: counted in refused, never a change.
  */
 export interface BlockedCallApi {
@@ -31221,6 +31232,10 @@ export interface BlockedCallApi {
   tool?: string;
   /** How many calls to this host were refused; absent on older trials (one). */
   count?: number;
+  /** `browser` when the environment's browser made the request; absent for the agent's own calls. */
+  via?: string;
+  /** For the browser: a page the agent tried to open, or a request a page made. Absent where the browser's record could not tell them apart. */
+  what?: BlockedCallApiWhat;
 }
 
 export interface TrialRefusedActionApi {
@@ -31870,6 +31885,8 @@ export interface CallExecutionV3DetailResponseApi {
   has_customer: boolean;
   trial_state: TrialStateApi;
   earlier_attempts: EarlierAttemptApi[];
+  /** The trial ran in an environment with a browser: its job had sites at its pin. What the browser did is read only when its entry is opened, from the call's browser endpoint. */
+  browser_environment: boolean;
   /** Which attempt this call is, counted from 1: one more than its earlier attempts. */
   attempt_number: number;
   /** Whether actors, test conditions and the World changes record are on for this deployment; false hides the World changes view. */
@@ -31882,6 +31899,64 @@ export interface CallExecutionV3DetailResponseApi {
   csat_status: CallExecutionV3DetailResponseApiCsatStatus;
   /** @minLength 1 */
   csat_reason: string;
+}
+
+/**
+ * `listed`: the file was read. `not_kept`: the trial names no file, or it is not stored. `unreadable`: the file could not be read. `no_browser`: no browser was started in this trial.
+ */
+export type CallBrowserEvidenceApiState =
+  (typeof CallBrowserEvidenceApiState)[keyof typeof CallBrowserEvidenceApiState];
+
+export const CallBrowserEvidenceApiState = {
+  listed: "listed",
+  not_kept: "not_kept",
+  unreadable: "unreadable",
+  no_browser: "no_browser",
+} as const;
+
+/**
+ * Where this trial's blocked list is: `record`, kept with the trial's changes; `file`, in `blocked` here; `unreadable`, not known.
+ */
+export type CallBrowserEvidenceApiBlockedSource =
+  (typeof CallBrowserEvidenceApiBlockedSource)[keyof typeof CallBrowserEvidenceApiBlockedSource];
+
+export const CallBrowserEvidenceApiBlockedSource = {
+  record: "record",
+  file: "file",
+  unreadable: "unreadable",
+} as const;
+
+export interface BrowserScreenshotApi {
+  /** When it was taken, as the record says (`load` or `end`). */
+  when: string;
+  /** The page's address as the record wrote it; text, not a link. */
+  url: string;
+  /** Whether the address may be shown as a link: http or https only. */
+  link: boolean;
+  tab: number;
+  at: number;
+  /** Whether the picture is stored; false when it was not kept. */
+  kept: boolean;
+  /** @minLength 1 */
+  picture_url: string;
+}
+
+export interface CallBrowserEvidenceApi {
+  /** `listed`: the file was read. `not_kept`: the trial names no file, or it is not stored. `unreadable`: the file could not be read. `no_browser`: no browser was started in this trial. */
+  state: CallBrowserEvidenceApiState;
+  /** False when the browser's record was not finished. */
+  complete?: boolean;
+  /** The trial's screenshots reached their limit; the last one is kept. */
+  capped: boolean;
+  /** The run's artifact level keeps no screenshots. */
+  level_keeps_none: boolean;
+  screenshots: BrowserScreenshotApi[];
+  /** Screenshot rows past the ones shown. */
+  more: number;
+  /** Where this trial's blocked list is: `record`, kept with the trial's changes; `file`, in `blocked` here; `unreadable`, not known. */
+  blocked_source: CallBrowserEvidenceApiBlockedSource;
+  blocked?: BlockedCallApi[];
+  blocked_truncated?: boolean;
 }
 
 export type CallWorkersResponseApiCollection =
