@@ -21,7 +21,7 @@ name: Admin PR approval
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
-    branches: [dev]
+    branches: [dev, main]
 
 permissions:
   contents: read
@@ -48,8 +48,15 @@ jobs:
           REPO: ${{ github.repository }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           SENDER: ${{ github.event.sender.login }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+          # Into main, only an admin's hotfix branch skips the second reviewer.
+          if [[ $BASE == main && $HEAD_REF != *hotfix* ]]; then
+            echo "$HEAD_REF is not a hotfix branch; normal review applies to main."
+            exit 0
+          fi
           # Both the author and whoever triggered this event (on synchronize, the
           # pusher) must be admins: a non-admin push to an admin's branch is
           # reviewed normally.
@@ -106,5 +113,5 @@ jobs:
           fi
           gh api -X POST "repos/$REPO/pulls/$PR/reviews" \
             -f commit_id="$HEAD_SHA" -f event=APPROVE \
-            -f body="Approved automatically: the author is a repository admin. The change still lands only through the dev merge queue and its required checks." \
+            -f body="Approved automatically: the author is a repository admin. The change still lands only through its branch's required checks." \
             --jq '"approved \(.commit_id)"'
