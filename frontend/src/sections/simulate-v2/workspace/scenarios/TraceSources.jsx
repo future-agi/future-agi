@@ -7,7 +7,7 @@ import { paths } from "src/routes/paths";
 import { StatusDot } from "../../components/primitives";
 import { rebuildRun } from "../../_mock/comparison";
 import { runPlanHref } from "../../_mock/runPlanLink";
-import { productionTracesOf, TRACE_GOALS } from "../../_mock/traceImport";
+import { productionEvidenceOf, TRACE_GOALS } from "../../_mock/traceImport";
 import {
   STATE_MODES,
   REDACTION_RULES,
@@ -75,7 +75,7 @@ export default function TraceSources({ row, env, envState }) {
   const imp = row.traceImport || {};
   const review = row.traceReview || {};
   const traces = useMemo(
-    () => productionTracesOf(env, envState),
+    () => productionEvidenceOf(env, envState),
     [env, envState],
   );
   const sources = (imp.sourceIds || []).map((id) => ({

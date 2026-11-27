@@ -6,7 +6,7 @@
   exist in production are named. What happened and what should happen are
   separate, and an inferred fact is never shown as observed.
 */
-import { productionTracesOf, retitleForShows } from "./traceImport";
+import { productionEvidenceOf, retitleForShows } from "./traceImport";
 import { failedSimulationsOf } from "./evidenceSources";
 import { rulesOf } from "./envModel";
 import { currentUser } from "./scenarioProvenance";
@@ -35,7 +35,7 @@ export const draftSourcesOf = (row, env, envState) => {
     kind === "simulation"
       ? failedSimulationsOf(env, envState)
       : kind === "observe" || kind === "simCall"
-        ? productionTracesOf(env, envState)
+        ? productionEvidenceOf(env, envState)
         : envState?.evidenceUploads || [];
   return ids.map((id) => all.find((t) => t.traceId === id)).filter(Boolean);
 };

@@ -7,6 +7,7 @@
 import { productionConversationsOf, replayScenarioOf } from "./scenarioSources";
 import { agentVersions } from "./versions";
 import { hashSeed } from "./runStream";
+import { scrubPersonalData } from "./rsiModel";
 
 /** The Observe project these traces come from — the one linked to the
     agent, or none. A name is never made up for an unlinked agent. */
@@ -36,70 +37,147 @@ const outsideRecordOf = (env) =>
   OUTSIDE.find(([re]) => re.test(`${env?.name || ""} ${env?.id || ""}`))?.[1] ||
   "a record from another system";
 
-export const productionTracesOf = (env, envState) => {
+/*
+  How Observe records production traffic (tracer models: a Trace is one run —
+  one input, its spans, one output — with an optional session; a TraceSession
+  groups the traces of one conversation):
+  · Chat agents: each caller turn is one trace; the conversation is a session.
+  · Voice agents: a call is one trace holding the whole conversation (Observe
+    lists them as calls); there are no sessions to pick.
+  Personal data is shown scrubbed (`shown`, fake values marked); the raw text
+  stays on `turns`, which `replayScenarioOf` scrubs again when it drafts.
+*/
+export const isVoiceEnv = (env) => env?.surface === "voice";
+
+const shownTurns = (turns, name) =>
+  turns.map((t) => ({
+    role: t.role,
+    text: scrubPersonalData(t.text, { names: [name], mark: true }).text,
+  }));
+
+const versionOf = (envState, key) => {
   const versions = agentVersions(envState).map((v) => v.label);
-  return productionConversationsOf(env).map((c, i) => {
-    const h = hashSeed(c.id) >>> 0;
-    return {
-      ...c,
-      traceId: `T-${101 + i}`,
-      agentVersion: versions.length
-        ? versions[
-            Math.max(
-              0,
-              versions.length - 1 - (h % Math.min(2, versions.length)),
-            )
-          ]
-        : "v1",
-      spans: 6 + (h % 9),
-      evidence: {
-        transcript: true,
-        tools: h % 4 !== 0,
-        startingState: h % 3 === 0,
-        /* What the call relied on that the world doesn't hold, if anything. */
-        uncovered: h % 3 === 1 ? outsideRecordOf(env) : null,
-      },
-    };
-  });
+  if (!versions.length) return "v1";
+  const h = hashSeed(key) >>> 0;
+  return versions[
+    Math.max(0, versions.length - 1 - (h % Math.min(2, versions.length)))
+  ];
 };
 
-/**
- * The same production traffic as Observe's sessions: the traces of one
- * conversation, grouped. A session keeps its own ID (S-…) and lists its
- * traces — it is never shown as one of them (evidence.md: "never disguise one
- * as another"). Its outcome is failed if any trace failed; its evidence is
- * what its traces hold together, with the starting state of its first one.
- */
-export const productionSessionsOf = (env, envState) => {
-  const traces = productionTracesOf(env, envState);
+/* One conversation → the traces it made, plus its session (chat only). */
+const recordConversations = (env, envState) => {
+  const convs = productionConversationsOf(env);
+  const voice = isVoiceEnv(env);
+  const traces = [];
   const sessions = [];
-  for (let i = 0; i < traces.length; ) {
-    const size = 1 + ((hashSeed(traces[i].id) >>> 0) % 3);
-    const group = traces.slice(i, i + size);
-    i += size;
-    const first = group[0];
-    const n = sessions.length;
+  convs.forEach((c, i) => {
+    const h = hashSeed(c.id) >>> 0;
+    const agentVersion = versionOf(envState, c.id);
+    const startingState = h % 3 === 0;
+    const uncovered = h % 3 === 1 ? outsideRecordOf(env) : null;
+    if (voice) {
+      /* The call is the trace. */
+      traces.push({
+        ...c,
+        traceId: `T-${101 + i}`,
+        agentVersion,
+        spans: 6 + (h % 9),
+        shown: shownTurns(c.turns, c.callerName),
+        evidence: {
+          transcript: true,
+          tools: h % 4 !== 0,
+          startingState,
+          uncovered,
+        },
+      });
+      return;
+    }
+    const sessionId = `S-${201 + i}`;
+    /* The agent's reply to the last caller turn, when the sample ends on one. */
+    const full =
+      c.turns[c.turns.length - 1]?.role === "caller"
+        ? [
+            ...c.turns,
+            { role: "agent", text: "I've noted that and updated the account." },
+          ]
+        : c.turns;
+    const callerAt = c.turns
+      .map((t, k) => (t.role === "caller" ? k : -1))
+      .filter((k) => k >= 0);
+    const mine = callerAt.map((k, n) => {
+      const th = hashSeed(`${c.id}:${n}`) >>> 0;
+      const reply = full[k + 1]?.text || "";
+      const exchange = [
+        ...c.turns.slice(0, k + 1),
+        { role: "agent", text: reply },
+      ];
+      const last = n === callerAt.length - 1;
+      return {
+        ...c,
+        id: `${c.id}-t${n + 1}`,
+        traceId: `T-${101 + traces.length + n}`,
+        sessionId,
+        turn: n + 1,
+        turnsInSession: callerAt.length,
+        /* Its input carries the session so far; the drafts replay up to this turn. */
+        turns: c.turns.slice(0, k + 1),
+        shown: shownTurns(exchange, c.callerName),
+        priorTurns: k,
+        at: new Date(new Date(c.at).getTime() + n * 45000).toISOString(),
+        durationS: null,
+        latencyS: 1.4 + (th % 60) / 10,
+        outcome: c.outcome === "failed" && last ? "failed" : "passed",
+        agentVersion,
+        spans: 3 + (th % 6),
+        /* Tool calls this run made (none while the agent only asks); missing
+           only when made but not recorded. */
+        toolCalls: n > 0 ? 1 + (th % 2) : 0,
+        evidence: {
+          transcript: true,
+          tools: n === 0 || th % 4 !== 0,
+          /* The records as they stood when the session began. */
+          startingState,
+          uncovered: last ? uncovered : null,
+        },
+      };
+    });
+    traces.push(...mine);
     sessions.push({
-      ...first,
-      id: `sess-${first.id}`,
-      traceId: `S-${201 + n}`,
-      traceIds: group.map((t) => t.traceId),
+      ...c,
+      id: `sess-${c.id}`,
+      traceId: sessionId,
       unit: "sessions",
-      at: group.reduce((a, t) => (t.at > a ? t.at : a), first.at),
-      durationS: group.reduce((a, t) => a + (t.durationS || 0), 0),
-      spans: group.reduce((a, t) => a + (t.spans || 0), 0),
-      outcome: group.some((t) => t.outcome === "failed") ? "failed" : "passed",
-      turns: group.flatMap((t) => t.turns || []),
+      traceIds: mine.map((t) => t.traceId),
+      shown: shownTurns(full, c.callerName),
+      shownTraceAt: Object.fromEntries(
+        callerAt.map((k, n) => [k, mine[n].traceId]),
+      ),
+      agentVersion,
+      spans: mine.reduce((a, t) => a + t.spans, 0),
       evidence: {
         transcript: true,
-        tools: group.some((t) => t.evidence.tools),
-        startingState: first.evidence.startingState,
-        uncovered:
-          group.find((t) => t.evidence.uncovered)?.evidence.uncovered || null,
+        /* Missing for the session when any of its traces lacks them. */
+        tools: mine.every((t) => t.evidence.tools),
+        startingState,
+        uncovered,
       },
     });
-  }
-  return sessions;
+  });
+  return { traces, sessions };
+};
+
+/** Production traces: a chat agent's turns, or a voice agent's calls. */
+export const productionTracesOf = (env, envState) =>
+  recordConversations(env, envState).traces;
+
+/** A chat agent's sessions — one per conversation, listing its traces. None for voice. */
+export const productionSessionsOf = (env, envState) =>
+  recordConversations(env, envState).sessions;
+
+/** Traces and sessions together, to find an import's source by its ID. */
+export const productionEvidenceOf = (env, envState) => {
+  const r = recordConversations(env, envState);
+  return [...r.traces, ...r.sessions];
 };
 
 /** What the new scenario represents — each says what it keeps and what it makes up. */

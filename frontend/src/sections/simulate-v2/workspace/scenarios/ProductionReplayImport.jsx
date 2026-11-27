@@ -21,6 +21,7 @@ import {
   TRACE_GOALS,
   draftingCostOf,
   fromTracesCli,
+  isVoiceEnv,
   productionSessionsOf,
   productionTracesOf,
   rangeOf,
@@ -91,8 +92,17 @@ export default function ProductionReplayImport({
     () => (mode === "observe" ? observeSelectionOf(searchParams) : null),
     [mode, searchParams],
   );
+  /* A voice agent's call is one trace; a chat agent has traces (turns) and
+     sessions (conversations). */
+  const voice = isVoiceEnv(env);
   const selTraces = useMemo(
-    () => selectionTracesOf(sel, productionTracesOf(env, envState)),
+    () =>
+      selectionTracesOf(
+        sel,
+        sel?.kind === "sessions"
+          ? productionSessionsOf(env, envState)
+          : productionTracesOf(env, envState),
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sel, env?.id],
   );
@@ -100,17 +110,28 @@ export default function ProductionReplayImport({
     if (src === "observe")
       return sel
         ? selTraces
-        : listUnit === "sessions"
+        : listUnit === "sessions" && !voice
           ? productionSessionsOf(env, envState)
           : productionTracesOf(env, envState);
     return (envState?.evidenceUploads || []).filter(
       (u) => u.sourceKind === src,
     );
-  }, [src, env, envState, sel, selTraces, listUnit]);
+  }, [src, env, envState, sel, selTraces, listUnit, voice]);
+  /* What one row is: a chat turn's trace, a session, or a voice call. */
+  const rowKind =
+    src !== "observe"
+      ? "file"
+      : (sel ? sel.kind === "sessions" : listUnit === "sessions" && !voice)
+        ? "session"
+        : voice
+          ? "call"
+          : "turn";
   const noun =
-    src === "observe" && !sel && listUnit === "sessions"
+    rowKind === "session"
       ? "session"
-      : EVIDENCE_KINDS[src].noun;
+      : rowKind === "call" && !sel
+        ? "call"
+        : EVIDENCE_KINDS[src].noun;
   /* The Observe project this environment takes traces from — the same
      link Observe's Create environment test reads. */
   const { state: simState } = useSimStore();
@@ -742,12 +763,16 @@ export default function ProductionReplayImport({
             spacing={0.5}
             alignItems="center"
             sx={{
-              mt: kinds.length > 1 || src !== "observe" || !sel ? 0.75 : 0,
+              mt:
+                kinds.length > 1 || src !== "observe" || (!sel && !voice)
+                  ? 0.75
+                  : 0,
               flexWrap: "wrap",
             }}
           >
             {src === "observe" &&
               !sel &&
+              !voice &&
               [
                 ["traces", "Traces"],
                 ["sessions", "Sessions"],
@@ -895,9 +920,7 @@ export default function ProductionReplayImport({
             </TextLink>
           ))}
       </Stack>
-      {traces.length > 0 && (
-        <RowHeader idLabel={noun === "session" ? "Session" : "Trace"} />
-      )}
+      {traces.length > 0 && <RowHeader kind={rowKind} />}
       {/* Saved draft imports — finish them later. */}
       {drafts0.length > 0 && (
         <Box
@@ -954,7 +977,7 @@ export default function ProductionReplayImport({
             }}
           >
             {src === "observe"
-              ? "No traces from this agent yet."
+              ? `No ${noun}s from this agent yet.`
               : src === "transcript"
                 ? "No transcripts yet — upload a .txt, .md or .json file."
                 : "No files yet — upload a .csv or .json file."}
@@ -963,6 +986,7 @@ export default function ProductionReplayImport({
         {traces.map((c) => (
           <ConversationRow
             key={c.id}
+            kind={rowKind}
             conv={c}
             draft={drafts.get(c.id)}
             added={alreadyIn.has(drafts.get(c.id).id)}
@@ -982,24 +1006,52 @@ ProductionReplayImport.propTypes = {
   selected: PropTypes.array,
 };
 
-/* One grid for the column header and every row, so the columns line up. */
-const ROW_GRID = {
+/* One grid per kind of row, shared by the column header and its rows. A chat
+   trace is one turn, so it names its session and shows latency, not length. */
+const COLS = {
+  turn: "28px minmax(0, 1fr) 52px 76px 32px 52px minmax(0, 150px) 48px 60px 28px",
+  other: "28px minmax(0, 1fr) 64px 56px 64px minmax(0, 190px) 48px 72px 28px",
+};
+const gridOf = (kind) => ({
   display: "grid",
-  gridTemplateColumns:
-    "28px minmax(0, 1fr) 64px 56px 64px minmax(0, 190px) 48px 72px 28px",
+  gridTemplateColumns: kind === "turn" ? COLS.turn : COLS.other,
   columnGap: 1.5,
   alignItems: "center",
   px: 1.5,
-};
+});
 const CELL = { typography: "s3", color: "text.secondary", minWidth: 0 };
 const NUM = { ...CELL, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+const HEADS = {
+  turn: [
+    "Input",
+    "Trace",
+    "Session",
+    "Agent",
+    "Result",
+    "Missing",
+    "Latency",
+    "When",
+  ],
+  session: [
+    "Conversation",
+    "Session",
+    "Agent",
+    "Result",
+    "Missing",
+    "Length",
+    "When",
+  ],
+  call: ["Call", "Trace", "Agent", "Result", "Missing", "Length", "When"],
+  file: ["Conversation", "ID", "Agent", "Result", "Missing", "Length", "When"],
+};
 
-function RowHeader({ idLabel = "Trace" }) {
+function RowHeader({ kind = "turn" }) {
   const head = { ...CELL, color: "text.tertiary", fontWeight: 500 };
+  const cols = HEADS[kind] || HEADS.file;
   return (
     <Box
       sx={{
-        ...ROW_GRID,
+        ...gridOf(kind),
         py: 0.75,
         borderBottom: "1px solid",
         borderColor: "divider",
@@ -1007,21 +1059,31 @@ function RowHeader({ idLabel = "Trace" }) {
       }}
     >
       <span />
-      <Typography sx={head}>Conversation</Typography>
-      <Typography sx={head}>{idLabel}</Typography>
-      <Typography sx={head}>Agent</Typography>
-      <Typography sx={head}>Result</Typography>
-      <Typography sx={head}>Missing</Typography>
-      <Typography sx={{ ...head, textAlign: "right" }}>Length</Typography>
-      <Typography sx={{ ...head, textAlign: "right" }}>When</Typography>
+      {cols.map((c, i) => (
+        <Typography
+          key={c}
+          sx={i >= cols.length - 2 ? { ...head, textAlign: "right" } : head}
+        >
+          {c}
+        </Typography>
+      ))}
       <span />
     </Box>
   );
 }
 
-function ConversationRow({ conv, draft, added, picked, onToggle }) {
+/* Who said a line, as the expanded rows label it. */
+const ROLE = { caller: "Caller", agent: "Agent" };
+
+function ConversationRow({
+  kind = "turn",
+  conv,
+  draft,
+  added,
+  picked,
+  onToggle,
+}) {
   const [open, setOpen] = useState(false);
-  const turns = draft.productionReplay?.turns || [];
   const failed = conv.outcome === "failed";
   const result = added
     ? "Added"
@@ -1040,12 +1102,23 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
   const missingText = missing.length
     ? missing.join(", ").replace(/^./, (c) => c.toUpperCase())
     : "—";
+  /* What's shown is already scrubbed; older evidence falls back to the draft. */
+  const shown =
+    conv.shown ||
+    (draft.productionReplay?.turns || []).map((t) => ({
+      role: "caller",
+      text: t.marked || t.text,
+    }));
+  const input =
+    kind === "turn"
+      ? [...shown].reverse().find((t) => t.role === "caller")?.text || ""
+      : null;
   return (
     <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
       <Box
         {...clickable(() => setOpen((o) => !o), { expanded: open })}
         sx={{
-          ...ROW_GRID,
+          ...gridOf(kind),
           ...focusRing,
           py: 0.75,
           cursor: "pointer",
@@ -1058,7 +1131,7 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
             checked={picked || added}
             disabled={added}
             onChange={onToggle}
-            inputProps={{ "aria-label": `Pick ${conv.topic}` }}
+            inputProps={{ "aria-label": `Pick ${conv.traceId}` }}
             sx={CHECKBOX_SX}
           />
         </Box>
@@ -1070,19 +1143,33 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
             color: added ? "text.disabled" : "text.primary",
           }}
         >
-          {conv.topic}
-          {conv.traceIds && (
-            <Box
-              component="span"
-              sx={{ typography: "s3", color: "text.tertiary", ml: 0.75 }}
-            >
-              {`${conv.traceIds.length} trace${conv.traceIds.length === 1 ? "" : "s"}`}
-            </Box>
+          {kind === "turn" ? (
+            <MarkedFakes text={input} />
+          ) : (
+            <>
+              {conv.topic}
+              {conv.traceIds && (
+                <Box
+                  component="span"
+                  sx={{ typography: "s3", color: "text.tertiary", ml: 0.75 }}
+                >
+                  {`${conv.traceIds.length} trace${conv.traceIds.length === 1 ? "" : "s"}`}
+                </Box>
+              )}
+            </>
           )}
         </Typography>
         <Typography noWrap sx={{ ...CELL, fontFamily: MONO }}>
           {conv.traceId || "—"}
         </Typography>
+        {kind === "turn" && (
+          <Typography noWrap sx={CELL}>
+            <Box component="span" sx={{ fontFamily: MONO }}>
+              {conv.sessionId || "—"}
+            </Box>
+            {conv.turn ? ` · ${conv.turn}/${conv.turnsInSession}` : ""}
+          </Typography>
+        )}
         <Typography noWrap sx={CELL}>
           {conv.agentVersion || "—"}
         </Typography>
@@ -1098,7 +1185,9 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
         <Typography
           noWrap
           title={
-            missing.length ? `No ${missing.join(" or ")} in this trace` : ""
+            missing.length
+              ? `Not recorded in this ${kind === "turn" ? "trace" : kind}: ${missing.join(", ").toLowerCase()}`
+              : ""
           }
           sx={{
             ...CELL,
@@ -1108,13 +1197,17 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
           {missingText}
         </Typography>
         <Typography noWrap sx={NUM}>
-          {conv.durationS ? fmtDuration(conv.durationS) : "—"}
+          {conv.latencyS != null
+            ? `${conv.latencyS.toFixed(1)} s`
+            : conv.durationS
+              ? fmtDuration(conv.durationS)
+              : "—"}
         </Typography>
         <Typography noWrap sx={NUM}>
           {relativeTime(conv.at)}
         </Typography>
         <Tooltip
-          title={open ? "Hide the caller's turns" : "Show the caller's turns"}
+          title={open ? "Hide what was said" : "Show what was said"}
           arrow
         >
           <IconButton size="small" tabIndex={-1}>
@@ -1135,7 +1228,6 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
           spacing={0.5}
           sx={{ px: 6, py: 1.5, bgcolor: "background.neutral" }}
         >
-          {/* The rest of what the trace holds, kept off the row. */}
           <Stack
             direction="row"
             alignItems="center"
@@ -1144,15 +1236,25 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
           >
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {[
-                conv.traceIds ? `Traces ${conv.traceIds.join(", ")}` : null,
-                conv.channel,
+                kind === "turn" && conv.sessionId
+                  ? `Session ${conv.sessionId} · turn ${conv.turn} of ${conv.turnsInSession}`
+                  : null,
+                conv.traceIds
+                  ? `Traces ${conv.traceIds[0]} to ${conv.traceIds[conv.traceIds.length - 1]}`
+                  : null,
+                kind !== "turn" ? conv.channel : null,
                 conv.spans ? `${conv.spans} spans` : null,
+                kind === "turn"
+                  ? conv.toolCalls
+                    ? `${conv.toolCalls} tool call${conv.toolCalls === 1 ? "" : "s"}${conv.evidence.tools ? "" : ", not recorded"}`
+                    : "no tool calls"
+                  : null,
                 conv.sourceKind && !failed && conv.expected
                   ? `expected: ${conv.expected}`
                   : null,
                 [
                   "transcript",
-                  conv.evidence.tools ? "tool calls" : null,
+                  kind !== "turn" && conv.evidence.tools ? "tool calls" : null,
                   conv.evidence.startingState ? "starting state" : null,
                 ]
                   .filter(Boolean)
@@ -1163,29 +1265,56 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
             </Typography>
             <PersonalDataTag row={draft} />
           </Stack>
-          {turns.map((t) => (
-            <Stack
-              key={t.n}
-              direction="row"
-              spacing={1.25}
-              alignItems="baseline"
+          {kind === "turn" && conv.priorTurns > 0 && (
+            <Typography
+              sx={{ typography: "s3", color: "text.disabled", pt: 0.25 }}
             >
-              <Typography
+              Earlier in the session — carried in this trace&apos;s input
+            </Typography>
+          )}
+          {shown.map((t, i) => {
+            const thisTrace = kind === "turn" && i >= (conv.priorTurns || 0);
+            const earlier = kind === "turn" && !thisTrace;
+            return (
+              <Stack
+                key={i}
+                direction="row"
+                spacing={1.25}
+                alignItems="baseline"
                 sx={{
-                  typography: "s3",
-                  color: "text.disabled",
-                  width: 52,
-                  flexShrink: 0,
-                  fontVariantNumeric: "tabular-nums",
+                  ...(kind === "turn" &&
+                    i === (conv.priorTurns || 0) && {
+                      pt: conv.priorTurns ? 0.75 : 0,
+                    }),
                 }}
               >
-                {`Caller ${t.n}`}
-              </Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                <MarkedFakes text={t.marked || t.text} />
-              </Typography>
-            </Stack>
-          ))}
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.disabled",
+                    width: 76,
+                    flexShrink: 0,
+                  }}
+                >
+                  {kind === "turn" && thisTrace
+                    ? t.role === "caller"
+                      ? "Input"
+                      : "Output"
+                    : kind === "session" && conv.shownTraceAt?.[i]
+                      ? `${ROLE[t.role]} · ${conv.shownTraceAt[i]}`
+                      : ROLE[t.role] || "Caller"}
+                </Typography>
+                <Typography
+                  sx={{
+                    typography: "s2",
+                    color: earlier ? "text.disabled" : "text.secondary",
+                  }}
+                >
+                  <MarkedFakes text={t.text} />
+                </Typography>
+              </Stack>
+            );
+          })}
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", pt: 0.5 }}
           >
@@ -1196,6 +1325,7 @@ function ConversationRow({ conv, draft, added, picked, onToggle }) {
     </Box>
   );
 }
+
 /* A replayed turn with each fake value (put in place of personal data)
    underlined, so it doesn't read as the real caller's details. */
 function MarkedFakes({ text }) {
@@ -1224,9 +1354,10 @@ function MarkedFakes({ text }) {
 }
 MarkedFakes.propTypes = { text: PropTypes.string };
 
-RowHeader.propTypes = { idLabel: PropTypes.string };
+RowHeader.propTypes = { kind: PropTypes.string };
 
 ConversationRow.propTypes = {
+  kind: PropTypes.string,
   conv: PropTypes.object,
   draft: PropTypes.object,
   added: PropTypes.bool,
