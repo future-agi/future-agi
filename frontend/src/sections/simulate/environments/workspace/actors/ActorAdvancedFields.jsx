@@ -1,5 +1,12 @@
 import PropTypes from "prop-types";
-import { Button, Collapse, Stack, Typography } from "@mui/material";
+import {
+  Button,
+  Collapse,
+  Fade,
+  Stack,
+  Typography,
+  useMediaQuery,
+} from "@mui/material";
 import ActorFallbackFields from "./ActorFallbackFields";
 import ActorField from "./ActorField";
 import ActorRecordsField from "./ActorRecordsField";
@@ -26,75 +33,84 @@ export default function ActorAdvancedFields({
   const many = (name, label) =>
     field(name, label, { multiline: true, minRows: 2 });
   const startParent = form.initial.parent;
+  const still = useMediaQuery("(prefers-reduced-motion: reduce)");
   return (
     <>
-      <Button size="small" sx={{ alignSelf: "flex-start" }} onClick={onToggle}>
+      {/* The small text button's 8px inset, pulled back so its label starts where the fields do. */}
+      <Button
+        size="small"
+        sx={{ alignSelf: "flex-start", ml: -1 }}
+        onClick={onToggle}
+      >
         {open ? F.lessAdvanced : F.advanced}
       </Button>
-      <Collapse in={open} sx={{ flexShrink: 0 }}>
-        <Stack spacing={2}>
-          <ActorRecordsField
-            records={form.value("records")}
-            sources={recordSources}
-            problem={form.problems.records}
-            onChange={(next) => form.put("records", next)}
-          />
-          <Stack direction="row" spacing={1}>
-            {field("timing", F.answers, {
-              options: fieldOptions.response_timing,
-              sx: { flex: 1 },
-            })}
-            {form.value("timing") === "delayed" &&
-              field("seconds", F.seconds, {
-                type: "number",
-                sx: { width: 140 },
-                inputProps: { min: 0 },
+      {/* The fields fade in while the space opens, so nothing pops in. */}
+      <Collapse in={open} timeout={still ? 0 : "auto"} sx={{ flexShrink: 0 }}>
+        <Fade in={open} timeout={still ? 0 : undefined}>
+          <Stack spacing={2}>
+            <ActorRecordsField
+              records={form.value("records")}
+              sources={recordSources}
+              problem={form.problems.records}
+              onChange={(next) => form.put("records", next)}
+            />
+            <Stack direction="row" spacing={1}>
+              {field("timing", F.answers, {
+                options: fieldOptions.response_timing,
+                sx: { flex: 1 },
               })}
+              {form.value("timing") === "delayed" &&
+                field("seconds", F.seconds, {
+                  type: "number",
+                  sx: { width: 140 },
+                  inputProps: { min: 0 },
+                })}
+            </Stack>
+            {field("play", F.play, {
+              options: fieldOptions.play,
+              helperText: F.playHelp,
+            })}
+            <ActorFallbackFields
+              form={form}
+              actor={actor}
+              fallbackWords={fieldOptions.fallback_word}
+              others={others}
+            />
+            {actorModels.length > 0 &&
+              field("model", F.model, {
+                options: [
+                  { value: "", label: F.environmentModel },
+                  ...actorModels.map((one) => ({ value: one, label: one })),
+                ],
+                helperText: F.modelHelp,
+                startLabel: form.initial.model,
+              })}
+            {capField &&
+              field(capField, F.caps[capField], {
+                type: "number",
+                helperText: F.noLimitHelp,
+                inputProps: { min: 1, step: 1 },
+              })}
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {F.moreDetailsHelp}
+            </Typography>
+            {(others.length > 0 || startParent) &&
+              field("parent", F.parent, {
+                options: [
+                  { value: "", label: F.nobody },
+                  ...others.map((one) => ({
+                    value: one.id,
+                    label: one.name || one.id,
+                  })),
+                ],
+                helperText: F.parentHelp,
+                startLabel: startParent,
+              })}
+            {many("may_agree", F.mayAgree)}
+            {many("private", F.private)}
+            {many("escalate_when", F.escalateWhen)}
           </Stack>
-          {field("play", F.play, {
-            options: fieldOptions.play,
-            helperText: F.playHelp,
-          })}
-          <ActorFallbackFields
-            form={form}
-            actor={actor}
-            fallbackWords={fieldOptions.fallback_word}
-            others={others}
-          />
-          {actorModels.length > 0 &&
-            field("model", F.model, {
-              options: [
-                { value: "", label: F.environmentModel },
-                ...actorModels.map((one) => ({ value: one, label: one })),
-              ],
-              helperText: F.modelHelp,
-              startLabel: form.initial.model,
-            })}
-          {capField &&
-            field(capField, F.caps[capField], {
-              type: "number",
-              helperText: F.noLimitHelp,
-              inputProps: { min: 1, step: 1 },
-            })}
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {F.moreDetailsHelp}
-          </Typography>
-          {(others.length > 0 || startParent) &&
-            field("parent", F.parent, {
-              options: [
-                { value: "", label: F.nobody },
-                ...others.map((one) => ({
-                  value: one.id,
-                  label: one.name || one.id,
-                })),
-              ],
-              helperText: F.parentHelp,
-              startLabel: startParent,
-            })}
-          {many("may_agree", F.mayAgree)}
-          {many("private", F.private)}
-          {many("escalate_when", F.escalateWhen)}
-        </Stack>
+        </Fade>
       </Collapse>
     </>
   );
