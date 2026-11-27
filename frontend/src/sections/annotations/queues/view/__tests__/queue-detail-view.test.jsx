@@ -223,21 +223,61 @@ describe("QueueDetailView bulk assignment", () => {
     expect(mocks.assignItems.mock.calls[0][0].userIds).toHaveLength(2);
   });
 
-  it("disables the select all and select none controls while assigning", async () => {
+  it("disables the select all, deselect all and select none controls while assigning", async () => {
     const user = userEvent.setup();
     const { rerender } = render(<QueueDetailView />);
+    const dialog = () => within(screen.getByRole("dialog"));
 
     await openBulkAssignDialog(user);
+
     mocks.assignPending = true;
     rerender(<QueueDetailView />);
 
-    const dialog = within(screen.getByRole("dialog"));
     expect(
-      dialog.getByRole("button", { name: /^select all$/i }),
+      dialog().getByRole("button", { name: /^select all$/i }),
     ).toBeDisabled();
     expect(
-      dialog.getByRole("button", { name: /^select none$/i }),
+      dialog().getByRole("button", { name: /^select none$/i }),
     ).toBeDisabled();
+
+    // Once every annotator is selected the toggle reads Deselect All; an
+    // in-flight request has to lock that state down too, not just the empty one.
+    mocks.assignPending = false;
+    rerender(<QueueDetailView />);
+    await user.click(dialog().getByRole("button", { name: /^select all$/i }));
+    expect(
+      dialog().getByRole("button", { name: /^deselect all$/i }),
+    ).toBeEnabled();
+
+    mocks.assignPending = true;
+    rerender(<QueueDetailView />);
+
+    expect(
+      dialog().getByRole("button", { name: /^deselect all$/i }),
+    ).toBeDisabled();
+    expect(
+      dialog().getByRole("button", { name: /^select none$/i }),
+    ).toBeDisabled();
+  });
+
+  it("flips the toggle when every annotator is checked by hand", async () => {
+    const user = userEvent.setup();
+    render(<QueueDetailView />);
+
+    const dialog = within(await openBulkAssignDialog(user));
+    const alice = dialog.getByLabelText("Alice");
+    const bob = dialog.getByLabelText("Bob");
+
+    await user.click(alice);
+    expect(dialog.getByRole("button", { name: /^select all$/i })).toBeVisible();
+
+    await user.click(bob);
+    expect(
+      dialog.getByRole("button", { name: /^deselect all$/i }),
+    ).toBeVisible();
+
+    await user.click(bob);
+    expect(dialog.getByRole("button", { name: /^select all$/i })).toBeVisible();
   });
 
   it("hides the select all and select none controls for a single annotator", async () => {

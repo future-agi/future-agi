@@ -314,6 +314,7 @@ class CustomPromptEvaluator(LLM):
         from .context_window import fit_to_context_with_metadata
 
         template_context = {}
+        truncated_fields: list[str] = []
         for key in required_keys:
             if key not in kwargs:
                 raise ValueError(f"Missing required key in kwargs: {key}")
@@ -330,6 +331,8 @@ class CustomPromptEvaluator(LLM):
                 )
                 value = formatted.text
                 if formatted.truncated:
+                    if key not in truncated_fields:
+                        truncated_fields.append(key)
                     logger.warning(
                         "custom_prompt_eval_input_truncated",
                         field=key,
@@ -427,6 +430,7 @@ class CustomPromptEvaluator(LLM):
             )
             ctx_str = formatted.text
             if formatted.truncated:
+                truncated_fields.append("row_context")
                 logger.warning(
                     "custom_prompt_eval_input_truncated",
                     field="row_context",
@@ -662,6 +666,8 @@ class CustomPromptEvaluator(LLM):
                     "completion_cost": self.cost["completion_cost"],
                 },
                 "response_time": eval_runtime_ms,
+                "truncated": bool(truncated_fields),
+                "truncated_fields": truncated_fields,
                 "explanation": chat_completion_response_json["explanation"],
                 # "data": chat_history,
             }

@@ -38,6 +38,7 @@ from simulate.selectors.call_detail import (
     trial_state,
 )
 from simulate.selectors.call_workers import call_workers, scenario_trial_routes
+from simulate.selectors.debug_failures import connected_call_count
 from simulate.selectors.held_back import coding_agent_key
 from simulate.selectors.run_resume import resume_state
 from simulate.selectors.runs import user_executions
@@ -349,6 +350,10 @@ class RunExecutionSerializer(serializers.Serializer):
         child=serializers.CharField(), required=False, default=list
     )
     trials = serializers.IntegerField(required=False, min_value=1, default=1)
+    connected_calls = serializers.IntegerField(
+        help_text="Calls that connected: a chat that completed, a voice call that ran"
+        " for any time. Debug failures needs enough of them."
+    )
     # The seed the run drew its personas and variations from: the same seed draws them again. Decimal text: a drawn
     # seed is up to 2^63 - 1, past what a JSON number keeps exactly.
     seed = serializers.CharField(allow_null=True, required=False)
@@ -848,6 +853,7 @@ def _execution_payload(
             (execution.execution_metadata or {}).get("selected_scenario_keys") or []
         ),
         "trials": execution.trials or 1,
+        "connected_calls": connected_call_count(execution),
         "seed": str(job.seed) if job is not None else None,
         "resume": asdict(resume_state(execution)),
         "summary": summary,

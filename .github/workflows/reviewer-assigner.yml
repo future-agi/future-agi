@@ -5,45 +5,86 @@ on:
     types: [opened, ready_for_review, reopened]
   workflow_dispatch:
     inputs:
+      mode:
+        description: "assign: request a reviewer. reassign: move requests with no agent review after 4 working hours."
+        type: choice
+        options: [assign, reassign]
+        default: assign
+      dry_run:
+        description: "Log what would change, write nothing."
+        type: boolean
+        default: false
       pr_number:
-        description: 'PR number to assign (leave blank to sweep all open PRs)'
+        description: "PR number to assign (leave blank to sweep all open PRs)"
         required: false
       run_pings:
-        description: 'Also run ping (Slack DMs) and summary jobs. Default off — flip this on to test the daily reminder flow manually.'
+        description: "Also run ping (Slack DMs) and summary jobs. Default off — flip this on to test the daily reminder flow manually."
         type: boolean
         default: false
   schedule:
     # 10:00 IST (UTC+5:30) → 04:30 UTC — same morning slot as pr-digest.
-    - cron: '30 4 * * *'
+    - cron: "30 4 * * *"
+    # Reassign sweep: hourly, 09:45–18:45 IST, Monday to Friday. Schedules run
+    # main's copy, so this starts with the next release; until then dispatch
+    # `--ref dev -f mode=reassign`.
+    - cron: "15 4-13 * * 1-5"
 
 jobs:
   assign:
     if: >-
       github.repository == 'future-agi/future-agi' &&
+      inputs.mode != 'reassign' &&
       github.event_name != 'schedule' &&
       github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
       contents: read
-      issues: write   # needed to post the cross-team coordination comment
+      issues: write # needed to post the cross-team coordination comment
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - name: Assign reviewers
         env:
           MODE: assign
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: node .github/scripts/reviewer-assigner.mjs
+
+  reassign:
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      (github.event.schedule == '15 4-13 * * 1-5' ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'reassign'))
+    runs-on: ubuntu-latest
+    concurrency:
+      group: reviewer-reassign
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+      contents: read
+      issues: write # edits the sticky assignment comment
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Reassign stale review requests
+        env:
+          MODE: reassign
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: node .github/scripts/reviewer-assigner.mjs
 
   ping:
     if: >-
       github.repository == 'future-agi/future-agi' &&
-      (github.event_name == 'schedule' ||
+      (github.event.schedule == '30 4 * * *' ||
        (github.event_name == 'workflow_dispatch' && inputs.run_pings))
     runs-on: ubuntu-latest
     permissions:
@@ -52,7 +93,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - name: DM stale reviewers
         env:
           MODE: ping
@@ -68,7 +109,7 @@ jobs:
   summary:
     if: >-
       github.repository == 'future-agi/future-agi' &&
-      (github.event_name == 'schedule' ||
+      (github.event.schedule == '30 4 * * *' ||
        (github.event_name == 'workflow_dispatch' && inputs.run_pings))
     runs-on: ubuntu-latest
     permissions:
@@ -77,7 +118,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - name: Post reviewer-load summary
         env:
           MODE: summary
