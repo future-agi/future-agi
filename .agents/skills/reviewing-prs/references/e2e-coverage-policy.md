@@ -5,7 +5,7 @@ classification looks wrong for the diff you just read, or when a passing `EXEMPT
 it hit.
 
 The policy is **strict with declared exemptions**: a change the classifier says needs a flow must
-either show the flow in the `e2e/FLOWS.md` diff or carry an `E2E:` line in the PR body giving a
+either add the flow under `e2e/flows` or carry an `E2E:` line in the PR body giving a
 reason. **Silence blocks; a stated reason does not.**
 
 ## Invoking it
@@ -42,7 +42,7 @@ file or anything under `e2e/stack/**` never reaches E2, E3 or E5.
 
 | Class  | What it covers                                                                                                                                                                                                                                                                                                                                                                                                                                    | Effect                                                                                                                                                                                   |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **E0** | Generated and lock files: the OpenAPI schema, generated contracts and types, gateway generated contracts, lockfiles, pinned test durations, `e2e/FLOWS.md`                                                                                                                                                                                                                                                                                        | Evidence only — never decides, but the `FLOWS.md` diff is the proof a flow was added                                                                                                     |
+| **E0** | Generated and lock files: the OpenAPI schema, generated contracts and types, gateway generated contracts, lockfiles, pinned test durations                                                                                                                                                                                                                                                                                                        | Evidence only — never decides                                                                                                                                                            |
 | **E1** | Docs: `**/*.md`, `**/*.mdx`, `docs/**`, issue templates, licence and notice files                                                                                                                                                                                                                                                                                                                                                                 | Exempt · `docs`                                                                                                                                                                          |
 | **B7** | Stack shape: `docker-compose*.yml` at the root and under `futureagi/`, **all of `e2e/stack/**`\*\*, the backend entrypoint                                                                                                                                                                                                                                                                                                                        | **Not** counted as behaviour · `stack-shape` — no flow required, but the suite must still boot. Matched **before** E2–E5, so these paths never fall through to `tooling` or `tests-only` |
 | **E2** | Repo tooling: `.github/**`, hooks, `scripts/**`, root `package.json`, release config, `deploy/**`, env examples, agent-config directories                                                                                                                                                                                                                                                                                                         | Exempt · `tooling`                                                                                                                                                                       |
@@ -90,12 +90,12 @@ Each marker kind carries its own check, and the kind's check has to pass too —
 necessary, never sufficient. The exception is `EXEMPT`, where no declaration is owed at all and the
 marker is not examined.
 
-| Marker kind         | Its own check                                                                 |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `new <ID>`          | The `FLOWS.md` diff adds a `### <ID>` heading                                 |
-| `updated <ID>`      | A changed file under `e2e/flows/**` contains `<ID>`                           |
-| `covered-by <ID>`   | `<ID>` already exists in `FLOWS.md` (spec unchanged; the CI run is the proof) |
-| `exempt (<reason>)` | `<reason>` is one of the known reasons, or `harness-gap <what>`               |
+| Marker kind         | Its own check                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------- |
+| `new <ID>`          | A spec under `e2e/flows/**` declares `<ID>`, and the merge base has no such id        |
+| `updated <ID>`      | A changed file under `e2e/flows/**` contains `<ID>`                                   |
+| `covered-by <ID>`   | A spec under `e2e/flows/**` declares `<ID>` (spec unchanged; the CI run is the proof) |
+| `exempt (<reason>)` | `<reason>` is one of the known reasons, or `harness-gap <what>`                       |
 
 | Classification    | Passes when                                                                           | Otherwise                                                                                             |
 | ----------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -117,7 +117,7 @@ Exit code is 0 on `pass`, 1 on everything else.
 - `needs-marker` → **P1 "E2E coverage undeclared"**. Quote the classification, the areas, and the
   exact `E2E:` line the author should add (the script's `explanation` already spells it out).
 - `block` → **P1**, titled for the cause: "Declared exemption contradicts the diff" for a `NEW-FLOW`
-  answered with `exempt`, "Declared flow is not in the catalog" when `FLOWS.md` does not add it,
+  answered with `exempt`, "Declared flow is not in the catalog" when no spec under `e2e/flows` adds it,
   "Malformed E2E declaration" for a grammar problem.
 - `NEW-FLOW` + `E2E: exempt (...)` is the one case that is not the author's to decide. Ask the human
   one question — accept the override, or hold the PR for a flow — and record their answer.
@@ -140,7 +140,7 @@ E2E: covered-by <ID>[, <ID>…]
 E2E: exempt (<reason>)
 ```
 
-`<ID>` matches `^[A-Z]+-E2E-\d{3}$`. `covered-by` ids must already exist in `FLOWS.md`.
+`<ID>` matches `^[A-Z]+-E2E-\d{3}$`. `covered-by` ids must already be declared by a spec under `e2e/flows`.
 
 `<reason>` is one of `docs`, `tooling`, `tests-only`, `not-in-stack`, `backend-internal`,
 `gateway-internal`, `cosmetic`, `generated`, `stack-shape`, `merge-back`, `unclassified`, `refactor`,
@@ -169,8 +169,8 @@ A large PR adding a simulation-ingestion endpoint: a new `views/` file, four add
 `R` is non-empty and the added `urls.py` lines and the new `views/` file are new-surface signals →
 `NEW-FLOW`, area `simulate`.
 
-Passing needs `E2E: new SIM-E2E-001` **and** a `### SIM-E2E-001` heading added in the `FLOWS.md`
-diff. `E2E: exempt (refactor)` on this diff is a `block` you must escalate to the human, not accept
+Passing needs `E2E: new SIM-E2E-001` **and** a spec under `e2e/flows` that adds
+the `SIM-E2E-001` id. `E2E: exempt (refactor)` on this diff is a `block` you must escalate to the human, not accept
 quietly. The B7 compose file adds no flow requirement of its own but does mean the suite has to
 still boot.
 

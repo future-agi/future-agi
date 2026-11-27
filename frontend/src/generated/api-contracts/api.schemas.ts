@@ -33129,6 +33129,8 @@ export interface RunExecutionApi {
   selected_scenario_keys?: string[];
   /** @minimum 1 */
   trials?: number;
+  /** Calls that connected: a chat that completed, a voice call that ran for any time. Debug failures needs enough of them. */
+  connected_calls: number;
   /** @minLength 1 */
   seed?: string;
   /** @minLength 1 */

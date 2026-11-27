@@ -17,10 +17,13 @@ import type { HarnessLockRefusalApi } from "src/generated/api-contracts/api.sche
 // locked_versions.py::lock_preview send them.
 const AT = "2026-11-25T10:00:00+00:00";
 
-// An unnumbered draft: its label, origin, hash and parent are null on the wire.
+// An unnumbered draft: its label, name, candidate state, origin, hash and parent are
+// null on the wire.
 const version = {
   id: "7d4c1a52-8d43-4c55-9d3e-0c5d0b1f6a10",
   label: null,
+  name: null,
+  candidate_state: null,
   status: "active",
   is_default: true,
   created_at: AT,

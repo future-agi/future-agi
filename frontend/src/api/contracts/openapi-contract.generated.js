@@ -129994,6 +129994,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "completed_at",
         "ordinal",
         "agent_version",
+        "connected_calls",
         "agent_type",
         "resume",
         "summary",
@@ -130086,6 +130087,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           default: 1,
           minimum: 1,
+        },
+        connected_calls: {
+          title: "Connected calls",
+          description:
+            "Calls that connected: a chat that completed, a voice call that ran for any time. Debug failures needs enough of them.",
+          type: "integer",
         },
         seed: {
           title: "Seed",
