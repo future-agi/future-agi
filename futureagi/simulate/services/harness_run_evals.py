@@ -25,6 +25,7 @@ dispatch with nothing to do.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
@@ -256,6 +257,8 @@ def _clear_queued_stamps(
             )
             now = timezone.now()
             to_update: list[CallExecution] = []
+            # The kept rows of each slot put back, by the request that kept them.
+            put_back: dict[Any, list[Any]] = {}
             for call_execution in calls:
                 metadata = _metadata(call_execution)
                 stamps = metadata.get(EVAL_QUEUED_KEY)
@@ -282,6 +285,10 @@ def _clear_queued_stamps(
                     else:
                         outputs[eval_config_id] = before["entry"]
                     call_execution.eval_outputs = outputs
+                    if before.get("replacement_id") is not None:
+                        put_back.setdefault(before["replacement_id"], []).append(
+                            call_execution.id
+                        )
                 call_execution.call_metadata = metadata
                 call_execution.updated_at = now
                 to_update.append(call_execution)
@@ -289,6 +296,12 @@ def _clear_queued_stamps(
                 CallExecution.objects.bulk_update(
                     to_update, ["call_metadata", "eval_outputs", "updated_at"]
                 )
+            if put_back:
+                # Local import: the store imports `scoring_status`, which imports this module.
+                from simulate.services.eval_result_store import forget_replacement
+
+                for replacement_id, call_ids in put_back.items():
+                    forget_replacement(replacement_id, call_ids, eval_config_id)
             if reopened_run_id is not None:
                 # Local import: `scoring_status` imports this module.
                 from simulate.services.scoring_status import (
@@ -414,7 +427,11 @@ def _dispatch_batch_after_commit(
 
 
 def queue_eval_for_finished_calls(
-    test_execution: TestExecution, eval_config: SimulateEvalConfig
+    test_execution: TestExecution,
+    eval_config: SimulateEvalConfig,
+    *,
+    keep_replaced: bool,
+    replaced_by=None,
 ) -> dict[str, int]:
     """Queue one grading job per finished call of this run that is eligible.
 
@@ -422,13 +439,20 @@ def queue_eval_for_finished_calls(
     completed_calls}``; the four skip/queue counts partition ``completed_calls``.
     One config of ``queue_evals_for_finished_calls``, which holds the rules.
     """
-    return queue_evals_for_finished_calls(test_execution, [eval_config])[
-        str(eval_config.id)
-    ]
+    return queue_evals_for_finished_calls(
+        test_execution,
+        [eval_config],
+        keep_replaced=keep_replaced,
+        replaced_by=replaced_by,
+    )[str(eval_config.id)]
 
 
 def queue_evals_for_finished_calls(
-    test_execution: TestExecution, eval_configs: list[SimulateEvalConfig]
+    test_execution: TestExecution,
+    eval_configs: list[SimulateEvalConfig],
+    *,
+    keep_replaced: bool,
+    replaced_by=None,
 ) -> dict[str, dict[str, int]]:
     """Queue the eligible finished calls of this run for each of ``eval_configs``
     in one pass, one grading job per call carrying every config queued for it,
@@ -452,6 +476,13 @@ def queue_evals_for_finished_calls(
     - ``queued`` means stamped and scheduled, not delivered to the broker; a
       dispatch that fails afterwards puts its call (and the rest of the
       batch) back as it was, but the returned count is not corrected.
+
+    It never replaces an answer: a stored verdict is never queued. It does
+    set a failed, denied, skipped or timed-out slot pending. With
+    ``keep_replaced`` that slot is kept first as the run's own score,
+    replaced (``replaced_by`` names the user, when there is one). Every
+    caller states the choice; if this function ever replaces an answer, the
+    callers that pass ``False`` must be looked at again.
 
     Backstops for any other caller: each ``eval_config`` must be this run's own
     and have something to grade (``regrade_mapping``), and the run must not be
@@ -508,6 +539,16 @@ def queue_evals_for_finished_calls(
         config_id: {} for config_id in config_ids
     }
     run_reopened = False
+    # Local import: the store imports `scoring_status`, which imports this module.
+    from simulate.services.eval_result_store import (
+        keep_replaced_verdicts,
+        replaced_verdict_rows,
+    )
+
+    replacement_id = uuid.uuid4()
+    replaced_at = timezone.now()
+    configs_by_key = {str(eval_config.id): eval_config for eval_config in eval_configs}
+    replaced_rows = []
     with transaction.atomic():
         finished_calls = list(
             CallExecution.objects.select_for_update(of=("self",))
@@ -592,12 +633,29 @@ def queue_evals_for_finished_calls(
                     continue
                 # What the call holds now, so a dispatch that fails can put it
                 # back instead of leaving a placeholder nothing will ever fill.
+                entry = outputs.get(config_id, _ABSENT)
+                kept = (
+                    replaced_verdict_rows(
+                        call_execution=call_execution,
+                        slots={config_id: entry},
+                        eval_configs=configs_by_key,
+                        organization_id=test_execution.run_test.organization_id,
+                        workspace_id=test_execution.run_test.workspace_id,
+                        replacement_id=replacement_id,
+                        replaced_at=replaced_at,
+                        replaced_by=replaced_by,
+                    )
+                    if keep_replaced and entry is not _ABSENT
+                    else []
+                )
+                replaced_rows.extend(kept)
                 previous[config_id][str(call_execution.id)] = {
-                    "entry": outputs.get(config_id, _ABSENT),
+                    "entry": entry,
                     **before,
                     "stamp": (metadata.get(EVAL_QUEUED_KEY) or {}).get(
                         config_id, _ABSENT
                     ),
+                    "replacement_id": replacement_id if kept else None,
                 }
                 stamp_eval_queued(metadata, [config_id], now=now)
                 # The call is being graded again: its placeholder and open eval
@@ -626,6 +684,7 @@ def queue_evals_for_finished_calls(
             CallExecution.objects.bulk_update(
                 to_stamp, ["call_metadata", "eval_outputs", "updated_at"]
             )
+            keep_replaced_verdicts(replaced_rows)
 
         for config_id in config_ids:
             counts[config_id]["queued"] = len(stamped[config_id])

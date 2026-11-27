@@ -835,6 +835,10 @@ def process_mapping(
 
 
 class EvaluationRunner:
+    # Few-shot examples from past feedback join the evaluator's message. A caller
+    # that measures that message before sending turns them off.
+    examples_from_feedback = True
+
     def __init__(
         self,
         user_eval_metric_id,
@@ -898,6 +902,11 @@ class EvaluationRunner:
         self._effective_config_cache_key: tuple | None = None
         if not format_output:
             self._initialize_eval_metric(update_status=update_metric_status)
+
+    def _feedback_examples(self, mapping, required_field=None):
+        if not self.examples_from_feedback:
+            return []
+        return self.get_few_shot_examples(mapping, required_field)
 
     def get_few_shot_examples(self, mapping, required_field=None):
         """
@@ -1823,7 +1832,7 @@ class EvaluationRunner:
                     required_field=required_field,
                 )
 
-            few_shot_examples = self.get_few_shot_examples(
+            few_shot_examples = self._feedback_examples(
                 final_mapping, final_required_field
             )
 
@@ -1889,7 +1898,7 @@ class EvaluationRunner:
                 else:
                     resolved_required_field = list(required_field)
                     resolved_mapping = list(mapping)
-                few_shot_examples = self.get_few_shot_examples(
+                few_shot_examples = self._feedback_examples(
                     resolved_mapping, resolved_required_field
                 )
                 required_field.append("few_shots")

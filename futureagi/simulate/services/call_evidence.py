@@ -194,7 +194,13 @@ class _Read:
     organization_id: Any
     workspace_id: Any
     max_chars: int | None
+    shared: dict[Any, Any] = field(default_factory=dict)
+    states_only: bool = False
     _cache: dict[str, Any] = field(default_factory=dict)
+
+    def once(self, key: tuple[Any, ...], load: Any) -> Any:
+        """``load()``, read once per key for every call that shares this read."""
+        return _once(self.shared, key, load)
 
     @property
     def metadata(self) -> Mapping[str, Any]:
@@ -221,6 +227,37 @@ class _Read:
         return messages
 
 
+# --- a configured eval's keys --------------------------------------------------
+
+# The kind each source of the eval table (``harness_evals``) is read as. There is one
+# table: a key is turned into a source there, and the source into a kind here.
+KIND_BY_SOURCE = {
+    "transcript": Kind.TRANSCRIPT,
+    "agent_prompt": Kind.AGENT_INSTRUCTIONS,
+    "scenario_columns.situation.value": Kind.SCENARIO,
+    "voice_recording": Kind.AUDIO,
+}
+# Keys only an ask fills, through this reader. They are not in the eval table,
+# because the graders of a run's own evals have no source for them, so today's
+# offer at run creation does not change.
+ASK_ONLY_KEYS = {
+    "tool_calls": Kind.TOOL_CALLS,
+    "world_changes": Kind.WORLD_CHANGES,
+    "world_state_end": Kind.WORLD_STATE_END,
+}
+
+
+def kind_for_key(key: str, modality: str) -> Kind | None:
+    """The kind a configured eval's key reads on a run of this modality, or None
+    where no kind fills it (such an eval is not offered for an ask)."""
+    from simulate.services.harness_evals import source_for_key
+
+    if key in ASK_ONLY_KEYS:
+        return ASK_ONLY_KEYS[key]
+    source = source_for_key(key, modality)
+    return None if source is None else KIND_BY_SOURCE.get(source)
+
+
 # --- the public calls ----------------------------------------------------------
 
 
@@ -231,15 +268,31 @@ def read_call_evidence(
     organization_id: Any,
     workspace_id: Any,
     max_chars: int | None = None,
+    shared: dict[Any, Any] | None = None,
+    states_only: bool = False,
 ) -> dict[Kind, Evidence]:
     """Each asked kind of evidence for one call. Refuses a call from elsewhere, or
-    one that was deleted (or whose run or run test was)."""
+    one that was deleted (or whose run or run test was).
+
+    ``shared`` keeps what calls of one run read alike (a saved contract, a seed, the
+    job's counts, the run's trace source) for the next call, when one caller reads
+    many calls. ``states_only`` answers each kind's state without fetching what is
+    kept elsewhere: an end-of-trial world file is present when its row is, and agent
+    traces when the run has a trace source. Such an answer carries no content, and a
+    stored world file that cannot be parsed is found out only when it is read.
+    A store that fails is remembered in ``shared`` too, so it is asked once."""
     run = call.test_execution
-    if not in_workspace(run.run_test, organization_id, workspace_id):
+    shared = shared if shared is not None else {}
+    run_test = run.run_test
+    if not _once(
+        shared,
+        ("in_workspace", run_test.id, str(organization_id), str(workspace_id)),
+        lambda: in_workspace(run_test, organization_id, workspace_id),
+    ):
         raise CallNotInWorkspace(str(call.id))
-    if call.deleted or run.deleted or run.run_test.deleted:
+    if call.deleted or run.deleted or run_test.deleted:
         raise CallDeleted(str(call.id))
-    trial = hosted_trial(call)
+    trial = hosted_trial(call, shared=shared)
     read = _Read(
         call=call,
         trial=trial,
@@ -247,6 +300,8 @@ def read_call_evidence(
         organization_id=organization_id,
         workspace_id=workspace_id,
         max_chars=max_chars,
+        shared=shared,
+        states_only=states_only,
     )
     return {kind: _read_one(read, kind) for kind in map(Kind, kinds)}
 
@@ -308,8 +363,12 @@ def run_kind_of(call: CallExecution) -> RunKind:
     return _run_kind(call, hosted_trial(call))
 
 
-def hosted_trial(call: CallExecution) -> HostedTrial | None:
-    """The hosted job this call was a trial of, or ``None`` for a call no job made."""
+def hosted_trial(
+    call: CallExecution, *, shared: dict[Any, Any] | None = None
+) -> HostedTrial | None:
+    """The hosted job this call was a trial of, or ``None`` for a call no job made.
+    The job's counts are read once per ``shared``."""
+    memo = shared if shared is not None else {}
     execution = (
         HostedHarnessExecution.objects.filter(call_execution_id=call.id)
         .select_related("job", "source_scenario")
@@ -324,10 +383,14 @@ def hosted_trial(call: CallExecution) -> HostedTrial | None:
         job_id=job.id,
         connector=connector if isinstance(connector, str) else None,
         artifact_level=job.artifact_level,
-        attempts=job.attempts.count(),
-        trials=HostedHarnessExecution.objects.filter(
-            job_id=job.id, source_scenario_id=execution.source_scenario_id
-        ).count(),
+        attempts=_once(memo, ("attempts", job.id), job.attempts.count),
+        trials=_once(
+            memo,
+            ("trials", job.id, execution.source_scenario_id),
+            HostedHarnessExecution.objects.filter(
+                job_id=job.id, source_scenario_id=execution.source_scenario_id
+            ).count,
+        ),
         environment_version_id=job.environment_version_id,
         execution_key=execution.execution_key,
         scenario_key=execution.source_scenario.scenario_key,
@@ -403,6 +466,33 @@ def stored_artifact(read: _Read, digest: str, artifact_kind: str) -> bytes | Non
     from tfc.settings.settings import UPLOAD_BUCKET_NAME
     from tfc.utils.storage_client import get_storage_client
 
+    row = _artifact_row(read, digest, artifact_kind)
+    if row is None:
+        return None
+    key, size = row
+    if size is not None and size > _ARTIFACT_MAX_BYTES:
+        raise ArtifactTooLarge(size)
+    try:
+        response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
+    except S3Error as exc:
+        if exc.code in {"NoSuchKey", "NoSuchBucket"}:
+            return None
+        raise
+    try:
+        body: bytes = response.read(_ARTIFACT_MAX_BYTES + 1)
+    finally:
+        response.close()
+        response.release_conn()
+    if len(body) > _ARTIFACT_MAX_BYTES:
+        raise ArtifactTooLarge(len(body))
+    return body
+
+
+def _artifact_row(
+    read: _Read, digest: str, artifact_kind: str
+) -> tuple[str, int | None] | None:
+    """The stored key and recorded size of an upload of the call's job, in the
+    caller's tenant, while its job is not deleted."""
     if read.trial is None:
         return None
     # The call passed the tenant check; its job is kept where its run is.
@@ -422,23 +512,7 @@ def stored_artifact(read: _Read, digest: str, artifact_kind: str) -> bytes | Non
     row = rows.values_list("object_key", "size").first()
     if row is None or not row[0]:
         return None
-    key, size = row
-    if size is not None and size > _ARTIFACT_MAX_BYTES:
-        raise ArtifactTooLarge(size)
-    try:
-        response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
-    except S3Error as exc:
-        if exc.code in {"NoSuchKey", "NoSuchBucket"}:
-            return None
-        raise
-    try:
-        body: bytes = response.read(_ARTIFACT_MAX_BYTES + 1)
-    finally:
-        response.close()
-        response.release_conn()
-    if len(body) > _ARTIFACT_MAX_BYTES:
-        raise ArtifactTooLarge(len(body))
-    return body
+    return row[0], row[1]
 
 
 # --- one reader for each kind ----------------------------------------------------
@@ -554,7 +628,8 @@ def _world_state_start(read: _Read) -> Evidence:
     start = _mapping(read.trial_state.get("start"))
     if start.get("state") != "seeded" or start.get("against") != "sealed_seed":
         return _missing(kind, Cause.START_NOT_SEALED)
-    files = _environment_files(read.trial.environment_version_id)
+    version_id = read.trial.environment_version_id
+    files = read.once(("seed", version_id), lambda: _environment_files(version_id))
     if files is None:
         return _missing(kind, Cause.NO_LONGER_KEPT)
     store = _json(files.get(_SEED_STORE))
@@ -584,6 +659,13 @@ def _world_state_end(read: _Read) -> Evidence:
             if cause == Cause.NOT_UPLOADED
             else None,
         )
+    if read.states_only:
+        row = _artifact_row(read, digest, "world_state")
+        if row is None:
+            return _missing(kind, Cause.NO_LONGER_KEPT)
+        if row[1] is not None and row[1] > _ARTIFACT_MAX_BYTES:
+            return _missing(kind, Cause.TOO_LARGE, note=f"{row[1]} bytes stored.")
+        return _present_unread(kind, "hosted_world_state")
     try:
         body = stored_artifact(read, digest, "world_state")
     except ArtifactTooLarge as exc:
@@ -648,9 +730,13 @@ def _audio(read: _Read) -> Evidence:
 
 def _agent_traces(read: _Read) -> Evidence:
     kind = Kind.AGENT_TRACES
-    source = run_traces_source(read.call.test_execution)
+    run = read.call.test_execution
+    source = read.once(("traces_source", run.id), lambda: run_traces_source(run))
     if source is None:
         return _not_applicable(kind)
+    if read.states_only:
+        # Present whether or not the agent recorded any: an empty record is a record.
+        return _present_unread(kind, "agent_traces")
     traces = read_run_traces(source, call_execution_id=str(read.call.id))
     if not traces:
         return _present(kind, "agent_traces", EMPTY_TRACE_RECORD)
@@ -712,7 +798,11 @@ def _whole_instructions(read: _Read) -> tuple[str, str] | None:
         version = None
     copied = _copied_prompt(read.trial.contract if read.trial else None)
     if copied is None and version is not None:
-        copied = _copied_prompt(stored_version_contract(version.id))
+        copied = _copied_prompt(
+            read.once(
+                ("contract", version.id), lambda: stored_version_contract(version.id)
+            )
+        )
     if copied is not None:
         return copied
     if read.trial is not None:
@@ -726,9 +816,12 @@ def _whole_instructions(read: _Read) -> tuple[str, str] | None:
         return None
     # Its prompt may be the reading's excerpt, and nothing stored tells that apart
     # from one a person set.
-    if AgentVersionSetup.no_workspace_objects.filter(
-        agent_version_id=version.id, agent_kind="source"
-    ).exists():
+    if read.once(
+        ("source_agent", version.id),
+        lambda: AgentVersionSetup.no_workspace_objects.filter(
+            agent_version_id=version.id, agent_kind="source"
+        ).exists(),
+    ):
         return None
     text = _mapping(version.configuration_snapshot).get("description")
     if isinstance(text, str) and text.strip():
@@ -1398,6 +1491,25 @@ def _present(
         cut=cut,
         marks=marks,
     )
+
+
+def _present_unread(kind: Kind, source: str) -> Evidence:
+    """Present, for a states-only read: nothing was fetched, so nothing is given."""
+    return Evidence(kind=kind, state=State.PRESENT, source=source)
+
+
+def _once(memo: dict[Any, Any], key: tuple[Any, ...], load: Any) -> Any:
+    """``load()`` once per key. A store error is kept and raised again, so a store
+    that is down is asked once for every call that shares ``memo``."""
+    if key not in memo:
+        try:
+            memo[key] = (load(), None)
+        except _store_errors() as failed:
+            memo[key] = (None, failed)
+    value, kept_error = memo[key]
+    if kept_error is not None:
+        raise kept_error
+    return value
 
 
 def _missing(kind: Kind, cause: Cause, *, note: str | None = None) -> Evidence:

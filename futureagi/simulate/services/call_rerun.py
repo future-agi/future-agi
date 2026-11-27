@@ -193,6 +193,88 @@ def call_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
     return snapshot
 
 
+# What a grader writes and an eval-only rerun snapshots before it clears.
+EVAL_FIELDS = (
+    "eval_outputs",
+    "call_metadata",
+    "provider_call_data",
+    "overall_score",
+    "tool_outputs",
+)
+
+
+def reread_under_lock(call_executions) -> None:
+    """Lock the calls' rows and read again what a grader writes.
+
+    A grader may store a verdict after the calls were loaded. Read under the
+    lock, that verdict is snapshotted and kept, never saved over. Call inside
+    the transaction that clears the calls.
+    """
+    calls = list(call_executions)
+    current = {
+        row["id"]: row
+        for row in CallExecution.objects.select_for_update()
+        .filter(id__in=[call.id for call in calls])
+        .order_by("id")
+        .values("id", *EVAL_FIELDS)
+    }
+    for call in calls:
+        row = current.get(call.id)
+        if row is not None:
+            for field in EVAL_FIELDS:
+                setattr(call, field, row[field])
+
+
+def restore_eval_only_rerun_state(
+    call_execution_ids, dispatch_error_message, replacement_id=None
+):
+    """Put calls back from their eval-only snapshots after the rerun's dispatch failed.
+
+    The verdicts the rerun kept as replaced are back on the calls restored
+    from a snapshot, so the rows keeping them (``replacement_id``) go in the
+    same transaction. A call with no snapshot keeps its rows: nothing was
+    put back on it.
+    """
+    from simulate.services.eval_result_store import forget_replacement
+
+    with transaction.atomic():
+        restored = []
+        for call_execution in CallExecution.objects.filter(id__in=call_execution_ids):
+            snapshot = (
+                CallExecutionSnapshot.objects.filter(
+                    call_execution=call_execution,
+                    rerun_type=CallExecutionSnapshot.RerunType.EVAL_ONLY,
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if snapshot:
+                call_execution.eval_outputs = snapshot.eval_outputs or {}
+                call_execution.provider_call_data = snapshot.provider_call_data
+                call_execution.overall_score = snapshot.overall_score
+                call_execution.tool_outputs = snapshot.tool_outputs
+                restored.append(call_execution.id)
+
+            call_execution.call_metadata = call_execution.call_metadata or {}
+            has_eval_outputs = bool(call_execution.eval_outputs)
+            call_execution.call_metadata["eval_started"] = has_eval_outputs
+            call_execution.call_metadata["eval_completed"] = has_eval_outputs
+            call_execution.call_metadata["rerun_dispatch_failed"] = (
+                dispatch_error_message
+            )
+            call_execution.save(
+                update_fields=[
+                    "eval_outputs",
+                    "provider_call_data",
+                    "overall_score",
+                    "tool_outputs",
+                    "call_metadata",
+                ]
+            )
+        if replacement_id is not None and restored:
+            forget_replacement(replacement_id, restored)
+
+
 def eval_snapshot(call_execution: CallExecution) -> CallExecutionSnapshot:
     """The call's evaluation results as an eval-only rerun keeps them. Not saved."""
     return CallExecutionSnapshot(
