@@ -1239,7 +1239,7 @@ def test_an_agent_with_environments_cannot_be_deleted_one_at_a_time(
     assert single.status_code == status.HTTP_409_CONFLICT, single.content
     assert single.json()["code"] == "agent_in_use"
     assert single.json()["detail"] == (
-        "Northwind is tested by 2 environments. Delete those environments first."
+        "Northwind is still tested by an environment, so it can't be deleted."
     )
     operations = auth_client.delete(
         f"/simulate/api/agent-definition-operations/{tested.id}/"
@@ -1283,6 +1283,11 @@ def test_an_agent_its_tab_shows_no_environment_for_is_still_kept_while_one_tests
         refused = auth_client.delete(f"{AGENTS}{agent.id}/delete/")
         assert refused.status_code == status.HTTP_409_CONFLICT, refused.content
         assert refused.json()["code"] == "agent_in_use"
+        # The tab lists none of what tests it, so the refusal names no count and asks
+        # for nothing the page shows.
+        assert refused.json()["detail"] == (
+            f"{agent.agent_name} is still tested by an environment, so it can't be deleted."
+        )
         operations = auth_client.delete(
             f"/simulate/api/agent-definition-operations/{agent.id}/"
         )
