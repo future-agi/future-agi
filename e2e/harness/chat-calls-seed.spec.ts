@@ -40,9 +40,13 @@ test('a seeded run of chat calls is finished, carries each transcript and can be
 
   await page.goto(`/dashboard/simulate/environments/${seeded.environmentId}/runs/${seeded.runTestId}`
     + `/${seeded.testExecutionId}`);
+  // RunTraceTable.jsx groups calls by goal, every group closed; Expand all shows the calls.
+  await page.getByLabel('Expand all', { exact: true }).check({ timeout: UI_READY });
   for (const key of keys) {
-    await expect(page.getByRole('checkbox', { name: `Select ${key}` })).toBeVisible({ timeout: UI_READY });
+    await expect(page.getByRole('checkbox', { name: `Select ${key}`, exact: true }))
+      .toBeVisible({ timeout: UI_READY });
   }
-  // Every row's tick box, not the page's select-all one (TraceTable.jsx labels both).
-  await expect(page.getByRole('checkbox', { name: /^Select (?!all calls on this page$)/ })).toHaveCount(2);
+  // Every call's tick box, not the page's or a group's (TraceTable.jsx and TraceGroupHeaderRow.jsx label those).
+  await expect(page.getByRole('checkbox', { name: /^Select (?!all calls on this page$|calls in )/ }))
+    .toHaveCount(2);
 });

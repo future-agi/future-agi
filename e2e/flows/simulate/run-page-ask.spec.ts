@@ -98,6 +98,8 @@ test('SIM-E2E-045: Ask a question about the calls I ticked in a run and read eac
   const askId = await test.step('UI: tick two calls, check the question, then ask', async () => {
     await page.goto(`/dashboard/simulate/environments/${seeded.environmentId}/runs/${seeded.runTestId}`
       + `/${seeded.executionId}`, { waitUntil: 'domcontentloaded' });
+    // RunTraceTable.jsx groups calls by goal, every group closed; Expand all shows the calls.
+    await page.getByLabel('Expand all', { exact: true }).check();
     for (const name of TICKED) {
       // TraceTable.jsx: each call's tick box is labelled "Select <scenario>".
       await page.getByRole('checkbox', { name: `Select ${seeded.keyOf[name]}`, exact: true }).check();
