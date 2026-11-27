@@ -273,6 +273,20 @@ def is_coding_agent_key(request) -> bool:
     return org_api_key is not None and org_api_key.type == "coding_agent"
 
 
+def is_browser_session(request) -> bool:
+    """Whether ``request`` authenticated as a person's signed-in session: the JWT branch of
+    ``APIKeyAuthentication``, whose ``request.auth`` is the token. An allowlist, so a new
+    way in, a subclass included, is not a session: an API key's ``request.auth`` is None,
+    and an MCP call is forced in (``ForcedAuthentication``) with none either."""
+    authenticator = getattr(request, "successful_authenticator", None)
+    return (
+        type(authenticator) is APIKeyAuthentication
+        and isinstance(getattr(request, "auth", None), str)
+        and bool(request.auth)
+        and getattr(request, "org_api_key", None) is None
+    )
+
+
 class APIKeyAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return "ApiKey"
@@ -992,7 +1006,26 @@ class AuthMonitoringMiddleware:
     def __call__(self, request):
         if is_oss():
             return self.get_response(request)
+        try:
+            refused = self._refuse_throttled(request)
+        except _CACHE_UNAVAILABLE_ERRORS as exc:
+            if _cache_transport_category(exc) is None:
+                raise
+            # Fail open, like the access-token cache: an unreachable cache must
+            # not turn every login, token, signup and password-reset request
+            # into a 500. Credentials are still checked against the database;
+            # only the per-IP throttle is skipped until the cache is back.
+            logger.warning(
+                "auth_rate_limit_cache_unavailable",
+                component="auth_rate_limit",
+                fallback="not_throttled",
+                **_cache_unavailable_metadata(exc),
+            )
+            refused = None
+        return refused if refused is not None else self.get_response(request)
 
+    def _refuse_throttled(self, request):
+        """The 403 for a throttled IP, or None to let the request through."""
         client_ip, _ = get_client_ip(request)
 
         if request.path.endswith("password-reset-initiate/"):
@@ -1057,7 +1090,7 @@ class AuthMonitoringMiddleware:
             requests.append(now)
             cache.set(f"ip_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS)
 
-        return self.get_response(request)
+        return None
 
 
 def generate_encrypted_message(key_value_pairs: dict) -> str:

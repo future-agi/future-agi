@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import socket
 import subprocess
 import sys
 import tarfile
@@ -16,7 +17,7 @@ from contextlib import nullcontext
 from datetime import timedelta
 from types import ModuleType, SimpleNamespace
 from typing import NamedTuple
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import quote, urlparse
 
 import pytest
@@ -375,6 +376,139 @@ def test_provider_egress_includes_scoped_claude_gateway():
             "ALK_CLAUDE_GATEWAY_API_KEY": "opaque",
         }
     ) == {"gateway.futureagi.com"}
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({"OPENAI_API_KEY": "k"}, {"api.openai.com"}),
+        (
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+            {"gateway.example.com"},
+        ),
+        (
+            {
+                "ANTHROPIC_API_KEY": "k",
+                "ANTHROPIC_BASE_URL": "https://gateway.example.com",
+            },
+            {"gateway.example.com"},
+        ),
+        # A private base is never opened in egress: the provider's own host stays, as without a base.
+        (
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "http://metadata.example.com/v1",
+            },
+            {"api.openai.com"},
+        ),
+        (
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "http://192.168.1.20:4000/v1",
+            },
+            {"api.openai.com"},
+        ),
+        # A plain public IP address is opened as it is.
+        (
+            {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://1.1.1.1:8080/v1"},
+            {"1.1.1.1"},
+        ),
+        # An address spelled as a number is never opened, wherever it resolves.
+        (
+            {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://0177.0.0.1/v1"},
+            {"api.openai.com"},
+        ),
+        (
+            {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://0x7f000001/v1"},
+            {"api.openai.com"},
+        ),
+        # A base that does not resolve from here is still the host the agent calls.
+        (
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.unresolved.example/v1",
+            },
+            {"gateway.unresolved.example"},
+        ),
+    ],
+)
+def test_provider_egress_follows_the_agent_s_base_url_as_preflight_probes_it(
+    values, expected
+):
+    hosts = {
+        "gateway.example.com": "93.184.215.14",
+        "metadata.example.com": "169.254.169.254",
+    }
+
+    def resolve(host, *_args, **_kwargs):
+        if host not in hosts:
+            raise socket.gaierror(socket.EAI_NONAME, "unknown host")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (hosts[host], 0))]
+
+    with patch("agentcc.services.url_safety.socket.getaddrinfo", resolve):
+        domains = _provider_egress_domains(values)
+        assert domains == expected
+        _validate_resolved_egress_domains(domains)
+
+
+@pytest.mark.parametrize(
+    ("base", "opened"),
+    [
+        ("https://gateway.example.com/v1", True),
+        ("http://1.1.1.1:8080/v1", True),
+        ("http://[2606:4700:4700::1111]/v1", True),
+        ("http://01.01.01.01/v1", False),
+        ("http://16843009/v1", False),
+        ("http://0x01010101/v1", False),
+    ],
+)
+def test_preflight_and_egress_make_the_same_decision_on_a_base_host(base, opened):
+    """A base the credential check calls is the host the launch opens, and one it
+    refuses is never opened, so a passing check never meets a closed egress."""
+    from simulate.services.harness_credential_probes import (
+        OPENAI_BASE_ALIASES,
+        probe,
+    )
+    from simulate.services.hosted_harness_gateway import _base_url_host
+
+    def resolve(host, *_args, **_kwargs):
+        address = "93.184.215.14" if host == "gateway.example.com" else "1.1.1.1"
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        address = host if ":" in host else address
+        return [(family, socket.SOCK_STREAM, 6, "", (address, 0))]
+
+    values = {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": base}
+    with (
+        patch("agentcc.services.url_safety.socket.getaddrinfo", resolve),
+        patch(
+            "simulate.services.harness_credential_probes._request",
+            return_value=Mock(status_code=200),
+        ),
+    ):
+        checked = probe("openai", values).ok
+        host = _base_url_host(values, OPENAI_BASE_ALIASES)
+
+    assert checked is opened
+    assert (host is not None) is opened
+
+
+def test_a_private_gateway_the_deployment_allows_launches_as_without_a_base(
+    monkeypatch,
+):
+    """A private gateway passes preflight where private provider URLs are allowed; egress never opens a private
+    host, so the launch keeps the provider's own host and is not refused."""
+    from agentcc.services.url_safety import ALLOW_PRIVATE_PROVIDER_URLS_ENV
+
+    monkeypatch.setenv(ALLOW_PRIVATE_PROVIDER_URLS_ENV, "true")
+    domains = _provider_egress_domains(
+        {"OPENAI_API_KEY": "k", "OPENAI_BASE_URL": "http://192.168.1.20:4000/v1"}
+    )
+
+    assert domains == {"api.openai.com"}
+    _validate_resolved_egress_domains(domains)
 
 
 def test_provider_egress_includes_vapi_and_retell_call_hosts():

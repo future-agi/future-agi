@@ -196,6 +196,11 @@ export const ACTORS_COPY = {
       triggerHelp:
         "When they first take part; a scenario can give them its own",
       triggerTool: "The action",
+      triggerOnCall: "On its call number",
+      triggerOnCallHelp: "Empty or 1 is the first call of the action",
+      triggerChance: "Chance (%)",
+      triggerChanceHelp:
+        "How likely they come in on a call, above 0 and up to 100",
       triggerWords: "Words",
       triggerWordsHelp: "Separated by commas",
       triggerTurn: "From the agent's turn",

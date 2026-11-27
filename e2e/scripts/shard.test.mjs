@@ -1732,8 +1732,13 @@ test("both workflows record and upload each shard's pulled images under one name
     report.includes("`stack-images-${stack}-${i}-attempt-${attempts[i - 1]}`"),
   );
   assert.ok(report.includes("checkStackImages(images, attempts);"));
-  // Every image a build step tags is marked built in the record.
-  for (const file of ["e2e-ci.yml", "e2e-stack-profile.yml"]) {
+  // Every image a build tags is marked built in the record. E2E CI builds
+  // its five from e2e/stack/docker-bake.hcl and wraps two of them.
+  for (const [file, count] of [
+    ["e2e-ci.yml", 2],
+    ["e2e-stack-profile.yml", 5],
+    ["../../e2e/stack/docker-bake.hcl", 5],
+  ]) {
     const text = readFileSync(
       new URL(`../../.github/workflows/${file}`, import.meta.url),
       "utf8",
@@ -1741,11 +1746,11 @@ test("both workflows record and upload each shard's pulled images under one name
     const tagged = new Set(
       [
         ...text.matchAll(
-          /(?:tags: |-t ")(futureagi\/[a-z-]+):(?:\$\{\{ env\.IMAGE_TAG \}\}|\$IMAGE_TAG)/g,
+          /(?:tags: |-t "|tags\s*=\s*\[")(futureagi\/[a-z-]+):(?:\$\{\{ env\.IMAGE_TAG \}\}|\$IMAGE_TAG|\$\{IMAGE_TAG\})/g,
         ),
       ].map((m) => m[1]),
     );
-    assert.equal(tagged.size, 5, file);
+    assert.equal(tagged.size, count, file);
     for (const repo of tagged)
       assert.ok(ci.includes(`"${repo}:$IMAGE_TAG"`), `${file}: ${repo}`);
   }

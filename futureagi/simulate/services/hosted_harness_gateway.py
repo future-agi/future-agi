@@ -35,6 +35,7 @@ from django.utils import timezone
 from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
+from agentcc.services.url_safety import ensure_public_http_url
 from integrations.services.github_app import (
     GitHubAppError,
     installation_credential,
@@ -56,6 +57,12 @@ from simulate.services.browser_sites import browser_sites_at_pin
 from simulate.services.code_archives import (
     store_commit_archive,
     stored_commit_archive,
+)
+from simulate.services.harness_credential_probes import (
+    ANTHROPIC_BASE_ALIASES,
+    OPENAI_BASE_ALIASES,
+    configured_base,
+    number_spelled_host,
 )
 from simulate.services.harness_versioning.hashing import INDEX_ONLY_FIELDS
 from simulate.services.hosted_harness import (
@@ -2276,12 +2283,34 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
     if aliases & {"OPENAI_API_KEY"} and (
         not selected_llm_provider or selected_llm_provider == "openai"
     ):
-        domains.add("api.openai.com")
+        domains.add(_base_url_host(values, OPENAI_BASE_ALIASES) or "api.openai.com")
     if aliases & {"ANTHROPIC_API_KEY"} and (
         not selected_llm_provider or selected_llm_provider == "anthropic"
     ):
-        domains.add("api.anthropic.com")
+        domains.add(
+            _base_url_host(values, ANTHROPIC_BASE_ALIASES) or "api.anthropic.com"
+        )
     return domains
+
+
+def _base_url_host(values: Mapping[str, Any], names: tuple[str, ...]) -> str | None:
+    """The host of the base URL the agent calls its provider at (a gateway or proxy), opened in egress in place
+    of the provider's own host. ``None`` when it sets none, or when its host is private or resolves to a private
+    address: egress never opens one, so the launch keeps the provider's own host as before. A host that does not
+    resolve from here is still the one the agent calls, so it is kept, never swapped for the provider's."""
+    _name, base = configured_base(
+        {name: str(values.get(name) or "") for name in names}, names
+    )
+    host = _hostname_from_url(base) if base else None
+    # The credential check refuses the same hosts, so the two agree.
+    if not host or number_spelled_host(host):
+        return None
+    try:
+        _validate_egress_host(host)
+        ensure_public_http_url(base, "base URL", allow_unresolvable=True)
+    except (HostedHarnessError, ValueError):
+        return None
+    return host
 
 
 def _resolved_egress_domains(

@@ -1,7 +1,9 @@
-"""The two counts Debug failures needs from a run: connected calls and failing calls."""
+"""What Debug failures reads from a run: its connected and failing call counts, and
+whether it already has an analysis."""
 
 from django.db.models import Q
 
+from simulate.models.agent_optimiser_run import AgentOptimiserRun
 from simulate.models.test_execution import CallExecution, TestExecution
 from simulate.services.run_results_v3_queries import run_calls_queryset
 
@@ -27,4 +29,15 @@ def failing_call_count(execution: TestExecution) -> int:
         # `result_outcome` is the queryset's annotation, so it is filtered through Q.
         .filter(Q(result_outcome__in=FAILING_OUTCOMES))
         .count()
+    )
+
+
+def has_debug_failures_analysis(execution: TestExecution) -> bool:
+    """Whether the analysis read returns an analysis the run already has: any run of its
+    optimiser, in any status. A refused first read leaves an optimiser with no run."""
+    return (
+        execution.agent_optimiser_id is not None
+        and AgentOptimiserRun.objects.filter(
+            agent_optimiser_id=execution.agent_optimiser_id
+        ).exists()
     )
