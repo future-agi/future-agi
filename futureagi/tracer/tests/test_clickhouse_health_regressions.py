@@ -285,8 +285,8 @@ def test_health_reads_clamp_and_restore_native_ping_timeout(fails):
 
 @pytest.mark.unit
 def test_health_client_forwards_and_enforces_retained_read_deadline(monkeypatch):
-    from tracer.services.clickhouse.client import ClickHouseClient
     from tracer.services.clickhouse import health_client
+    from tracer.services.clickhouse.client import ClickHouseClient
 
     clock = [10.0]
     monkeypatch.setattr(health_client, "monotonic", lambda: clock[0])
@@ -338,7 +338,11 @@ def test_health_client_forwards_and_enforces_retained_read_deadline(monkeypatch)
     assert observed["retained_until"] == retained_until
     assert connection.sync_request_timeout == 5
     assert connection.receive_packet is receive_packet
-    socket.settimeout.assert_called_with(300)
+    # The packet guard bounds the first socket wait by the retained deadline.
+    # The base read (replaced by the delegate here) restores the socket's own
+    # timeout, so this wrapper is not expected to.
+    first_wait = socket.settimeout.call_args_list[0].args[0]
+    assert 0 < first_wait <= 0.2
 
 
 @pytest.mark.unit
@@ -374,8 +378,8 @@ def test_health_read_clamps_an_expired_retained_deadline():
 
 @pytest.mark.unit
 def test_health_read_does_not_extend_later_retained_deadline(monkeypatch):
-    from tracer.services.clickhouse.client import ClickHouseClient
     from tracer.services.clickhouse import health_client
+    from tracer.services.clickhouse.client import ClickHouseClient
 
     clock = [10.0]
     monkeypatch.setattr(health_client, "monotonic", lambda: clock[0])
