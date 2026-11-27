@@ -171,7 +171,11 @@ class _Seed:
 
         trace_id = str(uuid4())
         root_id = uuid4().hex[:16]
-        rows = [self._span(project, trace_id, root_id, None, start, None, 0)] if root_span else []
+        rows = (
+            [self._span(project, trace_id, root_id, None, start, None, 0)]
+            if root_span
+            else []
+        )
         child_ids = []
         for offset, model, tokens in children:
             child_id = uuid4().hex[:16]
@@ -355,7 +359,9 @@ def _run_worker(seed, query_config):
     """Run the widget exactly as the exact-aggregation worker does."""
 
     workspace = seed.workspace
-    with patch("tracer.views.dashboard.V2AnalyticsQueryService", return_value=seed.usage):
+    with patch(
+        "tracer.views.dashboard.V2AnalyticsQueryService", return_value=seed.usage
+    ):
         try:
             response = DashboardWidgetViewSet()._execute_ch_query_config(
                 deepcopy(query_config),
@@ -388,7 +394,9 @@ def _run_public(seed, query_config, *, snapshot_probe=None):
     workspace = seed.workspace
     probe = snapshot_probe or MagicMock(side_effect=read_or_schedule_exact_snapshot)
     with (
-        patch("tracer.views.dashboard.V2AnalyticsQueryService", return_value=seed.usage),
+        patch(
+            "tracer.views.dashboard.V2AnalyticsQueryService", return_value=seed.usage
+        ),
         patch("tracer.views.dashboard.exceeds_remaining_deadline", return_value=False),
         patch("tracer.views.dashboard.read_or_schedule_exact_snapshot", probe),
         patch(
@@ -558,7 +566,9 @@ def test_latest_recorded_failure_hides_older_success_and_newer_success_replaces(
     )
 
     non_numeric_last = seed.trace(observe_project, day0 + timedelta(days=2, hours=10))
-    seed.result(non_numeric_last, template, day0 + timedelta(days=2, hours=11), value=0.4)
+    seed.result(
+        non_numeric_last, template, day0 + timedelta(days=2, hours=11), value=0.4
+    )
     seed.result(
         non_numeric_last,
         template,
@@ -881,9 +891,7 @@ def _reevaluated_and_failed_last(seed, project, template):
     seed.result(reevaluated, template, day_x + timedelta(hours=11), value=0.2)
     seed.result(reevaluated, template, now - timedelta(days=2), value=0.8)
     failed_last = seed.trace(project, day_x + timedelta(days=1, hours=10))
-    seed.result(
-        failed_last, template, day_x + timedelta(days=1, hours=11), value=0.9
-    )
+    seed.result(failed_last, template, day_x + timedelta(days=1, hours=11), value=0.9)
     seed.result(
         failed_last,
         template,
@@ -1106,7 +1114,9 @@ def _worker_payload(seed, identity):
 
     from tracer.tasks.exact_aggregation import _dashboard_payload
 
-    with patch("tracer.views.dashboard.V2AnalyticsQueryService", return_value=seed.usage):
+    with patch(
+        "tracer.views.dashboard.V2AnalyticsQueryService", return_value=seed.usage
+    ):
         return deepcopy(_dashboard_payload(deepcopy(identity)))
 
 
@@ -1284,6 +1294,7 @@ def test_long_trace_date_and_child_membership_do_not_move_with_chart_window(
         "config_id": template,
         "output_type": "SCORE",
     }
+
     def query(time_range, metrics, breakdowns=()):
         config = _config([observe_project], time_range, metrics, breakdowns=breakdowns)
         return _run_worker(seed, config)
@@ -1298,12 +1309,14 @@ def test_long_trace_date_and_child_membership_do_not_move_with_chart_window(
             [
                 _eval_metric(template),
                 _system_metric("trace_count", "count", filters=[eval_filter]),
-            ]
+            ],
         )
         assert _points(result) == ({monday: 0.9} if start == monday else {})
         expected = {monday: 1, thursday: 1} if start == monday else {thursday: 1}
         assert _points(result, "trace_count") == expected
-        result = query(time_range, [_system_metric("trace_count", "count")], [breakdown])
+        result = query(
+            time_range, [_system_metric("trace_count", "count")], [breakdown]
+        )
         assert _points(result, "trace_count", series="90") == expected
         assert not _points(result, "trace_count", series="10")
 
@@ -1414,9 +1427,7 @@ def test_eval_window_subjects_exclude_empty_and_nil_trace_ids():
     assert "toUUID('00000000-0000-0000-0000-000000000000')" in sql
 
 
-def test_system_metric_eval_filter_scopes_workspace_scan_by_org(
-    observe_project, seed
-):
+def test_system_metric_eval_filter_scopes_workspace_scan_by_org(observe_project, seed):
     template = str(uuid4())
     start = _day(datetime.now(UTC) - timedelta(days=5))
     trace = seed.trace(observe_project, start)
@@ -1437,12 +1448,10 @@ def test_system_metric_eval_filter_scopes_workspace_scan_by_org(
     assert _points(result, "trace_count") == {start: 1}
     query = "\n".join(seed.usage.queries)
     assert (
-        "usage_s_eval_filter_scan_0.organization_id = "
-        "toUUID(%(s_org_scope_id_0)s)"
+        "usage_s_eval_filter_scan_0.organization_id = toUUID(%(s_org_scope_id_0)s)"
     ) in query
     assert (
-        "usage_s_eval_filter_scan_0.workspace_id = "
-        "toUUID(%(s_scope_id_0)s)"
+        "usage_s_eval_filter_scan_0.workspace_id = toUUID(%(s_scope_id_0)s)"
     ) in query
 
 

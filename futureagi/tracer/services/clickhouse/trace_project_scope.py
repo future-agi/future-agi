@@ -73,7 +73,9 @@ def latest_live_trace_projects_sql(
 
     created_at = ", trace_project_scan.created_at" if include_created_at else ""
     date_projection = (
-        ", tupleElement(latest_state, 3) AS trace_created_at" if include_created_at else ""
+        ", tupleElement(latest_state, 3) AS trace_created_at"
+        if include_created_at
+        else ""
     )
     return f"""
         SELECT

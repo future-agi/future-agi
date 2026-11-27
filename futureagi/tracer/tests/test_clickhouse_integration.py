@@ -47,8 +47,14 @@ def _rewrite_eval_dashboard_tables(sql: str) -> str:
             "FROM traces AS trace_project_scan",
             f"FROM {_EVAL_TRACE_TABLE} AS trace_project_scan",
         )
-        .replace("FROM traces AS trace_window_scan", f"FROM {_EVAL_TRACE_TABLE} AS trace_window_scan")
-        .replace("FROM spans AS eval_window_span", f"FROM {_EVAL_SPAN_TABLE} AS eval_window_span")
+        .replace(
+            "FROM traces AS trace_window_scan",
+            f"FROM {_EVAL_TRACE_TABLE} AS trace_window_scan",
+        )
+        .replace(
+            "FROM spans AS eval_window_span",
+            f"FROM {_EVAL_SPAN_TABLE} AS eval_window_span",
+        )
         .replace(
             # Trace eval scores are dated by the trace's root span (TH-10545).
             "FROM spans AS eval_trace_span",

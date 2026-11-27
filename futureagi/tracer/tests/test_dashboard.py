@@ -6336,7 +6336,10 @@ class TestDashboardQueryBuilder:
             assert "AS bounded_trace_candidates" in compact_sql
             assert "usage_trace_candidate" not in compact_sql
             assert compact_sql.count("FROM usage_apicalllog AS") == 2
-            assert "usage_main_scan.id IN ( SELECT usage_main_scan_candidate.id" in compact_sql
+            assert (
+                "usage_main_scan.id IN ( SELECT usage_main_scan_candidate.id"
+                in compact_sql
+            )
             assert "GROUP BY trace_project_scan.id" in compact_sql
             assert (
                 "uniqExact(trace_project_scan.project_id) AS project_identity_count"
@@ -11693,7 +11696,8 @@ class TestDashboardV2RewriteRouting:
             "usage_cross_ev_bd1_scan_candidate.eval_trace_id != '' AND "
             "toUUIDOrZero(usage_cross_ev_bd1_scan_candidate.eval_trace_id) != "
             "toUUID('00000000-0000-0000-0000-000000000000') AND "
-            "toUUIDOrZero(usage_cross_ev_bd1_scan_candidate.eval_trace_id) IN" in compact_sql
+            "toUUIDOrZero(usage_cross_ev_bd1_scan_candidate.eval_trace_id) IN"
+            in compact_sql
         )
         assert ") AS bounded_trace_candidates" in compact_sql
         # A trace without a successful latest result is "(not set)" whether
@@ -11821,9 +11825,7 @@ class TestDashboardV2RewriteRouting:
                 "usage_sys_bd_ev0_scan_candidate",
                 "usage_s_eval_filter_scan_0_candidate",
             ):
-                assert f"FROM usage_apicalllog AS {candidate} PREWHERE" in (
-                    compact_sql
-                )
+                assert f"FROM usage_apicalllog AS {candidate} PREWHERE" in (compact_sql)
             assert set(re.findall(r"%\(([^)]+)\)s", sql)) <= params.keys()
 
     def test_eval_widget_filter_with_unusable_output_type_uses_template_type(

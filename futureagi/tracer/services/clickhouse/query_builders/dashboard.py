@@ -951,9 +951,11 @@ class DashboardQueryBuilder:
                 configs = configs.filter(project_id__in=self.project_ids)
             template_id = configs.values_list("eval_template_id", flat=True).first()
         elif decoded["property_kind"] == "eval_template":
-            template_id = self._visible_eval_templates(definition_id).values_list(
-                "id", flat=True
-            ).first()
+            template_id = (
+                self._visible_eval_templates(definition_id)
+                .values_list("id", flat=True)
+                .first()
+            )
         elif decoded["property_kind"] == "eval":
             # Read-only compatibility identities predate the config/template
             # split. Preserve their legacy resolution without publishing them
@@ -2347,7 +2349,9 @@ class DashboardQueryBuilder:
                         where_parts.append("0 = 1")
                         continue
                     try:
-                        val = _coerce_numeric_filter_operand(val, op, *_filter_leaf_identity(f))
+                        val = _coerce_numeric_filter_operand(
+                            val, op, *_filter_leaf_identity(f)
+                        )
                     except InvalidMetricCombinationError:
                         where_parts.append("0 = 1")
                         continue
@@ -2422,7 +2426,9 @@ class DashboardQueryBuilder:
             # The previous ``s.trace_id = e.eval_trace_id`` ON clause was
             # correlated only after the right side had been read, allowing an
             # eval + span-attribute dashboard to scan every tenant's spans.
-            span_trace_candidates = f"SELECT toString(trace_id) AS trace_id FROM ({subjects})"
+            span_trace_candidates = (
+                f"SELECT toString(trace_id) AS trace_id FROM ({subjects})"
+            )
             bounded_spans_join = f"""(
                 SELECT *
                 FROM {spans_joined}
@@ -3524,9 +3530,7 @@ class DashboardQueryBuilder:
                     bd_scope = f"{scan_alias}.workspace_id = toUUID(%({scope_key})s)"
                     params[scope_key] = self.workspace_id
                 else:
-                    bd_scope = (
-                        f"{scan_alias}.organization_id = toUUID(%({scope_key})s)"
-                    )
+                    bd_scope = f"{scan_alias}.organization_id = toUUID(%({scope_key})s)"
                     params[scope_key] = self.organization_id
                 ann_idx += 1
 
@@ -3538,9 +3542,7 @@ class DashboardQueryBuilder:
                     )
                     val_expr = f"if({not_set}, '(not set)', {label_expr})"
                 elif output_type in ("CHOICE", "CHOICES"):
-                    val_expr = (
-                        f"if({not_set}, '(not set)', {alias}.eval_output_str)"
-                    )
+                    val_expr = f"if({not_set}, '(not set)', {alias}.eval_output_str)"
                 else:
                     # SCORE: show as percentage
                     val_expr = (
@@ -3771,9 +3773,9 @@ class DashboardQueryBuilder:
         workspace = Q(workspace_id__isnull=True)
         if self.workspace_id:
             workspace |= Q(workspace_id=self.workspace_id)
-        return EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False).filter(
-            tenant & workspace
-        )
+        return EvalTemplate.no_workspace_objects.filter(
+            id=template_id, deleted=False
+        ).filter(tenant & workspace)
 
     def _configured_eval_output_type(self, template_id: str) -> str | None:
         from django.core.exceptions import ValidationError
@@ -3788,7 +3790,9 @@ class DashboardQueryBuilder:
             return None  # A malformed legacy id cannot name a template.
         return _known_eval_filter_output_type(output)
 
-    def _eval_filter_output_type(self, filter_item: dict, eval_template_id: str) -> str | None:
+    def _eval_filter_output_type(
+        self, filter_item: dict, eval_template_id: str
+    ) -> str | None:
         output_type = _known_eval_filter_output_type(filter_item.get("output_type"))
         if output_type is None and _leaf_carries_canonical_filter(filter_item):
             output_type = self._configured_eval_output_type(eval_template_id)
@@ -3963,7 +3967,9 @@ class DashboardQueryBuilder:
                         filter_value = (
                             None
                             if is_presence or is_range
-                            else _coerce_numeric_filter_operand(val, op, leaf_column, leaf_operator)
+                            else _coerce_numeric_filter_operand(
+                                val, op, leaf_column, leaf_operator
+                            )
                         )
                     except InvalidMetricCombinationError:
                         if output_type is not None:
