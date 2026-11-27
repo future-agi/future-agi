@@ -20,6 +20,7 @@ export default function ActorIdentityFields({
     ? actor.locked_fields.find((one) => one.field === "channel")
     : null;
   const startChannel = form.initial.channel;
+  const roleRequired = Boolean(chosen?.required_fields.includes("role"));
   return (
     <>
       <ActorField
@@ -45,16 +46,16 @@ export default function ActorIdentityFields({
       <ActorField
         form={form}
         name="role"
-        label={
-          chosen?.required_fields.includes("role") ? F.roleRequired : F.role
-        }
+        label={roleRequired ? F.roleRequired : F.role}
         helperText={F.roleHelp}
+        required={roleRequired}
       />
       <ActorField
         form={form}
         name="name"
         label={F.name}
         helperText={F.nameHelp}
+        required
       />
       {existing ? (
         <ActorField

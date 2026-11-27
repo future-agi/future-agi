@@ -76,8 +76,13 @@ export default function ActorForm({
   const { verdict } = check;
   // Problems wait until something is edited or Save is tried, so a form opens clean.
   const [tried, setTried] = useState(false);
-  const problems = verdict && (tried || changed) ? verdict.problems : [];
-  const waiting = Boolean(verdict?.problems.length) && problems.length === 0;
+  // Problems show once Save is tried, then follow each edit; until then Save asks the check first.
+  const problems = verdict && tried ? verdict.problems : [];
+  const overBy = verdict && tried ? verdict.over_by : 0;
+  const waiting =
+    Boolean(verdict) &&
+    !tried &&
+    (verdict.problems.length > 0 || verdict.over_by > 0);
   // Escape, the close button and a click outside ask before discarding; Cancel never asks.
   const [leaving, setLeaving] = useState(false);
   const leave = () => {
@@ -226,7 +231,7 @@ export default function ActorForm({
           </Stack>
           <ActorFormFooter
             problems={problems.filter((one) => !fieldOf(one))}
-            overBy={verdict ? verdict.over_by : 0}
+            overBy={overBy}
             check={check}
             checking={changed && check.pending}
             busy={busy}
@@ -236,7 +241,7 @@ export default function ActorForm({
               (!existing || changed) &&
               Boolean(verdict) &&
               problems.length === 0 &&
-              verdict.over_by === 0 &&
+              overBy === 0 &&
               (conflicts.length === 0 || shareConfirmed)
             }
             onCancel={onClose}

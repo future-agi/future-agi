@@ -10,6 +10,10 @@ import {
 } from "src/utils/test-utils";
 import { CLEAN, cast, typedActor } from "./castFixtures";
 
+// A label as typed, with or without the star a required field shows.
+const starred = (text) =>
+  new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( \\*)?$`);
+
 const mutate = vi.fn();
 const acceptMutate = vi.fn();
 const roleMutate = vi.fn();
@@ -128,7 +132,7 @@ const MANAGER = typedActor({
 });
 
 const choose = (label, option) => {
-  fireEvent.mouseDown(screen.getByLabelText(label));
+  fireEvent.mouseDown(screen.getByLabelText(starred(label)));
   fireEvent.click(screen.getByRole("option", { name: option }));
 };
 // Picks a join preset, then the way inside it when the preset covers several.
@@ -166,7 +170,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Edit Priya Raman" }),
     );
-    fireEvent.change(screen.getByLabelText("Role (optional)"), {
+    fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
       target: { value: "regional manager" },
     });
     // Save waits for the server's check of exactly this edit.
@@ -226,7 +230,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
       changes: { role: "regional manager" },
       expected_revision: 3,
     });
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "regional manager",
     );
 
@@ -279,7 +283,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: "Edit Priya Raman" }),
     );
-    fireEvent.change(screen.getByLabelText("Role (optional)"), {
+    fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
       target: { value: "regional manager" },
     });
     expect(
@@ -393,7 +397,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     await screen.findByText(/changed elsewhere while you were editing/);
     await screen.findByText(/Pushes for: Approve only large discounts/);
     // What was typed stays.
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "regional manager",
     );
     upload.mockResolvedValueOnce({
@@ -442,7 +446,7 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     axios.get.mockResolvedValue({ data: cast([], { revision: 4 }) });
     fireEvent.click(saveButton());
     await screen.findByText(/removed elsewhere/);
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "regional manager",
     );
     expect(saveButton()).toBeDisabled();
@@ -478,10 +482,10 @@ describe("WorldActorsPanel", () => {
     });
     render(<WorldActorsPanel envId="env-1" />);
     const card = within(screen.getByTestId("file-roles"));
-    expect(card.getByLabelText("answer-key.md")).toHaveTextContent(
+    expect(card.getByLabelText(starred("answer-key.md"))).toHaveTextContent(
       "Evaluator only",
     );
-    fireEvent.mouseDown(card.getByLabelText("refunds.md"));
+    fireEvent.mouseDown(card.getByLabelText(starred("refunds.md")));
     fireEvent.click(screen.getByRole("option", { name: "Seed records" }));
     expect(roleMutate).toHaveBeenCalledWith({
       path: "knowledge/refunds.md",
@@ -501,7 +505,7 @@ describe("WorldActorsPanel", () => {
     });
     render(<WorldActorsPanel envId="env-1" />);
     const card = within(screen.getByTestId("file-roles"));
-    expect(card.getByLabelText("refunds.md")).toHaveAttribute(
+    expect(card.getByLabelText(starred("refunds.md"))).toHaveAttribute(
       "aria-disabled",
       "true",
     );
@@ -585,7 +589,7 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText("Added to this environment's draft"),
     ).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Jordan" },
     });
     fireEvent.click(saveButton());
@@ -725,16 +729,19 @@ describe("WorldActorsPanel", () => {
   it("keeps limits typed but not saved when another change moves the cast", () => {
     const { rerender } = render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: "Limits" }));
-    fireEvent.change(screen.getByLabelText("How many at once on a call"), {
-      target: { value: "3" },
-    });
+    fireEvent.change(
+      screen.getByLabelText(starred("How many at once on a call")),
+      {
+        target: { value: "3" },
+      },
+    );
     actorsData = cast([MANAGER, typedActor({ id: "ops", name: "Ops" })], {
       revision: 4,
     });
     rerender(<WorldActorsPanel envId="env-1" />);
-    expect(screen.getByLabelText("How many at once on a call")).toHaveValue(
-      "3",
-    );
+    expect(
+      screen.getByLabelText(starred("How many at once on a call")),
+    ).toHaveValue("3");
   });
 
   it("says there is no caller only when the cast says so and has actors", () => {
@@ -780,27 +787,29 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([], { source: "saved", revision: 0 });
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Id"), {
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
       target: { value: "manager" },
     });
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya" },
     });
     fireEvent.change(
-      screen.getByLabelText("They give up when (optional, one per line)"),
+      screen.getByLabelText(
+        starred("They give up when (optional, one per line)"),
+      ),
       { target: { value: "She has decided" } },
     );
     fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     fireEvent.change(
-      screen.getByLabelText("What they know (optional, one per line)"),
+      screen.getByLabelText(starred("What they know (optional, one per line)")),
       { target: { value: "The limit is 25%" } },
     );
     choose("Answers", "After a delay");
-    fireEvent.change(screen.getByLabelText("Seconds"), {
+    fireEvent.change(screen.getByLabelText(starred("Seconds")), {
       target: { value: "5" },
     });
     fireEvent.mouseDown(
-      screen.getByLabelText("World actions they may take (optional)"),
+      screen.getByLabelText(starred("World actions they may take (optional)")),
     );
     expect(screen.getByText("Approve a pending discount")).toBeInTheDocument();
     fireEvent.click(
@@ -829,7 +838,7 @@ describe("WorldActorsPanel", () => {
   it("shows the conflict the server finds before saving, and saves the action shared only once confirmed", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
     });
     expect(screen.queryByTestId("actor-permission-conflict")).toBeNull();
@@ -845,7 +854,7 @@ describe("WorldActorsPanel", () => {
       ],
     };
     fireEvent.mouseDown(
-      screen.getByLabelText("World actions they may take (optional)"),
+      screen.getByLabelText(starred("World actions they may take (optional)")),
     );
     fireEvent.click(
       screen.getByRole("option", { name: /crm.approve_discount/ }),
@@ -855,7 +864,9 @@ describe("WorldActorsPanel", () => {
       "crm.approve_discount is held only by Priya Raman today",
     );
     expect(saveButton()).toBeDisabled();
-    fireEvent.click(within(warning).getByLabelText("Both should have it"));
+    fireEvent.click(
+      within(warning).getByLabelText(starred("Both should have it")),
+    );
     fireEvent.click(saveButton());
     expect(sent().changes.permitted_actions).toEqual(["crm.approve_discount"]);
     expect(sent().shareActions).toEqual(["crm.approve_discount"]);
@@ -874,7 +885,7 @@ describe("WorldActorsPanel", () => {
     answer = heldBy("crm.approve_discount");
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
     });
     const field = screen.getByLabelText(
@@ -906,11 +917,11 @@ describe("WorldActorsPanel", () => {
   it("shows no conflict when the server finds none", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
     });
     fireEvent.mouseDown(
-      screen.getByLabelText("World actions they may take (optional)"),
+      screen.getByLabelText(starred("World actions they may take (optional)")),
     );
     fireEvent.click(
       screen.getByRole("option", { name: /crm.request_approval/ }),
@@ -926,13 +937,13 @@ describe("WorldActorsPanel", () => {
     answer = undefined;
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
     });
     expect(saveButton()).toBeDisabled();
     expect(screen.getByText("Checking…")).toBeInTheDocument();
     answer = CLEAN;
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena K" },
     });
     expect(saveButton()).toBeEnabled();
@@ -942,10 +953,10 @@ describe("WorldActorsPanel", () => {
   it("shows a server problem under its field and keeps Save off", async () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Nair" },
     });
-    const wait = screen.getByLabelText("Waits, in seconds (optional)");
+    const wait = screen.getByLabelText(starred("Waits, in seconds (optional)"));
     expect(wait).not.toBeVisible();
     answer = {
       ...CLEAN,
@@ -954,7 +965,10 @@ describe("WorldActorsPanel", () => {
       ],
     };
     fireEvent.change(wait, { target: { value: "-5" } });
-    // The fold opens itself so a problem on a folded field shows under it.
+    // Nothing turns red while editing; Save shows the problem, and the fold opens itself so it shows under its field.
+    expect(screen.queryByText("A wait is 0 seconds or more")).toBeNull();
+    fireEvent.click(saveButton());
+    await settle();
     expect(wait).toBeVisible();
     expect(screen.getByText("A wait is 0 seconds or more")).toBeInTheDocument();
     expect(screen.queryByTestId("actor-problems")).toBeNull();
@@ -983,9 +997,10 @@ describe("WorldActorsPanel", () => {
       ...CLEAN,
       problems: [{ field: "id", message: "caller is kept by the environment" }],
     };
-    fireEvent.change(screen.getByLabelText("Id"), {
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
       target: { value: "caller" },
     });
+    fireEvent.click(saveButton());
     expect(
       screen.getByText("caller is kept by the environment"),
     ).toBeInTheDocument();
@@ -995,12 +1010,12 @@ describe("WorldActorsPanel", () => {
   it("shows the id the server would give until one is typed, and sends none of its own", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    expect(screen.getByLabelText("Id")).toHaveValue("");
+    expect(screen.getByLabelText(starred("Id"))).toHaveValue("");
     answer = { ...CLEAN, suggested_id: "sam_lee_2" };
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Sam Lee" },
     });
-    expect(screen.getByLabelText("Id")).toHaveValue("sam_lee_2");
+    expect(screen.getByLabelText(starred("Id"))).toHaveValue("sam_lee_2");
     fireEvent.click(saveButton());
     expect(sent()).not.toHaveProperty("id");
   });
@@ -1008,9 +1023,13 @@ describe("WorldActorsPanel", () => {
   it("sends no id when a typed id is cleared", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "x" } });
-    fireEvent.change(screen.getByLabelText("Id"), { target: { value: "" } });
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
+      target: { value: "x" },
+    });
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Ravi Kumar" },
     });
     fireEvent.click(saveButton());
@@ -1020,14 +1039,15 @@ describe("WorldActorsPanel", () => {
   it("will not save an actor the server says is too long, and says by how much", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Nair" },
     });
     answer = { ...CLEAN, over_by: 4200 };
     fireEvent.change(
-      screen.getByLabelText("What they know (optional, one per line)"),
+      screen.getByLabelText(starred("What they know (optional, one per line)")),
       { target: { value: "a long fact" } },
     );
+    fireEvent.click(saveButton());
     expect(
       screen.getByText(/4,200 characters too long to save/),
     ).toBeInTheDocument();
@@ -1053,9 +1073,9 @@ describe("WorldActorsPanel", () => {
       "May agree to (optional, one per line)",
     ];
     for (const label of always)
-      expect(screen.getByLabelText(label)).toBeVisible();
+      expect(screen.getByLabelText(starred(label))).toBeVisible();
     for (const label of folded)
-      expect(screen.getByLabelText(label)).not.toBeVisible();
+      expect(screen.getByLabelText(starred(label))).not.toBeVisible();
     expect(screen.getByText("Pressure")).toBeVisible();
     const [pressureHelp] = screen.getAllByText(
       /Given to them as background whenever they speak or decide in the moment/,
@@ -1065,7 +1085,7 @@ describe("WorldActorsPanel", () => {
     expect(pressureHelp).not.toHaveTextContent(/Brought in by/);
     fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     for (const label of folded)
-      expect(screen.getByLabelText(label)).toBeVisible();
+      expect(screen.getByLabelText(starred(label))).toBeVisible();
     expect(screen.queryByText(/not used by runs/)).toBeNull();
   });
 
@@ -1073,9 +1093,11 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    expect(screen.getByLabelText("Role (optional)")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(starred("Role (optional)")),
+    ).toBeInTheDocument();
     choose("How they take part", "Heard nearby");
-    expect(screen.getByLabelText("Role")).toBeInTheDocument();
+    expect(screen.getByLabelText(starred("Role"))).toBeInTheDocument();
     expect(screen.getByText("a voice near the person")).toBeInTheDocument();
   });
 
@@ -1084,13 +1106,13 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
     expect(
-      screen.getByLabelText("World actions they may take (optional)"),
+      screen.getByLabelText(starred("World actions they may take (optional)")),
     ).toBeInTheDocument();
     choose("How they take part", "Heard nearby");
-    fireEvent.change(screen.getByLabelText("Id"), {
+    fireEvent.change(screen.getByLabelText(starred("Id")), {
       target: { value: "colleague" },
     });
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Jordan" },
     });
     const automatic = screen.getByRole("checkbox", {
@@ -1135,7 +1157,7 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     // A stored age the server no longer offers still reads as stored.
-    expect(screen.getByLabelText("Age")).toHaveTextContent("32-40");
+    expect(screen.getByLabelText(starred("Age"))).toHaveTextContent("32-40");
     choose("Accent", "Indian");
     fireEvent.click(saveButton());
     expect(sent()).toMatchObject({
@@ -1167,7 +1189,7 @@ describe("WorldActorsPanel", () => {
     addActor();
     fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     choose("Brought in by (optional)", "Jordan Taylor");
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Sam" },
     });
     fireEvent.click(saveButton());
@@ -1179,15 +1201,15 @@ describe("WorldActorsPanel", () => {
     actorsData = cast([]);
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Raman" },
     });
-    fireEvent.change(screen.getByLabelText("Role (optional)"), {
+    fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
       target: { value: "store manager" },
     });
     fireEvent.click(saveButton());
     addActor();
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue("");
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue("");
   });
 
   it("sends only the name when only the name is edited", () => {
@@ -1202,7 +1224,7 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya R." },
     });
     fireEvent.click(saveButton());
@@ -1219,7 +1241,7 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     expect(saveButton()).toBeDisabled();
-    const name = screen.getByLabelText("Name");
+    const name = screen.getByLabelText(starred("Name"));
     fireEvent.change(name, { target: { value: "Priya R." } });
     expect(saveButton()).not.toBeDisabled();
     fireEvent.change(name, { target: { value: "Priya Raman " } });
@@ -1240,10 +1262,12 @@ describe("WorldActorsPanel", () => {
     render(<WorldActorsPanel envId="env-1" />);
     expect(screen.getByText("30 s after the start")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    expect(screen.getByLabelText("Comes in")).toHaveTextContent(
+    expect(screen.getByLabelText(starred("Comes in"))).toHaveTextContent(
       "At a set moment",
     );
-    expect(screen.getByLabelText("Seconds after the start")).toHaveValue(30);
+    expect(
+      screen.getByLabelText(starred("Seconds after the start")),
+    ).toHaveValue(30);
     comeIn("When the agent contacts them");
     expect(saveButton()).not.toBeDisabled();
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
@@ -1265,10 +1289,10 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    expect(screen.getByLabelText("Comes in")).toHaveTextContent(
+    expect(screen.getByLabelText(starred("Comes in"))).toHaveTextContent(
       "In about 25% of calls",
     );
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya R." },
     });
     fireEvent.click(saveButton());
@@ -1285,6 +1309,7 @@ describe("WorldActorsPanel", () => {
       ],
     };
     comeIn("Joins partway", "When the agent calls an action");
+    fireEvent.click(saveButton());
     expect(saveButton()).toBeDisabled();
     expect(
       screen.getByText("Pick the action that brings them in"),
@@ -1298,22 +1323,26 @@ describe("WorldActorsPanel", () => {
   it("keeps the form open and Save off while the record match is half-typed JSON, and asks the server nothing", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Nair" },
     });
     comeIn("Joins partway", "Once a record exists");
-    fireEvent.change(screen.getByLabelText("Matching (optional)"), {
+    fireEvent.change(screen.getByLabelText(starred("Matching (optional)")), {
       target: { value: '{"status": ' },
     });
     expect(asked).toBeNull();
-    expect(screen.getByLabelText("Matching (optional)")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(starred("Matching (optional)")),
+    ).toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
   });
 
   it("sends a cap as typed, the server saying when it is not a whole number", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    const cap = screen.getByLabelText("Most turns in a call (optional)");
+    const cap = screen.getByLabelText(
+      starred("Most turns in a call (optional)"),
+    );
     answer = {
       ...CLEAN,
       problems: [
@@ -1321,6 +1350,7 @@ describe("WorldActorsPanel", () => {
       ],
     };
     fireEvent.change(cap, { target: { value: "2.7" } });
+    fireEvent.click(saveButton());
     expect(saveButton()).toBeDisabled();
     expect(
       screen.getByText("A whole number above 0, or empty"),
@@ -1339,9 +1369,10 @@ describe("WorldActorsPanel", () => {
       ...CLEAN,
       problems: [{ field: "max_lines", message: "max_lines must be above 0" }],
     };
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya R." },
     });
+    fireEvent.click(saveButton());
     expect(screen.getByTestId("actor-problems")).toHaveTextContent(
       "max_lines must be above 0",
     );
@@ -1351,14 +1382,16 @@ describe("WorldActorsPanel", () => {
   it("never crashes on a record match of only spaces, and sends it as no match", () => {
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Priya Nair" },
     });
     comeIn("Joins partway", "Once a record exists");
-    fireEvent.change(screen.getByLabelText("Matching (optional)"), {
+    fireEvent.change(screen.getByLabelText(starred("Matching (optional)")), {
       target: { value: "   " },
     });
-    expect(screen.getByLabelText("Matching (optional)")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(starred("Matching (optional)")),
+    ).toBeInTheDocument();
     expect(asked.changes.trigger.where).toEqual({});
   });
 
@@ -1378,14 +1411,16 @@ describe("WorldActorsPanel", () => {
     ]);
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: "Edit Priya Raman" }));
-    expect(screen.getByLabelText("Kind (optional)")).toHaveTextContent("robot");
-    expect(screen.getByLabelText("If they do not answer")).toHaveTextContent(
-      "Jordan answers instead",
+    expect(screen.getByLabelText(starred("Kind (optional)"))).toHaveTextContent(
+      "robot",
     );
-    expect(screen.getByLabelText("Brought in by (optional)")).toHaveTextContent(
-      "Jordan",
-    );
-    expect(screen.getByLabelText("Comes in")).toHaveTextContent(
+    expect(
+      screen.getByLabelText(starred("If they do not answer")),
+    ).toHaveTextContent("Jordan answers instead");
+    expect(
+      screen.getByLabelText(starred("Brought in by (optional)")),
+    ).toHaveTextContent("Jordan");
+    expect(screen.getByLabelText(starred("Comes in"))).toHaveTextContent(
       "Present from the start",
     );
   });
@@ -1393,9 +1428,9 @@ describe("WorldActorsPanel", () => {
   it("offers a fallback action's arguments only when the fallback picked is one of the actor's actions", () => {
     render(<WorldActorsPanel envId="env-1" />);
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    expect(screen.queryByLabelText("Taken with (JSON)")).toBeNull();
+    expect(screen.queryByLabelText(starred("Taken with (JSON)"))).toBeNull();
     choose("If they do not answer", "crm.approve_discount is taken for them");
-    fireEvent.change(screen.getByLabelText("Taken with (JSON)"), {
+    fireEvent.change(screen.getByLabelText(starred("Taken with (JSON)")), {
       target: { value: '{"set": {"status": "declined"}}' },
     });
     fireEvent.click(saveButton());
@@ -1410,7 +1445,7 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
     fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     choose("If they do not answer", "crm.approve_discount is taken for them");
-    const taken = screen.getByLabelText("Taken with (JSON)");
+    const taken = screen.getByLabelText(starred("Taken with (JSON)"));
     fireEvent.change(taken, { target: { value: "{not json" } });
     fireEvent.click(
       screen.getByRole("button", { name: "Hide advanced settings" }),
@@ -1498,10 +1533,9 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText("In 2 scenarios, so how they join stays as it is."),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("How they take part")).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(
+      screen.getByLabelText(starred("How they take part")),
+    ).toHaveAttribute("aria-disabled", "true");
   });
 
   it("clears the in-use warning when a form opens", () => {
@@ -1729,7 +1763,7 @@ describe("WorldActorsPanel", () => {
       expect.any(Object),
     );
     fireEvent.click(within(block).getByRole("button", { name: "Edit actor" }));
-    expect(screen.getByLabelText("Role (optional)")).toHaveValue(
+    expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "sales manager",
     );
   });

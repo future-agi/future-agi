@@ -89,12 +89,14 @@ export default function ActorTriggerFields({
       )}
       {takes("p") &&
         field("triggerChance", F.triggerChance, {
+          required: true,
           type: "number",
           helperText: F.triggerChanceHelp,
           inputProps: { min: 1, max: 100, step: 1 },
         })}
       {takes("tool") &&
         field("triggerTool", F.triggerTool, {
+          required: true,
           options: actionIds.map((id) => ({ value: id, label: id })),
           startLabel: initial.triggerTool,
         })}
@@ -106,20 +108,24 @@ export default function ActorTriggerFields({
         })}
       {takes("words") &&
         field("triggerWords", F.triggerWords, {
+          required: true,
           helperText: F.triggerWordsHelp,
         })}
       {takes("turn") &&
         field("triggerTurn", F.triggerTurn, {
+          required: true,
           type: "number",
           inputProps: { min: 1 },
         })}
       {takes("seconds") &&
         field("triggerSeconds", F.triggerSeconds, {
+          required: true,
           type: "number",
           inputProps: { min: 0 },
         })}
       {takes("collection") &&
         field("triggerCollection", F.triggerCollection, {
+          required: true,
           options: collections.map((one) => ({ value: one, label: one })),
           startLabel: initial.triggerCollection,
         })}
