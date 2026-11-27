@@ -3829,21 +3829,23 @@
 
 **Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
 
-**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:228`
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:241`
 
 **Tags:** —
 
 **User steps:**
 
-1. open a finished run of the environment
-2. open Debug failures
-3. press Run Epoch
-4. read the Scenarios row of the launch form
-5. press Run Epoch in the form
-6. read the epoch page
+1. open a finished run of the environment with 14 connected calls and point at Debug failures
+2. open it again with 15 connected calls
+3. open Debug failures
+4. press Run Epoch
+5. read the Scenarios row of the launch form
+6. press Run Epoch in the form
+7. read the epoch page
 
 **Browser observations:**
 
+- at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."
 - the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
 - the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
