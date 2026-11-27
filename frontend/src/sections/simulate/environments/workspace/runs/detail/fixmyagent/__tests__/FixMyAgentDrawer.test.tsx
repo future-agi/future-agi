@@ -79,6 +79,39 @@ describe("FixMyAgentDrawer request errors", () => {
     expect(axios.post).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    [
+      "execution_not_completed",
+      "Diagnosis is available once every call in this run finishes.",
+      true,
+    ],
+    [
+      "execution_calls_unfinished",
+      "Some calls in this run didn’t finish, so Debug failures can’t read it.",
+      true,
+    ],
+    ["investigation_too_few_calls", TOO_FEW, false],
+    [
+      "investigation_nothing_failed",
+      "Nothing failed in this run, so there’s nothing to debug.",
+      false,
+    ],
+  ])(
+    "says why a %s refusal stopped the diagnosis",
+    async (code, words, canAskAgain) => {
+      axios.get.mockResolvedValue({ data: { status: "not_requested" } });
+      axios.post.mockRejectedValue({ statusCode: 409, code, detail: "raw" });
+      renderDrawer();
+
+      expect(await screen.findByText(words)).toBeVisible();
+      expect(screen.queryByText("raw")).toBeNull();
+      // A run whose calls may still finish can be asked again; the counts' answer stands.
+      expect(!!screen.queryByRole("button", { name: "Try again" })).toBe(
+        canAskAgain,
+      );
+    },
+  );
+
   it("starts fresh on a reopen: no old refusal, and the request is sent again", async () => {
     axios.get.mockResolvedValue({ data: { status: "not_requested" } });
     axios.post.mockRejectedValueOnce({ code: "investigation_too_few_calls" });
