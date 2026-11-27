@@ -140,8 +140,8 @@ export default function UploadDropZone({ onScanned, disabled = false }) {
           </Box>
           <Button
             size="small"
-            variant="outlined"
-            color="inherit"
+            variant="contained"
+            color="primary"
             disabled={inert}
             sx={{ flexShrink: 0 }}
           >
