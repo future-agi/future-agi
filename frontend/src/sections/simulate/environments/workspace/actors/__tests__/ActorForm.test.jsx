@@ -232,6 +232,20 @@ describe("ActorForm", () => {
     fireEvent.click(
       screen.getByRole("option", { name: "A chance on each call" }),
     );
+    // A typed-in value the server refuses shows under that input, not under Comes in.
+    verdict = {
+      ...CLEAN,
+      problems: [
+        { field: "trigger", message: "The chance must be 1 or less." },
+      ],
+    };
+    fireEvent.change(screen.getByLabelText(starred("Chance (%)")), {
+      target: { value: "150" },
+    });
+    expect(
+      screen.getByLabelText(starred("Chance (%)")),
+    ).toHaveAccessibleDescription("The chance must be 1 or less.");
+    verdict = CLEAN;
     fireEvent.change(screen.getByLabelText(starred("Chance (%)")), {
       target: { value: "25" },
     });

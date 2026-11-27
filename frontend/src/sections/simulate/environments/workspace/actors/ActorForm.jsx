@@ -99,17 +99,21 @@ export default function ActorForm({
     const name = PROBLEM_FIELDS[one.field];
     return Boolean(name) && touched(name) && filled(name);
   };
-  // The server names the whole trigger; its problem shows under the trigger's first required input left empty.
-  const emptyTriggerInput = () => {
-    const key = (triggerKeys[value("mode")] || [])
+  // The server names the whole trigger; its problem shows under the first required input left empty, else under
+  // the last one typed in (a chance over 100%, call 1.5), since that is the value it judged.
+  const triggerInputAt = () => {
+    const keys = triggerKeys[value("mode")] || [];
+    const empty = keys
       .filter((one) => !OPTIONAL_TRIGGER_KEYS.includes(one))
       .find((one) => isEmpty(TRIGGER_INPUTS[one]));
+    const typedIn = keys.filter((one) => !isEmpty(TRIGGER_INPUTS[one])).pop();
+    const key = empty || typedIn;
     return key ? TRIGGER_INPUTS[key] : null;
   };
   // Where a problem belongs: its form field, or the line above Save for one with none.
   const keyOf = (one) => {
     const name = PROBLEM_FIELDS[one.field];
-    if (name === "mode") return emptyTriggerInput() || "mode";
+    if (name === "mode") return triggerInputAt() || "mode";
     return name || `above:${one.message}`;
   };
   const problems = verdict
