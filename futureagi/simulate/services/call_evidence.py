@@ -1108,12 +1108,11 @@ _ESCAPED_QUOTE = re.compile(r'\\{1,15}"')
 _ESCAPED_VALUE_END = re.compile(r'["\\\n]')
 # A bare value runs to the end of its line, or to a comma, semicolon, brace or quote.
 _BARE_VALUE_END = re.compile(r"""[\n,;}"'\\]""")
-# The look at a bare value after a name inside a sentence: a few short words.
+# The look at a bare value after a name: its words, up to its end or the reach.
 _LOOK_WORD = re.compile(r"""[ \t]{0,64}([^\s,;}"\\]{1,64})""")
 # The look's own end: as a bare value's, except that an apostrophe between letters
 # (``don't``) is inside a word.
 _LOOK_END = re.compile(r"""[\n,;}"\\]|(?<![A-Za-z])'|'(?![A-Za-z])""")
-_LOOK_WORDS = 8
 _LOOK_REACH = 1024
 _KEY_SHAPED_LENGTH = 16
 _WORD_PUNCTUATION = ".,!?:;()[]"
@@ -1296,10 +1295,13 @@ def _named_value(text: str, name: re.Match[str]) -> tuple[int, int] | None:
     look = _LOOK_END.search(text, start, look_end)
     if look is not None and look.start() == start:
         return None
+    stop = look.start() if look else look_end
+    # The words after the next name are that name's value, and are read with it.
+    following = _SECRET_NAME.search(text, start, stop)
     read = _read_bare_value(
         text,
         start,
-        look.start() if look else look_end,
+        following.start() if following else stop,
         name.group("word").lower(),
         _starts_its_line(text, name),
     )
@@ -1332,27 +1334,31 @@ def _read_bare_value(
     """How much of the bare value after a secret's name to mask: none (``None``, a
     rule), all of it (``_WHOLE``), or one word's span.
 
-    A value that starts with a rule word is a rule. One word, a key-shaped lead, or
-    words with no sentence word among them are a secret, masked whole; so is a short
-    value after a password's or passphrase's name, or at a line's start. Otherwise a
-    plain word is followed by prose, and that word (a scheme's credential) is the
-    secret."""
+    In this order, so no exception can pass over a secret: one word, a key-shaped
+    word anywhere in the value, or a key-shaped lead (a scheme's credential) are a
+    secret, masked whole; so is a value whose first sentence is up to four words,
+    after a password's or passphrase's name, whatever its first word. Then a value that starts with a rule
+    word is a rule, and is kept. Words with no sentence word among them, or a short
+    value at a line's start, are masked whole. Otherwise a plain word is followed by
+    prose, and that word (a scheme's credential) is the secret."""
     words: list[re.Match[str]] = []
     at = start
-    while len(words) < _LOOK_WORDS and (found := _LOOK_WORD.match(text, at, stop)):
+    while found := _LOOK_WORD.match(text, at, stop):
         words.append(found)
         at = found.end()
     if len(words) < 2:
         return _WHOLE
     plain = [_plain(each.group(1)) for each in words]
+    lead = 2 if word == "authorization" and plain[0] in _AUTH_SCHEMES else 1
+    if any(_key_shaped(each.group(1)) for each in words[:lead]) or any(
+        _secret_shaped(each.group(1)) for each in words
+    ):
+        return _WHOLE
+    if word in _PHRASE_NAMES and _first_sentence(words) <= _PHRASE_MAX_WORDS:
+        return _WHOLE
     if plain[0] in _RULE_WORDS:
         return None
-    lead = 2 if word == "authorization" and plain[0] in _AUTH_SCHEMES else 1
-    if any(_key_shaped(each.group(1)) for each in words[:lead]):
-        return _WHOLE
     if not any(each in _SENTENCE_WORDS for each in plain):
-        return _WHOLE
-    if word in _PHRASE_NAMES and len(words) <= _PHRASE_MAX_WORDS:
         return _WHOLE
     if line_start and len(words) < _LINE_RULE_MIN_WORDS:
         return _WHOLE
@@ -1363,6 +1369,21 @@ def _read_bare_value(
 
 def _plain(word: str) -> str:
     return word.strip(_WORD_PUNCTUATION).lower()
+
+
+def _first_sentence(words: list[re.Match[str]]) -> int:
+    """How many of ``words`` there are up to the first that ends a sentence."""
+    for count, each in enumerate(words, 1):
+        if each.group(1).endswith((".", "!", "?")):
+            return count
+    return len(words)
+
+
+def _secret_shaped(word: str) -> bool:
+    """A word that is key-shaped wherever it sits in a value: a small number of up to
+    three digits (``5 minutes``) is a rule's count, not a key."""
+    plain = word.strip(_WORD_PUNCTUATION)
+    return _key_shaped(word) and not (plain.isdigit() and len(plain) <= 3)
 
 
 def _key_shaped(word: str) -> bool:
