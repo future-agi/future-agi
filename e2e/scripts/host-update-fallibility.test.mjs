@@ -426,8 +426,7 @@ test("rejects changed shared seed, annotations, timeout and new bypasses even wi
     ],
     ["240_000", "480_000"],
     ["tag: ['@flow']", "tag: ['@flow', '@quarantined']"],
-    // Split so the pre-commit focused-test scan does not read this mutant as one.
-    ["test('SET-", "test" + ".only('SET-"],
+    ["test('SET-", "test.only('SET-"],
   ]) {
     assert.throws(
       () => buildMutants(original.replace(from, to)),
