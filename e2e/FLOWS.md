@@ -4375,3 +4375,25 @@
 - a scenario whose key differs from its stored name reads the stored name
 - a scenario with no stored name reads Unnamed scenario
 - no scenario row shows a scenario key
+
+### SIM-E2E-044 — a failed Debug failures retry says why and a reopen asks again
+
+**Goal:** A developer whose Debug failures request fails is told so, and after closing and reopening the drawer it asks again; when that diagnosis fails and Try again fails too, the drawer says so instead of looking unchanged
+
+**Spec:** `flows/simulate/debug-failures-retry.spec.ts:89`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished run with 15 connected calls and no diagnosis, and open Debug failures while the request fails
+2. close the drawer
+3. reopen Debug failures while the request now goes through and the diagnosis fails
+4. press Try again while the request fails
+
+**Browser observations:**
+
+- opening Debug failures on a run with no diagnosis sends one request, and the drawer reads "Couldn't read this run. Try again." with a Try again button
+- closing the drawer removes it from the page
+- reopening sends a second request, and the drawer no longer reads "Couldn't read this run. Try again."; it reads "Couldn't finish the diagnosis" with "Debug analysis failed"
+- pressing Try again while the request fails sends a third request, and the drawer reads "Couldn't read this run. Try again." and no longer reads "Debug analysis failed", with Try again still shown
