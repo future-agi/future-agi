@@ -257,9 +257,9 @@ def test_the_ask_engine_jobs_are_registered_with_the_worker():
     from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
 
     assert "simulate.services.ask_engine" in registry.TEMPORAL_ACTIVITY_MODULES
-    assert _ACTIVITY_WRAPPERS[run_ask._activity_name] in (
-        registry.get_activities_for_queue("tasks_l")
-    )
-    assert _ACTIVITY_WRAPPERS[settle_ask_later._activity_name] in (
-        registry.get_activities_for_queue("tasks_s")
-    )
+    # The worker's wrappers are built when a queue's activities are first
+    # asked for, so ask before looking them up.
+    long_queue = registry.get_activities_for_queue("tasks_l")
+    short_queue = registry.get_activities_for_queue("tasks_s")
+    assert _ACTIVITY_WRAPPERS[run_ask._activity_name] in long_queue
+    assert _ACTIVITY_WRAPPERS[settle_ask_later._activity_name] in short_queue
