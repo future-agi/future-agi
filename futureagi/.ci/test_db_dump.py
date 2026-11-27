@@ -734,6 +734,38 @@ class ProducerTest(Workspace):
         # Not found, but something is staged: not a clean directory.
         self.assertNotEqual(self.produce().returncode, 0)
 
+    def test_a_dev_push_replaces_a_dump_saved_under_another_runtime(self):
+        self.assertEqual(self.produce(RECIPE="old-runtime").returncode, 0)
+        # Same inputs, a new test-db image: this run's recipe differs. The
+        # digest holds pg_dump's version lines, so only the compare applies.
+        result = self.produce(
+            FOUND="true",
+            SAVED="old-runtime",
+            RECIPE="new-runtime",
+            DIGEST="c" * 64,
+            REPLAYED="c" * 64,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.stage / "recipe").read_text(), "new-runtime\n")
+        self.assertEqual(self.verify("new-runtime").returncode, 0)
+        # Off dev pushes nothing is replaced, and a difference is still red.
+        self.assertEqual(
+            self.produce(
+                FOUND="true", SAVED="new-runtime", RECIPE="newer", PRODUCE="false"
+            ).returncode,
+            0,
+        )
+        self.assertEqual((self.stage / "recipe").read_text(), "new-runtime\n")
+        self.assertEqual(
+            self.produce(
+                FOUND="true",
+                SAVED="new-runtime",
+                RECIPE="newer",
+                COMPARE_STATUS=str(db_dump.COMPARE_DIFFERENT),
+            ).returncode,
+            db_dump.COMPARE_DIFFERENT,
+        )
+
 
 class BackendWorkflowTest(unittest.TestCase):
     def setUp(self):

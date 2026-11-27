@@ -29,18 +29,26 @@ CI_PRESEED_DIGEST="$fresh/preseed" CI_PRESEED_DUMP="$fresh/fresh.sql.gz" \
 # applies whatever the dump lacks (the overlay's part on internal runs) and
 # records the database again at the post_migrate boundary.
 replay() {
+  rm -f "$fresh/replayed" "$fresh/replayed.sql.gz"
+  "${pg[@]}" dropdb -U test_user --if-exists test_ci_roundtrip
   "${pg[@]}" createdb -U test_user test_ci_roundtrip
   "${tool[@]}" restore "$1" test_user test_ci_roundtrip "${pg[@]}"
   CI_PRESEED_DIGEST="$fresh/replayed" CI_PRESEED_DUMP="$fresh/replayed.sql.gz" \
     PG_TEST_DB=test_ci_roundtrip uv run pytest .ci/migrated_db.py -q
 }
 if [[ $FOUND == true ]]; then
-  # This run's shards restored this dump. It must still equal what this
-  # checkout migrates, or the run fails: a wrong key is red, never green.
+  # This run's shards may have restored this dump. It must still equal what
+  # this checkout migrates, or the run fails: a wrong key is red, never green.
   replay "$stage/dump.sql.gz"
-  cmp "$stage/preseed" "$fresh/replayed"
+  # The digest is exact only under the same runtime: it holds pg_dump's
+  # version lines. Shards restore only under the saved recipe.
+  if [[ $SAVED == "$RECIPE" ]]; then cmp "$stage/preseed" "$fresh/replayed"; fi
   "${tool[@]}" compare "$fresh/replayed.sql.gz" "$fresh/control.sql.gz"
-  exit 0
+  if [[ $SAVED == "$RECIPE" || $PRODUCE != true ]]; then exit 0; fi
+  # Same migrate inputs, new runtime (for example a rebuilt test-db image):
+  # save a dump for this recipe instead of carrying the old one forward.
+  echo "::notice title=Database dump::The saved dump is for another runtime; saving one for this runtime."
+  find "$stage" -mindepth 1 -delete
 fi
 [[ $PRODUCE == true ]] || exit 0
 unqualified() {
