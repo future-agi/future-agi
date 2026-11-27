@@ -626,6 +626,9 @@ export const TestRunLoadingStatus = [
   TestRunExecutionStatus.RUNNING,
   TestRunExecutionStatus.EVALUATING,
   TestRunExecutionStatus.CANCELLING,
+  TestRunExecutionStatus.QUEUED,
+  TestRunExecutionStatus.ONGOING,
+  TestRunExecutionStatus.ANALYZING,
 ];
 
 // A run that will make no more calls: Debug failures checks its connected calls.

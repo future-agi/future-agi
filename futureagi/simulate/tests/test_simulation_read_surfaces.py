@@ -1174,6 +1174,128 @@ def test_run_detail_shape_is_unchanged_with_no_removed_evals(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("call_statuses", "expected_status"),
+    [
+        (("pending", "pending"), "pending"),
+        (("queued", "queued"), "queued"),
+        (("ongoing", "ongoing"), "ongoing"),
+        (("analyzing", "analyzing"), "analyzing"),
+        (("completed", "completed"), "completed"),
+        (("failed", "failed"), "failed"),
+        (("cancelled", "cancelled"), "cancelled"),
+        (("queued", "pending"), "pending"),
+        (("ongoing", "pending"), "pending"),
+        (("ongoing", "queued"), "queued"),
+        (("analyzing", "ongoing"), "ongoing"),
+        (("completed", "analyzing"), "analyzing"),
+        (("failed", "completed"), "completed"),
+        (("cancelled", "failed"), "failed"),
+    ],
+)
+def test_run_detail_status_uses_earliest_call_lifecycle_state(
+    auth_client, simulation_tree, call_statuses, expected_status
+):
+    test_execution = simulation_tree["test_execution"]
+    test_execution.status = SimulationTestExecution.ExecutionStatus.RUNNING
+    test_execution.save(update_fields=["status"])
+    first_call = simulation_tree["call_execution"]
+    first_call.status = call_statuses[0]
+    first_call.save(update_fields=["status"])
+    second_call = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=first_call.scenario,
+        status=call_statuses[1],
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+    )
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["status"] == expected_status
+    assert response.data["count"] == 2
+    assert {str(row["id"]) for row in response.data["results"]} == {
+        str(first_call.id),
+        str(second_call.id),
+    }
+    assert response.data["error_messages"] == []
+    assert response.data["provider"] == test_execution.agent_definition.provider
+    assert response.data["agent_type"] == AgentDefinition.AgentTypeChoices.TEXT
+    test_execution.refresh_from_db()
+    assert test_execution.status == SimulationTestExecution.ExecutionStatus.RUNNING
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("stored_status", ["pending", "running", "cancelled"])
+def test_run_detail_status_falls_back_when_no_live_calls(
+    auth_client, simulation_tree, stored_status
+):
+    test_execution = simulation_tree["test_execution"]
+    test_execution.status = stored_status
+    test_execution.save(update_fields=["status"])
+    # A soft-deleted call must not override the execution's fallback status.
+    call_execution = simulation_tree["call_execution"]
+    call_execution.delete()
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["status"] == stored_status
+    assert response.data["count"] == 0
+    assert response.data["results"] == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"limit": 1},
+        {"limit": 1, "page": 99},
+        {"search": "15559990299"},
+        {
+            "filters": json.dumps(
+                [
+                    {
+                        "column_id": "status",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": "equals",
+                            "filter_value": "completed",
+                        },
+                    }
+                ]
+            ),
+        },
+    ],
+)
+def test_run_detail_status_includes_calls_outside_the_visible_page(
+    auth_client, simulation_tree, query
+):
+    test_execution = simulation_tree["test_execution"]
+    pending_call = simulation_tree["call_execution"]
+    pending_call.status = CallExecution.CallStatus.PENDING
+    pending_call.save(update_fields=["status"])
+    completed_call = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=pending_call.scenario,
+        phone_number="+15559990299",
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+    )
+
+    response = auth_client.get(
+        f"/simulate/test-executions/{test_execution.id}/", query
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["status"] == "pending"
+    assert response.data["error_messages"] == []
+    assert [str(row["id"]) for row in response.data["results"]] == (
+        [] if query.get("page") == 99 else [str(completed_call.id)]
+    )
+
+
+@pytest.mark.django_db
 def test_run_detail_filters_on_a_removed_evals_column(
     auth_client, simulation_tree, eval_configs
 ):
