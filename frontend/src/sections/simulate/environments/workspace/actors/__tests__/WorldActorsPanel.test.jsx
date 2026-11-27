@@ -933,7 +933,7 @@ describe("WorldActorsPanel", () => {
     expect(sent().shareActions).toEqual([]);
   });
 
-  it("keeps Save off, saying Checking, until the server has answered for what the form holds", () => {
+  it("keeps Save off until the server has answered, with no loader while typing", () => {
     answer = undefined;
     render(<WorldActorsPanel envId="env-1" />);
     addActor();
@@ -941,13 +941,51 @@ describe("WorldActorsPanel", () => {
       target: { value: "Lena" },
     });
     expect(saveButton()).toBeDisabled();
-    expect(screen.getByText("Checking…")).toBeInTheDocument();
+    expect(screen.queryByText("Checking…")).toBeNull();
     answer = CLEAN;
     fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena K" },
     });
     expect(saveButton()).toBeEnabled();
+  });
+
+  it("shows a problem live on a field you changed and filled, and keeps empty required fields quiet until Save", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    addActor();
+    answer = {
+      ...CLEAN,
+      problems: [{ field: "name", message: "Give them a name." }],
+    };
+    fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
+      target: { value: "Sales manager" },
+    });
+    expect(screen.queryByText("Give them a name.")).toBeNull();
+    answer = {
+      ...CLEAN,
+      problems: [
+        { field: "name", message: "Another actor is called Ops Lead." },
+      ],
+    };
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
+      target: { value: "Ops Lead" },
+    });
+    expect(
+      screen.getByText("Another actor is called Ops Lead."),
+    ).toBeInTheDocument();
+    // Save stays open until its first click, which is the final check.
+    expect(saveButton()).toBeEnabled();
+    // Emptied again, a missing name waits for Save like any empty required field.
+    answer = {
+      ...CLEAN,
+      problems: [{ field: "name", message: "Give them a name." }],
+    };
+    fireEvent.change(screen.getByLabelText(starred("Name")), {
+      target: { value: "" },
+    });
+    expect(screen.queryByText("Give them a name.")).toBeNull();
     expect(screen.queryByText("Checking…")).toBeNull();
+    fireEvent.click(saveButton());
+    expect(screen.getByText("Give them a name.")).toBeInTheDocument();
   });
 
   it("shows a server problem under its field and keeps Save off", async () => {
@@ -965,13 +1003,12 @@ describe("WorldActorsPanel", () => {
       ],
     };
     fireEvent.change(wait, { target: { value: "-5" } });
-    // Nothing turns red while editing; Save shows the problem, and the fold opens itself so it shows under its field.
-    expect(screen.queryByText("A wait is 0 seconds or more")).toBeNull();
-    fireEvent.click(saveButton());
+    // An edited, filled field shows its problem live, and the fold opens itself so it shows under the field.
     await settle();
     expect(wait).toBeVisible();
     expect(screen.getByText("A wait is 0 seconds or more")).toBeInTheDocument();
     expect(screen.queryByTestId("actor-problems")).toBeNull();
+    fireEvent.click(saveButton());
     expect(saveButton()).toBeDisabled();
     // While the next answer is pending the fold stays open under the cursor.
     answer = undefined;

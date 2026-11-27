@@ -271,11 +271,14 @@ describe("ActorForm", () => {
     fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Ops Lead" },
     });
-    expect(screen.queryByText("Another actor is called Ops Lead.")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    // The edited, filled name shows its problem live; the untouched trigger waits for Save.
     expect(screen.getByLabelText(starred("Name"))).toHaveAccessibleDescription(
       "Another actor is called Ops Lead.",
     );
+    expect(
+      screen.queryByText("Pick the agent turn they come in on."),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
     expect(
       screen.getByLabelText(starred("Comes in")),
     ).toHaveAccessibleDescription("Pick the agent turn they come in on.");

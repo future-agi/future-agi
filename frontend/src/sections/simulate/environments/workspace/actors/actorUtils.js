@@ -35,6 +35,8 @@ export const TRIGGER_INPUTS = {
   on_call: "triggerCall",
 };
 const TRIGGER_FIELDS = ["mode", ...Object.values(TRIGGER_INPUTS)];
+// Trigger keys a kind can take without a value: the record match and which call of the action.
+export const OPTIONAL_TRIGGER_KEYS = ["where", "on_call"];
 
 const typed = (value) => (value == null ? "" : value);
 

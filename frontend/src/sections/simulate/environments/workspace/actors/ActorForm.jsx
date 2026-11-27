@@ -18,7 +18,9 @@ import { ACTORS_COPY } from "./actors.constants";
 import { OPTIONS_SHAPE } from "./actors.shapes";
 import {
   ADVANCED,
+  OPTIONAL_TRIGGER_KEYS,
   PROBLEM_FIELDS,
+  TRIGGER_INPUTS,
   changesOf,
   fallbackActs,
   fieldsOnScreen,
@@ -76,13 +78,40 @@ export default function ActorForm({
   const { verdict } = check;
   // Problems wait until something is edited or Save is tried, so a form opens clean.
   const [tried, setTried] = useState(false);
-  // Problems show once Save is tried, then follow each edit; until then Save asks the check first.
-  const problems = verdict && tried ? verdict.problems : [];
+  // Until Save is tried, a problem shows only on a field the person changed and filled; an empty required field
+  // waits for Save. Save is the final check and shows every problem.
+  const isEmpty = (name) => {
+    const typed = value(name);
+    return Array.isArray(typed)
+      ? typed.length === 0
+      : String(typed ?? "").trim() === "";
+  };
+  const touched = (name) =>
+    name === "mode"
+      ? ["mode", ...Object.values(TRIGGER_INPUTS)].some((one) => one in fields)
+      : name in fields;
+  const filled = (name) =>
+    name === "mode"
+      ? (triggerKeys[value("mode")] || [])
+          .filter((key) => !OPTIONAL_TRIGGER_KEYS.includes(key))
+          .every((key) => !isEmpty(TRIGGER_INPUTS[key]))
+      : !isEmpty(name);
+  const live = (one) => {
+    const name = PROBLEM_FIELDS[one.field];
+    return Boolean(name) && touched(name) && filled(name);
+  };
+  const problems = verdict
+    ? tried
+      ? verdict.problems
+      : verdict.problems.filter(live)
+    : [];
   const overBy = verdict && tried ? verdict.over_by : 0;
+  // The first Save is the final check: it stays open until then, and shows every problem.
   const waiting =
     Boolean(verdict) &&
     !tried &&
     (verdict.problems.length > 0 || verdict.over_by > 0);
+  const checked = !tried || (problems.length === 0 && overBy === 0);
   // Escape, the close button and a click outside ask before discarding; Cancel never asks.
   const [leaving, setLeaving] = useState(false);
   const leave = () => {
@@ -233,15 +262,14 @@ export default function ActorForm({
             problems={problems.filter((one) => !fieldOf(one))}
             overBy={overBy}
             check={check}
-            checking={changed && check.pending}
+            checking={tried && check.pending}
             busy={busy}
             canSave={
               !busy &&
               conflict !== "removed" &&
               (!existing || changed) &&
               Boolean(verdict) &&
-              problems.length === 0 &&
-              overBy === 0 &&
+              checked &&
               (conflicts.length === 0 || shareConfirmed)
             }
             onCancel={onClose}
