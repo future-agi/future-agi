@@ -10,19 +10,17 @@ import { STATUS_CHIPS } from "./traceTable.constants";
 // not the status one.
 // Once counts load, a bucket with no calls has no segment. All and the
 // selected segment always stay, so the current filter is never lost. Before
-// the first counts arrive every segment shows greyed, so the bar doesn't jump
-// on first paint. A reload after that (picking a status, paging) arrives with
-// the previous counts still in `counts`, so the bar stays as it was.
+// the first response arrives (`firstLoad`) every segment shows greyed, so the
+// bar doesn't jump on first paint. A reload after that (picking a status,
+// paging) arrives with the previous counts still in `counts`, so the bar
+// stays as it was, even when those counts were all zero.
 export default function StatusFilterChips({
   value,
   counts,
   onChange,
   blocked = [],
-  loading = false,
+  firstLoad = false,
 }) {
-  // RunTraceTable always adds an All total, so no calls yet means all is 0.
-  const firstLoad = loading && !counts.all;
-
   return (
     <Stack
       direction="row"
@@ -131,5 +129,5 @@ StatusFilterChips.propTypes = {
   counts: PropTypes.object.isRequired,
   onChange: PropTypes.func.isRequired,
   blocked: PropTypes.arrayOf(PropTypes.string),
-  loading: PropTypes.bool,
+  firstLoad: PropTypes.bool,
 };

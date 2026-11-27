@@ -322,7 +322,7 @@ export default function RunDetail({
                 {identity.letter}
               </Box>
             )}
-            <Typography noWrap sx={{ typography: "m2", fontWeight: 600 }}>
+            <Typography noWrap sx={{ typography: "m1", fontWeight: 600 }}>
               {fixRun ? (
                 <>
                   {`Check run ${fixRun.label} for `}
@@ -361,7 +361,12 @@ export default function RunDetail({
               />
             )}
           </Stack>
-          <Tooltip arrow placement="bottom-start" title={runDetails}>
+          <Tooltip
+            arrow
+            describeChild
+            placement="bottom-start"
+            title={runDetails}
+          >
             <Typography
               noWrap
               sx={{
@@ -378,7 +383,8 @@ export default function RunDetail({
               }}
               tabIndex={0}
             >
-              {`agent ${agentLabel}`}
+              {/* No summary yet: name the environment, not 'agent -'. */}
+              {identity ? `agent ${agentLabel}` : env.name}
               {envLabel ? ` · ${envLabel}` : ""}
               {/* Before the time, so a narrow header cuts the time, not this. */}
               {resumeState?.resumable

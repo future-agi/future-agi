@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
-import { within } from "@testing-library/react";
+import { act, within } from "@testing-library/react";
 
 // The wrapper owns the network hook; feed it a fixed set of mapped tasks.
 const useRunCalls = vi.fn();
@@ -215,6 +215,98 @@ describe("RunTraceTable", () => {
         isLoading: false,
       };
     });
+  });
+
+  it("shows a status chip when its count goes from 0 to more on a live run", () => {
+    const result = (counts) => ({
+      tasks: TASKS,
+      columns: COLUMNS,
+      groups: groupsFor(TASKS),
+      facets: FACETS,
+      statusCounts: counts,
+      count: TASKS.length,
+      totalPages: 1,
+      isLoading: false,
+    });
+    useRunCalls.mockImplementation(() => result({ passed: 1, failed: 1 }));
+    const view = renderTable();
+    expect(screen.queryByRole("button", { name: "Error" })).toBeNull();
+
+    useRunCalls.mockImplementation(() =>
+      result({ passed: 1, failed: 1, error: 1 }),
+    );
+    view.rerender(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Error" })).toHaveTextContent(
+      "1",
+    );
+  });
+
+  it("does not grow the status bar when a reload follows an empty result", () => {
+    useRunCalls.mockImplementation(() => ({
+      tasks: [],
+      columns: COLUMNS,
+      groups: [],
+      facets: {},
+      statusCounts: {},
+      count: 0,
+      totalPages: 1,
+      // A reload showing the previous (empty) page: loading, but not first.
+      isLoading: true,
+      isFirstLoad: false,
+    }));
+    renderTable();
+    expect(screen.queryByRole("button", { name: "Queued" })).toBeNull();
+  });
+
+  it("measures the table box again when the toolbar changes height", () => {
+    const observers = [];
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback) {
+        this.callback = callback;
+        this.targets = [];
+        observers.push(this);
+      }
+      observe(target) {
+        this.targets.push(target);
+      }
+      unobserve() {}
+      disconnect() {
+        this.targets = [];
+      }
+    };
+    let top = 100;
+    const rect = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(() => ({ top, bottom: top, height: 0 }));
+    try {
+      renderTable();
+      // The box that scrolls the table runs to the window bottom.
+      const boxHeight = () => {
+        let el = screen.getByRole("table");
+        while (el && getComputedStyle(el).overflowY !== "auto") {
+          el = el.parentElement;
+        }
+        // Outermost auto-scroll ancestor is the fixed-height box.
+        let outer = el;
+        for (let p = el?.parentElement; p; p = p.parentElement) {
+          if (getComputedStyle(p).overflowY === "auto") outer = p;
+        }
+        return parseFloat(getComputedStyle(outer).height);
+      };
+      const watching = observers.filter((o) => o.targets.length);
+      expect(watching.length).toBeGreaterThan(0);
+      const first = boxHeight();
+
+      const before = rect.mock.calls.length;
+      top = 138; // the toolbar wrapped to a second row
+      act(() => watching.forEach((o) => o.callback()));
+      expect(rect.mock.calls.length).toBeGreaterThan(before);
+      expect(boxHeight()).toBe(first - 38);
+    } finally {
+      rect.mockRestore();
+      globalThis.ResizeObserver = original;
+    }
   });
 
   it.each([
@@ -1034,6 +1126,7 @@ describe("RunTraceTable", () => {
       ...base(...args),
       statusCounts: {},
       isLoading: true,
+      isFirstLoad: true,
     }));
     renderTable();
 

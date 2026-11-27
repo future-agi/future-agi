@@ -21,6 +21,7 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import ListToolbar from "src/components/list-toolbar";
 import { FilterPanel } from "src/components/filter-panel";
 import { useRunCalls } from "src/api/simulate-environments/runDetail";
 import {
@@ -163,6 +164,7 @@ export default function RunTraceTable({
   // the card never hugs a few rows. Measured, because the header above it
   // varies in height; re-measured on resize.
   const [boxHeight, setBoxHeight] = useState(null);
+  const toolbarRef = useRef(null);
   const measureBox = useCallback(() => {
     const top = scrollRef.current?.getBoundingClientRect().top;
     if (top == null) return;
@@ -174,6 +176,15 @@ export default function RunTraceTable({
     measureBox();
     window.addEventListener("resize", measureBox);
     return () => window.removeEventListener("resize", measureBox);
+  }, [measureBox]);
+  // The toolbar wraps, and its status bar grows and shrinks with the counts,
+  // so its height moves the box's top without a window resize.
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => measureBox());
+    observer.observe(toolbar);
+    return () => observer.disconnect();
   }, [measureBox]);
 
   // Follow the drawer: when prev/next lands on a call on another page, show
@@ -211,6 +222,7 @@ export default function RunTraceTable({
     agentType = null,
     runActive = false,
     isLoading,
+    isFirstLoad = false,
     error,
   } = useRunCalls(executionId, { ...listQuery, keepPrevious: true });
 
@@ -637,7 +649,7 @@ export default function RunTraceTable({
       <StatusFilterChips
         value={statusChip}
         counts={statusCounts}
-        loading={isLoading}
+        firstLoad={isFirstLoad}
         onChange={(value) => {
           setFilters((current) => {
             const {
@@ -691,18 +703,17 @@ export default function RunTraceTable({
           the card holds only the table and its pager. The wrapper is the
           container the toolbar's compact layout measures. */}
       <Box sx={{ containerType: "inline-size" }}>
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="space-between"
-          flexWrap="wrap"
-          columnGap={2}
-          rowGap={1.25}
-          sx={{ mb: 1.5 }}
-        >
-          {title}
-          {action}
-        </Stack>
+        <Box ref={toolbarRef}>
+          <ListToolbar
+            flexWrap="wrap"
+            useFlexGap
+            justifyContent="space-between"
+            sx={{ columnGap: 2, rowGap: 1.25 }}
+          >
+            {title}
+            {action}
+          </ListToolbar>
+        </Box>
         <SectionCard>
           {banner && (
             <Stack

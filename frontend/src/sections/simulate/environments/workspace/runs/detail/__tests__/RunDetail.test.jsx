@@ -635,6 +635,63 @@ describe("RunDetail", () => {
     ).toBeInTheDocument();
   });
 
+  it("puts the scenario version and seed in the sub-line's hover card", async () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        suiteVersion: { id: "s3", label: "v3" },
+        seed: "7902",
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    await userEvent.setup().hover(screen.getByText(/^agent v2/));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /Refund Copilot · 12 tasks · scenarios v3 · seed 7902/,
+    );
+  });
+
+  it("opens the sub-line's hover card on keyboard focus and keeps its visible text as the name", async () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        environmentVersion: { id: "e2", label: "v2" },
+        suiteVersion: { id: "s3", label: "v3" },
+        seed: "7902",
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    const user = userEvent.setup();
+    const subLine = screen.getByText(/^agent v2 · env v2/);
+    expect(subLine).toHaveAttribute("tabindex", "0");
+    // The hover text describes it; it must not replace the visible name.
+    expect(subLine).not.toHaveAttribute("aria-label");
+
+    for (let i = 0; i < 30 && document.activeElement !== subLine; i += 1) {
+      await user.tab();
+    }
+    expect(subLine).toHaveFocus();
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent(/scenarios v3 · seed 7902/);
+    expect(subLine).toHaveAttribute("aria-describedby", tip.id);
+  });
+
+  it("names the environment, not 'agent -', while the run summary is missing", () => {
+    useRunDetail.mockReturnValue({
+      identity: null,
+      stats: STATS,
+      isLoading: true,
+    });
+    renderDetail();
+    expect(screen.getByText("Run complete")).toBeInTheDocument();
+    expect(screen.getByText("Refund Copilot")).toBeInTheDocument();
+    expect(screen.queryByText(/^agent -/)).toBeNull();
+  });
+
   it.each([
     ["all passed", 12, 0],
     ["all failed", 0, 12],
