@@ -86,13 +86,27 @@ const EvalRow = ({
   onDelete,
   showRun,
   hideStatus,
+  hideRunStatus,
   isProjectEvals,
   allColumns,
   disableDelete,
   disableDeleteReason,
+  disabledReason,
+  confirmText,
+  confirmRun = true,
 }) => {
   const [open, setOpen] = useState(false);
+  // Optional per-row gate: a non-empty reason turns that control off and is
+  // its tooltip. Lists that don't pass one keep every control on.
+  const reasonFor = (action) => disabledReason?.(item, action) || "";
+  const selectReason = reasonFor("select");
+  const runReason = reasonFor("run");
+  const editReason = reasonFor("edit");
+  const deleteReason = disableDelete
+    ? disableDeleteReason || "Delete disabled"
+    : reasonFor("delete");
   const [confirmAction, setConfirmAction] = useState(null); // "run" | "delete" | null
+  const deleteLabel = confirmText?.deleteLabel || "Delete";
   const isComposite = (item.template_type || item.templateType) === "composite";
   const t = isComposite
     ? {
@@ -120,6 +134,12 @@ const EvalRow = ({
     (v) => v && resolveColumnName(v, allColumns),
   );
   const rc = item.run_config || {};
+  const hasOwner = Boolean(
+    item.owner ||
+      item.eval_owner ||
+      item.template_name ||
+      item.eval_template_tags,
+  );
   const isSystem =
     (item.owner || item.eval_owner) === "system" ||
     (!isComposite && item.template_name && item.eval_template_tags); // heuristic fallback
@@ -154,13 +174,21 @@ const EvalRow = ({
         }}
       >
         {showRun && !isProjectEvals && (
-          <Checkbox
-            size="small"
-            checked={selected}
-            onClick={(e) => e.stopPropagation()}
-            onChange={() => onToggle(item)}
-            sx={{ p: 0 }}
-          />
+          <Tooltip title={selectReason} arrow>
+            <span
+              style={{ display: "flex" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Checkbox
+                size="small"
+                checked={selected}
+                disabled={Boolean(selectReason)}
+                onChange={() => onToggle(item)}
+                inputProps={{ "aria-label": `Select ${item.name}` }}
+                sx={{ p: 0 }}
+              />
+            </span>
+          </Tooltip>
         )}
 
         {/* Type icon (replaces status dot) */}
@@ -220,7 +248,7 @@ const EvalRow = ({
             </Box>
           </Tooltip>
         )}
-        {isCompleted && (
+        {!hideStatus && !hideRunStatus && isCompleted && (
           <Tooltip title="Completed" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
@@ -231,7 +259,7 @@ const EvalRow = ({
             </Box>
           </Tooltip>
         )}
-        {isError && (
+        {!hideStatus && !hideRunStatus && isError && (
           <Tooltip title="Error" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
@@ -242,7 +270,7 @@ const EvalRow = ({
             </Box>
           </Tooltip>
         )}
-        {isStopped && (
+        {!hideStatus && !hideRunStatus && isStopped && (
           <Tooltip title="User stopped evaluation" arrow>
             <Box sx={{ display: "flex" }}>
               <Iconify
@@ -276,52 +304,63 @@ const EvalRow = ({
                 </IconButton>
               </Tooltip>
             ) : (
-              <Tooltip title={isCompleted ? "Re-run" : "Run"} arrow>
-                <IconButton
-                  size="small"
-                  onClick={() => setConfirmAction("run")}
-                  sx={{ p: 0.4 }}
-                >
-                  <Iconify
-                    icon={
-                      isCompleted
-                        ? "solar:refresh-linear"
-                        : "solar:play-circle-linear"
+              <Tooltip
+                title={runReason || (isCompleted ? "Re-run" : "Run")}
+                arrow
+              >
+                <span>
+                  <IconButton
+                    size="small"
+                    aria-label={`Run ${item.name}`}
+                    disabled={Boolean(runReason)}
+                    onClick={() =>
+                      confirmRun ? setConfirmAction("run") : onRun?.(item)
                     }
-                    width={16}
-                    sx={{ color: "primary.main" }}
-                  />
-                </IconButton>
+                    sx={{ p: 0.4 }}
+                  >
+                    <Iconify
+                      icon={
+                        isCompleted
+                          ? "solar:refresh-linear"
+                          : "solar:play-circle-linear"
+                      }
+                      width={16}
+                      sx={{
+                        color: runReason ? "text.disabled" : "primary.main",
+                      }}
+                    />
+                  </IconButton>
+                </span>
               </Tooltip>
             ))}
           {!isProjectEvals && (
-            <Tooltip title="Edit mapping & config" arrow>
-              <IconButton
-                size="small"
-                onClick={() => onEdit?.(item)}
-                sx={{ p: 0.4 }}
-              >
-                <Iconify
-                  icon="solar:pen-linear"
-                  width={16}
-                  sx={{ color: "text.secondary" }}
-                />
-              </IconButton>
+            <Tooltip title={editReason || "Edit mapping & config"} arrow>
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label={`Edit ${item.name}`}
+                  disabled={Boolean(editReason)}
+                  onClick={() => onEdit?.(item)}
+                  sx={{ p: 0.4 }}
+                >
+                  <Iconify
+                    icon="solar:pen-linear"
+                    width={16}
+                    sx={{
+                      color: editReason ? "text.disabled" : "text.secondary",
+                    }}
+                  />
+                </IconButton>
+              </span>
             </Tooltip>
           )}
-          <Tooltip
-            title={
-              disableDelete
-                ? disableDeleteReason || "Delete disabled"
-                : "Delete"
-            }
-            arrow
-          >
+          <Tooltip title={deleteReason || deleteLabel} arrow>
             <span>
               <IconButton
                 size="small"
+                aria-label={`${deleteLabel} ${item.name}`}
                 onClick={() => setConfirmAction("delete")}
-                disabled={disableDelete}
+                disabled={Boolean(deleteReason)}
                 sx={{ p: 0.4, "&:hover": { color: "error.main" } }}
               >
                 <Iconify
@@ -425,10 +464,14 @@ const EvalRow = ({
             sx={{ fontSize: "12px", flex: 1, color: "text.secondary" }}
           >
             {confirmAction === "delete"
-              ? "Delete this evaluation and its results?"
-              : isCompleted
-                ? "Re-run? This will overwrite previous results."
-                : "Run this evaluation on all rows?"}
+              ? (typeof confirmText?.delete === "function"
+                  ? confirmText.delete(item)
+                  : confirmText?.delete) ||
+                "Delete this evaluation and its results?"
+              : confirmText?.run ||
+                (isCompleted
+                  ? "Re-run? This will overwrite previous results."
+                  : "Run this evaluation on all rows?")}
           </Typography>
           <Button
             size="small"
@@ -445,6 +488,9 @@ const EvalRow = ({
             size="small"
             variant="contained"
             color={confirmAction === "delete" ? "error" : "primary"}
+            // A removal is already on its way: a second one would replace
+            // the first call's callbacks and lose its error.
+            disabled={confirmAction === "delete" && Boolean(deleteReason)}
             onClick={() => {
               if (confirmAction === "delete")
                 onDelete?.(isProjectEvals ? undefined : item);
@@ -456,7 +502,7 @@ const EvalRow = ({
             }}
           >
             {confirmAction === "delete"
-              ? "Delete"
+              ? deleteLabel
               : isCompleted
                 ? "Re-run"
                 : "Run"}
@@ -593,13 +639,15 @@ const EvalRow = ({
             {/* ── Meta ── */}
             <Sec title="Details">
               <Box sx={{ display: "flex", flexDirection: "column", gap: 0.3 }}>
-                <Row
-                  label="Template"
-                  value={
-                    item.template_name || item.eval_template_name || item.name
-                  }
-                />
-                <Row label="Owner" value={isSystem ? "System" : "User"} />
+                {(item.template_name || item.eval_template_name) && (
+                  <Row
+                    label="Template"
+                    value={item.template_name || item.eval_template_name}
+                  />
+                )}
+                {hasOwner && (
+                  <Row label="Owner" value={isSystem ? "System" : "User"} />
+                )}
                 {item.evalGroup && <Row label="Group" value={item.evalGroup} />}
                 {item.description && (
                   <Row label="About" value={item.description} />
@@ -706,6 +754,7 @@ const SavedEvalsList = ({
   isProjectEvals = false,
   showRun = true,
   hideStatus = false,
+  hideRunStatus = false,
   hideHeader = false,
   allColumns,
   onClose,
@@ -713,8 +762,16 @@ const SavedEvalsList = ({
   disableDeleteReason,
   autoSelectRequests,
   onAutoSelectApplied,
+  disabledReason,
+  onRunSelected,
+  confirmText,
+  confirmRun = true,
 }) => {
   const { setVisibleSection, setCurrentTab } = useEvaluationContext();
+  // "select" | "run" | "edit" | "delete" for a row; "add", "runAll" and
+  // "bulkDelete" (item null) for the header and footer buttons. Empty means allowed.
+  const reasonFor = (item, action) => disabledReason?.(item, action) || "";
+  const pickable = evals.filter((e) => !reasonFor(e, "select"));
   const handleAddClick = () => {
     if (onAddClick) {
       onAddClick();
@@ -751,10 +808,23 @@ const SavedEvalsList = ({
     });
   const toggleAll = () =>
     setSel(
-      sel.size === evals.length ? new Set() : new Set(evals.map((e) => e.id)),
+      pickable.length > 0 && pickable.every((e) => sel.has(e.id))
+        ? new Set()
+        : new Set(pickable.map((e) => e.id)),
     );
-  const selected = evals.filter((e) => sel.has(e.id));
-  const hasSel = sel.size > 0;
+  // A row whose select is off can't stay ticked (it may have changed since).
+  const selected = pickable.filter((e) => sel.has(e.id));
+  const hasSel = selected.length > 0;
+  const toRun = (hasSel ? selected : evals).filter((e) => !reasonFor(e, "run"));
+  const runAllReason =
+    reasonFor(null, "runAll") ||
+    (disabledReason && toRun.length === 0 ? "Nothing here can run" : "");
+  const bulkDeleteReason = selected
+    .map((e) => reasonFor(e, "delete"))
+    .find(Boolean);
+  const addReason = reasonFor(null, "add");
+  // A non-empty reason for "bulkDelete" hides the footer Delete altogether.
+  const bulkDeleteHidden = Boolean(reasonFor(null, "bulkDelete"));
 
   const handleBulkDelete = async () => {
     try {
@@ -789,9 +859,13 @@ const SavedEvalsList = ({
           {showRun && !isProjectEvals && evals.length > 0 && (
             <Checkbox
               size="small"
-              checked={sel.size === evals.length && evals.length > 0}
-              indeterminate={hasSel && sel.size < evals.length}
+              checked={
+                pickable.length > 0 && selected.length === pickable.length
+              }
+              indeterminate={hasSel && selected.length < pickable.length}
+              disabled={pickable.length === 0}
               onChange={toggleAll}
+              inputProps={{ "aria-label": `Evals (${evals.length})` }}
               sx={{ p: 0 }}
             />
           )}
@@ -801,20 +875,25 @@ const SavedEvalsList = ({
             sx={{ fontSize: "12px", flex: 1 }}
           >
             {hasSel
-              ? `${sel.size} of ${evals.length} selected`
+              ? `${selected.length} of ${evals.length} selected`
               : `Evals (${evals.length})`}
           </Typography>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<Iconify icon="solar:add-linear" width={14} />}
-            onClick={handleAddClick}
-            sx={{
-              flexShrink: 0,
-            }}
-          >
-            Add
-          </Button>
+          <Tooltip title={addReason} arrow>
+            <span tabIndex={addReason ? 0 : undefined}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<Iconify icon="solar:add-linear" width={14} />}
+                onClick={handleAddClick}
+                disabled={Boolean(addReason)}
+                sx={{
+                  flexShrink: 0,
+                }}
+              >
+                Add
+              </Button>
+            </span>
+          </Tooltip>
         </Box>
       )}
 
@@ -840,10 +919,14 @@ const SavedEvalsList = ({
             onDelete={onDeleteEvalClick}
             showRun={showRun}
             hideStatus={hideStatus}
+            hideRunStatus={hideRunStatus}
             isProjectEvals={isProjectEvals}
             allColumns={allColumns}
             disableDelete={disableDelete}
             disableDeleteReason={disableDeleteReason}
+            disabledReason={disabledReason}
+            confirmText={confirmText}
+            confirmRun={confirmRun}
           />
         ))}
       </Box>
@@ -864,41 +947,58 @@ const SavedEvalsList = ({
             px: 1.25,
           }}
         >
-          {hasSel && (
+          {hasSel && !bulkDeleteHidden && (
             <>
               <Typography
                 variant="caption"
                 sx={{ fontSize: "12px", color: "text.secondary", flex: 1 }}
               >
-                {sel.size} selected
+                {selected.length} selected
               </Typography>
-              <Button
-                size="small"
-                variant="outlined"
-                color="error"
-                startIcon={
-                  <Iconify icon="solar:trash-bin-trash-linear" width={14} />
-                }
-                onClick={() => setConfirmBulkDelete(true)}
-              >
-                Delete
-              </Button>
+              <Tooltip title={bulkDeleteReason || ""} arrow>
+                <span>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    startIcon={
+                      <Iconify icon="solar:trash-bin-trash-linear" width={14} />
+                    }
+                    disabled={Boolean(bulkDeleteReason)}
+                    onClick={() => setConfirmBulkDelete(true)}
+                  >
+                    Delete
+                  </Button>
+                </span>
+              </Tooltip>
             </>
           )}
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<Iconify icon="solar:play-circle-linear" width={16} />}
-            onClick={async () => {
-              const toRun = hasSel ? selected : evals;
-              await Promise.all(toRun.map((e) => onRunEvalClick?.(e)));
-              onClose?.();
-            }}
-          >
-            {hasSel
-              ? `Run Selected (${sel.size})`
-              : `Run All (${evals.length})`}
-          </Button>
+          <Tooltip title={runAllReason} arrow>
+            <span>
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={
+                  <Iconify icon="solar:play-circle-linear" width={16} />
+                }
+                disabled={Boolean(runAllReason)}
+                onClick={async () => {
+                  // A list that grades in one request (a run's re-grade)
+                  // takes them together; otherwise each eval runs alone.
+                  if (onRunSelected) {
+                    onRunSelected(toRun);
+                    return;
+                  }
+                  await Promise.all(toRun.map((e) => onRunEvalClick?.(e)));
+                  onClose?.();
+                }}
+              >
+                {hasSel
+                  ? `Run Selected (${toRun.length})`
+                  : `Run All (${toRun.length})`}
+              </Button>
+            </span>
+          </Tooltip>
         </Box>
       )}
 
@@ -906,8 +1006,8 @@ const SavedEvalsList = ({
         open={confirmBulkDelete}
         onClose={() => setConfirmBulkDelete(false)}
         title="Delete evaluations"
-        content={`Delete ${sel.size} selected evaluation${
-          sel.size === 1 ? "" : "s"
+        content={`Delete ${selected.length} selected evaluation${
+          selected.length === 1 ? "" : "s"
         } and their results? This action cannot be undone.`}
         action={
           <Button
@@ -934,6 +1034,8 @@ SavedEvalsList.propTypes = {
   isProjectEvals: PropTypes.bool,
   showRun: PropTypes.bool,
   hideStatus: PropTypes.bool,
+  // Hides only the Completed / Error / Stopped marks (keeps Running).
+  hideRunStatus: PropTypes.bool,
   hideHeader: PropTypes.bool,
   allColumns: PropTypes.array,
   onClose: PropTypes.func,
@@ -946,6 +1048,23 @@ SavedEvalsList.propTypes = {
     }),
   ),
   onAutoSelectApplied: PropTypes.func,
+  // (item, "select" | "run" | "edit" | "delete") or
+  // (null, "add" | "runAll" | "bulkDelete"; a reason for "bulkDelete" hides
+  // the footer Delete)
+  // → a reason that turns that control off, shown as its tooltip; "" or
+  // nothing keeps it on.
+  disabledReason: PropTypes.func,
+  // Runs the footer's evals in one call instead of one call per eval.
+  onRunSelected: PropTypes.func,
+  // false when the caller confirms a run itself, so it isn't asked twice.
+  confirmRun: PropTypes.bool,
+  confirmText: PropTypes.shape({
+    run: PropTypes.string,
+    // A sentence, or (item) => sentence to name the eval.
+    delete: PropTypes.oneOfType([PropTypes.string, PropTypes.func]),
+    // The delete action's name on the row button, tooltip and confirm.
+    deleteLabel: PropTypes.string,
+  }),
 };
 
 export default SavedEvalsList;
