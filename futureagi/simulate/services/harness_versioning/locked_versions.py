@@ -341,6 +341,51 @@ def _locked_version(
     ).first()
 
 
+@dataclass(frozen=True)
+class LockedVersionSplits:
+    """A locked version's splits, as the keys of its suite's scorable scenarios."""
+
+    id: UUID
+    label: str
+    splits: Mapping[str, str]
+
+    @property
+    def test_keys(self) -> frozenset[str]:
+        return frozenset(
+            key for key, split in self.splits.items() if split == TaskSplit.TEST
+        )
+
+
+def run_locked_version(run: HostedHarnessJob) -> LockedVersionSplits | None:
+    """The locked version of ``run``'s own pair, with its splits; None when the pair
+    isn't locked. An unlocked one doesn't count. An Epoch from the run holds back its
+    test split: its check runs use the same pair. The launch reads it once and records
+    it, so an unlock mid-Epoch changes nothing."""
+    # Once a run job names its own locked version, that one wins over the pair's.
+    environment_version_id, suite_version_id = (
+        run.environment_version_id,
+        run.suite_version_id,
+    )
+    if environment_version_id is None or suite_version_id is None:
+        return None
+    locked_version = _locked_version(environment_version_id, suite_version_id)
+    if locked_version is None:
+        return None
+    tasks = scorable_tasks(
+        suite_version_id, environment_version_id=environment_version_id
+    )
+    assigned = _assigned(tasks)
+    return LockedVersionSplits(
+        id=locked_version.id,
+        label=locked_version.label,
+        splits={
+            task.key: assigned[task.scenario_id]
+            for task in tasks
+            if task.scenario_id in assigned
+        },
+    )
+
+
 def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
     """What locking the default pair would give, or the reason it can't be locked. The
     lock and its preview both plan here, so a lock never disagrees with its preview."""

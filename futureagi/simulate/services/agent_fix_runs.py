@@ -29,6 +29,7 @@ from simulate.selectors.agent_fix import (
     default_max_minutes,
     eval_review,
     fewest_failing_cases,
+    held_back_keys,
     is_retryable,
     launch_blocker,
     measured_automatically,
@@ -51,6 +52,9 @@ from simulate.services.harness_usage import (
     require_agent_fix_usage,
     require_harness_authoring,
 )
+from simulate.services.harness_versioning.locked_versions import (
+    run_locked_version,
+)
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     request_cancellation,
@@ -63,6 +67,28 @@ from simulate.temporal.client import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def locked_test_keys(source_run: HostedHarnessJob) -> frozenset[str]:
+    """The run's scenarios in its locked version's test split; none off one."""
+    locked_version = run_locked_version(source_run)
+    return locked_version.test_keys if locked_version else frozenset()
+
+
+def all_in_test_split(cases: int, *, picked: bool = True) -> HostedHarnessError:
+    """The refusal of a fix whose every failing case is in the test split: it would have
+    nothing to learn from. A user who ``picked`` the cases is told how to pick others."""
+    subject = (
+        "The only failing case is" if cases == 1 else f"All {cases} failing cases are"
+    )
+    message = (
+        f"{subject} in the test split. Pick failing cases from the train split."
+        if picked
+        else f"{subject} in the test split, so the Epoch has nothing to learn from."
+    )
+    return HostedHarnessError(
+        "fix_targets_all_test", message, status_code=422, details={"cases": cases}
+    )
 
 
 def launch_fix_run(
@@ -122,6 +148,15 @@ def launch_fix_run(
             f"{', '.join(unproven)}",
             status_code=400,
         )
+    locked_version = run_locked_version(source_run)
+    # A must-pass case steers the search, so a test-split one would teach the fix.
+    if locked_version and set(protected_scenario_keys) & locked_version.test_keys:
+        raise HostedHarnessError(
+            "fix_protected_in_test",
+            "Cases in the test split can't be must-pass: the Epoch would learn from"
+            " them.",
+            status_code=422,
+        )
     by_scenario = {key: ran[key].failing_sub_goals for key in target_scenario_keys}
     failing = list(
         dict.fromkeys(name for names in by_scenario.values() for name in names)
@@ -133,6 +168,12 @@ def launch_fix_run(
             status_code=422,
         )
     failing_cases = sum(1 for names in by_scenario.values() if names)
+    if locked_version is None:
+        held_back = split_held_back(str(source_run.id), by_scenario)
+    else:
+        held_back = held_back_keys(source_run, by_scenario, locked_version)
+        if len(held_back) == failing_cases:
+            raise all_in_test_split(failing_cases)
     # Below the floor the fix first writes variations of each failing case.
     variations = failing_cases < settings.AGENT_FIX_MIN_FAILING_CASES
     if failing_cases < fewest_failing_cases():
@@ -174,7 +215,8 @@ def launch_fix_run(
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
         protected_scenario_keys=list(protected_scenario_keys),
-        held_back_scenario_keys=split_held_back(str(source_run.id), by_scenario),
+        held_back_scenario_keys=held_back,
+        locked_version_id=locked_version.id if locked_version else None,
         failing_sub_goals=failing,
         surfaces=surfaces,
         locked_paths=locked_paths,

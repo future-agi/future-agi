@@ -2,6 +2,7 @@
 improvement engine (in its sandbox) say to each other."""
 
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -95,6 +96,9 @@ class FixRequest(BaseModel):
     # Each variation that became a target, with the failing case it varies: it is held
     # back with that case, and counts as that case toward verified.
     variation_parents: dict[str, str] = Field(default_factory=dict)
+    # The locked version whose test split chose the held-back cases, picked at launch so
+    # an unlock mid-Epoch changes nothing; None when a sample chose them.
+    locked_version_id: UUID | None = None
     # The models the agent may call. Every model call a check run's spans show must name
     # one of them; with no spans, only the candidate's diff is checked.
     allowed_models: list[str] = Field(
@@ -420,6 +424,8 @@ class LaunchScenario(BaseModel):
     failing_sub_goals: list[str]
     # The evidence import that added this scenario to the suite; None for any other scenario.
     evidence_import_id: str | None = None
+    # Its split in the run's locked version; None off one, or when it can't be scored.
+    split: Literal["train", "test"] | None = None
 
 
 class LaunchSuggested(BaseModel):
@@ -504,8 +510,14 @@ class LaunchOptions(BaseModel):
     # Set when a launch that writes variations would be refused, with the reason.
     variations_blocked: LaunchBlocked | None = None
     # The targets' cases the epoch holds back to prove its fix, picked as launch picks
-    # them: empty below the fewest it holds any back from, None when the epoch first
-    # writes variations, since the held-back cases are picked with them.
+    # them. On a locked version: the failing ones in its test split. Otherwise: empty
+    # below the fewest it holds any back from, None when the epoch first writes
+    # variations, since the held-back cases are picked with them.
     held_back_scenario_keys: list[str] | None
     # None for an agent Epoch can't change.
     ship: ShipReadiness | None
+    # What chooses the held-back cases: the run's locked version's test split, or a
+    # sample.
+    held_back_from: Literal["locked_version", "sample"] = "sample"
+    # The label of the run's locked version; None off one.
+    locked_version_label: str | None = None

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from hashlib import sha256
 from statistics import median
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.conf import settings
@@ -50,6 +50,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
+from simulate.models.harness_versioning import TaskSplit
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
@@ -123,6 +124,11 @@ from simulate.temporal.constants import (
 from simulate.types import is_worker_subject
 from simulate.utils.verdicts import is_pending_placeholder, is_sealed_verdict
 from tracer.services.clickhouse.client import CHError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_versioning.locked_versions import (
+        LockedVersionSplits,
+    )
 
 logger = structlog.get_logger(__name__)
 
@@ -1566,6 +1572,23 @@ def split_held_back(
     return held
 
 
+def held_back_keys(
+    source_run: HostedHarnessJob,
+    failing: Mapping[str, list[str]],
+    locked_version: "LockedVersionSplits | None",
+) -> list[str]:
+    """The failing cases the worker never sees. On a run of a locked version they are the
+    failing cases of its test split, however few. On any other run, split_held_back
+    samples them."""
+    if locked_version is None:
+        return split_held_back(str(source_run.id), failing)
+    return [
+        key
+        for key, names in failing.items()
+        if names and key in locked_version.test_keys
+    ]
+
+
 def agent_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
     """Why Epoch can't change the environment's agent here, checked first on every way
     an epoch starts: an agent no kind can change, then a deployment that can't change it.
@@ -1896,6 +1919,9 @@ def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
 
 def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     """Everything the launch form shows and prefills for a finished run of an environment."""
+    # Imported here, as drafts is above.
+    from simulate.services.harness_versioning.locked_versions import run_locked_version
+
     environment = source_run.environment
     kind = _kind_or_none(environment)
     version_id = (
@@ -1921,8 +1947,15 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     imported = {
         key: origin.import_id for origin in origins for key in origin.scenario_keys
     }
+    locked_version = run_locked_version(source_run)
+    splits = locked_version.splits if locked_version else {}
     scenarios = [
-        one.model_copy(update={"evidence_import_id": imported.get(one.key)})
+        one.model_copy(
+            update={
+                "evidence_import_id": imported.get(one.key),
+                "split": splits.get(one.key),
+            }
+        )
         for one in scenarios
     ]
     targets = {
@@ -1974,7 +2007,12 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             target_scenario_keys=[
                 one.key for one in scenarios if one.failing_sub_goals
             ],
-            protected_scenario_keys=[one.key for one in scenarios if one.passed],
+            # A test-split case can't be must-pass: the search would learn from it.
+            protected_scenario_keys=[
+                one.key
+                for one in scenarios
+                if one.passed and one.split != TaskSplit.TEST
+            ],
         ),
         surfaces=launch_surfaces(offered),
         defaults=LaunchDefaults(
@@ -2009,10 +2047,13 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         )
         if variations_blocked
         else None,
-        # As launch picks them for the suggested targets. With variations to write first,
-        # they are picked after, with the variations.
-        held_back_scenario_keys=None
-        if variations
-        else split_held_back(str(source_run.id), targets),
+        # As launch picks them for the suggested targets. On a locked pair they are the
+        # failing cases of its test split, known now. Off one, with variations to write
+        # first, they are picked after, with the variations.
+        held_back_scenario_keys=held_back_keys(source_run, targets, locked_version)
+        if locked_version or not variations
+        else None,
+        held_back_from="locked_version" if locked_version else "sample",
+        locked_version_label=locked_version.label if locked_version else None,
         ship=ship_readiness(version_id, source_run),
     )

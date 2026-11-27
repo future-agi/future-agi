@@ -897,4 +897,73 @@ describe("LaunchFixDialog", () => {
     ).toHaveLength(2);
     expect(screen.queryByText(/This agent is not traced/)).toBeNull();
   });
+
+  describe("on a locked version", () => {
+    const TEST = ["refund-over-200", "identity-phone", "shipment-status"];
+    // Lock 2026.11.1 of the run's pair: three cases in its test split,
+    // one of which passed, so the platform leaves it out of the suggested protect.
+    function locked() {
+      const base = fixtureLaunchOptions("te-run-6");
+      return {
+        ...base,
+        held_back_from: "locked_version",
+        locked_version_label: "2026.11.1",
+        scenarios: base.scenarios.map((s) => ({
+          ...s,
+          split: TEST.includes(s.key) ? "test" : "train",
+        })),
+        suggested: {
+          ...base.suggested,
+          protected_scenario_keys:
+            base.suggested.protected_scenario_keys.filter(
+              (k) => !TEST.includes(k),
+            ),
+        },
+      };
+    }
+
+    it("holds back the test split and never offers a test-split case to protect", async () => {
+      const user = userEvent.setup();
+      pinOptions(locked());
+      renderDialog();
+
+      expect(
+        await screen.findByText(
+          "Held back: lock 2026.11.1's test split. It learns only from the train split.",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "12 failing: 10 to fix, 2 held back to prove it · 5 protected",
+        ),
+      ).toBeInTheDocument();
+
+      await openPicker(user);
+      expect(
+        protectCases().queryByRole("checkbox", {
+          name: "Routine task using shipment_status",
+        }),
+      ).toBeNull();
+      expect(
+        within(
+          fixCases().getByRole("checkbox", {
+            name: "Refunds above $200 need supervisor approval",
+          }),
+        ).getByText("Failing · Test split"),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Run Epoch" })).toBeEnabled();
+    });
+
+    it("keeps Start off when every picked case is in the test split", async () => {
+      pinOptions(locked());
+      renderDialog({ initialTargets: ["refund-over-200", "identity-phone"] });
+
+      expect(
+        await screen.findByText(
+          "All 2 failing cases are in the test split. Pick failing cases from the train split.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
+    });
+  });
 });

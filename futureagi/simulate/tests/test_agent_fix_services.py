@@ -23,7 +23,10 @@ from simulate.models import (
     AgentVersion,
     CallExecution,
     HarnessAgentVersionRuntime,
+    HarnessLockedVersion,
+    HarnessSuiteMember,
     HarnessSuiteVersion,
+    HarnessTaskSplit,
     HostedHarnessAttempt,
     HostedHarnessExecution,
     HostedHarnessJob,
@@ -32,6 +35,7 @@ from simulate.models import (
     TestExecution as SimTestExecution,
 )
 from simulate.models.chat_message import ChatMessageModel
+from simulate.models.harness_versioning import HarnessEnvironmentVersion, TaskSplit
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
     CandidateUpdate,
@@ -60,6 +64,7 @@ from simulate.selectors.agent_fix import (
     eval_review,
     fix_runs_for_read,
     graded_check_runs,
+    held_back_keys,
     is_retryable,
     launch_blocker,
     launch_options,
@@ -82,6 +87,7 @@ from simulate.services.agent_fix_runs import (
 from simulate.services.agent_setup import store_agent
 from simulate.services.alk_simulate_ingestion import _store_alk_chat_messages
 from simulate.services.harness_run_evals import queue_evals_for_finished_calls
+from simulate.services.harness_versioning.locked_versions import run_locked_version
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -258,16 +264,63 @@ def _fix_run(
     )
 
 
-def _launch(source_run, user, targets=(KEYS[0],)):
+def _launch(source_run, user, targets=(KEYS[0],), protected=()):
     return launch_fix_run(
         source_run,
         target_scenario_keys=list(targets),
+        protected_scenario_keys=list(protected),
         surfaces=[Surface.PROMPT],
         locked_paths=[],
         budget_usd=5.0,
         max_minutes=30,
         user=user,
     )
+
+
+def _locked_version(run, *, test=(), train=(), unlocked=False, label="2026.11.1"):
+    """A locked version of ``run``'s pair whose splits put ``test`` and ``train`` there,
+    each a member of the run's suite that grades "refunded", a goal its environment
+    version grades."""
+    assert run.environment_version_id and run.suite_version_id
+    version = HarnessEnvironmentVersion._base_manager.get(id=run.environment_version_id)
+    documents = dict(version.documents or {})
+    catalogue = list(documents.get("sub_goals") or [])
+    if not any(goal.get("name") == "refunded" for goal in catalogue):
+        documents["sub_goals"] = [*catalogue, {"name": "refunded"}]
+        HarnessEnvironmentVersion._base_manager.filter(id=version.id).update(
+            documents=documents
+        )
+    members = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=run.suite_version_id, scenario_key__in=[*test, *train]
+    )
+    for member in members:
+        member.content = {**(member.content or {}), "sub_goals": [{"name": "refunded"}]}
+        member.save(update_fields=["content"])
+    now = timezone.now()
+    locked_version = HarnessLockedVersion.no_workspace_objects.create(
+        environment=run.environment,
+        environment_version_id=run.environment_version_id,
+        suite_version_id=run.suite_version_id,
+        label=label,
+        locked_at=now,
+        unlocked_at=now if unlocked else None,
+        train_count=len(train),
+        test_count=len(test),
+    )
+    for member in members:
+        HarnessTaskSplit.no_workspace_objects.create(
+            scenario_id=member.scenario_id,
+            split=TaskSplit.TEST if member.scenario_key in test else TaskSplit.TRAIN,
+            first_locked_version=locked_version,
+        )
+    return locked_version
+
+
+def _both_failing(environment):
+    """A finished run on which both scenarios failed "refunded"."""
+    run = _run(environment, key="both-failing")
+    _receipts(run, dict.fromkeys(KEYS, {"refunded": False}))
+    return run
 
 
 def _measured_by_the_sandbox(source_run, instrumentation="none"):
@@ -488,6 +541,158 @@ def test_verified_needs_held_back_cases_from_four_different_cases(
     }
 
     assert limited_validation(fix_run) is limited
+
+
+class TestALockedVersion:
+    """A run of a locked pair holds back the failing cases of the locked version's test
+    split, and none of its test split may be must-pass."""
+
+    def test_its_failing_test_cases_are_held_back_however_few(self, source_run):
+        _locked_version(source_run, test=KEYS)
+
+        held = held_back_keys(
+            source_run,
+            {KEYS[0]: ["refunded"], KEYS[1]: []},
+            run_locked_version(source_run),
+        )
+
+        # A picked case that passed is no failing case to hold back.
+        assert held == [KEYS[0]]
+
+    def test_the_run_s_locked_version_is_the_locked_one_of_its_own_pair(
+        self, source_run
+    ):
+        locked = _locked_version(source_run, test=[KEYS[0]], train=[KEYS[1]])
+
+        found = run_locked_version(source_run)
+
+        assert (found.id, found.label) == (locked.id, "2026.11.1")
+        assert found.test_keys == frozenset([KEYS[0]])
+
+    def test_an_unlocked_version_holds_back_nothing_of_its_split(self, source_run):
+        _locked_version(source_run, test=[KEYS[0]], train=[KEYS[1]], unlocked=True)
+
+        # Off a locked version the Epoch samples, as it always has.
+        assert run_locked_version(source_run) is None
+
+    def test_a_member_that_cannot_be_scored_has_no_split(self, source_run):
+        _locked_version(source_run, test=[KEYS[0]], train=[KEYS[1]])
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=source_run.suite_version_id, scenario_key=KEYS[0]
+        ).update(content={"name": KEYS[0], "sub_goals": []})
+
+        held = held_back_keys(
+            source_run, {KEYS[0]: ["refunded"]}, run_locked_version(source_run)
+        )
+
+        assert held == []
+
+    def test_a_run_off_any_locked_version_samples_as_before(self, source_run):
+        with patch(
+            "simulate.selectors.agent_fix.split_held_back", return_value=["x"]
+        ) as split:
+            held = held_back_keys(source_run, {KEYS[0]: ["refunded"]}, None)
+
+        assert held == ["x"]
+        assert split.call_args.args == (str(source_run.id), {KEYS[0]: ["refunded"]})
+
+    def test_the_launch_holds_back_the_test_split_below_twelve_cases(
+        self, environment, user
+    ):
+        run = _both_failing(environment)
+        locked = _locked_version(run, test=[KEYS[0]], train=[KEYS[1]])
+
+        fix_run = _launch(run, user, targets=KEYS)
+
+        assert fix_run.request["held_back_scenario_keys"] == [KEYS[0]]
+        # The launch names the locked version whose test split it held back.
+        assert fix_run.request["locked_version_id"] == str(locked.id)
+        # The engine reads no evidence of a held-back case.
+        brief = engine_brief(fix_run)
+        assert {one.scenario_key for one in brief.source_failures} == {KEYS[1]}
+        assert limited_validation(fix_run) is True
+
+    def test_a_launch_off_a_locked_version_names_none(self, source_run, user):
+        assert _launch(source_run, user).request["locked_version_id"] is None
+
+    def test_a_launch_with_every_failing_case_in_the_test_split_is_refused(
+        self, environment, user
+    ):
+        run = _both_failing(environment)
+        _locked_version(run, test=KEYS)
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _launch(run, user, targets=KEYS)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_targets_all_test",
+            422,
+        )
+        assert refused.value.message == (
+            "All 2 failing cases are in the test split. Pick failing cases from the"
+            " train split."
+        )
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_the_refusal_of_one_failing_case_in_the_test_split_is_singular(
+        self, source_run, user
+    ):
+        _locked_version(source_run, test=[KEYS[0]], train=[KEYS[1]])
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _launch(source_run, user)
+
+        assert refused.value.code == "fix_targets_all_test"
+        assert refused.value.message == (
+            "The only failing case is in the test split. Pick failing cases from the"
+            " train split."
+        )
+
+    def test_a_protected_test_split_case_never_reaches_the_request(
+        self, source_run, user
+    ):
+        _locked_version(source_run, test=[KEYS[1]], train=[KEYS[0]])
+
+        with pytest.raises(HostedHarnessError) as refused:
+            _launch(source_run, user, protected=[KEYS[1]])
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "fix_protected_in_test",
+            422,
+        )
+        assert refused.value.message == (
+            "Cases in the test split can't be must-pass: the Epoch would learn from"
+            " them."
+        )
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_the_launch_form_names_each_split_and_leaves_the_test_split_unprotected(
+        self, source_run
+    ):
+        _locked_version(source_run, test=[KEYS[1]], train=[KEYS[0]])
+
+        options = launch_options(source_run)
+
+        assert {one.key: one.split for one in options.scenarios} == {
+            KEYS[0]: "train",
+            KEYS[1]: "test",
+        }
+        # The second scenario passed, but it is in the test split.
+        assert options.suggested.protected_scenario_keys == []
+        assert (options.held_back_from, options.locked_version_label) == (
+            "locked_version",
+            "2026.11.1",
+        )
+
+    def test_the_launch_form_off_a_locked_version_samples(self, source_run):
+        options = launch_options(source_run)
+
+        assert {one.split for one in options.scenarios} == {None}
+        assert options.suggested.protected_scenario_keys == [KEYS[1]]
+        assert (options.held_back_from, options.locked_version_label) == (
+            "sample",
+            None,
+        )
 
 
 def _open_suite_draft(environment):
