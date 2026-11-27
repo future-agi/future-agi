@@ -585,7 +585,7 @@ passing the live-LLM filter on the command line would silently un-quarantine eve
 ## CI
 
 `.github/workflows/e2e-ci.yml` runs on PRs to and pushes on `dev`/`main`, plus merge queue entries.
-The suite runs as six shards per stack (see [Shards](#shards) below). Each shard builds the images
+The suite runs as eight Distributed and six Standalone shards (see [Shards](#shards) below). Each shard builds the images
 from the PR's code (tagged `:e2e-ci`) with the registry layer cache, boots its own stack with
 `bin/e2e up` and runs its share of the spec files with `bin/e2e test`; on failure it dumps
 `bin/e2e ps` and the last 200 log lines and uploads its own Playwright report. A `report` job then
@@ -636,7 +636,8 @@ there.
 ### Shards
 
 `E2E_SHARD=k/N` makes `bin/e2e test` run one of `N` shares of the spec files. CI sets it per matrix
-leg (`E2E_SHARDS` in the workflow, currently 6); it works locally too:
+leg (`E2E_SHARDS` in the workflow, currently 8 for Distributed; `E2E_STANDALONE_SHARDS`, currently 6
+for Standalone); it works locally too:
 
 ```bash
 E2E_SHARD=2/6 bin/e2e test     # the second of six shares
@@ -665,6 +666,10 @@ runners in November 2026:
   API does not return. A backend unit test pins the 30-minute default.
 - With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
   alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
+- On three queue runs (27 November) the six Distributed suite steps took 700 to 1,170 s, because
+  the durations file was 2,400 s short of the measured suite. With refreshed durations the plan puts
+  about 1,380 test-seconds on each of eight Distributed shards. Standalone legs finished 5 to 10
+  minutes before Distributed, so Standalone stays at six.
 
 **Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
 compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
