@@ -17,6 +17,7 @@ import {
   REASSIGN_AFTER_MS,
   candidatesFor,
   hasHumanReviewRequest,
+  isAssignerComment,
   parseAssignment,
   pickLeastLoaded,
   reassignDue,
@@ -32,6 +33,7 @@ const {
   GITHUB_TOKEN,
   GITHUB_REPOSITORY,
   PR_NUMBER,
+  ASSIGNER_LOGIN,
   SLACK_BOT_TOKEN,
   SLACK_WEBHOOK_URL,
   REVIEWER_PING_ENABLED,
@@ -295,9 +297,9 @@ async function requestReviewer(prNumber, login) {
   loads.set(login, (loads.get(login) ?? 0) + 1);
 }
 
-// The newest bot comment carrying the marker, so a quoted marker in a human
-// comment is ignored. Routing only: a branch workflow can also comment as the bot.
-const isBot = (c) => /^github-actions(\[bot\])?$/.test(c.user?.login || "");
+// The newest assigner comment carrying the marker, so a quoted marker in a
+// human comment is ignored.
+const isBot = (c) => isAssignerComment(c, ASSIGNER_LOGIN);
 
 function findAssignment(comments) {
   for (let i = comments.length - 1; i >= 0; i--) {

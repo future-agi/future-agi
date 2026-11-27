@@ -26,6 +26,17 @@ export function hasHumanReviewRequest(pr) {
   );
 }
 
+// True for a comment by the assigner: the approver App, or github-actions
+// for assignments written before the App. Routing only: the approval job
+// trusts the App's review request, never a comment.
+export function isAssignerComment(comment, assigner) {
+  const login = lower(comment.user?.login);
+  return (
+    /^github-actions(\[bot\])?$/.test(login) ||
+    (Boolean(assigner) && login === lower(assigner))
+  );
+}
+
 function uniqueExcept(logins, author) {
   const seen = new Set([lower(author)]);
   return logins.filter((l) => !seen.has(lower(l)) && seen.add(lower(l)));

@@ -1,10 +1,11 @@
 name: Reviewer Assigner
 
 on:
-  pull_request:
-    types: [opened, ready_for_review, reopened]
-  # Reassign heartbeat: every merge to dev runs the sweep from dev's copy.
-  # Schedules run main's copy, which lags dev, so the sweep has no cron.
+  # Every merge to dev runs the assign and reassign sweeps from dev's copy,
+  # with the approver App token: the approval job trusts only that App's
+  # review requests. A pull request run never gets the key, so a new pull
+  # request gets its reviewer at the next merge to dev. Schedules run main's
+  # copy, which lags dev, so the sweeps have no cron.
   push:
     branches: [dev]
   workflow_dispatch:
@@ -30,53 +31,65 @@ on:
     - cron: "30 4 * * *"
 
 jobs:
-  assign:
+  sweep:
     if: >-
       github.repository == 'future-agi/future-agi' &&
-      ((github.event_name == 'pull_request' && github.event.pull_request.draft != true) ||
-       (github.event_name == 'workflow_dispatch' && inputs.mode != 'reassign'))
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The approver App key; the environment admits only main and dev.
+    environment:
+      name: devflow-approver
+      deployment: false
+    concurrency:
+      group: reviewer-sweep
+      cancel-in-progress: false
     permissions:
-      pull-requests: write
       contents: read
-      issues: write # needed to post the cross-team coordination comment
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Fail without the approver App
+        env:
+          CLIENT_ID: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
+          PRIVATE_KEY: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+          BOT: ${{ vars.DEVFLOW_APPROVER_BOT }}
+        run: |
+          if [[ -z $CLIENT_ID || -z $PRIVATE_KEY || $BOT != *"[bot]" ]]; then
+            echo "::error::DEVFLOW_APPROVER_CLIENT_ID, DEVFLOW_APPROVER_PRIVATE_KEY or DEVFLOW_APPROVER_BOT is not set. No reviewer was requested; this workflow never requests one with GITHUB_TOKEN."
+            exit 1
+          fi
+      - name: Mint the approver App token
+        id: approver
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
+          private-key: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+          permission-pull-requests: write # review requests
+          permission-issues: write # the sticky assignment comment
+          permission-contents: read
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
       - name: Assign reviewers
+        if: github.event_name == 'push' || inputs.mode != 'reassign'
         env:
           MODE: assign
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.approver.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          ASSIGNER_LOGIN: ${{ vars.DEVFLOW_APPROVER_BOT }}
+          PR_NUMBER: ${{ inputs.pr_number }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: node .github/scripts/reviewer-assigner.mjs
-
-  reassign:
-    if: >-
-      github.repository == 'future-agi/future-agi' &&
-      (github.event_name == 'push' ||
-       (github.event_name == 'workflow_dispatch' && inputs.mode == 'reassign'))
-    runs-on: ubuntu-latest
-    concurrency:
-      group: reviewer-reassign
-      cancel-in-progress: false
-    permissions:
-      pull-requests: write
-      contents: read
-      issues: write # edits the sticky assignment comment
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
       - name: Reassign stale review requests
+        if: github.event_name == 'push' || inputs.mode == 'reassign'
         env:
           MODE: reassign
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.approver.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          ASSIGNER_LOGIN: ${{ vars.DEVFLOW_APPROVER_BOT }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: node .github/scripts/reviewer-assigner.mjs
 

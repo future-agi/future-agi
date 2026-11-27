@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   candidatesFor,
   hasHumanReviewRequest,
+  isAssignerComment,
   parseAssignment,
   pickLeastLoaded,
   reassignDue,
@@ -189,4 +190,15 @@ test("a request for the code-owner team is not a human request; any other is", (
     }),
     true,
   );
+});
+
+test("the assigner's comments are the App's and github-actions', nobody else's", () => {
+  const by = (login) => ({ user: { login } });
+  const app = "devflow-approver[bot]";
+  assert.equal(isAssignerComment(by("devflow-approver[bot]"), app), true);
+  assert.equal(isAssignerComment(by("Devflow-Approver[bot]"), app), true);
+  assert.equal(isAssignerComment(by("github-actions[bot]"), app), true);
+  assert.equal(isAssignerComment(by("someone"), app), false);
+  assert.equal(isAssignerComment(by("devflow-approver"), app), false);
+  assert.equal(isAssignerComment(by(""), ""), false);
 });
