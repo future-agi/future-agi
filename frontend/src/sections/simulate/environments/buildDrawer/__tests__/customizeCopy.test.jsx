@@ -104,27 +104,23 @@ beforeEach(() => {
 });
 
 describe("Customize a private copy", () => {
-  it("needs an agent and a change before it builds", () => {
+  it("needs only a change before it builds, no agent", () => {
     render();
 
-    expect(build()).toBeDisabled();
-    expect(
-      screen.getByText(
-        "Choose the agent whose workspace the copy is built in.",
-      ),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("radio", { name: "ShopMate" }));
+    // The copy is the organization's: no agent is asked for.
+    expect(screen.queryByRole("radio", { name: "ShopMate" })).toBeNull();
     expect(build()).toBeDisabled();
     expect(
       screen.getByText("Say what should change in the copy."),
     ).toBeInTheDocument();
     fireEvent.change(change(), { target: { value: "   " } });
     expect(build()).toBeDisabled();
+    fireEvent.change(change(), { target: { value: "Add a loyalty tier" } });
+    expect(build()).toBeEnabled();
   });
 
   it("starts the copy with the change and opens its design", async () => {
     render();
-    fireEvent.click(screen.getByRole("radio", { name: "ShopMate" }));
     fireEvent.change(change(), {
       target: { value: "  Refunds over $500 need a supervisor " },
     });
@@ -138,7 +134,6 @@ describe("Customize a private copy", () => {
     );
     expect(createHarnessCustomization).toHaveBeenCalledWith({
       suite_id: "suite-1",
-      agent_version_id: "version-1",
       name: "Retail copy",
       change: "Refunds over $500 need a supervisor",
       idempotency_key: "idem-copy",
@@ -152,7 +147,6 @@ describe("Customize a private copy", () => {
         "only a ready environment that extends no other can be customized",
     });
     render();
-    fireEvent.click(screen.getByRole("radio", { name: "ShopMate" }));
     fireEvent.change(change(), { target: { value: "Add a loyalty tier" } });
 
     fireEvent.click(build());
@@ -171,7 +165,6 @@ describe("Customize a private copy", () => {
       canRun: false,
     });
     render();
-    fireEvent.click(screen.getByRole("radio", { name: "ShopMate" }));
     fireEvent.change(change(), { target: { value: "Add a loyalty tier" } });
 
     expect(build()).toBeDisabled();

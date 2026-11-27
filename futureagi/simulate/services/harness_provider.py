@@ -1709,16 +1709,19 @@ class HostedHarnessProvider:
 
     def create_customization(self, request) -> Response:
         """Build a private copy of a ready environment with the person's change: a hosted job
-        whose builder starts from the ready world (`metadata.design.template`)."""
+        whose builder starts from the ready world (`metadata.design.template`). It needs no
+        customer agent, so none of a build's agent, credential, source or egress checks apply."""
+        from simulate.services.harness_agent_versions import advisory_xact_lock
         from simulate.services.harness_releases import (
-            connected_agent_connection,
             customization_payload,
-            organization_agent_version,
             visible_suite,
         )
+        from simulate.services.harness_usage import require_harness_authoring
         from simulate.services.hosted_harness import (
             HostedHarnessError,
+            create_hosted_job,
             find_replayed_job,
+            idempotency_lock_name,
         )
 
         organization = request_organization(request)
@@ -1731,43 +1734,59 @@ class HostedHarnessProvider:
             )
         data = request.validated_data
         workspace = request_workspace(request)
+        idempotency_key = data["idempotency_key"]
         request_digest = canonical_digest(json.loads(json.dumps(data, default=str)))
         try:
             replayed = find_replayed_job(
                 organization,
                 {},
-                idempotency_key=data["idempotency_key"],
+                idempotency_key=idempotency_key,
                 workspace=workspace,
                 request_digest=request_digest,
             )
             if replayed is not None:
                 return self._dispatch(request, replayed)
-            agent_version = organization_agent_version(
-                organization, workspace, data["agent_version_id"]
-            )
-            suite = visible_suite(organization, data["suite_id"])
-            agent, secret_values = connected_agent_connection(
-                organization, agent_version
-            )
             payload = customization_payload(
                 organization,
-                suite=suite,
-                agent=agent,
-                agent_version=agent_version,
+                suite=visible_suite(organization, data["suite_id"]),
                 name=data["name"],
                 change=data["change"],
-                idempotency_key=data["idempotency_key"],
-                secret_values=secret_values,
+                idempotency_key=idempotency_key,
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
-        return self._submit(
-            request,
-            organization,
-            payload,
-            data["idempotency_key"],
-            request_digest=request_digest,
-        )
+        try:
+            require_harness_authoring(str(organization.id))
+        except Exception as exc:
+            response = _usage_limit_response(exc)
+            if response is not None:
+                return response
+            raise
+        try:
+            with transaction.atomic():
+                # A same-key create waits here and then replays the first's job.
+                advisory_xact_lock(idempotency_lock_name(organization, idempotency_key))
+                job, _ = create_hosted_job(
+                    organization,
+                    payload,
+                    idempotency_key=idempotency_key,
+                    workspace=workspace,
+                    on_create=None,
+                    request_digest=request_digest,
+                )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        except Exception as exc:
+            logger.warning(
+                "harness_customize_failed org=%s error=%s",
+                organization.id,
+                type(exc).__name__,
+            )
+            return Response(
+                {"detail": "Hosted harness scheduler is unavailable"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return self._dispatch(request, job)
 
     def _submit(
         self,

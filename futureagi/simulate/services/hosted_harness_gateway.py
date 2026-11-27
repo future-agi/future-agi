@@ -3021,6 +3021,7 @@ class HostedHarnessGateway:
         seed_contract = (
             _seed_contract_for(job)
             if authoring_archive is None
+            and customization is None
             and not (payload.get("metadata") or {}).get("simulation_only")
             and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
             else None

@@ -145,12 +145,10 @@ class HarnessReleaseAgentRequestSerializer(serializers.Serializer):
 
 class HarnessReleaseCustomizeRequestSerializer(serializers.Serializer):
     """A private copy of a ready environment with the person's change (contract §7.5's
-    design, started from the ready world)."""
+    design, started from the ready world). No agent: the copy is the organization's own release,
+    used with any agent once it is sealed."""
 
     suite_id = serializers.UUIDField()
-    agent_version_id = serializers.UUIDField(
-        help_text="The agent whose workspace the copy is built in, as every build is.",
-    )
     name = serializers.CharField(max_length=255)
     change = serializers.CharField(
         max_length=4000,

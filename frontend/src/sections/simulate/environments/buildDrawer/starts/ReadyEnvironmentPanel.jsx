@@ -817,49 +817,28 @@ Line.propTypes = { label: PropTypes.string, value: PropTypes.node };
 /*
   Customize — a private copy of the ready world with the person's change
   (env-world-customize). The builder starts from this world's records, tools and rules and
-  adds the change; its design opens at once and nothing is sealed until it's approved. The
-  copy is built in the chosen agent's workspace, as every build is, and is then listed with
-  the ready environments as Private.
+  adds the change; its design opens at once and nothing is sealed until it's approved. No agent
+  is needed: the copy is the organization's own ready environment, listed as Private and used
+  with any agent once it's saved.
 */
 function CustomizeTab({ world }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { canEdit } = useSimulationAccess();
-  const modality = modalityOfWorld(world);
-  const { agents, isLoading } = useWorldAgents(modality);
-  const [agentId, setAgentId] = useState(null);
-  const agent = agents.find((a) => a.id === agentId) || null;
-  const { version, isLoading: versionLoading } = useAdaptedVersion(
-    agent?.sample ? null : agentId,
-  );
   const [change, setChange] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   // One key per attempt: sending the same copy again is the same job.
   const [key, setKey] = useState(harnessIdempotencyKey);
-  const ready =
-    canEdit &&
-    Boolean(change.trim()) &&
-    Boolean(version) &&
-    !agent?.sample &&
-    !versionLoading &&
-    !submitting;
-  const why = !canEdit
-    ? ""
-    : !agent
-      ? "Choose the agent whose workspace the copy is built in."
-      : agent.sample
-        ? "A sample agent can't be used. Connect your agent first."
-        : !change.trim()
-          ? "Say what should change in the copy."
-          : "";
+  const ready = canEdit && Boolean(change.trim()) && !submitting;
+  const why =
+    canEdit && !change.trim() ? "Say what should change in the copy." : "";
   const build = async () => {
     setSubmitting(true);
     setError(null);
     try {
       const created = await createHarnessCustomization({
         suite_id: world.suite.id,
-        agent_version_id: version.id,
         name: `${world.name} copy`,
         change: change.trim(),
         idempotency_key: key,
@@ -893,18 +872,9 @@ function CustomizeTab({ world }) {
           inputProps={{ "aria-label": "What should change", maxLength: 4000 }}
           sx={INPUT_SX}
         />
-        <AgentPicker
-          agents={agents}
-          isLoading={isLoading}
-          value={agentId}
-          onChange={setAgentId}
-          modality={modality}
-          disabled={submitting}
-          subtitle="The copy is built in this agent's workspace; use it with any agent once it's saved."
-        />
         <Typography sx={{ ...T12, color: "text.secondary" }}>
           {
-            "The builder starts from this world's records, tools and rules, adds your change, and shows the design for you to approve before it builds."
+            "The builder starts from this world's records, tools and rules, adds your change, and shows the design for you to approve before it builds. The copy is your organization's; use it with any agent once it's saved."
           }
         </Typography>
         {error && <Alert severity="error">{error}</Alert>}

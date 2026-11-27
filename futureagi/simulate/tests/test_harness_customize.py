@@ -15,7 +15,6 @@ from simulate.models import (
     HarnessSuiteRelease,
     HostedHarnessJob,
 )
-from simulate.models.agent_definition import ProviderCredentials
 from simulate.services import harness_releases
 from simulate.services.harness_releases import (
     complete_customization,
@@ -30,21 +29,14 @@ CHANGE = "Refunds over $500 need a supervisor"
 
 
 @pytest.fixture
-def submit(auth_client, retail, shopmate, monkeypatch):
-    from simulate.services import harness_provider
+def submit(auth_client, retail, monkeypatch):
     from simulate.temporal import client
 
-    ProviderCredentials.objects.create(
-        agent_version=shopmate, provider_type="retell", api_key="test-key"
-    )
     started = []
     monkeypatch.setattr(
         client,
         "start_hosted_harness_gateway_workflow",
         lambda job_id, *args: started.append(job_id),
-    )
-    monkeypatch.setattr(
-        harness_provider, "_validate_known_hosted_egress", lambda *args: None
     )
 
     def send(**changed):
@@ -52,7 +44,6 @@ def submit(auth_client, retail, shopmate, monkeypatch):
             CUSTOMIZE,
             {
                 "suite_id": str(retail.id),
-                "agent_version_id": str(shopmate.id),
                 "name": "Retail copy",
                 "change": CHANGE,
                 "idempotency_key": f"copy-{uuid.uuid4()}",
@@ -89,7 +80,46 @@ class TestCustomize:
         assert source["suite_id"] == str(retail.id)
         assert source["environment_digest"] == retail.environment.digest
         assert metadata["customization"]["change"] == CHANGE
-        assert "test-key" not in json.dumps(job.payload)
+
+    def test_a_copy_needs_no_agent_and_stages_no_provider_credentials(
+        self, submit, settings
+    ):
+        from simulate.models import AgentDefinition
+
+        settings.HARNESS_VERSIONING_ENABLED = True
+        agents = AgentDefinition.no_workspace_objects.count()
+
+        response = submit()
+
+        assert response.status_code == 202, response.content
+        job = HostedHarnessJob.no_workspace_objects.get(id=submit.started[0])
+        # No customer agent: none is pinned, read or made for the copy.
+        assert job.agent_version_id is None
+        assert AgentDefinition.no_workspace_objects.count() == agents
+        agent = job.payload["agent"]
+        assert agent["connector"] == "hosted_agent"
+        assert not agent.get("secret_refs")
+        assert "credential_values" not in job.payload
+        assert "agent_version_id" not in job.payload["metadata"]["customization"]
+
+    def test_an_agent_is_not_accepted(self, submit, shopmate):
+        response = submit(agent_version_id=str(shopmate.id))
+
+        assert response.status_code == 400, response.content
+        assert not submit.started
+
+    def test_a_voice_world_makes_a_voice_copy(self, submit, retail):
+        environment = retail.environment
+        environment.manifest = {
+            **(environment.manifest or {}),
+            "metadata": {"catalogue": {"channel": "voice"}},
+        }
+        environment.save(update_fields=["manifest"])
+
+        submit()
+
+        job = HostedHarnessJob.no_workspace_objects.get(id=submit.started[0])
+        assert job.payload["metadata"]["design"]["modality"] == "voice"
 
     def test_a_copy_needs_a_change(self, submit):
         response = submit(change="   ")

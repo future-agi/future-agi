@@ -1972,27 +1972,42 @@ def design_name(name: str, source: str, key: str) -> str:
     return f"{slug[:60]}_{tag}"
 
 
+# A design runs no agent, but every hosted job names one: this one is never called, and it brings
+# no provider, credentials, egress or agent version with it.
+DESIGNER_AGENT = {
+    "connector": HOSTED_AGENT,
+    "config": {
+        "name": "Environment designer",
+        "instructions": "Designs a copy of a ready environment; never run as an agent.",
+        "model": "vertex_ai/gemini-3.8-flash",
+    },
+}
+
+
+def copy_modality(environment: HarnessEnvironmentRelease) -> str:
+    """The copy's channel is its ready world's: voice when the catalogue says so, else chat."""
+    catalogue = ((environment.manifest or {}).get("metadata") or {}).get(
+        "catalogue"
+    ) or {}
+    return "voice" if catalogue.get("channel") == "voice" else "chat"
+
+
 def customization_payload(
     organization,
     *,
     suite: HarnessSuiteRelease,
-    agent: dict[str, Any],
-    agent_version: AgentVersion,
     name: str,
     change: str,
     idempotency_key: str,
-    secret_values: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """The validated hosted job payload that builds a private copy of `suite`'s world with the
     person's `change`. The builder starts from the ready world (`metadata.design.template`) and
-    the copy is sealed as this organization's own release; the original stays as it was. The
-    agent version names whose workspace the copy is built in, as every build does."""
+    the copy is sealed as this organization's own release; the original stays as it was. No
+    customer agent takes part: the copy is used with one once it is sealed."""
     from simulate.serializers.harness_job import HarnessJobCreateSerializer
 
     if suite.organization_id not in (None, organization.id):
         raise _error("release_not_found", "suite release not found", 404)
-    if agent_version.organization_id != organization.id:
-        raise _error("agent_version_not_found", "agent version not found", 404)
     change = change.strip()
     if not change:
         raise _error("customization_invalid", "say what should change in the copy")
@@ -2005,27 +2020,19 @@ def customization_payload(
         )
     serializer = HarnessJobCreateSerializer(
         data={
-            "agent": agent,
+            "agent": DESIGNER_AGENT,
             "artifacts": {"level": "full"},
             # A copy is designed, not run: the field only needs a count the job admits.
             "scenario_count": max(len(suite.personas), 1),
             "metadata": {"name": name},
-            **({"credential_values": secret_values} if secret_values else {}),
-        }
+        },
+        context={"composition": True},
     )
     if not serializer.is_valid():
         raise _error(
             "customization_invalid", json.dumps(serializer.errors, default=str)
         )
     payload = serializer.validated_data
-    connector = payload["agent"]["connector"]
-    if (connector, payload["agent"].get("mode")) not in COMPOSABLE:
-        raise _error(
-            "compose_unsupported",
-            f"{connector} agents can't build a copy yet; retell_chat, retell and vapi agents "
-            "in provider_import mode can",
-        )
-    _check_modality(agent_version, connector)
     [environment] = chain
     template = {
         "environment": [
@@ -2044,7 +2051,7 @@ def customization_payload(
     payload["metadata"]["design"] = {
         "name": design_name(name, environment.name, idempotency_key),
         "requirements": change,
-        "modality": "voice" if MODALITY[connector] == "voice" else "chat",
+        "modality": copy_modality(environment),
         "template": template,
     }
     payload["metadata"]["customization"] = {
@@ -2057,7 +2064,6 @@ def customization_payload(
             "environment_name": environment.name,
         },
         "change": change,
-        "agent_version_id": str(agent_version.id),
     }
     document: dict[str, Any] = json.loads(json.dumps(payload, default=str))
     return document
