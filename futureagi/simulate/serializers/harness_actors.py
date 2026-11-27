@@ -67,15 +67,33 @@ class HarnessTriggerWhereValueField(serializers.JSONField):
         return value
 
 
+class _JsonNumberField(serializers.FloatField):
+    """A number as JSON sends it: true, false and "0.5" are refused, as the whole-record write refuses them."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, bool) or not isinstance(data, (int, float)):
+            self.fail("invalid")
+        return super().to_internal_value(data)
+
+
+class _JsonIntegerField(serializers.IntegerField):
+    """A whole number as JSON sends it: true and "2" are refused."""
+
+    def to_internal_value(self, data):
+        if isinstance(data, bool) or not isinstance(data, int):
+            self.fail("invalid")
+        return super().to_internal_value(data)
+
+
 class HarnessActorTriggerSerializer(serializers.Serializer):
     """When an actor comes in; only the keys its kind uses are present, none defaulted."""
 
     kind = serializers.ChoiceField(choices=TRIGGER_KINDS, required=False)
     seconds = serializers.FloatField(required=False, min_value=0)
     tool = serializers.CharField(required=False, allow_blank=True, max_length=200)
-    on_call = serializers.IntegerField(required=False, min_value=1)
-    p = serializers.FloatField(required=False, min_value=0, max_value=1)
-    turn = serializers.IntegerField(required=False, min_value=0)
+    on_call = _JsonIntegerField(required=False, min_value=1)
+    p = _JsonNumberField(required=False, min_value=0, max_value=1)
+    turn = _JsonIntegerField(required=False, min_value=0)
     words = serializers.ListField(
         child=serializers.CharField(max_length=200), required=False, max_length=50
     )

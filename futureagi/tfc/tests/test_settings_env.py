@@ -115,6 +115,46 @@ def test_only_a_cloud_region_turns_on_cloud_defaults(
     assert loaded.stdout.splitlines()[-1] == f"{recaptcha} {channel_layer}"
 
 
+# Celery beat schedules a daily celery.backend_cleanup task while results expire
+# and the backend cannot expire them itself, as django-db cannot. No worker can
+# run it from the in-process memory:// broker, so beat must not schedule it there.
+_BROKERS = ("CELERY_BROKER_URL", "CELERY_BROKER_READ_URL", "CELERY_BROKER_WRITE_URL")
+
+
+@pytest.mark.parametrize(
+    "brokers, entries",
+    [
+        ({"CELERY_BROKER_URL": "memory://"}, "[]"),
+        ({"CELERY_BROKER_URL": "amqp://u:p@mq:5672//"}, "['celery.backend_cleanup']"),
+        (dict.fromkeys(_BROKERS[1:], "amqp://mq//"), "['celery.backend_cleanup']"),
+    ],
+)
+def test_beat_schedules_result_cleanup_only_with_a_real_broker(brokers, entries):
+    env = {k: v for k, v in os.environ.items() if k not in _BROKERS}
+    loaded = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib, os; from celery import Celery; "
+            "from celery.beat import Scheduler; "
+            "s = importlib.import_module(os.environ['DJANGO_SETTINGS_MODULE']); "
+            # A stand-in backend that, like django-db, cannot expire results.
+            "s.CELERY_RESULT_BACKEND = 'disabled'; "
+            "app = Celery(set_as_current=False); "
+            "app.config_from_object(s, namespace='CELERY'); "
+            "beat = Scheduler(app, lazy=True); beat.install_default_entries({}); "
+            "print(sorted(beat.schedule))",
+        ],
+        env={**env, "CELERY_RESULT_BACKEND": "disabled", **brokers},
+        cwd=BACKEND,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.splitlines()[-1] == entries
+
+
 # RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: orgs created at or after it see only
 # Environments in Simulate. Unset means no org is restricted, and a value that
 # is not a date-time refuses to start rather than silently restricting nobody.

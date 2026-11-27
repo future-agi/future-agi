@@ -11,6 +11,22 @@ const SEVERITY_CONFIG = {
   low: { label: "Low", role: "neutral", text: "text.secondary" },
 };
 
+// What a severity means for this issue: its reason, or that it isn't
+// established yet. Shared by the severity badge and the Triage dropdown.
+export function severityExplanation({
+  severity,
+  assessmentStatus,
+  source,
+  reason,
+  label,
+}) {
+  const fallback = source === "default" && assessmentStatus !== "completed";
+  if (fallback) {
+    return `Severity has not been established (${assessmentStatus || "unassessed"}). Medium is only a compatibility default. ${reason || ""}`.trim();
+  }
+  return `${reason || label || severity || ""}${assessmentStatus === "pending" ? " — reassessment pending" : ""}`;
+}
+
 export default function ErrorSeverityBadge({
   severity,
   assessmentStatus,
@@ -24,9 +40,13 @@ export default function ErrorSeverityBadge({
       ? "Pending"
       : "Unassessed"
     : cfg.label;
-  const explanation = fallback
-    ? `Severity has not been established (${assessmentStatus || "unassessed"}). Medium is only a compatibility default. ${reason || ""}`
-    : `${reason || cfg.label}${assessmentStatus === "pending" ? " — reassessment pending" : ""}`;
+  const explanation = severityExplanation({
+    severity,
+    assessmentStatus,
+    source,
+    reason,
+    label: cfg.label,
+  });
 
   return (
     <Tooltip title={explanation}>

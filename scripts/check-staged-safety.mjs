@@ -19,6 +19,11 @@ const files =
 
 const CODE_FILE_RE = /\.(cjs|cts|js|jsx|mjs|mts|py|ts|tsx)$/i;
 const ENV_EXAMPLE_RE = /(^|\/)\.env(\..*)?\.example$/;
+// Files whose fixtures are focused-test mutants on purpose: they test that the
+// e2e harness rejects `.only`. Keep this list short and reviewed.
+const FOCUSED_TEST_FIXTURES = new Set([
+  "e2e/scripts/host-update-fallibility.test.mjs",
+]);
 const blockedPathRules = [
   {
     name: "macOS metadata",
@@ -53,7 +58,8 @@ const textRules = [
   {
     name: "focused test",
     re: /(?:^|[^\w.])(?:describe|it|test|suite|context)\.only\s*\(|(?:^|[^\w])f(?:describe|it|test)\s*\(|pytest\.mark\.(?:only|focus)\b/,
-    appliesTo: (file) => CODE_FILE_RE.test(file),
+    appliesTo: (file) =>
+      CODE_FILE_RE.test(file) && !FOCUSED_TEST_FIXTURES.has(file),
     fix: "Remove focused test markers so CI runs the full suite.",
   },
   {

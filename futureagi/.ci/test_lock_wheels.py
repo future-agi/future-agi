@@ -428,7 +428,7 @@ class ImageWiringTest(unittest.TestCase):
         self.assertNotIn("\n    permissions:", fetch)  # the workflow's read only
         place = shard.index("name: e2e-lock-wheels\n")
         self.assertIn("path: futureagi/docker/lock-wheels\n", shard[place:])
-        self.assertLess(place, shard.index("name: Build backend image from PR code"))
+        self.assertLess(place, shard.index("name: Build the stack images from PR code"))
 
     def test_the_cache_writer_places_the_same_wheel_before_building(self):
         steps = self.cache.split("\n    steps:\n", 1)[1]

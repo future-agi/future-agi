@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1250,
+  endpointCount: 1257,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -860,6 +860,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/agent-fix-engine/{id}/check-runs/{run_id}/": ["get"],
       "/simulate/api/agent-fix-engine/{id}/report/": ["post"],
       "/simulate/api/agent-fix-engine/{id}/source/": ["get"],
+      "/simulate/api/agent-fix-engine/{id}/submitted/": ["get"],
       "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": ["post"],
       "/simulate/api/agent-fix-issues/": ["get", "post"],
       "/simulate/api/agent-fix-issues/plan/": ["get"],
@@ -867,6 +868,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/agent-fix-issues/{id}/run/": ["post"],
       "/simulate/api/agent-fix-issues/{id}/stop/": ["post"],
       "/simulate/api/agent-fix-runs/": ["get", "post"],
+      "/simulate/api/agent-fix-runs/coding-agent-attempts/": ["post"],
+      "/simulate/api/agent-fix-runs/coding-agent-brief/": ["get"],
       "/simulate/api/agent-fix-runs/launch-options/": ["get"],
       "/simulate/api/agent-fix-runs/{id}/": ["get"],
       "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/":
@@ -878,6 +881,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/agent-fix-runs/{id}/retry/": ["post"],
       "/simulate/api/agent-fix-runs/{id}/stop/": ["post"],
+      "/simulate/api/agent-fix-runs/{id}/verdict/": ["get"],
       "/simulate/api/agent-prompt-optimiser/": ["get", "post"],
       "/simulate/api/agent-prompt-optimiser/{id}/": [
         "delete",
@@ -1007,8 +1011,11 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/":
         ["get"],
+      "/simulate/api/harness-environments/{id}/versions/lock-preview/": ["get"],
+      "/simulate/api/harness-environments/{id}/versions/lock/": ["post"],
       "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
         ["get"],
+      "/simulate/api/harness-environments/{id}/versions/unlock/": ["post"],
       "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
         ["post"],
       "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":
@@ -2407,6 +2414,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/agent-fix-engine/{id}/check-runs/{run_id}/": ["get"],
   "/simulate/api/agent-fix-engine/{id}/report/": ["post"],
   "/simulate/api/agent-fix-engine/{id}/source/": ["get"],
+  "/simulate/api/agent-fix-engine/{id}/submitted/": ["get"],
   "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": ["post"],
   "/simulate/api/agent-fix-issues/": ["get", "post"],
   "/simulate/api/agent-fix-issues/plan/": ["get"],
@@ -2414,6 +2422,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/agent-fix-issues/{id}/run/": ["post"],
   "/simulate/api/agent-fix-issues/{id}/stop/": ["post"],
   "/simulate/api/agent-fix-runs/": ["get", "post"],
+  "/simulate/api/agent-fix-runs/coding-agent-attempts/": ["post"],
+  "/simulate/api/agent-fix-runs/coding-agent-brief/": ["get"],
   "/simulate/api/agent-fix-runs/launch-options/": ["get"],
   "/simulate/api/agent-fix-runs/{id}/": ["get"],
   "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/": [
@@ -2425,6 +2435,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/agent-fix-runs/{id}/retry/": ["post"],
   "/simulate/api/agent-fix-runs/{id}/stop/": ["post"],
+  "/simulate/api/agent-fix-runs/{id}/verdict/": ["get"],
   "/simulate/api/agent-prompt-optimiser/": ["get", "post"],
   "/simulate/api/agent-prompt-optimiser/{id}/": [
     "delete",
@@ -2539,8 +2550,11 @@ export const API_SURFACE_PATHS = Object.freeze({
     ["post"],
   "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/":
     ["get"],
+  "/simulate/api/harness-environments/{id}/versions/lock-preview/": ["get"],
+  "/simulate/api/harness-environments/{id}/versions/lock/": ["post"],
   "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
     ["get"],
+  "/simulate/api/harness-environments/{id}/versions/unlock/": ["post"],
   "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
     ["post"],
   "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":

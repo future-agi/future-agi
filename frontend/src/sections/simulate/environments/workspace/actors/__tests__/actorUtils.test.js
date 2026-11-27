@@ -146,6 +146,41 @@ describe("changesOf", () => {
     });
   });
 
+  it("makes a chance from a percent, and reads a stored one back as a percent", () => {
+    expect(
+      changesOf(
+        NEW("world"),
+        { mode: "probability", triggerChance: "25" },
+        TRIGGER_FIELDS,
+      ).trigger,
+    ).toEqual({ kind: "probability", p: 0.25 });
+    const chance = typedActor({ trigger: { kind: "probability", p: 0.07 } });
+    expect(initialFields(chance).triggerChance).toBe(7);
+    expect(changesOf(chance, { triggerChance: "50" }, TRIGGER_FIELDS)).toEqual({
+      trigger: { kind: "probability", p: 0.5 },
+    });
+  });
+
+  it("keeps a later call of an action when the action is changed, and leaves an emptied call out", () => {
+    const second = typedActor({
+      trigger: { kind: "on_tool", tool: "crm.approve", on_call: 2 },
+    });
+    expect(initialFields(second).triggerOnCall).toBe(2);
+    expect(
+      changesOf(second, { triggerTool: "crm.reject" }, TRIGGER_FIELDS),
+    ).toEqual({ trigger: { kind: "on_tool", tool: "crm.reject", on_call: 2 } });
+    expect(changesOf(second, { triggerOnCall: "" }, TRIGGER_FIELDS)).toEqual({
+      trigger: { kind: "on_tool", tool: "crm.approve" },
+    });
+    expect(
+      changesOf(
+        NEW("world"),
+        { mode: "on_tool", triggerTool: "crm.approve", triggerOnCall: "3" },
+        TRIGGER_FIELDS,
+      ).trigger,
+    ).toEqual({ kind: "on_tool", tool: "crm.approve", on_call: 3 });
+  });
+
   it("keeps a trigger the form cannot make, as the cast marks it, until another way is picked", () => {
     const chance = typedActor({
       id: "lead",
