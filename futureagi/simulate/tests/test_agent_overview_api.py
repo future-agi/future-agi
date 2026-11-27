@@ -28,6 +28,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.models.agent_definition import ProviderCredentials
+from simulate.selectors.agent_environments import OWNER, environment_jobs, owned_by
 from simulate.services.agent_setup import store_agent
 from simulate.services.hosted_harness import (
     create_hosted_job,
@@ -1254,6 +1255,98 @@ def test_an_agent_with_environments_cannot_be_deleted_one_at_a_time(
     )
     free.refresh_from_db()
     assert free.deleted is True
+
+
+@pytest.mark.django_db
+def test_an_agent_its_tab_shows_no_environment_for_is_still_kept_while_one_tests_it(
+    auth_client, organization, workspace, user
+):
+    # Deleting asks whether anything tests the agent, not what its tab lists: an adaptation
+    # the list hides, or a build in another workspace, still holds it.
+    adapted = _agent(organization, workspace, "Adapted only")
+    adaptation = _environment(adapted, 1)
+    HostedHarnessJob.all_objects.filter(id=adaptation.id).update(
+        payload={**adaptation.payload, "metadata": {"adaptation": {"mode": "run"}}}
+    )
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    elsewhere = _agent(organization, workspace, "Built elsewhere")
+    HostedHarnessJob.all_objects.filter(id=_environment(elsewhere, 2).id).update(
+        workspace=sibling
+    )
+
+    rows = _rows(auth_client)
+    for agent in (adapted, elsewhere):
+        assert _list(auth_client, agent) == []
+        assert rows[agent.agent_name]["environment_count"] == 0
+        refused = auth_client.delete(f"{AGENTS}{agent.id}/delete/")
+        assert refused.status_code == status.HTTP_409_CONFLICT, refused.content
+        assert refused.json()["code"] == "agent_in_use"
+        operations = auth_client.delete(
+            f"/simulate/api/agent-definition-operations/{agent.id}/"
+        )
+        assert operations.status_code == status.HTTP_409_CONFLICT, operations.content
+        agent.refresh_from_db()
+        assert agent.deleted is False
+
+
+@pytest.mark.django_db
+def test_the_owner_rule_reads_the_same_as_a_count_and_as_a_filter(
+    organization, workspace
+):
+    agent = _agent(organization, workspace, "Owned")
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    unlinked = _environment(agent, 1)
+    HostedHarnessJob.all_objects.filter(id=unlinked.id).update(
+        run_test=None, agent_version=version
+    )
+    linked = _environment(agent, 2)
+    gone = _environment(agent, 3)
+    RunTest.all_objects.filter(id=gone.run_test_id).update(deleted=True)
+    orphan = _environment(agent, 4)
+    HostedHarnessJob.all_objects.filter(id=orphan.id).update(
+        run_test=None, agent_version=None
+    )
+    _environment(_agent(organization, workspace, "Someone else"), 5)
+
+    as_count = {
+        job.id
+        for job in environment_jobs().annotate(_owner=OWNER).filter(_owner=agent.id)
+    }
+    as_filter = {job.id for job in environment_jobs().filter(owned_by(agent.id))}
+
+    assert as_count == as_filter == {unlinked.id, linked.id}
+
+
+@pytest.mark.django_db
+def test_the_count_and_the_list_use_the_same_scope(
+    auth_client, organization, workspace, user
+):
+    agent = _agent(organization, workspace, "Scoped")
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    here = _environment(agent, 1)
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    for minutes, linked in ((2, True), (3, False)):
+        job = _environment(agent, minutes)
+        fields = {"workspace": sibling}
+        if not linked:
+            fields.update(run_test=None, agent_version=version)
+        HostedHarnessJob.all_objects.filter(id=job.id).update(**fields)
+
+    listed = [row["id"] for row in _list(auth_client, agent)]
+    row = _rows(auth_client)["Scoped"]
+
+    assert listed == [str(here.id)]
+    assert _detail(auth_client, agent)["environment_count"] == len(listed)
+    assert row["environment_count"] == len(listed)
+    assert [entry["id"] for entry in row["environments"]] == listed
 
 
 @pytest.mark.django_db
