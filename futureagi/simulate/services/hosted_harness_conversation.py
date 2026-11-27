@@ -2755,6 +2755,7 @@ def _bind_added_scenarios(
         ALKSimulateIngestionError,
         append_alk_sim_scenarios,
     )
+    from simulate.services.harness_scenarios import provision_persona
 
     added = (
         sorted(
@@ -2774,7 +2775,7 @@ def _bind_added_scenarios(
         shared, created = append_alk_sim_scenarios(
             environment.run_test,
             [
-                personas[one.scenario_key] if personas else _provision_persona(one)
+                personas[one.scenario_key] if personas else provision_persona(one)
                 for one in added
             ],
         )
@@ -2790,18 +2791,6 @@ def _bind_added_scenarios(
     HostedHarnessScenario._base_manager.bulk_update(
         added, ["scenario", "dataset_row", "updated_at"]
     )
-
-
-def _provision_persona(registration: HostedHarnessScenario) -> dict[str, Any]:
-    """The persona record ALK registers for a scenario (fi.alk.harness.platform.persona_of)."""
-    persona = registration.persona if isinstance(registration.persona, dict) else {}
-    return {
-        "name": str(persona.get("name") or registration.name or "caller")[:255],
-        "role": str(persona.get("role") or persona.get("occupation") or "")[:255],
-        "situation": registration.instruction,
-        "outcome": registration.tests,
-        "persona": persona,
-    }
 
 
 def _workspace_object_key(conversation: HostedHarnessConversation, digest: str) -> str:

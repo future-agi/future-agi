@@ -214,6 +214,7 @@ def test_each_connector_parks_and_recovers_approved_inputs(
     }
     manifest = {
         "schema_version": "futureagi.environment-bundle.v2",
+        "runtime": {"kind": "process"},
         "metadata": {"reviewed_source": pin},
         "digest": "sha256:" + "d" * 64,
         "files": [
@@ -354,6 +355,7 @@ def test_each_connector_parks_and_recovers_approved_inputs(
         sandbox = gateway.client.sandbox
         command = sandbox.process.session_request.command
         assert "fi.alk.harness.hosted_entrypoint" not in command
+        assert "--reviewed-scenarios-only" not in command
         assert builds.controller_args(job) in command
         assert ("--await-harness" in command) == settings.ALK_HOSTED_BUILDER_SESSION
         assert builds.PRIVATE_PERMISSIONS in " ".join(sandbox.process.exec_calls)
@@ -393,9 +395,38 @@ def test_each_connector_parks_and_recovers_approved_inputs(
                     == HostedHarnessJob.State.FAILED
                 )
         else:
+            from django.db import transaction
+
+            from simulate.services import hosted_harness
+
+            def fail_registration(*_):
+                raise HostedHarnessError(
+                    "scenario_provision_failed", "Could not register the suite."
+                )
+
+            with transaction.atomic(), monkeypatch.context() as patch:
+                patch.setattr(
+                    hosted_harness, "provision_job_scenarios", fail_registration
+                )
+                failed = builds.complete(attempt, _archive(files))
+                assert failed.state == HostedHarnessJob.State.FAILED
+                assert failed.failure["code"] == "scenario_provision_failed"
+                assert not failed.run_test_id
+                assert not failed.scenario_registrations.exists()
+                assert not failed.payload["metadata"].get("authoring_object_key")
+                transaction.set_rollback(True)
+
             completed = builds.complete(attempt, _archive(files))
             assert completed.state == HostedHarnessJob.State.COMPLETED
-            assert completed.scenario_registrations.count() == 1
+            row = completed.scenario_registrations.get()
+            assert completed.run_test_id
+            assert row.scenario_key == scenario["scenario_key"]
+            assert row.scenario_id and row.dataset_row_id
+            assert row.scenario.dataset_id == row.dataset_row.dataset_id
+            assert (
+                builds.complete(attempt, _archive(files)).run_test_id
+                == completed.run_test_id
+            )
             assert completed.payload["metadata"]["authoring_object_key"]
 
 

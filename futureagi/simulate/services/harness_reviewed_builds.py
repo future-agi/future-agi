@@ -547,13 +547,56 @@ def check_archive(job, body):
     return pin
 
 
-@transaction.atomic
-def complete(attempt, body):
+def _publish(job, body):
+    from simulate.services.agent_contracts import store_build_contract
+    from simulate.services.harness_scenarios import pair_scenarios, provision_persona
+    from simulate.services.hosted_harness import (
+        authored_contract_data,
+        provision_job_scenarios,
+    )
     from simulate.services.hosted_harness_gateway import (
         authoring_stage_outputs_from_archive,
         freeze_authoring_archive,
     )
 
+    files = archives.read_archive(body)
+    manifest = json.loads(files["environment-bundle/manifest.json"])
+    runtime = manifest.get("runtime")
+    if not isinstance(runtime, dict) or runtime.get("kind") not in (
+        "process",
+        "external",
+        "compose",
+    ):
+        raise HostedHarnessError(
+            "source_runtime_missing",
+            "The scenarios were generated, but the agent could not be packaged for simulation.",
+            status_code=422,
+        )
+    freeze_authoring_archive(job, body, extending=False)
+    job.refresh_from_db()
+    job.stage_outputs = authoring_stage_outputs_from_archive(
+        body, scenario_limit=job.scenario_count
+    )
+    job.save(update_fields=["stage_outputs"])
+    pairs = pair_scenarios(job, json.loads(files["scenarios.json"]), prune=True)
+    contract = authored_contract_data(job)
+    provision_job_scenarios(
+        job,
+        {
+            "name": job.name or str(job.id),
+            "chosen_evals": contract.get("chosen_evals") or [],
+            "personas": [
+                {"scenario_key": row.scenario_key, **provision_persona(row)}
+                for row, _ in pairs
+            ],
+        },
+    )
+    job.refresh_from_db(fields=["run_test", "agent_version"])
+    store_build_contract(job, archive=body)
+
+
+@transaction.atomic
+def complete(attempt, body):
     job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
         pk=attempt.job_id
     )
@@ -561,30 +604,20 @@ def complete(attempt, body):
         return job
     try:
         check_archive(job, body)
+        with transaction.atomic():
+            _publish(job, body)
     except HostedHarnessError as exc:
         if exc.retryable:
             raise
+        job.refresh_from_db()
         job.failure = {"code": exc.code, "message": exc.message}
         job.state = HostedHarnessJob.State.FAILED
     else:
-        freeze_authoring_archive(job, body, extending=False)
-        job.refresh_from_db()
-        files = archives.read_archive(body)
-        scenarios = json.loads(files["scenarios.json"])
-        from simulate.services.agent_contracts import store_build_contract
-        from simulate.services.harness_scenarios import index_scenarios
-
-        index_scenarios(job, scenarios, prune=True)
-        store_build_contract(job, archive=body)
-        job.stage_outputs = authoring_stage_outputs_from_archive(
-            body, scenario_limit=job.scenario_count
-        )
         job.state = HostedHarnessJob.State.COMPLETED
     job.terminal_at = job.content_updated_at = timezone.now()
     job.current_stage = job.state
     job.save(
         update_fields=[
-            "stage_outputs",
             "failure",
             "state",
             "current_stage",

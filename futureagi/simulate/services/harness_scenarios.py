@@ -748,6 +748,18 @@ def _rows_held(
     return held_rows
 
 
+def provision_persona(registration: HostedHarnessScenario) -> dict[str, Any]:
+    """The persona record ALK registers for a scenario (fi.alk.harness.platform.persona_of)."""
+    persona = registration.persona if isinstance(registration.persona, dict) else {}
+    return {
+        "name": str(persona.get("name") or registration.name or "caller")[:255],
+        "role": str(persona.get("role") or persona.get("occupation") or "")[:255],
+        "situation": registration.instruction,
+        "outcome": registration.tests,
+        "persona": persona,
+    }
+
+
 def index_scenarios(
     job: HostedHarnessJob,
     docs: list[dict[str, Any]],

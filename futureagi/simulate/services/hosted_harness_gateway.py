@@ -3360,7 +3360,7 @@ class HostedHarnessGateway:
                 else (
                     "python -m fi.alk.harness.bundle_author_v2 "
                     "--job /work/job.json --source /work/source "
-                    f"--authoring /work/authoring --output /work/bundle{' --reviewed-scenarios-only' if reviewed else ''} && "
+                    "--authoring /work/authoring --output /work/bundle && "
                     "rm -rf /work/authoring/environment-bundle && "
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )

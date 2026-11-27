@@ -2988,9 +2988,14 @@ def _derive_agent_name_from_job(job: HostedHarnessJob) -> str:
 def provision_scenarios(
     attempt: HostedHarnessAttempt, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    job = attempt.job
     # Before any transaction: the failure it records must survive the raise.
     _check_subfolder_echo(attempt, payload)
+    return provision_job_scenarios(attempt.job, payload)
+
+
+def provision_job_scenarios(
+    job: HostedHarnessJob, payload: dict[str, Any]
+) -> dict[str, Any]:
     # Enforce exactly scenario_count unique personas.
     persona_keys = [p["scenario_key"] for p in payload["personas"]]
     if len(persona_keys) != len(set(persona_keys)):
@@ -3316,10 +3321,10 @@ def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     supplied = str(payload.get("agent_prompt") or "").strip()
     if supplied:
         return supplied
-    return str(_authored_contract_data(job).get("system_prompt_excerpt") or "").strip()
+    return str(authored_contract_data(job).get("system_prompt_excerpt") or "").strip()
 
 
-def _authored_contract_data(job: HostedHarnessJob) -> dict[str, Any]:
+def authored_contract_data(job: HostedHarnessJob) -> dict[str, Any]:
     """The authored contract body, or empty before the contract stage has landed."""
     for output in job.stage_outputs or []:
         if not isinstance(output, dict) or output.get("kind") != "contract":
@@ -3408,7 +3413,7 @@ def _copy_target_facts(
     if connector in PROVIDER_TARGET_CONNECTORS and not agent_definition.provider:
         agent_definition.provider = connector_provider(connector)
         changed.append("provider")
-    authored = _authored_contract_data(job)
+    authored = authored_contract_data(job)
     named = str(authored.get("agent") or "").strip()
     if named and agent_definition.agent_name == "alk-sdk-agent":
         agent_definition.agent_name = named[:255]
@@ -3889,7 +3894,7 @@ def _settle_job(
         and not metadata.get("adaptation")
         and not metadata.get("design")
         and (
-            (not job.run_test_id and not _scenario_only_source_build(job))
+            not job.run_test_id
             or not metadata.get("authoring_object_key")
             or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
             != job.scenario_count
