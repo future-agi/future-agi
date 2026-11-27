@@ -37,6 +37,9 @@ x-backend-env: &backend-env
   EE_LICENSE_KEY: ${EE_LICENSE_KEY:-}
   # Billing usage events: only Future AGI Cloud drains the usage:events stream.
   USAGE_EVENTS_ENABLED: ${USAGE_EVENTS_ENABLED:-false}
+  # Blank restricts no organization, so "-" and not ":-". The date is the
+  # settings.py default.
+  RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: ${RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF-2026-10-28T00:00:00Z}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
   # Only the dedicated bootstrap jobs install schema. In particular Django's

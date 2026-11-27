@@ -9,8 +9,9 @@ import { runResultsKey } from "./runEvals";
  *
  * `POST …/debug-analysis/` queues one Omega job per call of a completed run.
  * The run's evals decide which goals broke on which calls; Omega explains how,
- * and grouping clusters its explanations into the ways each goal broke. Every
- * count arrives computed, so a card's number always matches its View link.
+ * and grouping clusters its explanations into the ways each goal broke. Goal
+ * counts arrive computed, so a card's number always matches its View link;
+ * one-off rows are grouped and counted client-side.
  */
 
 export const DEBUG_ANALYSIS_WORKING_STATES = ["pending", "running"];
@@ -49,7 +50,6 @@ export function mapDebugAnalysis(raw) {
       measuredCalls: summary.measured_call_count,
       brokenGoals: summary.broken_goal_count,
       brokenCalls: summary.broken_call_count,
-      oneOffs: summary.one_off_count,
     },
     goals: (raw?.goals ?? []).map((goal) => ({
       goal: goal.goal,
