@@ -43,7 +43,6 @@ const analysis = (oneOffs) => ({
     measuredCalls: 20,
     brokenGoals: 0,
     brokenCalls: 0,
-    oneOffs: oneOffs.length,
   },
   goals: [],
   oneOffs,
@@ -104,7 +103,7 @@ describe("DiagnosisPane one-offs", () => {
       "c8",
     ]);
 
-    // The rude tone row counts its one call, not its two findings.
+    // The rude tone row counts its one call, not its three findings.
     expect(within(rowOf("Rude tone")).getByText("1")).toBeInTheDocument();
   });
 
@@ -130,14 +129,47 @@ describe("DiagnosisPane one-offs", () => {
     expect(screen.getByText(/plus 2 one-off issues/)).toBeInTheDocument();
   });
 
-  it("shows a name equal to its title in full, with nothing to expand", () => {
+  it("shows a name equal to its title in full, as plain text with nothing to expand", () => {
     renderPane([way("o-1", "omits the fare", ["c1", "c2"], "Omits The Fare")]);
-    expect(screen.getByText("Omits the fare")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Omits the fare" }),
-    ).toBeDisabled();
+    const name = screen.getByText("Omits the fare");
+    expect(name).toBeInTheDocument();
+    // Cut off with an ellipsis it would carry noWrap; plain text wraps.
+    expect(name).not.toHaveClass("MuiTypography-noWrap");
+    expect(screen.queryByRole("button", { name: "Omits the fare" })).toBeNull();
     expect(screen.getByText("2")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
     expect(screen.queryByText("Omits The Fare")).toBeNull();
+  });
+
+  it("does not expand when the title is the name with a subject and a full stop", () => {
+    renderPane([
+      way(
+        "o-2",
+        "echoes full card number",
+        ["c1"],
+        "Agent echoes full card number.",
+      ),
+    ]);
+    expect(screen.getByText("Echoes full card number")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Echoes full card number" }),
+    ).toBeNull();
+  });
+
+  it("lists every way of a mixed group, a plain one under the name, each with its View", async () => {
+    const user = userEvent.setup();
+    const onViewCalls = renderPane([
+      way("m-1", "omits the fare", ["c1", "c2"], "Omits the fare"),
+      way("m-2", "omits the fare", ["c3"], "Skips the fare on a transfer"),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Omits the fare" }));
+    const own = screen.getByText("Skips the fare on a transfer").parentElement;
+    // The way without its own explanation reads as the name, below the row's.
+    const plain = screen.getAllByText("Omits the fare")[1].parentElement;
+    await user.click(within(own).getByRole("button", { name: "View" }));
+    expect(onViewCalls).toHaveBeenLastCalledWith(["c3"]);
+    await user.click(within(plain).getByRole("button", { name: "View" }));
+    expect(onViewCalls).toHaveBeenLastCalledWith(["c1", "c2"]);
   });
 });

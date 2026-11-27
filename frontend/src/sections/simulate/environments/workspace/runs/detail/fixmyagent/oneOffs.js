@@ -22,3 +22,18 @@ export function groupOneOffs(oneOffs) {
     }))
     .sort((a, b) => b.callIds.length - a.callIds.length);
 }
+
+// A cluster title as the backend names it (_phrase in simulation_diagnosis.py):
+// no leading "the agent" / "voice assistant" subject, no trailing full stop.
+const SUBJECT = /^(the )?(voice )?(assistant|agent)('s)?\s+/i;
+const phraseOf = (text) =>
+  String(text ?? "")
+    .trim()
+    .replace(SUBJECT, "")
+    .replace(/\.+$/, "")
+    .split(/\s+/)
+    .join(" ")
+    .toLowerCase();
+
+// Whether a way's title just says its group's name again.
+export const sameName = (title, name) => phraseOf(title) === phraseOf(name);

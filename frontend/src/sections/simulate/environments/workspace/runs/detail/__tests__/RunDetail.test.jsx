@@ -391,7 +391,6 @@ const ANALYSIS = {
     measuredCalls: 12,
     brokenGoals: 1,
     brokenCalls: 3,
-    oneOffs: 1,
   },
   goals: [
     {
@@ -921,16 +920,24 @@ describe("RunDetail", () => {
       "reports diagnosis availability without requesting analysis: %s, import %s",
       async (status, evidence) => {
         const request = vi.fn();
-        useDebugAnalysis.mockReturnValue(debugHook({ ...ANALYSIS, status }, { request }));
+        useDebugAnalysis.mockReturnValue(
+          debugHook({ ...ANALYSIS, status }, { request }),
+        );
         fixLaunchOptions.mockReturnValue({
           options: { scenarios: [scenario("case", evidence, true)] },
         });
         renderDetail();
-        await userEvent.setup().click(screen.getByRole("button", { name: "Run Epoch" }));
+        await userEvent
+          .setup()
+          .click(screen.getByRole("button", { name: "Run Epoch" }));
         expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
         expect(useDebugAnalysis).toHaveBeenCalledWith("ex1");
-        expect(launchFix.props.diagnosisUnavailable).toBe(status !== "completed");
-        expect(launchFix.props.initialTargets).toEqual(evidence ? ["case"] : undefined);
+        expect(launchFix.props.diagnosisUnavailable).toBe(
+          status !== "completed",
+        );
+        expect(launchFix.props.initialTargets).toEqual(
+          evidence ? ["case"] : undefined,
+        );
         expect(request).not.toHaveBeenCalled();
       },
     );
@@ -938,12 +945,20 @@ describe("RunDetail", () => {
     it.each([
       { status: "running" },
       { fixRun: { id: "check", label: "check" } },
-    ])("does not offer Epoch for live or check runs with cached options", (identity) => {
-      useRunDetail.mockReturnValue({ identity: { ...IDENTITY, ...identity }, stats: STATS });
-      fixLaunchOptions.mockReturnValue({ options: { scenarios: [scenario("ordinary", null, true)] } });
-      renderDetail();
-      expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
-    });
+    ])(
+      "does not offer Epoch for live or check runs with cached options",
+      (identity) => {
+        useRunDetail.mockReturnValue({
+          identity: { ...IDENTITY, ...identity },
+          stats: STATS,
+        });
+        fixLaunchOptions.mockReturnValue({
+          options: { scenarios: [scenario("ordinary", null, true)] },
+        });
+        renderDetail();
+        expect(screen.queryByRole("button", { name: "Run Epoch" })).toBeNull();
+      },
+    );
 
     it("is not offered when all cases passed", () => {
       finished();

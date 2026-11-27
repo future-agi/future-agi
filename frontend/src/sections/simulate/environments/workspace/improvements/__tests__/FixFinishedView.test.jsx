@@ -1251,6 +1251,25 @@ describe("Ship", () => {
     ).toBeInTheDocument();
   });
 
+  it("says there are no file changes when the patch is empty", async () => {
+    const user = userEvent.setup();
+    const real = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url, ...rest) =>
+      /\/patch\//.test(url)
+        ? Promise.resolve({ data: "" })
+        : real(url, ...rest),
+    );
+    try {
+      renderPage("fix-ready-github");
+      const { dialog } = await confirmShip(user, "Open pull request");
+      expect(
+        await within(dialog).findByText("No file changes."),
+      ).toBeInTheDocument();
+    } finally {
+      axios.get.mockImplementation(real);
+    }
+  });
+
   it("offers the patch when the repository cannot take a pull request", async () => {
     hooks.ship = {
       isPending: false,

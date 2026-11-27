@@ -33,8 +33,8 @@ function Row({ label, icon, value }) {
           minWidth: 0,
           px: 1,
           py: 0.25,
-          borderRadius: "6px",
-          bgcolor: "action.hover",
+          borderRadius: "4px",
+          bgcolor: "background.muted",
         }}
       >
         <Iconify
@@ -105,7 +105,7 @@ function ChangeSummary({ fix, winner }) {
         const removed = f.lines.filter((l) => l.type === "remove").length;
         return (
           <Stack
-            key={f.file}
+            key={`${i}-${f.file}`}
             direction="row"
             spacing={1}
             alignItems="center"
@@ -137,7 +137,7 @@ function ChangeSummary({ fix, winner }) {
               sx={{
                 typography: "s3",
                 fontWeight: 500,
-                color: "status.success.fg",
+                color: added ? "status.success.fg" : "text.tertiary",
                 width: 28,
                 textAlign: "right",
                 flexShrink: 0,

@@ -1,9 +1,16 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Typography, Button, ButtonBase } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  ButtonBase,
+  Collapse,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
-import { sentence } from "./oneOffs";
+import { sameName, sentence } from "./oneOffs";
 
 /**
  * One goal the run's evals say broke: how often, what the eval expected, and
@@ -198,9 +205,11 @@ GoalCard.propTypes = {
 export function OneOffGroup({ phrase, ways, callIds, onViewCalls }) {
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const details = ways.filter(
-    (way) => way.title && way.title.toLowerCase() !== phrase.toLowerCase(),
-  );
+  // A way with its own explanation is worth opening; one without reads as the
+  // name. A group opens only if some way has its own, then lists every way.
+  const hasOwnTitle = (way) => way.title && !sameName(way.title, phrase);
+  const expandable = ways.some(hasOwnTitle);
+  const details = expandable ? ways : [];
 
   return (
     <Box>
@@ -222,47 +231,57 @@ export function OneOffGroup({ phrase, ways, callIds, onViewCalls }) {
         >
           {callIds.length}
         </Typography>
-        <ButtonBase
-          disabled={!details.length}
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            justifyContent: "flex-start",
-            gap: 0.5,
-            borderRadius: "4px",
-            textAlign: "left",
-            "&:hover": { bgcolor: "action.hover" },
-            "&.Mui-focusVisible": {
-              outline: "2px solid",
-              outlineColor: "border.focus",
-            },
-          }}
-        >
-          <Typography
-            sx={{ typography: "s2", minWidth: 0, wordBreak: "break-word" }}
-            noWrap={details.length > 0}
-            title={phrase}
+        {expandable ? (
+          <ButtonBase
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              justifyContent: "flex-start",
+              gap: 0.5,
+              borderRadius: "4px",
+              textAlign: "left",
+              "&:hover": { bgcolor: "action.hover" },
+              "&.Mui-focusVisible": {
+                outline: "2px solid",
+                outlineColor: "border.focus",
+              },
+            }}
           >
-            {phrase}
-          </Typography>
-          {details.length > 0 && (
+            <Typography
+              sx={{ typography: "s2", minWidth: 0, wordBreak: "break-word" }}
+              noWrap
+              title={phrase}
+            >
+              {phrase}
+            </Typography>
             <Iconify
               icon="solar:alt-arrow-down-linear"
               width={14}
               sx={{
-                color: "text.disabled",
+                color: "text.tertiary",
                 flexShrink: 0,
                 transition: "transform 150ms",
                 transform: open ? "rotate(180deg)" : "none",
               }}
             />
-          )}
-        </ButtonBase>
+          </ButtonBase>
+        ) : (
+          <Typography
+            sx={{
+              typography: "s2",
+              flex: 1,
+              minWidth: 0,
+              wordBreak: "break-word",
+            }}
+          >
+            {phrase}
+          </Typography>
+        )}
         <ViewAction label="View" onClick={() => onViewCalls?.(callIds)} />
       </Stack>
-      {open && (
+      <Collapse in={open} unmountOnExit>
         <Box sx={{ pl: 5.75, pr: 2, pb: 1 }}>
           {(showAll ? details : details.slice(0, VISIBLE_DETAILS)).map(
             (way) => (
@@ -285,7 +304,7 @@ export function OneOffGroup({ phrase, ways, callIds, onViewCalls }) {
                     minWidth: 0,
                   }}
                 >
-                  {way.title}
+                  {hasOwnTitle(way) ? way.title : phrase}
                 </Typography>
                 {ways.length > 1 && (
                   <ViewAction
@@ -306,7 +325,7 @@ export function OneOffGroup({ phrase, ways, callIds, onViewCalls }) {
             </Button>
           )}
         </Box>
-      )}
+      </Collapse>
     </Box>
   );
 }

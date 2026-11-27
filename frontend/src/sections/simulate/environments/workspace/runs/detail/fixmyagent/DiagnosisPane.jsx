@@ -249,7 +249,6 @@ DiagnosisPane.propTypes = {
       measuredCalls: PropTypes.number,
       brokenGoals: PropTypes.number,
       brokenCalls: PropTypes.number,
-      oneOffs: PropTypes.number,
     }),
     goals: PropTypes.array,
     oneOffs: PropTypes.array,

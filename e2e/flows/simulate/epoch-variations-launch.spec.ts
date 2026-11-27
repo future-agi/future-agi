@@ -90,7 +90,7 @@ const DIAGNOSIS: Json = {
   status: 'completed',
   report: null,
   error_message: null,
-  summary: { measured_call_count: 12, broken_goal_count: 1, broken_call_count: 6, one_off_count: 2 },
+  summary: { measured_call_count: 12, broken_goal_count: 1, broken_call_count: 6 },
   goals: [
     {
       goal: 'escalated',
@@ -293,9 +293,12 @@ test('SIM-E2E-007: a run with fewer failing cases than an epoch needs starts one
   await test.step('ui: the diagnosis offers Run Epoch', async () => {
     await page.getByRole('button', { name: 'Debug failures' }).click();
     await expect(page.getByRole('button', { name: 'Run Epoch', exact: true })).toBeVisible({ timeout: UI_READY });
-    // The two same-name one-offs read as one row counting their 3 calls.
-    await expect(page.getByText('Omits the fare', { exact: true })).toHaveCount(1);
-    await expect(page.getByRole('button', { name: 'Omits the fare', exact: true })).toBeVisible({ timeout: UI_READY });
+    // The two same-name one-offs read as one plain row counting their 3 calls, with a View.
+    const fare = page.getByText('Omits the fare', { exact: true });
+    await expect(fare).toHaveCount(1);
+    const fareRow = fare.locator('..');
+    await expect(fareRow.getByText('3', { exact: true })).toBeVisible({ timeout: UI_READY });
+    await expect(fareRow.getByRole('button', { name: 'View', exact: true })).toBeVisible({ timeout: UI_READY });
   }, { timeout: UI_READY });
 
   const dialog = page.getByRole('dialog').filter({ hasText: `Run Epoch on ${AGENT_NAME}` });
