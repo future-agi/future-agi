@@ -39253,7 +39253,7 @@ export const SimulateApiAgentFixRunsSubmitAttemptBody = zod.object({
     .number()
     .optional()
     .describe(
-      "The attempt's limit in credits. Left out, the most its check runs can hold at once: a hold on the budget, not spend.",
+      "The attempt's limit in credits. Left out, the attempt's hold × 1.25, capped at 50,000 credits. Its hold is the most its check runs can hold at once.",
     ),
 });
 

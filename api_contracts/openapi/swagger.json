@@ -52184,7 +52184,7 @@
                     {
                         "name": "budget_credits",
                         "in": "formData",
-                        "description": "The attempt's limit in credits. Left out, the most its check runs can hold at once: a hold on the budget, not spend.",
+                        "description": "The attempt's limit in credits. Left out, the attempt's hold × 1.25, capped at 50,000 credits. Its hold is the most its check runs can hold at once.",
                         "required": false,
                         "type": "integer",
                         "maximum": 50000,

@@ -49888,7 +49888,7 @@ export type SimulateApiAgentFixRunsSubmitAttemptBody = {
   /** A GitHub agent's change is refused unless this is the brief's base_commit. */
   base_commit?: string;
   locked_paths?: string[];
-  /** The attempt's limit in credits. Left out, the most its check runs can hold at once: a hold on the budget, not spend. */
+  /** The attempt's limit in credits. Left out, the attempt's hold × 1.25, capped at 50,000 credits. Its hold is the most its check runs can hold at once. */
   budget_credits?: number;
 };
 
