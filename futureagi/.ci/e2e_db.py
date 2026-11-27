@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""The E2E stack's saved database dump: its name, its record, its checks.
+"""The E2E stacks' saved database dumps: their names, records and checks.
 
-Every E2E leg boots a stack and migrates its Postgres from zero. One leg of a
-dev push migrates a scratch database with the stack's own image and saves a
-dump of it (.ci/e2e-db-control.sh); this file names that dump by what the
-migrate reads and checks a saved record before anything trusts it. The dump
-itself is made, restored and compared by the backend's tool, db_dump.py.
+Every E2E leg boots a stack and migrates its Postgres from zero. One leg per
+stack of a dev push migrates a scratch database with that stack's own image
+and saves a dump of it (.ci/e2e-db-control.sh); this file names that dump by
+what the migrate reads and checks a saved record before anything trusts it.
+The dump itself is made, restored and compared by the backend's tool,
+db_dump.py.
+
+Each stack has its own dump, made by its own image under its own settings,
+so a difference between the stacks is never a failure.
 
 The dump is the database after `manage.py migrate` alone, post_migrate
 included: no cache table, no seed command. It is a public artifact.
@@ -33,17 +37,25 @@ BACKEND = "futureagi/"
 # The backend key's list says what a migrate imports or opens; these entries
 # of it are read by pytest only.
 PYTEST_ONLY = frozenset({"pytest.ini", "conftest.py", ".ci/migrated_db.py"})
-# The image the migrate runs in, and this file.
-IMAGE_FILES = frozenset({"Dockerfile.oss", ".ci/e2e_db.py"})
-# What names the stack's Postgres image and the settings the migrate runs
-# under. Whole files: any edit misses, which costs one slow run.
-STACK_FILES = frozenset(
-    {
+# The image the migrate runs in, this file, and the script that runs the
+# migrate.
+IMAGE_FILES = frozenset({"Dockerfile.oss", ".ci/e2e_db.py", ".ci/e2e-db-control.sh"})
+# Per stack: what names its Postgres image, builds its image on top of the
+# backend's and holds the settings its migrate runs under. Whole files and
+# folders: any edit misses, which costs one slow run.
+STACKS = {
+    "distributed": (
         "docker-compose.distributed.yml",
         "e2e/stack/docker-compose.e2e.yml",
         "e2e/stack/e2e.env",
-    }
-)
+    ),
+    "standalone": (
+        "docker-compose.yml",
+        "e2e/stack/docker-compose.standalone-e2e.yml",
+        "e2e/stack/standalone-e2e.env",
+        "deploy/standalone/",
+    ),
+}
 RECORD = ("dump.sql.gz", "preseed", "recipe")
 SKIP_DIRS = frozenset({"node_modules", "site-packages", "__pycache__"})
 # What a plain dump of one database, taken without owners and privileges,
@@ -61,9 +73,12 @@ def _say(text):
     sys.stdout.write(text + "\n")
 
 
-def key_input(path):
-    """Whether a path of the repository is read by the stack's migrate."""
-    if path in STACK_FILES:
+def key_input(path, stack):
+    """Whether a path of the repository is read by that stack's migrate."""
+    if any(
+        path.startswith(entry) if entry.endswith("/") else path == entry
+        for entry in STACKS[stack]
+    ):
         return True
     if not path.startswith(BACKEND):
         return False
@@ -76,9 +91,11 @@ def key_input(path):
     )
 
 
-def inputs_key(root):
-    """The name a saved E2E dump is published under: the committed migrate inputs."""
-    digest = hashlib.sha256(f"{VERSION}\0".encode())
+def inputs_key(root, stack):
+    """The name a stack's saved dump is published under: its committed migrate inputs."""
+    if stack not in STACKS:
+        raise db_dump.DumpError(f"no E2E stack is called {stack!r}")
+    digest = hashlib.sha256(f"{VERSION}\0{stack}\0".encode())
     listing = subprocess.run(
         ["git", "-C", str(root), "ls-tree", "-r", "-z", "--full-tree", "HEAD"],
         check=True,
@@ -87,9 +104,9 @@ def inputs_key(root):
     ).stdout
     for entry in listing.split(b"\0"):
         path = entry.partition(b"\t")[2].decode("utf-8", "surrogateescape")
-        if key_input(path):
+        if key_input(path, stack):
             digest.update(entry + b"\0")
-    return f"e2e-migrated-db-v{VERSION}-{digest.hexdigest()[:40]}"
+    return f"e2e-migrated-db-v{VERSION}-{stack}-{digest.hexdigest()[:40]}"
 
 
 def recipe(key, server_version_num):
@@ -190,6 +207,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     sub = commands.add_parser("key")
+    sub.add_argument("stack")
     sub.add_argument("--root", default=str(db_dump.ROOT))
     sub = commands.add_parser("recipe")
     sub.add_argument("key")
@@ -206,7 +224,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "key":
-            _say(inputs_key(args.root))
+            _say(inputs_key(args.root, args.stack))
         elif args.command == "recipe":
             _say(recipe(args.key, args.server_version_num))
         elif args.command == "verify":

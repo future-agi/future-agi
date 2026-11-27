@@ -17,7 +17,7 @@ import test_db_dump as samples
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CONTROL = ROOT / "futureagi/.ci/e2e-db-control.sh"
-KEY = "e2e-migrated-db-v1-" + "1" * 40
+KEY = "e2e-migrated-db-v1-distributed-" + "1" * 40
 
 # Stands in for `bin/e2e`: each database is one file that holds its dump.
 # `migrate` fills an empty database with the next prepared dump.
@@ -102,6 +102,7 @@ class KeyTest(Workspace):
             "futureagi/Dockerfile.oss": "image",
             "futureagi/ee/falcon_ai/builtin_skills/a.yaml": "skill",
             "futureagi/.ci/e2e_db.py": "tool",
+            "futureagi/.ci/e2e-db-control.sh": "control",
             "futureagi/.ci/db_dump.py": "dump tool",
             "futureagi/conftest.py": "pytest only",
             "futureagi/accounts/views.py": "view",
@@ -109,6 +110,9 @@ class KeyTest(Workspace):
             "e2e/stack/docker-compose.e2e.yml": "overlay",
             "e2e/stack/e2e.env": "env",
             "docker-compose.yml": "standalone",
+            "e2e/stack/docker-compose.standalone-e2e.yml": "standalone overlay",
+            "e2e/stack/standalone-e2e.env": "standalone env",
+            "deploy/standalone/bin/bootstrap.py": "bootstrap",
             "frontend/package.json": "{}",
         }.items():
             target = root / path
@@ -129,58 +133,98 @@ class KeyTest(Workspace):
         self.git(root, "add", "-A")
         self.git(root, "commit", "-q", "-m", "change", "--no-gpg-sign")
 
-    def key_after(self, root, path, text):
+    def keys_after(self, root, path, text):
         (root / path).write_text(text)
         self.commit(root)
-        return e2e_db.inputs_key(root)
+        return {stack: e2e_db.inputs_key(root, stack) for stack in e2e_db.STACKS}
 
-    def test_what_the_stacks_migrate_reads_changes_the_key(self):
-        root = self.repo()
-        key = e2e_db.inputs_key(root)
-        self.assertRegex(key, r"^e2e-migrated-db-v1-[0-9a-f]{40}$")
-        for path in (
-            "futureagi/accounts/migrations/0001_initial.py",
-            "futureagi/tfc/settings/settings.py",
-            "futureagi/uv.lock",
-            "futureagi/Dockerfile.oss",
-            # What a migration opens: the same list the backend's key has.
-            "futureagi/ee/falcon_ai/builtin_skills/a.yaml",
-            "futureagi/.ci/e2e_db.py",
-            "futureagi/.ci/db_dump.py",
-            # The files that name the stack's Postgres image and its settings.
+    SHARED = (
+        "futureagi/accounts/migrations/0001_initial.py",
+        "futureagi/tfc/settings/settings.py",
+        "futureagi/uv.lock",
+        "futureagi/Dockerfile.oss",
+        # What a migration opens: the same list the backend's key has.
+        "futureagi/ee/falcon_ai/builtin_skills/a.yaml",
+        "futureagi/.ci/e2e_db.py",
+        "futureagi/.ci/e2e-db-control.sh",
+        "futureagi/.ci/db_dump.py",
+    )
+    # The files that name a stack's Postgres image, build its image and hold
+    # its settings.
+    OWN = {
+        "distributed": (
             "docker-compose.distributed.yml",
             "e2e/stack/docker-compose.e2e.yml",
             "e2e/stack/e2e.env",
-        ):
+        ),
+        "standalone": (
+            "docker-compose.yml",
+            "e2e/stack/docker-compose.standalone-e2e.yml",
+            "e2e/stack/standalone-e2e.env",
+            "deploy/standalone/bin/bootstrap.py",
+        ),
+    }
+
+    def test_each_stack_has_its_own_name(self):
+        root = self.repo()
+        keys = {stack: e2e_db.inputs_key(root, stack) for stack in e2e_db.STACKS}
+        self.assertEqual(sorted(keys), ["distributed", "standalone"])
+        for stack, key in keys.items():
+            self.assertRegex(key, rf"^e2e-migrated-db-v1-{stack}-[0-9a-f]{{40}}$")
+        # Not one hash under two names: the stack is part of what is hashed.
+        self.assertNotEqual(keys["distributed"][-40:], keys["standalone"][-40:])
+        with self.assertRaisesRegex(e2e_db.db_dump.DumpError, "no E2E stack"):
+            e2e_db.inputs_key(root, "error-feed")
+        code, out = run_tool("key", "error-feed", "--root", str(root))
+        self.assertEqual(code, 1)
+        self.assertIn("::error title=E2E database dump::", out)
+
+    def test_what_every_stacks_migrate_reads_changes_every_key(self):
+        root = self.repo()
+        keys = {stack: e2e_db.inputs_key(root, stack) for stack in e2e_db.STACKS}
+        for path in self.SHARED:
             with self.subTest(path):
-                changed = self.key_after(root, path, f"changed {path}")
-                self.assertNotEqual(changed, key)
-                key = changed
+                changed = self.keys_after(root, path, f"changed {path}")
+                for stack in keys:
+                    self.assertNotEqual(changed[stack], keys[stack], stack)
+                keys = changed
+
+    def test_a_stacks_own_files_change_only_its_key(self):
+        root = self.repo()
+        keys = {stack: e2e_db.inputs_key(root, stack) for stack in e2e_db.STACKS}
+        for stack, paths in self.OWN.items():
+            (other,) = set(keys) - {stack}
+            for path in paths:
+                with self.subTest(path):
+                    changed = self.keys_after(root, path, f"changed {path}")
+                    self.assertNotEqual(changed[stack], keys[stack])
+                    self.assertEqual(changed[other], keys[other])
+                    keys = changed
 
     def test_what_it_does_not_read_keeps_the_key(self):
         root = self.repo()
-        key = e2e_db.inputs_key(root)
+        keys = {stack: e2e_db.inputs_key(root, stack) for stack in e2e_db.STACKS}
         for path in (
             "futureagi/accounts/views.py",
             # pytest's files are the backend key's business, not this one's.
             "futureagi/conftest.py",
-            "docker-compose.yml",
             "frontend/package.json",
         ):
             with self.subTest(path):
-                self.assertEqual(self.key_after(root, path, "changed"), key)
+                self.assertEqual(self.keys_after(root, path, "changed"), keys)
         (root / "futureagi/uv.lock").write_text("not committed")
-        self.assertEqual(e2e_db.inputs_key(root), key)
+        self.assertEqual(e2e_db.inputs_key(root, "distributed"), keys["distributed"])
 
     def test_the_part_shared_with_the_backend_key_comes_from_its_list(self):
         shared = e2e_db.db_dump.KEY_FILES - e2e_db.PYTEST_ONLY
         self.assertIn("ee/falcon_ai/builtin_skills_loader.py", shared)
         self.assertIn("uv.lock", shared)
         self.assertNotIn("conftest.py", shared)
-        for name in shared:
-            self.assertTrue(e2e_db.key_input("futureagi/" + name), name)
-        for folder in e2e_db.db_dump.KEY_DIRS:
-            self.assertTrue(e2e_db.key_input(f"futureagi/{folder}x"), folder)
+        for stack in e2e_db.STACKS:
+            for name in shared:
+                self.assertTrue(e2e_db.key_input("futureagi/" + name, stack), name)
+            for folder in e2e_db.db_dump.KEY_DIRS:
+                self.assertTrue(e2e_db.key_input(f"futureagi/{folder}x", stack), folder)
 
     def test_the_recipe_adds_the_server_that_made_the_dump(self):
         self.assertEqual(e2e_db.recipe(KEY, "160004"), KEY + "-pg160004")
@@ -469,17 +513,48 @@ class ControlTest(Workspace):
             result.stdout,
         )
 
-    def test_a_saved_dump_from_another_server_is_compared_then_replaced(self):
-        self.save(samples.sql(), recipe=KEY + "-pg150010")
-        (self.state / "migrate-2.sql").write_text(samples.sql(token="tokenC"))
-        result = self.control(FOUND="true")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(e2e_db.verify(self.out, KEY), KEY + "-pg160004")
-        # A run that does not save leaves it at the compare.
-        shutil.rmtree(self.out)
+    def test_a_saved_dump_from_another_postgres_is_never_compared(self):
+        # A new minor release of the image may print a dump differently. The
+        # saved dump here differs from what migrate gives, and must not count.
+        self.save(samples.sql(token="tokenOLD"), recipe=KEY + "-pg160003")
+        # A run that does not save: nothing to do, not even a migrate.
         result = self.control(FOUND="true", PRODUCE="false")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("another Postgres version", result.stdout)
+        self.assertNotIn("equals a fresh migrate", result.stdout)
+        self.assertEqual(self.migrates(), 0)
         self.assertEqual(self.saved_files(), [])
+        # A dev push saves a fresh one for this server, as if nothing was saved.
+        result = self.control(FOUND="true")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.migrates(), 2)
+        self.assertEqual(e2e_db.verify(self.out, KEY), KEY + "-pg160004")
+
+    def test_each_stack_runs_its_own_migrate_with_what_its_boot_sets(self):
+        runs = {
+            "distributed": "compose run --rm --no-deps -T -e PG_DB=e2e_scratch_fresh"
+            " --entrypoint python postgres-schema-bootstrap manage.py migrate --noinput",
+            # deploy/standalone/bin/bootstrap.py sets both before it migrates.
+            "standalone": "compose run --rm --no-deps -T -e PG_DB=e2e_scratch_fresh"
+            " -e NO_STARTUP_DB_MUTATIONS=false -e SERVICE_TYPE=bootstrap"
+            " -w /app/backend app python manage.py migrate --noinput",
+        }
+        for stack, run in runs.items():
+            with self.subTest(stack):
+                shutil.rmtree(self.state)
+                self.state.mkdir()
+                (self.state / "migrate-1.sql").write_text(samples.sql())
+                shutil.rmtree(self.out, ignore_errors=True)
+                result = self.control(E2E_STACK=stack)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = (self.state / "calls").read_text().splitlines()
+                self.assertIn(run, calls)
+        bootstrap = (ROOT / "deploy/standalone/bin/bootstrap.py").read_text()
+        self.assertIn('os.environ["NO_STARTUP_DB_MUTATIONS"] = "false"', bootstrap)
+        self.assertIn('os.environ["SERVICE_TYPE"] = "bootstrap"', bootstrap)
+        result = self.control(E2E_STACK="error-feed")
+        self.assertNotIn(result.returncode, (0, 3), result.stdout)
+        self.assertIn("No scratch migrate is defined", result.stdout)
 
     def test_a_run_that_neither_compares_nor_saves_does_nothing(self):
         result = self.control(PRODUCE="false")
@@ -505,12 +580,14 @@ class WorkflowTest(unittest.TestCase):
 
     def test_the_fetch_runs_on_dev_pushes_only_and_cannot_fail_the_plan(self):
         changes = self.job("changes")
-        step = self.step(changes, "Find the saved database dump for this commit")
+        step = self.step(
+            changes, "Find each stack's saved database dump for this commit"
+        )
         self.assertIn(f"if: {self.DEV_PUSH}", step)
         self.assertIn("continue-on-error: true\n", step)
         self.assertIn("timeout-minutes: 2\n", step)
         hand = self.step(
-            changes, "Hand the saved database dump to the leg that compares it"
+            changes, "Hand the saved database dumps to the legs that compare them"
         )
         self.assertIn("continue-on-error: true\n", hand)
         self.assertIn("if: steps.db.outputs.artifact != ''\n", hand)
@@ -522,14 +599,17 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(
             re.findall(r"python3 .*", step),
             [
-                'python3 -I "$tools/e2e_db.py" key --root "$GITHUB_WORKSPACE")',
-                'python3 -I "$tools/fetch_migrated_db.py" "$record"'
-                ' --workflow .github/workflows/e2e-ci.yml --name "$key"; then',
-                'python3 -I "$tools/e2e_db.py" verify "$record" "$key"; then',
+                'python3 -I "$tools/e2e_db.py" key "$stack" --root "$GITHUB_WORKSPACE")',
+                'python3 -I "$tools/fetch_migrated_db.py" "$records/$stack"'
+                ' --workflow .github/workflows/e2e-ci.yml --name "$key" &&',
+                'python3 -I "$tools/e2e_db.py" verify "$records/$stack" "$key"; then',
             ],
         )
+        # Every stack the run plans, each into its own folder.
+        self.assertIn("STACKS: ${{ steps.stacks.outputs.stacks }}\n", step)
+        self.assertIn("for stack in $(jq -r '.[]' <<< \"$STACKS\"); do\n", step)
 
-    def test_the_control_runs_on_one_distributed_leg_of_a_dev_push(self):
+    def test_the_control_runs_on_one_leg_per_stack_of_a_dev_push(self):
         e2e = self.job("e2e")
         suite = e2e.index("      - name: Run E2E suite\n")
         names = (
@@ -537,7 +617,10 @@ class WorkflowTest(unittest.TestCase):
             "Compare the saved database dump with a fresh migrate, and save one",
             "Save the database dump for later dev runs",
         )
-        role = f"{self.DEV_PUSH} && matrix.stack == 'distributed' && matrix.shard == 3"
+        role = f"{self.DEV_PUSH} && matrix.shard == 3"
+        # Read so that a run without the plan's answer gives nothing, not an
+        # expression error.
+        mine = "fromJSON(needs.changes.outputs.db || '{}')[matrix.stack]"
         for name in names:
             step = self.step(e2e, name)
             self.assertLess(suite, e2e.index(step), name)
@@ -547,18 +630,21 @@ class WorkflowTest(unittest.TestCase):
         control = self.step(e2e, names[1])
         self.assertIn("steps.boot.outcome == 'success'", control)
         self.assertIn("run: bash futureagi/.ci/e2e-db-control.sh\n", control)
-        self.assertIn("KEY: ${{ needs.changes.outputs.db_key }}\n", control)
+        self.assertIn(f"KEY: ${{{{ {mine}.key }}}}\n", control)
+        self.assertIn(f"FOUND: ${{{{ {mine}.found == true }}}}\n", control)
         self.assertIn(
-            "FOUND: ${{ needs.changes.outputs.db_artifact != '' }}\n", control
+            "RECORD: ${{ runner.temp }}/e2e-db-record/${{ matrix.stack }}\n", control
         )
         self.assertIn('PRODUCE: "true"\n', control)
+        self.assertIn(f"&& {mine}.found }}}}\n", self.step(e2e, names[0]))
         save = self.step(e2e, names[2])
-        self.assertIn("name: ${{ needs.changes.outputs.db_key }}\n", save)
+        self.assertIn(f"name: ${{{{ {mine}.key }}}}\n", save)
         self.assertIn("if-no-files-found: ignore\n", save)
         self.assertIn("retention-days: 7\n", save)
         self.assertIn("overwrite: true\n", save)
         # Nothing else in the job reads or restores the dump yet.
-        self.assertEqual(e2e.count("db_artifact"), 3)
+        self.assertEqual(e2e.count("db_artifact"), 1)
+        self.assertEqual(e2e.count("needs.changes.outputs.db "), 4)
 
     def test_no_job_gained_a_permission_or_a_dependency(self):
         self.assertIn("    needs: [changes, lock-wheels]\n", self.job("e2e"))
