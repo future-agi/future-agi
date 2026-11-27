@@ -1164,6 +1164,39 @@ def test_a_missing_score_is_not_a_zero_in_labels_or_filters(observe_project, see
     assert _points(filtered, "trace_count") == {day0: 1}
 
 
+def test_a_sub_second_custom_window_keeps_its_fraction_for_every_metric(
+    observe_project, seed
+):
+    """Previous PR head fails: clickhouse-driver renders a ``datetime`` bound
+    without microseconds, so the custom window [12:00:00.25, 12:00:00.75)
+    became [12:00:00, 12:00:00), an empty window, and a trace starting at
+    12:00:00.5 showed neither its eval score nor its trace count.
+    Fixed: a custom window's bounds keep their fraction in every metric of the
+    widget, and a trace just outside the fraction stays out.
+    """
+
+    template = str(uuid4())
+    day0 = _day(datetime.now(UTC) - timedelta(days=5))
+    noon = day0 + timedelta(hours=12)
+    inside = seed.trace(observe_project, noon + timedelta(milliseconds=500))
+    seed.result(inside, template, noon + timedelta(hours=1), value=0.6)
+    outside = seed.trace(observe_project, noon + timedelta(milliseconds=100))
+    seed.result(outside, template, noon + timedelta(hours=1), value=0.2)
+    window = _custom(
+        noon + timedelta(milliseconds=250), noon + timedelta(milliseconds=750)
+    )
+    result = _run_worker(
+        seed,
+        _config(
+            [observe_project],
+            window,
+            [_eval_metric(template), _system_metric("trace_count", "count")],
+        ),
+    )
+    assert _points(result) == pytest.approx({day0: 0.6})
+    assert _points(result, "trace_count") == {day0: 1}
+
+
 # ---------------------------------------------------------------------------
 # 7. Regression guards for the held candidate's findings (pass on dev)
 # ---------------------------------------------------------------------------

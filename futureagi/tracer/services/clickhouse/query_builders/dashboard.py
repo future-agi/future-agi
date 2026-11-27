@@ -41,6 +41,7 @@ from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_source,
     eval_logger_version_column,
 )
+from tracer.services.clickhouse.query_builders.base import exact_datetime_bound_sql
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
 )
@@ -1097,23 +1098,46 @@ class DashboardQueryBuilder:
                     metric_name,
                     role="metric",
                 )
-            return self._build_system_metric_query(
+            sql, params = self._build_system_metric_query(
                 metric_name, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "eval_metric":
-            return self._build_eval_metric_query(
+            sql, params = self._build_eval_metric_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "annotation_metric":
-            return self._build_annotation_metric_query(
+            sql, params = self._build_annotation_metric_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         elif metric_type == "custom_attribute":
-            return self._build_custom_attr_query(
+            sql, params = self._build_custom_attr_query(
                 metric, aggregation, bucket_fn, per_metric_filters, params
             )
         else:
             raise ValueError(f"Unknown metric type: {metric_type}")
+        return self._exact_custom_window(sql, params)
+
+    def _exact_custom_window(self, sql: str, params: dict) -> tuple[str, dict]:
+        """Keep a custom window's sub-second bounds (TH-10545).
+
+        clickhouse-driver renders a ``datetime`` parameter without its
+        microseconds, so a custom window of [12:00:00.25, 12:00:00.75) became
+        empty. A custom window's ``%(start_date)s`` / ``%(end_date)s`` are
+        rendered at DateTime64(6) precision instead, for every metric of the
+        widget alike. Whole-second bounds keep their SQL text unchanged
+        (``exact_datetime_bound_sql``). Rolling presets are not touched: their
+        bounds are "now", and a sub-second shift of a rolling window is not a
+        different window.
+        """
+
+        tr = self.config.get("time_range") or self.config.get("timeRange") or {}
+        if not (tr.get("custom_start") and tr.get("custom_end")):
+            return sql, params
+        for name in ("start_date", "end_date"):
+            if name in params:
+                bound = exact_datetime_bound_sql(params, name)
+                sql = sql.replace(f"%({name})s", bound)
+        return sql, params
 
     @staticmethod
     def _reject_unknown_cataloged_system_dimension(
