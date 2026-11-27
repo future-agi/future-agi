@@ -19733,17 +19733,6 @@ export interface AgentFixLaunchApi {
   cost_limit_usd?: number;
 }
 
-/**
- * What chooses the held-back cases: the run's locked version's test split, or a sample of the run's failing cases.
- */
-export type AgentFixLaunchOptionsApiHeldBackFrom =
-  (typeof AgentFixLaunchOptionsApiHeldBackFrom)[keyof typeof AgentFixLaunchOptionsApiHeldBackFrom];
-
-export const AgentFixLaunchOptionsApiHeldBackFrom = {
-  locked_version: "locked_version",
-  sample: "sample",
-} as const;
-
 export interface AgentFixLaunchSourceRunApi {
   id: string;
   number: number | null;
@@ -19806,6 +19795,17 @@ export interface AgentFixCodingAgentBriefApi {
    */
   instructions: string;
 }
+
+/**
+ * What chooses the held-back cases: the run's locked version's test split, or a sample of the run's failing cases.
+ */
+export type AgentFixLaunchOptionsApiHeldBackFrom =
+  (typeof AgentFixLaunchOptionsApiHeldBackFrom)[keyof typeof AgentFixLaunchOptionsApiHeldBackFrom];
+
+export const AgentFixLaunchOptionsApiHeldBackFrom = {
+  locked_version: "locked_version",
+  sample: "sample",
+} as const;
 
 export interface AgentFixLaunchScenarioApi {
   /** @minLength 1 */
