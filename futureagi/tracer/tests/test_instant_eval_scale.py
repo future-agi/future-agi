@@ -1252,6 +1252,60 @@ def test_lost_worker_copies_answer_after_a_concurrent_first_read(
     assert answer.get().label == summary_service.ERROR
 
 
+@pytest.mark.django_db(transaction=True)
+def test_lost_worker_error_survives_a_failed_answer_copy(answered_run):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import connection, connections, transaction
+
+    from tfc.temporal.eval_tasks.activities import _requeue_lost_entry_sync
+    from tracer.models.instant_eval import InstantEvalAnswer
+
+    task, _ = answered_run
+    entry = EvalLogger.objects.get(
+        eval_task_id=str(task.pk), status=EvalEntryStatus.ERRORED
+    )
+    EvalLogger.objects.filter(pk=entry.pk).update(
+        status=EvalEntryStatus.RUNNING, attempts=1
+    )
+    answer = InstantEvalAnswer.objects.filter(
+        task=task,
+        row__row_id=entry.trace_session_id,
+        config_id=entry.custom_eval_config_id,
+    )
+    held, release = threading.Event(), threading.Event()
+
+    def hold_answer():
+        # Another session holds the answer row, so the copy's upsert times out.
+        try:
+            with transaction.atomic():
+                answer.select_for_update().get()
+                held.set()
+                release.wait(timeout=30)
+        finally:
+            connections.close_all()
+
+    def short_lock_wait(execute, sql, params, many, context):
+        if sql.startswith("INSERT INTO tracer_instant_eval_answer "):
+            # Inside recovery's transaction, so the copy fails fast on the lock.
+            execute("SET LOCAL lock_timeout = '1s'", None, False, context)
+        return execute(sql, params, many, context)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        holder = pool.submit(hold_answer)
+        assert held.wait(timeout=10)
+        try:
+            with connection.execute_wrapper(short_lock_wait):
+                result = _requeue_lost_entry_sync(str(entry.pk))
+        finally:
+            release.set()
+        holder.result(timeout=10)
+    # The copy failed, but the terminal write committed: never left RUNNING.
+    assert result["status"] == EvalEntryStatus.ERRORED
+    assert EvalLogger.objects.get(pk=entry.pk).status == EvalEntryStatus.ERRORED
+
+
 def _half_answered_run(auth_client, observe_project, yes_no, status_):
     """A 6-row run: one row failed, one answered, four never read."""
     result = _start(auth_client, observe_project, [yes_no], sample_size=6).json()[

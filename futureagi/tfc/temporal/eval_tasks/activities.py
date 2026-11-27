@@ -435,7 +435,13 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
             )
             if landed and locked_run:
                 # The held run lock is authoritative, even after a cached miss.
-                record_answer(entry_id)
+                # A savepoint, as mark_terminal's own copy uses: a failed copy
+                # never fails the entry, and is caught up when the run finishes.
+                try:
+                    with transaction.atomic():
+                        record_answer(entry_id)
+                except Exception:
+                    logger.warning("instant_eval_answer_copy_failed", exc_info=True)
             elif landed and task_id is not None:
                 # A first Ask read may have backfilled while the entry was
                 # still running. Recheck the primary without the negative
