@@ -177,11 +177,8 @@ const UsersView = ({
   // (set by ObservePage for the Users fixed tab).
   const activeViewConfig = activeViewConfigProp ?? activeViewConfigCtx;
 
-  const refreshUsers = useCallback(() => {
-    if (gridApi) {
-      gridApi.refreshServerSide();
-    }
-  }, [gridApi]);
+  const usersGridRef = useRef(null);
+  const refreshUsers = useCallback(() => usersGridRef.current?.refresh(), []);
 
   // --- Filter & date state ---
   const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
@@ -928,6 +925,7 @@ const UsersView = ({
           }}
         >
           <UsersGrid
+            ref={usersGridRef}
             setHasData={setHasData}
             setIsLoading={setIsLoading}
             setSearchState={setSearchState}
