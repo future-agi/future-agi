@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
+  warn: vi.fn(),
 }));
+
+vi.mock("src/utils/logger", () => ({ default: { warn: mocks.warn } }));
 
 vi.mock("src/utils/axios", () => ({
   default: { get: mocks.get },
@@ -17,7 +20,10 @@ import {
   ensureCanonicalMemberListSort,
   getUserQueryOptions,
 } from "../getUserQueryOptions";
-import { gridSortModelToMemberListSort } from "../memberListGridQuery";
+import {
+  gridSortModelToMemberListSort,
+  safeGridSortModelToMemberListSort,
+} from "../memberListGridQuery";
 
 describe("getUserQueryOptions", () => {
   beforeEach(() => {
@@ -77,6 +83,18 @@ describe("getUserQueryOptions", () => {
     expect(() =>
       gridSortModelToMemberListSort([{ colId: "ws_level", sort: "desc" }]),
     ).toThrow("Unsupported member list sort field");
+  });
+
+  it("falls back to the default sort for unsupported grid sort fields", () => {
+    const orgRoleAsc = [{ colId: "org_level", sort: "asc" }];
+    const orgRoleDesc = [{ colId: "org_level", sort: "desc" }];
+    mocks.warn.mockClear();
+    expect(
+      safeGridSortModelToMemberListSort(orgRoleAsc, { workspaceScope: true }),
+    ).toBe("-created_at");
+    expect(mocks.warn).toHaveBeenCalledTimes(1);
+    expect(safeGridSortModelToMemberListSort(orgRoleDesc)).toBe("-org_level");
+    expect(mocks.warn).toHaveBeenCalledTimes(1);
   });
 
   it("sends canonical sort params from query options", async () => {
