@@ -608,7 +608,9 @@ def test_span_results_count_and_trace_result_beats_later_span_result(
     instead of the trace-level 0.9.
     Fixed (and guarded, since dev already does this):
     * day 0: only span-level results, on two spans; the latest recorded one
-      (0.6) wins. Span-level results must feed trace dashboards.
+      (0.6) wins even though the older one has the higher usage id, so the
+      election orders by recorded time before id. Span-level results must
+      feed trace dashboards.
     * day 1: a trace-level result (0.9) beats a later span-level one (0.1).
     * day 2: two span results recorded at the same instant; the higher usage
       id (recorded later) wins (0.5), on every run.
@@ -623,12 +625,15 @@ def test_span_results_count_and_trace_result_beats_later_span_result(
         day0 + timedelta(hours=10),
         children=[(timedelta(minutes=1), None, 0), (timedelta(minutes=2), None, 0)],
     )
+    older_id, newer_id = 910002, 910001
+    assert older_id > newer_id, "precondition: id order opposes recorded order"
     seed.result(
         spans_only,
         template,
         day0 + timedelta(hours=11),
         value=0.2,
         span_id=spans_only.children[0],
+        usage_id=older_id,
     )
     seed.result(
         spans_only,
@@ -636,6 +641,7 @@ def test_span_results_count_and_trace_result_beats_later_span_result(
         day0 + timedelta(hours=12),
         value=0.6,
         span_id=spans_only.children[1],
+        usage_id=newer_id,
     )
 
     with_trace_result = seed.trace(
@@ -1598,6 +1604,10 @@ def test_untyped_text_filter_does_not_fail_or_broaden_widget(
     start = _day(datetime.now(UTC) - timedelta(days=5))
     trace = seed.trace(observe_project, start)
     seed.result(trace, template, start, value=0.8)
+    # A genuine numeric 0: if the text "0" were ever compiled as a numeric
+    # comparison (eval_score = 0), this trace would be counted.
+    zero = seed.trace(observe_project, start + timedelta(hours=1))
+    seed.result(zero, template, start + timedelta(hours=1), value=0)
     leaf = {
         "column_id": template,
         "source": "traces",
@@ -1619,7 +1629,7 @@ def test_untyped_text_filter_does_not_fail_or_broaden_widget(
         ],
     )
     result = _run_worker(seed, config)
-    assert _points(result) == {start: 0.8}
+    assert _points(result) == pytest.approx({start: 0.4})
     assert _points(result, "trace_count") == {}
 
 
