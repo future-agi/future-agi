@@ -709,7 +709,7 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("tags the caller with no way of taking part, and wraps a long comes-in tag", () => {
+  it("tags the caller with no way of taking part, and keeps a long comes-in tag to one line", () => {
     const long =
       "When the agent says refund, cancel, manager, supervisor, chargeback or complaint";
     actorsData = cast([
@@ -721,7 +721,8 @@ describe("WorldActorsPanel", () => {
     const tag = screen
       .getAllByText(long)
       .find((one) => one.closest(".MuiChip-root"));
-    expect(tag).toHaveStyle({ whiteSpace: "normal" });
+    // Tags keep the chip's own height; a cut-off one shows in full on hover.
+    expect(tag).toHaveStyle({ whiteSpace: "nowrap", textOverflow: "ellipsis" });
   });
 
   it("shows how a speaking actor joins and how loud it is as tags", () => {

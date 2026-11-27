@@ -158,20 +158,27 @@ export default function ActorRow({
             {tagsOf(actor, loudChannels).map((tag) => (
               <Chip
                 key={tag}
-                // A long comes-in text wraps instead of being cut off.
+                // A long comes-in text is cut off with an ellipsis and shows in full on hover.
                 label={
-                  <Box component="span" sx={{ whiteSpace: "normal" }}>
-                    {tag}
-                  </Box>
+                  <OverflowTooltip title={tag}>
+                    <Box
+                      component="span"
+                      sx={{
+                        display: "block",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {tag}
+                    </Box>
+                  </OverflowTooltip>
                 }
                 size="small"
                 sx={{
                   bgcolor: "background.neutral",
                   color: "text.secondary",
-                  typography: "s3",
                   maxWidth: "100%",
-                  height: "auto",
-                  py: 0.25,
                 }}
               />
             ))}
