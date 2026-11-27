@@ -48,12 +48,7 @@ export default function ActorAdvancedFields({
       <Collapse in={open} timeout={still ? 0 : "auto"} sx={{ flexShrink: 0 }}>
         <Fade in={open} timeout={still ? 0 : undefined}>
           <Stack spacing={2}>
-            <ActorRecordsField
-              records={form.value("records")}
-              sources={recordSources}
-              problem={form.problems.records}
-              onChange={(next) => form.put("records", next)}
-            />
+            <ActorRecordsField form={form} sources={recordSources} />
             <Stack direction="row" spacing={1}>
               {field("timing", F.answers, {
                 options: fieldOptions.response_timing,

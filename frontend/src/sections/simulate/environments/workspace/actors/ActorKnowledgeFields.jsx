@@ -7,20 +7,24 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useController } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import { refusalText } from "../evals/refusalText";
 import { ACTORS_COPY } from "./actors.constants";
+import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
 const F = ACTORS_COPY.worldActors.form;
 
 export default function ActorKnowledgeFields({
-  files,
+  form,
   sources,
   upload,
   uploadRules,
-  problems,
-  onChange,
 }) {
+  const { field } = useController({ name: "files" });
+  const files = field.value;
+  const { problems } = form;
+  const onChange = form.put;
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   // Evaluator-only files are listed, locked, so it's clear why an actor can't be given them.
@@ -108,7 +112,7 @@ export default function ActorKnowledgeFields({
 }
 
 ActorKnowledgeFields.propTypes = {
-  files: PropTypes.arrayOf(PropTypes.string).isRequired,
+  form: ACTOR_FORM_SHAPE.isRequired,
   sources: PropTypes.shape({
     files: PropTypes.arrayOf(PropTypes.string).isRequired,
     // Every attached file's role by path; evaluator-only files are never in `files`.
@@ -120,7 +124,4 @@ ActorKnowledgeFields.propTypes = {
     formats: PropTypes.arrayOf(PropTypes.string).isRequired,
     max_label: PropTypes.string.isRequired,
   }).isRequired,
-  problems: PropTypes.objectOf(PropTypes.string).isRequired,
-  // (field, next value)
-  onChange: PropTypes.func.isRequired,
 };

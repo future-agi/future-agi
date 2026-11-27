@@ -1,24 +1,23 @@
 import PropTypes from "prop-types";
 import { Autocomplete, TextField } from "@mui/material";
+import { useController } from "react-hook-form";
 import { ACTORS_COPY } from "./actors.constants";
+import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
 const F = ACTORS_COPY.worldActors.form;
 const recordLabel = (one) => `${one.store}.${one.collection}`;
 
-export default function ActorRecordsField({
-  records,
-  sources,
-  problem,
-  onChange,
-}) {
+export default function ActorRecordsField({ form, sources }) {
+  const { field } = useController({ name: "records" });
+  const problem = form.problems.records;
   return (
     <Autocomplete
       multiple
       disableCloseOnSelect
       size="small"
       options={sources}
-      value={records}
-      onChange={(_, next) => onChange(next)}
+      value={field.value}
+      onChange={(_, next) => form.put("records", next)}
       getOptionLabel={recordLabel}
       isOptionEqualToValue={(one, other) =>
         recordLabel(one) === recordLabel(other)
@@ -41,9 +40,7 @@ const RECORD = PropTypes.shape({
 });
 
 ActorRecordsField.propTypes = {
-  records: PropTypes.arrayOf(RECORD).isRequired,
+  form: ACTOR_FORM_SHAPE.isRequired,
   // The world's record collections an actor may be given.
   sources: PropTypes.arrayOf(RECORD).isRequired,
-  problem: PropTypes.string,
-  onChange: PropTypes.func.isRequired,
 };

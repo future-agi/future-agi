@@ -344,12 +344,10 @@ export default function ActorForm({
                 helperText: F.factsHelp,
               })}
               <ActorKnowledgeFields
-                files={value("files")}
+                form={form}
                 sources={context.knowledgeSources}
                 upload={context.upload}
                 uploadRules={context.uploadRules}
-                problems={form.problems}
-                onChange={put}
               />
               <ActorActionFields
                 form={form}

@@ -7,11 +7,17 @@ import {
   Switch,
   Typography,
 } from "@mui/material";
+import { useController } from "react-hook-form";
 import { ACTORS_COPY } from "./actors.constants";
+import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
 const F = ACTORS_COPY.worldActors.form;
 
-export default function ActorLoudness({ value, bounds, problem, onChange }) {
+export default function ActorLoudness({ form, bounds }) {
+  const { field } = useController({ name: "loudness_ratio" });
+  const { value } = field;
+  const problem = form.problems.loudness_ratio;
+  const onChange = (next) => form.put("loudness_ratio", next);
   const fixed = typeof value === "number";
   const [low, high] = bounds.automatic;
   const percent = (ratio) => `${Math.round(ratio * 100)}%`;
@@ -58,8 +64,7 @@ export default function ActorLoudness({ value, bounds, problem, onChange }) {
 }
 
 ActorLoudness.propTypes = {
-  // Null for automatic.
-  value: PropTypes.number,
+  form: ACTOR_FORM_SHAPE.isRequired,
   bounds: PropTypes.shape({
     automatic: PropTypes.arrayOf(PropTypes.number).isRequired,
     min: PropTypes.number.isRequired,
@@ -67,6 +72,4 @@ ActorLoudness.propTypes = {
     step: PropTypes.number.isRequired,
     default: PropTypes.number.isRequired,
   }).isRequired,
-  problem: PropTypes.string,
-  onChange: PropTypes.func,
 };

@@ -8,6 +8,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useController } from "react-hook-form";
 import { ACTORS_COPY } from "./actors.constants";
 import { ACTOR_FORM_SHAPE } from "./actors.shapes";
 
@@ -21,7 +22,8 @@ export default function ActorActionFields({
   shareConfirmed,
   onShare,
 }) {
-  const permitted = form.value("permitted");
+  const { field } = useController({ name: "permitted" });
+  const permitted = field.value;
   const problem = form.problems.permitted;
   const describe = (id) =>
     actions.find((one) => one.action === id)?.description || "";
