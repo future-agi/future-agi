@@ -66,16 +66,23 @@ class InstallTestPackagesTest(unittest.TestCase):
         self.assertEqual((text.count(RUNNER_SOURCES), text.count(PGBOUNCER)), (1, 1))
         self.script = self.root / "script.sh"
         self.script.write_text(
-            text.replace(RUNNER_SOURCES, str(self.sources)).replace(PGBOUNCER, str(self.tools / "pgbouncer"))
+            text.replace(RUNNER_SOURCES, str(self.sources)).replace(
+                PGBOUNCER, str(self.tools / "pgbouncer")
+            )
         )
         self.cache = self.root / "cache"
         self.calls = self.root / "calls"
         self.fail = self.root / "fail"
         self.env = dict(os.environ, PATH=f"{self.tools}:{os.environ['PATH']}")
-        self.env.update(CALLS=str(self.calls), ARGS=str(self.root / "args"), FAIL=str(self.fail))
+        self.env.update(
+            CALLS=str(self.calls), ARGS=str(self.root / "args"), FAIL=str(self.fail)
+        )
         self.tool("apt-get", APT)
         self.tool("sudo", '#!/bin/sh\nexec "$@"\n')
-        self.tool("timeout", '#!/bin/sh\nprintf "timeout %s\\n" "$1" >> "$CALLS"\nshift\nexec "$@"\n')
+        self.tool(
+            "timeout",
+            '#!/bin/sh\nprintf "timeout %s\\n" "$1" >> "$CALLS"\nshift\nexec "$@"\n',
+        )
         self.tool("sleep", '#!/bin/sh\nprintf "sleep %s\\n" "$1" >> "$CALLS"\n')
         for name in ("ffmpeg", "ffprobe", "xmlsec1", "pgbouncer"):
             self.tool(name, f'#!/bin/sh\necho "{name} stand-in"\n')
@@ -88,7 +95,11 @@ class InstallTestPackagesTest(unittest.TestCase):
     def run_script(self, *failures):
         self.fail.write_text("".join(f"{line}\n" for line in failures))
         return subprocess.run(
-            ["bash", str(self.script), str(self.cache)], env=self.env, text=True, capture_output=True, timeout=60
+            ["bash", str(self.script), str(self.cache)],
+            env=self.env,
+            text=True,
+            capture_output=True,
+            timeout=60,
         )
 
     def log(self):
@@ -110,7 +121,9 @@ class InstallTestPackagesTest(unittest.TestCase):
         )
         self.assertEqual((self.cache / "complete").read_text(), "runner\n")
         self.assertEqual((self.cache / "sources/ubuntu.sources").read_text(), SOURCES)
-        self.assertRegex(result.stdout, r"(?m)^APT packages served by the runner source in \d+s$")
+        self.assertRegex(
+            result.stdout, r"(?m)^APT packages served by the runner source in \d+s$"
+        )
         self.assertNotIn("::warning::", result.stdout)
 
     def test_a_stalled_mirror_falls_back_to_the_canonical_archive(self):
@@ -129,7 +142,14 @@ class InstallTestPackagesTest(unittest.TestCase):
                 # One bounded try of the mirror: no retry and no wait before
                 # the fall-back, and none of its indexes left for the archive.
                 self.assertNotIn("sleep", " ".join(log))
-                self.assertEqual([line for line in log[:first_canonical] if line.startswith("runner")].count("runner update lists="), 1)
+                self.assertEqual(
+                    [
+                        line
+                        for line in log[:first_canonical]
+                        if line.startswith("runner")
+                    ].count("runner update lists="),
+                    1,
+                )
                 self.assertEqual(
                     log[first_canonical - 1 :],
                     [
@@ -147,12 +167,20 @@ class InstallTestPackagesTest(unittest.TestCase):
                     SOURCES.replace("mirror+file:/etc/apt/apt-mirrors.txt", CANONICAL),
                 )
                 self.assertIn("::warning::", result.stdout)
-                self.assertRegex(result.stdout, r"(?m)^APT packages served by the canonical source in \d+s$")
+                self.assertRegex(
+                    result.stdout,
+                    r"(?m)^APT packages served by the canonical source in \d+s$",
+                )
 
     def test_a_mid_sync_canonical_archive_is_retried_and_a_timeout_is_not(self):
-        result = self.run_script("runner:update:124", "canonical:update:100", "canonical:update:100")
+        result = self.run_script(
+            "runner:update:124", "canonical:update:100", "canonical:update:100"
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([line for line in self.log() if line.startswith("sleep")], ["sleep 20", "sleep 40"])
+        self.assertEqual(
+            [line for line in self.log() if line.startswith("sleep")],
+            ["sleep 20", "sleep 40"],
+        )
         self.assertEqual(self.log().count("canonical update lists="), 3)
         self.setUp()
         result = self.run_script("runner:update:124", "canonical:update:124")
@@ -171,7 +199,9 @@ class InstallTestPackagesTest(unittest.TestCase):
         self.calls.unlink()
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.log(), ["timeout 120s", "runner install lists=runner-index,"])
+        self.assertEqual(
+            self.log(), ["timeout 120s", "runner install lists=runner-index,"]
+        )
         self.assertIn("APT cache hit: runner source", result.stdout)
 
     def test_package_signatures_stay_checked(self):
@@ -179,9 +209,20 @@ class InstallTestPackagesTest(unittest.TestCase):
         # No call and no line of the script may switch that check off.
         self.assertEqual(self.run_script("runner:update:124").returncode, 0)
         seen = (SCRIPT.read_text() + (self.root / "args").read_text()).lower()
-        for switch in ("allow-unauthenticated", "allowunauthenticated", "allowinsecure", "trusted=yes", "force-yes", "no-check-certificate", "verify-peer=false"):
+        for switch in (
+            "allow-unauthenticated",
+            "allowunauthenticated",
+            "allowinsecure",
+            "trusted=yes",
+            "force-yes",
+            "no-check-certificate",
+            "verify-peer=false",
+        ):
             self.assertNotIn(switch, seen)
-        self.assertIn("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg", (self.cache / "sources/ubuntu.sources").read_text())
+        self.assertIn(
+            "Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg",
+            (self.cache / "sources/ubuntu.sources").read_text(),
+        )
 
 
 if __name__ == "__main__":
