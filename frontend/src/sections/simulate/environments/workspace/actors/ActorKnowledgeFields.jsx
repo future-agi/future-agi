@@ -59,7 +59,8 @@ export default function ActorKnowledgeFields({
             size="small"
             component="label"
             disabled={uploading}
-            sx={{ alignSelf: "flex-start" }}
+            // The small text button's 8px inset, pulled back so its label starts where the fields do.
+            sx={{ alignSelf: "flex-start", ml: -1 }}
           >
             {uploading ? F.uploading : F.upload}
             <input
