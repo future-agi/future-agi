@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "src/utils/test-utils";
-import ErrorSeverityBadge from "../components/ErrorSeverityBadge";
+import ErrorSeverityBadge, {
+  severityExplanation,
+} from "../components/ErrorSeverityBadge";
 
 describe("Feed severity assessment", () => {
   it("does not present a default as an assessed Medium", () => {
@@ -43,5 +45,15 @@ describe("Feed severity assessment", () => {
       />,
     );
     expect(screen.getByText("Low")).toBeInTheDocument();
+  });
+  it("capitalises the label while a reassessment is pending", () => {
+    expect(
+      severityExplanation({
+        severity: "high",
+        source: "llm",
+        assessmentStatus: "pending",
+        label: "High",
+      }),
+    ).toBe("High — reassessment pending");
   });
 });

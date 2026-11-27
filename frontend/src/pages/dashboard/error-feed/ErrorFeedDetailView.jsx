@@ -3,6 +3,8 @@ import {
   Box,
   Chip,
   IconButton,
+  ListItemIcon,
+  ListSubheader,
   Menu,
   MenuItem,
   Stack,
@@ -89,37 +91,52 @@ const TABS = [
 // ── Main view ─────────────────────────────────────────────────────────────────
 // The ⋯ menu's rows, as in the prototype: one line each, a quiet note on the
 // right, and small section labels.
+// Render with `disabled`: MenuList reads that prop off the element to skip it
+// when choosing the item that gets initial focus.
 function MenuSectionLabel({ children }) {
   return (
-    <Typography
+    <ListSubheader
       sx={{
         typography: "s3",
         fontWeight: 500,
         color: "text.tertiary",
+        bgcolor: "transparent",
+        lineHeight: "16px",
         px: 1.5,
         pt: 0.75,
         pb: 0.25,
       }}
     >
       {children}
-    </Typography>
+    </ListSubheader>
   );
 }
-MenuSectionLabel.propTypes = { children: PropTypes.node };
+MenuSectionLabel.propTypes = {
+  children: PropTypes.node,
+  disabled: PropTypes.bool,
+};
 
-function ActionItem({ icon, label, ariaLabel, note, onClick, disabled }) {
+// `rest` carries the autoFocus/tabIndex that MenuList injects into its children.
+function ActionItem({
+  icon,
+  label,
+  ariaLabel,
+  note,
+  onClick,
+  disabled,
+  ...rest
+}) {
   return (
     <MenuItem
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel || label}
       sx={{ gap: 1 }}
+      {...rest}
     >
-      <Iconify
-        icon={icon}
-        width={16}
-        sx={{ flexShrink: 0, color: "text.secondary" }}
-      />
+      <ListItemIcon sx={{ minWidth: 0, color: "text.secondary" }}>
+        <Iconify icon={icon} width={16} sx={{ flexShrink: 0 }} />
+      </ListItemIcon>
       <Typography sx={{ typography: "s2", flex: 1 }}>{label}</Typography>
       {note && (
         <Typography sx={{ typography: "s3", color: "text.tertiary", ml: 2 }}>
@@ -337,9 +354,9 @@ export default function ErrorFeedDetailView() {
                   gap={0.75}
                   minWidth={0}
                 >
+                  {/* Not a tab stop: the back arrow already goes here. */}
                   <Typography
-                    component={shared ? "span" : "button"}
-                    type={shared ? undefined : "button"}
+                    component="span"
                     onClick={
                       shared
                         ? undefined
@@ -349,10 +366,6 @@ export default function ErrorFeedDetailView() {
                       typography: "s1",
                       color: "text.secondary",
                       flexShrink: 0,
-                      p: 0,
-                      border: 0,
-                      bgcolor: "transparent",
-                      font: "inherit",
                       cursor: shared ? "default" : "pointer",
                       "&:hover": shared ? {} : { color: "text.primary" },
                     }}
@@ -373,8 +386,7 @@ export default function ErrorFeedDetailView() {
                       component="h1"
                       noWrap
                       sx={{
-                        fontSize: 15,
-                        lineHeight: "22px",
+                        typography: "m1",
                         fontWeight: 600,
                         color: "text.primary",
                         minWidth: 0,
@@ -472,7 +484,7 @@ export default function ErrorFeedDetailView() {
                     transformOrigin={{ vertical: "top", horizontal: "right" }}
                     slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
                   >
-                    <MenuSectionLabel>Export</MenuSectionLabel>
+                    <MenuSectionLabel disabled>Export</MenuSectionLabel>
                     <ActionItem
                       icon="solar:document-text-linear"
                       label="Traces"
@@ -512,7 +524,7 @@ export default function ErrorFeedDetailView() {
                     transformOrigin={{ vertical: "top", horizontal: "right" }}
                     slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
                   >
-                    <MenuSectionLabel>Status</MenuSectionLabel>
+                    <MenuSectionLabel disabled>Status</MenuSectionLabel>
                     {[
                       ["resolved", "Resolve", "solar:check-linear"],
                       [

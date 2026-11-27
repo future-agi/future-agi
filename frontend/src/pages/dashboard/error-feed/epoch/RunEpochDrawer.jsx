@@ -14,7 +14,6 @@ import {
   ToggleButtonGroup,
   Typography,
 } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 
 import ContentSkeleton from "src/components/content-skeleton";
@@ -253,6 +252,19 @@ function EnvironmentPicker({ environments, value, onPick }) {
   const shown = q
     ? inTab.filter((env) => env.name.toLowerCase().includes(q))
     : inTab;
+  // A pick that the tab or the search hides is dropped, so Continue never
+  // acts on an environment the person can no longer see.
+  const narrow = (nextTab, nextQuery) => {
+    const nq = nextQuery.trim().toLowerCase();
+    const visible = environments.filter(
+      (env) =>
+        (nextTab === "All" || typeOf(env) === nextTab) &&
+        (!nq || env.name.toLowerCase().includes(nq)),
+    );
+    setTab(nextTab);
+    setQuery(nextQuery);
+    if (!visible.some((env) => env.id === picked)) setPicked(null);
+  };
   const meta = (env) =>
     [
       AGENT_SOURCE[env.source_kind],
@@ -273,7 +285,7 @@ function EnvironmentPicker({ environments, value, onPick }) {
               size="small"
               placeholder="Search environments"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => narrow(tab, e.target.value)}
               inputProps={{ "aria-label": "Search environments" }}
               InputProps={{
                 startAdornment: (
@@ -294,7 +306,7 @@ function EnvironmentPicker({ environments, value, onPick }) {
               exclusive
               size="small"
               value={tab}
-              onChange={(_, next) => next && setTab(next)}
+              onChange={(_, next) => next && narrow(next, query)}
               aria-label="Agent type"
               sx={{ flexShrink: 0 }}
             >
@@ -344,9 +356,7 @@ function EnvironmentPicker({ environments, value, onPick }) {
                   borderTop: i ? 1 : 0,
                   borderColor: "divider",
                   cursor: "pointer",
-                  bgcolor: selected
-                    ? (t) => alpha(t.palette.primary.main, 0.06)
-                    : "transparent",
+                  bgcolor: selected ? "action.selected" : "transparent",
                   "&:hover": selected ? {} : { bgcolor: "action.hover" },
                 }}
               >

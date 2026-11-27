@@ -247,6 +247,55 @@ describe("RunEpochDrawer: the plan", () => {
     expect(radios[0]).toHaveAccessibleName("Booking line");
   });
 
+  it("searches many environments, shows a no-match message and drops a hidden pick", async () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({
+      ...envRow(
+        `00000000-0000-4000-8000-00000000000${i}`,
+        `Line ${i}`,
+        "github",
+      ),
+      agent_type: i === 0 ? "voice" : "chat",
+    }));
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.resolve({ data: { results: many } })
+        : answer(url, config),
+    );
+    const user = userEvent.setup();
+    renderDrawer();
+    const list = await screen.findByTestId("epoch-environments");
+    const search = screen.getByRole("textbox", { name: "Search environments" });
+    const cont = screen.getByRole("button", { name: "Continue" });
+    expect(within(list).getAllByRole("radio")).toHaveLength(9);
+
+    await user.type(search, "Line 3");
+    const radios = within(list).getAllByRole("radio");
+    expect(radios).toHaveLength(1);
+    expect(radios[0]).toHaveAccessibleName("Line 3");
+    await user.click(radios[0]);
+    expect(cont).toBeEnabled();
+
+    // Searching the pick away clears it.
+    await user.clear(search);
+    await user.type(search, "Line 4");
+    expect(within(list).getAllByRole("radio")).toHaveLength(1);
+    expect(cont).toBeDisabled();
+
+    await user.clear(search);
+    await user.type(search, "zzz");
+    expect(
+      screen.getByText('No environment matches "zzz".'),
+    ).toBeInTheDocument();
+
+    // Switching the tab does the same.
+    await user.clear(search);
+    await user.click(within(list).getByRole("radio", { name: "Line 1" }));
+    expect(cont).toBeEnabled();
+    const types = screen.getByRole("group", { name: "Agent type" });
+    await user.click(within(types).getByRole("button", { name: /Voice/ }));
+    expect(cont).toBeDisabled();
+  });
+
   it("shows no type tabs when every environment is one type", async () => {
     renderDrawer();
     await screen.findByTestId("epoch-environments");

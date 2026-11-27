@@ -37,7 +37,7 @@ import { useErrorFeedStore } from "../store";
 import { useSharedIssue } from "../sharedIssueContext";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
-import { severityExplanation } from "./severityExplanation";
+import { severityExplanation } from "./ErrorSeverityBadge";
 import PropTypes from "prop-types";
 import { statusColors } from "src/utils/runStatus";
 
@@ -340,7 +340,7 @@ const SEVERITY_OPTIONS = [
   },
 ];
 
-function SeverityDropdown({ current, onChange }) {
+function SeverityDropdown({ current, onChange, fallbackLabel }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const cur =
     SEVERITY_OPTIONS.find((s) => s.value === current) || SEVERITY_OPTIONS[1];
@@ -381,7 +381,7 @@ function SeverityDropdown({ current, onChange }) {
           fontWeight={600}
           sx={{ color: `status.${cur.role}.fg` }}
         >
-          {cur.label}
+          {fallbackLabel || cur.label}
         </Typography>
         <Iconify
           icon="solar:alt-arrow-down-linear"
@@ -447,6 +447,7 @@ function SeverityDropdown({ current, onChange }) {
 SeverityDropdown.propTypes = {
   current: PropTypes.string,
   onChange: PropTypes.func,
+  fallbackLabel: PropTypes.string,
 };
 
 // ── Assignee dropdown ─────────────────────────────────────────────────────────
@@ -1349,6 +1350,9 @@ export default function ErrorMetadataPanel({ error }) {
                           assessmentStatus: error.severity_assessment_status,
                           source: error.severity_source,
                           reason: error.severity_reason,
+                          label: SEVERITY_OPTIONS.find(
+                            (s) => s.value === error.severity,
+                          )?.label,
                         })
                       : ""
                   }
@@ -1358,6 +1362,14 @@ export default function ErrorMetadataPanel({ error }) {
                     <SeverityDropdown
                       current={severity}
                       onChange={setSeverity}
+                      fallbackLabel={
+                        error.severity_source === "default" &&
+                        error.severity_assessment_status !== "completed"
+                          ? error.severity_assessment_status === "pending"
+                            ? "Pending"
+                            : "Unassessed"
+                          : null
+                      }
                     />
                   </span>
                 </Tooltip>
