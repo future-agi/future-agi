@@ -500,3 +500,29 @@ func TestBaseURLError_PublicMessage(t *testing.T) {
 		t.Errorf("Error() = %q, want the resolved address for the operator's logs", urlErr.Error())
 	}
 }
+
+func TestLegacyAndZeroConcurrencyInheritBase(t *testing.T) {
+	cache := NewOrgProviderCache(map[string]config.ProviderConfig{"registered": {MaxConcurrent: 37}}, false)
+	for _, branch := range []struct {
+		name    string
+		baseURL string
+		base    int
+	}{{"registered", "", 37}, {"custom", "https://synthetic.invalid", 100}} {
+		for _, limit := range []int{-1, 0, 9} {
+			t.Run(fmt.Sprintf("%s/%d", branch.name, limit), func(t *testing.T) {
+				tenantCfg := &tenant.ProviderConfig{BaseURL: branch.baseURL, MaxConcurrent: limit}
+				base, ok := cache.baseConfig(branch.name, tenantCfg)
+				if !ok || base.MaxConcurrent != branch.base {
+					t.Fatalf("base concurrency = %d, ok = %v", base.MaxConcurrent, ok)
+				}
+				want := branch.base
+				if limit > 0 {
+					want = limit
+				}
+				if got := resolveOrgConfig(base, "", tenantCfg).MaxConcurrent; got != want {
+					t.Errorf("resolved concurrency = %d; want %d", got, want)
+				}
+			})
+		}
+	}
+}

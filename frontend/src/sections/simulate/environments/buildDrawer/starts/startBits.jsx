@@ -128,27 +128,6 @@ StartCard.propTypes = {
   sx: PropTypes.object,
 };
 
-/** An icon and a line, with the rest in a tooltip. */
-export function IconLine({ icon, text, hint }) {
-  return (
-    <Stack direction="row" spacing={1.25} alignItems="flex-start">
-      <Iconify
-        icon={icon}
-        width={16}
-        sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
-      />
-      <Typography component="div" sx={{ ...T13, color: "text.secondary" }}>
-        {hint ? <HintLine text={text} hint={hint} /> : text}
-      </Typography>
-    </Stack>
-  );
-}
-IconLine.propTypes = {
-  icon: PropTypes.string.isRequired,
-  text: PropTypes.node,
-  hint: PropTypes.string,
-};
-
 /**
  * The start's own bottom row: why it can't go yet, then its action. It
  * sticks to the drawer's bottom edge.
