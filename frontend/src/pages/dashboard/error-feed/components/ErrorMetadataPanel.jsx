@@ -36,8 +36,7 @@ import openExternal, { safeExternalUrl } from "../openExternal";
 import { useErrorFeedStore } from "../store";
 import { useSharedIssue } from "../sharedIssueContext";
 import ErrorStatusChip from "./ErrorStatusChip";
-import ErrorSeverityBadge from "./ErrorSeverityBadge";
-import { severityExplanation } from "./ErrorSeverityBadge";
+import ErrorSeverityBadge, { severityExplanation } from "./ErrorSeverityBadge";
 import PropTypes from "prop-types";
 import { statusColors } from "src/utils/runStatus";
 
@@ -1363,6 +1362,10 @@ export default function ErrorMetadataPanel({ error }) {
                       current={severity}
                       onChange={setSeverity}
                       fallbackLabel={
+                        // Only while the pick is still the saved default: right
+                        // after a pick, `error` holds the old severity until
+                        // the refetch lands.
+                        severity === error.severity &&
                         error.severity_source === "default" &&
                         error.severity_assessment_status !== "completed"
                           ? error.severity_assessment_status === "pending"

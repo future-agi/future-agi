@@ -69,7 +69,7 @@ export const EVIDENCE_COPY = {
   transcriptTitle: "Add a transcript",
   transcriptBody:
     "Paste one transcript, or add files: each file becomes its own case.",
-  transcriptPrivacy: `Emails, phone and card numbers, SSNs and API keys become placeholders. Up to ${MAX_IMPORT_KEPT_CHARS.toLocaleString("en-US")} characters per import.`,
+  transcriptPrivacy: `Emails, phone numbers, card and ID numbers, IP addresses and keys become placeholders. Up to ${MAX_IMPORT_KEPT_CHARS.toLocaleString("en-US")} characters per import.`,
   dropHeading: "Choose files or drag & drop them here",
   dropFormats:
     "JSON messages (.json), User: / Agent: lines (.txt) or CSV with role and text (.csv)",
@@ -87,7 +87,6 @@ export const EVIDENCE_COPY = {
     text: "User: / Agent: lines",
     csv: "CSV with role and text",
   },
-  uploadFiles: "Upload files",
   usePaste: "Paste instead",
   production: "From production",
   productionHelp: "Makes them regression tests. Can't be changed later.",

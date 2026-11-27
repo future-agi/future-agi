@@ -59,7 +59,7 @@ describe("ImportTranscriptDialog", () => {
     await openDialog();
     expect(
       screen.getByText(
-        "Emails, phone and card numbers, SSNs and API keys become placeholders. Up to 60,000 characters per import.",
+        "Emails, phone numbers, card and ID numbers, IP addresses and keys become placeholders. Up to 60,000 characters per import.",
       ),
     ).toBeInTheDocument();
   });
@@ -192,6 +192,26 @@ describe("ImportTranscriptDialog", () => {
     );
     expect(screen.queryByText("one.txt")).toBeNull();
     expect(screen.getByText("two.txt")).toBeInTheDocument();
+  });
+
+  it("refuses a wrong-type file in a mixed drop and keeps the others", async () => {
+    await openDialog();
+
+    fireEvent.change(document.querySelector('input[type="file"]'), {
+      target: {
+        files: [
+          file(PASTED, "chat.txt", "text/plain"),
+          file("%PDF-1.7", "notes.pdf", "application/pdf"),
+        ],
+      },
+    });
+
+    const listed = await screen.findByTestId("transcript-files");
+    expect(within(listed).getByText("chat.txt")).toBeInTheDocument();
+    expect(within(listed).queryByText("notes.pdf")).toBeNull();
+    expect(
+      screen.getByText("notes.pdf isn't a .json, .txt or .csv file."),
+    ).toBeInTheDocument();
   });
 
   it("shows the line the backend could not read, and keeps the text", async () => {
