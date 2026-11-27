@@ -73083,6 +73083,11 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .number()
       .min(1)
       .default(simulateV3TestExecutionCallsResponseExecutionTrialsDefault),
+    connected_calls: zod
+      .number()
+      .describe(
+        "Calls that connected: a chat that completed, a voice call that ran for any time. Debug failures needs enough of them.",
+      ),
     seed: zod.string().min(1).optional(),
     agent_type: zod.string().min(1),
     resume: zod.object({
