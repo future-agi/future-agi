@@ -3002,3 +3002,42 @@ def test_a_history_read_around_a_message_returns_the_page_that_holds_it(
         False,
         True,
     )
+
+
+@pytest.mark.django_db
+def test_chat_on_build_whose_sandbox_is_gone_ends_the_build_not_retries(
+    organization, monkeypatch
+):
+    from simulate.models import HostedHarnessAttempt
+    from simulate.services import hosted_harness_gateway as gateway_module
+    from simulate.services.hosted_sandbox.base import SandboxNotFoundError
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key="lost-sb")
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sb-gone"
+    ).attempt
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        state=HostedHarnessAttempt.State.RUNNING
+    )
+    job.refresh_from_db()
+    conversation, _, _ = enqueue_message(
+        job, content="still there?", client_request_id="lost-sb"
+    )
+
+    def get(_ref, request_timeout=None):
+        raise SandboxNotFoundError("Paused sandbox sb-gone not found")
+
+    reconciled = []
+    gateway = object.__new__(gateway_module.HostedHarnessGateway)
+    gateway.client = SimpleNamespace(runtime_name="", runtime_digest="", get=get)
+    monkeypatch.setattr(
+        gateway, "reconcile_completed", lambda current: reconciled.append(current.id)
+    )
+    with pytest.raises(HostedHarnessError) as caught:
+        gateway.ensure_conversation_runtime(
+            job, conversation=conversation, endpoint_base_url="https://platform.example"
+        )
+
+    assert caught.value.code == "conversation_attempt_sandbox_gone"
+    assert caught.value.retryable is False
+    assert reconciled == [attempt.id]

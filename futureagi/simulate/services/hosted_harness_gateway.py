@@ -3869,6 +3869,16 @@ class HostedHarnessGateway:
                 state=HostedHarnessConversation.State.DEGRADED,
                 updated_at=timezone.now(),
             )
+            if attempt is not None and isinstance(exc, SandboxNotFoundError):
+                # The build's sandbox is gone for good: record the loss so the job ends or
+                # retries, instead of recovery restarting this chat on it forever.
+                self.reconcile_completed(attempt)
+                raise HostedHarnessError(
+                    "conversation_attempt_sandbox_gone",
+                    "the build's sandbox no longer exists",
+                    status_code=409,
+                    retryable=False,
+                ) from exc
             if isinstance(exc, HostedHarnessError):
                 raise
             raise HostedHarnessError(
