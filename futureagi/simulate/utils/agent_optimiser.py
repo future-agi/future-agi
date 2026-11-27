@@ -693,7 +693,18 @@ def create_optimiser_run_for_test_execution(
 
     Returns:
         AgentOptimiserRun instance or None if input data couldn't be prepared
+
+    Raises:
+        SimulationInvestigationConflict: Debug failures' rule refuses the run.
     """
+    # Imported here: the rule's run-results queries import simulate.tasks, which
+    # imports this module.
+    from tracer.services.simulation_investigation import debug_failures_refusal
+
+    refusal = debug_failures_refusal(test_execution)
+    if refusal is not None:
+        raise refusal
+
     input_data = prepare_simulation_analysis_input(str(test_execution.id))
 
     if not input_data:

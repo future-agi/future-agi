@@ -50,3 +50,22 @@ class SimulateEvalConfig(BaseModel):
         verbose_name = "Simulate Eval Config"
         verbose_name_plural = "Simulate Eval Configs"
         ordering = ["-created_at"]
+
+
+class SimulateEvalConfigRemovedKeys(models.Model):
+    """What the evaluator-key clean-up took out of an eval attachment's nested config.
+
+    A plain model: no soft delete, no foreign key (so creating the table takes no lock
+    on ``simulate_eval_config``). ``removed`` holds the removed pairs except
+    ``api_key`` and except keys whose value was ``None``.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    eval_config_id = models.UUIDField(db_index=True)
+    removed = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    restored_at = models.DateTimeField(null=True, blank=True)
+    restored_keys = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_eval_config_removed_keys"

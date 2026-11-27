@@ -26,8 +26,22 @@ IVR_CHANNEL = "ivr"
 CHAT_CHANNEL = "chat_message"
 # The trigger kinds each runtime evaluates: someone who speaks runs on the agent's turns and words, someone acting
 # through the world on its actions, contacts and time.
-SPEAKING_TRIGGERS = ("always", "on_tool", "on_keyword", "mid_journey", "conditional")
-WORLD_TRIGGERS = ("always", "on_tool", "contacted", "after_seconds", "conditional")
+SPEAKING_TRIGGERS = (
+    "always",
+    "on_tool",
+    "on_keyword",
+    "mid_journey",
+    "conditional",
+    "probability",
+)
+WORLD_TRIGGERS = (
+    "always",
+    "on_tool",
+    "contacted",
+    "after_seconds",
+    "conditional",
+    "probability",
+)
 # What an actor that does not answer in time leaves behind, without naming an action or another actor.
 FALLBACK_WORDS = {"silent": "Nothing happens", "decline": "They decline"}
 # The kinds the editor offers when the sealed schema lists none; any other kind a builder writes is kept and shown.
@@ -81,17 +95,17 @@ TRIGGER_KIND_LABELS = {
     "conditional": "Once a record exists",
     "probability": "By chance",
 }
-# The keys each kind reads when the runtime evaluates it, as the editor makes them; `on_call` above 1 and a chance are
-# kept, never made (`editable_trigger`).
+# The keys each kind reads when the runtime evaluates it, as the editor makes them: `on_call` is which call of the
+# action brings the actor in (1 when left out), `p` the chance, 0 to 1, drawn once per call.
 TRIGGER_FIELDS: dict[str, list[str]] = {
     "always": [],
     "contacted": [],
-    "on_tool": ["tool"],
+    "on_tool": ["tool", "on_call"],
     "on_keyword": ["words"],
     "mid_journey": ["turn"],
     "after_seconds": ["seconds"],
     "conditional": ["collection", "where"],
-    "probability": [],
+    "probability": ["p"],
 }
 
 
@@ -340,14 +354,11 @@ def trigger_kinds(rules: ActorRules, channel: str | None) -> list[str]:
 def editable_trigger(
     trigger: CallActorTrigger, channel: str | None, kinds: list[str]
 ) -> bool:
-    """Whether the editor can make this trigger again: well formed, a kind it offers for the way the actor joins,
-    and not a later call of a tool."""
+    """Whether the editor can make this trigger again: well formed, and a kind it offers for the way the actor
+    joins."""
     if not well_formed(trigger):
         return False
-    kind = trigger.get("kind") or "always"
-    return kind in kinds and not (
-        kind == "on_tool" and (whole_of(trigger.get("on_call")) or 1) > 1
-    )
+    return (trigger.get("kind") or "always") in kinds
 
 
 class ArrivalOverride(TypedDict):

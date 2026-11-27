@@ -58,41 +58,13 @@ import { NO_DATA_FOR_RANGE_MESSAGE } from "./constants";
 import useClampedChartTooltips from "./hooks/useClampedChartTooltips";
 import ContentSkeleton from "src/components/content-skeleton";
 import { seriesColors } from "src/theme/data-colors";
+import {
+  buildChartSeriesColorMap,
+  buildSeriesColorMap,
+  getSeriesColor,
+} from "./chartColors";
 
 const CHART_HEIGHT_FALLBACK = 280;
-const hashSeriesName = (name) => {
-  const s = String(name || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-};
-// Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
-// at 4 series. Walk each name once and, on a taken slot, advance to the next
-// free one — distinct up to palette size, stable for the common non-colliding case.
-// `palette` is the theme's data palette (seriesColors(theme)).
-const buildSeriesColorMap = (names, palette) => {
-  const map = {};
-  const used = new Set();
-  (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % palette.length;
-    let picked = start;
-    for (let i = 0; i < palette.length; i += 1) {
-      const candidate = (start + i) % palette.length;
-      if (!used.has(candidate)) {
-        picked = candidate;
-        break;
-      }
-    }
-    used.add(picked);
-    map[name] = palette[picked];
-  });
-  return map;
-};
-const getSeriesColorFromMap = (map, name, palette) =>
-  (map && map[name]) || palette[hashSeriesName(name) % palette.length];
-
 function getApexType(chartType) {
   const map = {
     line: "line",
@@ -536,14 +508,10 @@ export default function WidgetChart({
   const palette = seriesColors(theme);
   const seriesColorMap = useMemo(
     () =>
-      buildSeriesColorMap(
-        series.map((s) => s.name),
-        palette,
-      ),
-    [series, palette],
+      buildChartSeriesColorMap(series, palette, theme.palette.mode, chartType),
+    [series, palette, theme.palette.mode, chartType],
   );
-  const colorFor = (name) =>
-    getSeriesColorFromMap(seriesColorMap, name, palette);
+  const colorFor = (name) => getSeriesColor(name, seriesColorMap, palette);
 
   // Pie slices are breakdown values, which repeat across metrics. Key their
   // colours by the raw breakdown name so a given project is the same colour in
@@ -556,8 +524,7 @@ export default function WidgetChart({
       ),
     [series, palette],
   );
-  const pieColorFor = (name) =>
-    getSeriesColorFromMap(pieColorMap, name, palette);
+  const pieColorFor = (name) => getSeriesColor(name, pieColorMap, palette);
 
   const isDenseSeries = isDenseChartSeries(plottedChartSeries);
   const markerSizes = useMemo(

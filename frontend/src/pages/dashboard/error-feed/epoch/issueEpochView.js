@@ -2,7 +2,6 @@
 // the list icon. Pure: the issue's epoch job, as epochFromIssue.js reads it, plus the
 // epoch's own read once one started. Labels come from the epoch page's map.
 import {
-  OUR_FAILURES,
   STATE_LABEL,
   fixName,
   isShipped,
@@ -12,7 +11,10 @@ import {
   stageOf,
   winnerOf,
 } from "src/sections/simulate/environments/workspace/improvements/fixRunView";
-import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
+import {
+  FIX_LIVE_STATES,
+  OUR_FAILURES,
+} from "src/api/simulate-environments/fixRuns";
 import { paths } from "src/routes/paths";
 
 // The epoch's page, from the epoch's own environment.

@@ -70,6 +70,14 @@ export const DELETE_DIALOG_COPY = {
   confirm: "Delete",
 };
 
+// A delete refused while a version is locked: an admin can unlock it from there.
+// ``pair`` names the unlocked versions, as LOCK_COPY does; null when unknown.
+export const DELETE_REFUSAL_COPY = {
+  unlock: "Unlock versions",
+  unlocked: (label, pair) =>
+    pair ? `Unlocked ${pair} (lock ${label}).` : `Unlocked lock ${label}.`,
+};
+
 // A field the list API doesn't send at all (not even as null). Cells draw a
 // "Coming soon" chip for it; a field sent as null draws a dash instead.
 export const NOT_PROVIDED = Symbol("not provided");

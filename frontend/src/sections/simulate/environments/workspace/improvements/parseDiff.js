@@ -3,13 +3,20 @@
 export function parseDiff(text) {
   const files = [];
   let current = null;
+  let oldFile = "";
   (text || "").split("\n").forEach((raw) => {
     if (raw.startsWith("diff --git ")) {
       current = null;
       return;
     }
+    if (raw.startsWith("--- ")) {
+      // A deleted file's "+++" is /dev/null; its real path is only here.
+      oldFile = raw.slice(4).replace(/^a\//, "");
+      if (current) return;
+    }
     if (raw.startsWith("+++ ")) {
-      current = { file: raw.slice(4).replace(/^b\//, ""), lines: [] };
+      const next = raw.slice(4).replace(/^b\//, "");
+      current = { file: next === "/dev/null" ? oldFile : next, lines: [] };
       files.push(current);
       return;
     }

@@ -50,8 +50,16 @@ export default function FixMyAgentDrawer({
   const { analysis, isLoading, request, isRequesting, requestError } =
     useDebugAnalysis(open ? executionId : null);
 
-  // The first open of a finished run queues its diagnosis; later opens read it.
+  // Every open starts from the run as it is now. The drawer stays mounted while
+  // closed, so without this a reopen would send no request and keep showing the
+  // last refusal. The new request replaces the old error. Declared before the
+  // request effect so both run in the same commit, in this order.
   const requested = useRef(null);
+  useEffect(() => {
+    if (open) requested.current = null;
+  }, [open, executionId]);
+
+  // An open of an unanalyzed run queues its diagnosis; an analyzed one is read.
   useEffect(() => {
     if (!open || isLoading || analysis.status !== "not_requested") return;
     if (requested.current === executionId) return;
@@ -74,10 +82,12 @@ export default function FixMyAgentDrawer({
 
   // A refused request (e.g. calls still running) must read as an error, never an
   // endless loader. The rule's refusals hold until the run changes, so they read
-  // as a reason with no retry.
+  // as a reason with no retry. A retry of a failed diagnosis can fail too: its
+  // error replaces the old failure, or Try again would look like it did nothing.
   const view = useMemo(() => {
     const base =
-      requestError && analysis.status === "not_requested"
+      requestError &&
+      (analysis.status === "not_requested" || analysis.status === "failed")
         ? {
             ...analysis,
             status: "failed",

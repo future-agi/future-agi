@@ -11,6 +11,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from simulate.services import harness_actor_labels as labels
 from simulate.services.harness_actor_merge import id_from, merged_record
 from simulate.services.harness_actor_rules import _RULES_BEFORE_DECLARED, typed_limits
+from simulate.services.harness_actor_validation import actor_problems
 from simulate.services.harness_actor_view import never_sees
 from simulate.services.harness_versioning import drafts
 from simulate.services.harness_versioning.versions import record_authoring
@@ -253,6 +254,7 @@ def test_trigger_kinds_follow_the_runtime_and_the_sealed_schema_and_editable_tri
         "on_tool",
         "on_keyword",
         "mid_journey",
+        "probability",
     ]
     assert labels.trigger_kinds(newer, None) == [
         "always",
@@ -260,13 +262,17 @@ def test_trigger_kinds_follow_the_runtime_and_the_sealed_schema_and_editable_tri
         "contacted",
         "after_seconds",
         "conditional",
+        "probability",
     ]
     kinds = labels.trigger_kinds(newer, None)
     assert labels.editable_trigger({"kind": "on_tool", "tool": "a"}, None, kinds)
-    assert not labels.editable_trigger(
+    # A later call of an action and a chance are made in the editor too.
+    assert labels.editable_trigger(
         {"kind": "on_tool", "tool": "a", "on_call": 2}, None, kinds
     )
-    assert not labels.editable_trigger({"kind": "probability", "p": 0.5}, None, kinds)
+    assert labels.editable_trigger({"kind": "probability", "p": 0.5}, None, kinds)
+    assert labels.TRIGGER_FIELDS["probability"] == ["p"]
+    assert labels.TRIGGER_FIELDS["on_tool"] == ["tool", "on_call"]
     assert not labels.editable_trigger(
         {"kind": "on_keyword", "words": ["x"]}, None, kinds
     )
@@ -598,6 +604,7 @@ def test_the_cast_carries_what_the_server_decides_about_each_actor(
         "on_tool",
         "contacted",
         "after_seconds",
+        "probability",
     ]
     assert cast["id_hint"] == "1 to 64 lowercase letters, digits or underscores"
     kinds = {one["key"]: one["kind"] for one in cast["limit_fields"]}
@@ -1090,3 +1097,127 @@ def test_a_chat_actor_scheduled_for_a_turn_says_it_comes_in_before_the_person_cl
     assert "before the person closes" in when_label(scheduled, "chat_message")
     # On a call the scheduled turn is the whole rule.
     assert "closes" not in when_label(scheduled, "audio_mix")
+
+
+def test_a_chance_of_0_is_refused_on_every_write_and_a_chance_in_range_is_kept(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-edits-chance")
+
+    def by_chance(p):
+        return {**MANAGER, "activation": {"trigger": {"kind": "probability", "p": p}}}
+
+    zero = _add(auth_client, environment, by_chance(0))
+    flag = _add(auth_client, environment, by_chance(True))
+    kept = _add(auth_client, environment, by_chance(0.4))
+
+    assert (zero.status_code, zero.json()["error"]) == (400, "actor_invalid")
+    assert "above 0%" in zero.json()["message"]
+    assert (flag.status_code, flag.json()["error"]) == (400, "actor_invalid")
+    assert kept.status_code == 200, kept.content
+    assert _stored(environment)["manager"]["activation"]["trigger"] == {
+        "kind": "probability",
+        "p": 0.4,
+    }
+
+
+def test_an_action_trigger_without_its_action_is_refused(
+    user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-edits-empty-tool")
+    on_tool = {
+        **MANAGER,
+        "activation": {"trigger": {"kind": "on_tool", "tool": "", "on_call": 2}},
+    }
+
+    refused = _add(auth_client, environment, on_tool)
+
+    assert (refused.status_code, refused.json()["error"]) == (400, "actor_invalid")
+    assert "Pick the action" in refused.json()["message"]
+    assert "manager" not in _stored(environment)
+
+
+@pytest.mark.parametrize(
+    "trigger, field",
+    [
+        ({"kind": "on_keyword", "words": []}, "words"),
+        ({"kind": "on_keyword", "words": ["  "]}, "words"),
+        ({"kind": "mid_journey", "turn": 0}, "turn"),
+        ({"kind": "on_tool", "tool": " "}, "tool"),
+        ({"kind": "probability", "p": 0}, "p"),
+        ({"kind": "probability", "p": "0.5"}, "p"),
+        ({"kind": "probability", "p": float("nan")}, "p"),
+        ({"kind": "on_keyword", "words": "refund"}, "words"),
+        ({"kind": "on_keyword", "words": [None]}, "words"),
+    ],
+)
+def test_a_trigger_the_harness_would_refuse_is_refused_when_written(trigger, field):
+    actor = {**MANAGER, "id": "manager", "activation": {"trigger": trigger}}
+
+    problems = actor_problems([actor], "manager", RULES, new_id=True)
+
+    assert problems, trigger
+    # Refused once: by the record's schema for a value of the wrong type, else by the trigger's own rule.
+    assert len(problems) == 1, problems
+    assert problems[0]["field"] in (field, "trigger", "activation"), problems
+
+
+def test_an_agent_turn_written_as_a_whole_float_is_kept():
+    actor = {
+        **MANAGER,
+        "id": "manager",
+        "activation": {"trigger": {"kind": "mid_journey", "turn": 2.0}},
+    }
+
+    assert actor_problems([actor], "manager", RULES, new_id=True) == []
+
+
+def test_an_old_record_s_trigger_never_blocks_an_edit_of_another_field():
+    """A record stored before these rules (ALK's default chance is 0) is edited by name only: its trigger is not
+    this edit's, so it never blocks it; an edit that writes the trigger is still checked."""
+    before = {
+        **MANAGER,
+        "id": "manager",
+        "activation": {"trigger": {"kind": "probability", "p": 0}},
+    }
+    renamed = {**before, "name": "Rep"}
+
+    by_name = actor_problems(
+        [renamed], "manager", RULES, new_id=False, before=before, touched={"name"}
+    )
+    by_trigger = actor_problems(
+        [renamed],
+        "manager",
+        RULES,
+        new_id=False,
+        before=before,
+        touched={"activation.trigger"},
+    )
+
+    assert by_name == []
+    assert by_trigger
+
+
+@pytest.mark.parametrize("p", [True, "0.5"])
+def test_a_chance_that_is_not_a_number_is_refused_on_both_write_paths(
+    p, user, workspace, storage, auth_client
+):
+    environment = _built(user, workspace, "actor-edits-chance-types")
+    assert _add(auth_client, environment, MANAGER).status_code == 200
+    url = f"{BASE}/{environment.id}/actors/manager/"
+    trigger = {"kind": "probability", "p": p}
+
+    by_changes = auth_client.put(url, {"changes": {"trigger": trigger}}, format="json")
+    by_record = auth_client.put(
+        url, {"actor": {**MANAGER, "activation": {"trigger": trigger}}}, format="json"
+    )
+
+    assert by_changes.status_code == 400, by_changes.content
+    assert by_record.status_code == 400, by_record.content
+    assert (
+        _stored(environment)["manager"]
+        .get("activation", {})
+        .get("trigger", {})
+        .get("kind")
+        != "probability"
+    )

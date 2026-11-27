@@ -51729,6 +51729,35 @@
                 }
             ]
         },
+        "/simulate/api/agent-fix-engine/{id}/submitted/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-engine_submitted",
+                "description": "The tree an outside attempt verifies, `source/`-rooted like ``source``.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": {
             "post": {
                 "operationId": "simulate_api_agent-fix-engine_v1_chat_completions_create",
@@ -52105,10 +52134,127 @@
             },
             "parameters": []
         },
+        "/simulate/api/agent-fix-runs/coding-agent-attempts/": {
+            "post": {
+                "operationId": "simulate_api_agent-fix-runs_submit_attempt",
+                "description": "Submit the tree a person's own coding agent made for a finished run. Future AGI\nchecks it as a short Epoch: no model proposes a change, but each check runs the\nagent on the run's cases and uses credits. Read its verdict.",
+                "parameters": [
+                    {
+                        "name": "source_run_id",
+                        "in": "formData",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "tree",
+                        "in": "formData",
+                        "description": "A `source/`-rooted tar.gz: each file of the brief it keeps, changed or not, and any new file. A file of the brief left out is deleted.",
+                        "required": true,
+                        "type": "file"
+                    },
+                    {
+                        "name": "summary",
+                        "in": "formData",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 2000
+                    },
+                    {
+                        "name": "base_commit",
+                        "in": "formData",
+                        "description": "A GitHub agent's change is refused unless this is the brief's base_commit.",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 64
+                    },
+                    {
+                        "name": "locked_paths",
+                        "in": "formData",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "maxLength": 512,
+                            "minLength": 1
+                        }
+                    },
+                    {
+                        "name": "budget_credits",
+                        "in": "formData",
+                        "description": "The attempt's limit in credits. Left out, the attempt's hold × 1.25, capped at 50,000 credits. Its hold is the most its check runs can hold at once.",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 50000,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixRun"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/agent-fix-runs/coding-agent-brief/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-runs_brief",
+                "description": "What a person's own coding agent reads to fix a finished run: its failing cases,\nnever a held-back one, the agent's files, the rules, and how to submit.",
+                "parameters": [
+                    {
+                        "name": "source_run_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixCodingAgentBrief"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/simulate/api/agent-fix-runs/launch-options/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_launch_options",
-                "description": "What the launch form shows and prefills for a finished run, and what would\nrefuse the launch now.",
+                "description": "What the launch form shows and prefills for a finished run, and what would\nrefuse the launch now. Only a person's signed-in session reads the cases an Epoch\non the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP\nnever.",
                 "parameters": [
                     {
                         "name": "source_run_id",
@@ -52384,6 +52530,39 @@
                     "simulate"
                 ],
                 "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/agent-fix-runs/{id}/verdict/": {
+            "get": {
+                "operationId": "simulate_api_agent-fix-runs_verdict",
+                "description": "An outside attempt's verdict: each tier's status, the static and target tiers'\ndetail, and its must-pass regressions, none on a held-back case.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixAttemptVerdict"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
                 "x-runtime-response-validation": true
             },
             "parameters": [
@@ -53752,6 +53931,12 @@
                     },
                     "204": {
                         "description": "Deleted"
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -56459,6 +56644,100 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/versions/lock-preview/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_versions_lock_preview",
+                "description": "Whether the default environment and suite versions can be locked now, why\nnot, and the train and test splits a lock would give. It plans as the lock does,\nso it reads the default run's environment contract and scenario documents by\ndesign, and the agent version's facts its bundle key needs, never its\ncredential blob; the versions list stays off them.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockPreview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/versions/lock/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_versions_lock_version",
+                "description": "Lock the default environment and suite versions with train and test splits;\nreturns every version and the locked-version history: every locked one plus\nthe newest unlocked ones.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockVersion"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVersions"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_versions_suite_suite_members",
@@ -56495,6 +56774,55 @@
                 },
                 {
                     "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/versions/unlock/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_versions_unlock_version",
+                "description": "Unlock a locked version, as a workspace admin or owner. Its versions, splits and\nscores stay; returns every version and the locked-version history: every\nlocked one plus the newest unlocked ones.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUnlockVersion"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUnlockForbidden"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVersions"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -63758,6 +64086,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TestExecutionDebugAnalysisError"
                         }
                     },
                     "500": {
@@ -101934,6 +102268,11 @@
                 },
                 "metrics_enabled": {
                     "title": "Metrics enabled",
+                    "type": "boolean",
+                    "default": false
+                },
+                "coding_agent_attempts_enabled": {
+                    "title": "Coding agent attempts enabled",
                     "type": "boolean",
                     "default": false
                 },
@@ -146841,6 +147180,26 @@
                 }
             }
         },
+        "AgentFixOutsideCandidate": {
+            "required": [
+                "summary",
+                "number"
+            ],
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "number": {
+                    "title": "Number",
+                    "type": "integer",
+                    "maximum": 4,
+                    "minimum": 1
+                }
+            },
+            "x-nullable": true
+        },
         "AgentFixRequest": {
             "required": [
                 "target_scenario_keys",
@@ -146955,6 +147314,9 @@
                     "title": "Measured automatically",
                     "type": "boolean",
                     "default": false
+                },
+                "outside_candidate": {
+                    "$ref": "#/definitions/AgentFixOutsideCandidate"
                 }
             }
         },
@@ -147198,6 +147560,7 @@
                 "report",
                 "failure",
                 "retried_from_id",
+                "attempt_of_id",
                 "candidates"
             ],
             "type": "object",
@@ -147263,7 +147626,6 @@
                 },
                 "step": {
                     "title": "Step",
-                    "description": "A finished fix is done, whatever the engine last said.",
                     "type": "string",
                     "enum": [
                         "variations",
@@ -147308,6 +147670,18 @@
                     "title": "Retryable",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "attempt_of_id": {
+                    "title": "Attempt of id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "limited_validation": {
                     "title": "Limited validation",
@@ -147550,6 +147924,169 @@
                     "title": "Version",
                     "type": "integer",
                     "x-nullable": true
+                }
+            }
+        },
+        "AgentFixCodingAgentTarget": {
+            "required": [
+                "key",
+                "name",
+                "failing_sub_goals"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "failing_sub_goals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AgentFixCodingAgentFailure": {
+            "required": [
+                "scenario_key",
+                "trial",
+                "sub_goals",
+                "reasons",
+                "transcript"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "trial": {
+                    "title": "Trial",
+                    "type": "integer"
+                },
+                "sub_goals": {
+                    "title": "Sub goals",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "boolean"
+                    }
+                },
+                "reasons": {
+                    "title": "Reasons",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "transcript": {
+                    "title": "Transcript",
+                    "type": "string"
+                }
+            }
+        },
+        "AgentFixOutsideAttempts": {
+            "required": [
+                "used",
+                "max"
+            ],
+            "type": "object",
+            "properties": {
+                "used": {
+                    "title": "Used",
+                    "type": "integer"
+                },
+                "max": {
+                    "title": "Max",
+                    "type": "integer"
+                }
+            }
+        },
+        "AgentFixCodingAgentBrief": {
+            "required": [
+                "source_run",
+                "environment",
+                "agent",
+                "base_commit",
+                "files",
+                "targets",
+                "protected_scenario_keys",
+                "locked_paths",
+                "failures",
+                "attempts",
+                "blocked",
+                "instructions"
+            ],
+            "type": "object",
+            "properties": {
+                "source_run": {
+                    "$ref": "#/definitions/AgentFixLaunchSourceRun"
+                },
+                "environment": {
+                    "$ref": "#/definitions/AgentFixLaunchEnvironment"
+                },
+                "agent": {
+                    "$ref": "#/definitions/AgentFixAgent"
+                },
+                "base_commit": {
+                    "title": "Base commit",
+                    "description": "The commit a GitHub agent's change must start from; blank for an uploaded agent.",
+                    "type": "string"
+                },
+                "files": {
+                    "description": "The agent's files as the run ran them. The submitted tree holds each one it keeps, changed or not, and may add new files; one left out is deleted.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "targets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixCodingAgentTarget"
+                    }
+                },
+                "protected_scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "locked_paths": {
+                    "description": "The paths earlier attempts on the run locked: every later attempt keeps them, and may lock more.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "failures": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixCodingAgentFailure"
+                    }
+                },
+                "attempts": {
+                    "$ref": "#/definitions/AgentFixOutsideAttempts"
+                },
+                "blocked": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                },
+                "instructions": {
+                    "title": "Instructions",
+                    "description": "The prompt the coding agent follows, in markdown.",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         },
@@ -147971,6 +148508,7 @@
                 "report",
                 "failure",
                 "retried_from_id",
+                "attempt_of_id",
                 "candidates"
             ],
             "type": "object",
@@ -148036,7 +148574,6 @@
                 },
                 "step": {
                     "title": "Step",
-                    "description": "A finished fix is done, whatever the engine last said.",
                     "type": "string",
                     "enum": [
                         "variations",
@@ -148081,6 +148618,18 @@
                     "title": "Retryable",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "attempt_of_id": {
+                    "title": "Attempt of id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "limited_validation": {
                     "title": "Limited validation",
@@ -148200,6 +148749,135 @@
                     "type": "string",
                     "format": "uri",
                     "minLength": 1
+                }
+            }
+        },
+        "AgentFixAttemptTier": {
+            "required": [
+                "name",
+                "status",
+                "detail"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "failed",
+                        "pending",
+                        "skipped"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                }
+            }
+        },
+        "AgentFixAttemptVerdict": {
+            "required": [
+                "id",
+                "number",
+                "state",
+                "step",
+                "ending",
+                "failure",
+                "summary",
+                "tiers",
+                "counted",
+                "must_pass_regressions",
+                "patch_available",
+                "pull_request_url"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "number": {
+                    "title": "Number",
+                    "type": "integer"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "stopping",
+                        "ready",
+                        "no_improvement",
+                        "not_reproduced",
+                        "out_of_budget",
+                        "stopped",
+                        "failed",
+                        "too_few_cases"
+                    ]
+                },
+                "step": {
+                    "title": "Step",
+                    "type": "string",
+                    "enum": [
+                        "variations",
+                        "reproduce",
+                        "search",
+                        "verify",
+                        "done"
+                    ],
+                    "x-nullable": true
+                },
+                "ending": {
+                    "title": "Ending",
+                    "type": "string",
+                    "enum": [
+                        "ready",
+                        "no_improvement",
+                        "not_reproduced",
+                        "out_of_budget",
+                        "failed"
+                    ],
+                    "x-nullable": true
+                },
+                "failure": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixAttemptTier"
+                    }
+                },
+                "counted": {
+                    "title": "Counted",
+                    "type": "boolean"
+                },
+                "must_pass_regressions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "patch_available": {
+                    "title": "Patch available",
+                    "type": "boolean"
+                },
+                "pull_request_url": {
+                    "title": "Pull request url",
+                    "type": "string"
                 }
             }
         },
@@ -153680,6 +154358,74 @@
                 }
             }
         },
+        "HarnessLockRefusal": {
+            "required": [
+                "error",
+                "message",
+                "retryable"
+            ],
+            "type": "object",
+            "properties": {
+                "error": {
+                    "title": "Error",
+                    "description": "lock_not_ready, version_already_locked, lock_too_few_test, lock_too_few_train, version_locked, version_conflict or rebuild_running.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
+                },
+                "piece": {
+                    "title": "Piece",
+                    "description": "version_conflict: the piece whose default moved.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "train": {
+                    "title": "Train",
+                    "description": "lock_too_few_*: the train tasks a lock gives.",
+                    "type": "integer"
+                },
+                "test": {
+                    "title": "Test",
+                    "description": "lock_too_few_*: the test tasks a lock gives.",
+                    "type": "integer"
+                },
+                "locked_version_id": {
+                    "title": "Locked version id",
+                    "description": "version_locked: the locked version to unlock first.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "description": "version_locked: that locked version's label.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment_label": {
+                    "title": "Environment label",
+                    "description": "version_locked: its environment version's label.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "suite_label": {
+                    "title": "Suite label",
+                    "description": "version_locked: its suite version's label.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
         "HarnessActorLimits": {
             "description": "The whole limits block, replacing the stored one. Each limit is a positive number or null for no limit; model is one of actor_models. A limit left out takes the channel's default.",
             "type": "object",
@@ -158445,11 +159191,88 @@
                 }
             }
         },
+        "HarnessLockedVersion": {
+            "required": [
+                "id",
+                "label",
+                "environment_version_id",
+                "environment_label",
+                "suite_version_id",
+                "suite_label",
+                "locked_at",
+                "locked_by",
+                "unlocked_at",
+                "unlocked_by",
+                "train",
+                "test"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "environment_label": {
+                    "title": "Environment label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "suite_label": {
+                    "title": "Suite label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "locked_at": {
+                    "title": "Locked at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "locked_by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "unlocked_at": {
+                    "title": "Unlocked at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "unlocked_by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "train": {
+                    "title": "Train",
+                    "type": "integer"
+                },
+                "test": {
+                    "title": "Test",
+                    "type": "integer"
+                }
+            }
+        },
         "HarnessVersions": {
             "required": [
                 "agent",
                 "environment",
-                "suite"
+                "suite",
+                "locked_versions"
             ],
             "type": "object",
             "properties": {
@@ -158469,6 +159292,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessVersion"
+                    }
+                },
+                "locked_versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessLockedVersion"
                     }
                 }
             }
@@ -161721,6 +162550,102 @@
                 }
             }
         },
+        "HarnessRefusal": {
+            "required": [
+                "code",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessLockPreview": {
+            "required": [
+                "environment_version_id",
+                "suite_version_id",
+                "proved",
+                "can_lock",
+                "refusal",
+                "train",
+                "test",
+                "test_target"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "proved": {
+                    "title": "Proved",
+                    "description": "The suite version passed its proofs against this environment version.",
+                    "type": "boolean"
+                },
+                "can_lock": {
+                    "title": "Can lock",
+                    "type": "boolean"
+                },
+                "refusal": {
+                    "$ref": "#/definitions/HarnessRefusal"
+                },
+                "train": {
+                    "title": "Train",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "test": {
+                    "title": "Test",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "test_target": {
+                    "title": "Test target",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessLockVersion": {
+            "required": [
+                "environment_version_id",
+                "suite_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "description": "The default environment version the caller saw.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "description": "The default suite version the caller saw.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "additionalProperties": false
+        },
         "HarnessSuiteMember": {
             "required": [
                 "scenario_key",
@@ -161760,6 +162685,102 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                }
+            }
+        },
+        "HarnessUnlockVersion": {
+            "required": [
+                "locked_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "locked_version_id": {
+                    "title": "Locked version id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "additionalProperties": false
+        },
+        "HarnessUnlockForbidden": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "enum": [
+                        "viewer_read_only"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string"
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
                 }
             }
         },
@@ -173042,6 +174063,27 @@
                     "title": "Failed calls",
                     "type": "integer",
                     "readOnly": true
+                },
+                "debug_failures_connected_calls": {
+                    "title": "Debug failures connected calls",
+                    "description": "Connected calls as Debug failures counts them: per call and live calls only. Null until the run finishes. Unlike connected_calls, it counts a completed chat on a voice run and skips a deleted call.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "failing_calls": {
+                    "title": "Failing calls",
+                    "description": "Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "has_debug_failures_analysis": {
+                    "title": "Has debug failures analysis",
+                    "description": "Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes.",
+                    "type": "boolean",
+                    "readOnly": true,
+                    "x-nullable": true
                 },
                 "total_duration": {
                     "title": "Total duration",
