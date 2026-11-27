@@ -26,12 +26,7 @@
       "display_name": "Heimdall",
       "ownership": "Observe + Tracing SDK + Dashboard",
       "lead": "atharva-bhange",
-      "members": [
-        "atharva-bhange",
-        "JayaSurya-27",
-        "commitPirate",
-        "sarthakFuture"
-      ],
+      "members": ["atharva-bhange", "JayaSurya-27", "commitPirate"],
       "paths": [
         "futureagi/tracer/**",
         "futureagi/sockets/**",
@@ -47,12 +42,7 @@
       "display_name": "Turing",
       "ownership": "Platform Evals + Evals SDK + Falcon",
       "lead": "hadarishav",
-      "members": [
-        "hadarishav",
-        "KarthikAvinashFI",
-        "cdileep23",
-        "azain-commits"
-      ],
+      "members": ["hadarishav", "KarthikAvinashFI", "cdileep23"],
       "paths": [
         "futureagi/evaluations/**",
         "futureagi/agentic_eval/**",
@@ -96,7 +86,7 @@
       "display_name": "Adam",
       "ownership": "Platform Optimization + Opt. SDK + Gateway",
       "lead": "NVJKKartik",
-      "members": ["NVJKKartik", "azain-commits", "hadarishav"],
+      "members": ["NVJKKartik", "hadarishav"],
       "paths": [
         "agentcc-gateway/**",
         "futureagi/agentcc/**",
@@ -122,13 +112,7 @@
       "display_name": "Frame",
       "ownership": "Datasets + Future AGI + RBAC + Pricing & billing",
       "lead": "khushalsonawat",
-      "members": [
-        "khushalsonawat",
-        "sarthakFuture",
-        "azain-commits",
-        "cdileep23",
-        "Tanmaycode1"
-      ],
+      "members": ["khushalsonawat", "cdileep23", "Tanmaycode1"],
       "paths": [
         "futureagi/accounts/**",
         "futureagi/saml2_auth/**",
@@ -164,8 +148,6 @@
     "hadarishav": { "slack_id": "U07UPK1NZGA", "display_name": "Rishav" },
     "JayaSurya-27": { "slack_id": "U083MBRARTL", "display_name": "Jaya" },
     "commitPirate": { "slack_id": "U09LC0C8NKE", "display_name": "Nosang" },
-    "sarthakFuture": { "slack_id": "U07V82HJ17H", "display_name": "Sarthak" },
-    "azain-commits": { "slack_id": "U09GEEBEATS", "display_name": "Azain" },
     "NVJKKartik": { "slack_id": "U0851KZFTV4", "display_name": "Kartik" },
     "Tanmaycode1": { "slack_id": "U0ARCAND0R1", "display_name": "Tanmay" },
     "nik13": { "slack_id": "U06U5JVUBJP", "display_name": "Nikhil" }
