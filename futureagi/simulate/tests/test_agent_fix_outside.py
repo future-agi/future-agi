@@ -21,6 +21,7 @@ from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import resolve
 from django.utils import timezone
+from rest_framework.parsers import MultiPartParser
 
 from accounts.models import Organization, OrgApiKey
 from conftest import WorkspaceAwareAPIClient
@@ -729,6 +730,32 @@ class TestSubmit:
             "The tree is too large. An attempt takes a tree of at most 1 MB."
         )
         submitted.assert_not_called()
+
+    def test_a_declared_length_over_the_upload_limit_is_refused_before_the_body_is_parsed(
+        self, auth_client, source_run, settings
+    ):
+        settings.AGENT_FIX_MAX_UPLOAD_BYTES = 1024 * 1024
+        tree = _tree({**FIXED, "big.bin": os.urandom(5 * 1024 * 1024 // 2)})
+        assert len(tree) > 2 * settings.AGENT_FIX_MAX_UPLOAD_BYTES
+
+        with patch.object(
+            MultiPartParser, "parse", autospec=True, side_effect=MultiPartParser.parse
+        ) as parsed:
+            response = _submit(
+                auth_client,
+                source_run,
+                tree=SimpleUploadedFile("tree.tar.gz", tree),
+            )
+
+        assert (response.status_code, response.json()["error"]) == (
+            413,
+            "fix_tree_too_large",
+        )
+        assert response.json()["message"] == (
+            "The tree is too large. An attempt takes a tree of at most 1 MB."
+        )
+        parsed.assert_not_called()
+        assert not AgentFixRun.no_workspace_objects.exists()
 
     @pytest.mark.parametrize("kind", [tarfile.REGTYPE, tarfile.DIRTYPE])
     def test_a_flood_of_empty_entries_is_refused_before_it_is_expanded(

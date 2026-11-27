@@ -105,14 +105,22 @@ def _rejected_archive_upload(files) -> Response | None:
     return None
 
 
-def _oversized_upload(request) -> Response | None:
-    """Refuse on the declared length, before Django reads the body: the size of the parsed files
-    is known only after the whole request has been buffered (up to `DATA_UPLOAD_MAX_MEMORY_SIZE`)."""
+def declared_length_over(request, max_bytes: int) -> bool:
+    """Whether the request declares a body over `max_bytes`, read before Django reads the body:
+    the size of the parsed files is known only after the whole request has been buffered (up to
+    `DATA_UPLOAD_MAX_MEMORY_SIZE`)."""
     try:
         declared = int(request.META.get("CONTENT_LENGTH") or 0)
     except ValueError:
         declared = 0
-    if declared > _SOURCE_UPLOAD_MAX_BYTES + _SOURCE_UPLOAD_FRAMING_BYTES:
+    return declared > max_bytes
+
+
+def _oversized_upload(request) -> Response | None:
+    """Refuse on the declared length, before Django reads the body."""
+    if declared_length_over(
+        request, _SOURCE_UPLOAD_MAX_BYTES + _SOURCE_UPLOAD_FRAMING_BYTES
+    ):
         return Response(
             {"detail": "source may not exceed 200 MiB"},
             status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,

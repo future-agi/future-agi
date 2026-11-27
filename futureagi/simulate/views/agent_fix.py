@@ -70,6 +70,7 @@ from simulate.services.agent_fix_runs import (
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
+    declared_length_over,
     request_organization,
     scope_jobs,
 )
@@ -113,6 +114,19 @@ def _not_found():
     )
 
 
+# Multipart framing and an attempt's text fields, on top of its tree.
+_ATTEMPT_FRAMING_BYTES = 1024 * 1024
+
+
+def _tree_too_large(limit: int) -> HostedHarnessError:
+    return HostedHarnessError(
+        "fix_tree_too_large",
+        f"The tree is too large. An attempt takes a tree of at most"
+        f" {limit // (1024 * 1024)} MB.",
+        status_code=413,
+    )
+
+
 class _FixRunPages(ExtendedPageNumberPagination):
     page_size = 25
 
@@ -136,6 +150,12 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         check_ee_feature(
             EEFeature.FIX_MY_AGENT, org_id=str(request_organization(request).id)
         )
+        # Refused before the body is parsed: by the time the view runs, the whole
+        # upload has been buffered.
+        if self.action == "submit_attempt":
+            limit = settings.AGENT_FIX_MAX_UPLOAD_BYTES
+            if declared_length_over(request, limit + _ATTEMPT_FRAMING_BYTES):
+                raise _tree_too_large(limit)
 
     def handle_exception(self, exc):
         return _error_response(exc) or super().handle_exception(exc)
@@ -275,12 +295,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         limit = settings.AGENT_FIX_MAX_UPLOAD_BYTES
         if data["tree"].size > limit:
-            raise HostedHarnessError(
-                "fix_tree_too_large",
-                f"The tree is too large. An attempt takes a tree of at most"
-                f" {limit // (1024 * 1024)} MB.",
-                status_code=413,
-            )
+            raise _tree_too_large(limit)
         fix_run = submit_outside_attempt(
             source_run,
             tree=data["tree"].read(),
