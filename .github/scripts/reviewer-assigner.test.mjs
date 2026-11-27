@@ -13,19 +13,23 @@ import { renderAssignment } from "./reviewer-rotation.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const BOT = "approver-app[bot]";
 
-// Preloaded into the sweep: replaces fetch, logs every call, serves one GraphQL
-// page and the write-access collaborators.
+// Preloaded into the sweep: replaces fetch, logs every call, serves one or two
+// GraphQL pages and the write-access collaborators.
 const FAKE_GITHUB = `
 import { appendFileSync, readFileSync } from "node:fs";
 const log = (c) => appendFileSync(process.env.CALL_LOG, JSON.stringify(c) + "\\n");
+let pages = 0;
 globalThis.fetch = async (url, init = {}) => {
   const path = String(url).replace("https://api.github.com", "");
   const method = init.method || "GET";
   log(path === "/graphql" ? { method, path } : { method, path, body: init.body });
   const reply = (body) => ({ ok: true, status: 200, headers: { get: () => null }, json: async () => body, text: async () => "" });
   if (method === "POST" && path === "/graphql") {
-    const nodes = JSON.parse(readFileSync(process.env.FAKE_PRS, "utf8"));
-    return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: false }, nodes } } } });
+    pages += 1;
+    const file = pages === 1 ? process.env.FAKE_PRS : process.env.FAKE_PRS_PAGE2;
+    const nodes = file ? JSON.parse(readFileSync(file, "utf8")) : [];
+    const more = pages === 1 && Boolean(process.env.FAKE_PRS_PAGE2);
+    return reply({ data: { repository: { pullRequests: { pageInfo: { hasNextPage: more, endCursor: more ? "c1" : null }, nodes } } } });
   }
   if (method === "GET" && path === "/repos/o/r/collaborators?permission=push&per_page=100")
     return reply(JSON.parse(process.env.FAKE_WRITERS).map((login) => ({ login })));
@@ -62,12 +66,13 @@ const requestedFrom = (login) => ({
   nodes: [{ requestedReviewer: { __typename: "User", login } }],
 });
 
-function sweep(prs, writers = WRITERS) {
+function sweep(prs, writers = WRITERS, page2 = null) {
   const dir = mkdtempSync(join(tmpdir(), "assigner-"));
   try {
     const preload = join(dir, "fake-github.mjs");
     writeFileSync(preload, FAKE_GITHUB);
     writeFileSync(join(dir, "prs.json"), JSON.stringify(prs));
+    if (page2) writeFileSync(join(dir, "prs2.json"), JSON.stringify(page2));
     const run = spawnSync(
       process.execPath,
       [
@@ -85,6 +90,7 @@ function sweep(prs, writers = WRITERS) {
           CALL_LOG: join(dir, "calls.jsonl"),
           FAKE_PRS: join(dir, "prs.json"),
           FAKE_WRITERS: JSON.stringify(writers),
+          ...(page2 ? { FAKE_PRS_PAGE2: join(dir, "prs2.json") } : {}),
         },
         encoding: "utf8",
       },
@@ -184,6 +190,30 @@ test("a PR opened more than a week ago is left alone, so the backlog never rotat
   const { run, calls } = sweep([pr(1, { createdAt: old })]);
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(calls, [{ method: "POST", path: "/graphql" }]);
+});
+
+test("the sweep reads newest first and stops at the first page past a week", () => {
+  const source = readFileSync(resolve(here, "reviewer-assigner.mjs"), "utf8");
+  assert.match(source, /orderBy: \{ field: CREATED_AT, direction: DESC \}/);
+  const old = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+  // Page 2 holds a PR that would be assigned; reading it would be a write.
+  const { run, calls } = sweep([pr(1, { createdAt: old })], WRITERS, [pr(2)]);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(calls, [{ method: "POST", path: "/graphql" }]);
+});
+
+test("a page of recent PRs reads the next page", () => {
+  const now = new Date().toISOString();
+  const settled = pr(1, {
+    reviewRequests: requestedFrom("cdileep23"),
+    comments: { nodes: [marker("cdileep23", now)] },
+  });
+  const { run, calls } = sweep([settled], WRITERS, [pr(2)]);
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(calls.filter((c) => c.path === "/graphql").length, 2);
+  assert.ok(
+    calls.some((c) => c.path === "/repos/o/r/pulls/2/requested_reviewers"),
+  );
 });
 
 test("only a reviewer with write access is requested", () => {

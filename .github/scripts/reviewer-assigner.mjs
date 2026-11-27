@@ -175,14 +175,16 @@ function slackMention(ghUser) {
 
 // ─── mode: sweep (assign + reassign) ──────────────────────────────────────────
 
-// One paginated GraphQL read covers every open PR: reviewers, assignment marker,
-// reviews and files. A sweep costs one request per PAGE_SIZE open PRs, plus
-// writes for the PRs that need an assignment or a reassignment. The marker is
-// posted when the PR opens, so the first 30 comments hold it.
-const PAGE_SIZE = 50;
+// One paginated GraphQL read, newest first, covers the open PRs the sweep can
+// act on: reviewers, assignment marker, reviews and files. Paging stops at the
+// first page that reaches past NEW_PR_MS, so a sweep costs a few requests
+// however long the backlog is, plus writes for the PRs that need an assignment
+// or a reassignment. A page of 50 with comment bodies timed out (HTTP 502). The
+// marker is posted when the PR opens, so the first 30 comments hold it.
+const PAGE_SIZE = 25;
 const SWEEP_QUERY = `query($owner: String!, $repo: String!, $after: String) {
   repository(owner: $owner, name: $repo) {
-    pullRequests(states: OPEN, first: ${PAGE_SIZE}, after: $after) {
+    pullRequests(states: OPEN, first: ${PAGE_SIZE}, after: $after, orderBy: { field: CREATED_AT, direction: DESC }) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number
@@ -232,8 +234,11 @@ function normalise(n) {
   };
 }
 
+// Open PRs, newest first, through the first page that reaches past the
+// NEW_PR_MS cutoff. Reviewer load is counted on these PRs only.
 async function openPrs() {
   const out = [];
+  const cutoff = Date.now() - NEW_PR_MS;
   let after = null;
   do {
     const res = await gh("/graphql", {
@@ -250,7 +255,10 @@ async function openPrs() {
       );
     const page = res.data.repository.pullRequests;
     out.push(...page.nodes.map(normalise));
-    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    const oldest = page.nodes.at(-1)?.createdAt;
+    const pastCutoff = !oldest || Date.parse(oldest) < cutoff;
+    after =
+      page.pageInfo.hasNextPage && !pastCutoff ? page.pageInfo.endCursor : null;
   } while (after);
   return out;
 }
