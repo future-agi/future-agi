@@ -148,7 +148,6 @@ export default function SourceDrawer({ envId, source, initialTab, onClose }) {
             <ReviewedStatements
               source={file}
               rules={review.preview?.proposals?.policy_rules || []}
-              ruleIds={[]}
             />
             {file.origin?.kind !== "knowledge_base" &&
               !file.fields?.length &&

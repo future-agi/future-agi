@@ -242,16 +242,35 @@ export const PROPOSALS_COPY = {
   reference: {
     file: "File",
     usedAs: "Used as",
-    usedAsValue: "Background, the agent can look things up in it",
+    // Role only when the tested-agent switch isn't known (outside a ready review).
+    usedAsValue: (role, testedAgent) => {
+      const what = role === "policy" ? "Policy background" : "Background";
+      if (testedAgent == null) return what;
+      return testedAgent
+        ? `${what}, the agent can look things up in it`
+        : `${what}, kept from the tested agent`;
+    },
     rules: "Rules",
-    rulesValue: "None stated, so nothing is graded from it",
+    // Withheld policy text has no titles yet, so its count would be false.
+    rulesValue: ({ role, rules: checkable = 0, withheld }) => {
+      if (role !== "policy") return "None stated, so nothing is graded from it";
+      if (withheld) return null;
+      return checkable
+        ? `${plural(checkable, "checkable rule")}, listed under Rules`
+        : "None checkable, so nothing is graded from it";
+    },
     read: "Read",
-    readValue: (read) =>
-      read.passages.length
-        ? `${plural(read.sections, "section")} · ${read.words.toLocaleString()} words`
-        : "No readable text",
-    section: "Section",
+    // The API reads by page; withheld text (Knowledge base, personal data) has pages only.
+    readValue: ({ read, pages, withheld }) => {
+      if (read?.passages.length)
+        return `${plural(read.sections, "page")} · ${read.words.toLocaleString()} words`;
+      return withheld && pages
+        ? `${plural(pages, "page")} · text not shown in this review`
+        : null;
+    },
+    section: "Page",
     says: "What it says",
+    showText: "Show text",
     showAll: (n) => `Show all ${n} lines`,
     showFewer: "Show fewer",
   },

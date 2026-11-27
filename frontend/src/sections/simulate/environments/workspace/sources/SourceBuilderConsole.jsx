@@ -19,6 +19,7 @@ import BuilderConsole from "../../buildEnvironment/console/BuilderConsole";
 import Iconify from "src/components/iconify";
 import ShimmerText from "../../components/ShimmerText";
 import useSourceAcceptedToast from "./useSourceAcceptedToast";
+import { PROPOSALS_COPY as COPY } from "./proposals";
 import SourceReviewPanel from "./SourceReviewPanel";
 import { overUploadLimit, uploadOff } from "./sources.constants";
 
@@ -122,22 +123,29 @@ export default function SourceBuilderConsole({
   const editor = (id) => (
     <Box
       component="section"
-      aria-label="Proposed changes"
-      sx={{ border: 1, borderColor: "divider", borderRadius: 1, p: 1.5 }}
+      aria-label={COPY.cardTitle}
+      sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
     >
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Proposed changes
-      </Typography>
-      <SourceReviewPanel
-        reviewId={id}
-        ownerId={envId}
-        canEdit={capabilities.isSuccess}
-        environmentBasis={capabilities.data}
-        acceptLabel="Add to draft"
-        onAccepted={refresh}
-        onCancelled={close}
-        onDismiss={close}
-      />
+      <Box sx={{ px: 1.5, py: 1.25, borderBottom: 1, borderColor: "divider" }}>
+        <Typography sx={{ typography: "m3", fontWeight: 600 }}>
+          {COPY.cardTitle}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+          {COPY.cardSubtitle}
+        </Typography>
+      </Box>
+      <Box sx={{ px: 1.5, pb: 1.5 }}>
+        <SourceReviewPanel
+          reviewId={id}
+          ownerId={envId}
+          canEdit={capabilities.isSuccess}
+          environmentBasis={capabilities.data}
+          acceptLabel="Add to draft"
+          onAccepted={refresh}
+          onCancelled={close}
+          onDismiss={close}
+        />
+      </Box>
     </Box>
   );
   const status = state ? (

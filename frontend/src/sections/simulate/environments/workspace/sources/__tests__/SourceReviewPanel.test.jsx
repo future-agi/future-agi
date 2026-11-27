@@ -27,6 +27,40 @@ const repair = {
   draft_digest: preview.draft_digest,
   preview,
 };
+const policyId = "src_3bdd:page:1:statement";
+const orderRule = "Responses must include “order number”";
+const refundRule = "Responses must include “Refund ID”";
+const policyPreview = {
+  ...preview,
+  sources: [
+    {
+      pin: { source_id: "src_3bdd", role: "policy" },
+      filename: "refund-rules.pdf",
+      statements: [
+        'The response must contain "order number".',
+        "Refunds are paid back within 5 business days.",
+        'Always include "Refund ID" in every reply.',
+      ].map((text, i) => ({
+        page: 1,
+        text,
+        statement_id: `${policyId}:${[2, 4, 5][i]}`,
+        text_truncated: false,
+      })),
+    },
+  ],
+  proposals: {
+    policy_rules: [
+      [2, "supported", orderRule],
+      [4, "unsupported"],
+      [5, "supported", refundRule],
+    ].map(([n, status, title]) => ({
+      rule_id: `${policyId}:${n}:rule`,
+      statement_id: `${policyId}:${n}`,
+      status,
+      ...(title && { title }),
+    })),
+  },
+};
 let serverReview;
 
 beforeEach(() => {
@@ -156,15 +190,16 @@ describe("Prebuild source review", () => {
         expected_draft_digest: "sha256:repaired",
       }),
     );
-    expect(onAccepted).toHaveBeenCalledExactlyOnceWith(
-      serverReview,
-      { reviewId: serverReview.id, ...api.post.mock.calls[1][1] },
-    );
+    expect(onAccepted).toHaveBeenCalledExactlyOnceWith(serverReview, {
+      reviewId: serverReview.id,
+      ...api.post.mock.calls[1][1],
+    });
   });
   it("keeps a four-page source collapsed until the reviewer asks to see the text", async () => {
+    // An accepted review can't be edited, but its text can still be read.
     serverReview = {
       ...repair,
-      state: "ready",
+      state: "accepted",
       preview: {
         ...preview,
         sources: [
@@ -187,12 +222,13 @@ describe("Prebuild source review", () => {
     };
     mount(null, null, true);
     expect(await screen.findByText("Refund policy.pdf")).toBeVisible();
-    expect(screen.getByText("Reference · 4 pages")).toBeVisible();
-    expect(screen.getByText("First business rule.")).not.toBeVisible();
-    fireEvent.click(screen.getByText("Show text"));
-    expect(screen.getByText("First business rule.")).toBeVisible();
+    expect(screen.queryByText("First business rule.")).toBeNull();
+    const show = screen.getByRole("button", { name: "Show text" });
+    expect(show).toBeEnabled();
+    fireEvent.click(show);
+    expect(await screen.findByText("First business rule.")).toBeVisible();
+    expect(screen.getByText("3 pages · 9 words")).toBeVisible();
     expect(screen.queryByText("Refund policy")).toBeNull();
-    expect(screen.getByText("Reference passages")).toBeVisible();
   });
   it("shows safe row and column counts before a preselected destination", async () => {
     serverReview = {
@@ -225,11 +261,57 @@ describe("Prebuild source review", () => {
       screen.getByRole("button", { name: "Prepare for this table" }),
     ).toBeEnabled();
   });
-  it("shows supported policy wording and its page, while preserving other passages as references", async () => {
-    const statementId = "src_1:page:2:statement:1";
-    const passage = "The response must contain the confirmation code.";
-    const reference = "Support is open weekdays.";
-    const guidance = "Escalate after two returns.";
+  it("checkable rules show under Rules, ticked by default, and an unticked one is sent as reference_only", async () => {
+    serverReview = { ...repair, state: "ready", preview: policyPreview };
+    api.post.mockResolvedValue({
+      data: { ...serverReview, state: "accepted", revision: 3 },
+    });
+    mount(null, null, true);
+    const keep = await screen.findByRole("checkbox", { name: orderRule });
+    const drop = screen.getByRole("checkbox", { name: refundRule });
+    expect(keep).toBeChecked();
+    expect(drop).toBeChecked();
+    expect(screen.getAllByText("From refund-rules.pdf, page 1")).toHaveLength(
+      2,
+    );
+    fireEvent.click(drop);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve sources and start build" }),
+    );
+    await screen.findByText("Source review accepted.");
+    expect(
+      api.post.mock.calls[0][1].decisions.policy_reviews[0].rules.map(
+        ({ proposal, decision }) => [proposal.rule_id, decision],
+      ),
+    ).toEqual([
+      [`${policyId}:2:rule`, "accepted"],
+      [`${policyId}:4:rule`, "reference_only"],
+      [`${policyId}:5:rule`, "reference_only"],
+    ]);
+  });
+
+  it("an accepted review ticks only accepted_rule_ids", async () => {
+    serverReview = {
+      ...repair,
+      state: "accepted",
+      preview: {
+        ...policyPreview,
+        sources: [
+          {
+            ...policyPreview.sources[0],
+            accepted_rule_ids: [`${policyId}:5:rule`],
+          },
+        ],
+      },
+    };
+    mount();
+    expect(
+      await screen.findByRole("checkbox", { name: refundRule }),
+    ).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: orderRule })).not.toBeChecked();
+  });
+
+  it("a withheld file says how many pages it has, not that it has no text", async () => {
     serverReview = {
       ...repair,
       state: "ready",
@@ -237,48 +319,24 @@ describe("Prebuild source review", () => {
         ...preview,
         sources: [
           {
-            pin: { source_id: "src_1", role: "policy" },
-            filename: "Returns.pdf",
-            statements: [
-              { statement_id: statementId, page: 2, text: passage },
-              {
-                statement_id: "src_1:page:3:statement:1",
-                page: 3,
-                text: reference,
-              },
-              { statement_id: "policy-guidance", page: 4, text: guidance },
-            ],
+            pin: { source_id: "kb", role: "reference" },
+            filename: "Returns handbook",
+            origin: { kind: "knowledge_base", kb_id: "kb-1" },
+            statements: [1, 2, 2].map((page, i) => ({
+              page,
+              statement_id: `kb:${i}`,
+            })),
           },
         ],
-        proposals: {
-          policy_rules: [
-            {
-              rule_id: "rule-1",
-              statement_id: statementId,
-              status: "supported",
-            },
-          ],
-        },
       },
     };
-    api.post.mockResolvedValue({
-      data: { ...serverReview, state: "accepted", revision: 3 },
-    });
     mount();
-    fireEvent.click(await screen.findByRole("checkbox", { name: passage }));
-    expect(screen.getByText("From Returns.pdf, page 2")).toBeVisible();
-    expect(screen.getByText(reference)).toBeVisible();
-    expect(screen.getByText(guidance)).toBeVisible();
-    expect(screen.getByText(/page 4 · Policy guidance/)).toBeVisible();
-    expect(screen.getByText(/page 3 · Reference passage/)).toBeVisible();
-    expect(screen.queryByText(/src_1/)).toBeNull();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Approve sources and start build" }),
-    );
-    await screen.findByText("Source review accepted.");
     expect(
-      api.post.mock.calls[0][1].decisions.policy_reviews[0].rules[0].decision,
-    ).toBe("accepted");
+      await screen.findByText("2 pages · text not shown in this review"),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Returns handbook" }),
+    ).toHaveAttribute("href", expect.stringContaining("kb-1"));
   });
 
   it.each([
@@ -496,7 +554,7 @@ describe("Prebuild source review", () => {
       api.post.mock.calls[0][1].decisions.record_reviews[0].fields[0],
     ).toMatchObject({ source_field: "item", is_stable_id: true });
   });
-  it("keeps clipped policy wording as an explicitly labeled reference", async () => {
+  it("keeps clipped policy wording as a reference passage without a tick", async () => {
     const text = "The response must contain " + "X".repeat(1974);
     serverReview = {
       ...repair,
@@ -514,15 +572,20 @@ describe("Prebuild source review", () => {
         ],
         proposals: {
           policy_rules: [
-            { rule_id: "r", statement_id: "s", status: "supported" },
+            {
+              rule_id: "r",
+              statement_id: "s",
+              status: "supported",
+              title: "Responses must include “X”",
+            },
           ],
         },
       },
     };
     mount();
+    expect(await screen.findByText(`${text}…`)).toBeVisible();
     expect(
-      await screen.findByText(/Excerpt · full passage kept as reference only/),
-    ).toBeVisible();
-    expect(screen.queryByRole("checkbox", { name: text })).toBeNull();
+      screen.queryByRole("checkbox", { name: "Responses must include “X”" }),
+    ).toBeNull();
   });
 });

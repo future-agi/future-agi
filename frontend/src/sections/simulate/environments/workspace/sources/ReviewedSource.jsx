@@ -13,9 +13,8 @@ import {
 } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { Columns } from "./MappingTab";
-import ProposalItem from "./ProposalItem";
 import { plural } from "./sources.constants";
-import { readableField } from "./importSourceReview";
+import { isHeading, readableField } from "./importSourceReview";
 
 function passageCaption(rule, text) {
   if (rule?.status === "conflict") return "Conflicting rule · reference only";
@@ -27,7 +26,7 @@ function passageCaption(rule, text) {
     : "Reference passage";
 }
 
-export function ReviewedStatements({ source, rules, ruleIds, onSelect }) {
+export function ReviewedStatements({ source, rules }) {
   if (source.origin?.kind === "knowledge_base") {
     const pages = new Map();
     for (const statement of source.statements || []) {
@@ -51,42 +50,18 @@ export function ReviewedStatements({ source, rules, ruleIds, onSelect }) {
       </Stack>
     );
   }
-  const name = (source.filename || "")
-    .replace(/\.[^.]+$/, "")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
-  const statements = (source.statements || []).filter(
-    (statement, index, list) => {
-      if (!statement.text) return false;
-      const heading = statement.text
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}]+/gu, " ")
-        .trim();
-      const [firstLine, ...rest] = statement.text.trim().split(/\r?\n/);
-      const documentTitle =
-        firstLine.trim().split(/\s+/).length <= 8 &&
-        /^(?:[\p{L}-]+\s+){0,6}(?:policy|policies|guidelines|handbook)$/iu.test(
-          firstLine.trim(),
-        ) &&
-        rest.every(
-          (line) =>
-            !line.trim() || /^(?:policy\s+)?version\s*:/i.test(line.trim()),
-        );
-      return !(
-        index === 0 &&
-        list.length > 1 &&
-        (heading === name || documentTitle)
-      );
-    },
-  );
+  const statements = (source.statements || [])
+    .filter((statement) => statement.text)
+    .filter(
+      (statement, index, list) => !isHeading(source, statement, index, list),
+    );
   const policy = new Map(rules.map((rule) => [rule.statement_id, rule]));
-  const selectable = (statement) =>
+  const isRule = (statement) =>
     policy.get(statement.statement_id)?.status === "supported" &&
     !(statement.text_truncated ?? statement.text.length >= 2000);
   return [
-    ["Rules", statements.filter(selectable)],
-    ["Reference passages", statements.filter((s) => !selectable(s))],
+    ["Rules", statements.filter(isRule)],
+    ["Reference passages", statements.filter((s) => !isRule(s))],
   ]
     .filter(([, items]) => items.length)
     .map(([heading, items]) => (
@@ -103,45 +78,27 @@ export function ReviewedStatements({ source, rules, ruleIds, onSelect }) {
           // Old previews omitted the flag and may end exactly at the excerpt limit.
           const excerpt =
             statement.text_truncated ?? statement.text.length >= 2000;
-          if (!rule || rule.status !== "supported" || !onSelect || excerpt)
-            return (
-              <Stack spacing={0.25} key={statement.statement_id}>
-                <Typography
-                  component="blockquote"
-                  sx={{
-                    m: 0,
-                    pl: 1.5,
-                    borderLeft: "2px solid",
-                    borderColor: "divider",
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  {statement.text}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  From {ref} ·{" "}
-                  {excerpt
-                    ? "Excerpt · full passage kept as reference only"
-                    : passageCaption(rule, statement.text)}
-                </Typography>
-              </Stack>
-            );
           return (
-            <ProposalItem
-              key={rule.rule_id}
-              inset={0}
-              item={{
-                id: rule.rule_id,
-                title: statement.text,
-                rule: statement.text,
-                kind: "rule",
-                cite: { ref },
-              }}
-              checked={ruleIds.includes(statement.statement_id)}
-              onToggle={(event) =>
-                onSelect(statement.statement_id, event.target.checked)
-              }
-            />
+            <Stack spacing={0.25} key={statement.statement_id}>
+              <Typography
+                component="blockquote"
+                sx={{
+                  m: 0,
+                  pl: 1.5,
+                  borderLeft: "2px solid",
+                  borderColor: "divider",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {statement.text}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                From {ref} ·{" "}
+                {excerpt
+                  ? "Excerpt · full passage kept as reference only"
+                  : passageCaption(rule, statement.text)}
+              </Typography>
+            </Stack>
           );
         })}
       </Stack>
@@ -150,8 +107,6 @@ export function ReviewedStatements({ source, rules, ruleIds, onSelect }) {
 ReviewedStatements.propTypes = {
   source: PropTypes.object.isRequired,
   rules: PropTypes.array.isRequired,
-  ruleIds: PropTypes.array.isRequired,
-  onSelect: PropTypes.func,
 };
 
 export function ReviewedRecords({ source }) {

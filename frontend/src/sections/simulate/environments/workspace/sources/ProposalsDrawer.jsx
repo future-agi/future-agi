@@ -115,6 +115,37 @@ export function ProposalDrawerFrame({ open, onClose, subtitle, children }) {
   );
 }
 
+// A group's name with its count; a divider above every group but the first.
+export function ProposalGroupHeading({ group, count, first, inset }) {
+  return (
+    <Typography
+      sx={{
+        typography: "m3",
+        color: "text.primary",
+        px: inset,
+        pt: first ? 1.5 : 2,
+        pb: 0.75,
+        ...(!first && { borderTop: "1px solid", borderColor: "divider" }),
+      }}
+    >
+      {group}
+      <Box
+        component="span"
+        sx={{ color: "text.tertiary", fontWeight: 400, ml: 0.75 }}
+      >
+        {count}
+      </Box>
+    </Typography>
+  );
+}
+
+ProposalGroupHeading.propTypes = {
+  group: PropTypes.string.isRequired,
+  count: PropTypes.number.isRequired,
+  first: PropTypes.bool,
+  inset: PropTypes.number.isRequired,
+};
+
 ProposalDrawerFrame.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
@@ -395,27 +426,12 @@ export function Proposals({
               timeout={timeout}
               unmountOnExit
             >
-              <Typography
-                sx={{
-                  typography: "m3",
-                  color: "text.primary",
-                  px: inset,
-                  pt: index ? 2 : 1.5,
-                  pb: 0.75,
-                  ...(index > 0 && {
-                    borderTop: "1px solid",
-                    borderColor: "divider",
-                  }),
-                }}
-              >
-                {group}
-                <Box
-                  component="span"
-                  sx={{ color: "text.tertiary", fontWeight: 400, ml: 0.75 }}
-                >
-                  {shown.length}
-                </Box>
-              </Typography>
+              <ProposalGroupHeading
+                group={group}
+                count={shown.length}
+                first={index === 0}
+                inset={inset}
+              />
               {inGroup.map((item) => (
                 <Collapse
                   key={item.id}

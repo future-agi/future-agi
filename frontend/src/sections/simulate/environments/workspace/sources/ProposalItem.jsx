@@ -7,6 +7,7 @@ import {
   Checkbox,
   Collapse,
   IconButton,
+  Link,
   Stack,
   TextField,
   Typography,
@@ -50,6 +51,7 @@ export default function ProposalItem({
   onLeaveOut,
   onChoose,
   personalReplaced,
+  foldText,
 }) {
   const [editing, setEditing] = useState(false);
   const timeout = usePrefersReducedMotion() ? 0 : "auto";
@@ -68,7 +70,11 @@ export default function ProposalItem({
       <ReferenceItem
         item={item}
         inset={inset}
-        onOpen={() => onOpenSource(item.cite?.sourceId, item.cite?.at)}
+        folded={foldText}
+        onOpen={
+          onOpenSource &&
+          (() => onOpenSource(item.cite?.sourceId, item.cite?.at))
+        }
       />
     );
 
@@ -340,6 +346,8 @@ ProposalItem.propTypes = {
   onLeaveOut: PropTypes.func,
   onChoose: PropTypes.func,
   personalReplaced: PropTypes.bool,
+  // A reference shows its facts with its passages folded behind Show text.
+  foldText: PropTypes.bool,
 };
 
 /*
@@ -355,8 +363,12 @@ const PASSAGES_SX = {
   "& > *": { borderBottom: "1px solid", borderColor: "divider", py: 0.75 },
 };
 
-function ReferenceItem({ item, inset, onOpen }) {
+// A span, so a read-only review's disabled fieldset doesn't disable reading.
+const toggleProps = { component: "span", role: "button" };
+
+function ReferenceItem({ item, inset, folded, onOpen }) {
   const [all, setAll] = useState(false);
+  const [open, setOpen] = useState(!folded);
   const timeout = usePrefersReducedMotion() ? 0 : "auto";
   const read = item.read || { sections: 0, words: 0, passages: [] };
   const rows = read.passages;
@@ -385,29 +397,43 @@ function ReferenceItem({ item, inset, onOpen }) {
         </Typography>,
       ];
     });
-  const facts = [
-    [
-      COPY.reference.file,
-      <ButtonBase
-        key="file"
-        onClick={onOpen}
-        sx={{
-          typography: "s1",
-          fontWeight: 500,
-          color: "text.primary",
-          textDecoration: "underline",
-          textUnderlineOffset: 3,
-          textDecorationColor: (theme) => theme.palette.text.disabled,
-          "&:hover": { textDecorationColor: "currentColor" },
-        }}
+  const fileSx = {
+    typography: "s1",
+    fontWeight: 500,
+    color: "text.primary",
+    textDecoration: "underline",
+    textUnderlineOffset: 3,
+    textDecorationColor: (theme) => theme.palette.text.disabled,
+    "&:hover": { textDecorationColor: "currentColor" },
+  };
+  let file = item.cite?.ref;
+  if (onOpen)
+    file = (
+      <ButtonBase onClick={onOpen} sx={fileSx}>
+        {file}
+      </ButtonBase>
+    );
+  else if (item.cite?.href)
+    file = (
+      <Link
+        href={item.cite.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        sx={fileSx}
       >
-        {item.cite?.ref}
-      </ButtonBase>,
+        {file}
+      </Link>
+    );
+  const readValue = COPY.reference.readValue(item);
+  const facts = [
+    [COPY.reference.file, file],
+    [
+      COPY.reference.usedAs,
+      COPY.reference.usedAsValue(item.role, item.testedAgent),
     ],
-    [COPY.reference.usedAs, COPY.reference.usedAsValue],
-    [COPY.reference.rules, COPY.reference.rulesValue],
-    [COPY.reference.read, COPY.reference.readValue(read)],
-  ];
+    [COPY.reference.rules, COPY.reference.rulesValue(item)],
+    [COPY.reference.read, readValue],
+  ].filter(([, value]) => value);
   return (
     <Box sx={{ px: inset, pb: 2 }}>
       <Box component="table" sx={{ borderCollapse: "collapse", mb: 1.5 }}>
@@ -437,8 +463,18 @@ function ReferenceItem({ item, inset, onOpen }) {
           ))}
         </Box>
       </Box>
+      {read.passages.length > 0 && folded && (
+        <ButtonBase
+          {...toggleProps}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          sx={{ display: "block", typography: "s3", color: "primary.main" }}
+        >
+          {COPY.reference.showText}
+        </ButtonBase>
+      )}
       {read.passages.length > 0 && (
-        <>
+        <Collapse in={open} timeout={timeout} unmountOnExit>
           <Box sx={{ ...PASSAGES_SX, borderTop: "1px solid" }}>
             <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {COPY.reference.section}
@@ -454,6 +490,7 @@ function ReferenceItem({ item, inset, onOpen }) {
           </Collapse>
           {read.passages.length > SHOWN && (
             <ButtonBase
+              {...toggleProps}
               onClick={() => setAll((value) => !value)}
               sx={{
                 mt: 0.75,
@@ -469,7 +506,7 @@ function ReferenceItem({ item, inset, onOpen }) {
                 : COPY.reference.showAll(read.passages.length)}
             </ButtonBase>
           )}
-        </>
+        </Collapse>
       )}
     </Box>
   );
@@ -478,5 +515,6 @@ function ReferenceItem({ item, inset, onOpen }) {
 ReferenceItem.propTypes = {
   item: PropTypes.object.isRequired,
   inset: PropTypes.number.isRequired,
-  onOpen: PropTypes.func.isRequired,
+  folded: PropTypes.bool,
+  onOpen: PropTypes.func,
 };

@@ -120,9 +120,10 @@ const ready = {
         {
           rule_id: "rule-1",
           statement_id: "statement-1",
-          kind: "eligibility",
-          check_type: "state_predicate",
+          kind: "required_behavior",
+          check_type: "contains",
           status: "supported",
+          title: "Responses must include “15 days”",
         },
       ],
     },
@@ -268,7 +269,7 @@ describe("SourcesSection", () => {
     expect(await screen.findByText("The request timed out")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(
-      await screen.findByRole("checkbox", { name: /Refunds are allowed/ }),
+      await screen.findByRole("checkbox", { name: /must include “15 days”/ }),
     ).toBeInTheDocument();
 
     const [, body] = api.post.mock.calls[0];
@@ -294,10 +295,10 @@ describe("SourcesSection", () => {
 
     view.unmount();
     mount();
-    const rule = await screen.findByRole("checkbox", {
-      name: /Refunds are allowed/,
-    });
-    fireEvent.click(rule);
+    // A checkable rule starts ticked.
+    expect(
+      await screen.findByRole("checkbox", { name: /must include “15 days”/ }),
+    ).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: /Add \d+ changes?/ }));
     expect(
       await screen.findByText("Source review accepted."),
@@ -400,7 +401,7 @@ describe("SourcesSection", () => {
     mount({
       environmentSourceSelection: { kb_id: "kb-1", file_ids: ["ready-file"] },
     });
-    await screen.findByRole("checkbox", { name: /Refunds are allowed/ });
+    await screen.findByRole("checkbox", { name: /must include “15 days”/ });
     expect(api.post).toHaveBeenCalledExactlyOnceWith(
       indexPath,
       expect.objectContaining({
