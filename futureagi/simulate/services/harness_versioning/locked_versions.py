@@ -38,8 +38,8 @@ from simulate.services.harness_tool_reach import blocked_tools
 from simulate.services.harness_versioning.drafts import require_no_rebuild
 from simulate.services.harness_versioning.versions import (
     _conflict,
-    _lock_environment,
     actors_enabled,
+    lock_environment,
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -418,7 +418,7 @@ def lock_version(
 ) -> HostedHarnessJob:
     """Lock the default pair the caller saw. A newer default refuses the lock."""
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         for piece, seen in (
             ("environment", environment_version_id),
             ("suite", suite_version_id),
@@ -499,7 +499,7 @@ def unlock_version(
     """Unlock a locked version. Its versions, its splits and the scores on it stay as they are."""
     require_unlock_admin(environment, user)
     with transaction.atomic():
-        locked = _lock_environment(environment)
+        locked = lock_environment(environment)
         locked_version = (
             HarnessLockedVersion.no_workspace_objects.select_for_update()
             .filter(environment=locked, id=locked_version_id)
