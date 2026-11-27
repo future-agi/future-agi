@@ -37,6 +37,10 @@ TOO_FEW_CALLS = (
     f"You need at least {MIN_CONNECTED_CALLS} connected calls to debug failures."
 )
 NOTHING_FAILED = "Nothing failed in this run, so there’s nothing to debug."
+RUN_IN_PROGRESS = "Diagnosis is available once every call in this run finishes."
+CALLS_UNFINISHED = (
+    "Some calls in this run didn’t finish, so Debug failures can’t read it."
+)
 
 
 def _project_for_execution(execution: TestExecution) -> Project:
@@ -67,34 +71,33 @@ _TERMINAL_CALL_STATUSES = (
     CallExecution.CallStatus.FAILED,
     CallExecution.CallStatus.CANCELLED,
 )
+# A run in one of these makes no more calls. A failed or cancelled run is read
+# like a completed one.
+FINISHED_RUN_STATUSES = (
+    TestExecution.ExecutionStatus.COMPLETED,
+    TestExecution.ExecutionStatus.FAILED,
+    TestExecution.ExecutionStatus.CANCELLED,
+)
 
 
 def ensure_simulation_investigation(
     execution: TestExecution,
 ) -> list[TraceInvestigationJob]:
-    """Create one durable job per call of a completed execution; re-arm failed ones.
+    """Create one durable job per call of a finished execution; re-arm failed ones.
 
-    Refuses to start a diagnosis of a run with too few connected calls or no
-    failing call: it would spend credits and find nothing. A diagnosis such a run
-    already has is returned unchanged while any of its calls is read or in flight.
+    Refuses to start a diagnosis of a run that debug_failures_refusal refuses. A
+    diagnosis such a run already has is returned unchanged while any of its calls
+    is read or in flight.
     """
-    if execution.status != TestExecution.ExecutionStatus.COMPLETED:
-        raise SimulationInvestigationConflict("Test execution is not completed")
     with transaction.atomic():
         execution = (
             TestExecution.objects.select_for_update()
             .select_related("run_test")
             .get(pk=execution.pk)
         )
-        if execution.status != TestExecution.ExecutionStatus.COMPLETED:
-            raise SimulationInvestigationConflict("Test execution is not completed")
         calls = CallExecution.objects.filter(
             test_execution_id=execution.id, deleted=False
         )
-        if calls.exclude(status__in=_TERMINAL_CALL_STATUSES).exists():
-            raise SimulationInvestigationConflict(
-                "Test execution contains nonterminal calls"
-            )
         earlier = list(
             TraceInvestigationJob.objects.select_for_update(of=("self",))
             .select_related("current_report")
@@ -141,7 +144,22 @@ def debug_failures_refusal(
     execution: TestExecution,
 ) -> SimulationInvestigationConflict | None:
     """Why a new diagnosis of this run would find nothing, or None. Run
-    Simulation's optimiser analysis refuses the same runs."""
+    Simulation's optimiser analysis refuses the same runs.
+
+    A run is read once it is finished and every call in it is terminal. A
+    finished run can keep calls that no step ever closes, so that case has its
+    own words.
+    """
+    if execution.status not in FINISHED_RUN_STATUSES:
+        return SimulationInvestigationConflict(RUN_IN_PROGRESS)
+    if (
+        CallExecution.objects.filter(test_execution_id=execution.id, deleted=False)
+        .exclude(status__in=_TERMINAL_CALL_STATUSES)
+        .exists()
+    ):
+        return SimulationInvestigationConflict(
+            CALLS_UNFINISHED, code="execution_calls_unfinished"
+        )
     if connected_call_count(execution) < MIN_CONNECTED_CALLS:
         return SimulationInvestigationConflict(
             TOO_FEW_CALLS, code="investigation_too_few_calls"
@@ -529,7 +547,7 @@ def simulation_evidence_page(
     if attempt is None:
         raise SimulationInvestigationConflict("Attempt is not active")
     execution = attempt.job.test_execution
-    if execution is None or execution.status != TestExecution.ExecutionStatus.COMPLETED:
+    if execution is None or execution.status not in FINISHED_RUN_STATUSES:
         raise SimulationInvestigationConflict("Execution evidence is unavailable")
     job = attempt.job
     project = job.project

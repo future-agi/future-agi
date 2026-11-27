@@ -10,13 +10,13 @@ import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import { kpisQueryOptions } from "src/hooks/useKpis";
 import { FixMyAgentRefetchStates } from "./common";
-import { DEBUG_FAILURES_REFUSALS } from "../debugFailuresRule";
+import { debugFailuresRefusalReason } from "../debugFailuresRule";
 
 // The server refuses to start an analysis of a run that Debug failures' rule
 // blocks. The refusal is an answer, not a failure: it shows as its reason and
 // is not retried or toasted. Any other error is thrown on as before.
 const refusalOf = (error) => {
-  const refusal = DEBUG_FAILURES_REFUSALS[error?.code];
+  const refusal = debugFailuresRefusalReason(error?.code);
   if (!refusal) throw error;
   return { refusal };
 };
