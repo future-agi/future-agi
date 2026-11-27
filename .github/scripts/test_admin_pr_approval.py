@@ -83,7 +83,7 @@ class KeyCheckTests(unittest.TestCase):
     script = staticmethod(lambda: step_script("approve", "Fail without the approver App key"))
 
     def test_a_missing_secret_fails_loudly(self):
-        for env in ({}, {"APP_ID": "1"}, {"PRIVATE_KEY": "k"}, {"APP_ID": "", "PRIVATE_KEY": ""}):
+        for env in ({}, {"CLIENT_ID": "1"}, {"PRIVATE_KEY": "k"}, {"CLIENT_ID": "", "PRIVATE_KEY": ""}):
             with self.subTest(env=env):
                 done, _, _ = run(self.script(), env)
                 self.assertEqual(done.returncode, 1)
@@ -91,7 +91,7 @@ class KeyCheckTests(unittest.TestCase):
                 self.assertIn("never approves with GITHUB_TOKEN", done.stdout)
 
     def test_both_secrets_pass(self):
-        done, _, _ = run(self.script(), {"APP_ID": "1", "PRIVATE_KEY": "k"})
+        done, _, _ = run(self.script(), {"CLIENT_ID": "1", "PRIVATE_KEY": "k"})
         self.assertEqual(done.returncode, 0, done.stdout)
 
 

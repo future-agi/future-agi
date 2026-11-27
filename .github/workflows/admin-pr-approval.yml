@@ -15,9 +15,9 @@ name: Admin PR approval
 # The approval comes from the devflow approver GitHub App, never from
 # GITHUB_TOKEN: any workflow on any branch acts as github-actions[bot], so
 # that login's approval proves nothing. The App key is in the environment
-# devflow-approver, which admits only main; a pull_request_target run
-# presents main to it. Without the key the approve job fails and approves
-# nothing.
+# devflow-approver, which admits only the protected branches main and dev,
+# so only merged code mints it; a pull_request_target run presents main to
+# it. Without the key the approve job fails and approves nothing.
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -76,18 +76,18 @@ jobs:
     steps:
       - name: Fail without the approver App key
         env:
-          APP_ID: ${{ secrets.DEVFLOW_APPROVER_APP_ID }}
+          CLIENT_ID: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
           PRIVATE_KEY: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
         run: |
-          if [[ -z $APP_ID || -z $PRIVATE_KEY ]]; then
-            echo "::error::DEVFLOW_APPROVER_APP_ID or DEVFLOW_APPROVER_PRIVATE_KEY is not set in the devflow-approver environment. Nothing was approved; this workflow never approves with GITHUB_TOKEN."
+          if [[ -z $CLIENT_ID || -z $PRIVATE_KEY ]]; then
+            echo "::error::DEVFLOW_APPROVER_CLIENT_ID or DEVFLOW_APPROVER_PRIVATE_KEY is not set in the devflow-approver environment. Nothing was approved; this workflow never approves with GITHUB_TOKEN."
             exit 1
           fi
       - name: Mint the approver App token
         id: approver
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: ${{ secrets.DEVFLOW_APPROVER_APP_ID }}
+          client-id: ${{ secrets.DEVFLOW_APPROVER_CLIENT_ID }}
           private-key: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
           permission-pull-requests: write
       - name: Approve the head commit
