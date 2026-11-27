@@ -2108,6 +2108,25 @@ def complete_customization(
     return locked
 
 
+def _check_copy_lineage(output: Path, source: dict[str, Any]) -> None:
+    """Refuse a sealed copy that doesn't name the ready environment and suite it was made from,
+    before anything of it is uploaded or registered."""
+    release = _verified(output / "environment", "release.json")
+    suite = _verified(output / "suite", "suite.json")
+    derived_from = str((release.get("provenance") or {}).get("derived_from") or "")
+    if derived_from != f"release:{source.get('environment_digest')}":
+        raise _error(
+            "customization_lineage_invalid",
+            "the sealed copy does not name the ready environment it was made from",
+        )
+    template_suite = (suite.get("metadata") or {}).get("template_suite")
+    if template_suite != source.get("suite_digest"):
+        raise _error(
+            "customization_lineage_invalid",
+            "the sealed copy's scenarios do not name the ready suite they were made from",
+        )
+
+
 def _customized(
     job: HostedHarnessJob, output: Path
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -2120,17 +2139,10 @@ def _customized(
             str(failure.get("code") or "design_failed"),
             str(failure.get("message") or "the design did not finish"),
         )
-    source = (customization_of(job) or {}).get("source") or {}
-    # A copy that names another source is not kept: its releases go with the failure.
-    with transaction.atomic():
-        environment, suite = register_release(
-            output / "environment", output / "suite", organization=job.organization
-        )
-        if _lineage(environment) != f"release:{source.get('environment_digest')}":
-            raise _error(
-                "customization_lineage_invalid",
-                "the sealed copy does not name the ready environment it was made from",
-            )
+    _check_copy_lineage(output, (customization_of(job) or {}).get("source") or {})
+    environment, suite = register_release(
+        output / "environment", output / "suite", organization=job.organization
+    )
     return {
         "environment_release_id": str(environment.id),
         "environment_name": environment.name,

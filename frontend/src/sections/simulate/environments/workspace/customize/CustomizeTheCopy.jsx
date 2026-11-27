@@ -58,7 +58,7 @@ BriefRow.propTypes = {
 /**
  * Customize a copy — its design (env-world-customize-design). The builder starts from the
  * ready world and adds the person's change in the chat on the left; nothing is sealed until
- * they approve there. Once it is sealed, the copy is this workspace's own ready environment,
+ * they approve there. Once it is sealed, the copy is the organization's own ready environment,
  * used with an agent like any other.
  */
 export default function CustomizeTheCopy({ jobId, job, chat }) {
@@ -212,7 +212,7 @@ export default function CustomizeTheCopy({ jobId, job, chat }) {
               </BriefRow>
               <BriefRow label="Ready world">{sourceTitle}</BriefRow>
               <BriefRow label="Visibility">
-                Private to this workspace. Its scores won&apos;t compare with
+                Private to your organization. Its scores won&apos;t compare with
                 the ready environment&apos;s.
               </BriefRow>
             </Box>

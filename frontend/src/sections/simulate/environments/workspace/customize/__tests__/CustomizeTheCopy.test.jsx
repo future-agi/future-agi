@@ -67,6 +67,11 @@ describe("The copy's design", () => {
       screen.getByText("The ready world and your change"),
     ).toBeInTheDocument();
     expect(screen.getByText("Builder chat")).toBeInTheDocument();
+    // The copy is the organization's release: no narrower privacy is promised.
+    expect(
+      screen.getByText(/Private to your organization/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/this workspace/)).not.toBeInTheDocument();
   });
 
   it("says what the builder is doing while the job is still provisioning", () => {

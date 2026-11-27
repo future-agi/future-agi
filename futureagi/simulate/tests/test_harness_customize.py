@@ -166,6 +166,30 @@ def _result(directory: Path, document: dict) -> Path:
     return directory
 
 
+def _sealed(
+    output: Path, *, derived_from: str | None, template_suite: str | None
+) -> Path:
+    """A completed design's output: the copy's environment and suite manifests, each sealed
+    with its digest, naming the source they were made from."""
+    from simulate.services.harness_releases import _release_digest
+
+    for name, manifest in (
+        (
+            "environment/release.json",
+            {"name": "copy", "provenance": {"derived_from": derived_from}},
+        ),
+        (
+            "suite/suite.json",
+            {"name": "copy_base", "metadata": {"template_suite": template_suite}},
+        ),
+    ):
+        path = output / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        manifest = {**manifest, "files": []}
+        path.write_text(json.dumps({**manifest, "digest": _release_digest(manifest)}))
+    return _result(output, {"status": "completed"})
+
+
 @pytest.mark.django_db
 class TestSettleCustomization:
     @pytest.fixture
@@ -210,7 +234,11 @@ class TestSettleCustomization:
             return environment, suite
 
         monkeypatch.setattr(harness_releases, "register_release", register)
-        output = _result(tmp_path, {"status": "completed"})
+        output = _sealed(
+            tmp_path,
+            derived_from=f"release:{retail.environment.digest}",
+            template_suite=retail.digest,
+        )
 
         settled = complete_customization(job, output)
 
@@ -233,37 +261,45 @@ class TestSettleCustomization:
         )
         assert original["derived_from"] is None
 
-    def test_a_copy_that_names_another_source_is_refused(
-        self,
-        job,
-        retail,
-        tmp_path,
-        monkeypatch,
+    @pytest.mark.parametrize(
+        "lineage",
+        [
+            {"derived_from": "release:sha256:" + "0" * 64},
+            {"derived_from": None},
+            {"template_suite": "sha256:" + "0" * 64},
+            {"template_suite": None},
+        ],
+        ids=[
+            "another-environment",
+            "no-environment-source",
+            "another-suite",
+            "no-suite-source",
+        ],
+    )
+    def test_a_copy_that_names_another_source_is_refused_before_it_is_stored(
+        self, job, retail, tmp_path, monkeypatch, lineage
     ):
-        def register(environment_dir, suite_dir, *, organization):
-            environment = HarnessEnvironmentRelease.no_workspace_objects.create(
-                organization=organization,
-                digest="sha256:" + "e" * 63 + "f",
-                name="elsewhere",
-                object_key="releases/elsewhere",
-                manifest={"provenance": {"derived_from": "release:sha256:" + "0" * 64}},
-                tools=[],
-                policy={},
-            )
-            return environment, None
-
-        monkeypatch.setattr(harness_releases, "register_release", register)
-
-        settled = complete_customization(
-            job, _result(tmp_path, {"status": "completed"})
+        stored = []
+        monkeypatch.setattr(
+            harness_releases, "_upload", lambda *args: stored.append(args)
         )
+        output = _sealed(
+            tmp_path,
+            **{
+                "derived_from": f"release:{retail.environment.digest}",
+                "template_suite": retail.digest,
+                **lineage,
+            },
+        )
+        releases = HarnessEnvironmentRelease.no_workspace_objects.count()
+
+        settled = complete_customization(job, output)
 
         assert settled.state == HostedHarnessJob.State.FAILED
         assert settled.failure["code"] == "customization_lineage_invalid"
-        # The refused copy isn't left listed with the ready environments.
-        assert not HarnessEnvironmentRelease.no_workspace_objects.filter(
-            name="elsewhere"
-        ).exists()
+        # Refused before register_release: nothing uploaded, no release rows.
+        assert stored == []
+        assert HarnessEnvironmentRelease.no_workspace_objects.count() == releases
 
     def test_a_design_that_stopped_fails_with_its_reason(self, job, tmp_path):
         output = _result(
