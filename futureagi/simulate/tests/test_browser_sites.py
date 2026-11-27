@@ -62,7 +62,13 @@ def test_a_kept_list_reads_back_as_itself():
     # A stored list is read again at every pin (browser_sites_at_pin), so its one form must be
     # a fixed point: reading it back keeps every site and changes none.
     kept = browser_sites(
-        ["Exämple.com", "straße.de", "xn--nxasmq6b.com", "Shop.Example.com.", "docs.example.org"]
+        [
+            "Exämple.com",
+            "straße.de",
+            "xn--nxasmq6b.com",
+            "Shop.Example.com.",
+            "docs.example.org",
+        ]
     )
     assert browser_sites(kept) == kept
 

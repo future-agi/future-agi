@@ -20,10 +20,14 @@ browser asks for (IDNA 2008, UTS 46 non-transitional), without repeats, sorted.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 import idna
+
+if TYPE_CHECKING:
+    from simulate.models.harness_versioning import HarnessEnvironmentVersion
 
 # Every site also joins the sandbox's egress list, which is finite on some providers. Ten leaves
 # room for the hosts every run needs; the provider's own limit is checked on the whole list.
@@ -39,8 +43,8 @@ _HOST = re.compile(rf"(?:\*\.)?{_LABEL}(?:\.{_LABEL})+", re.ASCII)
 # A host whose last label is a number (decimal, octal or 0x hex) is read as an IPv4 address.
 _NUMBER_LABEL = re.compile(r"[0-9]+|0x[0-9a-f]*", re.ASCII)
 # Names that only ever mean a machine on a private network, or no machine at all, never a site on
-# the internet: the special-use names of RFC 6761 and RFC 8375 (home.arpa), and the names home,
-# office and cluster networks use for themselves.
+# the internet: the special-use names of RFC 6761, RFC 8375 (home.arpa), RFC 7686 (onion) and
+# RFC 9476 (alt), and the names home, office and cluster networks use for themselves.
 _LOCAL_SUFFIXES = (
     "localhost",
     "internal",
@@ -52,6 +56,8 @@ _LOCAL_SUFFIXES = (
     "test",
     "invalid",
     "example",
+    "onion",
+    "alt",
 )
 _LONGEST_HOST = 253
 
@@ -66,7 +72,9 @@ def _one_form(value: Any) -> str | None:
     site = value.strip().lower()
     if site.endswith(".") and not site.endswith(".."):
         site = site[:-1]
-    if not site.isascii():
+    # A label starting xn-- claims to be the ASCII form of a name outside ASCII; it is read as one
+    # too, so a label that is not a valid ASCII form (xn--zz) is refused rather than kept.
+    if not site.isascii() or any(label.startswith("xn--") for label in site.split(".")):
         wildcard = site.startswith("*.")
         try:
             # The form a browser asks for (IDNA 2008 as UTS 46 reads it, non-transitional), so
@@ -145,7 +153,8 @@ def browser_sites(value: Any) -> list[str]:
 
 
 def browser_sites_at_pin(
-    payload: Mapping[str, Any] | None, environment_version: Any = None
+    payload: Mapping[str, Any] | None,
+    environment_version: HarnessEnvironmentVersion | None = None,
 ) -> list[str]:
     """The sites a job's browser may open at its pin; none for a job without a browser.
 
@@ -175,7 +184,9 @@ BROWSER_ENVIRONMENT_REQUIRED = (
 )
 
 
-def refuse_unpaired_browser_agent(agent_version_id: Any, sites: Any) -> None:
+def refuse_unpaired_browser_agent(
+    agent_version_id: UUID | None, sites: Sequence[str]
+) -> None:
     """Refuse pairing an agent version that needs a browser with an environment that names no sites.
 
     Only the need its reading stored refuses: a version not read yet, one whose contract can't be
