@@ -627,6 +627,72 @@ describe("SourcesSection", () => {
     ).toBeVisible();
   });
 
+  it("explains a missing world snapshot without offering to retry the writer", async () => {
+    sessionStorage.setItem(storageKey, ready.id);
+    const generation = {
+      id: "gen",
+      state: "failed",
+      error: "source_world_snapshot_missing",
+    };
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      scenario_generation: generation,
+    };
+    sources = [
+      {
+        source_id: "policy",
+        filename: "policy.pdf",
+        review_id: ready.id,
+        unsaved: true,
+      },
+    ];
+    const fallback = api.get.getMockImplementation();
+    api.get.mockImplementation(async (path) => {
+      if (path.endsWith("/scenario-generation/")) return { data: generation };
+      if (path.endsWith("/drafts/"))
+        return {
+          data: {
+            environment: { id: "draft-1", parent_id: "env-v1", revision: 1 },
+            suite: null,
+          },
+        };
+      if (path.endsWith("/sources/"))
+        return {
+          data: {
+            sources,
+            draft: true,
+            generation_review_id: ready.id,
+            scenario_generation: generation,
+          },
+        };
+      return fallback(path);
+    });
+    mount(undefined, false, true);
+    const drawer = await screen.findByRole("dialog", {
+      name: "Review proposed changes",
+    });
+    expect(
+      await within(drawer).findByText(/Rebuild this environment/),
+    ).toBeVisible();
+    expect(
+      within(drawer).queryByRole("button", { name: "Retry generation" }),
+    ).toBeNull();
+    fireEvent.click(
+      within(drawer).getByRole("button", { name: "Close", exact: true }),
+    );
+    expect(await screen.findByText(/Rebuild this environment/)).toBeVisible();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Review and save" }),
+    );
+    const changes = await screen.findByRole("dialog", {
+      name: "Review changes",
+    });
+    expect(
+      await within(changes).findByText(/Rebuild this environment/),
+    ).toBeVisible();
+  });
+
   it("recovers a failed generation after reload, keeps Save held and retries the existing review", async () => {
     sources = [
       {

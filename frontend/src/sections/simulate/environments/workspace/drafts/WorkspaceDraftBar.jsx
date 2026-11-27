@@ -14,6 +14,7 @@ import {
   useEnvironmentSources,
 } from "src/api/simulate-environments/sourceImports";
 import { DRAFTS_COPY as COPY } from "../workspace.constants";
+import { missingSnapshotMessage } from "../sources/sources.constants";
 import DraftBar from "./DraftBar";
 import ReviewChangesDrawer from "./ReviewChangesDrawer";
 
@@ -76,7 +77,8 @@ export default function WorkspaceDraftBar({
   else if (affected && generation && generation.state !== "completed")
     sourceHold = sourceGenerationPending(generation)
       ? COPY.errors.source_generation_in_progress
-      : COPY.errors.source_generation_not_ready;
+      : missingSnapshotMessage(generation) ||
+        COPY.errors.source_generation_not_ready;
 
   if (!drafts?.any) return null;
   const generated = affected ? generation?.generated_scenarios || [] : [];

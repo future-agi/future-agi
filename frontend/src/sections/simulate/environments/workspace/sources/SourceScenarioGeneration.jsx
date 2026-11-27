@@ -19,6 +19,8 @@ import { draftsKey } from "src/api/simulate-environments/versions";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessScenariosListKey } from "src/api/simulate-environments/scenariosHooks";
 
+import { missingSnapshotMessage } from "./sources.constants";
+
 const generationErrors = {
   source_writer_failed: "The scenario writer could not finish.",
   source_generation_dispatch_failed:
@@ -37,6 +39,7 @@ export default function SourceScenarioGeneration({ review, onDismiss }) {
   const state = query.data?.state;
   const envId = review.scope.id;
   const retry = useRetrySourceGeneration(review.id, envId);
+  const rebuildMessage = missingSnapshotMessage(query.data);
   const pending = sourceGenerationPending(query.data);
   const scenarios = query.data?.generated_scenarios || [];
   const filenames = new Map(
@@ -82,17 +85,20 @@ export default function SourceScenarioGeneration({ review, onDismiss }) {
         <Alert
           severity="error"
           action={
-            <Button
-              color="inherit"
-              disabled={!canEdit || retry.isPending}
-              onClick={() => retry.mutate()}
-            >
-              Retry generation
-            </Button>
+            !rebuildMessage && (
+              <Button
+                color="inherit"
+                disabled={!canEdit || retry.isPending}
+                onClick={() => retry.mutate()}
+              >
+                Retry generation
+              </Button>
+            )
           }
         >
           Scenario generation failed.{" "}
-          {generationErrors[query.data?.error] ||
+          {rebuildMessage ||
+            generationErrors[query.data?.error] ||
             query.data?.error?.replaceAll("_", " ")}
           {retry.isError &&
             (retry.error?.message || "Could not retry generation.")}

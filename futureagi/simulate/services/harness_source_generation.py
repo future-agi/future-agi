@@ -16,6 +16,10 @@ from simulate.models import (
     HarnessSourceScenarioGeneration as Generation,
 )
 from simulate.services import harness_sources as sources
+from simulate.services.harness_source_writer import (
+    MISSING_SNAPSHOT,
+    missing_snapshot_error,
+)
 from simulate.services.harness_versioning import archives, assembly, drafts, versions
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -126,6 +130,8 @@ def state_for_request(request, review_id, *, retry=False):
             if item.state == Generation.State.STALE:
                 raise _conflict()
             if item.state == Generation.State.FAILED:
+                if item.error == MISSING_SNAPSHOT:
+                    raise missing_snapshot_error()
                 if _basis(row.owner) != item.basis:
                     raise _conflict()
                 item.state = Generation.State.QUEUED

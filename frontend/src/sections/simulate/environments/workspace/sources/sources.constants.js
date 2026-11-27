@@ -3,6 +3,11 @@
 
 import { relativeTime } from "src/utils/format-time";
 
+export const missingSnapshotMessage = (generation) =>
+  generation?.error === "source_world_snapshot_missing"
+    ? "Rebuild this environment to create its world snapshot, then add the source again."
+    : null;
+
 const MB = 1024 * 1024;
 export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 

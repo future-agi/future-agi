@@ -796,6 +796,19 @@ def test_participant_visibility_fails_closed(user, workspace, request, monkeypat
     assert drafts.fresh_draft(environment, "environment") is None
 
 
+def test_missing_world_snapshot_stops_before_sandbox_launch(monkeypatch):
+    from simulate.services import harness_source_writer as writer
+
+    monkeypatch.setattr(
+        writer.gateway, "HostedHarnessGateway", lambda: pytest.fail("sandbox requested")
+    )
+    with pytest.raises(HostedHarnessError) as exc:
+        writer.author_additions(
+            None, {"environment-bundle/manifest.json": b"{}"}, {}, []
+        )
+    assert exc.value.code == "source_world_snapshot_missing"
+
+
 @pytest.mark.parametrize("writer_exit", [0, 1])
 def test_writer_cleanup_preserves_result_or_writer_error(monkeypatch, writer_exit):
     from unittest.mock import Mock
@@ -807,7 +820,7 @@ def test_writer_cleanup_preserves_result_or_writer_error(monkeypatch, writer_exi
     sandbox = provider.create.return_value
     sandbox.delete.side_effect = ConnectionError("sandbox cleanup interrupted")
     sandbox.process.exec.return_value.exit_code = writer_exit
-    files = {"scenarios.json": b"[]"}
+    files = {"scenarios.json": b"[]", "manifest.json": b"{}"}
     sandbox.fs.download_file.return_value = archives.pack_archive(files)
     monkeypatch.setattr(
         writer.gateway, "HostedHarnessGateway", lambda: SimpleNamespace(client=provider)
@@ -993,13 +1006,19 @@ def test_reviewer_retry_dispatches_once_and_rejects_changed_basis(
 
     job = queued_source_job
     job.state = "failed"
-    job.error = "source_generation_failed"
+    job.error = "source_world_snapshot_missing"
     job.save()
     request = SimpleNamespace(
         user=user, organization=user.organization, workspace=workspace, headers={}
     )
     dispatch = Mock()
     monkeypatch.setattr(harness_source_generation, "dispatch", dispatch)
+    with pytest.raises(HostedHarnessError) as error:
+        harness_source_generation.state_for_request(request, job.review_id, retry=True)
+    assert error.value.code == "source_world_snapshot_missing"
+    dispatch.assert_not_called()
+    job.error = "source_generation_failed"
+    job.save()
     with django_capture_on_commit_callbacks(execute=True):
         for _ in range(2):
             state = harness_source_generation.state_for_request(

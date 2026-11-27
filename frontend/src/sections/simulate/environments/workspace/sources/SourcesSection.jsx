@@ -26,7 +26,11 @@ import { ProposalDrawerFrame } from "./ProposalsDrawer";
 import AddSourceMenu from "./AddSourceMenu";
 import KnowledgeBasePicker from "./KnowledgeBasePicker";
 import SourcesTable from "./SourcesTable";
-import { overUploadLimit, SOURCES_COPY } from "./sources.constants";
+import {
+  missingSnapshotMessage,
+  overUploadLimit,
+  SOURCES_COPY,
+} from "./sources.constants";
 
 export default function SourcesSection({ env, locked }) {
   const location = useLocation();
@@ -242,7 +246,8 @@ export default function SourcesSection({ env, locked }) {
           sx={{ mx: 1.5, mt: 1.5 }}
         >
           {draftGeneration.state === "failed"
-            ? "Scenario generation failed. Open the source review to retry."
+            ? missingSnapshotMessage(draftGeneration) ||
+              "Scenario generation failed. Open the source review to retry."
             : draftGeneration.state === "stale"
               ? "This source generation is out of date. Prepare the sources again."
               : "Scenario generation is in progress."}

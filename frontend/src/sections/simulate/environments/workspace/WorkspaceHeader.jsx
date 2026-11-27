@@ -81,7 +81,7 @@ export default function WorkspaceHeader({
       alignItems="center"
       spacing={2}
       // The back arrow lines up with the chat rail's icons below it.
-      sx={{ pl: 1.5, pr: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+      sx={{ pl: 1, pr: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
     >
       <CustomTooltip show title={WORKSPACE_COPY.back} size="small" arrow>
         <IconButton

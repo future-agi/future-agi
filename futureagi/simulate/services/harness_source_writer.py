@@ -13,7 +13,20 @@ from simulate.services.hosted_harness import HostedHarnessError
 logger = logging.getLogger(__name__)
 
 
+MISSING_SNAPSHOT = "source_world_snapshot_missing"
+
+
+def missing_snapshot_error():
+    return HostedHarnessError(
+        MISSING_SNAPSHOT,
+        "Rebuild this environment to create its world snapshot, then add the source again.",
+        status_code=409,
+    )
+
+
 def author_additions(owner, files, pin, cases):
+    if "manifest.json" not in files:
+        raise missing_snapshot_error()
     provider = gateway.HostedHarnessGateway().client
     material = gateway._platform_simulator_material()
     env = {
