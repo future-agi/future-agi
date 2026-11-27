@@ -7,6 +7,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { refusalText } from "../evals/refusalText";
 import { ACTORS_COPY } from "./actors.constants";
 
@@ -57,10 +58,15 @@ export default function ActorKnowledgeFields({
         <Box>
           <Button
             size="small"
+            variant="outlined"
             component="label"
             disabled={uploading}
-            // The small text button's 8px inset, pulled back so its label starts where the fields do.
-            sx={{ alignSelf: "flex-start", ml: -1 }}
+            startIcon={<Iconify icon="solar:cloud-upload-linear" width={16} />}
+            sx={{
+              alignSelf: "flex-start",
+              color: "text.primary",
+              borderColor: "divider",
+            }}
           >
             {uploading ? F.uploading : F.upload}
             <input
