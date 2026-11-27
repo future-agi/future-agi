@@ -11,6 +11,13 @@ name: Admin PR approval
 # ignored. Both the author and the event's sender must be admins, so a push by
 # a non-admin to an admin's branch keeps the normal review. Dev dismisses stale
 # approvals on push, so each new head is approved again.
+#
+# The approval comes from the devflow approver GitHub App, never from
+# GITHUB_TOKEN: any workflow on any branch acts as github-actions[bot], so
+# that login's approval proves nothing. The App key is in the environment
+# devflow-approver, which admits only main; a pull_request_target run
+# presents main to it. Without the key the approve job fails and approves
+# nothing.
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -18,26 +25,29 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: admin-pr-approval-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  approve:
+  admin:
     if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      approve: ${{ steps.check.outputs.approve }}
     steps:
-      - name: Approve the head commit when the author is a repository admin
+      - name: Check that the author and the sender are repository admins
+        id: check
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           SENDER: ${{ github.event.sender.login }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           # Both the author and whoever triggered this event (on synchronize, the
@@ -50,6 +60,44 @@ jobs:
               exit 0
             fi
           done
+          echo "approve=true" >> "$GITHUB_OUTPUT"
+
+  approve:
+    needs: admin
+    if: needs.admin.outputs.approve == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only admin pull requests reach the key. No deployment record per run.
+    environment:
+      name: devflow-approver
+      deployment: false
+    permissions:
+      contents: read
+    steps:
+      - name: Fail without the approver App key
+        env:
+          APP_ID: ${{ secrets.DEVFLOW_APPROVER_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+        run: |
+          if [[ -z $APP_ID || -z $PRIVATE_KEY ]]; then
+            echo "::error::DEVFLOW_APPROVER_APP_ID or DEVFLOW_APPROVER_PRIVATE_KEY is not set in the devflow-approver environment. Nothing was approved; this workflow never approves with GITHUB_TOKEN."
+            exit 1
+          fi
+      - name: Mint the approver App token
+        id: approver
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.DEVFLOW_APPROVER_APP_ID }}
+          private-key: ${{ secrets.DEVFLOW_APPROVER_PRIVATE_KEY }}
+          permission-pull-requests: write
+      - name: Approve the head commit
+        env:
+          GH_TOKEN: ${{ steps.approver.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
           # Approve only the commit this event is about; a later push gets its own run.
           current=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
           if [[ $current != "$HEAD_SHA" ]]; then
