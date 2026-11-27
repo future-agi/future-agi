@@ -63,10 +63,10 @@ async function stubApi(page: Page, ids: Ids) {
   return briefRuns;
 }
 
-test('SIM-E2E-042: a coding agent\'s attempt reads its checks in plain words on its Epoch page, and goes on only through Copy for coding agent', {
+test('SIM-E2E-043: a coding agent\'s attempt reads its checks in plain words on its Epoch page, and goes on only through Copy for coding agent', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-042', area: 'simulate',
+    id: 'SIM-E2E-043', area: 'simulate',
     userGoal: 'A developer opens the Epoch page of an attempt their own coding agent sent, reads Future AGI\'s checks on the change in plain words, and copies the run\'s brief back to the coding agent as the one way on',
     steps: [
       'open the Epoch page of the coding agent\'s attempt',

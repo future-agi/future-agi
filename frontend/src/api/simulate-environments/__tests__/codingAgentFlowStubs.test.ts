@@ -25,7 +25,7 @@ import {
   type Ids,
 } from "../../../../../e2e/flows/simulate/coding-agent-attempt.payload";
 
-// SIM-E2E-042 serves these from the browser, because the E2E stack has no Enterprise
+// SIM-E2E-043 serves these from the browser, because the E2E stack has no Enterprise
 // license and no runner, so it cannot hold an attempt's Epoch. Parsing them with the
 // generated contract keeps them true to the API: a field the API renames or drops
 // fails here.
@@ -44,7 +44,7 @@ const ids: Ids = {
 };
 const ORIGIN = "http://localhost:3031";
 
-describe("SIM-E2E-042's stubbed responses match the agent-fix-runs contracts", () => {
+describe("SIM-E2E-043's stubbed responses match the agent-fix-runs contracts", () => {
   it("the attempt's Epoch read, a coding agent's attempt with no winner", () => {
     const read = SimulateApiAgentFixRunsReadResponse.parse(
       asContract(attemptEpoch(ids)),
@@ -72,7 +72,7 @@ describe("SIM-E2E-042's stubbed responses match the agent-fix-runs contracts", (
 
 // The words the flow asserts, from the page's own helpers: if the page's wording
 // changes, this fails before the flow does.
-describe("SIM-E2E-042's expected words are the page's", () => {
+describe("SIM-E2E-043's expected words are the page's", () => {
   const fix = attemptEpoch(ids) as unknown as AgentFixRunDetailApi;
   const verdict = attemptVerdict(ids) as unknown as AgentFixAttemptVerdictApi;
 

@@ -2024,6 +2024,28 @@
 - historical append rerun admits late rows only for the frozen contact without reranking
 - edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
 
+### EVAL-E2E-021 — custom evaluation tags survive draft reopening and repeated version saves
+
+**Goal:** Keep preset and custom evaluation labels when reopening a draft and repeatedly saving a version
+
+**Spec:** `flows/evals/custom-tags.spec.ts:10`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a draft with preset and custom tags through the API
+2. reopen the draft, add a trimmed custom tag, reject its duplicate and leave another pending
+3. publish through Save Evaluation and reopen the saved default version
+4. remove a tag, save pending text as a version, then remove that tag and save again
+5. reload the saved version and inspect the remaining labels
+
+**Backend state verified:**
+
+- draft detail returns the exact seeded tags
+- publishing retains existing tags and includes confirmed and pending entries exactly once
+- repeated version saves retain the exact remaining tags without resurrecting removed pending input
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
@@ -3678,7 +3700,7 @@
 
 **Goal:** An existing customer, whose org predates the cutoff, still reaches every Simulate page from the menu, and can debug the failures of a finished Run Simulation run once it has 15 connected calls
 
-**Spec:** `flows/simulate/existing-customer-pages.spec.ts:89`
+**Spec:** `flows/simulate/existing-customer-pages.spec.ts:103`
 
 **Tags:** —
 
@@ -3688,6 +3710,7 @@
 2. open Scenarios and Run Simulation from the menu
 3. open a finished Run Simulation run with 14 connected calls and point at Debug failures
 4. open a finished Run Simulation run with 15 connected calls and 14 completed calls
+5. click Debug failures
 
 **Backend state verified:**
 
@@ -3699,6 +3722,7 @@
 - each of those two items opens its page by URL and title, never /404
 - at 14 connected calls Debug failures is disabled, and its tooltip reads exactly "You need at least 15 connected calls to debug failures."
 - at 15 connected calls and 14 completed calls Debug failures is enabled
+- clicking it opens the Debug failures drawer, with its subtitle and its no-analysis-yet text
 
 ### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
 
@@ -4348,7 +4372,40 @@
 - a scenario with no stored name reads Unnamed scenario
 - no scenario row shows a scenario key
 
-### SIM-E2E-042 — a coding agent's attempt reads its checks in plain words on its Epoch page, and goes on only through Copy for coding agent
+### SIM-E2E-042 — an author locks an environment's default versions and sees the locked version's label with the train and test split
+
+**Goal:** An author whose environment has enough scorable scenarios opens its Overview, sees the version is ready to lock, locks it, and reads its label with the train and test task counts; the environment then cannot be deleted until the version is unlocked
+
+**Spec:** `flows/simulate/lock-version-splits.spec.ts:58`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment with 12 scorable scenarios (e2e/lib/harness_environment_seed.py)
+2. read the environment's versions: nothing is locked
+3. read the lock preview: the default pair can be locked
+4. open the Overview tab and read the "Lock environment <vN>, scenarios <vN>" card as Ready
+5. choose Lock versions on the card and confirm Lock versions in the dialog
+6. read the card as "Locked: environment <vN>, scenarios <vN>", with no status badge and the lock line
+7. delete the environment through the API
+
+**Backend state verified:**
+
+- before the lock the versions read has no locked version and no lock key, and the versions/lock-preview read says can_lock is true with 8 train and 4 test tasks
+- from the confirm click on, the only mutating /simulate/ request is one POST to the versions/lock route, naming the default environment and suite version ids, answered 200 with one locked version
+- simulate_harness_locked_version has one row for the environment, unlocked_at NULL, with the default environment and suite version ids and a YYYY.M.N label
+- simulate_harness_task_split has one row per seeded scenario, each first given by that locked version, and the test rows number what target_test_size gives (4 of 12)
+- simulate_harness_locked_version_member holds that locked version's roster: one row per seeded scenario, each with the split simulate_harness_task_split gave it
+- the versions read lists that locked version with the same label and the 8 train and 4 test counts, and the versions/lock-preview read refuses with version_already_locked
+- deleting the environment answers 409 version_locked, "Lock <label> covers this version. A workspace admin or owner must unlock it first.", and the environment is still readable
+
+**Browser observations:**
+
+- the card reads "Lock environment <vN>, scenarios <vN>" (the default pair) and Ready, with "Lock versions" enabled
+- the dialog reads "Lock environment <vN>, scenarios <vN>?"; after confirming the card title is "Locked: environment <vN>, scenarios <vN>", it shows no status badge and its line reads "Lock <label> · <d Mon> · Train 8 · Test 4 scenarios · scorer environment <vN>"
+
+### SIM-E2E-043 — a coding agent's attempt reads its checks in plain words on its Epoch page, and goes on only through Copy for coding agent
 
 **Goal:** A developer opens the Epoch page of an attempt their own coding agent sent, reads Future AGI's checks on the change in plain words, and copies the run's brief back to the coding agent as the one way on
 
