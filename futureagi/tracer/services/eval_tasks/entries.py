@@ -464,6 +464,7 @@ def mark_terminal(
     error_message: str | None = None,
     skipped_reason: str | None = None,
     epoch: datetime | None = None,
+    copy_instant_answer: bool = True,
 ) -> bool:
     """Record an entry's terminal state (status + the hash that produced it).
 
@@ -495,7 +496,7 @@ def mark_terminal(
     if epoch is not None:
         fence["updated_at"] = epoch
     landed = EvalLogger.objects.filter(**fence).update(**fields) > 0
-    if landed:
+    if landed and copy_instant_answer:
         _record_instant_answer(entry.id, entry.eval_task_id)
     return landed
 

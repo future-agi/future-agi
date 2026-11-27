@@ -400,8 +400,7 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
             # answer, and project deletion locks the run before its entries.
             entries = EvalLogger.objects.using("default").filter(id=entry_id)
             task_id = _uuid(entries.values_list("eval_task_id", flat=True).first())
-            if task_id is not None:
-                _lock_retained_run(task_id)
+            locked_run = task_id is not None and _lock_retained_run(task_id)
             entry = entries.select_for_update().first()
             if entry is None:
                 return {"entry_id": str(entry_id), "status": "deleted"}
@@ -428,6 +427,9 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
                 error=True,
                 error_message="Evaluation worker was lost after its recovery retry.",
                 epoch=entry.updated_at,
+                # A lazily created run that did not yet exist at the lock
+                # boundary backfills its answers; never lock it under the entry.
+                copy_instant_answer=locked_run,
             )
             return {"entry_id": str(entry_id), "status": str(EvalEntryStatus.ERRORED)}
     finally:
