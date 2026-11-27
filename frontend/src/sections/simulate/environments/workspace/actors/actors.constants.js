@@ -133,7 +133,8 @@ export const ACTORS_COPY = {
       idHelp: (rule) =>
         [
           "Made from the name; change it now if you like.",
-          rule,
+          // The server's rule comes without a full stop.
+          rule && rule.replace(/\.?$/, "."),
           "It never changes once saved.",
         ]
           .filter(Boolean)
@@ -179,6 +180,7 @@ export const ACTORS_COPY = {
       styleHelp: "Their manner and traits, such as brisk and decides quickly",
       answers: "Answers",
       seconds: "Seconds",
+      delaySeconds: "Give the seconds, or 0 for no delay.",
       permitted: "World actions they may take (optional)",
       permittedHelp:
         "Pick from this environment's actions. The world refuses anything else they try and records the attempt.",

@@ -58,10 +58,11 @@ const TRIGGER_VALUES = {
   turn: numberOrNull,
   seconds: numberOrNull,
   where: (text) => (String(text).trim() ? JSON.parse(text) : {}),
-  // Typed as a percent, sent as a share; rounded so 33.3 is 0.333, not 0.33299…
+  // Typed as a percent, sent as a share; rounded so 33.3 is 0.333, not 0.33299… A percent outside 0 to 100 is left
+  // out, so the server asks for one in percent rather than judging the share.
   p: (text) => {
     const percent = numberOrNone(text);
-    return percent === undefined
+    return percent === undefined || percent <= 0 || percent > 100
       ? undefined
       : Math.round(percent * 100) / 10000;
   },

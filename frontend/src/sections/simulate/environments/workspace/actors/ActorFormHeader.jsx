@@ -6,12 +6,7 @@ const C = ACTORS_COPY.worldActors;
 const F = C.form;
 const ALERT = { mx: 2.5, mt: 1.5, flexShrink: 0 };
 
-export default function ActorFormHeader({
-  actor,
-  error,
-  offline,
-  conflict,
-}) {
+export default function ActorFormHeader({ actor, error, offline, conflict }) {
   const existing = Boolean(actor.id);
   return (
     <>

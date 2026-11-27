@@ -165,6 +165,10 @@ describe("changesOf", () => {
     expect(changesOf(chance, { triggerChance: "33.3" }, FIELDS)).toEqual({
       trigger: { kind: "probability", p: 0.333 },
     });
+    // Over 100% is left out, so the server asks for a chance in percent.
+    expect(changesOf(chance, { triggerChance: "150" }, FIELDS)).toEqual({
+      trigger: { kind: "probability" },
+    });
     const second = typedActor({
       id: "ops",
       trigger: { kind: "on_tool", tool: "crm.approve", on_call: 2 },

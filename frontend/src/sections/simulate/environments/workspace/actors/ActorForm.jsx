@@ -116,9 +116,13 @@ export default function ActorForm({
     if (name === "mode") return triggerInputAt() || "mode";
     return name || `above:${one.message}`;
   };
-  const problems = verdict
-    ? verdict.problems.filter((one) => live(one) || revealed.has(keyOf(one)))
-    : [];
+  // The server takes a delay with no seconds as no delay, so the form asks for them itself; 0 is no delay.
+  const own =
+    value("timing") === "delayed" && isEmpty("seconds")
+      ? [{ field: "response_timing", message: F.delaySeconds }]
+      : [];
+  const found = verdict ? [...own, ...verdict.problems] : [];
+  const problems = found.filter((one) => live(one) || revealed.has(keyOf(one)));
   const overBy = verdict && revealed.has("over_by") ? verdict.over_by : 0;
   // Escape, the close button and a click outside ask before discarding; Cancel never asks.
   const [leaving, setLeaving] = useState(false);
@@ -195,7 +199,7 @@ export default function ActorForm({
   const submit = () => {
     setRevealed(
       new Set([
-        ...(verdict?.problems || []).map(keyOf),
+        ...found.map(keyOf),
         ...(verdict?.over_by > 0 ? ["over_by"] : []),
       ]),
     );
@@ -206,7 +210,7 @@ export default function ActorForm({
     const blocked =
       conflict === "removed" ||
       !verdict ||
-      verdict.problems.length > 0 ||
+      found.length > 0 ||
       verdict.over_by > 0 ||
       (conflicts.length > 0 && !shareConfirmed);
     if (!blocked)

@@ -834,6 +834,14 @@ describe("WorldActorsPanel", () => {
       { target: { value: "The limit is 25%" } },
     );
     choose("Answers", "After a delay");
+    // A delay with its seconds cleared, which the server would take as none; Save asks for them.
+    fireEvent.change(screen.getByLabelText(starred("Seconds")), {
+      target: { value: "" },
+    });
+    refusesSave();
+    expect(
+      screen.getByLabelText(starred("Seconds")),
+    ).toHaveAccessibleDescription("Give the seconds, or 0 for no delay.");
     fireEvent.change(screen.getByLabelText(starred("Seconds")), {
       target: { value: "5" },
     });
@@ -1409,13 +1417,14 @@ describe("WorldActorsPanel", () => {
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
     answer = {
       ...CLEAN,
-      problems: [{ field: "trigger", message: "Give the seconds after the start" }],
+      problems: [
+        { field: "trigger", message: "Give the seconds after the start" },
+      ],
     };
     comeIn("At a set moment");
-    expect(screen.getByLabelText(starred("Seconds after the start"))).not.toHaveAttribute(
-      "aria-invalid",
-      "true",
-    );
+    expect(
+      screen.getByLabelText(starred("Seconds after the start")),
+    ).not.toHaveAttribute("aria-invalid", "true");
     expect(screen.queryByText("Give the seconds after the start")).toBeNull();
     fireEvent.click(saveButton());
     expect(

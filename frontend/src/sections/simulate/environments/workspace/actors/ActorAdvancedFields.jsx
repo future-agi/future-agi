@@ -61,6 +61,7 @@ export default function ActorAdvancedFields({
               })}
               {form.value("timing") === "delayed" &&
                 field("seconds", F.seconds, {
+                  required: true,
                   type: "number",
                   sx: { width: 140 },
                   inputProps: { min: 0 },
