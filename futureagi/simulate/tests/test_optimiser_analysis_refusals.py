@@ -15,7 +15,11 @@ from simulate.models import (
 )
 from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
-from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.models.test_execution import (
+    CallExecution,
+    EvalExplanationSummaryStatus,
+    TestExecution,
+)
 from simulate.selectors.debug_failures import connected_call_count
 from simulate.tasks.agent_optimiser_tasks import execute_optimiser_run
 
@@ -199,13 +203,13 @@ def _ask(client, execution, route):
     "status",
     [TestExecution.ExecutionStatus.CANCELLED, TestExecution.ExecutionStatus.FAILED],
 )
-@pytest.mark.parametrize("route", ["read", "refresh"])
 def test_starts_an_analysis_of_a_stopped_run(
-    auth_client, organization, workspace, dispatch, status, route
+    auth_client, organization, workspace, dispatch, status
 ):
+    # Only the refresh starts an analysis; a read starts nothing.
     execution = _run(organization, workspace, ELIGIBLE, status=status)
 
-    response = _ask(auth_client, execution, route)
+    response = _ask(auth_client, execution, "refresh")
 
     assert response.status_code == 200
     assert response.json()["result"]["status"] == "pending"
@@ -284,9 +288,13 @@ def test_a_cancelled_runs_finished_calls_are_analysed(
         [*ELIGIBLE, (CallExecution.CallStatus.CANCELLED, 0)],
         status=TestExecution.ExecutionStatus.CANCELLED,
     )
-    # Its eval explanations are summarised already, so no summary is computed.
+    # Its eval explanations are summarised already (a current summary), so no
+    # summary is computed.
     execution.eval_explanation_summary = {}
-    execution.save(update_fields=["eval_explanation_summary"])
+    execution.eval_explanation_summary_status = EvalExplanationSummaryStatus.COMPLETED
+    execution.save(
+        update_fields=["eval_explanation_summary", "eval_explanation_summary_status"]
+    )
     analysis = {"agent_level": {}, "system_level": {}}
 
     # The task's body runs inline, without the activity wrapper's connection
@@ -300,7 +308,10 @@ def test_a_cancelled_runs_finished_calls_are_analysed(
         patch("simulate.utils.agent_optimiser.SimulationAnalysisAgent") as agent,
     ):
         agent.return_value.analyze.return_value = analysis
-        response = auth_client.get(_analysis_url(execution))
+        # Only the refresh starts an analysis.
+        response = auth_client.post(
+            f"{_analysis_url(execution)}refresh/", {}, format="json"
+        )
 
     assert response.status_code == 200
     run = AgentOptimiserRun.objects.get(agent_optimiser__test_executions=execution)

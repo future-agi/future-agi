@@ -64156,7 +64156,7 @@
                     "409": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiTextErrorResponse"
+                            "$ref": "#/definitions/TestExecutionDebugAnalysisError"
                         }
                     },
                     "500": {

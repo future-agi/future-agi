@@ -74744,7 +74744,7 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404 = {
 };
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse409 = {
-  data: ApiTextErrorResponseApi;
+  data: TestExecutionDebugAnalysisErrorApi;
   status: 409;
 };
 

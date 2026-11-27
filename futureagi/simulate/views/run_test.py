@@ -6730,7 +6730,7 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
             200: OptimiserAnalysisRefreshResponseSerializer,
             400: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
-            409: ApiTextErrorResponseSerializer,
+            409: TestExecutionDebugAnalysisErrorSerializer,
             500: ApiTextErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -6752,10 +6752,9 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                 run_test__deleted=False,
             )
 
-            if test_execution.status in _STILL_GRADED:
-                return self._gm.custom_error_response(
-                    status.HTTP_409_CONFLICT, _STILL_GRADED_MESSAGE
-                )
+            # A run still being graded is refused by Debug failures' rule in
+            # the create below (409, execution_not_completed), as is any run
+            # it would find nothing in.
             # Two presses at once: the run's row is locked around the check
             # and the create, so the second waits, then finds the first's
             # analysis on its way. The job is handed over after the commit.
