@@ -51,6 +51,7 @@ _FOREIGN_ANSWERS = pytest.mark.parametrize(
 _FUTUREAGI = Path(__file__).resolve().parents[1]
 _LIVE_MODULES = (
     "model_hub/tests/test_bulk_selection_bounded_ch25.py",
+    "model_hub/tests/test_delete_chunks_clickhouse_live.py",
     "model_hub/tests/test_eval_usage_clickhouse_selector.py",
     "model_hub/tests/test_feedback_vector_lifecycle.py",
     "tracer/tests/test_analysis_source_arrivals.py",
