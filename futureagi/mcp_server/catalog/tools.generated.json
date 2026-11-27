@@ -12180,14 +12180,24 @@
             "type": "string"
           },
           "page": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "A page number from 1; last is not supported."
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "last"
+                ]
+              }
+            ],
+            "description": "A page number from 1, or last for the last page."
           },
           "limit": {
             "type": "integer",
             "minimum": 1,
-            "description": "Scenarios per page.",
+            "description": "Scenarios per page; any other value takes the default.",
             "maximum": 100
           },
           "search": {

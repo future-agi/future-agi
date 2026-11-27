@@ -222,6 +222,65 @@ def test_the_scenario_list_still_takes_blank_filters(auth_client, monkeypatch):
     assert seen == [query]
 
 
+def _scenario_list_seen(monkeypatch):
+    seen = []
+
+    class Provider:
+        def list_scenarios(self, request, pk):
+            from rest_framework.response import Response
+
+            seen.append(dict(request.query_params.items()))
+            return Response({"count": 0, "next": None, "previous": None, "results": []})
+
+    monkeypatch.setattr(harness_job, "get_harness_provider", lambda: Provider())
+    return seen
+
+
+@pytest.mark.django_db
+def test_the_scenario_list_still_takes_the_last_page_and_any_page_size(
+    auth_client, monkeypatch
+):
+    """The paginator reads page=last as the last page and a page size that is not a whole number from 1 as the
+    default; the list's query serializer lets both through as before."""
+    seen = _scenario_list_seen(monkeypatch)
+    for query in ({"page": "last"}, {"page": "last", "limit": "0"}, {"limit": "all"}):
+        response = auth_client.get(
+            f"/simulate/api/harness-jobs/{uuid4()}/scenarios/", query
+        )
+        assert response.status_code == 200, response.content
+    assert seen == [{"page": "last"}, {"page": "last", "limit": "0"}, {"limit": "all"}]
+
+
+@pytest.mark.django_db
+def test_the_scenario_list_still_refuses_a_page_that_is_no_page(
+    auth_client, monkeypatch
+):
+    seen = _scenario_list_seen(monkeypatch)
+    for page in ("0", "first"):
+        response = auth_client.get(
+            f"/simulate/api/harness-jobs/{uuid4()}/scenarios/", {"page": page}
+        )
+        assert response.status_code == 400, response.content
+    assert seen == []
+
+
+@pytest.mark.django_db
+def test_the_mcp_scenario_list_can_ask_for_the_last_page(auth_client, monkeypatch):
+    seen = _scenario_list_seen(monkeypatch)
+
+    response = auth_client.post(
+        "/mcp/internal/tool-call/",
+        {
+            "tool_name": "list_harness_scenarios",
+            "params": {"id": str(uuid4()), "page": "last"},
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    assert seen == [{"page": "last"}]
+
+
 @pytest.mark.django_db
 def test_an_empty_path_value_is_refused_before_any_route_is_resolved(auth_client):
     response = auth_client.post(

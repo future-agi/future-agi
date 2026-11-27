@@ -57655,7 +57655,7 @@
                     {
                         "name": "page",
                         "in": "query",
-                        "description": "A page number from 1; last is not supported.",
+                        "description": "A page number from 1, or last for the last page.",
                         "required": false,
                         "type": "integer",
                         "minimum": 1
@@ -57663,7 +57663,7 @@
                     {
                         "name": "limit",
                         "in": "query",
-                        "description": "Scenarios per page.",
+                        "description": "Scenarios per page; any other value takes the default.",
                         "required": false,
                         "type": "integer",
                         "minimum": 1

@@ -1376,16 +1376,37 @@ class HarnessRestoredCaseSerializer(serializers.Serializer):
     )
 
 
+class _PageNumberField(serializers.IntegerField):
+    """A page number from 1, or `last`, as the list's paginator reads it."""
+
+    def run_validation(self, data=serializers.empty):
+        if data == "last":
+            return data
+        return super().run_validation(data)
+
+
+class _PageSizeField(serializers.IntegerField):
+    """Scenarios per page; anything but a whole number from 1 takes the default page size, as the paginator does."""
+
+    def run_validation(self, data=serializers.empty):
+        try:
+            return super().run_validation(data)
+        except serializers.ValidationError:
+            return None
+
+
 class HarnessScenarioListQuerySerializer(serializers.Serializer):
     """The scenario list's query. Filters on a scenario field (FIELD=VALUE, FIELD_not=VALUE) are read as given."""
 
-    page = serializers.IntegerField(
+    page = _PageNumberField(
         min_value=1,
         required=False,
-        help_text="A page number from 1; last is not supported.",
+        help_text="A page number from 1, or last for the last page.",
     )
-    limit = serializers.IntegerField(
-        min_value=1, required=False, help_text="Scenarios per page."
+    limit = _PageSizeField(
+        min_value=1,
+        required=False,
+        help_text="Scenarios per page; any other value takes the default.",
     )
     search = serializers.CharField(
         required=False, allow_blank=True, help_text="Every word must match."

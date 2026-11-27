@@ -625,6 +625,7 @@ tools:
     operation: {method: GET, path: "/simulate/api/harness-jobs/{id}/scenarios/"}
     access: read
     pagination:
+      page: {last: true}
       limit: {maximum: 100}
   - name: list_environment_versions
     group: simulation

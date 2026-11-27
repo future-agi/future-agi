@@ -59678,8 +59678,12 @@ export const SimulateApiHarnessJobsScenariosQueryParams = zod.object({
     .number()
     .min(1)
     .optional()
-    .describe("A page number from 1; last is not supported."),
-  limit: zod.number().min(1).optional().describe("Scenarios per page."),
+    .describe("A page number from 1, or last for the last page."),
+  limit: zod
+    .number()
+    .min(1)
+    .optional()
+    .describe("Scenarios per page; any other value takes the default."),
   search: zod.string().optional().describe("Every word must match."),
   ordering: zod
     .string()

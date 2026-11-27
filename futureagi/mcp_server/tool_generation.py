@@ -34,13 +34,26 @@ def _apply_pagination_policy(
     Only a ceiling is applied. The policy deliberately cannot set a default:
     every one of these endpoints already applies its own default page size when
     the parameter is omitted, so injecting one here would silently resize pages
-    for MCP callers while claiming the REST contract is untouched.
+    for MCP callers while claiming the REST contract is untouched. A page number
+    marked `{last: true}` also takes `last`, which the paginator reads as the
+    last page and Swagger 2.0 cannot spell as a union.
     """
     policy = entry.get("pagination", {})
     if not isinstance(policy, dict):
         raise ToolGenerationError(f"Invalid pagination policy for {entry['name']}")
     for field, bounds in policy.items():
         schema = input_schema["properties"].get(field, {})
+        if (
+            bounds == {"last": True}
+            and field in request_mapping["query"]
+            and schema.get("type") == "integer"
+        ):
+            description = schema.pop("description", None)
+            input_schema["properties"][field] = {
+                "anyOf": [schema, {"type": "string", "enum": ["last"]}],
+                **({"description": description} if description else {}),
+            }
+            continue
         if (
             field not in request_mapping["query"] + request_mapping["body"]
             or schema.get("type") != "integer"
