@@ -10,6 +10,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -172,6 +173,16 @@ class MigrationLeavesTest(unittest.TestCase):
         self.assertIn("'tracer'", out)
         self.assertRegex(out, r"::warning::.*0003_next\.py cannot be read")
 
+    def test_a_file_too_deep_to_parse_means_no_verdict_not_a_crash(self):
+        # A crash would exit 1, which the workflow reads as a "no".
+        self.tree.app("deep", chain("deep", "0001_initial", "0002_next"))
+        with mock.patch.object(
+            migration_leaves.ast, "parse", side_effect=RecursionError("too deep")
+        ):
+            code, out = self.tree.run()
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"::warning::.*cannot be read \(RecursionError\)")
+
     def test_what_the_files_cannot_settle_means_no_verdict(self):
         cases = {
             "a dependency that is not a plain pair": (
@@ -319,6 +330,23 @@ class WorkflowTest(unittest.TestCase):
         # The job never runs code from the candidate: the script comes from
         # the base commit, and reads the candidate's files as text.
         self.assertIn("script=futureagi/.ci/migration_leaves.py\n", step)
+        # Which commit is "the base": the queue's base, else the commit
+        # itself; for a pull request the test merge's first parent, because
+        # the event's base can predate the base tip the merge was built on.
+        self.assertIn("BASE_SHA: ${{ github.event.merge_group.base_sha }}\n", step)
+        self.assertIn("policy=${BASE_SHA:-$GITHUB_SHA}\n", step)
+        self.assertIn(
+            "if [[ $GITHUB_EVENT_NAME == pull_request ]]; then\n"
+            "            policy=$(git rev-parse --verify --quiet 'HEAD^1^{commit}') || policy=\n",
+            step,
+        )
+        self.assertNotIn("pull_request.base.sha", step)
+        self.assertNotIn("policy=HEAD", step)
+        # Reading the candidate's files can fail (blobs come on demand):
+        # that is a doubt, and a doubt passes.
+        self.assertIn("if ! git show ", step)
+        self.assertIn("! git archive HEAD ", step)
+        self.assertRegex(step, r"::warning[^\n]*\n\s+exit 0\n")
         self.assertIn(
             'git show "$policy:$script" > "$RUNNER_TEMP/migration-leaves.py"', step
         )

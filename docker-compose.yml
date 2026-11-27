@@ -135,6 +135,8 @@ services:
       # baked into URLs handed to the browser and must be reachable from it.
       STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
       S3_ENDPOINT_URL: http://127.0.0.1:9005
+      # This MinIO is the app's own: it keeps the bucket policy up to date.
+      STORAGE_BUNDLED: "true"
       MINIO_URL: ${MINIO_URL:-http://localhost:${MINIO_API_PORT:-9005}}
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-futureagi}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-futureagi}

@@ -47,7 +47,7 @@ def app_label(app_dir):
     if apps.is_file():
         try:
             tree = ast.parse(apps.read_text(encoding="utf-8"))
-        except (SyntaxError, ValueError, OSError) as error:
+        except (SyntaxError, ValueError, OSError, RecursionError) as error:
             raise NoVerdict(
                 f"{apps} cannot be read ({error.__class__.__name__})"
             ) from error
@@ -75,7 +75,7 @@ def own_parents(path, label):
     """The migrations of this app that the migration file at `path` names in `dependencies`."""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
-    except (SyntaxError, ValueError, OSError) as error:
+    except (SyntaxError, ValueError, OSError, RecursionError) as error:
         raise NoVerdict(
             f"{path} cannot be read ({error.__class__.__name__})"
         ) from error
@@ -213,21 +213,21 @@ def message(label, migrations_dir, last):
 def main(argv):
     root = pathlib.Path(argv[1] if len(argv) > 1 else "futureagi")
     if not root.is_dir():
-        print(
-            f"::warning::migration leaves: {root} is not a directory; nothing checked"
+        sys.stdout.write(
+            f"::warning::migration leaves: {root} is not a directory; nothing checked\n"
         )
         return 0
     clashes, warnings, judged = check(root)
     for reason in warnings:
-        print(
-            f"::warning::migration leaves: no verdict, Django's check decides: {reason}"
+        sys.stdout.write(
+            f"::warning::migration leaves: no verdict, Django's check decides: {reason}\n"
         )
     for label, migrations_dir, last in clashes:
-        print(
-            f"::error title=Two latest migrations in one app::{message(label, migrations_dir, last)}"
+        sys.stdout.write(
+            f"::error title=Two latest migrations in one app::{message(label, migrations_dir, last)}\n"
         )
-    print(
-        f"migration leaves: {judged} apps read, {len(clashes)} with more than one latest migration, {len(warnings)} without a verdict"
+    sys.stdout.write(
+        f"migration leaves: {judged} apps read, {len(clashes)} with more than one latest migration, {len(warnings)} without a verdict\n"
     )
     return 1 if clashes else 0
 

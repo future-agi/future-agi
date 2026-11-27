@@ -222,6 +222,8 @@ x-backend-env: &backend-env
   # MINIO_URL when accessing the host from outside localhost.
   STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
   S3_ENDPOINT_URL: http://minio:9000
+  # This MinIO is the app's own: it keeps the bucket policy up to date.
+  STORAGE_BUNDLED: "true"
   MINIO_URL: ${MINIO_URL:-http://localhost:${MINIO_API_PORT:-9005}}
   S3_ACCESS_KEY: ${MINIO_ROOT_USER:-futureagi}
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-futureagi}
