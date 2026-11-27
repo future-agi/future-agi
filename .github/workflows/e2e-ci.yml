@@ -288,7 +288,7 @@ jobs:
         # Only a dump saved by a successful dev push of this workflow is
         # fetched. No dump, or any failure here, means there is nothing to
         # compare; it never fails the plan.
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-proof'
         continue-on-error: true
         timeout-minutes: 2
         env:
@@ -877,14 +877,14 @@ jobs:
       # fails. The step's environment holds no secret; the migrate runs with
       # the stack's committed settings (e2e/stack/e2e.env).
       - name: Download the saved database dump
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.stack == 'distributed' && matrix.shard == 3 && needs.changes.outputs.db_artifact != '' }}
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-proof' && matrix.stack == 'distributed' && matrix.shard == 3 && needs.changes.outputs.db_artifact != '' }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: ${{ needs.changes.outputs.db_artifact }}
           path: ${{ runner.temp }}/e2e-db-record
       - name: Compare the saved database dump with a fresh migrate, and save one
         id: db-control
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.stack == 'distributed' && matrix.shard == 3 }}
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-proof' && matrix.stack == 'distributed' && matrix.shard == 3 }}
         # Two migrates from zero when there is no saved dump yet (about 6
         # minutes each), one when there is.
         timeout-minutes: 30
@@ -896,7 +896,7 @@ jobs:
           OUT: ${{ runner.temp }}/e2e-db-out
         run: bash futureagi/.ci/e2e-db-control.sh
       - name: Save the database dump for later dev runs
-        if: ${{ !cancelled() && steps.db-control.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/dev' && matrix.stack == 'distributed' && matrix.shard == 3 }}
+        if: ${{ !cancelled() && steps.db-control.outcome == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/test/TH-10965-e2e-db-proof' && matrix.stack == 'distributed' && matrix.shard == 3 }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           # Named by its migrate inputs. Public: the E2E image holds no

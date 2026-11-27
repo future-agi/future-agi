@@ -34,8 +34,8 @@ class FetchError(ValueError):
 
 def eligible(run, repository, workflow=WORKFLOW):
     return (
-        run["event"] == "push"
-        and run["head_branch"] == "dev"
+        run["event"] == "workflow_dispatch"
+        and run["head_branch"] == "test/TH-10965-e2e-db-proof"
         and run["conclusion"] == "success"
         and run["path"] == workflow
         and (run.get("head_repository") or {}).get("full_name") == repository
@@ -51,7 +51,7 @@ def listed(artifact):
     """
     run = artifact.get("workflow_run") or {}
     return (
-        run.get("head_branch") == "dev"
+        run.get("head_branch") == "test/TH-10965-e2e-db-proof"
         and run.get("repository_id") is not None
         and run.get("head_repository_id") == run.get("repository_id")
     )
