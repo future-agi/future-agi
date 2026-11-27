@@ -1292,6 +1292,36 @@ def test_an_agent_its_tab_shows_no_environment_for_is_still_kept_while_one_tests
 
 
 @pytest.mark.django_db
+def test_a_request_sees_exactly_its_workspace_or_only_jobs_with_none(
+    organization, workspace, user
+):
+    # scope_jobs guards many views: a request with a workspace sees only that workspace's
+    # jobs, and one with none sees only jobs that have no workspace.
+    from types import SimpleNamespace
+
+    from simulate.services.harness_provider import scope_jobs
+
+    agent = _agent(organization, workspace, "Scoped jobs")
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    here, there, nowhere = (_environment(agent, minutes) for minutes in (1, 2, 3))
+    HostedHarnessJob.all_objects.filter(id=there.id).update(workspace=sibling)
+    HostedHarnessJob.all_objects.filter(id=nowhere.id).update(workspace=None)
+    jobs = HostedHarnessJob.no_workspace_objects.filter(
+        id__in=[here.id, there.id, nowhere.id]
+    )
+
+    def seen(scope):
+        request = SimpleNamespace(workspace=scope, headers={})
+        return set(scope_jobs(jobs, request).values_list("id", flat=True))
+
+    assert seen(workspace) == {here.id}
+    assert seen(sibling) == {there.id}
+    assert seen(None) == {nowhere.id}
+
+
+@pytest.mark.django_db
 def test_the_owner_rule_reads_the_same_as_a_count_and_as_a_filter(
     organization, workspace
 ):
