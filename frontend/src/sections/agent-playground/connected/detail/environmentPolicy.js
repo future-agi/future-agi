@@ -1,3 +1,5 @@
+import { ENV_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
+
 // The production version, when it has moved past the one this environment
 // is pinned to; null when the environment tests the latest in production.
 export const productionAhead = (env, agent) => {
@@ -20,4 +22,9 @@ export const policyLabel = (env, agent) => {
 export const isBehind = (env, agent) =>
   env.policy === "pinned" && productionAhead(env, agent) != null;
 
-export const canFollow = (env) => env.policy === "pinned" && !!env.agentVersion;
+// A failed or cancelled build never moves: the server refuses it as not ready, so the
+// row offers nothing that could only end in that error. A running one keeps the offer.
+const NEVER_MOVES = new Set([ENV_STATUS.FAILED, ENV_STATUS.CANCELLED]);
+
+export const canFollow = (env) =>
+  env.policy === "pinned" && !!env.agentVersion && !NEVER_MOVES.has(env.status);
