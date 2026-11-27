@@ -513,6 +513,20 @@ class RollupRuns(unittest.TestCase):
         self.assertEqual(digest.count("DEVFLOW_TRAIN_LOGIN: ${{ vars.DEVFLOW_TRAIN_LOGIN }}"), 2)
         self.assertIn("pull-requests: read", digest, "the issues listing returns the rollups")
 
+    def test_the_rollup_shape_matches_the_train(self):
+        import devflow_train as train
+
+        self.assertEqual(t.TRAIN_MARKER, train.MANIFEST_MARKER)
+        self.assertEqual(t.TRAIN_BRANCH, train.BRANCH_PREFIX)
+        self.assertEqual(t.TRAIN_ROLLUP_LABEL, train.ROLLUP_LABEL)
+        self.assertEqual(t.bot(t.TRAIN_LOGIN), train.bot_login(train.Config().train_login).lower())
+        built = train.new_manifest(f"{9:040x}", [{"number": 3, "head_sha": f"{3:040x}", "branch": "b", "title": "t"}])
+        built["head_sha"] = f"{81:040x}"
+        issue = {"number": 81, "pull_request": {}, "user": {"login": TRAIN_APP}, "body": train.render_manifest(built)}
+        self.assertEqual(t.rollup_members([issue], TRAIN_APP),
+                         {f"{81:040x}": {"pr": 81, "branch": train.BRANCH_PREFIX + built["id"], "members": [3]}})
+
+
 
 class Liveness(unittest.TestCase):
     def test_a_running_queue_build_counts_its_finished_failed_jobs(self):
@@ -849,6 +863,72 @@ class Pinned(unittest.TestCase):
         self.assertTrue(uses)
         for ref in uses:
             self.assertRegex(ref, r"@[0-9a-f]{40}$")
+
+
+class TrainTicksTheBreaker(unittest.TestCase):
+    """Rollup reds never reach the queue, so with no dev push and no queue
+    build only the live train tick runs the breaker. A trip it files pauses
+    that same tick."""
+
+    def tick(self, file_trips):
+        import devflow_train as train
+        import test_devflow_train as tt
+
+        at = t.iso(datetime.now(UTC) - timedelta(minutes=10))
+        runs = [dict(rollup_run(i, n), created_at=at, updated_at=at, event="pull_request")
+                for i, n in ((1, 80), (2, 81), (3, 82))]
+        jobs = {i: [dict(j, completed_at=at) for j in pr_shard_failed()] for i in (1, 2, 3)}
+        rollups = [rollup_issue(80, [1, 2]), rollup_issue(81, [3]), rollup_issue(82, [4, 5])]
+        api = BreakerApi(runs, jobs, {("devflow:rollup", "all"): rollups})
+        reader = tt.RedReader(tt.data([tt.pr_node(7)]), [])
+        from unittest import mock
+
+        with mock.patch("sys.stdout"):
+            out = train.tick(reader, tt.REQUIRED, tt.cfg(), None, api, file_trips)
+        return out, api
+
+    def test_three_red_rollups_trip_and_pause_the_same_tick(self):
+        out, api = self.tick(file_trips=True)
+        self.assertIn(("POST", "/repos/o/r/issues"), api.writes)
+        self.assertEqual(out["paused_by"], [101], "the listing has not caught up; the filed issue pauses")
+        self.assertEqual(out["batches"], [])
+
+    def test_without_the_heartbeat_the_tick_only_logs(self):
+        out, api = self.tick(file_trips=False)
+        self.assertEqual(api.writes, [])
+        self.assertEqual(out["paused_by"], [])
+
+    def test_a_failed_breaker_read_logs_and_the_tick_goes_on(self):
+        from unittest import mock
+
+        import devflow_train as train
+        import test_devflow_train as tt
+
+        class Down(BreakerApi):
+            def request(self, method, url, body=None, token=None):
+                raise urllib.error.URLError("down")
+
+        reader = tt.RedReader(tt.data([tt.pr_node(7)], base_red=[100]), [])
+        with mock.patch("sys.stdout"):
+            out = train.tick(reader, tt.REQUIRED, tt.cfg(), None, Down(), True)
+        self.assertEqual(out["paused_by"], [100], "open issues still pause")
+
+    def test_only_a_live_train_run_builds_the_breaker(self):
+        import devflow_train as train
+
+        self.assertIs(train.devflow_tick, t, "the train imports this module")
+        src = pathlib.Path(train.__file__).read_text()
+        self.assertIn("if live and devflow_tick:\n        breaker = devflow_tick.Api(repo, os.environ[\"GH_TOKEN\"])", src)
+        self.assertIn("tick(reader, required, cfg, live, breaker, file_trips)", src)
+
+    def test_the_import_works_under_isolated_mode(self):
+        import subprocess
+
+        script = pathlib.Path(__file__).with_name("devflow_train.py")
+        code = ("import runpy, sys; sys.argv = ['x']; "
+                f"m = runpy.run_path({str(script)!r}, run_name='not_main'); print(m['devflow_tick'] is not None)")
+        out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, cwd="/", check=False)
+        self.assertEqual(out.stdout.strip(), "True", out.stderr)
 
 
 class ManualClose(unittest.TestCase):

@@ -98,9 +98,11 @@ import type {
   AgentDefinitionEditResponseApi,
   AgentDefinitionListResponseApi,
   AgentDefinitionResponseApi,
+  AgentFixAttemptVerdictApi,
   AgentFixCandidateCreatedApi,
   AgentFixCheckRunCreatedApi,
   AgentFixCheckRunRequestApi,
+  AgentFixCodingAgentBriefApi,
   AgentFixEngineReportApi,
   AgentFixEngineStateApi,
   AgentFixIssueCreateApi,
@@ -1367,8 +1369,10 @@ import type {
   SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
   SimulateApiAgentFixIssuesListParams,
   SimulateApiAgentFixIssuesPlanParams,
+  SimulateApiAgentFixRunsBriefParams,
   SimulateApiAgentFixRunsLaunchOptionsParams,
   SimulateApiAgentFixRunsListParams,
+  SimulateApiAgentFixRunsSubmitAttemptBody,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiAlkSimulateCallExecutionsRecordingUploadBody,
@@ -60114,6 +60118,49 @@ export const simulateApiAgentFixEngineSource = async (
   );
 };
 
+export type simulateApiAgentFixEngineSubmittedResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineSubmittedResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineSubmittedResponseSuccess =
+  simulateApiAgentFixEngineSubmittedResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixEngineSubmittedResponseError =
+  simulateApiAgentFixEngineSubmittedResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixEngineSubmittedResponse =
+  | simulateApiAgentFixEngineSubmittedResponseSuccess
+  | simulateApiAgentFixEngineSubmittedResponseError;
+
+export const getSimulateApiAgentFixEngineSubmittedUrl = (id: string) => {
+  return `/simulate/api/agent-fix-engine/${id}/submitted/`;
+};
+
+/**
+ * The tree an outside attempt verifies, `source/`-rooted like ``source``.
+ */
+export const simulateApiAgentFixEngineSubmitted = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineSubmittedResponse> => {
+  return apiMutator<simulateApiAgentFixEngineSubmittedResponse>(
+    getSimulateApiAgentFixEngineSubmittedUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 = {
   data: void;
   status: 200;
@@ -60586,6 +60633,148 @@ export const simulateApiAgentFixRunsCreate = async (
   );
 };
 
+export type simulateApiAgentFixRunsSubmitAttemptResponse201 = {
+  data: AgentFixRunApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixRunsSubmitAttemptResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixRunsSubmitAttemptResponseSuccess =
+  simulateApiAgentFixRunsSubmitAttemptResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixRunsSubmitAttemptResponseError =
+  simulateApiAgentFixRunsSubmitAttemptResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixRunsSubmitAttemptResponse =
+  | simulateApiAgentFixRunsSubmitAttemptResponseSuccess
+  | simulateApiAgentFixRunsSubmitAttemptResponseError;
+
+export const getSimulateApiAgentFixRunsSubmitAttemptUrl = () => {
+  return `/simulate/api/agent-fix-runs/coding-agent-attempts/`;
+};
+
+/**
+ * Submit the tree a person's own coding agent made for a finished run. Future AGI
+checks it as a short Epoch: no model proposes a change, but each check runs the
+agent on the run's cases and uses credits. Read its verdict.
+ */
+export const simulateApiAgentFixRunsSubmitAttempt = async (
+  simulateApiAgentFixRunsSubmitAttemptBody?: SimulateApiAgentFixRunsSubmitAttemptBody,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsSubmitAttemptResponse> => {
+  const formData = new FormData();
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.source_run_id !== undefined) {
+    formData.append(
+      `source_run_id`,
+      simulateApiAgentFixRunsSubmitAttemptBody.source_run_id,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.tree !== undefined) {
+    formData.append(`tree`, simulateApiAgentFixRunsSubmitAttemptBody.tree);
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.summary !== undefined) {
+    formData.append(
+      `summary`,
+      simulateApiAgentFixRunsSubmitAttemptBody.summary,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.base_commit !== undefined) {
+    formData.append(
+      `base_commit`,
+      simulateApiAgentFixRunsSubmitAttemptBody.base_commit,
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.locked_paths !== undefined) {
+    simulateApiAgentFixRunsSubmitAttemptBody?.locked_paths.forEach((value) =>
+      formData.append(`locked_paths`, value),
+    );
+  }
+  if (simulateApiAgentFixRunsSubmitAttemptBody?.budget_credits !== undefined) {
+    formData.append(
+      `budget_credits`,
+      simulateApiAgentFixRunsSubmitAttemptBody.budget_credits.toString(),
+    );
+  }
+
+  return apiMutator<simulateApiAgentFixRunsSubmitAttemptResponse>(
+    getSimulateApiAgentFixRunsSubmitAttemptUrl(),
+    {
+      ...options,
+      method: "POST",
+      body: formData,
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsBriefResponse200 = {
+  data: AgentFixCodingAgentBriefApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsBriefResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsBriefResponseSuccess =
+  simulateApiAgentFixRunsBriefResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixRunsBriefResponseError =
+  simulateApiAgentFixRunsBriefResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixRunsBriefResponse =
+  | simulateApiAgentFixRunsBriefResponseSuccess
+  | simulateApiAgentFixRunsBriefResponseError;
+
+export const getSimulateApiAgentFixRunsBriefUrl = (
+  params: SimulateApiAgentFixRunsBriefParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-runs/coding-agent-brief/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-runs/coding-agent-brief/`;
+};
+
+/**
+ * What a person's own coding agent reads to fix a finished run: its failing cases,
+never a held-back one, the agent's files, the rules, and how to submit.
+ */
+export const simulateApiAgentFixRunsBrief = async (
+  params: SimulateApiAgentFixRunsBriefParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsBriefResponse> => {
+  return apiMutator<simulateApiAgentFixRunsBriefResponse>(
+    getSimulateApiAgentFixRunsBriefUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiAgentFixRunsLaunchOptionsResponse200 = {
   data: AgentFixLaunchOptionsApi;
   status: 200;
@@ -60633,7 +60822,9 @@ export const getSimulateApiAgentFixRunsLaunchOptionsUrl = (
 
 /**
  * What the launch form shows and prefills for a finished run, and what would
-refuse the launch now.
+refuse the launch now. Only a person's signed-in session reads the cases an Epoch
+on the run holds back, as for an Epoch's read; a coding agent, the CLI or MCP
+never.
  */
 export const simulateApiAgentFixRunsLaunchOptions = async (
   params: SimulateApiAgentFixRunsLaunchOptionsParams,
@@ -60931,6 +61122,50 @@ export const simulateApiAgentFixRunsStop = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsVerdictResponse200 = {
+  data: AgentFixAttemptVerdictApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsVerdictResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsVerdictResponseSuccess =
+  simulateApiAgentFixRunsVerdictResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixRunsVerdictResponseError =
+  simulateApiAgentFixRunsVerdictResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixRunsVerdictResponse =
+  | simulateApiAgentFixRunsVerdictResponseSuccess
+  | simulateApiAgentFixRunsVerdictResponseError;
+
+export const getSimulateApiAgentFixRunsVerdictUrl = (id: string) => {
+  return `/simulate/api/agent-fix-runs/${id}/verdict/`;
+};
+
+/**
+ * An outside attempt's verdict: each tier's status, the static and target tiers'
+detail, and its must-pass regressions, none on a held-back case.
+ */
+export const simulateApiAgentFixRunsVerdict = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsVerdictResponse> => {
+  return apiMutator<simulateApiAgentFixRunsVerdictResponse>(
+    getSimulateApiAgentFixRunsVerdictUrl(id),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
