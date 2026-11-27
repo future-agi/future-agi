@@ -339,6 +339,20 @@ class TestEngineAuthentication:
         assert response.status_code == 200, response.content
         assert response.json()["fix_run_id"] == str(fix_run.id)
 
+    def test_the_sandbox_reads_its_source_through_the_platform(
+        self, api_client, source_run, storage
+    ):
+        # Agent source is never readable by URL: the sandbox gets the bytes from here.
+        fix_run = _armed(_fix_run(source_run))
+        key = f"agent-fix/{fix_run.organization_id}/{fix_run.id}/base-source.tar.gz"
+        storage.objects[key] = b"stored archive"
+
+        response = _engine(api_client, "get", fix_run, "source/")
+
+        assert response.status_code == 200, response.content
+        assert response["Content-Type"] == "application/gzip"
+        assert response.content == b"stored archive"
+
     def test_the_brief_round_trips_with_the_records_the_engine_reads(
         self, api_client, source_run
     ):
