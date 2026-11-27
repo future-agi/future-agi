@@ -41,13 +41,16 @@ permissions:
   contents: read
 
 concurrency:
-  # PRs: one active run per PR, cancel stale. Push: per-SHA so dev/main runs
-  # never cancel each other (their checks gate release PRs and deploys).
+  # PRs: one active run per PR, cancel stale. Push to dev: one group, never
+  # cancelled, so one run is running and one waits; a newer push replaces the
+  # waiting one. Every dev push was already tested in the merge queue, and at
+  # 400 landings a day per-SHA runs would hold the runners. Push to main:
+  # per-SHA, so release runs never cancel each other (they gate deploys).
   # Keyed on github.ref, not head_ref: for PRs that is refs/pull/N/merge, unique
   # per PR even across forks, whereas a fork branch also named "dev" would share
   # a head_ref group with internal dev runs and cancel them.
   # Manual profiles can be dispatched together without replacing a pending trial.
-  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}
+  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -79,8 +82,10 @@ jobs:
           persist-credentials: false
       - name: Exercise the candidate policy against Git fixtures
         run: python3 -I .github/scripts/test_ci_scope.py
-      - name: "\"CI ran on this base\" verdicts on recorded API payloads"
+      - name: '"CI ran on this base" verdicts on recorded API payloads'
         run: python3 -I .github/scripts/test_ci_base_gate.py
+      - name: Registry pull retries on a fake registry
+        run: python3 -I .github/scripts/test_registry_retry.py
 
   changes:
     runs-on: ubuntu-latest
@@ -404,7 +409,7 @@ jobs:
         id: probe
         working-directory: futureagi
         run: |
-          docker compose -f docker-compose.test.yml -p futureagi-test pull --quiet
+          bash "$GITHUB_WORKSPACE/.github/scripts/registry-retry.sh" "Service image pull" docker compose -f docker-compose.test.yml -p futureagi-test pull --quiet
           key=$(bash ../.github/actions/backend-test-packages/database/key.sh probe)
           echo "key=$key" >> "$GITHUB_OUTPUT"
       - id: present
@@ -419,7 +424,7 @@ jobs:
         uses: ./.github/actions/backend-test-packages/database
         with:
           profile: ${{ inputs.backend_setup }}
-          handoff: 'true'
+          handoff: "true"
       - name: Dump producer service logs on failure
         if: failure() && steps.cold.outcome == 'failure'
         working-directory: futureagi
@@ -441,7 +446,6 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
-
   test:
     # "pytest shard N" and "metrics shard N" share these steps; the changes
     # job builds the matrix (suite, splits, marker term, timeout per leg).
@@ -460,20 +464,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout EE package (internal runs only)
+        if: env.IS_INTERNAL_RUN == 'true'
+        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
+        with: *ee_checkout
+
       - name: Prefetch service images in the background
         # Pull-only on purpose: compose has no cross-invocation locking, so a
         # background `up` can race the health gate's `up` on container creation
         # when pulls are cold and the uv cache is warm. Concurrent pulls of the
         # same image are safe at the daemon level; the gate stays the only
-        # invocation that creates containers.
+        # invocation that creates containers. Rate limits and transient
+        # registry errors are retried (.github/scripts/registry-retry.sh). It
+        # starts after the EE checkout, which drops its token, so the
+        # candidate's script never runs beside that credential.
         run: |
-          nohup docker compose -f docker-compose.test.yml -p futureagi-test \
-            pull --quiet > /tmp/compose-up.log 2>&1 &
-
-      - name: Checkout EE package (internal runs only)
-        if: env.IS_INTERNAL_RUN == 'true'
-        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
-        with: *ee_checkout
+          nohup bash "$GITHUB_WORKSPACE/.github/scripts/registry-retry.sh" "Service image prefetch" docker compose -f docker-compose.test.yml -p futureagi-test pull --quiet > /tmp/compose-up.log 2>&1 &
 
       - uses: ./.github/actions/backend-test-packages/environment
         with:
@@ -688,7 +694,10 @@ jobs:
       - uses: ./.github/actions/backend-test-packages/lock-wheels
 
       - name: Start test services
-        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
+        # Only the pull retries; a failed `up` is a real service failure.
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/registry-retry.sh" "Service image pull" docker compose -f docker-compose.test.yml -p futureagi-test pull --quiet
+          docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
 
       - name: Create and migrate the test database
         # Collecting the module needs the database; without SAML_MULTIWORKER
@@ -793,7 +802,10 @@ jobs:
         run: uv sync --frozen --extra dev --no-install-package en-core-web-sm
       - uses: ./.github/actions/backend-test-packages/lock-wheels
       - name: Start test dependencies
-        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
+        # Only the pull retries; a failed `up` is a real service failure.
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/registry-retry.sh" "Service image pull" docker compose -f docker-compose.test.yml -p futureagi-test pull --quiet
+          docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
       - name: Run evaluator suite from the backend working directory
         id: evaluator-suite
         # The backend cwd is required by existing fixtures' relative paths.
@@ -1095,7 +1107,11 @@ jobs:
     # that job's script through to the end of this file.
     name: Record the tested merge candidate
     needs: [changes, backend-tests]
-    if: ${{ github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
+    # !cancelled(): without a status check the implicit success() also needs
+    # every job upstream of backend-tests to succeed, and the pin check and
+    # other selected-out jobs are skipped, so the receipt was never recorded
+    # (run 45819635797: suites passed, receipt skipped).
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

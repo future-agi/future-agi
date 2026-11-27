@@ -907,14 +907,17 @@ class WorkflowTests(unittest.TestCase):
                 )
 
     def test_producers_record_receipts_outside_the_required_aggregate(self):
-        for kind, name, aggregate, selected in (
+        # Backend CI's receipt runs on !cancelled(): with the implicit
+        # success() a skipped upstream job skipped it (run 45819635797).
+        for kind, name, aggregate, selected, guard in (
             (
                 "backend",
                 "backend-ci.yml",
                 "backend-tests",
                 "needs.changes.outputs.backend == 'true'",
+                "!cancelled() && ",
             ),
-            ("e2e", "e2e-ci.yml", "e2e-tests", "needs.changes.outputs.any == 'true'"),
+            ("e2e", "e2e-ci.yml", "e2e-tests", "needs.changes.outputs.any == 'true'", ""),
         ):
             text = self.text(name)
             job = re.search(r"(?ms)^  candidate-receipt:\n(.*?)(?=^  \S|\Z)", text)[1]
@@ -922,7 +925,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIn(f"    name: {gate.RECEIPT_JOB}\n", job)
                 self.assertIn(f"    needs: [changes, {aggregate}]\n", job)
                 self.assertIn(
-                    f"    if: ${{{{ github.event_name == 'pull_request' && needs.{aggregate}.result == 'success' && {selected} }}}}\n",
+                    f"    if: ${{{{ {guard}github.event_name == 'pull_request' && needs.{aggregate}.result == 'success' && {selected} }}}}\n",
                     job,
                 )
                 self.assertIn(
