@@ -128,13 +128,24 @@ export type HeldBack =
 // the server picked for the suggested targets, or why there are none to show.
 // Below `cases_min` the epoch writes variations first and picks them with those;
 // `edited`: the targets differ from the suggested ones, so the launch picks them.
+// On a locked version the launch holds back the picked cases of its test split,
+// however few, so they are known for any pick and come only from that split.
 export function heldBackOf(
   options: Pick<
     AgentFixLaunchOptionsApi,
     "held_back_scenario_keys" | "suggested" | "limits"
-  >,
+  > &
+    Partial<Pick<AgentFixLaunchOptionsApi, "held_back_from" | "scenarios">>,
   targets: string[],
 ): HeldBack {
+  if (options.held_back_from === "locked_version") {
+    const test = new Set(
+      (options.scenarios ?? [])
+        .filter((one) => one.split === "test")
+        .map((one) => one.key),
+    );
+    return { keys: targets.filter((key) => test.has(key)) };
+  }
   const keys = options.held_back_scenario_keys;
   const suggested = options.suggested.target_scenario_keys;
   const same =

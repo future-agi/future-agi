@@ -29,6 +29,7 @@ PROXY_ENV_KEYS = tuple(
 
 STORAGE_ENV_KEYS = (
     "STORAGE_BACKEND",
+    "STORAGE_BUNDLED",
     "S3_ENDPOINT",
     "S3_ENDPOINT_URL",
     "S3_SECURE",
@@ -529,6 +530,100 @@ def _anonymous_statements(policy):
     ]
 
 
+# An earlier four-prefix denial, which an existing bucket may still carry.
+EARLIER_PRIVATE_PREFIXES = (
+    "agent-fix/",
+    "harness-sources/",
+    "harness-conversations/",
+    "agent-contracts/",
+)
+# Connected repository checkouts and the harness archives and records built
+# around the agent.
+ADDED_PRIVATE_PREFIXES = (
+    "code-archives/",
+    "harness-environments/",
+    "harness-authoring/",
+    "harness-sealed/",
+    "harness-assembled/",
+    "harness-bundles/",
+    "harness-releases/",
+    "harness-suites/",
+    "harness-diagnostics/",
+)
+# Everything the app reads only with its own keys, which nobody may read by URL.
+PRIVATE_RESOURCES = {
+    f"arn:aws:s3:::futureagi/{prefix}*"
+    for prefix in EARLIER_PRIVATE_PREFIXES + ADDED_PRIVATE_PREFIXES
+}
+
+
+def _denials(policy):
+    return [s for s in policy["Statement"] if s["Effect"] == "Deny"]
+
+
+def _ours(policy):
+    return [
+        s for s in policy["Statement"] if s.get("Sid") == "PrivateObjectsNotAnonymous"
+    ]
+
+
+def _assert_agent_source_is_private(policy):
+    (denial,) = _ours(policy)
+    assert denial["Effect"] == "Deny"
+    assert denial["Principal"] == {"AWS": ["*"]}
+    assert denial["Action"] == ["s3:GetObject"]
+    assert set(denial["Resource"]) == PRIVATE_RESOURCES
+    # Anonymous callers only: on S3 a Deny for "*" would also refuse the backend's
+    # own signed reads.
+    assert denial["Condition"] == {"StringEquals": {"aws:principaltype": ["Anonymous"]}}
+
+
+def _bundled(monkeypatch):
+    """The bundled MinIO, whose bucket policy the app owns."""
+    return reload_storage_client(
+        monkeypatch, STORAGE_BACKEND="minio", STORAGE_BUNDLED="true"
+    )
+
+
+def _s3_error(code):
+    return S3Error(
+        code=code,
+        message=code,
+        resource="/futureagi",
+        request_id="request",
+        host_id="host",
+        response=None,
+    )
+
+
+def test_the_denial_names_its_condition_key_in_lowercase(monkeypatch):
+    """MinIO refuses "aws:PrincipalType" as a MalformedPolicy; only the lowercase
+    spelling is accepted there, and AWS reads key names in any case."""
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = FakeBucketClient(exists=False)
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    (denial,) = _denials(policy)
+    assert list(denial["Condition"]["StringEquals"]) == ["aws:principaltype"]
+
+
+def _read_only_policy(bucket="futureagi"):
+    """What ensure_bucket applied before agent source was kept private."""
+    return {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"AWS": ["*"]},
+                "Action": ["s3:GetObject"],
+                "Resource": [f"arn:aws:s3:::{bucket}/*"],
+            }
+        ],
+    }
+
+
 def _legacy_public_policy(bucket="futureagi", principal="*"):
     """What ensure_bucket applied before: every action for anyone."""
     return json.dumps(
@@ -547,6 +642,8 @@ def _legacy_public_policy(bucket="futureagi", principal="*"):
 
 
 def test_new_bucket_is_readable_by_url_but_not_writable_or_listable(monkeypatch):
+    # Not the bundled MinIO: a bucket the app creates is the app's, so it gets
+    # the whole policy wherever it lives.
     storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
     client = FakeBucketClient(exists=False)
 
@@ -556,6 +653,7 @@ def test_new_bucket_is_readable_by_url_but_not_writable_or_listable(monkeypatch)
     (statement,) = _anonymous_statements(policy)
     assert statement["Action"] == ["s3:GetObject"]
     assert statement["Resource"] == ["arn:aws:s3:::futureagi/*"]
+    _assert_agent_source_is_private(policy)
 
 
 class RacedBucketClient(FakeBucketClient):
@@ -598,7 +696,7 @@ def test_bucket_owned_by_someone_else_still_fails(monkeypatch):
 
 
 def test_existing_minio_bucket_with_the_old_policy_is_cut_back_to_reads(monkeypatch):
-    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    storage_client = _bundled(monkeypatch)
     client = FakeBucketClient(
         exists=True, policy=_legacy_public_policy(principal={"AWS": ["*"]})
     )
@@ -609,10 +707,11 @@ def test_existing_minio_bucket_with_the_old_policy_is_cut_back_to_reads(monkeypa
     (statement,) = _anonymous_statements(policy)
     assert statement["Action"] == ["s3:GetObject"]
     assert statement["Resource"] == ["arn:aws:s3:::futureagi/*"]
+    _assert_agent_source_is_private(policy)
 
 
 def test_tightening_keeps_statements_for_named_principals(monkeypatch):
-    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    storage_client = _bundled(monkeypatch)
     named = {
         "Effect": "Allow",
         "Principal": {"AWS": ["arn:aws:iam::123456789012:user/backup"]},
@@ -630,21 +729,164 @@ def test_tightening_keeps_statements_for_named_principals(monkeypatch):
     assert [s["Action"] for s in _anonymous_statements(policy)] == [["s3:GetObject"]]
 
 
-def test_read_only_bucket_is_left_alone(monkeypatch):
-    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
-    read_only = {
-        "Version": "2012-10-17",
-        "Statement": [storage_client._anonymous_read_statement("futureagi")],
+def test_read_only_bucket_from_an_earlier_release_keeps_agent_source_private(
+    monkeypatch,
+):
+    storage_client = _bundled(monkeypatch)
+    client = FakeBucketClient(exists=True, policy=json.dumps(_read_only_policy()))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    assert _anonymous_statements(policy) == _read_only_policy()["Statement"]
+    _assert_agent_source_is_private(policy)
+
+
+def test_tightening_keeps_an_operators_own_denials(monkeypatch):
+    storage_client = _bundled(monkeypatch)
+    theirs = {
+        "Sid": "NoDeletes",
+        "Effect": "Deny",
+        "Principal": {"AWS": ["*"]},
+        "Action": ["s3:DeleteObject"],
+        "Resource": ["arn:aws:s3:::futureagi/*"],
     }
-    client = FakeBucketClient(exists=True, policy=json.dumps(read_only))
+    policy = _read_only_policy()
+    policy["Statement"].append(theirs)
+    client = FakeBucketClient(exists=True, policy=json.dumps(policy))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (written,) = client.set_calls
+    assert theirs in written["Statement"]
+    _assert_agent_source_is_private(written)
+
+
+def test_bucket_nobody_reads_by_url_is_not_opened_up(monkeypatch):
+    """A bundled bucket whose policy lets nobody in anonymously stays that way:
+    the denial is added, an anonymous read is not."""
+    storage_client = _bundled(monkeypatch)
+    named = {
+        "Effect": "Allow",
+        "Principal": {"AWS": ["arn:aws:iam::123456789012:user/backup"]},
+        "Action": ["s3:GetObject"],
+        "Resource": ["arn:aws:s3:::futureagi/*"],
+    }
+    client = FakeBucketClient(
+        exists=True,
+        policy=json.dumps({"Version": "2012-10-17", "Statement": [named]}),
+    )
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    assert _anonymous_statements(policy) == []
+    assert named in policy["Statement"]
+    _assert_agent_source_is_private(policy)
+
+
+def test_bucket_without_a_policy_is_left_private(monkeypatch):
+    storage_client = _bundled(monkeypatch)
+    client = FakeBucketClient(exists=True, policy_error=_s3_error("NoSuchBucketPolicy"))
+
+    storage_client.ensure_bucket(client, "futureagi")
+    storage_client.ensure_bucket(client, "futureagi")
+
+    assert client.set_calls == []
+    assert client.get_calls == 1
+
+
+def _current_policy_as_minio_stores_it():
+    policy = _read_only_policy()
+    policy["Statement"].append(
+        {
+            "Sid": "PrivateObjectsNotAnonymous",
+            "Effect": "Deny",
+            "Principal": {"AWS": ["*"]},
+            "Action": ["s3:GetObject"],
+            "Resource": sorted(PRIVATE_RESOURCES, reverse=True),
+            "Condition": {"StringEquals": {"aws:principaltype": ["Anonymous"]}},
+        }
+    )
+    return policy
+
+
+def test_bucket_with_the_current_policy_is_left_alone(monkeypatch):
+    storage_client = _bundled(monkeypatch)
+    client = FakeBucketClient(
+        exists=True, policy=json.dumps(_current_policy_as_minio_stores_it())
+    )
 
     storage_client.ensure_bucket(client, "futureagi")
 
     assert client.set_calls == []
 
 
-def test_existing_bucket_policy_is_checked_once_per_process(monkeypatch):
+def test_a_stale_denial_is_replaced_not_duplicated(monkeypatch):
+    storage_client = _bundled(monkeypatch)
+    stale = _current_policy_as_minio_stores_it()
+    stale["Statement"][1]["Resource"] = ["arn:aws:s3:::futureagi/agent-fix/*"]
+    client = FakeBucketClient(exists=True, policy=json.dumps(stale))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    _assert_agent_source_is_private(policy)
+
+
+def test_an_earlier_four_prefix_denial_is_brought_up_to_date(monkeypatch):
+    """A bundled bucket that already carries the four-prefix denial gets the
+    current one in its place: one write, one denial, every prefix."""
+    storage_client = _bundled(monkeypatch)
+    earlier = _current_policy_as_minio_stores_it()
+    earlier["Statement"][1]["Resource"] = [
+        f"arn:aws:s3:::futureagi/{prefix}*" for prefix in EARLIER_PRIVATE_PREFIXES
+    ]
+    client = FakeBucketClient(exists=True, policy=json.dumps(earlier))
+
+    storage_client.ensure_bucket(client, "futureagi")
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    _assert_agent_source_is_private(policy)
+    assert _anonymous_statements(policy) == _read_only_policy()["Statement"]
+
+
+@pytest.mark.parametrize("prefix", ADDED_PRIVATE_PREFIXES)
+def test_the_denial_covers_agent_code_kept_under(prefix, monkeypatch):
     storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+
+    denial = storage_client._private_objects_statement("futureagi")
+
+    assert f"arn:aws:s3:::futureagi/{prefix}*" in denial["Resource"]
+
+
+@pytest.mark.parametrize("prefix", ADDED_PRIVATE_PREFIXES)
+def test_a_new_bucket_keeps_agent_code_private_under(prefix, monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = FakeBucketClient(exists=False)
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    (denial,) = _ours(policy)
+    assert f"arn:aws:s3:::futureagi/{prefix}*" in denial["Resource"]
+
+
+@pytest.mark.parametrize("prefix", ADDED_PRIVATE_PREFIXES)
+def test_an_existing_bundled_bucket_keeps_agent_code_private_under(prefix, monkeypatch):
+    storage_client = _bundled(monkeypatch)
+    client = FakeBucketClient(exists=True, policy=json.dumps(_read_only_policy()))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    (denial,) = _ours(policy)
+    assert f"arn:aws:s3:::futureagi/{prefix}*" in denial["Resource"]
+
+
+def test_existing_bucket_policy_is_checked_once_per_process(monkeypatch):
+    storage_client = _bundled(monkeypatch)
     client = FakeBucketClient(exists=True, policy=_legacy_public_policy())
 
     storage_client.ensure_bucket(client, "futureagi")
@@ -654,8 +896,91 @@ def test_existing_bucket_policy_is_checked_once_per_process(monkeypatch):
     assert len(client.set_calls) == 1
 
 
+class FlakyBucketClient(FakeBucketClient):
+    """The first policy write fails as a dropped connection does; later ones land."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.failed_once = False
+
+    def set_bucket_policy(self, bucket_name, policy):
+        if not self.failed_once:
+            self.failed_once = True
+            raise ConnectionError("connection reset")
+        super().set_bucket_policy(bucket_name, policy)
+
+
+def test_a_failed_policy_write_is_tried_again(monkeypatch):
+    storage_client = _bundled(monkeypatch)
+    client = FlakyBucketClient(exists=True, policy=json.dumps(_read_only_policy()))
+
+    storage_client.ensure_bucket(client, "futureagi")
+    storage_client.ensure_bucket(client, "futureagi")
+    storage_client.ensure_bucket(client, "futureagi")
+
+    assert client.get_calls == 2
+    (policy,) = client.set_calls
+    _assert_agent_source_is_private(policy)
+
+
+def test_an_unreadable_policy_is_read_again(monkeypatch):
+    storage_client = _bundled(monkeypatch)
+    client = FakeBucketClient(
+        exists=True,
+        policy=json.dumps(_read_only_policy()),
+        policy_error=ConnectionError("connection reset"),
+    )
+
+    storage_client.ensure_bucket(client, "futureagi")
+    client.policy_error = None
+    storage_client.ensure_bucket(client, "futureagi")
+
+    assert client.get_calls == 2
+    (policy,) = client.set_calls
+    _assert_agent_source_is_private(policy)
+
+
+# Storage that is not the bundled MinIO keeps the policy its operator gave it.
+# Only what earlier releases already did there stays: anonymous writes and
+# listings are cut back to reads, and a bucket the app creates gets the whole
+# policy.
+
+
+def test_operators_own_minio_with_a_read_only_policy_is_not_written(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = FakeBucketClient(exists=True, policy=json.dumps(_read_only_policy()))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    assert client.set_calls == []
+
+
+def test_operators_own_minio_still_loses_anonymous_writes(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    client = FakeBucketClient(exists=True, policy=_legacy_public_policy())
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    (policy,) = client.set_calls
+    assert policy["Statement"] == _read_only_policy()["Statement"]
+    assert _ours(policy) == []
+
+
+def test_operators_own_minio_keeps_a_denial_it_already_has(monkeypatch):
+    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    stale = _current_policy_as_minio_stores_it()
+    stale["Statement"][1]["Resource"] = ["arn:aws:s3:::futureagi/agent-fix/*"]
+    client = FakeBucketClient(exists=True, policy=json.dumps(stale))
+
+    storage_client.ensure_bucket(client, "futureagi")
+
+    assert client.set_calls == []
+
+
 def test_operator_owned_s3_bucket_policy_is_not_touched(monkeypatch):
-    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="s3")
+    storage_client = reload_storage_client(
+        monkeypatch, STORAGE_BACKEND="s3", STORAGE_BUNDLED="true"
+    )
     client = FakeBucketClient(exists=True, policy=_legacy_public_policy())
 
     storage_client.ensure_bucket(client, "futureagi")
@@ -665,10 +990,8 @@ def test_operator_owned_s3_bucket_policy_is_not_touched(monkeypatch):
 
 
 def test_unreadable_or_missing_policy_does_not_fail_the_upload(monkeypatch):
-    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
-    client = FakeBucketClient(
-        exists=True, policy_error=RuntimeError("NoSuchBucketPolicy")
-    )
+    storage_client = _bundled(monkeypatch)
+    client = FakeBucketClient(exists=True, policy_error=_s3_error("AccessDenied"))
 
     storage_client.ensure_bucket(client, "futureagi")
 
@@ -676,7 +999,7 @@ def test_unreadable_or_missing_policy_does_not_fail_the_upload(monkeypatch):
 
 
 def test_failed_tightening_does_not_fail_the_upload(monkeypatch):
-    storage_client = reload_storage_client(monkeypatch, STORAGE_BACKEND="minio")
+    storage_client = _bundled(monkeypatch)
     client = FakeBucketClient(
         exists=True,
         policy=_legacy_public_policy(),

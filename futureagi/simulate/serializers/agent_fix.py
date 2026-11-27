@@ -6,6 +6,7 @@ from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from simulate.models import AgentFixCandidate, AgentFixIssueJob, AgentFixRun
+from simulate.models.harness_versioning import TaskSplit
 from simulate.pydantic_schemas.agent_fix import (
     ALLOWED_MODELS_MAX,
     BUDGET_CREDITS_MAX,
@@ -813,6 +814,13 @@ class AgentFixLaunchScenarioSerializer(serializers.Serializer):
         help_text="The evidence import that added this scenario to the suite; null for "
         "any other scenario. A failing one offers Run Epoch from that evidence.",
     )
+    split = serializers.ChoiceField(
+        choices=TaskSplit.values,
+        allow_null=True,
+        help_text="Its split in the run's locked version; null off a locked version, or "
+        "when it can't be scored. A test-split case is never must-pass, and a failing one is "
+        "held back.",
+    )
 
 
 class AgentFixLaunchSuggestedSerializer(serializers.Serializer):
@@ -878,11 +886,21 @@ class AgentFixLaunchOptionsSerializer(serializers.Serializer):
         child=serializers.CharField(),
         allow_null=True,
         help_text="The suggested targets the Epoch holds back to prove its fix, picked as"
-        " launch picks them: empty when too few fail to hold any back, null when the"
-        " Epoch first writes variations, since they are picked with the variations.",
+        " launch picks them: on a locked version, the failing ones in its test split;"
+        " otherwise empty when too few fail to hold any back, null when the Epoch first"
+        " writes variations, since they are picked with the variations.",
     )
     ship = AgentFixShipReadinessSerializer(
         allow_null=True, help_text="Null for an agent Epoch can't change."
+    )
+    held_back_from = serializers.ChoiceField(
+        choices=["locked_version", "sample"],
+        help_text="What chooses the held-back cases: the run's locked version's test "
+        "split, or a sample of the run's failing cases.",
+    )
+    locked_version_label = serializers.CharField(
+        allow_null=True,
+        help_text="The label of the run's locked version; null off a locked version.",
     )
 
 

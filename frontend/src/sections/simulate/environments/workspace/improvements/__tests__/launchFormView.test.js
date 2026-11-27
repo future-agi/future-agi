@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  heldBackNote,
+  testSplitKeys,
   countsLine,
   reviewSentence,
   budgetSteps,
@@ -52,6 +54,77 @@ describe("held back", () => {
     expect(countsLine(12, 1, LIMITS, { pending: "edited" })).toBe(
       "12 failing to fix · 1 protected",
     );
+  });
+});
+
+// A run of lock 2026.11.1: two failing cases in its test split, one
+// in train. The server held back the suggested targets' test-split cases.
+const LOCKED = {
+  held_back_from: "locked_version",
+  locked_version_label: "2026.11.1",
+  held_back_scenario_keys: ["a", "b"],
+  suggested: { target_scenario_keys: ["a", "b", "c"] },
+  limits: FLOOR,
+  scenarios: [
+    { key: "a", split: "test" },
+    { key: "b", split: "test" },
+    { key: "c", split: "train" },
+    { key: "d", split: null },
+  ],
+};
+
+describe("held back on a locked version", () => {
+  it("holds back the picked cases of the test split, however few", () => {
+    expect(testSplitKeys(LOCKED)).toEqual(["a", "b"]);
+    expect(heldBackOf(LOCKED, ["a", "b", "c"])).toEqual({ keys: ["a", "b"] });
+    expect(countsLine(2, 0, LIMITS, heldBackOf(LOCKED, ["a", "c"]))).toBe(
+      "2 failing: 1 to fix, 1 held back to prove it · 0 protected",
+    );
+  });
+
+  it("holds back only test-split cases, whatever the pick", () => {
+    // An edited pick, below cases_min: the test split still says which.
+    expect(heldBackOf(LOCKED, ["a", "c"])).toEqual({ keys: ["a"] });
+    expect(heldBackOf(LOCKED, ["c"])).toEqual({ keys: [] });
+    // A server answer outside the test split is never shown as held back.
+    expect(
+      heldBackOf({ ...LOCKED, held_back_scenario_keys: ["a", "c"] }, [
+        "a",
+        "b",
+        "c",
+      ]),
+    ).toEqual({ keys: ["a", "b"] });
+  });
+
+  it("samples off a locked version", () => {
+    const sampled = {
+      held_back_from: "sample",
+      locked_version_label: null,
+      held_back_scenario_keys: ["c"],
+      suggested: { target_scenario_keys: ["a", "b", "c"] },
+      limits: LIMITS,
+      scenarios: LOCKED.scenarios,
+    };
+    expect(heldBackOf(sampled, ["a", "b", "c"])).toEqual({ keys: ["c"] });
+    expect(heldBackNote(sampled)).toBeNull();
+  });
+
+  it("names the lock whose test split is held back", () => {
+    expect(heldBackNote(LOCKED)).toMatch(/lock 2026\.11\.1/);
+  });
+
+  it("refuses a pick that is all test split, as the launch does", () => {
+    const check = (targets) =>
+      launchError({
+        targets,
+        protectedKeys: [],
+        surfaces: ["prompt"],
+        limits: LIMITS,
+        testKeys: testSplitKeys(LOCKED),
+      });
+    expect(check(["a", "b"])).toMatch(/in the test split/);
+    expect(check(["a"])).toMatch(/in the test split/);
+    expect(check(["a", "c"])).toBeNull();
   });
 });
 
