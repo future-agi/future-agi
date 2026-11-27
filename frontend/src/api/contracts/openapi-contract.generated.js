@@ -90585,6 +90585,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
+        has_debug_failures_analysis: {
+          title: "Has debug failures analysis",
+          description:
+            "Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes.",
+          type: "boolean",
+          readOnly: true,
+          "x-nullable": true,
+        },
         total_duration: {
           title: "Total duration",
           type: "number",

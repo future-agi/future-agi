@@ -30676,6 +30676,8 @@ export interface RunTestKPIsResponseApi {
   readonly failed_calls?: number;
   /** Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals. */
   readonly failing_calls?: number;
+  /** Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes. */
+  readonly has_debug_failures_analysis?: boolean;
   readonly total_duration?: number;
 }
 

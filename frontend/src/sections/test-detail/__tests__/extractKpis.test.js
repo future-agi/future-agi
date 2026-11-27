@@ -51,18 +51,20 @@ describe("extractKpis", () => {
     },
   );
 
-  // `failing_calls` is Debug failures' count, null while the run is live. A
-  // number would paint a phantom eval, and null a phantom choice chart.
+  // Debug failures' count and analysis flag, both null while the run is live.
+  // A value would paint a phantom eval, and null a phantom choice chart.
   it.each([
-    [AGENT_TYPES.VOICE, 3],
-    [AGENT_TYPES.CHAT, null],
-  ])("keeps failing_calls out of every bucket (%s, %s)", (agentType, count) => {
+    ["failing_calls", AGENT_TYPES.VOICE, 3],
+    ["failing_calls", AGENT_TYPES.CHAT, null],
+    ["has_debug_failures_analysis", AGENT_TYPES.VOICE, true],
+    ["has_debug_failures_analysis", AGENT_TYPES.CHAT, null],
+  ])("keeps %s out of every bucket (%s, %s)", (key, agentType, value) => {
     const { evalMetrics, callDetails, systemMetrics, deterministicEvals } =
-      extractKpis({ failing_calls: count, total_calls: 20 }, agentType);
+      extractKpis({ [key]: value, total_calls: 20 }, agentType);
 
-    expect(evalMetrics).not.toHaveProperty("failing_calls");
-    expect(callDetails).not.toHaveProperty("failing_calls");
-    expect(systemMetrics).not.toHaveProperty("failing_calls");
-    expect(deterministicEvals.map((e) => e.id)).not.toContain("failing_calls");
+    expect(evalMetrics).not.toHaveProperty(key);
+    expect(callDetails).not.toHaveProperty(key);
+    expect(systemMetrics).not.toHaveProperty(key);
+    expect(deterministicEvals.map((e) => e.id)).not.toContain(key);
   });
 });

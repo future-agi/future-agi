@@ -52,7 +52,10 @@ from simulate.models.test_execution import (
     CallExecutionSnapshot,
     EvalExplanationSummaryStatus,
 )
-from simulate.selectors.debug_failures import failing_call_count
+from simulate.selectors.debug_failures import (
+    failing_call_count,
+    has_debug_failures_analysis,
+)
 from simulate.selectors.runs import user_executions
 from simulate.serializers.requests.call_execution import (
     CallExecutionFilterSerializer,
@@ -2215,6 +2218,13 @@ class RunTestKPIsView(APIView):
                 # count would change, so it is not counted on every poll.
                 "failing_calls": (
                     failing_call_count(test_executor)
+                    if test_executor.status in _FINISHED_EXECUTION_STATUSES
+                    else None
+                ),
+                # Debug failures opens a run's earlier analysis even when the rule
+                # would refuse a new one.
+                "has_debug_failures_analysis": (
+                    has_debug_failures_analysis(test_executor)
                     if test_executor.status in _FINISHED_EXECUTION_STATUSES
                     else None
                 ),

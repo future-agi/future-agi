@@ -68421,6 +68421,12 @@ export const SimulateTestExecutionsKpisListResponse = zod.object({
     .describe(
       "Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals.",
     ),
+  has_debug_failures_analysis: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes.",
+    ),
   total_duration: zod.number().optional(),
 });
 

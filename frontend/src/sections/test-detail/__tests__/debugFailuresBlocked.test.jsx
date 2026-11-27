@@ -141,6 +141,42 @@ describe("Debug failures on a finished run", () => {
     ).toEqual({ disabled: true, reason: BLOCKED_REASON });
   });
 
+  it.each([
+    ["too few connected calls", 14, 1],
+    ["nothing failing", 15, 0],
+  ])(
+    "opens the analysis a run with %s already has",
+    (_, connected_calls, failing_calls) => {
+      expect(
+        run("completed", {
+          agent_type: "voice",
+          total_calls: 20,
+          connected_calls,
+          failing_calls,
+          has_debug_failures_analysis: true,
+        }),
+      ).toEqual({ disabled: false, reason: "" });
+    },
+  );
+
+  it.each([
+    [14, 1, BLOCKED_REASON],
+    [15, 0, NOTHING_FAILED_REASON],
+  ])(
+    "is blocked on %s connected and %s failing with no analysis",
+    (connected_calls, failing_calls, reason) => {
+      expect(
+        run("completed", {
+          agent_type: "voice",
+          total_calls: 20,
+          connected_calls,
+          failing_calls,
+          has_debug_failures_analysis: false,
+        }),
+      ).toEqual({ disabled: true, reason });
+    },
+  );
+
   it("does not block on a count it was never sent", () => {
     expect(run("completed", { agent_type: "voice", total_calls: 3 })).toEqual({
       disabled: false,

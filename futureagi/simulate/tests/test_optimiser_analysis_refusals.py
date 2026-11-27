@@ -1,5 +1,6 @@
 """Run Simulation's Debug failures starts no analysis of a run too small to read,
-or one where nothing failed. An analysis the run already has is still returned."""
+or one where nothing failed. An analysis the run already has is still returned, and
+the run's KPIs say it has one."""
 
 from unittest.mock import patch
 
@@ -58,6 +59,24 @@ def _run(
 
 def _analysis_url(execution):
     return f"/simulate/test-executions/{execution.id}/optimiser-analysis/"
+
+
+def _kpis(client, execution):
+    response = client.get(f"/simulate/test-executions/{execution.id}/kpis/")
+    assert response.status_code == 200
+    return response.json()
+
+
+def _analysed(execution):
+    """Gives the run an earlier, completed analysis."""
+    optimiser = AgentOptimiser.objects.create(name="Earlier")
+    execution.agent_optimiser = optimiser
+    execution.save(update_fields=["agent_optimiser"])
+    AgentOptimiserRun.objects.create(
+        agent_optimiser=optimiser,
+        status=AgentOptimiserRun.OptimiserStatus.COMPLETED,
+        result={"insights": "Earlier analysis"},
+    )
 
 
 def _runs(execution):
@@ -134,15 +153,10 @@ def test_returns_the_analysis_a_blocked_run_already_has(
     auth_client, organization, workspace, dispatch
 ):
     execution = _run(organization, workspace, NONE_FAILING)
-    optimiser = AgentOptimiser.objects.create(name="Earlier")
-    execution.agent_optimiser = optimiser
-    execution.save(update_fields=["agent_optimiser"])
-    AgentOptimiserRun.objects.create(
-        agent_optimiser=optimiser,
-        status=AgentOptimiserRun.OptimiserStatus.COMPLETED,
-        result={"insights": "Earlier analysis"},
-    )
+    _analysed(execution)
 
+    # The run page opens it: the KPIs say the run has an analysis.
+    assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is True
     read = auth_client.get(_analysis_url(execution))
     refresh = auth_client.post(f"{_analysis_url(execution)}refresh/", {}, format="json")
 
@@ -209,3 +223,35 @@ def test_kpis_send_no_failing_count_for_a_live_run(
 
     assert response.status_code == 200
     assert response.json()["failing_calls"] is None
+
+
+def test_kpis_say_a_finished_run_has_an_analysis(auth_client, organization, workspace):
+    execution = _run(organization, workspace, ELIGIBLE)
+    _analysed(execution)
+
+    assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is True
+
+
+def test_kpis_say_a_refused_read_left_no_analysis(
+    auth_client, organization, workspace, dispatch
+):
+    execution = _run(organization, workspace, NONE_FAILING)
+
+    refused = auth_client.get(_analysis_url(execution))
+    execution.refresh_from_db()
+
+    assert refused.status_code == 409
+    # The refused read made the run an optimiser, with no analysis in it.
+    assert execution.agent_optimiser_id is not None
+    assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is False
+
+
+def test_kpis_send_no_analysis_flag_for_a_live_run(
+    auth_client, organization, workspace
+):
+    execution = _run(
+        organization, workspace, ELIGIBLE, status=TestExecution.ExecutionStatus.RUNNING
+    )
+    _analysed(execution)
+
+    assert _kpis(auth_client, execution)["has_debug_failures_analysis"] is None

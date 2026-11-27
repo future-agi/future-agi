@@ -1439,6 +1439,14 @@ class RunTestKPIsResponseSerializer(serializers.Serializer):
             "a completed call that failed its evals."
         ),
     )
+    has_debug_failures_analysis = serializers.BooleanField(
+        read_only=True,
+        allow_null=True,
+        help_text=(
+            "Whether the run has a Debug failures analysis the optimiser-analysis "
+            "read returns, in any status. Null until the run finishes."
+        ),
+    )
     total_duration = serializers.FloatField(read_only=True)
 
 
