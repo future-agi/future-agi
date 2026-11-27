@@ -1203,6 +1203,113 @@ def test_a_sub_second_custom_window_keeps_its_fraction_for_every_metric(
     assert _points(result, "trace_count") == {day0: 1}
 
 
+def test_single_project_joins_are_unchanged_by_project_matching(
+    observe_project, seed
+):
+    """Regression guard; passes at the parent commit too. Item 1 made the
+    cross-eval, span-root and system-breakdown joins match on the project as
+    well as the trace. With one selected project and no shared UUIDs they
+    must keep every row they had:
+    * cross-eval: an eval metric broken down by another template;
+    * span root: an eval metric broken down by a span column (status);
+    * system breakdown: a trace count broken down by an eval template.
+    """
+
+    scored, other = str(uuid4()), str(uuid4())
+    day0 = _day(datetime.now(UTC) - timedelta(days=5))
+    traces = [
+        seed.trace(observe_project, day0 + timedelta(hours=10 + hour))
+        for hour in range(2)
+    ]
+    for trace, value in zip(traces, (0.4, 0.6), strict=True):
+        seed.result(trace, scored, day0 + timedelta(hours=13), value=value)
+        seed.result(trace, other, day0 + timedelta(hours=13), value=0.5)
+    window = _custom(day0 - timedelta(days=1), day0 + timedelta(days=2))
+    by_other = {
+        "name": other,
+        "type": "eval_metric",
+        "config_id": other,
+        "output_type": "SCORE",
+    }
+
+    cross = _run_worker(
+        seed,
+        _config(
+            [observe_project], window, [_eval_metric(scored)], breakdowns=[by_other]
+        ),
+    )
+    assert _points(cross, series="50") == pytest.approx({day0: 0.5})
+
+    span_root = _run_worker(
+        seed,
+        _config(
+            [observe_project],
+            window,
+            [_eval_metric(scored)],
+            breakdowns=[{"name": "status", "type": "system_metric"}],
+        ),
+    )
+    assert _points(span_root, series="OK") == pytest.approx({day0: 0.5})
+
+    system = _run_worker(
+        seed,
+        _config(
+            [observe_project],
+            window,
+            [_system_metric("trace_count", "count")],
+            breakdowns=[by_other],
+        ),
+    )
+    assert _points(system, "trace_count", series="50") == {day0: 2}
+
+
+@pytest.mark.parametrize(
+    "time_range",
+    [
+        pytest.param({"preset": "7D"}, id="preset"),
+        pytest.param(
+            {
+                "custom_start": "2026-11-01T00:00:00Z",
+                "custom_end": "2026-11-08T00:00:00Z",
+            },
+            id="whole-second-custom",
+        ),
+    ],
+)
+def test_presets_and_whole_second_windows_keep_their_window_sql(time_range):
+    """Item 6 must not touch these windows: no exact-microsecond parameter is
+    added and every window predicate keeps the plain ``%(start_date)s`` /
+    ``%(end_date)s`` tokens. (The VM run also compares the SQL byte for byte
+    with the parent commit.)
+    """
+
+    from tracer.services.clickhouse.query_builders.dashboard import (
+        DashboardQueryBuilder,
+    )
+
+    template = str(uuid4())
+    config = {
+        "project_ids": [str(uuid4())],
+        "organization_id": str(uuid4()),
+        "workspace_id": str(uuid4()),
+        "granularity": "day",
+        "time_range": time_range,
+        "metrics": [
+            _eval_metric(template),
+            _system_metric("trace_count", "count"),
+        ],
+        "filters": [],
+        "breakdowns": [],
+    }
+    builder = DashboardQueryBuilder(config)
+    for metric in config["metrics"]:
+        sql, params = builder.build_metric_query(metric)
+        assert "start_date_exact_us" not in params
+        assert "end_date_exact_us" not in params
+        assert "fromUnixTimestamp64Micro" not in sql
+        assert "%(start_date)s" in sql and "%(end_date)s" in sql
+
+
 # ---------------------------------------------------------------------------
 # 7. Regression guards for the held candidate's findings (pass on dev)
 # ---------------------------------------------------------------------------
