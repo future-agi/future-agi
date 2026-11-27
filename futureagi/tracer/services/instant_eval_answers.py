@@ -114,7 +114,8 @@ def record_answer(entry_id) -> int:
             f"SELECT r.task_id, r.id, l.custom_eval_config_id, {label}, {confidence}, r.time, now() "
             "FROM tracer_eval_logger l JOIN tracer_instant_eval_row r "
             "ON r.task_id = %(task)s AND r.row_id = %(rid)s "
-            f"WHERE l.id = %(id)s AND l.custom_eval_config_id IS NOT NULL AND {SETTLED} "
+            "WHERE l.id = %(id)s AND l.deleted = false "
+            f"AND l.custom_eval_config_id IS NOT NULL AND {SETTLED} "
             "ON CONFLICT (task_id, row_id, config_id) DO UPDATE "
             "SET label = EXCLUDED.label, confidence = EXCLUDED.confidence, "
             "answered_at = EXCLUDED.answered_at",

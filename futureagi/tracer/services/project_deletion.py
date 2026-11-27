@@ -9,7 +9,6 @@ fi-collector invalidation. See `fi-collector/pkg/auth/auth.go`
 from __future__ import annotations
 
 import contextlib
-from uuid import UUID
 
 import redis
 import structlog
@@ -107,8 +106,7 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
         UserAlertMonitor.objects.filter(project__in=projects).update(
             deleted=True, deleted_at=now
         )
-        instant_task_ids, pause_task_ids = _cancel_instant_runs(projects, now)
-        _retire_insights(projects, now)
+        pause_task_ids = _retire_instant_eval_and_insights(projects, now)
         EvalTask.objects.filter(project__in=projects).update(
             deleted=True, deleted_at=now
         )
@@ -116,8 +114,6 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
         soft_delete_eval_results(
             EvalLogger.objects.filter(custom_eval_config__in=eval_configs)
         )
-        InstantEvalAnswer.objects.filter(task_id__in=instant_task_ids).delete()
-        InstantEvalRow.objects.filter(task_id__in=instant_task_ids).delete()
         eval_configs.update(deleted=True, deleted_at=now)
         projects.update(deleted=True, deleted_at=now)
 
@@ -127,16 +123,27 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
     return project_ids
 
 
-def _cancel_instant_runs(projects: QuerySet[Project], now) -> tuple[list[UUID], list[str]]:
-    # Even cancelled runs retain answers. Serialize their copiers with deletion
-    # before locking tasks, entries or answers, in the same order for bulk deletes.
-    task_ids = list(
-        InstantEvalRun.objects.filter(project__in=projects)
-        .order_by("pk")
+def _retire_instant_eval_and_insights(projects: QuerySet[Project], now) -> list[str]:
+    """Stop the projects' Instant eval and Insights work and drop the text it
+    copied out of their traces.
+
+    Instant eval rows keep an excerpt of each row they read, and Insights
+    units keep the excerpt, content and reading of each unit; neither table
+    has a soft-delete flag, and the traces they copied are going, so the
+    copies are deleted outright. A report's result quotes those units, so it
+    is cleared; the report and its config are soft-deleted like the traces.
+    A run still going is cancelled (Instant eval) or failed (Insights) first,
+    so no stage reads or bills for a deleted project.
+
+    Returns the ids of eval tasks whose workflows should be paused."""
+    instant = InstantEvalRun.objects.filter(project__in=projects)
+    # Even a cancelled run can have an answer copier. Take its lock before
+    # touching answers or entries, without freezing the set to clean up.
+    list(
+        instant.order_by("pk")
         .select_for_update(of=("self",))
-        .values_list("eval_task_id", flat=True)
+        .values_list("pk", flat=True)
     )
-    instant = InstantEvalRun.objects.filter(eval_task_id__in=task_ids)
     active = list(
         instant.filter(
             cancelled_at__isnull=True,
@@ -144,10 +151,11 @@ def _cancel_instant_runs(projects: QuerySet[Project], now) -> tuple[list[UUID], 
         ).values_list("eval_task_id", flat=True)
     )
     instant.filter(cancelled_at__isnull=True).update(cancelled_at=now)
-    return task_ids, [str(task_id) for task_id in active]
+    task_ids = list(instant.values_list("eval_task_id", flat=True))
+    if task_ids:
+        InstantEvalAnswer.objects.filter(task_id__in=task_ids).delete()
+        InstantEvalRow.objects.filter(task_id__in=task_ids).delete()
 
-
-def _retire_insights(projects: QuerySet[Project], now) -> None:
     # The base manager has no workspace or soft-delete filter: a report
     # deleted earlier still holds copied text.
     runs = InsightRun._base_manager.filter(project__in=projects)
@@ -175,6 +183,7 @@ def _retire_insights(projects: QuerySet[Project], now) -> None:
 
     for run_id in runs.values_list("pk", flat=True).iterator(chunk_size=200):
         transaction.on_commit(partial(_forget_evidence, str(run_id)))
+    return [str(task_id) for task_id in active]
 
 
 def _pause_eval_task_workflows(task_ids: list[str]) -> None:

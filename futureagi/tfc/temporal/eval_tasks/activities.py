@@ -400,8 +400,8 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
 
         with transaction.atomic():
             # The owning task is fixed at entry creation. Read just its id,
-            # without locking the entry: mark_terminal may copy an Instant
-            # answer, and project deletion locks the run before its entries.
+            # without locking the entry: copying a terminal answer must use
+            # the same run-before-entry order as project deletion.
             entries = EvalLogger.objects.using("default").filter(id=entry_id)
             task_id = _uuid(entries.values_list("eval_task_id", flat=True).first())
             locked_run = task_id is not None and _lock_retained_run(task_id)
@@ -431,9 +431,12 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
                 error=True,
                 error_message="Evaluation worker was lost after its recovery retry.",
                 epoch=entry.updated_at,
-                copy_instant_answer=locked_run,
+                copy_instant_answer=False,
             )
-            if landed and task_id is not None and not locked_run:
+            if landed and locked_run:
+                # The held run lock is authoritative, even after a cached miss.
+                record_answer(entry_id)
+            elif landed and task_id is not None:
                 # A first Ask read may have backfilled while the entry was
                 # still running. Recheck the primary without the negative
                 # task cache, and never wait for a run under the entry lock.

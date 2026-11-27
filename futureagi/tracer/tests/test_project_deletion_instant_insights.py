@@ -143,6 +143,47 @@ def test_deletion_locks_cancelled_run_before_child_writes(observe_project):
     assert run.cancelled_at == cancelled_at
 
 
+@pytest.mark.django_db(transaction=True)
+def test_deletion_catches_a_run_committed_before_cancellation(observe_project):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from django.db import connection, connections, transaction
+
+    from tracer.views.instant_eval_scale import _prepared_run
+
+    _instant_run(observe_project, status=EvalTaskStatus.COMPLETED)
+    task, old_run = _instant_run(observe_project, status=EvalTaskStatus.COMPLETED)
+    # Legacy task with stored rows but no run yet. Deletion initially sees
+    # only the other run; the project lock permits the new run's FK check.
+    old_run.delete()
+
+    def first_read():
+        try:
+            with transaction.atomic(), connection.cursor() as cur:
+                cur.execute("SET LOCAL lock_timeout = '5s'")
+                return _prepared_run(task, {}, rate=0).pk
+        finally:
+            connections.close_all()
+
+    published = []
+
+    def before_cancel(execute, sql, params, many, context):
+        if sql.startswith('UPDATE "tracer_instant_eval_run"'):
+            published.append(pool.submit(first_read).result(timeout=10))
+        return execute(sql, params, many, context)
+
+    with (
+        ThreadPoolExecutor(max_workers=1) as pool,
+        connection.execute_wrapper(before_cancel),
+    ):
+        _delete(observe_project)
+
+    (run_id,) = published
+    assert InstantEvalRun.objects.get(pk=run_id).cancelled_at is not None
+    assert not InstantEvalAnswer.objects.filter(task_id=task.pk).exists()
+    assert not InstantEvalRow.objects.filter(task_id=task.pk).exists()
+
+
 def test_an_active_instant_run_is_paused_after_commit(
     observe_project, django_capture_on_commit_callbacks
 ):
