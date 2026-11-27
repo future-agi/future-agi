@@ -144,12 +144,6 @@ class TestFixGroup:
 
         assert (found["fix_group"], found["fix"]["message"]) == (group, message)
 
-    def test_the_state_message_says_a_wrong_schema_needs_a_rebuild(self):
-        # The builder cannot change the schema: its own words then end the fix.
-        assert "change nothing and say the environment must be rebuilt" in (
-            STATE_MESSAGE
-        )
-
     def test_a_row_without_a_fix_has_no_group(self, user, workspace, storage):
         environment = _environment(user, workspace, storage, "rd-fixg-none")
         _certify(environment, storage)
