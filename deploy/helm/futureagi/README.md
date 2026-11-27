@@ -521,10 +521,11 @@ existing bucket.
 
 A GCS bucket (`objectStorage.bucket`) must be created in advance.
 
-On GCS, public read on this bucket also exposes agent source archives (GCS
-can't deny anonymous reads by prefix). The app serves stored files by plain
-object URLs, so making the bucket private breaks those downloads. Until agent
-source moves to a bucket of its own, choose between them.
+On GCS, bucket policies can't restrict anonymous reads by prefix: a bucket
+with public read serves every object in it, including agent source archives.
+The app serves stored files by plain object URLs, so a private bucket breaks
+those downloads; until source archives move to a bucket of their own, choose
+between them.
 
 ### Bundled datastores
 
