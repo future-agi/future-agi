@@ -265,6 +265,12 @@ import type {
   ApiTracesSpanAttributeValuesListParams,
   AppsmithPasswordUpdateResponseApi,
   AppsmithUserCreateResponseApi,
+  AskCheckRequestApi,
+  AskCheckResponseApi,
+  AskDetailResponseApi,
+  AskLaunchRequestApi,
+  AskLaunchResponseApi,
+  AskListResponseApi,
   AssignItemsApi,
   AutoReloadSettingsRequestApi,
   AutoReloadSettingsResponseApi,
@@ -1418,6 +1424,7 @@ import type {
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
   SimulateV3CallExecutionWorkersParams,
+  SimulateV3TestExecutionAsksParams,
   SimulateV3TestExecutionCallsParams,
   SimulateV3TestExecutionTracesParams,
   SimulateV3TestExecutionTrialRoutesParams,
@@ -75243,6 +75250,271 @@ export const simulateV3TestExecutionAnalytics = async (
 ): Promise<simulateV3TestExecutionAnalyticsResponse> => {
   return apiMutator<simulateV3TestExecutionAnalyticsResponse>(
     getSimulateV3TestExecutionAnalyticsUrl(testExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionAsksResponse200 = {
+  data: AskListResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionAsksResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateV3TestExecutionAsksResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateV3TestExecutionAsksResponseSuccess =
+  simulateV3TestExecutionAsksResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateV3TestExecutionAsksResponseError = (
+  | simulateV3TestExecutionAsksResponse404
+  | simulateV3TestExecutionAsksResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateV3TestExecutionAsksResponse =
+  | simulateV3TestExecutionAsksResponseSuccess
+  | simulateV3TestExecutionAsksResponseError;
+
+export const getSimulateV3TestExecutionAsksUrl = (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionAsksParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/asks/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/asks/`;
+};
+
+export const simulateV3TestExecutionAsks = async (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionAsksParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionAsksResponse> => {
+  return apiMutator<simulateV3TestExecutionAsksResponse>(
+    getSimulateV3TestExecutionAsksUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionAskLaunchResponse200 = {
+  data: AskLaunchResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionAskLaunchResponse201 = {
+  data: AskLaunchResponseApi;
+  status: 201;
+};
+
+export type simulateV3TestExecutionAskLaunchResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateV3TestExecutionAskLaunchResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateV3TestExecutionAskLaunchResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateV3TestExecutionAskLaunchResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateV3TestExecutionAskLaunchResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 201 | 400 | 403 | 404 | 409>;
+};
+
+export type simulateV3TestExecutionAskLaunchResponseSuccess = (
+  | simulateV3TestExecutionAskLaunchResponse200
+  | simulateV3TestExecutionAskLaunchResponse201
+) & {
+  headers: ApiResponseHeaders;
+};
+export type simulateV3TestExecutionAskLaunchResponseError = (
+  | simulateV3TestExecutionAskLaunchResponse400
+  | simulateV3TestExecutionAskLaunchResponse403
+  | simulateV3TestExecutionAskLaunchResponse404
+  | simulateV3TestExecutionAskLaunchResponse409
+  | simulateV3TestExecutionAskLaunchResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateV3TestExecutionAskLaunchResponse =
+  | simulateV3TestExecutionAskLaunchResponseSuccess
+  | simulateV3TestExecutionAskLaunchResponseError;
+
+export const getSimulateV3TestExecutionAskLaunchUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/asks/`;
+};
+
+export const simulateV3TestExecutionAskLaunch = async (
+  testExecutionId: string,
+  askLaunchRequestApi: AskLaunchRequestApi,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionAskLaunchResponse> => {
+  return apiMutator<simulateV3TestExecutionAskLaunchResponse>(
+    getSimulateV3TestExecutionAskLaunchUrl(testExecutionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(askLaunchRequestApi),
+    },
+  );
+};
+
+export type simulateV3TestExecutionAskCheckResponse200 = {
+  data: AskCheckResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionAskCheckResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateV3TestExecutionAskCheckResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateV3TestExecutionAskCheckResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateV3TestExecutionAskCheckResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateV3TestExecutionAskCheckResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409>;
+};
+
+export type simulateV3TestExecutionAskCheckResponseSuccess =
+  simulateV3TestExecutionAskCheckResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateV3TestExecutionAskCheckResponseError = (
+  | simulateV3TestExecutionAskCheckResponse400
+  | simulateV3TestExecutionAskCheckResponse403
+  | simulateV3TestExecutionAskCheckResponse404
+  | simulateV3TestExecutionAskCheckResponse409
+  | simulateV3TestExecutionAskCheckResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateV3TestExecutionAskCheckResponse =
+  | simulateV3TestExecutionAskCheckResponseSuccess
+  | simulateV3TestExecutionAskCheckResponseError;
+
+export const getSimulateV3TestExecutionAskCheckUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/asks/check/`;
+};
+
+export const simulateV3TestExecutionAskCheck = async (
+  testExecutionId: string,
+  askCheckRequestApi: AskCheckRequestApi,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionAskCheckResponse> => {
+  return apiMutator<simulateV3TestExecutionAskCheckResponse>(
+    getSimulateV3TestExecutionAskCheckUrl(testExecutionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(askCheckRequestApi),
+    },
+  );
+};
+
+export type simulateV3TestExecutionAskDetailResponse200 = {
+  data: AskDetailResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionAskDetailResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateV3TestExecutionAskDetailResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateV3TestExecutionAskDetailResponseSuccess =
+  simulateV3TestExecutionAskDetailResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateV3TestExecutionAskDetailResponseError = (
+  | simulateV3TestExecutionAskDetailResponse404
+  | simulateV3TestExecutionAskDetailResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateV3TestExecutionAskDetailResponse =
+  | simulateV3TestExecutionAskDetailResponseSuccess
+  | simulateV3TestExecutionAskDetailResponseError;
+
+export const getSimulateV3TestExecutionAskDetailUrl = (
+  testExecutionId: string,
+  askId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/asks/${askId}/`;
+};
+
+export const simulateV3TestExecutionAskDetail = async (
+  testExecutionId: string,
+  askId: string,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionAskDetailResponse> => {
+  return apiMutator<simulateV3TestExecutionAskDetailResponse>(
+    getSimulateV3TestExecutionAskDetailUrl(testExecutionId, askId),
     {
       ...options,
       method: "GET",

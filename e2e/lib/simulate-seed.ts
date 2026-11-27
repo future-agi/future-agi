@@ -218,10 +218,12 @@ export interface HarnessEnvironmentSeed {
   scenarioKeys: string[];
   refundKeys: string[];
   lookupKeys: string[];
-  /** With `trial`: the finished run and its one trial. */
+  /** With `trial`: the finished run and its one trial. With `chatCalls`: the finished run of chat calls. */
   runTestId?: string;
   testExecutionId?: string;
   callExecutionId?: string;
+  /** With `chatCalls`: each call's id by its scenario key. */
+  callIds?: Record<string, string>;
 }
 
 /**
@@ -258,6 +260,11 @@ export function seedHarnessEnvironment(opts: {
   workers?: 'sealed' | 'not_fronted' | 'old_seal';
   // Each refund case gives the refund worker a budget, so the case relies on that worker.
   refundWorkerBudget?: boolean;
+  /**
+   * The agent's replies: a finished run with one completed chat call per reply, the n-th on the n-th scenario
+   * (refunds first), each with its transcript: the customer's line, then that reply. Not with `trial`.
+   */
+  chatCalls?: string[];
 }): HarnessEnvironmentSeed {
   const suffix = seedSuffix();
   return runSeedScript(
@@ -281,6 +288,7 @@ export function seedHarnessEnvironment(opts: {
         tool_detail: opts.toolDetail ?? false,
         workers: opts.workers ?? null,
         refund_worker_budget: opts.refundWorkerBudget ?? false,
+        chat_calls: opts.chatCalls ?? null,
       }),
     },
   ) as HarnessEnvironmentSeed;

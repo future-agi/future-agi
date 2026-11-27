@@ -42,7 +42,7 @@ from typing import Any
 
 import structlog
 from django.db import connection, transaction
-from django.db.models import Q
+from django.db.models import Case, Count, Q, Value, When
 from django.utils import timezone
 
 from model_hub.views.utils.evals import run_eval_func
@@ -580,10 +580,13 @@ def launch_ask(
     workspace_id,
     asked_by,
     accepted_credits: float | None,
+    launch_key: uuid.UUID | None = None,
 ) -> SimulateAsk:
     """Launch an ask the person has seen and accepted. The check before launch and
     its gate run again here; a cost that changed since it was shown is refused.
-    Nothing is written or spent on a refusal."""
+    Nothing is written or spent on a refusal. ``launch_key`` is kept on the ask,
+    unique in the organisation, so a second launch under it fails to save
+    (IntegrityError) before anything is queued."""
     definitions = list(definitions)
     if len({definition.key for definition in definitions}) != len(definitions):
         raise LaunchRefused("questions", "Each question needs its own key.")
@@ -652,6 +655,7 @@ def launch_ask(
             credits_estimate=shown["credits_estimate"],
             asked_by=asked_by,
             engine=ENGINE,
+            launch_key=launch_key,
         )
         SimulateEvalResult.objects.bulk_create(
             [
@@ -1369,37 +1373,54 @@ def result_counts(ask: SimulateAsk) -> dict[str, dict[str, Any]]:
     """For each question: requested, the six counts, pending, the calls gone since
     (a call, run or run test deleted: its rows are left out), and the rate with its
     denominator (answers only; errors and unmeasured are never in it)."""
-    rows = _results().filter(ask=ask)
+    return results_counts([ask])[ask.id]
+
+
+def results_counts(asks: Sequence[SimulateAsk]) -> dict[Any, dict[str, dict[str, Any]]]:
+    """``result_counts`` for each of ``asks``, by ask id, in one grouped query."""
     deleted = (
         Q(call_execution__deleted=True)
         | Q(call_execution__test_execution__deleted=True)
         | Q(call_execution__test_execution__run_test__deleted=True)
     )
-    gone = Counter(rows.filter(deleted).values_list("question_key", flat=True))
-    by_question: dict[str, Counter] = {}
-    labels: dict[str, Counter] = {}
-    for key, state, label in rows.exclude(deleted).values_list(
-        "question_key", "state", "label"
-    ):
-        by_question.setdefault(key, Counter())[state] += 1
-        if state == RESULT.ANSWERED and label is not None:
-            labels.setdefault(key, Counter())[label] += 1
-    requested = len(ask.selection.get("call_ids") or [])
-    counts = {}
-    for question in ask.questions:
-        key = question["key"]
-        seen = by_question.get(key, Counter())
-        counts[key] = {
-            "requested": requested,
-            **{state.value: seen.get(state.value, 0) for state in COUNTED_STATES},
-            "pending": seen.get(RESULT.PENDING.value, 0),
-            "calls_gone": gone.get(key, 0),
-            "rate": {
-                "answered": seen.get(RESULT.ANSWERED.value, 0),
-                "labels": dict(labels.get(key, Counter())),
-            },
-        }
-    return counts
+    grouped = (
+        _results()
+        .filter(ask_id__in=[ask.id for ask in asks])
+        .annotate(gone=Case(When(deleted, then=Value(True)), default=Value(False)))
+        .values("ask_id", "question_key", "state", "label", "gone")
+        .annotate(rows=Count("id"))
+        .order_by()
+    )
+    by_question: dict[tuple[Any, str], Counter] = {}
+    labels: dict[tuple[Any, str], Counter] = {}
+    gone: Counter = Counter()
+    for row in grouped:
+        key = (row["ask_id"], row["question_key"])
+        if row["gone"]:
+            gone[key] += row["rows"]
+            continue
+        by_question.setdefault(key, Counter())[row["state"]] += row["rows"]
+        if row["state"] == RESULT.ANSWERED and row["label"] is not None:
+            labels.setdefault(key, Counter())[row["label"]] += row["rows"]
+    every: dict[Any, dict[str, dict[str, Any]]] = {}
+    for ask in asks:
+        requested = len(ask.selection.get("call_ids") or [])
+        counts = {}
+        for question in ask.questions:
+            key = (ask.id, question["key"])
+            seen = by_question.get(key, Counter())
+            counts[question["key"]] = {
+                "requested": requested,
+                **{state.value: seen.get(state.value, 0) for state in COUNTED_STATES},
+                "pending": seen.get(RESULT.PENDING.value, 0),
+                "calls_gone": gone.get(key, 0),
+                "rate": {
+                    "answered": seen.get(RESULT.ANSWERED.value, 0),
+                    "labels": dict(labels.get(key, Counter())),
+                },
+            }
+        every[ask.id] = counts
+    return every
 
 
 def _results():

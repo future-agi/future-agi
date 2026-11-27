@@ -500,9 +500,13 @@ def seed_environment(
     tool_detail=False,
     workers=None,
     refund_worker_budget=False,
+    chat_calls=None,
 ):
     """A completed, backfilled Environment of ``refunds`` + ``lookups`` scenarios; ``trial`` picks a
     ``TRIAL_STATES`` variant for its finished trial.
+
+    ``chat_calls`` (a list of the agent's replies) adds a finished run with one completed chat call per
+    reply, the n-th on the n-th scenario, each with its transcript: the customer's line, then that reply.
 
     ``proofs`` (``{key: format-2 entry}``) is the default pair's validation; without it every
     case is proved, so a flow about something else is not held back for validation. A key the
@@ -629,6 +633,12 @@ def seed_environment(
         if trial
         else {}
     )
+    if chat_calls:
+        if trial:
+            raise ValueError("chat_calls and trial each make the run; pick one")
+        if len(chat_calls) > len(documents):
+            raise ValueError("chat_calls needs a scenario per call; raise refunds or lookups")
+        trial_ids = _finished_chat_calls(environment, definition, documents, chat_calls)
     return {
         **trial_ids,
         "environmentId": str(environment.id),
@@ -725,6 +735,61 @@ def _finished_trial(environment, definition, document, trial_state):
         "runTestId": str(environment.run_test_id),
         "testExecutionId": str(execution.id),
         "callExecutionId": str(call.id),
+    }
+
+
+def _finished_chat_calls(environment, definition, documents, replies):
+    """One finished run of the Environment with a completed chat call per reply, the n-th on the n-th scenario,
+    each carrying its scenario key (so the run's table can tick it) and its transcript as a chat run stores it:
+    the customer's line, then the agent's reply."""
+    from simulate.models import Scenarios
+    from simulate.models.chat_message import ChatMessageModel
+    from simulate.models.test_execution import CallExecution, TestExecution
+
+    execution = TestExecution.objects.create(
+        run_test_id=environment.run_test_id,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=len(replies),
+        total_calls=len(replies),
+        agent_definition=definition,
+    )
+    call_ids = {}
+    for document, reply in zip(documents, replies):
+        # Every call belongs to a scenario (the column is required).
+        scenario = Scenarios.objects.create(
+            name=document["name"],
+            source="test",
+            organization=environment.organization,
+            workspace=environment.workspace,
+        )
+        call = CallExecution.objects.create(
+            test_execution=execution,
+            scenario=scenario,
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            call_metadata={
+                "harness_scenario_key": document["scenario_key"],
+                "harness_trial_index": 0,
+            },
+        )
+        for role, text in (
+            (ChatMessageModel.RoleChoices.USER, f"Hello, I need help with {document['name']}."),
+            (ChatMessageModel.RoleChoices.ASSISTANT, reply),
+        ):
+            ChatMessageModel.no_workspace_objects.create(
+                call_execution=call,
+                role=role,
+                messages=[text],
+                content=[{"role": role, "content": text}],
+                session_id=f"e2e-chat-{call.id}",
+                organization=environment.organization,
+                workspace=environment.workspace,
+            )
+        call_ids[document["scenario_key"]] = str(call.id)
+    return {
+        "runTestId": str(environment.run_test_id),
+        "testExecutionId": str(execution.id),
+        "callIds": call_ids,
     }
 
 

@@ -72725,6 +72725,346 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
   ),
 });
 
+export const SimulateV3TestExecutionAsksParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const SimulateV3TestExecutionAsksQueryParams = zod.object({
+  page: zod.number().min(1).optional(),
+});
+
+export const SimulateV3TestExecutionAsksResponse = zod.object({
+  count: zod.number(),
+  next: zod.string().min(1),
+  previous: zod.string().min(1),
+  total_pages: zod.number(),
+  current_page: zod.number(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      status: zod.string().min(1),
+      stop_cause: zod.string(),
+      created_at: zod.string().datetime({ offset: true }),
+      asked_by: zod.string().min(1),
+      selection_kind: zod.string().min(1),
+      note: zod.string(),
+      requested: zod.number(),
+      credits_estimate: zod.number(),
+      questions: zod.array(
+        zod.object({
+          key: zod.string().min(1),
+          name: zod.string().min(1),
+          answer_type: zod.string().min(1),
+          labels: zod.array(zod.string().min(1)),
+          kinds: zod.array(zod.string().min(1)),
+          counts: zod.object({
+            requested: zod.number(),
+            answered: zod.number(),
+            unmeasured: zod.number(),
+            not_applicable: zod.number(),
+            grading_error: zod.number(),
+            infrastructure_error: zod.number(),
+            cancelled: zod.number(),
+            pending: zod.number(),
+            calls_gone: zod.number(),
+            rate: zod.object({
+              answered: zod.number(),
+              labels: zod.record(zod.string(), zod.number()),
+            }),
+          }),
+        }),
+      ),
+    }),
+  ),
+});
+
+export const SimulateV3TestExecutionAskLaunchParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const simulateV3TestExecutionAskLaunchBodySelectionCallIdsMax = 200;
+
+export const simulateV3TestExecutionAskLaunchBodySelectionNoteDefault = ``;
+export const simulateV3TestExecutionAskLaunchBodySelectionNoteMax = 500;
+
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemQuestionMax = 2000;
+
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemAnswerTypeDefault = `yes_no`;
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsItemMax = 200;
+
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsDefault =
+  [];
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsMax = 10;
+
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsMaxOne = 2000;
+
+export const simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsDefault =
+  {};
+export const simulateV3TestExecutionAskLaunchBodyQuestionsMax = 5;
+
+export const SimulateV3TestExecutionAskLaunchBody = zod.object({
+  selection: zod.object({
+    kind: zod.enum(["runs", "calls"]),
+    call_ids: zod
+      .array(zod.string().uuid())
+      .max(simulateV3TestExecutionAskLaunchBodySelectionCallIdsMax)
+      .optional(),
+    note: zod
+      .string()
+      .max(simulateV3TestExecutionAskLaunchBodySelectionNoteMax)
+      .default(simulateV3TestExecutionAskLaunchBodySelectionNoteDefault),
+  }),
+  questions: zod
+    .array(
+      zod.object({
+        question: zod
+          .string()
+          .min(1)
+          .max(simulateV3TestExecutionAskLaunchBodyQuestionsItemQuestionMax),
+        answer_type: zod
+          .enum(["yes_no", "category"])
+          .default(
+            simulateV3TestExecutionAskLaunchBodyQuestionsItemAnswerTypeDefault,
+          ),
+        labels: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .max(
+                simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsItemMax,
+              ),
+          )
+          .max(simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsMax)
+          .default(
+            simulateV3TestExecutionAskLaunchBodyQuestionsItemLabelsDefault,
+          ),
+        descriptions: zod
+          .record(
+            zod.string(),
+            zod
+              .string()
+              .max(
+                simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsMaxOne,
+              ),
+          )
+          .default(
+            simulateV3TestExecutionAskLaunchBodyQuestionsItemDescriptionsDefault,
+          ),
+        kinds: zod
+          .array(
+            zod.enum([
+              "transcript",
+              "agent_instructions",
+              "scenario",
+              "tool_calls",
+              "world_changes",
+              "world_state_end",
+              "world_state_start",
+              "check_results",
+              "audio",
+              "agent_traces",
+            ]),
+          )
+          .min(1),
+      }),
+    )
+    .min(1)
+    .max(simulateV3TestExecutionAskLaunchBodyQuestionsMax),
+  accepted: zod.object({
+    requested: zod.number().min(1),
+    credits_estimate: zod.number(),
+  }),
+  launch_key: zod.string().uuid(),
+});
+
+export const SimulateV3TestExecutionAskLaunchResponse = zod.object({
+  id: zod.string().uuid(),
+  status: zod.string().min(1),
+});
+
+export const SimulateV3TestExecutionAskCheckParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const simulateV3TestExecutionAskCheckBodySelectionCallIdsMax = 200;
+
+export const simulateV3TestExecutionAskCheckBodySelectionNoteDefault = ``;
+export const simulateV3TestExecutionAskCheckBodySelectionNoteMax = 500;
+
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemQuestionMax = 2000;
+
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemAnswerTypeDefault = `yes_no`;
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsItemMax = 200;
+
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsDefault = [];
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsMax = 10;
+
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsMaxOne = 2000;
+
+export const simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsDefault =
+  {};
+export const simulateV3TestExecutionAskCheckBodyQuestionsMax = 5;
+
+export const SimulateV3TestExecutionAskCheckBody = zod.object({
+  selection: zod.object({
+    kind: zod.enum(["runs", "calls"]),
+    call_ids: zod
+      .array(zod.string().uuid())
+      .max(simulateV3TestExecutionAskCheckBodySelectionCallIdsMax)
+      .optional(),
+    note: zod
+      .string()
+      .max(simulateV3TestExecutionAskCheckBodySelectionNoteMax)
+      .default(simulateV3TestExecutionAskCheckBodySelectionNoteDefault),
+  }),
+  questions: zod
+    .array(
+      zod.object({
+        question: zod
+          .string()
+          .min(1)
+          .max(simulateV3TestExecutionAskCheckBodyQuestionsItemQuestionMax),
+        answer_type: zod
+          .enum(["yes_no", "category"])
+          .default(
+            simulateV3TestExecutionAskCheckBodyQuestionsItemAnswerTypeDefault,
+          ),
+        labels: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .max(
+                simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsItemMax,
+              ),
+          )
+          .max(simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsMax)
+          .default(
+            simulateV3TestExecutionAskCheckBodyQuestionsItemLabelsDefault,
+          ),
+        descriptions: zod
+          .record(
+            zod.string(),
+            zod
+              .string()
+              .max(
+                simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsMaxOne,
+              ),
+          )
+          .default(
+            simulateV3TestExecutionAskCheckBodyQuestionsItemDescriptionsDefault,
+          ),
+        kinds: zod
+          .array(
+            zod.enum([
+              "transcript",
+              "agent_instructions",
+              "scenario",
+              "tool_calls",
+              "world_changes",
+              "world_state_end",
+              "world_state_start",
+              "check_results",
+              "audio",
+              "agent_traces",
+            ]),
+          )
+          .min(1),
+      }),
+    )
+    .min(1)
+    .max(simulateV3TestExecutionAskCheckBodyQuestionsMax),
+});
+
+export const simulateV3TestExecutionAskCheckResponsePricedByUseDefault = [];
+
+export const SimulateV3TestExecutionAskCheckResponse = zod.object({
+  requested: zod.number(),
+  questions: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      kinds: zod.array(zod.string().min(1)),
+      ready: zod.number(),
+      unmeasured: zod.number(),
+      not_applicable: zod.number(),
+      by_kind: zod.record(
+        zod.string(),
+        zod.object({
+          present: zod.number(),
+          not_applicable: zod.number(),
+          not_captured: zod.record(zod.string(), zod.number()),
+        }),
+      ),
+    }),
+  ),
+  answers: zod.number(),
+  credits_estimate: zod.number(),
+  priced_by_use: zod
+    .array(zod.string().min(1))
+    .default(simulateV3TestExecutionAskCheckResponsePricedByUseDefault),
+  refusal: zod.object({
+    code: zod.string().min(1),
+    message: zod.string().min(1),
+  }),
+});
+
+export const SimulateV3TestExecutionAskDetailParams = zod.object({
+  test_execution_id: zod.string(),
+  ask_id: zod.string(),
+});
+
+export const SimulateV3TestExecutionAskDetailResponse = zod.object({
+  id: zod.string().uuid(),
+  status: zod.string().min(1),
+  stop_cause: zod.string(),
+  created_at: zod.string().datetime({ offset: true }),
+  asked_by: zod.string().min(1),
+  selection_kind: zod.string().min(1),
+  note: zod.string(),
+  requested: zod.number(),
+  credits_estimate: zod.number(),
+  questions: zod.array(
+    zod.object({
+      key: zod.string().min(1),
+      name: zod.string().min(1),
+      answer_type: zod.string().min(1),
+      labels: zod.array(zod.string().min(1)),
+      kinds: zod.array(zod.string().min(1)),
+      counts: zod.object({
+        requested: zod.number(),
+        answered: zod.number(),
+        unmeasured: zod.number(),
+        not_applicable: zod.number(),
+        grading_error: zod.number(),
+        infrastructure_error: zod.number(),
+        cancelled: zod.number(),
+        pending: zod.number(),
+        calls_gone: zod.number(),
+        rate: zod.object({
+          answered: zod.number(),
+          labels: zod.record(zod.string(), zod.number()),
+        }),
+      }),
+    }),
+  ),
+  results: zod.array(
+    zod.object({
+      call_execution_id: zod.string().uuid(),
+      test_execution_id: zod.string().uuid(),
+      call_name: zod.string().min(1),
+      question_key: zod.string().min(1),
+      state: zod.string().min(1),
+      cause: zod.string(),
+      answer: zod.string(),
+      score: zod.number(),
+      confidence: zod.number(),
+      reason: zod.string(),
+      finished_at: zod.string().datetime({ offset: true }),
+    }),
+  ),
+});
+
 export const SimulateV3TestExecutionCallsParams = zod.object({
   test_execution_id: zod.string(),
 });

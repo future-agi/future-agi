@@ -205,10 +205,7 @@ describe("RunTraceTable — selecting calls to re-run", () => {
 
   it("shows no checkbox column for a run with no call to tick, even once filtered", async () => {
     const user = userEvent.setup();
-    const untagged = [
-      task("u1", null, null),
-      task("u2", null, null, "failed"),
-    ];
+    const untagged = [task("u1", null, null), task("u2", null, null, "failed")];
     useRunCalls.mockImplementation((_id, opts = {}) => {
       const status = opts.filters?.status?.[0];
       const tasks = untagged.filter((t) => !status || t.status === status);
@@ -419,7 +416,9 @@ describe("RunTraceTable — ticking a whole group", () => {
 
     await user.click(groupBox("Refunds"));
 
-    expect(screen.getByText("3 calls selected · 1 scenario")).toBeInTheDocument();
+    expect(
+      screen.getByText("3 calls selected · 1 scenario"),
+    ).toBeInTheDocument();
     expect(groupBox("Refunds")).toBeChecked();
     expect(groupBox("Refunds")).toHaveAttribute("data-indeterminate", "false");
   });
@@ -460,7 +459,10 @@ describe("RunTraceTable — ticking a whole group", () => {
   it("gives a group of untagged calls no checkbox", () => {
     mockGroups([
       { label: "Refunds", rows: TASKS.slice(0, 3) },
-      { label: "Untagged", rows: [task("u1", null, null), task("u2", null, null)] },
+      {
+        label: "Untagged",
+        rows: [task("u1", null, null), task("u2", null, null)],
+      },
     ]);
     renderTable();
 
@@ -707,5 +709,83 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     await user.click(rowBox("refund · Trial 1"));
 
     expect(screen.getByRole("button", { name: /^Re-run/ })).toBeDisabled();
+  });
+});
+
+describe("RunTraceTable — asking a question about ticked calls", () => {
+  const askButton = () =>
+    screen.getByRole("button", { name: "Ask a question" });
+
+  it("hands the ticked calls' ids to the question", async () => {
+    const user = userEvent.setup();
+    const onAskCalls = vi.fn();
+    renderTable({ onAskCalls });
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+    await user.click(rowBox("escalate · Trial 2"));
+
+    await user.click(askButton());
+
+    await waitFor(() => expect(onAskCalls).toHaveBeenCalledWith(["r1", "e2"]));
+    expect(listMatchingCalls).not.toHaveBeenCalled();
+  });
+
+  it("reads every matching call the table never loaded, less the unticked", async () => {
+    const user = userEvent.setup();
+    total = 120;
+    listMatchingCalls.mockResolvedValue(matching("refund", "escalate"));
+    const onAskCalls = vi.fn();
+    renderTable({ onAskCalls });
+    await openRows(user);
+    await user.click(pageBox());
+    await user.click(
+      screen.getByRole("button", { name: "Select all 120 matching calls" }),
+    );
+    await user.click(rowBox("refund · Trial 1"));
+
+    await user.click(askButton());
+
+    await waitFor(() => expect(onAskCalls).toHaveBeenCalledWith(["m0", "m1"]));
+    expect(listMatchingCalls).toHaveBeenCalledWith("ex1", {}, ["r1"]);
+  });
+
+  it("holds the question back past 200 calls, reading nothing", async () => {
+    const user = userEvent.setup();
+    total = 250;
+    const onAskCalls = vi.fn();
+    renderTable({ onAskCalls });
+    await openRows(user);
+    await user.click(pageBox());
+    await user.click(
+      screen.getByRole("button", { name: "Select all 250 matching calls" }),
+    );
+
+    expect(askButton()).toBeDisabled();
+    expect(listMatchingCalls).not.toHaveBeenCalled();
+  });
+
+  it("keeps its own reason, apart from re-run's", async () => {
+    const user = userEvent.setup();
+    renderTable({
+      onAskCalls: vi.fn(),
+      askDisabledReason:
+        "You don't have permission to ask questions about calls.",
+    });
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+
+    expect(askButton()).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Re-run/ })).toBeEnabled();
+  });
+
+  it("offers no question when the page gives no way to ask", async () => {
+    const user = userEvent.setup();
+    renderTable();
+    await openRows(user);
+    await user.click(rowBox("refund · Trial 1"));
+
+    expect(
+      screen.queryByRole("button", { name: "Ask a question" }),
+    ).not.toBeInTheDocument();
   });
 });

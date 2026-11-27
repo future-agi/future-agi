@@ -71,6 +71,9 @@ import RunReport from "./RunReport";
 import useCallListNavigation from "./useCallListNavigation";
 import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
+import AskQuestionDialog from "./asks/AskQuestionDialog";
+import RunAsksPanel from "./asks/RunAsksPanel";
+import { runAsksKey } from "src/api/simulate-environments/runAsks";
 import { debugFailuresBlockedReason } from "src/sections/test-detail/debugFailuresRule";
 
 /**
@@ -125,6 +128,10 @@ export default function RunDetail({
   // Set by Run Epoch: the imported failing cases the fix starts from.
   const [fixTargets, setFixTargets] = useState(null);
   const [exporting, setExporting] = useState(false);
+  // The calls a question is being asked about ({ kind, callIds }), and the ask
+  // opened on the Questions tab.
+  const [askFor, setAskFor] = useState(null);
+  const [openAskId, setOpenAskId] = useState(null);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
     callsShown: tab === "tasks",
@@ -259,6 +266,19 @@ export default function RunDetail({
       location.state?.backTo ??
         paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
     );
+
+  // Only a backed run has calls to ask about; a live one has no final calls yet.
+  const askDisabledReason = !access.canRun
+    ? WORKSPACE_COPY.viewer.ask
+    : live
+      ? "Wait for this run to finish before asking about its calls"
+      : null;
+  const askLaunched = (askId) => {
+    setAskFor(null);
+    queryClient.invalidateQueries({ queryKey: runAsksKey(executionId) });
+    setOpenAskId(askId);
+    setTab("questions");
+  };
 
   const exportResults = async () => {
     setExporting(true);
@@ -638,6 +658,7 @@ export default function RunDetail({
               />
             )}
             <Tab value="analytics" label="Analytics" />
+            {backed && <Tab value="questions" label="Questions" />}
             {env?.composition && <Tab value="report" label="Report" />}
           </CustomTabs>
 
@@ -676,6 +697,12 @@ export default function RunDetail({
               }
               onRerunInRun={fixRun ? null : rerunInRun.mutate}
               onTickableChange={setHasTickableCalls}
+              onAskCalls={
+                backed
+                  ? (callIds) => setAskFor({ kind: "calls", callIds })
+                  : null
+              }
+              askDisabledReason={askDisabledReason}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
                 !access.canRun
@@ -715,6 +742,17 @@ export default function RunDetail({
                 onOpen={openOptimization}
               />
             </SectionCard>
+          )}
+
+          {tab === "questions" && backed && (
+            <RunAsksPanel
+              executionId={executionId}
+              openAskId={openAskId}
+              onOpenAsk={setOpenAskId}
+              onOpenCall={(callId) => openById(callId)}
+              onAsk={() => setAskFor({ kind: "runs" })}
+              askDisabledReason={askDisabledReason}
+            />
           )}
 
           {tab === "analytics" && (
@@ -780,6 +818,16 @@ export default function RunDetail({
             )
           }
           onAdd={() => setAddingEvals(false)}
+        />
+      )}
+
+      {backed && (
+        <AskQuestionDialog
+          open={!!askFor}
+          onClose={() => setAskFor(null)}
+          executionId={executionId}
+          selection={askFor}
+          onLaunched={askLaunched}
         />
       )}
 

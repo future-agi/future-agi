@@ -92,6 +92,8 @@ export default function RerunSelectionBar({
   resolveSelection,
   onRerun,
   onRerunInRun = null,
+  onAsk = null,
+  askDisabledReason = null,
   onClear,
 }) {
   const [anchor, setAnchor] = useState(null);
@@ -168,6 +170,29 @@ export default function RerunSelectionBar({
       >
         Clear
       </Button>
+      {onAsk && (
+        <CustomTooltip
+          show={!!askDisabledReason}
+          size="small"
+          arrow
+          title={askDisabledReason}
+        >
+          <span>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!!askDisabledReason}
+              onClick={onAsk}
+              startIcon={
+                <Iconify icon="solar:question-circle-linear" width={15} />
+              }
+              sx={rerunButtonSx}
+            >
+              Ask a question
+            </Button>
+          </span>
+        </CustomTooltip>
+      )}
       <CustomTooltip
         show={!!disabledReason}
         size="small"
@@ -227,11 +252,7 @@ export default function RerunSelectionBar({
                   : `Re-run ${plural(scenarios, "scenario")}`}
             </Typography>
             {failed && (
-              <Button
-                size="small"
-                onClick={readSelection}
-                sx={{ minWidth: 0 }}
-              >
+              <Button size="small" onClick={readSelection} sx={{ minWidth: 0 }}>
                 Try again
               </Button>
             )}
@@ -307,5 +328,8 @@ RerunSelectionBar.propTypes = {
   resolveSelection: PropTypes.func.isRequired,
   onRerun: PropTypes.func.isRequired,
   onRerunInRun: PropTypes.func,
+  // Asks a question about the ticked calls; its own reason, apart from re-run's.
+  onAsk: PropTypes.func,
+  askDisabledReason: PropTypes.string,
   onClear: PropTypes.func.isRequired,
 };

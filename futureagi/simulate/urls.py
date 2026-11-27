@@ -155,6 +155,7 @@ from .views.livekit_api import (
     ValidateLiveKitCredentialsView,
 )
 from .views.persona import PersonaDuplicateView, PersonaViewSet
+from .views.run_asks import RunAskCheckView, RunAskDetailView, RunAsksView
 from .views.run_results_v3 import (
     CallExecutionV3DetailView,
     CallExecutionV3WorkersView,
@@ -261,6 +262,21 @@ urlpatterns = [
         "v3/test-executions/<uuid:test_execution_id>/export/",
         RunExportV3View.as_view(),
         name="v3-test-execution-export",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/asks/",
+        RunAsksView.as_view(),
+        name="v3-test-execution-asks",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/asks/check/",
+        RunAskCheckView.as_view(),
+        name="v3-test-execution-ask-check",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/asks/<uuid:ask_id>/",
+        RunAskDetailView.as_view(),
+        name="v3-test-execution-ask-detail",
     ),
     path(
         "api/harness/ingress/<str:token>/",

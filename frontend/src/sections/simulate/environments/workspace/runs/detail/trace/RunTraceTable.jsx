@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { enqueueSnackbar } from "notistack";
 import {
   useCallback,
   useEffect,
@@ -28,6 +29,7 @@ import {
   listMatchingCalls,
   uniqueScenarioKeys,
 } from "src/api/simulate-environments/rerunScenarios";
+import { MAX_ASK_CALLS } from "src/api/simulate-environments/runAsks";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 
 import SectionCard from "../../../../components/SectionCard";
@@ -83,6 +85,8 @@ export default function RunTraceTable({
   onRerunInRun = null,
   runTrials = 1,
   rerunDisabledReason = null,
+  onAskCalls = null,
+  askDisabledReason = null,
   onTickableChange,
 }) {
   const [groupBy, setGroupBy] = useState("goal");
@@ -321,6 +325,33 @@ export default function RunTraceTable({
       keys: uniqueScenarioKeys(calls),
       callIds: calls.map((call) => call.id),
     };
+  };
+  // The ticked calls' ids, for a question about them. "All matching" reads the
+  // calls the table never loaded; past the ask's limit it is refused here, with
+  // nothing read.
+  const [askReading, setAskReading] = useState(false);
+  const askLimitReason =
+    selection.count > MAX_ASK_CALLS
+      ? `A question reads up to ${MAX_ASK_CALLS} calls; ${selection.count.toLocaleString()} are selected.`
+      : null;
+  const askCalls = async () => {
+    setAskReading(true);
+    try {
+      const callIds = allMatching
+        ? (
+            await listMatchingCalls(
+              executionId,
+              serverFilters,
+              selection.idList,
+            )
+          ).map((call) => call.id)
+        : selection.idList;
+      onAskCalls(callIds);
+    } catch {
+      enqueueSnackbar("Couldn't read the selected calls", { variant: "error" });
+    } finally {
+      setAskReading(false);
+    }
   };
   const banner = !hasSelection ? null : allMatching ? (
     <>
@@ -688,6 +719,12 @@ export default function RunTraceTable({
                   onRerunInRun(callIds, { onSuccess: selection.clear })
               : null
           }
+          onAsk={onAskCalls ? askCalls : null}
+          askDisabledReason={
+            askDisabledReason ||
+            askLimitReason ||
+            (askReading ? "Reading the selected calls…" : null)
+          }
           onClear={selection.clear}
         />
       )}
@@ -905,6 +942,9 @@ RunTraceTable.propTypes = {
   onRerunInRun: PropTypes.func,
   runTrials: PropTypes.number,
   rerunDisabledReason: PropTypes.string,
+  // Opens a question about the ticked calls, with their ids.
+  onAskCalls: PropTypes.func,
+  askDisabledReason: PropTypes.string,
   // Told whether the run has any call that can be ticked for a re-run.
   onTickableChange: PropTypes.func,
 };

@@ -35,6 +35,12 @@ VIEWER_REFUSALS = [
     ("post", f"{JOBS}{ID}/runs/", "start a paid run"),
     ("post", f"/simulate/run-tests/{ID}/execute/", "start a paid run"),
     ("post", f"/simulate/test-executions/{ID}/cancel/", "cancel a run"),
+    (
+        "post",
+        f"/simulate/v3/test-executions/{ID}/asks/check/",
+        "check a question about calls",
+    ),
+    ("post", f"/simulate/v3/test-executions/{ID}/asks/", "ask a question about calls"),
     ("post", f"{JOBS}secret-values/", "add or change secrets"),
     ("post", f"{JOBS}secret-files/", "add or change secrets"),
     ("post", JOBS, "create an environment"),

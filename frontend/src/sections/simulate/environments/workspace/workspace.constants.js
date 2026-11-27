@@ -131,6 +131,7 @@ export const WORKSPACE_COPY = {
     scenarios: "You don't have permission to change scenarios.",
     evals: "You don't have permission to change evaluations.",
     runEvals: "You don't have permission to run evaluations.",
+    ask: "You don't have permission to ask questions about calls.",
   },
   runBlocked: {
     agent: "No agent is connected to this environment yet",

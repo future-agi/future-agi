@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1238,
+  endpointCount: 1241,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -35381,6 +35381,117 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/v3/test-executions/{test_execution_id}/asks/": {
+      get: {
+        operationId: "simulate_v3_test_execution_asks",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AskListResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_v3_test_execution_ask_launch",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AskLaunchRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AskLaunchResponse",
+          },
+          201: {
+            $ref: "#/definitions/AskLaunchResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/asks/check/": {
+      post: {
+        operationId: "simulate_v3_test_execution_ask_check",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AskCheckRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AskCheckResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/asks/{ask_id}/": {
+      get: {
+        operationId: "simulate_v3_test_execution_ask_detail",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AskDetailResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/v3/test-executions/{test_execution_id}/calls/": {
       get: {
         operationId: "simulate_v3_test_execution_calls",
@@ -59807,6 +59918,222 @@ export const OPENAPI_CONTRACT = Object.freeze({
         send_credential: {
           title: "Send credential",
           type: "boolean",
+        },
+      },
+    },
+    AskCheckRequest: {
+      required: ["selection", "questions"],
+      type: "object",
+      properties: {
+        selection: {
+          $ref: "#/definitions/AskSelection",
+        },
+        questions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AskQuestion",
+          },
+          maxItems: 5,
+          minItems: 1,
+        },
+      },
+    },
+    AskCheckResponse: {
+      required: [
+        "requested",
+        "questions",
+        "answers",
+        "credits_estimate",
+        "refusal",
+      ],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        questions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AskCheckedQuestion",
+          },
+        },
+        answers: {
+          title: "Answers",
+          type: "integer",
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        priced_by_use: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        refusal: {
+          $ref: "#/definitions/AskRefusal",
+        },
+      },
+    },
+    AskDetailResponse: {
+      required: [
+        "id",
+        "status",
+        "stop_cause",
+        "created_at",
+        "asked_by",
+        "selection_kind",
+        "note",
+        "requested",
+        "credits_estimate",
+        "questions",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        stop_cause: {
+          title: "Stop cause",
+          type: "string",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        asked_by: {
+          title: "Asked by",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        selection_kind: {
+          title: "Selection kind",
+          type: "string",
+          minLength: 1,
+        },
+        note: {
+          title: "Note",
+          type: "string",
+        },
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        questions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AskQuestionSummary",
+          },
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AskResultRow",
+          },
+        },
+      },
+    },
+    AskLaunchRequest: {
+      required: ["selection", "questions", "accepted", "launch_key"],
+      type: "object",
+      properties: {
+        selection: {
+          $ref: "#/definitions/AskSelection",
+        },
+        questions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AskQuestion",
+          },
+          maxItems: 5,
+          minItems: 1,
+        },
+        accepted: {
+          $ref: "#/definitions/AskAccepted",
+        },
+        launch_key: {
+          title: "Launch key",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AskLaunchResponse: {
+      required: ["id", "status"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AskListResponse: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AskSummary",
+          },
         },
       },
     },
@@ -106063,6 +106390,341 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AskQuestion: {
+      required: ["question", "kinds"],
+      type: "object",
+      properties: {
+        question: {
+          title: "Question",
+          type: "string",
+          maxLength: 2000,
+          minLength: 1,
+        },
+        answer_type: {
+          title: "Answer type",
+          type: "string",
+          enum: ["yes_no", "category"],
+          default: "yes_no",
+        },
+        labels: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 10,
+        },
+        descriptions: {
+          title: "Descriptions",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 2000,
+          },
+          default: {},
+        },
+        kinds: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: [
+              "transcript",
+              "agent_instructions",
+              "scenario",
+              "tool_calls",
+              "world_changes",
+              "world_state_end",
+              "world_state_start",
+              "check_results",
+              "audio",
+              "agent_traces",
+            ],
+          },
+          minItems: 1,
+        },
+      },
+    },
+    AskSelection: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["runs", "calls"],
+        },
+        call_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 200,
+        },
+        note: {
+          title: "Note",
+          type: "string",
+          default: "",
+          maxLength: 500,
+        },
+      },
+    },
+    AskCheckedQuestion: {
+      required: [
+        "name",
+        "kinds",
+        "ready",
+        "unmeasured",
+        "not_applicable",
+        "by_kind",
+      ],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        kinds: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        ready: {
+          title: "Ready",
+          type: "integer",
+        },
+        unmeasured: {
+          title: "Unmeasured",
+          type: "integer",
+        },
+        not_applicable: {
+          title: "Not applicable",
+          type: "integer",
+        },
+        by_kind: {
+          title: "By kind",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/AskKindCounts",
+          },
+        },
+      },
+    },
+    AskRefusal: {
+      required: ["code", "message"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    AskQuestionSummary: {
+      required: ["key", "name", "answer_type", "labels", "kinds", "counts"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        answer_type: {
+          title: "Answer type",
+          type: "string",
+          minLength: 1,
+        },
+        labels: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        kinds: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        counts: {
+          $ref: "#/definitions/AskCounts",
+        },
+      },
+    },
+    AskResultRow: {
+      required: [
+        "call_execution_id",
+        "test_execution_id",
+        "call_name",
+        "question_key",
+        "state",
+        "cause",
+        "answer",
+        "score",
+        "confidence",
+        "reason",
+        "finished_at",
+      ],
+      type: "object",
+      properties: {
+        call_execution_id: {
+          title: "Call execution id",
+          type: "string",
+          format: "uuid",
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+        },
+        call_name: {
+          title: "Call name",
+          type: "string",
+          minLength: 1,
+        },
+        question_key: {
+          title: "Question key",
+          type: "string",
+          minLength: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        cause: {
+          title: "Cause",
+          type: "string",
+        },
+        answer: {
+          title: "Answer",
+          type: "string",
+          "x-nullable": true,
+        },
+        score: {
+          title: "Score",
+          type: "number",
+          "x-nullable": true,
+        },
+        confidence: {
+          title: "Confidence",
+          type: "number",
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          "x-nullable": true,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    AskAccepted: {
+      required: ["requested", "credits_estimate"],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+          minimum: 1,
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    AskSummary: {
+      required: [
+        "id",
+        "status",
+        "stop_cause",
+        "created_at",
+        "asked_by",
+        "selection_kind",
+        "note",
+        "requested",
+        "credits_estimate",
+        "questions",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        stop_cause: {
+          title: "Stop cause",
+          type: "string",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        asked_by: {
+          title: "Asked by",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        selection_kind: {
+          title: "Selection kind",
+          type: "string",
+          minLength: 1,
+        },
+        note: {
+          title: "Note",
+          type: "string",
+        },
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        credits_estimate: {
+          title: "Credits estimate",
+          type: "number",
+          "x-nullable": true,
+        },
+        questions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AskQuestionSummary",
+          },
+        },
+      },
+    },
     AutoReloadSettingsData: {
       required: [
         "autoreload_enabled",
@@ -137187,6 +137849,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AskKindCounts: {
+      required: ["present", "not_applicable", "not_captured"],
+      type: "object",
+      properties: {
+        present: {
+          title: "Present",
+          type: "integer",
+        },
+        not_applicable: {
+          title: "Not applicable",
+          type: "integer",
+        },
+        not_captured: {
+          title: "Not captured",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
+        },
+      },
+    },
+    AskCounts: {
+      required: [
+        "requested",
+        "answered",
+        "unmeasured",
+        "not_applicable",
+        "grading_error",
+        "infrastructure_error",
+        "cancelled",
+        "pending",
+        "calls_gone",
+        "rate",
+      ],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        answered: {
+          title: "Answered",
+          type: "integer",
+        },
+        unmeasured: {
+          title: "Unmeasured",
+          type: "integer",
+        },
+        not_applicable: {
+          title: "Not applicable",
+          type: "integer",
+        },
+        grading_error: {
+          title: "Grading error",
+          type: "integer",
+        },
+        infrastructure_error: {
+          title: "Infrastructure error",
+          type: "integer",
+        },
+        cancelled: {
+          title: "Cancelled",
+          type: "integer",
+        },
+        pending: {
+          title: "Pending",
+          type: "integer",
+        },
+        calls_gone: {
+          title: "Calls gone",
+          type: "integer",
+        },
+        rate: {
+          $ref: "#/definitions/AskRate",
+        },
+      },
+    },
     AutomationRuleScope: {
       type: "object",
       properties: {
@@ -154190,6 +154929,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         metadata: {
           $ref: "#/definitions/AgentPromptOptimiserIndividualResultMetadata",
+        },
+      },
+    },
+    AskRate: {
+      required: ["answered", "labels"],
+      type: "object",
+      properties: {
+        answered: {
+          title: "Answered",
+          type: "integer",
+        },
+        labels: {
+          title: "Labels",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+          },
         },
       },
     },
