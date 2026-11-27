@@ -1068,21 +1068,36 @@ _SECRET_KEY_MARKERS = (
 # The words of a key's name (split at symbols and at a capital after a small letter)
 # that make a number under it a secret, and those that make it a count or a limit.
 _NUMBER_SECRET_WORDS = frozenset(
-    {"password", "passphrase", "passcode", "passwd", "secret", "otp", "pin", "token"}
+    {
+        "password",
+        "passphrase",
+        "passcode",
+        "passwd",
+        "secret",
+        "otp",
+        "pin",
+        "token",
+        "apikey",
+        "credential",
+        "authorization",
+        "cookie",
+    }
 )
+# Two words that name a secret only together: ``api_key``, ``private_key``.
+_NUMBER_SECRET_PAIRS = (frozenset({"api", "key"}), frozenset({"private", "key"}))
 _NUMBER_COUNT_WORDS = frozenset({"count", "max", "min", "limit", "length", "size"})
 _KEY_WORD_BREAK = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|[^A-Za-z0-9]+")
-# In text, a secret's name, then ``:`` or ``=``, with padding and at most one line
-# break on each side. The name may be quoted, and its quotes escaped as in JSON text
+# In text, a secret's name, then ``:`` or ``=``, with padding and at most two line
+# breaks (one blank line) on each side. The name may be quoted, and its quotes escaped as in JSON text
 # inside JSON text. Every part is bounded, so each start is read in constant time.
 _SECRET_NAME = re.compile(
     r"""(?ix)
     (?P<open>\\{0,15}["'])?
     (?P<word>authorization|api[_-]?key|secret|token|password|passphrase)
     (?P<close>\\{0,15}["'])?
-    [ \t]{0,64}(?:\r?\n[ \t]{0,64})?
+    (?:[ \t]{0,64}\r?\n){0,2}[ \t]{0,64}
     (?P<sep>[:=])
-    [ \t]{0,64}(?:\r?\n[ \t]{0,64})?
+    (?:[ \t]{0,64}\r?\n){0,2}[ \t]{0,64}
     """
 )
 # What may stand before a name at the start of its line: indent, a list or heading
@@ -1094,7 +1109,10 @@ _ESCAPED_VALUE_END = re.compile(r'["\\\n]')
 # A bare value runs to the end of its line, or to a comma, semicolon, brace or quote.
 _BARE_VALUE_END = re.compile(r"""[\n,;}"'\\]""")
 # The look at a bare value after a name inside a sentence: a few short words.
-_LOOK_WORD = re.compile(r"""[ \t]{0,64}([^\s,;}"'\\]{1,64})""")
+_LOOK_WORD = re.compile(r"""[ \t]{0,64}([^\s,;}"\\]{1,64})""")
+# The look's own end: as a bare value's, except that an apostrophe between letters
+# (``don't``) is inside a word.
+_LOOK_END = re.compile(r"""[\n,;}"\\]|(?<![A-Za-z])'|'(?![A-Za-z])""")
 _LOOK_WORDS = 8
 _LOOK_REACH = 1024
 _KEY_SHAPED_LENGTH = 16
@@ -1106,9 +1124,19 @@ _SENTENCE_WORDS = frozenset(
     does don't must should can will would only if when then than by on in at with
     as about after before this that these those there here you your we our they
     them their he she his her i me my say ask tell please e.g i.e etc what which
-    who how why so also any all each every just
+    who how why so also any all each every just it's i'm can't won't isn't
+    doesn't didn't there's that's we're you're they're i'll we'll let's
     """.split()
 )
+# A value that starts with one of these is a rule: a sentence word, or a verb that
+# opens an instruction.
+_RULE_WORDS = _SENTENCE_WORDS | frozenset({"explain", "refuse", "decline"})
+# A value after one of these names, of at most this many words, is masked whole: a
+# passphrase may hold sentence words.
+_PHRASE_NAMES = frozenset({"password", "passphrase"})
+_PHRASE_MAX_WORDS = 4
+# At a line's start, a value of fewer words than this is a field's value.
+_LINE_RULE_MIN_WORDS = 4
 _AUTH_SCHEMES = frozenset({"basic", "bearer", "token", "digest", "apikey", "negotiate"})
 # scheme://user:password@. The lookbehind means a start inside a run of scheme
 # characters is never tried, which keeps the scan linear on a long id or hex run.
@@ -1166,6 +1194,9 @@ def _mask_under(key: Any, value: Any, under_secret: bool) -> Any:
         return dict.fromkeys(value, _MASK)
     if _numbers_a_secret(key, value):
         return _MASK
+    if isinstance(value, list) and _numbers_a_secret(key, 0):
+        # A list held directly by the key: each number in it is that secret.
+        value = [_MASK if _numbers_a_secret(key, item) else item for item in value]
     return _mask(
         value, under_secret or any(marker in name for marker in _SECRET_KEY_MARKERS)
     )
@@ -1177,10 +1208,18 @@ def _numbers_a_secret(key: Any, value: Any) -> bool:
     ``password_resets`` key is kept."""
     if isinstance(value, bool) or not isinstance(value, int | float):
         return False
-    words = {word.lower() for word in _KEY_WORD_BREAK.split(str(key)) if word}
+    words = {
+        _singular(word.lower()) for word in _KEY_WORD_BREAK.split(str(key)) if word
+    }
     if words & _NUMBER_COUNT_WORDS:
         return False
-    return bool(words & _NUMBER_SECRET_WORDS) or {"api", "key"} <= words
+    return bool(words & _NUMBER_SECRET_WORDS) or any(
+        pair <= words for pair in _NUMBER_SECRET_PAIRS
+    )
+
+
+def _singular(word: str) -> str:
+    return word[:-1] if len(word) > 3 and word.endswith("s") else word
 
 
 def _mask_text(text: str) -> str:
@@ -1212,10 +1251,9 @@ def _mask_named_values(text: str) -> str:
     """Each value after a secret's name masked, in one forward pass.
 
     A quoted or escaped value is masked to its closing quote. A bare value is masked
-    to the end of its line (or a comma, semicolon, brace or quote), unless the name
-    sits inside a sentence and the words after it read as one (``_reads_as_a_rule``).
-    Then only the name is passed over, and the scan goes on from it, so a secret
-    later on the same line is still found."""
+    to the end of its line (or a comma, semicolon, brace or quote), or only in part,
+    or kept as a rule (``_read_bare_value``). The scan goes on after what was masked,
+    or after the name, so a secret later on the same line is still found."""
     parts: list[str] = []
     at = 0
     scan = 0
@@ -1246,42 +1284,81 @@ def _named_value(text: str, name: re.Match[str]) -> tuple[int, int] | None:
         start += 1
     # The look is bounded; the value's own end is searched only when it is masked,
     # so a long line of names inside sentences is read once.
+    if start >= len(text):
+        return None
     look_end = min(len(text), start + _LOOK_REACH)
-    near = _BARE_VALUE_END.search(text, start, look_end)
-    if start >= len(text) or (near is not None and near.start() == start):
+    if _is_a_field(text, name):
+        near = _BARE_VALUE_END.search(text, start, look_end)
+        if near is not None and near.start() == start:
+            return None
+        end = near or _BARE_VALUE_END.search(text, start)
+        return start, end.start() if end else len(text)
+    look = _LOOK_END.search(text, start, look_end)
+    if look is not None and look.start() == start:
         return None
-    if not _is_a_field(text, name) and _reads_as_a_rule(
-        text, start, near.start() if near else look_end, name.group("word").lower()
-    ):
-        return None
-    end = near or _BARE_VALUE_END.search(text, start)
+    read = _read_bare_value(
+        text,
+        start,
+        look.start() if look else look_end,
+        name.group("word").lower(),
+        _starts_its_line(text, name),
+    )
+    if read is not _WHOLE:
+        return read
+    end = look or _LOOK_END.search(text, start)
     return start, end.start() if end else len(text)
 
 
+# What ``_read_bare_value`` gives for a value masked to its end.
+_WHOLE: tuple[int, int] = (-1, -1)
+
+
 def _is_a_field(text: str, name: re.Match[str]) -> bool:
-    """A name that is quoted, set with ``=``, or starts its line names a value."""
-    if name.group("open") or name.group("close") or name.group("sep") == "=":
-        return True
+    """A name that is quoted or set with ``=`` names a value, whatever follows."""
+    return bool(name.group("open") or name.group("close") or name.group("sep") == "=")
+
+
+def _starts_its_line(text: str, name: re.Match[str]) -> bool:
+    """Whether only indent, a list or heading mark, or the rest of the key's own name
+    stands before ``name`` on its line."""
     reach = max(0, name.start() - _LINE_HEAD_REACH)
     head = _LINE_HEAD.search(text, reach, name.start())
     return head is not None and (head.group(0).startswith("\n") or reach == 0)
 
 
-def _reads_as_a_rule(text: str, start: int, stop: int, word: str) -> bool:
-    """Whether the bare value after a name inside a sentence is a rule, not a secret:
-    several words, the first (and a scheme's credential) not shaped like a key, with
-    a plain sentence word among the first few. A look cut short is a secret."""
-    words: list[str] = []
+def _read_bare_value(
+    text: str, start: int, stop: int, word: str, line_start: bool
+) -> tuple[int, int] | None:
+    """How much of the bare value after a secret's name to mask: none (``None``, a
+    rule), all of it (``_WHOLE``), or one word's span.
+
+    A value that starts with a rule word is a rule. One word, a key-shaped lead, or
+    words with no sentence word among them are a secret, masked whole; so is a short
+    value after a password's or passphrase's name, or at a line's start. Otherwise a
+    plain word is followed by prose, and that word (a scheme's credential) is the
+    secret."""
+    words: list[re.Match[str]] = []
     at = start
     while len(words) < _LOOK_WORDS and (found := _LOOK_WORD.match(text, at, stop)):
-        words.append(found.group(1))
+        words.append(found)
         at = found.end()
     if len(words) < 2:
-        return False
-    lead = 2 if word == "authorization" and _plain(words[0]) in _AUTH_SCHEMES else 1
-    if any(_key_shaped(each) for each in words[:lead]):
-        return False
-    return any(_plain(each) in _SENTENCE_WORDS for each in words)
+        return _WHOLE
+    plain = [_plain(each.group(1)) for each in words]
+    if plain[0] in _RULE_WORDS:
+        return None
+    lead = 2 if word == "authorization" and plain[0] in _AUTH_SCHEMES else 1
+    if any(_key_shaped(each.group(1)) for each in words[:lead]):
+        return _WHOLE
+    if not any(each in _SENTENCE_WORDS for each in plain):
+        return _WHOLE
+    if word in _PHRASE_NAMES and len(words) <= _PHRASE_MAX_WORDS:
+        return _WHOLE
+    if line_start and len(words) < _LINE_RULE_MIN_WORDS:
+        return _WHOLE
+    secret = words[lead - 1]
+    span_end = secret.start(1) + len(secret.group(1).rstrip(_WORD_PUNCTUATION))
+    return secret.start(1), span_end
 
 
 def _plain(word: str) -> str:
