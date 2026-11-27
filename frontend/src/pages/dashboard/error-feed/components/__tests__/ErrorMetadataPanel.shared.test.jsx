@@ -132,3 +132,34 @@ describe("ErrorMetadataPanel on a shared issue", () => {
     expect(screen.getByText("TH-1")).toBeInTheDocument();
   });
 });
+
+describe("ErrorMetadataPanel severity not assessed", () => {
+  it("labels a default severity Pending, not Medium", () => {
+    render(
+      <ErrorMetadataPanel
+        error={{
+          ...error,
+          severity: "medium",
+          severity_source: "default",
+          severity_assessment_status: "pending",
+        }}
+      />,
+    );
+    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(screen.queryByText("Medium")).not.toBeInTheDocument();
+  });
+
+  it("shows the real label once assessed", () => {
+    render(
+      <ErrorMetadataPanel
+        error={{
+          ...error,
+          severity: "medium",
+          severity_source: "llm",
+          severity_assessment_status: "completed",
+        }}
+      />,
+    );
+    expect(screen.getByText("Medium")).toBeInTheDocument();
+  });
+});

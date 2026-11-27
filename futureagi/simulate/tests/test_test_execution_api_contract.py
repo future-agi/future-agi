@@ -194,7 +194,6 @@ def test_test_execution_action_contracts_are_runtime_validated():
     }
 
     assert doc_only_views.isdisjoint(migrated_views)
-    assert (
-        report["app_wide_summary"]["runtime_backed_validated_request_decorators"] >= 378
-    )
+    # The runtime-backed decorator floor is enforced by
+    # check-runtime-management-api-contract-coverage.mjs; the report holds debt only.
     assert report["app_wide_summary"]["doc_only_input_contract_decorators"] <= 97
