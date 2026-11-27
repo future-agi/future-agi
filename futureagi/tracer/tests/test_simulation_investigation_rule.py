@@ -28,8 +28,8 @@ from tracer.tests.test_simulation_investigation import _failure_result
 pytestmark = pytest.mark.django_db
 
 
-def _small_run(organization, workspace):
-    """A finished run of five connected calls, none failing: the rule blocks it."""
+def _small_run(organization, workspace, calls=5):
+    """A finished run of `calls` connected calls, none failing: the rule blocks it."""
     run = RunTest.objects.create(
         name="Small", organization=organization, workspace=workspace
     )
@@ -42,7 +42,7 @@ def _small_run(organization, workspace):
         organization=organization,
         workspace=workspace,
     )
-    for _ in range(5):
+    for _ in range(calls):
         CallExecution.objects.create(
             test_execution=execution,
             scenario=scenario,
@@ -51,6 +51,11 @@ def _small_run(organization, workspace):
             duration_seconds=30,
         )
     return execution
+
+
+def _run_where_nothing_failed(organization, workspace):
+    """A finished run of 15 connected calls, none failing: the rule blocks it."""
+    return _small_run(organization, workspace, calls=15)
 
 
 def _diagnosed_before_the_rule(execution):
@@ -126,10 +131,18 @@ def test_a_diagnosis_made_before_the_rule_stays_openable(
     assert _jobs(execution) == before
 
 
-def test_a_small_runs_unread_diagnosis_is_not_read_again(
-    auth_client, organization, workspace
+@pytest.mark.parametrize(
+    ("run", "code"),
+    [
+        (_small_run, "investigation_too_few_calls"),
+        (_run_where_nothing_failed, "investigation_nothing_failed"),
+    ],
+    ids=["too_few_calls", "nothing_failed"],
+)
+def test_a_blocked_runs_unread_diagnosis_is_refused(
+    auth_client, organization, workspace, run, code
 ):
-    execution = _small_run(organization, workspace)
+    execution = run(organization, workspace)
     _diagnosed_before_the_rule(execution)
     TraceInvestigationJob.no_workspace_objects.filter(test_execution=execution).update(
         state=TraceInvestigationJobState.CANCELLED
@@ -138,7 +151,7 @@ def test_a_small_runs_unread_diagnosis_is_not_read_again(
 
     response = auth_client.post(_url(execution))
 
-    # The rule stops new spend: a read again would be one.
-    assert response.status_code == 202
-    assert response.json()["status"] == "failed"
+    # Nothing in it was read, and a read again would be new spend.
+    assert response.status_code == 409
+    assert response.json()["code"] == code
     assert _jobs(execution) == before

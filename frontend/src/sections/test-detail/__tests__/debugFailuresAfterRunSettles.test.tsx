@@ -20,6 +20,7 @@ type Kpis = {
   agent_type: "voice";
   total_calls: number;
   connected_calls: number;
+  debug_failures_connected_calls: number;
 };
 type Decision = { disabled: boolean; reason: string };
 type RowsUpdate = { rowData?: CallRow[]; update?: CallRow[] };
@@ -162,10 +163,12 @@ const runPage = (status: RunStatus, results: CallRow[] = []): RunPage => ({
   results,
   column_order: [],
 });
-const kpis = (connected_calls: number): Kpis => ({
+// The rule reads its own count; here the Connected card shows the same one.
+const kpis = (connected: number): Kpis => ({
   agent_type: "voice",
   total_calls: 20,
-  connected_calls,
+  connected_calls: connected,
+  debug_failures_connected_calls: connected,
 });
 type Deferred<T> = {
   promise: Promise<T>;

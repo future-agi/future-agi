@@ -5,7 +5,7 @@ import { ShowComponent } from "../../../components/show";
 import FixableRecommendations from "./FixableRecommendations";
 import NonFixableRecommendations from "./NonFixableRecommendations";
 
-const FixMyAgentSections = ({ refetch, optimizerAnalysis }) => {
+const FixMyAgentSections = ({ refetch, optimizerAnalysis, refusal }) => {
   const agentLevelFixableRecommendations =
     optimizerAnalysis?.response?.agent_level?.actionable_recommendations ?? [];
   const domainLevelFixableRecommendations =
@@ -21,6 +21,11 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis }) => {
     optimizerAnalysis?.last_updated ?? optimizerAnalysis?.lastUpdated;
   return (
     <>
+      <ShowComponent condition={!!refusal && !!optimizerAnalysis?.response}>
+        <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+          {refusal}
+        </Typography>
+      </ShowComponent>
       <ShowComponent condition={!optimizerAnalysis?.response}>
         <Box
           sx={{
@@ -31,8 +36,8 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis }) => {
           }}
         >
           <Typography variant="s2_1" fontWeight="fontWeightMedium">
-            There are no suggestions yet, click the refresh button to get
-            suggestions
+            {refusal ||
+              "There are no suggestions yet, click the refresh button to get suggestions"}
           </Typography>
         </Box>
       </ShowComponent>
@@ -102,6 +107,7 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis }) => {
 FixMyAgentSections.propTypes = {
   refetch: PropTypes.func,
   optimizerAnalysis: PropTypes.object,
+  refusal: PropTypes.string,
 };
 
 export default FixMyAgentSections;

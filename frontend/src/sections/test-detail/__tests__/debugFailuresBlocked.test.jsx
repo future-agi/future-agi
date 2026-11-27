@@ -15,6 +15,8 @@ vi.mock("src/hooks/useKpis", async (importOriginal) => ({
 
 const BLOCKED_REASON =
   "You need at least 15 connected calls to debug failures.";
+const NOTHING_FAILED_REASON =
+  "Nothing failed in this run, so there’s nothing to debug.";
 
 // Decides for e1 with the given store, after one KPI read of `kpis` landed.
 const decide = (store, kpis) => {
@@ -62,7 +64,11 @@ describe("Debug failures on a finished run", () => {
     "is blocked on a completed %s run with 14 connected calls",
     (agent_type) => {
       expect(
-        run("completed", { agent_type, total_calls: 20, connected_calls: 14 }),
+        run("completed", {
+          agent_type,
+          total_calls: 20,
+          debug_failures_connected_calls: 14,
+        }),
       ).toEqual({ disabled: true, reason: BLOCKED_REASON });
     },
   );
@@ -71,7 +77,11 @@ describe("Debug failures on a finished run", () => {
     "is open on a completed %s run with exactly 15 connected calls",
     (agent_type) => {
       expect(
-        run("completed", { agent_type, total_calls: 20, connected_calls: 15 }),
+        run("completed", {
+          agent_type,
+          total_calls: 20,
+          debug_failures_connected_calls: 15,
+        }),
       ).toEqual({ disabled: false, reason: "" });
     },
   );
@@ -81,7 +91,7 @@ describe("Debug failures on a finished run", () => {
       run("cancelled", {
         agent_type: "voice",
         total_calls: 20,
-        connected_calls: 14,
+        debug_failures_connected_calls: 14,
       }),
     ).toEqual({ disabled: true, reason: BLOCKED_REASON });
   });
@@ -91,7 +101,7 @@ describe("Debug failures on a finished run", () => {
       run("failed", {
         agent_type: "text",
         total_calls: 20,
-        connected_calls: 0,
+        debug_failures_connected_calls: 0,
       }),
     ).toEqual({ disabled: true, reason: BLOCKED_REASON });
   });
@@ -101,10 +111,97 @@ describe("Debug failures on a finished run", () => {
       run("failed", {
         agent_type: "text",
         total_calls: 20,
-        connected_calls: 15,
+        debug_failures_connected_calls: 15,
       }),
     ).toEqual({ disabled: false, reason: "" });
   });
+
+  it("is blocked on a completed run with 15 connected calls and none failing", () => {
+    expect(
+      run("completed", {
+        agent_type: "voice",
+        total_calls: 20,
+        debug_failures_connected_calls: 15,
+        failing_calls: 0,
+      }),
+    ).toEqual({ disabled: true, reason: NOTHING_FAILED_REASON });
+  });
+
+  it("is open on a completed run with 15 connected calls and one failing", () => {
+    expect(
+      run("completed", {
+        agent_type: "voice",
+        total_calls: 20,
+        debug_failures_connected_calls: 15,
+        failing_calls: 1,
+      }),
+    ).toEqual({ disabled: false, reason: "" });
+  });
+
+  it("names the call count first on a run with 14 connected calls and none failing", () => {
+    expect(
+      run("completed", {
+        agent_type: "voice",
+        total_calls: 20,
+        debug_failures_connected_calls: 14,
+        failing_calls: 0,
+      }),
+    ).toEqual({ disabled: true, reason: BLOCKED_REASON });
+  });
+
+  it.each([
+    ["too few connected calls", 14, 1],
+    ["nothing failing", 15, 0],
+  ])(
+    "opens the analysis a run with %s already has",
+    (_, connected_calls, failing_calls) => {
+      expect(
+        run("completed", {
+          agent_type: "voice",
+          total_calls: 20,
+          debug_failures_connected_calls: connected_calls,
+          failing_calls,
+          has_debug_failures_analysis: true,
+        }),
+      ).toEqual({ disabled: false, reason: "" });
+    },
+  );
+
+  it.each([
+    [14, 1, BLOCKED_REASON],
+    [15, 0, NOTHING_FAILED_REASON],
+  ])(
+    "is blocked on %s connected and %s failing with no analysis",
+    (connected_calls, failing_calls, reason) => {
+      expect(
+        run("completed", {
+          agent_type: "voice",
+          total_calls: 20,
+          debug_failures_connected_calls: connected_calls,
+          failing_calls,
+          has_debug_failures_analysis: false,
+        }),
+      ).toEqual({ disabled: true, reason });
+    },
+  );
+
+  it.each([
+    [15, 14, { disabled: true, reason: BLOCKED_REASON }],
+    [14, 15, { disabled: false, reason: "" }],
+  ])(
+    "judges by the rule's count when the Connected card shows %s",
+    (connected_calls, debug_failures_connected_calls, decision) => {
+      expect(
+        run("completed", {
+          agent_type: "voice",
+          total_calls: 20,
+          connected_calls,
+          debug_failures_connected_calls,
+          failing_calls: 1,
+        }),
+      ).toEqual(decision);
+    },
+  );
 
   it("does not block on a count it was never sent", () => {
     expect(run("completed", { agent_type: "voice", total_calls: 3 })).toEqual({
@@ -116,7 +213,11 @@ describe("Debug failures on a finished run", () => {
 
 describe("Debug failures while it checks", () => {
   const CHECKING = { disabled: true, reason: "" };
-  const fifteen = { agent_type: "voice", total_calls: 20, connected_calls: 15 };
+  const fifteen = {
+    agent_type: "voice",
+    total_calls: 20,
+    debug_failures_connected_calls: 15,
+  };
 
   it("waits for a status read for the execution on screen", () => {
     expect(
