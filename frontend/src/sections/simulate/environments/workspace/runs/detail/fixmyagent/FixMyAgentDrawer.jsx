@@ -13,6 +13,7 @@ import {
 } from "src/api/simulate-environments/runDetail";
 import DiagnosisPane from "./DiagnosisPane";
 import ImaginePane from "./ImaginePane";
+import { DEBUG_FAILURES_REFUSALS } from "src/sections/test-detail/debugFailuresRule";
 
 /**
  * Fix my agent — the Debug-failures drawer.
@@ -26,12 +27,14 @@ import ImaginePane from "./ImaginePane";
  * close-X — so this content deliberately does NOT add its own, or the two would
  * stack in the same corner.
  */
-// The API refuses a run whose calls are still in flight; anything else is a
-// generic failure — raw backend text is not user copy.
+// The API refuses a run whose calls are still in flight, or one too small or
+// with nothing failed; anything else is a generic failure — raw backend text is
+// not user copy.
 function refusalMessage(error) {
-  return error?.code === "execution_not_completed"
-    ? "Diagnosis is available once every call in this run finishes."
-    : null;
+  if (error?.code === "execution_not_completed") {
+    return "Diagnosis is available once every call in this run finishes.";
+  }
+  return DEBUG_FAILURES_REFUSALS[error?.code] ?? null;
 }
 
 export default function FixMyAgentDrawer({
@@ -39,6 +42,7 @@ export default function FixMyAgentDrawer({
   onClose,
   executionId,
   stats,
+  blockedReason,
   onLaunch,
   onViewCalls,
 }) {
@@ -46,8 +50,16 @@ export default function FixMyAgentDrawer({
   const { analysis, isLoading, request, isRequesting, requestError } =
     useDebugAnalysis(open ? executionId : null);
 
-  // The first open of a finished run queues its diagnosis; later opens read it.
+  // Every open starts from the run as it is now. The drawer stays mounted while
+  // closed, so without this a reopen would send no request and keep showing the
+  // last refusal. The new request replaces the old error. Declared before the
+  // request effect so both run in the same commit, in this order.
   const requested = useRef(null);
+  useEffect(() => {
+    if (open) requested.current = null;
+  }, [open, executionId]);
+
+  // An open of an unanalyzed run queues its diagnosis; an analyzed one is read.
   useEffect(() => {
     if (!open || isLoading || analysis.status !== "not_requested") return;
     if (requested.current === executionId) return;
@@ -69,18 +81,26 @@ export default function FixMyAgentDrawer({
   );
 
   // A refused request (e.g. calls still running) must read as an error, never an
-  // endless loader.
+  // endless loader. The rule's refusals hold until the run changes, so they read
+  // as a reason with no retry. A retry of a failed diagnosis can fail too: its
+  // error replaces the old failure, or Try again would look like it did nothing.
   const view = useMemo(() => {
     const base =
-      requestError && analysis.status === "not_requested"
+      requestError &&
+      (analysis.status === "not_requested" || analysis.status === "failed")
         ? {
             ...analysis,
             status: "failed",
             errorMessage: refusalMessage(requestError),
+            refused: !!DEBUG_FAILURES_REFUSALS[requestError.code],
           }
         : analysis;
-    return withCallContext(base, citedCalls);
-  }, [analysis, requestError, citedCalls]);
+    // A failed diagnosis of a run the rule blocks is not read again, so a retry
+    // would do nothing: the rule's reason is the next step instead.
+    const retryBlockedBy =
+      base.status === "failed" && !base.refused ? blockedReason || null : null;
+    return withCallContext({ ...base, retryBlockedBy }, citedCalls);
+  }, [analysis, requestError, citedCalls, blockedReason]);
 
   // Once diagnosed, the header counts what the diagnosis counts, so they agree.
   // Before that only the run's failing count shows: it holds errored calls, which
@@ -211,6 +231,8 @@ FixMyAgentDrawer.propTypes = {
   stats: PropTypes.shape({
     failed: PropTypes.number,
   }),
+  // Why the rule blocks a new diagnosis of this run, or null.
+  blockedReason: PropTypes.string,
   onLaunch: PropTypes.func,
   onViewCalls: PropTypes.func,
 };

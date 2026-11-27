@@ -120,7 +120,12 @@ export function useDebugAnalysis(executionId) {
         // The route's contract is an explicit empty object, not a missing body.
         .post(endpoints.testExecutions.debugAnalysis(executionId), {})
         .then((res) => res.data),
+    // A read still on its way (a reopen re-enables the query) was sent before
+    // this request; if it landed after, it would overwrite the new status.
+    onMutate: () => queryClient.cancelQueries({ queryKey }),
     onSuccess: (data) => queryClient.setQueryData(queryKey, data),
+    // The drawer shows every refusal and failure itself; no second, global toast.
+    meta: { errorHandled: true },
   });
 
   const analysis = useMemo(() => mapDebugAnalysis(query.data), [query.data]);

@@ -297,6 +297,109 @@ class HarnessSuiteValidation(BaseModel):
         ]
 
 
+class TaskSplit(models.TextChoices):
+    TRAIN = "train", "Train"
+    TEST = "test", "Test"
+
+
+class HarnessLockedVersion(BaseModel):
+    """An environment's default environment and suite versions, locked so scores on them
+    stay comparable. Unlocking keeps the row: the versions and splits never change."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    environment = models.ForeignKey(
+        "simulate.HostedHarnessJob", on_delete=models.CASCADE, related_name="+"
+    )
+    # RESTRICT, not PROTECT, so a cascade from the job removes the locked version too.
+    environment_version = models.ForeignKey(
+        HarnessEnvironmentVersion, on_delete=models.RESTRICT, related_name="+"
+    )
+    suite_version = models.ForeignKey(
+        HarnessSuiteVersion, on_delete=models.RESTRICT, related_name="+"
+    )
+    # "2026.11.1": the month it was locked in, then its count in that month.
+    label = models.CharField(max_length=32)
+    locked_at = models.DateTimeField()
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    unlocked_at = models.DateTimeField(null=True, blank=True)
+    unlocked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # Its split counts when locked. Its versions and splits never change, so neither do
+    # these: a read never recounts them.
+    train_count = models.PositiveIntegerField()
+    test_count = models.PositiveIntegerField()
+
+    class Meta:
+        db_table = "simulate_harness_locked_version"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["environment_version", "suite_version"],
+                condition=Q(unlocked_at__isnull=True),
+                name="uniq_harness_lockver_pair",
+            ),
+            models.UniqueConstraint(
+                fields=["environment", "label"], name="uniq_harness_lockver_label"
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["environment", "-locked_at"], name="idx_hlockver_env_locked"
+            ),
+        ]
+
+
+class HarnessTaskSplit(BaseModel):
+    """The split a scenario got at the first lock that included it. Never changed."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scenario = models.OneToOneField(
+        "simulate.HostedHarnessScenario", on_delete=models.CASCADE, related_name="+"
+    )
+    split = models.CharField(max_length=8, choices=TaskSplit.choices)
+    first_locked_version = models.ForeignKey(
+        HarnessLockedVersion, on_delete=models.CASCADE, related_name="+"
+    )
+
+    class Meta:
+        db_table = "simulate_harness_task_split"
+
+
+class HarnessLockedVersionMember(BaseModel):
+    """A scenario a lock covers, with its split, written with the lock and never
+    changed. Which tasks can run follows the default bundle, which a lock doesn't
+    freeze, so a lock's members are recorded rather than worked out at read time."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    locked_version = models.ForeignKey(
+        HarnessLockedVersion, on_delete=models.CASCADE, related_name="+"
+    )
+    # RESTRICT, as a suite member's: a cascade from the job removes both.
+    scenario = models.ForeignKey(
+        "simulate.HostedHarnessScenario", on_delete=models.RESTRICT, related_name="+"
+    )
+    split = models.CharField(max_length=8, choices=TaskSplit.choices)
+
+    class Meta:
+        db_table = "simulate_harness_locked_version_member"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["locked_version", "scenario"],
+                name="uniq_harness_lockver_member",
+            ),
+        ]
+
+
 class HarnessAgentVersionRuntime(BaseModel):
     """Harness-side facts of one agent version: source, payload and credential set."""
 

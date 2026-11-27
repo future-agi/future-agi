@@ -142,12 +142,23 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   // A candidate whose patch could not be read has no change line.
   AgentFixCandidateWording: ["changes"],
 };
+// A locked version's locker and unlocker, and a lock preview's refusal, are sent as null.
+// A lock refusal has no nested ref; it is listed so its scalar fields keep their null.
+const HARNESS_LOCKED_VERSION_NULLABLE_REFS = {
+  HarnessLockedVersion: ["locked_by", "unlocked_by"],
+  HarnessLockPreview: ["refusal"],
+  HarnessLockRefusal: [],
+};
+const NULLABLE_REFS = {
+  ...AGENT_FIX_ISSUE_NULLABLE_REFS,
+  ...HARNESS_LOCKED_VERSION_NULLABLE_REFS,
+};
 
-function isAgentFixIssueSchema(name) {
+function hasNullableFields(name) {
   return (
     name.startsWith("SimulationEvidence") ||
     name.startsWith("AgentFixIssue") ||
-    name in AGENT_FIX_ISSUE_NULLABLE_REFS ||
+    name in NULLABLE_REFS ||
     name === "AgentFixEpochIssue" ||
     // The launch form's parts of an agent: a part it may change has no reason.
     name === "AgentFixLaunchSurface" ||
@@ -165,12 +176,12 @@ function isAgentFixIssueSchema(name) {
 
 // A scalar field's x-nullable becomes a null union. A definition's own x-nullable
 // only says how drf-yasg first met it, so it is dropped: the nested objects that are
-// sent as null are the ones AGENT_FIX_ISSUE_NULLABLE_REFS names.
+// sent as null are the ones NULLABLE_REFS names.
 function withNullableFields(name, schema) {
-  const fields = AGENT_FIX_ISSUE_NULLABLE_REFS[name] || [];
-  if (!isAgentFixIssueSchema(name) && !fields.length) return schema;
+  const fields = NULLABLE_REFS[name] || [];
+  if (!hasNullableFields(name) && !fields.length) return schema;
   const { "x-nullable": _definitionNullable, ...definition } = schema;
-  const properties = isAgentFixIssueSchema(name)
+  const properties = hasNullableFields(name)
     ? Object.fromEntries(
         Object.entries(definition.properties || {}).map(([key, property]) => {
           const { "x-nullable": nullable, ...rest } = property;
@@ -192,7 +203,7 @@ function withNullableFields(name, schema) {
       properties[field] = { anyOf: [properties[field], { type: "null" }] };
     }
   }
-  return { ...(isAgentFixIssueSchema(name) ? definition : schema), properties };
+  return { ...(hasNullableFields(name) ? definition : schema), properties };
 }
 
 // The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
@@ -377,6 +388,13 @@ async function runGeneration(schemaPath) {
         operations: {
           "api_host-update-status_list": {
             zod: { strict: { response: true } },
+          },
+          // Their serializers are closed: the server refuses an unknown field.
+          "simulate_api_harness-environments_versions_lock_version": {
+            zod: { strict: { body: true } },
+          },
+          "simulate_api_harness-environments_versions_unlock_version": {
+            zod: { strict: { body: true } },
           },
         },
         zod: {
@@ -1407,6 +1425,8 @@ export type ${jsonAlias} = JsonValueApi;`,
       "SimulateApiHarnessEnvironmentsVersionsResponse",
       "SimulateApiHarnessEnvironmentsVersionsMoveDefaultResponse",
       "SimulateApiHarnessEnvironmentsVersionsAgentDiscardAgentVersionResponse",
+      "SimulateApiHarnessEnvironmentsVersionsLockVersionResponse",
+      "SimulateApiHarnessEnvironmentsVersionsUnlockVersionResponse",
       "SimulateApiHarnessEnvironmentsDraftsResponse",
       "SimulateApiHarnessEnvironmentsDraftsSaveDraftsResponse",
     ];
@@ -1438,6 +1458,19 @@ export type ${jsonAlias} = JsonValueApi;`,
           `${response}.${label} nullable`,
         );
       }
+    }
+    // A locked version always has a label: undo the version rows' label rewrite on it, in
+    // every versions response that carries locked versions (the drafts read carries none).
+    for (const response of VERSIONS_RESPONSES.filter(
+      (name) => name !== "SimulateApiHarnessEnvironmentsDraftsResponse",
+    )) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${response} =`,
+        /("locked_versions": zod\.array\(\s*zod\.object\(\{\s*"id": zod\.string\(\)\.uuid\(\),\s*"label": zod\.string\(\)\.min\(1\))\.nullable\(\)/,
+        "$1",
+        `${response}.locked_versions.label required`,
+      );
     }
     // Only agent versions are checked, hold credentials or can be picked.
     for (const response of VERSIONS_RESPONSES) {

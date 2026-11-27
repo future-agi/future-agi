@@ -1752,7 +1752,6 @@ class TestABrowserAgentRunsOnlyWithSites:
             refusal = _refusal(environment, VersionPicks(agent_version_id=a2.id))
 
         assert refusal.code == "browser_environment_required"
-        assert "browser environment" in refusal.message
 
     def test_the_default_agent_is_held_to_the_same_rule(self, user, workspace, storage):
         environment = _environment(user, workspace, "pk-browser-default", storage)

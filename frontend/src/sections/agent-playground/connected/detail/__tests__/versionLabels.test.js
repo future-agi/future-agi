@@ -10,8 +10,7 @@ import {
 describe("failureText", () => {
   it("no longer names browser agents as unsupported: they run in a browser environment", () => {
     const text = failureText({ code: "agent_type_unsupported" });
-    expect(text).toMatch(/computer-use/);
-    expect(text).toMatch(/crawler/);
+    expect(text).toBe(FAILURE_TEXT.agent_type_unsupported);
     expect(text).not.toMatch(/browser/i);
   });
 

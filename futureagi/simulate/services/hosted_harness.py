@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import BooleanField, ExpressionWrapper, Q
 from django.utils import timezone
 
 from simulate.models import (
@@ -1312,7 +1312,7 @@ def refuse_unpaired_pins(
     sites: only a compatible pair runs.
 
     It reads the pinned agent's stored contract, from storage, so a caller makes it once for a
-    run's pins, and never while it holds a row lock.
+    run's pins, before the row lock; only a recheck after the pins moved runs under it.
     """
     if pins is None:
         return
@@ -1344,6 +1344,8 @@ def resolve_run_pins(
     rerun_of: HostedHarnessJob | None = None,
     picks: VersionPicks | None = None,
     fix_run: Any = None,
+    credential_blob: bool = True,
+    documents: bool = True,
 ) -> ResolvedPins | None:
     """The versions a new run would be pinned to, when versioning pins runs.
 
@@ -1351,7 +1353,9 @@ def resolve_run_pins(
     rerun keeps its source's pins when they can run: they are the defaults, their
     bundle is cached, or certifying is on; otherwise it runs the defaults. Picks that
     cannot run are refused rather than run as the defaults. Only a check run of
-    ``fix_run`` may pick the suite version private to it.
+    ``fix_run`` may pick the suite version private to it. Without ``credential_blob``
+    the agent's side row comes without its blob, for a caller that never runs it;
+    without ``documents`` the version rows come without their documents.
     """
     from simulate.services.harness_versioning.assembly import (
         bundle_ready,
@@ -1377,7 +1381,12 @@ def resolve_run_pins(
         and rerun_of.environment_version_id is not None
         and rerun_of.suite_version_id is not None
     ):
-        loaded = _load_pins(environment, rerun_of)
+        loaded = _load_pins(
+            environment,
+            rerun_of,
+            credential_blob=credential_blob,
+            documents=documents,
+        )
         _, environment_version, suite_version, runtime = loaded
         kept = _source_bundle(environment, rerun_of)
         if pin_ids(rerun_of) == defaults or (
@@ -1410,7 +1419,9 @@ def resolve_run_pins(
         if picked != ids:
             ids, loaded = picked, None
     if loaded is None:
-        loaded = load_ids(environment, ids)
+        loaded = load_ids(
+            environment, ids, credential_blob=credential_blob, documents=documents
+        )
     agent_version, environment_version, suite_version, runtime = loaded
     # A rerun of its source's very pins replays the bundle its source ran.
     if source is not rerun_of or ids != pin_ids(rerun_of) or runtime is None:
@@ -1741,19 +1752,33 @@ def pin_ids(job: HostedHarnessJob) -> tuple[Any, Any, Any]:
 
 
 def _load_pins(
-    environment: HostedHarnessJob, source: HostedHarnessJob
+    environment: HostedHarnessJob,
+    source: HostedHarnessJob,
+    *,
+    credential_blob: bool = True,
+    documents: bool = True,
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions ``source`` is pinned to, and the agent's
     side row."""
-    return load_ids(environment, pin_ids(source))
+    return load_ids(
+        environment,
+        pin_ids(source),
+        credential_blob=credential_blob,
+        documents=documents,
+    )
 
 
 def load_ids(
-    environment: HostedHarnessJob, ids: tuple[Any, Any, Any]
+    environment: HostedHarnessJob,
+    ids: tuple[Any, Any, Any],
+    *,
+    credential_blob: bool = True,
+    documents: bool = True,
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions of these ids, and the agent's side
     row with the facts it runs with in ``environment``: a shared legacy row stands
-    for the environment's own."""
+    for the environment's own. Without ``credential_blob`` the row's blob is unread;
+    without ``documents`` the version rows' documents are."""
     from simulate.models import (
         AgentVersion,
         HarnessAgentVersionRuntime,
@@ -1762,10 +1787,13 @@ def load_ids(
     )
 
     agent_version_id, environment_version_id, suite_version_id = ids
-    environment_version = HarnessEnvironmentVersion._base_manager.get(
-        id=environment_version_id
-    )
-    suite_version = HarnessSuiteVersion._base_manager.get(id=suite_version_id)
+    environment_versions = HarnessEnvironmentVersion._base_manager.all()
+    suite_versions = HarnessSuiteVersion._base_manager.all()
+    if not documents:
+        environment_versions = environment_versions.defer("documents")
+        suite_versions = suite_versions.defer("documents")
+    environment_version = environment_versions.get(id=environment_version_id)
+    suite_version = suite_versions.get(id=suite_version_id)
     # A soft-deleted agent version is never pinned onto a run.
     agent_version = (
         AgentVersion.no_workspace_objects.select_related("agent_definition")
@@ -1782,17 +1810,59 @@ def load_ids(
         )
     from simulate.services.harness_versioning.backfill import effective_runtime
 
-    runtime = (
-        effective_runtime(
-            environment,
-            HarnessAgentVersionRuntime.no_workspace_objects.filter(
-                agent_version=agent_version
-            ).first(),
+    runtimes = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=agent_version
+    )
+    if not credential_blob:
+        runtimes = runtimes.defer("credential_blob").annotate(
+            # Whether a discarded row was a legacy one, without reading its blob.
+            blobless=ExpressionWrapper(
+                Q(credential_blob__isnull=True) | Q(credential_blob=""),
+                output_field=BooleanField(),
+            )
         )
+    runtime = (
+        effective_runtime(environment, runtimes.first())
         if agent_version is not None
         else None
     )
     return agent_version, environment_version, suite_version, runtime
+
+
+def sub_goal_catalogue(sub_goals: object) -> frozenset[str]:
+    """The sub-goal names an environment version grades, from its ``sub_goals``
+    document: a list of goal objects, each named by ``name``. Empty for a version
+    recorded before the catalogue was, and for any other shape."""
+    if not isinstance(sub_goals, list):
+        return frozenset()
+    return frozenset(
+        str(goal["name"])
+        for goal in sub_goals
+        if isinstance(goal, dict) and goal.get("name")
+    )
+
+
+def _goal_names(sub_goals: object) -> list[str] | None:
+    """The goal names a scenario's ``sub_goals`` field gives: a list of goal objects,
+    or of bare names as legacy members wrote them. None for a missing field or any
+    other shape, which predates sub-goals."""
+    if not isinstance(sub_goals, list):
+        return None
+    return [
+        str(goal.get("name")) if isinstance(goal, Mapping) else str(goal)
+        for goal in sub_goals
+    ]
+
+
+def grades_nothing(sub_goals: object, catalogue: Collection[str]) -> bool:
+    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
+    cannot score it. A scenario without the field predates sub-goals and an empty
+    catalogue grades anything: neither is refused. The catalogue is any collection
+    of goal names, a mapping keyed by name included."""
+    names = _goal_names(sub_goals)
+    if not catalogue or names is None:
+        return False
+    return not any(name in catalogue for name in names)
 
 
 def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
@@ -1801,11 +1871,11 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
     Certifying drops them from the bundle, so the run could not play them. A member
     without a ``sub_goals`` field predates them and is left to the run.
     """
-    catalogue = {
-        str(goal.get("name"))
-        for goal in (pins.environment_version.documents or {}).get("sub_goals") or []
-        if isinstance(goal, dict) and goal.get("name")
-    }
+    catalogue = sub_goal_catalogue(
+        (pins.environment_version.documents or {}).get("sub_goals")
+    )
+    if not catalogue:
+        return
     ungradable = [
         key
         for key in scenario_keys
@@ -1824,19 +1894,6 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
             + " no sub-goal of this environment version, so the run cannot score it",
             status_code=422,
         )
-
-
-def grades_nothing(sub_goals: Any, catalogue: Collection[str]) -> bool:
-    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
-    cannot score it. A scenario without the field predates sub-goals and an empty
-    catalogue grades anything: neither is refused."""
-    if not catalogue or not isinstance(sub_goals, list):
-        return False
-    names = {
-        str(goal.get("name") if isinstance(goal, Mapping) else goal)
-        for goal in sub_goals
-    }
-    return not names & set(catalogue)
 
 
 def _member_registrations(
@@ -2884,6 +2941,11 @@ def delete_environment(job: HostedHarnessJob) -> None:
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=job.id
         )
+        from simulate.services.harness_versioning.locked_versions import (
+            require_no_locked_version,
+        )
+
+        require_no_locked_version(locked)
         from simulate.services.harness_versioning.nudges import (
             close_environment_nudges,
         )

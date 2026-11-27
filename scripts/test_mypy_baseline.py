@@ -463,60 +463,49 @@ TYPE_PATHS = (
 
 
 class WorkflowTests(unittest.TestCase):
-    """The check reports on every PR, so it can be required later; for now it
-    is advisory. "Python Types Pass" is the one summary check."""
+    """The check reports on every PR and merge group, so branch rules can
+    require it. "Python Types Pass" is the one summary check."""
 
     @classmethod
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text(encoding="utf-8")
 
-    def test_every_pr_and_every_push_to_dev_triggers_it(self):
+    def test_every_pr_push_to_dev_and_merge_group_triggers_it(self):
         on = top_level_block(self.text, "on")
         pull_request = re.search(r"(?ms)^  pull_request:\n(.*?)(?=^  \S|\Z)", on)
         push = re.search(r"(?ms)^  push:\n(.*?)(?=^  \S|\Z)", on)
-        self.assertIsNotNone(pull_request)
-        self.assertIsNotNone(push)
-        # Retargets arrive as edited events, with changes.base populated.
+        queue = re.search(r"(?ms)^  merge_group:\n(.*?)(?=^  \S|\Z)", on)
+        # No edited type: an edit-started suite hides a required check (#4332).
         self.assertEqual(
-            pull_request.group(1).strip(),
-            "types: [opened, synchronize, reopened, edited]",
+            pull_request.group(1).strip(), "types: [opened, synchronize, reopened]"
         )
         self.assertEqual(push.group(1).strip(), "branches: [dev]")
-        self.assertEqual(re.findall(r"(?m)^  (\S+):", on), ["pull_request", "push"])
+        self.assertEqual(queue.group(1).strip(), "types: [checks_requested]")
+        self.assertEqual(
+            re.findall(r"(?m)^  (\S+):", on), ["pull_request", "push", "merge_group"]
+        )
         self.assertNotRegex(on, r"(?m)^\s*(paths|paths-ignore)\s*:")
         self.assertNotRegex(on, r"(?m)^\s*branches-ignore\s*:")
 
-    def test_only_ordinary_edits_get_an_isolated_concurrency_group(self):
+    def test_prs_and_merge_groups_cancel_stale_runs_but_dev_pushes_do_not(self):
         concurrency = top_level_block(self.text, "concurrency")
-        # Retargets and pushes share the PR group and cancel stale checks.
-        # Body/title edits get a unique group, so even a skipped run cannot
-        # cancel the active check. Dev pushes retain one group per commit.
+        # A PR or merge group ref keeps one active run; dev pushes get one group
+        # per commit, so a later merge cannot cancel them.
         self.assertRegex(
             concurrency,
-            r"(?m)^  group: python-types-\$\{\{ github\.event\.action == 'edited' "
-            r"&& !github\.event\.changes\.base && github\.run_id "
-            r"\|\| github\.event_name == 'push' && github\.sha "
-            r"\|\| github\.ref \}\}\s*$",
+            r"(?m)^  group: python-types-\$\{\{ github\.event_name == 'push' "
+            r"&& github\.sha \|\| github\.ref \}\}\s*$",
         )
         self.assertRegex(concurrency, r"(?m)^  cancel-in-progress: true\s*$")
 
-    def test_ordinary_edits_skip_changes_and_the_fail_closed_summary(self):
-        guard = "github.event.action != 'edited' || github.event.changes.base"
-        changes = job_block(self.text, "changes")
-        summary = job_block(self.text, "python-types-pass")
-        self.assertRegex(changes, rf"(?m)^    if: {re.escape(guard)}\s*$")
-        # Without the same guard, always() would fail on deliberately skipped
-        # changes/mypy jobs and leave a red check on an ordinary body edit.
-        self.assertRegex(
-            summary, rf"(?m)^    if: always\(\) && \({re.escape(guard)}\)\s*$"
-        )
+    def test_every_run_reaches_the_changes_job(self):
+        # No edited events start a run, so no job needs an edit guard.
+        self.assertNotRegex(job_block(self.text, "changes"), r"(?m)^    if:")
 
-    def test_the_header_says_it_is_advisory_and_names_the_summary(self):
+    def test_the_header_names_the_workflow_and_the_summary(self):
         header = self.text.split("\non:", 1)[0]
-        self.assertIn("name: Python types (advisory)", header)
-        self.assertIn(
-            'Advisory for now: "Python Types Pass" is not a required check.', header
-        )
+        self.assertRegex(header, r"(?m)^name: Python types$")
+        self.assertIn('"Python Types Pass" is the one summary check.', header)
 
     def test_a_changes_job_decides_from_the_type_paths(self):
         changes = job_block(self.text, "changes")
@@ -525,10 +514,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(
             changes,
             r"(?m)^      python: \$\{\{ \(github\.event_name == 'push' "
-            r"\|\| github\.event\.changes\.base\) && 'true' "
+            r"\|\| github\.event_name == 'merge_group'\) && 'true' "
             r"\|\| steps\.filter\.outputs\.python \}\}\s*$",
         )
-        # Pushes and retargets force mypy; other PR events use the path filter.
+        # Pushes and merge groups force mypy; PR events use the path filter.
         steps = re.findall(r"(?ms)^      - (.*?)(?=^      - |\Z)", changes)
         self.assertEqual(len(steps), 2)
         for step in steps:
@@ -613,7 +602,7 @@ class WorkflowTests(unittest.TestCase):
         locked = re.search(r'(?m)^name = "mypy"\nversion = "([^"]+)"', lock).group(1)
         self.assertEqual(pinned, locked)
 
-    def test_the_summary_runs_after_both_jobs_except_on_ordinary_edits(self):
+    def test_the_summary_always_runs_after_both_jobs(self):
         names = re.findall(
             r"(?m)^    name: Python Types Pass\s*$", top_level_block(self.text, "jobs")
         )
@@ -624,11 +613,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(summary, r"(?m)^    name: Python Types Pass\s*$")
         self.assertRegex(summary, r"(?m)^    needs: \[changes, mypy-baseline\]\s*$")
         # always(), not !cancelled(): a cancelled run must fail the check, not skip it.
-        self.assertRegex(
-            summary,
-            r"(?m)^    if: always\(\) && \(github\.event\.action != 'edited' "
-            r"\|\| github\.event\.changes\.base\)\s*$",
-        )
+        self.assertRegex(summary, r"(?m)^    if: always\(\)\s*$")
         self.assertRegex(
             summary, r"(?m)^          CHANGES: \$\{\{ needs\.changes\.result \}\}\s*$"
         )

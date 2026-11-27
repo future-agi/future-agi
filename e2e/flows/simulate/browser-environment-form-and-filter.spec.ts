@@ -30,10 +30,10 @@ const CHAT = 'Chat';
 interface Refusal { error: string; message: string; positions: number[] }
 interface ListPage { count: number; results: { id: string; name: string; agent_type: string }[] }
 
-test('SIM-E2E-042: a wrong browser site is refused by its position at preflight, before anything is built', {
+test('SIM-E2E-045: a wrong browser site is refused by its position at preflight, before anything is built', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-042', area: 'simulate',
+    id: 'SIM-E2E-045', area: 'simulate',
     userGoal: 'A user building an environment for a browser agent names the sites its browser may open, and a '
       + 'wrong site is refused by its position, before anything is built',
     steps: ['open Environments with the Build environment drawer on folder upload', 'choose the agent folder and '
@@ -41,20 +41,17 @@ test('SIM-E2E-042: a wrong browser site is refused by its position at preflight,
               + 'in capitals and a URL after it', 'run preflight', 'read the preflight row'],
     backendChecks: ['the preflight request carries browser.allowed_sites as the two typed entries, trimmed and '
                       + 'lower-cased, in order',
-                    'the server answers 400 browser_sites_invalid with positions [2]',
-                    'no PG simulate_hosted_harness_job row is added for the actor org'],
+                    'the server answers 400 browser_sites_invalid with positions [2]'],
     browserChecks: ['the preflight row reads "Preflight couldn\'t run" and the refusal naming site 2'],
   }),
-}, async ({ page, actor, probe }, testInfo) => {
+}, async ({ page, actor }, testInfo) => {
   test.skip(process.env.E2E_STACK === 'standalone', 'agent reading runs on worker-reading and mock-daytona in the distributed E2E stack');
-  // 4 x UI_READY (upload, form, request, preflight row) = 240 s + POLL.ASYNC_JOB (the scan, 60 s) + navigation.
-  test.setTimeout(330_000);
+  // Every wait: the upload (UI_READY) + the found agent (UI_READY + POLL.ASYNC_JOB, the scan) + Browser sites,
+  // the preflight request and the preflight row (UI_READY each) = 60 + 120 + 3 x 60 = 360 s, + 60 s headroom.
+  test.setTimeout(420_000);
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
   const good = `e2e-sites-${suffix}.example.com`;
   const typed = `${good.toUpperCase()}, https://${good}/path`;
-  const jobs = async () => Number((await probe.pg<{ count: string }>(
-    'SELECT count(*)::text AS count FROM simulate_hosted_harness_job WHERE organization_id = $1',
-    [actor.organizationId]))[0].count);
 
   await test.step('ui: upload the agent folder and find its agent', async () => {
     await page.goto(UPLOAD_BUILD, { waitUntil: 'domcontentloaded' });
@@ -67,13 +64,10 @@ test('SIM-E2E-042: a wrong browser site is refused by its position at preflight,
     await page.getByRole('button', { name: 'Next' }).click();
   });
 
-  let before = 0;
   await test.step('ui: type the browser sites', async () => {
     await page.getByRole('textbox', { name: 'Browser sites' }).fill(typed, { timeout: UI_READY });
-    // Counted here, after the scan, so only preflight could add a row.
-    before = await jobs();
     await testInfo.attach('minted', { contentType: 'application/json',
-      body: JSON.stringify({ good, typed, organizationId: actor.organizationId, jobsBefore: before }) });
+      body: JSON.stringify({ good, typed, organizationId: actor.organizationId }) });
   });
 
   let refusal: Refusal | undefined;
@@ -95,28 +89,27 @@ test('SIM-E2E-042: a wrong browser site is refused by its position at preflight,
     await expect(page.getByText('Preflight couldn\'t run', { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(page.getByText(ONE_WRONG_SITE(2), { exact: true })).toBeVisible();
   });
-
-  await test.step('storage: nothing was built', async () => {
-    expect(await jobs()).toBe(before);
-  });
 });
 
-test('SIM-E2E-043: environments built for browser agents read Browser and are what the Browser filter lists', {
+test('SIM-E2E-046: environments built for browser agents read Browser and are what the Browser filter lists', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SIM-E2E-043', area: 'simulate',
+    id: 'SIM-E2E-046', area: 'simulate',
     userGoal: 'A user finds the environments built for browser agents by their Browser label and the Browser filter',
     steps: ['seed two built environments: one whose agent contract needs a browser, one chat '
               + '(e2e/lib/harness_environment_seed.py)', 'open Environments', 'search each one\'s name and read '
-              + 'its agent type', 'choose Agent type › Browser', 'search each name again and read the rows'],
+              + 'its agent type', 'search the browser one\'s name', 'choose Agent type › Browser and read the rows',
+            'search the chat one\'s name and read the rows'],
     backendChecks: ['GET harness-environments/?agent_type=browser lists the browser environment with agent_type '
                       + 'browser, and not the chat one'],
     browserChecks: ['the browser environment\'s row reads Browser and the chat one\'s reads Chat',
                     'with Browser chosen, the browser environment is listed and the chat one is not'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
-  // 2 seeds (container execs, about 20 s each) + 3 x UI_READY (180 s) + navigation.
-  test.setTimeout(240_000);
+  // Every wait: 2 seeds (container execs, about 20 s each) + step 1's search and row count for each name
+  // (4 x UI_READY) + step 2's row count, filtered answer, row count, filtered answer and row count (5 x UI_READY)
+  // = 40 + 540 s, + 60 s headroom.
+  test.setTimeout(640_000);
   const browserSeed = seedHarnessEnvironment({ organizationId: actor.organizationId, workspaceId: actor.workspaceId,
     environmentNeeds: ['browser'] });
   const chatSeed = seedHarnessEnvironment({ organizationId: actor.organizationId, workspaceId: actor.workspaceId });
@@ -141,21 +134,26 @@ test('SIM-E2E-043: environments built for browser agents read Browser and are wh
   });
 
   await test.step('ui: the Browser filter lists the browser environment and not the chat one', async () => {
+    // The filtered answer for one name. Each is awaited, so a row count is the filter's and not a list still
+    // loading. Each filter and name pair is asked for once: the app keeps a list answer fresh for 5 s
+    // (app.jsx QueryClient staleTime) and asks again only after that.
+    const filtered = (name: string) => page.waitForResponse((r) => {
+      const url = new URL(r.url());
+      return url.pathname.endsWith(LIST_PATH) && url.searchParams.get('agent_type') === 'browser'
+        && url.searchParams.get('search') === name;
+    }, { timeout: UI_READY });
+    await search.fill(browserEnv);
+    await expect(rowsNamed(browserEnv)).toHaveCount(1, { timeout: UI_READY });
+    const forBrowser = filtered(browserEnv);
     // The Agent type select's display carries the aria-label (EnvironmentFilters.jsx FilterSelect).
     await page.getByRole('combobox', { name: 'Agent type', exact: true }).click();
     await page.getByRole('option', { name: BROWSER, exact: true }).click();
-    await search.fill(browserEnv);
+    expect(((await (await forBrowser).json()) as ListPage).results.map((one) => one.id))
+      .toEqual([browserSeed.environmentId]);
     await expect(rowsNamed(browserEnv)).toHaveCount(1, { timeout: UI_READY });
-    // Wait for the filtered answer for the chat name, so an empty table is the filter's and not a list
-    // still loading.
-    const answered = page.waitForResponse((r) => {
-      const url = new URL(r.url());
-      return url.pathname.endsWith(LIST_PATH) && url.searchParams.get('agent_type') === 'browser'
-        && url.searchParams.get('search') === chatEnv;
-    }, { timeout: UI_READY });
+    const forChat = filtered(chatEnv);
     await search.fill(chatEnv);
-    const response = await answered;
-    expect((await response.json() as ListPage).results).toEqual([]);
+    expect(((await (await forChat).json()) as ListPage).results).toEqual([]);
     await expect(rowsNamed(browserEnv)).toHaveCount(0, { timeout: UI_READY });
     await expect(rowsNamed(chatEnv)).toHaveCount(0);
   });

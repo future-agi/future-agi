@@ -65,6 +65,8 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?number} csat         `kpis.avg_csat_score`, null if absent.
  * @property {?number} avgTurnCount `kpis.avg_turn_count`, null if absent.
  * @property {?number} connectedPct `kpis.calls_connected_percentage`.
+ * @property {?number} connected    Calls that connected (`execution.connected_calls`),
+ *                                  the count Debug failures needs; null if absent.
  * @property {?string} agentType    `kpis.agent_type` ("voice"|"text") — the
  *                                  run-level voice-vs-chat signal the call drawer
  *                                  falls back to when a row omits its own type.
@@ -274,6 +276,7 @@ export function useRunDetail(
       csat: null,
       avgTurnCount: null,
       connectedPct: null,
+      connected: execution?.connected_calls ?? null,
       agentType: execution?.agent_type ?? null,
       tokens: summary?.tokens?.total_value ?? null,
       cost:
