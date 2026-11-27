@@ -3,12 +3,13 @@
 import json
 import re
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from hashlib import sha256
 from statistics import median
 from typing import Any
+from uuid import UUID
 
 import structlog
 from django.conf import settings
@@ -865,30 +866,25 @@ def outside_attempt_hold_usd(
     must-pass check may re-run every scenario OUTSIDE_REPEATS times more, ungraded: a
     re-run the budget refused would read as broken and refuse a good fix. The baseline
     runs every scenario OUTSIDE_REPEATS times, graded, except for a repeat an earlier
-    attempt on the run finished: read again, it still holds its evals, which a winner's
-    grading runs, unless a winner graded it already. That grading stays with its run
-    (start_check_run), so the repeat holds nothing."""
+    attempt on the run finished that the next one reads again (_reused_baselines): it
+    still holds its evals, which a winner's grading runs, unless an earlier winner claimed
+    it and every finished call holds a verdict of every eval. A claimed run stays with
+    its claim (start_check_run), so the repeat then holds nothing; one that lacks a
+    verdict is topped up by this attempt's winner, so it holds its evals."""
     environment = source_run.environment
     if environment is None:
         raise HostedHarnessError(
             "fix_source_not_a_run", "Epoch starts from a run", status_code=422
         )
-    evals = len(runnable_eval_config_ids(environment.run_test_id))
+    config_ids = runnable_eval_config_ids(environment.run_test_id)
     ungraded: Decimal = _worst_case(0)
-    graded: Decimal = _worst_case(evals)
+    graded: Decimal = _worst_case(len(config_ids))
     every = inventory_size(source_run)
     held_back = set(request.held_back_scenario_keys)
     searched = len(set(request.target_scenario_keys) - held_back)
-    reused: list[HostedHarnessJob] = []
-    if attempt_of is not None:
-        finished = HostedHarnessJob.no_workspace_objects.filter(
-            fix_run_id__in=fix_lineage(attempt_of),
-            fix_label__regex=_BASELINE_LABEL.pattern,
-            state=HostedHarnessJob.State.COMPLETED,
-            deleted=False,
-        )
-        reused = _each_repeat(finished, _BASELINE_LABEL)[:OUTSIDE_REPEATS]
-    to_grade = sum(1 for run in reused if run.graded_at is None)
+    reused = [] if attempt_of is None else _reused_baselines(attempt_of)
+    lacking = runs_lacking_verdicts(reused, config_ids)
+    to_grade = sum(1 for run in reused if run.graded_at is None or run.id in lacking)
     screen = (2 * searched + len(held_back)) * ungraded
     final = every * OUTSIDE_REPEATS * graded
     confirm = every * OUTSIDE_REPEATS * ungraded
@@ -1345,6 +1341,55 @@ def check_run_parallelism(fix_run: AgentFixRun) -> int:
     return ran_at(baseline)
 
 
+def answers_request(
+    run: HostedHarnessJob,
+    *,
+    scenario_keys: Sequence[str],
+    trials: int | None,
+    parallelism: int,
+) -> bool:
+    """Whether a finished check run answers a request for these scenarios (in the order
+    sent), trials and parallelism, so a fix reads it again instead of running it. A run
+    at another parallelism is not comparable (ran_at), so it runs again."""
+    metadata = (run.payload or {}).get("metadata") or {}
+    return (
+        metadata.get("selected_scenario_keys") == list(scenario_keys)
+        and metadata.get("trials") == trials
+        and ran_at(run) == parallelism
+    )
+
+
+def _reused_baselines(attempt_of: AgentFixRun) -> list[HostedHarnessJob]:
+    """The baseline repeats the next outside attempt after ``attempt_of`` reads again.
+    The next attempt asks what the last asked, so each finished baseline is matched to
+    the newest one's scenarios and trials, at the parallelism the next one runs at. This
+    mirrors _finished_earlier's criteria (answers_request), so the hold never counts a
+    run start_check_run runs again."""
+    finished = list(
+        HostedHarnessJob.no_workspace_objects.filter(
+            fix_run_id__in=fix_lineage(attempt_of),
+            fix_label__regex=_BASELINE_LABEL.pattern,
+            state=HostedHarnessJob.State.COMPLETED,
+            deleted=False,
+        ).order_by("created_at")
+    )
+    if not finished:
+        return []
+    newest = (finished[-1].payload or {}).get("metadata") or {}
+    parallelism = check_run_parallelism(attempt_of)
+    matching = [
+        run
+        for run in finished
+        if answers_request(
+            run,
+            scenario_keys=newest.get("selected_scenario_keys") or [],
+            trials=newest.get("trials"),
+            parallelism=parallelism,
+        )
+    ]
+    return _each_repeat(matching, _BASELINE_LABEL)[:OUTSIDE_REPEATS]
+
+
 def base_check_runs(fix_run: AgentFixRun) -> list[HostedHarnessJob]:
     """The base version's check runs a fix's read shows. A retry reuses what the failed fix
     finished, and those runs stay on the failed fix, so they are added here."""
@@ -1437,8 +1482,9 @@ def graded_check_runs(
     """The base version's baseline repeats and the winner's final check: the runs a fix's
     evals grade once it has a winner, and all they compare. A retry's baselines include the
     ones it read again from the failed fix, and only those: what its limit holds. A later
-    outside attempt's include the baselines an earlier attempt's winner graded, which keep
-    that grading (start_check_run): they are read, not graded again."""
+    outside attempt's include the baselines an earlier attempt's winner claimed, which keep
+    that claim (start_check_run): they are read, and topped up only where a finished call
+    lacks a verdict (runs_lacking_verdicts)."""
     check_runs: list[HostedHarnessJob] | None = getattr(fix_run, "check_run_list", None)
     if check_runs is None:
         check_runs = list(HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run))
@@ -1475,13 +1521,38 @@ def graded_check_runs(
     return base, final
 
 
-def _graded_rows(runs: list[HostedHarnessJob], billed: set[str]) -> list[Any]:
-    """The stored output of each billed eval on each finished call of ``runs``."""
-    outputs = HostedHarnessExecution.no_workspace_objects.filter(
-        job_id__in=[run.id for run in runs],
-        call_execution__status=CallExecution.CallStatus.COMPLETED,
-    ).values_list("call_execution__eval_outputs", flat=True)
-    return [(one or {}).get(config_id) for one in outputs for config_id in billed]
+def _graded_calls(runs: Iterable[HostedHarnessJob]) -> list[tuple[Any, dict[str, Any]]]:
+    """Each finished call of ``runs``, as its run's id and its stored eval outputs: the
+    calls a winner's grading queues (queue_evals_for_finished_calls) and its read reads."""
+    return [
+        (job_id, outputs if isinstance(outputs, dict) else {})
+        for job_id, outputs in HostedHarnessExecution.no_workspace_objects.filter(
+            job_id__in=[run.id for run in runs],
+            call_execution__status=CallExecution.CallStatus.COMPLETED,
+        ).values_list("job_id", "call_execution__eval_outputs")
+    ]
+
+
+def _lacking(
+    calls: Iterable[tuple[Any, dict[str, Any]]], config_ids: Collection[str]
+) -> set[Any]:
+    return {
+        job_id
+        for job_id, outputs in calls
+        if not all(is_sealed_verdict(outputs.get(one)) for one in config_ids)
+    }
+
+
+def runs_lacking_verdicts(
+    runs: Iterable[HostedHarnessJob], config_ids: Collection[str]
+) -> set[UUID]:
+    """The runs with a finished call that holds no sealed verdict of one of
+    ``config_ids``: never graded, a grading that failed or was put back, one still
+    pending, or an eval added since. Derived, never stored; empty for no evals or no
+    finished call. A winner's grading tops these up, and their hold keeps their evals."""
+    if not config_ids:
+        return set()
+    return _lacking(_graded_calls(runs), config_ids)
 
 
 def eval_review(fix_run: AgentFixRun) -> EvalReview:
@@ -1495,8 +1566,9 @@ def eval_review(fix_run: AgentFixRun) -> EvalReview:
     run_test_id = fix_run.environment.run_test_id
     base, final = graded_check_runs(fix_run, winner)
     billed = set(runnable_eval_config_ids(run_test_id))
-    base_rows, final_rows = _graded_rows(base, billed), _graded_rows(final, billed)
-    rows = base_rows + final_rows
+    base_calls, final_calls = _graded_calls(base), _graded_calls(final)
+    calls = base_calls + final_calls
+    rows = [outputs.get(one) for _, outputs in calls for one in billed]
     scoring = TestExecution.objects.filter(
         id__in=[run.test_execution_id for run in (*base, *final)],
         status=TestExecution.ExecutionStatus.EVALUATING,
@@ -1522,11 +1594,12 @@ def eval_review(fix_run: AgentFixRun) -> EvalReview:
                 )
             )
     # Grading with an arm that has no graded call compared nothing: it is not done.
-    compared_both = not billed or bool(base_rows and final_rows)
+    compared_both = not billed or bool(base_calls and final_calls)
+    # Done is what a winner's grading reads as nothing left to top up (runs_lacking_verdicts).
     return EvalReview(
         grading=(
             EvalGrading.DONE
-            if compared_both and all(is_sealed_verdict(row) for row in rows)
+            if compared_both and not _lacking(calls, billed)
             else EvalGrading.INCOMPLETE
         ),
         warnings=warnings,

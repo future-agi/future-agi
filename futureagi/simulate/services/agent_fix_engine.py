@@ -39,13 +39,14 @@ from simulate.pydantic_schemas.agent_fix import (
     FailureOwner,
 )
 from simulate.selectors.agent_fix import (
+    answers_request,
     check_run_parallelism,
     committed_usd,
     fix_lineage,
     graded_check_runs,
     is_graded_label,
     is_outside_attempt,
-    ran_at,
+    runs_lacking_verdicts,
     worst_case_usd_per_execution,
 )
 from simulate.services.agent_fix_agents import agent_kind
@@ -576,13 +577,12 @@ def _finished_earlier(
         state=HostedHarnessJob.State.COMPLETED,
         deleted=False,
     ).order_by("-created_at"):
-        metadata = (run.payload or {}).get("metadata") or {}
         pins = (run.agent_version_id, run.environment_version_id, run.suite_version_id)
-        if (
-            tuple(str(one) for one in pins) == wanted
-            and metadata.get("selected_scenario_keys") == request.scenario_keys
-            and metadata.get("trials") == request.trials
-            and ran_at(run) == parallelism
+        if tuple(str(one) for one in pins) == wanted and answers_request(
+            run,
+            scenario_keys=request.scenario_keys,
+            trials=request.trials,
+            parallelism=parallelism,
         ):
             return run
     return None
@@ -649,12 +649,18 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
         return
     winner = AgentFixCandidate.no_workspace_objects.get(fix_run=fix_run, id=winner_id)
     base, final = graded_check_runs(fix_run, winner)
-    # A baseline an earlier winner graded is read as it was graded, not paid again: it
-    # is neither queued nor priced.
+    # A baseline an earlier winner claimed stays that winner's, in its read and its bill.
+    # It is queued and priced again only where a finished call lacks a verdict of a
+    # current eval: a grading that failed or never reached it, or an eval added since.
+    # The queue skips every sealed verdict, so that top-up grades only what is missing.
+    claimed = [
+        run for run in base if fix_run.id not in (run.fix_run_id, run.graded_for_id)
+    ]
+    lacking = runs_lacking_verdicts(claimed, [str(one.id) for one in configs])
     runs = [
         run
         for run in (*base, *final)
-        if fix_run.id in (run.fix_run_id, run.graded_for_id)
+        if fix_run.id in (run.fix_run_id, run.graded_for_id) or run.id in lacking
     ]
     configs = _evals_within_budget(fix_run, configs, runs)
     if not configs:
@@ -677,7 +683,7 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
             )
             continue
         # A run with nothing queued, and none graded before, is left for the next
-        # winner. The dispatch runs once the report commits, so the mark comes after it.
+        # winner. The dispatch runs once the report commits, so the claim comes after it.
         if any(one["queued"] or one["skipped_existing"] for one in counts.values()):
             transaction.on_commit(
                 _graded_once_dispatched(run.id, [str(one.id) for one in configs]),
@@ -687,22 +693,15 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
 
 def _graded_once_dispatched(run_id: Any, config_ids: list[str]) -> Callable[[], None]:
     def mark() -> None:
-        """Mark the run graded once every finished call holds every eval's entry: a
-        dispatch that failed, even partway, put each call it did not reach back as it
-        was, and the next winner grades those."""
+        """Claim the run once its grading reached a call: the winner's Epoch then pays
+        for its evals and keeps its read. Whether a finished call still lacks a verdict
+        is read from the calls (runs_lacking_verdicts), so a later winner tops up what
+        this grading did not finish."""
         run = HostedHarnessJob.no_workspace_objects.filter(id=run_id).first()
         if run is None:
             return
         calls = CallExecution.objects.filter(test_execution_id=run.test_execution_id)
         if not calls.filter(eval_outputs__has_any_keys=config_ids).exists():
-            return
-        finished = calls.filter(status=CallExecution.CallStatus.COMPLETED).values_list(
-            "eval_outputs", flat=True
-        )
-        if not all(
-            isinstance(outputs, dict) and all(one in outputs for one in config_ids)
-            for outputs in finished
-        ):
             return
         HostedHarnessJob.no_workspace_objects.filter(id=run_id).update(
             graded_at=timezone.now()
