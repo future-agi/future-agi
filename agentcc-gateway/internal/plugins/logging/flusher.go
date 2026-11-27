@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -430,7 +429,7 @@ func retryable(status int, err error) bool {
 // service's does.
 func backendGone(err error) bool {
 	var dnsErr *net.DNSError
-	return errors.Is(err, syscall.ECONNREFUSED) || (errors.As(err, &dnsErr) && dnsErr.IsNotFound)
+	return connectionRefused(err) || (errors.As(err, &dnsErr) && dnsErr.IsNotFound)
 }
 
 // closing reports whether Close has begun. A flush then re-enqueues the
