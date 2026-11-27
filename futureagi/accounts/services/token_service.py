@@ -13,11 +13,41 @@ from accounts.models.auth_token import (
 logger = structlog.get_logger(__name__)
 
 
+def accept_pending_invites(user):
+    """Accept every unexpired pending invite for this user.
+
+    Signing in, finishing 2FA or a passkey, or loading orgs in an
+    already-open session is the existing user's accept. A first
+    membership in another org stays inactive until this runs, so SAML
+    cannot treat the invite itself as consent.
+    """
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+
+    pending_invites = list(
+        OrganizationInvite.objects.filter(
+            target_email__iexact=user.email,
+            status=InviteStatus.PENDING,
+        )
+    )
+    for pending in pending_invites:
+        if pending.is_expired:
+            continue
+        try:
+            pending.accept(user)
+        except ValueError:
+            logger.exception(
+                "invite_accept_failed",
+                user_id=str(user.id),
+                organization_id=str(pending.organization_id),
+            )
+
+
 def issue_tokens(user):
     """Create access + refresh tokens for the user.
     Extracted from CustomTokenObtainPairView.post().
     Returns: {'access': encrypted_token, 'refresh': encrypted_token}
     """
+    accept_pending_invites(user)
     # Deactivate all previous refresh tokens for this user
     AuthToken.objects.filter(
         user=user, auth_type=AuthTokenType.REFRESH.value, is_active=True

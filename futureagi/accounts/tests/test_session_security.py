@@ -661,6 +661,68 @@ class TestLoginAfterOrgRemovalAndReinvite:
         assert data.get("requires_org_setup") is not True
 
 
+@pytest.mark.django_db
+def test_login_accepts_pending_invite_from_another_org(api_client, user, organization):
+    """Logging in accepts a pending invite the user has not joined yet.
+
+    The invite email tells an existing user to sign in. Login must call
+    invite.accept for that pending invite, or the membership stays inactive
+    and SAML can never see consent the user already gave by signing in.
+    """
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+
+    other = Organization.objects.create(name="Inviting Org")
+    other_ws = Workspace.objects.create(
+        name="Inviting Default",
+        organization=other,
+        is_default=True,
+        is_active=True,
+        created_by=user,
+    )
+    membership = OrganizationMembership.no_workspace_objects.create(
+        user=user,
+        organization=other,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=False,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=user,
+        workspace=other_ws,
+        role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.WORKSPACE_MEMBER,
+        is_active=False,
+    )
+    invite = OrganizationInvite.objects.create(
+        organization=other,
+        target_email=user.email,
+        status=InviteStatus.PENDING,
+        level=Level.MEMBER,
+        workspace_access=[
+            {
+                "workspace_id": str(other_ws.id),
+                "level": Level.WORKSPACE_MEMBER,
+            }
+        ],
+    )
+
+    resp = _login(api_client, user.email)
+    assert resp.status_code == status.HTTP_200_OK
+
+    membership.refresh_from_db()
+    invite.refresh_from_db()
+    workspace_membership = WorkspaceMembership.no_workspace_objects.get(
+        user=user, workspace=other_ws
+    )
+    assert membership.is_active is True
+    assert workspace_membership.is_active is True
+    assert invite.status == InviteStatus.ACCEPTED
+    home = OrganizationMembership.no_workspace_objects.get(
+        user=user, organization=organization
+    )
+    assert home.is_active is True
+
+
 # ---------------------------------------------------------------------------
 # E. Token Tamper Detection
 # ---------------------------------------------------------------------------
