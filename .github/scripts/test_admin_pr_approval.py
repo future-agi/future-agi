@@ -96,15 +96,24 @@ class KeyCheckTests(unittest.TestCase):
 
 
 class AdminCheckTests(unittest.TestCase):
-    def check(self, author, sender, permissions):
+    def check(self, author, sender, permissions, base="dev", head_ref="feat/x"):
         cases = "\n".join(f'  *"/collaborators/{login}/permission"*) echo {p} ;;' for login, p in permissions.items())
-        env = {"GH_TOKEN": "x", "REPO": REPO, "AUTHOR": author, "SENDER": sender}
+        env = {"GH_TOKEN": "x", "REPO": REPO, "AUTHOR": author, "SENDER": sender, "BASE": base, "HEAD_REF": head_ref}
         done, _, output = run(step_script("admin", "Check that the author and the sender are repository admins"), env, cases)
         self.assertEqual(done.returncode, 0, done.stderr)
         return output
 
     def test_admin_author_and_sender_approve(self):
         self.assertIn("approve=true", self.check("boss", "boss", {"boss": "admin"}))
+
+    def test_main_approves_only_an_admin_hotfix_branch(self):
+        admin = {"boss": "admin"}
+        self.assertIn("approve=true", self.check("boss", "boss", admin, "main", "fix/frontend-hotfix-login"))
+        self.assertEqual(self.check("boss", "boss", admin, "main", "feat/new-page"), "")
+        self.assertEqual(self.check("dev", "dev", {"dev": "write"}, "main", "hotfix/x"), "")
+
+    def test_main_and_dev_both_trigger(self):
+        self.assertIn("branches: [dev, main]", text())
 
     def test_a_non_admin_author_or_sender_does_not(self):
         self.assertEqual(self.check("dev", "dev", {"dev": "write"}), "")
