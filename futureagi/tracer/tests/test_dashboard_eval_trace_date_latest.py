@@ -1104,6 +1104,66 @@ def test_eval_breakdown_label_is_the_same_for_every_metric_it_breaks_down(
         assert labels == {"red"}, (name, labels)
 
 
+def test_a_missing_score_is_not_a_zero_in_labels_or_filters(observe_project, seed):
+    """Previous PR head fails: ``eval_score`` is stored as 0 when a result has
+    no number, so a scoreless winner was labelled "0" (system-metric and
+    cross-template breakdowns) and matched a score = 0 filter, while a real 0
+    was "(not set)" under its own eval metric.
+    Fixed: a real 0 is "0" and matches = 0; a scoreless result is
+    "(not set)" and matches no score comparison.
+    """
+
+    template = str(uuid4())
+    day0 = _day(datetime.now(UTC) - timedelta(days=5))
+    zero = seed.trace(observe_project, day0 + timedelta(hours=10))
+    seed.result(zero, template, day0 + timedelta(hours=11), value=0)
+    scoreless = seed.trace(observe_project, day0 + timedelta(hours=12))
+    seed.result(scoreless, template, day0 + timedelta(hours=13), value=None)
+    window = _custom(day0 - timedelta(days=1), day0 + timedelta(days=2))
+    breakdown = {
+        "name": template,
+        "type": "eval_metric",
+        "config_id": template,
+        "output_type": "SCORE",
+    }
+
+    for metric in (
+        _system_metric("trace_count", "count"),
+        _eval_metric(template, aggregation="count"),
+    ):
+        result = _run_worker(
+            seed,
+            _config([observe_project], window, [metric], breakdowns=[breakdown]),
+        )
+        series = {
+            line["name"]: _points(result, metric["name"], series=line["name"])
+            for line in _metric(result, metric["name"])["series"]
+        }
+        populated = {name: points for name, points in series.items() if points}
+        assert populated == {"0": {day0: 1}, "(not set)": {day0: 1}}, metric["name"]
+
+    equals_zero = {
+        "column_id": template,
+        "source": "traces",
+        "output_type": "SCORE",
+        "filter_config": {
+            "col_type": "EVAL_METRIC",
+            "filter_type": "number",
+            "filter_op": "equals",
+            "filter_value": 0,
+        },
+    }
+    filtered = _run_worker(
+        seed,
+        _config(
+            [observe_project],
+            window,
+            [_system_metric("trace_count", "count", filters=[equals_zero])],
+        ),
+    )
+    assert _points(filtered, "trace_count") == {day0: 1}
+
+
 # ---------------------------------------------------------------------------
 # 7. Regression guards for the held candidate's findings (pass on dev)
 # ---------------------------------------------------------------------------

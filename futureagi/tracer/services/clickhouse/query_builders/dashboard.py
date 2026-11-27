@@ -312,6 +312,11 @@ def _latest_recorded_eval_sql(
         election_key = f"{trace_alias}.project_id, {latest_alias}.eval_trace_id"
         dated_projection = ""
     config = f"JSONExtractString({scan_alias}.config)"
+    # The physical eval_score is 0 for a missing score; callers that read a
+    # score as a number or a label check this flag first (TH-10545).
+    has_numeric_score = eval_output_presence_expr(
+        f"{config}, 'output', 'output'", "SCORE"
+    )
     # Preselect immutable row ids with a narrow lookup, not physical versions
     # by their mutable config. Then collapse *all* versions of qualifying ids.
     return f"""
@@ -324,7 +329,8 @@ def _latest_recorded_eval_sql(
                         JSONExtractString({config}, 'project_id')
                             AS eval_stamped_project_id,
                         JSONExtractString({config}, 'target_type')
-                            AS eval_target_type
+                            AS eval_target_type,
+                        {has_numeric_score} AS eval_has_numeric_score
                     FROM usage_apicalllog AS {scan_alias}
                     PREWHERE {scope}
                       AND {scan_alias}.source_id = %({template_param})s
@@ -2250,9 +2256,10 @@ class DashboardQueryBuilder:
                             "if(e.eval_output_str = '', '(not set)', e.eval_output_str)"
                         )
                     else:
+                        # A missing score is stored as 0; a real 0 is "0".
                         bd_expr = (
-                            "if(e.eval_score = 0, '(not set)', "
-                            "toString(round(e.eval_score * 100)))"
+                            "if(e.eval_has_numeric_score, "
+                            "toString(round(e.eval_score * 100)), '(not set)')"
                         )
                 else:
                     ev_alias = f"ev_bd{bd_idx}"
@@ -2275,8 +2282,9 @@ class DashboardQueryBuilder:
                             f"{ev_alias}.eval_output_str)"
                         )
                     else:
+                        no_score = f"NOT {ev_alias}.eval_has_numeric_score"
                         bd_expr = (
-                            f"if({not_set}, '(not set)', "
+                            f"if({not_set} OR {no_score}, '(not set)', "
                             f"toString(round({ev_alias}.eval_score * 100)))"
                         )
 
@@ -2426,7 +2434,11 @@ class DashboardQueryBuilder:
                         )
                         params[val_key] = _coerce_string_filter_value(val, op)
                     else:
-                        where_parts.append(f"e.eval_score {op_symbol} %({val_key})s")
+                        # A missing score is stored as 0: it is no value.
+                        where_parts.append(
+                            f"(e.eval_has_numeric_score AND "
+                            f"e.eval_score {op_symbol} %({val_key})s)"
+                        )
                         params[val_key] = _coerce_filter_value(val, op)
                 else:
                     ev_alias = f"ev_f{i}"
@@ -2449,7 +2461,10 @@ class DashboardQueryBuilder:
                         params[val_key] = _coerce_string_filter_value(val, op)
                     else:
                         ev_col = f"{ev_alias}.eval_score"
-                        where_parts.append(f"{ev_col} {op_symbol} %({val_key})s")
+                        where_parts.append(
+                            f"({ev_alias}.eval_has_numeric_score AND "
+                            f"{ev_col} {op_symbol} %({val_key})s)"
+                        )
                         params[val_key] = _coerce_filter_value(val, op)
 
             elif f_type == "custom_attribute":
@@ -3609,8 +3624,8 @@ class DashboardQueryBuilder:
                 else:
                     # SCORE: show as percentage
                     val_expr = (
-                        f"if({not_set}, '(not set)', "
-                        f"toString(round({alias}.eval_score * 100)))"
+                        f"if({not_set} OR NOT {alias}.eval_has_numeric_score, "
+                        f"'(not set)', toString(round({alias}.eval_score * 100)))"
                     )
 
                 # Each trace's LATEST RECORDED result for the template, in the
@@ -4079,6 +4094,12 @@ class DashboardQueryBuilder:
                         filter_condition += f" AND {eval_col} {range_condition}"
                 else:
                     filter_condition = f"{eval_col} {op_symbol} %({val_key})s"
+                    if output_type == "SCORE":
+                        # A missing score is stored as 0: it is no value.
+                        filter_condition = (
+                            f"{latest_alias}.eval_has_numeric_score AND "
+                            f"{filter_condition}"
+                        )
 
                 # Membership follows each trace's LATEST RECORDED result for
                 # the template, elected exactly like the eval-score widget
