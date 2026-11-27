@@ -6,6 +6,8 @@ on:
       - ".github/workflows/worker-release-checks.yml"
       - "scripts/release-error-feed-worker.py"
       - "scripts/test_release_error_feed_worker.py"
+      - "scripts/release-insights-agent.py"
+      - "scripts/test_release_insights_agent.py"
       - "scripts/verify-platform-image-tags.py"
       - "scripts/test_verify_platform_image_tags.py"
 permissions:
@@ -17,5 +19,5 @@ jobs:
       - uses: actions/checkout@v4
       # Only this workflow's own tests: the rest of scripts/ has its own
       # workflows (the mypy and Ruff gate self-tests need their pinned tools).
-      - run: python3 -m unittest -v test_release_error_feed_worker test_verify_platform_image_tags
+      - run: python3 -m unittest -v test_release_error_feed_worker test_release_insights_agent test_verify_platform_image_tags
         working-directory: scripts
