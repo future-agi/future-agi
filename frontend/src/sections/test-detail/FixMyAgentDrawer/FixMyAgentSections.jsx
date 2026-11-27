@@ -33,7 +33,8 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis }) => {
           }}
         >
           <Typography variant="s2_1" fontWeight="fontWeightMedium">
-            There are no suggestions yet. Press Refresh to analyse this run.
+            There are no suggestions yet, click the refresh button to get
+            suggestions
           </Typography>
           {/* A run nobody has analysed has no other way to start one. */}
           <Button variant="contained" size="small" onClick={() => refetch?.()}>
