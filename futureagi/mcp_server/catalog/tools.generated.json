@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "tool_names_sha256": "c795430e3ad21361fd923e9d23e5194b571023077610c38621345e627f654387",
-  "tool_count": 161,
+  "tool_names_sha256": "d3d1be714baf014eca75f726a2a148c27ec16810bd25b72d9a30cd9c7b8cc89e",
+  "tool_count": 163,
   "tools": [
     {
       "name": "whoami",
@@ -13165,7 +13165,7 @@
     },
     {
       "name": "run_debug_failures",
-      "description": "Start Debug failures on a finished run (test execution), one analysis job per call. It may incur usage charges. A run that has not finished is refused; poll get_debug_failures for the diagnosis.",
+      "description": "Start Debug failures on a finished run (test execution), one analysis job per call. It may incur usage charges. Starting a diagnosis needs a finished run with at least 15 connected calls and a failing call; a run below that is refused with the reason. On a run below that rule, a diagnosis already made is returned unchanged. On an eligible run, asking again reads again only the calls whose analysis failed or was cancelled, which may incur charges; calls in progress or already read are kept. Poll get_debug_failures for the diagnosis.",
       "group": "epoch",
       "inputSchema": {
         "type": "object",
@@ -14060,6 +14060,89 @@
       "entitlement": "fix_my_agent"
     },
     {
+      "name": "get_epoch_coding_agent_brief",
+      "description": "Return what your coding agent needs to fix a finished run itself, with source_run_id the run's test execution ID. It lists the failing cases, the agent's files, the rules for a change, the attempts left, and instructions to follow. Submit the change with `fagi epoch submit`, then read get_epoch_attempt_verdict.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source_run_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "source_run_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/agent-fix-runs/coding-agent-brief/",
+        "parameters": {
+          "path": [],
+          "query": [
+            "source_run_id"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_brief"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
+      "name": "get_epoch_attempt_verdict",
+      "description": "Return the verdict on a fix your coding agent submitted, by the attempt's Epoch ID. It gives its state, each check's status, the detail of the static and target checks, and its must-pass regressions. Poll it until the attempt has ended.",
+      "group": "epoch",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/simulate/api/agent-fix-runs/{id}/verdict/",
+        "parameters": {
+          "path": [
+            "id"
+          ],
+          "query": [],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "simulate_api_agent-fix-runs_verdict"
+      },
+      "entitlement": "fix_my_agent"
+    },
+    {
       "name": "get_epoch_candidate_patch",
       "description": "Return an Epoch candidate's change as a git patch on the base agent version, to apply by hand.",
       "group": "epoch",
@@ -14107,7 +14190,7 @@
     },
     {
       "name": "make_epoch_candidate_default",
-      "description": "Make an Epoch candidate the environment's default agent version, so later runs use it. To ship a candidate that only its must-pass check refused, give override_reason.",
+      "description": "Make an Epoch's winning candidate the environment's default agent version, so later runs use it. A candidate its checks refused is shipped only by a person, in Future AGI.",
       "group": "epoch",
       "inputSchema": {
         "type": "object",
@@ -14161,7 +14244,7 @@
     },
     {
       "name": "open_epoch_candidate_pull_request",
-      "description": "Open a pull request with an Epoch candidate's change on a GitHub agent's repository. It is opened once. To ship a candidate that only its must-pass check refused, give override_reason.",
+      "description": "Open a pull request with an Epoch's winning candidate on a GitHub agent's repository. It is opened once. A candidate its checks refused is shipped only by a person, in Future AGI.",
       "group": "epoch",
       "inputSchema": {
         "type": "object",

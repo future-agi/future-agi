@@ -6,11 +6,13 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
 from django.urls import Resolver404, clear_url_caches, resolve
 from rest_framework.test import APIRequestFactory
 
 from tfc.capabilities import service
 from tfc.capabilities import testing as capability_testing
+from tfc.capabilities.contracts import CapabilitiesResponseSerializer
 from tfc.capabilities.views import CapabilitiesView
 from tfc.licensing.types import (
     DeploymentFlavor,
@@ -70,6 +72,21 @@ def test_capabilities_view_hides_license_details_for_non_admin_user(active_licen
     assert response.status_code == 200
     assert "license" not in response.data
     assert "instance_id" not in response.data
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_capabilities_view_exposes_the_coding_agent_attempts_setting(
+    active_license, enabled
+):
+    request = APIRequestFactory().get("/api/capabilities/")
+    request.user = SimpleNamespace(is_authenticated=True, is_staff=False)
+
+    with override_settings(AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED=enabled):
+        response = CapabilitiesView().get(request)
+
+    assert response.status_code == 200
+    assert response.data["coding_agent_attempts_enabled"] is enabled
+    assert CapabilitiesResponseSerializer(data=response.data).is_valid()
 
 
 def test_self_hosted_routes_expose_status_not_control_plane():

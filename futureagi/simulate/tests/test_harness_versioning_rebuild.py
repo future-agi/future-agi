@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 
 from simulate.models import (
     HarnessEnvironmentVersion,
+    HarnessLockedVersion,
     HarnessNudge,
     HostedHarnessConversation,
     HostedHarnessConversationLease,
@@ -18,6 +19,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services.harness_versioning import archives, drafts, nudges, rebuild
+from simulate.services.harness_versioning.locked_versions import lock_preview
 from simulate.services.hosted_harness import HostedHarnessError, canonical_digest
 from simulate.services.hosted_harness_conversation import (
     enqueue_message,
@@ -703,6 +705,60 @@ class TestDispatch:
 
 
 class TestLanding:
+    def test_a_rebuild_leaves_a_locked_version_as_it_was(
+        self,
+        user,
+        workspace,
+        storage,
+        scheduled,
+        started,
+        auth_client,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, nudge, _a1, _a2 = _queued(
+            user,
+            workspace,
+            storage,
+            "r-locked",
+            auth_client,
+            django_capture_on_commit_callbacks,
+        )
+        e1, s1 = environment.environment_version, environment.suite_version
+        # The split rules have their own tests; this one is about the rebuild.
+        locked_version = HarnessLockedVersion.no_workspace_objects.create(
+            environment=environment,
+            environment_version=e1,
+            suite_version=s1,
+            label="2026.11.1",
+            locked_at=timezone.now(),
+            locked_by=user,
+            train_count=1,
+            test_count=1,
+        )
+
+        with django_capture_on_commit_callbacks(execute=True):
+            nudge = _turn(environment, nudge, storage)
+
+        assert nudge.state == "applied", (nudge.error, nudge.summary)
+        environment.refresh_from_db()
+        assert environment.environment_version_id != e1.id
+        e1.refresh_from_db()
+        assert (e1.status, e1.discard_reason) == ("active", None)
+        locked_version.refresh_from_db()
+        assert (
+            locked_version.environment_version_id,
+            locked_version.suite_version_id,
+        ) == (
+            e1.id,
+            s1.id,
+        )
+        assert locked_version.unlocked_at is None
+        preview = lock_preview(environment)
+        assert preview["environment_version_id"] == environment.environment_version_id
+        assert preview["refusal"] is None or (
+            preview["refusal"]["code"] != "version_already_locked"
+        )
+
     def test_a_rebuild_lands_a_new_environment_version(
         self,
         user,

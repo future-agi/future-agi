@@ -204,7 +204,68 @@ def _record_problems(
                 problem("id", f"{actor_id!r} is reserved; give the actor another id."),
             )
         )
-    return problems
+    return problems + _trigger_problems(actor)
+
+
+# What each trigger needs for a run to bring the actor in, as the harness checks it when a scenario is kept: the
+# record path at fault and the sentence for it.
+def _trigger_problems(actor: ActorRecord) -> list[tuple[str, Problem]]:
+    activation = actor.get("activation")
+    trigger = activation.get("trigger") if isinstance(activation, dict) else None
+    if not isinstance(trigger, dict):
+        return []
+    kind = trigger.get("kind") or "always"
+    found: list[tuple[str, str]] = []
+    if kind == "on_tool" and not str(trigger.get("tool") or "").strip():
+        found.append(("tool", "Pick the action whose call brings them in."))
+    if kind == "probability":
+        # A chance that is not a number, or outside 0 to 1, is the record schema's to refuse, once.
+        chance = trigger.get("p")
+        if "p" not in trigger or (
+            isinstance(chance, (int, float))
+            and not isinstance(chance, bool)
+            and (chance != chance or chance == 0)
+        ):
+            found.append(("p", "Give a chance above 0% and at most 100%."))
+    if kind == "on_keyword":
+        # Words that are not a list of text are the record schema's to refuse, once.
+        words = trigger.get("words")
+        texts = (
+            [one for one in words if isinstance(one, str)]
+            if isinstance(words, list)
+            else None
+        )
+        listed = texts is not None and len(texts) == len(words or [])
+        if "words" not in trigger or (
+            listed and not any(one.strip() for one in texts or [])
+        ):
+            found.append(("words", "Give the words that bring them in."))
+    if kind == "mid_journey":
+        # A turn that is not a whole number is the record schema's to refuse; 2.0 reads as 2.
+        turn = trigger.get("turn")
+        if "turn" not in trigger or (
+            isinstance(turn, (int, float)) and not isinstance(turn, bool) and turn < 1
+        ):
+            found.append(
+                (
+                    "turn",
+                    "Give the agent's turn they come in at, a whole number from 1.",
+                )
+            )
+    if actor.get("channel") == "ivr" and kind != "always":
+        found.append(
+            (
+                "kind",
+                "A phone menu answers the call itself, so it is present from the start.",
+            )
+        )
+    return [
+        (
+            f"activation.trigger.{key}",
+            problem(field_at(f"activation.trigger.{key}"), sentence),
+        )
+        for key, sentence in found
+    ]
 
 
 def _names(value: object) -> list[str]:

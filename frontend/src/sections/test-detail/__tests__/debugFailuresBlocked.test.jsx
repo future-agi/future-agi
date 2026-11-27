@@ -1,22 +1,47 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import PropTypes from "prop-types";
+import { kpisQueryOptions } from "src/hooks/useKpis";
 import { useFixMyAgentBlocked } from "../common";
 import { useTestExecutionStore } from "../states";
 
 const mockKpis = vi.hoisted(() => ({ current: { agent_type: "voice" } }));
 
-vi.mock("src/hooks/useKpis", () => ({
+vi.mock("src/hooks/useKpis", async (importOriginal) => ({
+  ...(await importOriginal()),
   default: () => ({ data: mockKpis.current, isPending: false }),
 }));
 
 const BLOCKED_REASON =
   "You need at least 15 connected calls to debug failures.";
 
-const run = (status, kpis) => {
+// Decides for e1 with the given store, after one KPI read of `kpis` landed.
+const decide = (store, kpis) => {
   mockKpis.current = kpis;
-  useTestExecutionStore.setState({ status });
-  return renderHook(() => useFixMyAgentBlocked("e1")).result.current;
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(kpisQueryOptions("e1").queryKey, kpis);
+  useTestExecutionStore.setState(store);
+  const Wrapper = ({ children }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  Wrapper.propTypes = { children: PropTypes.node };
+  return renderHook(() => useFixMyAgentBlocked("e1"), { wrapper: Wrapper })
+    .result.current;
 };
+
+// The grid read this status for e1, and the one KPI read landed after the
+// grid saw e1 finish.
+const run = (status, kpis) =>
+  decide(
+    {
+      status,
+      statusExecutionId: "e1",
+      kpisUpdateCountAtFinish: 0,
+      finalKpisFailed: false,
+    },
+    kpis,
+  );
 
 describe("Debug failures on a run still in progress", () => {
   it("says it opens once the run finishes", () => {
@@ -85,6 +110,56 @@ describe("Debug failures on a finished run", () => {
     expect(run("completed", { agent_type: "voice", total_calls: 3 })).toEqual({
       disabled: false,
       reason: "",
+    });
+  });
+});
+
+describe("Debug failures while it checks", () => {
+  const CHECKING = { disabled: true, reason: "" };
+  const fifteen = { agent_type: "voice", total_calls: 20, connected_calls: 15 };
+
+  it("waits for a status read for the execution on screen", () => {
+    expect(
+      decide(
+        {
+          status: "completed",
+          statusExecutionId: "e0",
+          kpisUpdateCountAtFinish: 0,
+          finalKpisFailed: false,
+        },
+        fifteen,
+      ),
+    ).toEqual(CHECKING);
+  });
+
+  it("waits for a KPI read that lands after the run finished", () => {
+    expect(
+      decide(
+        {
+          status: "completed",
+          statusExecutionId: "e1",
+          kpisUpdateCountAtFinish: 1,
+          finalKpisFailed: false,
+        },
+        fifteen,
+      ),
+    ).toEqual(CHECKING);
+  });
+
+  it("says why when the final KPI read failed", () => {
+    expect(
+      decide(
+        {
+          status: "completed",
+          statusExecutionId: "e1",
+          kpisUpdateCountAtFinish: 1,
+          finalKpisFailed: true,
+        },
+        fifteen,
+      ),
+    ).toEqual({
+      disabled: true,
+      reason: "Couldn't load the call count. Refresh to try again.",
     });
   });
 });

@@ -38,12 +38,7 @@ import { BTN_SX, T12, T14 } from "./drawerStyles";
 import { FORMS_BY_PANEL } from "./forms/formsByPanel";
 import WorldsBrowser from "./starts/WorldsBrowser";
 import { QuietTag } from "./starts/startBits";
-import {
-  SANDBOX_ITEM,
-  SCRATCH_ITEM,
-  worldItem,
-  worldWayOf,
-} from "./starts/startItems";
+import { SCRATCH_ITEM, worldItem, worldWayOf } from "./starts/startItems";
 
 const DRAWER_WIDTH = 960;
 const SHOW_BUILD_FROM_SCRATCH = false;
@@ -383,7 +378,6 @@ export default function BuildEnvironmentDrawer({
         error={worldsError}
         onRetry={() => refetchWorlds()}
         onOpenWorld={(w, tab) => pick(worldItem(w, tab))}
-        onOpenSandbox={() => pick(SANDBOX_ITEM)}
       />
     ) : (
       <DrawerCatalog

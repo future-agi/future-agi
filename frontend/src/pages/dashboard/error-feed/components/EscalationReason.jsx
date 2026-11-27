@@ -20,7 +20,7 @@ export function escalationReasonText(issue) {
     : summary;
 }
 
-export default function EscalationReason({ issue }) {
+export default function EscalationReason({ issue, inline = false }) {
   const text = escalationReasonText(issue);
   if (!text) return null;
   const evaluatedAt =
@@ -29,7 +29,14 @@ export default function EscalationReason({ issue }) {
     <Typography
       typography="s2"
       color="text.secondary"
-      sx={{ overflowWrap: "anywhere" }}
+      /* Beside the error-type chip: one line, cut short, the whole reason on hover. */
+      noWrap={inline}
+      title={
+        inline
+          ? `${text}${evaluatedAt ? ` Last evaluated ${new Date(evaluatedAt).toLocaleString()}.` : ""}`
+          : undefined
+      }
+      sx={inline ? { minWidth: 0 } : { overflowWrap: "anywhere" }}
     >
       {text}
       {evaluatedAt && (
@@ -46,4 +53,8 @@ export default function EscalationReason({ issue }) {
   );
 }
 
-EscalationReason.propTypes = { issue: PropTypes.object.isRequired };
+EscalationReason.propTypes = {
+  issue: PropTypes.object.isRequired,
+  /* One line beside the error-type chip in the issue header. */
+  inline: PropTypes.bool,
+};
