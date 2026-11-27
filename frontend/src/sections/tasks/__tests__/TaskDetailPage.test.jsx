@@ -14,6 +14,7 @@ import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { defaultSamplingPolicy } from "../components/samplingPolicyForm";
 
+const axiosGetMock = vi.hoisted(() => vi.fn());
 const axiosPatchMock = vi.hoisted(() => vi.fn());
 const axiosPostMock = vi.hoisted(() => vi.fn());
 const confirmDialogMock = vi.hoisted(() => vi.fn());
@@ -23,6 +24,7 @@ vi.mock("src/utils/axios", async () => {
   const actual = await vi.importActual("src/utils/axios");
   return {
     default: {
+      get: axiosGetMock,
       patch: axiosPatchMock,
       post: axiosPostMock,
     },
@@ -35,6 +37,7 @@ vi.mock("src/utils/axios", async () => {
         // The real mapping, so the Resume assertions check the URL the backend
         // serves rather than a copy of it.
         resumeEvalTask: actual.endpoints.project.resumeEvalTask,
+        getEvalTaskLogs: actual.endpoints.project.getEvalTaskLogs,
         createEvalTask: () => "/tracer/eval-task/",
       },
     },
@@ -69,10 +72,6 @@ vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
       {rightPanel}
     </div>
   ),
-}));
-
-vi.mock("src/sections/common/EvalsTasks/TaskLogsView", () => ({
-  default: () => <div>logs</div>,
 }));
 
 vi.mock("../components/TaskHeader", () => ({
@@ -154,8 +153,30 @@ const loadedTask = (overrides = {}) => ({
   ...overrides,
 });
 
+const taskLogs = (status, failureReason = null) => ({
+  data: {
+    status: true,
+    result: {
+      status,
+      failure_reason: failureReason,
+      row_type: "spans",
+      success_count: 0,
+      errors_count: 0,
+      skipped_count: 0,
+      warnings_count: 0,
+      total_count: 0,
+      error_groups: [],
+      warning_groups: [],
+      error_groups_truncated: false,
+      warning_groups_truncated: false,
+    },
+  },
+});
+
 describe("TaskDetailPage", () => {
   beforeEach(() => {
+    axiosGetMock.mockReset();
+    axiosGetMock.mockResolvedValue(taskLogs("completed"));
     axiosPatchMock.mockReset();
     axiosPatchMock.mockResolvedValue({ data: { result: {} } });
     axiosPostMock.mockReset();
@@ -300,6 +321,34 @@ describe("TaskDetailPage", () => {
     });
   });
 
+  it("refreshes terminal Logs in place only after Resume succeeds", async () => {
+    useGetTaskData.mockReturnValue({ data: loadedTask({ status: "failed" }) });
+    const reason = "Row selection exceeded its read budget.";
+    axiosGetMock
+      .mockResolvedValueOnce(taskLogs("failed", reason))
+      .mockResolvedValue(taskLogs("pending"));
+    axiosPostMock.mockRejectedValueOnce(new Error("Workflow did not start"));
+    renderTaskDetail("task-1");
+    fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
+    expect(await screen.findByText(reason)).toBeVisible();
+
+    const resume = screen.getByRole("button", { name: /resume/i });
+    fireEvent.click(resume);
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        expect.stringContaining("Failed to resume"),
+        { variant: "error" },
+      ),
+    );
+    expect(screen.getByText(reason)).toBeVisible();
+    expect(axiosGetMock).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(resume);
+    expect(await screen.findByText("Pending")).toBeVisible();
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+    expect(axiosGetMock).toHaveBeenCalledTimes(2);
+  });
+
   it("offers no Resume for a completed task", () => {
     useGetTaskData.mockReturnValue({
       data: loadedTask({ status: "completed" }),
@@ -417,7 +466,9 @@ describe("TaskDetailPage", () => {
 
     renderTaskDetail("task-1");
     fireEvent.click(screen.getByRole("tab", { name: /logs/i }));
-    expect(screen.getByText("logs")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Completed — no evaluation runs in this log"),
+    ).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: /re-run/i }));
 

@@ -10,6 +10,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { isResumableTaskStatus } from "../task_status";
+import { useResumeEvalTask } from "../useResumeEvalTask";
 
 const statusRole = {
   pending: "neutral",
@@ -39,9 +40,7 @@ const RunningStatusRenderer = ({ value, data, api }) => {
     },
   });
 
-  const { mutate: resumeEvalTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(data.id), {}),
-    meta: { errorHandled: true },
+  const { mutate: resumeEvalTask } = useResumeEvalTask({
     onSuccess: (_) => {
       api.applyServerSideTransaction({
         update: [{ ...data, status: "running" }],
@@ -62,7 +61,7 @@ const RunningStatusRenderer = ({ value, data, api }) => {
 
   const onResume = () => {
     //@ts-ignore
-    resumeEvalTask();
+    resumeEvalTask(data.id);
   };
 
   const mainValue = (value || "").trim().toLowerCase();
