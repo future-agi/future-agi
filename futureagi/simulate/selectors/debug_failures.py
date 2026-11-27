@@ -14,13 +14,13 @@ _TEXT = CallExecution.SimulationCallType.TEXT
 # A chat connected when it completed; a voice call when it ran for any time. Read per
 # call: a hosted run's agent definition can carry a stale type, the call's own type is
 # authoritative. Twin of the KPI view's run-level `connected_calls`.
-_CONNECTED = Q(
-    simulation_call_type=_TEXT, status=CallExecution.CallStatus.COMPLETED
-) | (~Q(simulation_call_type=_TEXT) & Q(duration_seconds__gt=0))
+CONNECTED = Q(simulation_call_type=_TEXT, status=CallExecution.CallStatus.COMPLETED) | (
+    ~Q(simulation_call_type=_TEXT) & Q(duration_seconds__gt=0)
+)
 
 
 def connected_call_count(execution: TestExecution) -> int:
-    return CallExecution.objects.filter(_CONNECTED, test_execution=execution).count()
+    return CallExecution.objects.filter(CONNECTED, test_execution=execution).count()
 
 
 def failing_call_count(execution: TestExecution) -> int:
