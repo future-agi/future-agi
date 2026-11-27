@@ -149,6 +149,11 @@ def spans(ch_database, table):
 
 # A sender's negative cost, which the collector writes to the cost column as it is.
 NEGATIVE_REPORT = {"cost": -0.01, "numbers": {"gen_ai.cost.total": -0.01}}
+# A report with a negative side, which the collector sums into the cost column.
+REJECTED_REPORT = {
+    "cost": 0.03,
+    "numbers": {"gen_ai.cost.input": -0.01, "gen_ai.cost.output": 0.04},
+}
 
 
 def _traced(monkeypatch):
@@ -358,6 +363,14 @@ def test_a_span_exported_twice_counts_once_by_its_request_model(spans, monkeypat
             CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(0.015)),
             id="a_negative_reported_cost_and_an_estimate",
         ),
+        # The collector sums a report with a negative side into a positive cost. That
+        # sum is no estimate, so the other copy's estimate is the price.
+        pytest.param(
+            {"service": "agent", "kind": "llm", "model": "m1", **REJECTED_REPORT},
+            {"service": "omega", "kind": "llm", "model": "m1", "cost": 0.01},
+            CallUsage(models=["m1"], llm_spans=1, cost_usd=pytest.approx(0.01)),
+            id="a_rejected_report_and_an_estimate",
+        ),
     ],
 )
 def test_a_span_exported_twice_keeps_what_either_copy_says(
@@ -497,6 +510,11 @@ def test_a_cost_its_sender_reported_outranks_the_other_copy_s_estimate(
             ["m2"],
             id="a_negative_part_beside_a_valid_part",
         ),
+        # The same report summed above zero: the sum is neither a report nor an
+        # estimate, as the collector never priced the call from its tokens.
+        pytest.param(
+            REJECTED_REPORT, None, ["m2"], id="a_negative_part_summed_above_zero"
+        ),
         # A NaN or infinite number goes to attributes_extra (adapter.go Split), where
         # the collector reads no cost: the sides it did read are the report.
         pytest.param(
@@ -622,17 +640,23 @@ def _owner_case(spans, trace, low, high, case):
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    "case",
+    ("case", "listed_under"),
     [
-        "earliest_span_names_the_lesser",
-        "marked_spans_start_together",
-        "conflicting_marks_same_start",
-        "conflicting_marks_swapped",
-        "conflicting_marks_skewed_starts",
-        "unmarked_copy_starts_first",
+        ("earliest_span_names_the_lesser", "owner"),
+        ("unmarked_copy_starts_first", "owner"),
+        # The list names a trace's call from its earliest marked row, not span: the
+        # lesser id's copy starts first, so the list shows the trace under it.
+        ("conflicting_marks_skewed_starts", "low"),
+        # Marked rows that start together: the list may pick either, so only usage's
+        # call is pinned.
+        ("marked_spans_start_together", None),
+        ("conflicting_marks_same_start", None),
+        ("conflicting_marks_swapped", None),
     ],
 )
-def test_usage_and_the_trace_list_name_the_same_call(spans, monkeypatch, case):
+def test_usage_names_a_trace_s_call_by_its_spans_and_the_list_by_its_rows(
+    spans, monkeypatch, case, listed_under
+):
     _traced(monkeypatch)
     low, high = sorted(str(uuid.uuid4()) for _ in range(2))
     trace = str(uuid.uuid4())
@@ -649,7 +673,8 @@ def test_usage_and_the_trace_list_name_the_same_call(spans, monkeypatch, case):
             if one.trace_id == trace
         }
         assert {call for call, one in usage.items() if "m9" in one.models} == {owner}
-        assert listed == {owner}
+        if listed_under:
+            assert listed == {owner if listed_under == "owner" else low}
 
 
 @pytest.mark.integration

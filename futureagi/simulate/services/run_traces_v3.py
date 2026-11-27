@@ -42,7 +42,8 @@ REPORTED_COST_KEYS = (
 # marks only a profiled producer's or a non-additive span (converter.go trackCost);
 # the other copies carry no marker, and their cost keys say whether a cost was reported.
 COST_KIND_KEY = "fi.cost.kind"
-# The whitespace Go's strings.TrimSpace trims from a cost text, ASCII only.
+# The ASCII whitespace Go's strings.TrimSpace trims from a cost text. Go also trims
+# Unicode spaces such as U+00A0; this does not.
 _COST_TEXT_SPACE = " \\t\\n\\v\\f\\r"
 READ_TIMEOUT_MS = 2000
 MAX_TRACES = 200
@@ -161,10 +162,17 @@ def _job_scope_params(source: RunTracesSource) -> dict[str, Any]:
     }
 
 
+# A trace belongs to the call named on its earliest span that names one.
+_CALL_OF_TRACE = (
+    f"argMinIf({cols.ATTRS_STRING}['{CALL_MARK_KEY}'], start_time, "
+    f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')) AS call_execution_id"
+)
+
+
 def _span_call_columns() -> str:
-    """A span's call, over its copies, the same in the list and in usage: whether a copy
-    names one, the greater id when two copies name two, and when its marked copies
-    start. An unmarked copy's start is not the mark's."""
+    """A span's call, over its copies: whether a copy names one, the greater id when two
+    copies name two, and when its marked copies start. An unmarked copy's start is not
+    the mark's."""
     marked = f"mapContains({cols.ATTRS_STRING}, '{CALL_MARK_KEY}')"
     return (
         f"max({marked}) AS names_call, "
@@ -180,28 +188,16 @@ def _trace_call_sql(start: str) -> str:
 
 def run_traces_sql() -> str:
     is_root = "parent_span_id = ''"
-    # A span's copies are read as one span first, so its call is the one usage reads.
-    spans = (
-        "SELECT trace_id, "
-        f"countIf({is_root}) > 0 AS is_root, "
-        f"minIf(start_time, {is_root}) AS root_start, "
-        f"argMinIf(name, start_time, {is_root}) AS span_name, "
-        f"argMinIf(status, start_time, {is_root}) AS span_status, "
-        f"argMinIf(latency_ms, start_time, {is_root}) AS span_latency_ms, "
-        f"{_span_call_columns()} "
-        "FROM spans FINAL "
-        f"{_job_scope_sql()}"
-        "GROUP BY trace_id, id"
-    )
     return (
         "SELECT trace_id, "
-        "countIf(is_root) > 0 AS has_root, "
-        "argMinIf(span_name, root_start, is_root) AS root_name, "
-        "minIf(root_start, is_root) AS root_start_time, "
-        "argMinIf(span_status, root_start, is_root) AS root_status, "
-        "argMinIf(span_latency_ms, root_start, is_root) AS root_latency_ms, "
-        f"{_trace_call_sql('marked_start')} AS call_execution_id "
-        f"FROM ({spans}) "
+        f"countIf({is_root}) > 0 AS has_root, "
+        f"argMinIf(name, start_time, {is_root}) AS root_name, "
+        f"minIf(start_time, {is_root}) AS root_start_time, "
+        f"argMinIf(status, start_time, {is_root}) AS root_status, "
+        f"argMinIf(latency_ms, start_time, {is_root}) AS root_latency_ms, "
+        f"{_CALL_OF_TRACE} "
+        "FROM spans FINAL "
+        f"{_job_scope_sql()}"
         "GROUP BY trace_id "
         "HAVING call_execution_id = %(call_execution_id)s "
         "ORDER BY has_root ASC, root_start_time DESC, trace_id "
@@ -228,24 +224,29 @@ def _cost_kind_sql() -> str:
     return f"{cols.ATTRS_STRING}['{COST_KIND_KEY}']"
 
 
+def _cost_values_sql() -> str:
+    """The numbers a span row's cost keys hold, as the collector reads them (adapter.go
+    firstNumber: a number, or text with its whitespace trimmed)."""
+    attrs, numbers = cols.ATTRS_STRING, cols.ATTRS_NUMBER
+    keys = ", ".join(f"'{key}'" for key in REPORTED_COST_KEYS)
+    text = f"toFloat64OrNull(trimBoth(value, '{_COST_TEXT_SPACE}'))"
+    return (
+        f"arrayConcat(mapValues(mapFilter((key, value) -> key IN ({keys}), {numbers})), "
+        "arrayMap(value -> assumeNotNull(value), arrayFilter(value -> isNotNull(value), "
+        f"arrayMap(value -> {text}, mapValues(mapFilter((key, value) -> key IN ({keys}), "
+        f"{attrs}))))))"
+    )
+
+
 def _reported_cost_sql() -> str:
     """Whether a span row's cost is a price its sender reported, a zero too. The cost
     column holds what the collector made of the report (adapter.go userCost: the
     total, else input plus output), and it must be a price.
 
     The collector's marker decides when the copy has one (converter.go trackCost).
-    A copy without one was reported when a cost key holds a number as the collector
-    reads it (adapter.go firstNumber: a number, or text with its whitespace trimmed),
-    and every such key is a price: a negative side summed into a zero is none."""
-    attrs, numbers = cols.ATTRS_STRING, cols.ATTRS_NUMBER
-    keys = ", ".join(f"'{key}'" for key in REPORTED_COST_KEYS)
-    text = f"toFloat64OrNull(trimBoth(value, '{_COST_TEXT_SPACE}'))"
-    values = (
-        f"arrayConcat(mapValues(mapFilter((key, value) -> key IN ({keys}), {numbers})), "
-        "arrayMap(value -> assumeNotNull(value), arrayFilter(value -> isNotNull(value), "
-        f"arrayMap(value -> {text}, mapValues(mapFilter((key, value) -> key IN ({keys}), "
-        f"{attrs}))))))"
-    )
+    A copy without one was reported when a cost key holds a number, and every such
+    key is a price: a negative side summed into a zero is none."""
+    values = _cost_values_sql()
     return (
         f"({_price_sql('cost')} AND multiIf("
         f"{_cost_kind_sql()} = 'provider_reported', true, "
@@ -257,7 +258,9 @@ def _reported_cost_sql() -> str:
 def run_usage_sql() -> str:
     """Each call's model calls: the models its LLM spans named, how many there were,
     what its LLM and embedding spans cost, and how many of those had no price. A span
-    counts for the call it names, else for the call its trace names, as in the list.
+    counts for the call it names, else for the call of its trace's earliest marked
+    span. The list names a trace's call from its rows, not its spans, so the two can
+    differ when a span's copies disagree on the call or on when the mark started.
 
     An agent with two exporters sends one span twice, and the table keeps the copies
     apart, by service name or by kind. They are counted and priced as the one span they
@@ -266,9 +269,15 @@ def run_usage_sql() -> str:
     alone."""
     attrs = cols.ATTRS_STRING
     reported = _reported_cost_sql()
-    # The collector's own estimate counts only when it is a price too, and not beside
-    # an unknown marker.
-    estimated = f"({_cost_kind_sql()} != 'unknown' AND {_price_sql('cost')})"
+    # The collector's own estimate: a price, on a copy it marked estimated, or on an
+    # unmarked copy whose cost keys hold no number. The collector prices from tokens
+    # only then, so a rejected report's sum is no estimate.
+    estimated = (
+        f"({_price_sql('cost')} AND multiIf("
+        f"{_cost_kind_sql()} = 'estimated', true, "
+        f"{_cost_kind_sql()} IN ('provider_reported', 'unknown'), false, "
+        f"empty({_cost_values_sql()})))"
+    )
     # The request model a copy names, else the model column, for an instrumentor that
     # names its model in another convention.
     model = f"if({cols.LLM_REQUEST_MODEL} != '', {cols.LLM_REQUEST_MODEL}, model)"
