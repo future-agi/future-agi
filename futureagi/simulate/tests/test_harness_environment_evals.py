@@ -1602,7 +1602,7 @@ def test_queue_eval_for_finished_calls_refuses_a_cancelled_run(environment):
     eval_config = add_selected_eval(run_test, "no_misselling", "voice")
 
     with pytest.raises(ValueError, match="does not grade a cancelled run"):
-        queue_eval_for_finished_calls(execution, eval_config)
+        queue_eval_for_finished_calls(execution, eval_config, keep_replaced=True)
 
     call.refresh_from_db()
     assert "eval_queued" not in call.call_metadata

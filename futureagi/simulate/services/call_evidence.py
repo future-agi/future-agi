@@ -227,6 +227,37 @@ class _Read:
         return messages
 
 
+# --- a configured eval's keys --------------------------------------------------
+
+# The kind each source of the eval table (``harness_evals``) is read as. There is one
+# table: a key is turned into a source there, and the source into a kind here.
+KIND_BY_SOURCE = {
+    "transcript": Kind.TRANSCRIPT,
+    "agent_prompt": Kind.AGENT_INSTRUCTIONS,
+    "scenario_columns.situation.value": Kind.SCENARIO,
+    "voice_recording": Kind.AUDIO,
+}
+# Keys only an ask fills, through this reader. They are not in the eval table,
+# because the graders of a run's own evals have no source for them, so today's
+# offer at run creation does not change.
+ASK_ONLY_KEYS = {
+    "tool_calls": Kind.TOOL_CALLS,
+    "world_changes": Kind.WORLD_CHANGES,
+    "world_state_end": Kind.WORLD_STATE_END,
+}
+
+
+def kind_for_key(key: str, modality: str) -> Kind | None:
+    """The kind a configured eval's key reads on a run of this modality, or None
+    where no kind fills it (such an eval is not offered for an ask)."""
+    from simulate.services.harness_evals import source_for_key
+
+    if key in ASK_ONLY_KEYS:
+        return ASK_ONLY_KEYS[key]
+    source = source_for_key(key, modality)
+    return None if source is None else KIND_BY_SOURCE.get(source)
+
+
 # --- the public calls ----------------------------------------------------------
 
 
