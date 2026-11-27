@@ -60,6 +60,7 @@ from simulate.tests.test_agent_fix_api import entitled as entitled
 from simulate.tests.test_agent_fix_services import (
     KEYS,
     _fix_run,
+    _locked_version,
     _receipts,
     _run,
 )
@@ -1008,6 +1009,55 @@ class TestAdvance:
         job.refresh_from_db()
         assert job.ending["code"] == "fix_targets_passed"
         assert job.fix_run_id is None
+
+    def test_a_baseline_failing_only_in_the_test_split_has_nothing_to_learn_from(
+        self, environment, issue, user
+    ):
+        job = self._measuring(
+            environment, issue, user, state="completed", held={"refunded": False}
+        )
+        _locked_version(job.baseline_run, test=KEYS)
+
+        assert jobs.advance_issue_job(str(job.id)) is True
+
+        job.refresh_from_db()
+        assert job.ending["code"] == "fix_targets_all_test"
+        assert job.fix_run_id is None
+
+    def test_one_failing_case_in_the_test_split_ends_the_job(
+        self, environment, issue, user
+    ):
+        job = self._measuring(
+            environment, issue, user, state="completed", held={"refunded": False}
+        )
+        _receipts(
+            job.baseline_run,
+            {KEYS[0]: {"refunded": False}, KEYS[1]: {"refunded": True}},
+        )
+        _locked_version(job.baseline_run, test=[KEYS[0]], train=[KEYS[1]])
+
+        assert jobs.advance_issue_job(str(job.id)) is True
+
+        job.refresh_from_db()
+        assert job.ending["code"] == "fix_targets_all_test"
+
+    def test_a_passing_test_split_case_is_not_protected(self, environment, issue, user):
+        job = self._measuring(
+            environment, issue, user, state="completed", held={"refunded": False}
+        )
+        _receipts(
+            job.baseline_run,
+            {KEYS[0]: {"refunded": False}, KEYS[1]: {"refunded": True}},
+        )
+        _locked_version(job.baseline_run, test=[KEYS[1]], train=[KEYS[0]])
+
+        with patch(
+            "simulate.services.agent_fix_issue.launch_fix_run",
+            side_effect=HostedHarnessError("stop", "Stop", status_code=422),
+        ) as launch:
+            jobs.advance_issue_job(str(job.id))
+
+        assert launch.call_args.kwargs["protected_scenario_keys"] == []
 
     def test_a_launch_that_keeps_failing_ends_on_the_job_s_clock(
         self, environment, issue, user

@@ -115,8 +115,10 @@ class AdminCheckTests(unittest.TestCase):
     def test_main_and_dev_both_trigger(self):
         self.assertIn("branches: [dev, main]", text())
 
-    def test_main_keeps_the_admin_rule_in_devflow_mode(self):
-        self.assertIn("vars.APPROVAL_MODE != 'devflow' || github.event.pull_request.base.ref == 'main'", job("admin"))
+    def test_the_admin_rule_runs_in_every_mode(self):
+        # Devflow mode switched it off on dev once, and the devflow job then
+        # withdrew every queued admin approval.
+        self.assertNotIn("APPROVAL_MODE", job("admin"))
         self.assertIn("github.event.pull_request.base.ref == 'dev'", job("devflow"))
 
     def test_a_non_admin_author_or_sender_does_not(self):
