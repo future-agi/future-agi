@@ -103,6 +103,7 @@ function SourceReviewEditor({
   stale,
   actionsEl,
   inlineActions,
+  onShown,
 }) {
   const { id, state, revision, draft_digest: digest, preview, scope } = review;
   // A page with its own header shows Cancel and Approve there, not at the foot.
@@ -526,17 +527,22 @@ function SourceReviewEditor({
         spacing={2}
         sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}
       >
-        {groups.map(({ group, items: inGroup }, index) => (
-          <Collapse key={group} in appear timeout={timeout}>
-            <ProposalGroupHeading
-              group={group}
-              count={inGroup.length}
-              first={index === 0}
-              inset={0}
-            />
-            {inGroup.map(renderItem)}
+        {groups.length > 0 && (
+          // onShown runs once the body has slid fully open, so its full height is there.
+          <Collapse in appear timeout={timeout} onEntered={onShown}>
+            {groups.map(({ group, items: inGroup }, index) => (
+              <Box key={group}>
+                <ProposalGroupHeading
+                  group={group}
+                  count={inGroup.length}
+                  first={index === 0}
+                  inset={0}
+                />
+                {inGroup.map(renderItem)}
+              </Box>
+            ))}
           </Collapse>
-        ))}
+        )}
         {tables.length > 0 && (
           <TextField
             select
@@ -753,6 +759,8 @@ SourceReviewEditor.propTypes = {
   actionsEl: PropTypes.object,
   // In a chat card the footer follows the review instead of sticking to the scroll box.
   inlineActions: PropTypes.bool,
+  // Called once the review's body has drawn in full.
+  onShown: PropTypes.func,
   defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
 };
 
@@ -831,4 +839,5 @@ SourceReviewPanel.propTypes = {
   onDismiss: PropTypes.func,
   actionsEl: PropTypes.object,
   inlineActions: PropTypes.bool,
+  onShown: PropTypes.func,
 };

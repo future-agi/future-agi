@@ -3,6 +3,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useReducer,
   useRef,
   useState,
@@ -154,6 +155,7 @@ export default function BuilderConsole({
   canChooseFilePurpose = false,
   onCollapse,
   collapseRef,
+  scrollRef,
   active = true,
 }) {
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
@@ -193,13 +195,8 @@ export default function BuilderConsole({
     count: turns?.length ?? 0,
     older: starts.find((turn) => turn.id === "older-messages"),
     onFound: (target) => {
-      const list = listRef.current;
       setFollowing(false);
-      reader.startOwnScroll();
-      list.scrollTo?.({
-        top: target.offsetTop - list.offsetTop,
-        behavior: "smooth",
-      });
+      scrollToNode(target);
     },
     onLatest: () => {
       setFollowing(true);
@@ -207,6 +204,32 @@ export default function BuilderConsole({
     },
   });
   const { startOwnScroll } = reader;
+  // Puts a message's top at the top of the list.
+  const scrollToNode = useCallback(
+    (target) => {
+      const list = listRef.current;
+      startOwnScroll();
+      list?.scrollTo?.({
+        top: target.offsetTop - list.offsetTop,
+        behavior: "smooth",
+      });
+    },
+    [startOwnScroll],
+  );
+  // A card in the chat shows itself once it has drawn; the list keeps following
+  // the latest, since the person didn't scroll away.
+  useImperativeHandle(
+    scrollRef,
+    () => ({
+      show: (messageId) => {
+        const target = listRef.current?.querySelector(
+          `[data-message-id="${CSS.escape(messageId)}"]`,
+        );
+        if (active && target) scrollToNode(target);
+      },
+    }),
+    [active, scrollToNode],
+  );
   const scrollToLatest = useCallback(() => {
     startOwnScroll();
     // Scroll only the message list. scrollIntoView would also scroll every
@@ -806,5 +829,7 @@ BuilderConsole.propTypes = {
     PropTypes.func,
     PropTypes.shape({ current: PropTypes.any }),
   ]),
+  // Gets `show(messageId)`, which scrolls that message's top into view.
+  scrollRef: PropTypes.shape({ current: PropTypes.any }),
   active: PropTypes.bool,
 };
