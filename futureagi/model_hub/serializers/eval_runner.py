@@ -163,7 +163,9 @@ class UserEvalSerializer(serializers.Serializer):
     config = serializers.JSONField()
     kb_id = serializers.UUIDField(required=False)
     error_localizer = serializers.BooleanField(default=False)
-    model = serializers.CharField(max_length=100, required=False)
+    # Blank is valid: code evals have no judge model, and the eval picker sends
+    # "" when no model applies (as UserEvalMutationRequestSerializer allows).
+    model = serializers.CharField(max_length=100, required=False, allow_blank=True)
     # Per-binding weight overrides for composite evals. Ignored for
     # single-template metrics. Shape: `{"<child_template_id>": <weight>}`.
     composite_weight_overrides = serializers.JSONField(
