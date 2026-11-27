@@ -29,7 +29,8 @@ name: Admin PR approval
 #   decides by the assigned reviewer's devflow verdict and tier. A review
 #   starts no base-controlled run, so the reviewer tool re-adds
 #   devflow:reviewed, and devflow-approval-sweep.yml re-decides every ten
-#   minutes.
+#   minutes. The admin rule keeps approving in every mode, and the devflow
+#   job never withdraws the admin rule's approval on an admin's pull request.
 on:
   pull_request_target:
     types:
@@ -53,7 +54,6 @@ jobs:
     # The admin rule's own four events: a label or an edit by an admin must
     # not approve a non-admin's push.
     if: >-
-      (vars.APPROVAL_MODE != 'devflow' || github.event.pull_request.base.ref == 'main') &&
       contains(fromJSON('["opened", "reopened", "synchronize", "ready_for_review"]'), github.event.action) &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft
