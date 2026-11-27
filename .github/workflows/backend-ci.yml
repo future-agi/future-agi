@@ -1107,7 +1107,11 @@ jobs:
     # that job's script through to the end of this file.
     name: Record the tested merge candidate
     needs: [changes, backend-tests]
-    if: ${{ github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
+    # !cancelled(): without a status check the implicit success() also needs
+    # every job upstream of backend-tests to succeed, and the pin check and
+    # other selected-out jobs are skipped, so the receipt was never recorded
+    # (run 45819635797: suites passed, receipt skipped).
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
