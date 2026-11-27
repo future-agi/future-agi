@@ -11035,6 +11035,8 @@ export interface DatasetTableResultApi {
   synthetic_dataset?: boolean;
   synthetic_dataset_percentage?: number;
   synthetic_regenerate?: boolean;
+  /** @minLength 1 */
+  failure_reason?: string;
   is_processing_data?: boolean;
 }
 
