@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1230,
+  endpointCount: 1234,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -40,7 +40,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/accounts/keys/": ["get"],
       "/accounts/logout/": ["post"],
       "/accounts/me/timezone/": ["post"],
-      "/accounts/notifications/snooze/": ["get"],
+      "/accounts/notifications/email/unsubscribe/": ["get", "post"],
+      "/accounts/notifications/snooze/": ["get", "post"],
       "/accounts/notifications/unsubscribe/": ["get"],
       "/accounts/onboarding/": ["get", "post"],
       "/accounts/organization/2fa-policy/": ["get", "put"],
@@ -1006,8 +1007,11 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/":
         ["get"],
+      "/simulate/api/harness-environments/{id}/versions/lock-preview/": ["get"],
+      "/simulate/api/harness-environments/{id}/versions/lock/": ["post"],
       "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
         ["get"],
+      "/simulate/api/harness-environments/{id}/versions/unlock/": ["post"],
       "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
         ["post"],
       "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":
@@ -1594,7 +1598,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/accounts/keys/": ["get"],
   "/accounts/logout/": ["post"],
   "/accounts/me/timezone/": ["post"],
-  "/accounts/notifications/snooze/": ["get"],
+  "/accounts/notifications/email/unsubscribe/": ["get", "post"],
+  "/accounts/notifications/snooze/": ["get", "post"],
   "/accounts/notifications/unsubscribe/": ["get"],
   "/accounts/onboarding/": ["get", "post"],
   "/accounts/organization/2fa-policy/": ["get", "put"],
@@ -2502,8 +2507,11 @@ export const API_SURFACE_PATHS = Object.freeze({
     ["post"],
   "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/":
     ["get"],
+  "/simulate/api/harness-environments/{id}/versions/lock-preview/": ["get"],
+  "/simulate/api/harness-environments/{id}/versions/lock/": ["post"],
   "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
     ["get"],
+  "/simulate/api/harness-environments/{id}/versions/unlock/": ["post"],
   "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
     ["post"],
   "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":

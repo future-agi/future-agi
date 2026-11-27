@@ -15,7 +15,7 @@ import { seedEnvironment } from '../../lib/environment-seed';
 // Deliberate failures, one run per check; each run must fail on that check and no earlier one:
 // 1. paste the fixed transcript the first time: the import is answered 201, not 400.
 // 2. after the import lands, add the same transcript once more: two POSTs are sent.
-// 3. tick "These transcripts come from production": the row is declared production.
+// 3. tick "From production": the row is declared production.
 // 4. look for the minted ask in the stored text instead of the email: the ask is stored,
 //    which proves the probe reads the stored columns.
 // 5. paste the fixed transcript without the email: check 4 still holds (no email, the ask
@@ -31,7 +31,7 @@ const UI_READY = 60_000;
 const ADD_SCENARIOS = 'Add scenarios';
 const UPLOAD_SOURCE = /^Upload transcript or file/;
 // Copy, pinned from frontend/src/sections/simulate/environments/evidence/evidence.constants.js.
-const DIALOG_BODY = /Paste a transcript or upload files/;
+const DIALOG_BODY = /Paste one transcript, or add files/;
 const CREATE = 'Create environment test';
 const NOT_PRODUCTION = /Not marked as production, so these become tests, not regression tests/;
 const NOT_EXACT_REPLAY = /the test is not an exact replay/;

@@ -2377,46 +2377,30 @@
             },
             "parameters": []
         },
-        "/accounts/notifications/snooze/": {
+        "/accounts/notifications/email/unsubscribe/": {
             "get": {
-                "operationId": "accounts_notifications_snooze_list",
-                "description": "Snooze the realtime track for N days (default 7). Daily still fires.",
-                "parameters": [],
+                "operationId": "accounts_notifications_email_unsubscribe_list",
+                "description": "Per-category unsubscribe for notification emails. Token is signed.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML snooze result",
+                        "description": "HTML unsubscribe confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2426,52 +2410,201 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "accounts_notifications_email_unsubscribe_create",
+                "description": "Per-category unsubscribe for notification emails. Token is signed.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmailUnsubscribeRequest"
+                        }
+                    },
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML unsubscribe result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/accounts/notifications/snooze/": {
+            "get": {
+                "operationId": "accounts_notifications_snooze_list",
+                "description": "Snooze the realtime track for N days (default 7). Daily still fires.\nGET asks first, because link scanners prefetch URLs; POST snoozes.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "description": "Days to pause realtime digests, 1 to 30 (default 7).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML snooze confirmation page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "accounts_notifications_snooze_create",
+                "description": "Snooze the realtime track for N days (default 7). Daily still fires.\nGET asks first, because link scanners prefetch URLs; POST snoozes.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SnoozeRequest"
+                        }
+                    },
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "description": "Days to pause realtime digests, 1 to 30 (default 7).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML snooze result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
         "/accounts/notifications/unsubscribe/": {
             "get": {
                 "operationId": "accounts_notifications_unsubscribe_list",
-                "description": "One-click unsubscribe from both digest tracks. Token is HMAC-signed.",
-                "parameters": [],
+                "description": "Digest unsubscribe link from older emails. Token is HMAC-signed.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML unsubscribe result",
+                        "description": "HTML unsubscribe confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2481,9 +2614,15 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -53614,6 +53753,12 @@
                     "204": {
                         "description": "Deleted"
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -56320,6 +56465,100 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/versions/lock-preview/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_versions_lock_preview",
+                "description": "Whether the default environment and suite versions can be locked now, why\nnot, and the train and test splits a lock would give. It plans as the lock does,\nso it reads the default run's environment contract and scenario documents by\ndesign, and the agent version's facts its bundle key needs, never its\ncredential blob; the versions list stays off them.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockPreview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/versions/lock/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_versions_lock_version",
+                "description": "Lock the default environment and suite versions with train and test splits;\nreturns every version and the locked-version history: every locked one plus\nthe newest unlocked ones.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockVersion"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVersions"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_versions_suite_suite_members",
@@ -56356,6 +56595,55 @@
                 },
                 {
                     "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/versions/unlock/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_versions_unlock_version",
+                "description": "Unlock a locked version, as a workspace admin or owner. Its versions, splits and\nscores stay; returns every version and the locked-version history: every\nlocked one plus the newest unlocked ones.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUnlockVersion"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUnlockForbidden"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVersions"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -92746,6 +93034,31 @@
                     "title": "Timezone",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "EmailUnsubscribeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "unsubscribe",
+                        "resubscribe"
+                    ]
+                }
+            }
+        },
+        "SnoozeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "snooze"
+                    ]
                 }
             }
         },
@@ -146443,6 +146756,28 @@
             },
             "x-nullable": true
         },
+        "AgentFixShipReadiness": {
+            "required": [
+                "path",
+                "blocked"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "description": "pull_request for a GitHub agent; make_default for an uploaded one.",
+                    "type": "string",
+                    "enum": [
+                        "pull_request",
+                        "make_default"
+                    ]
+                },
+                "blocked": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                }
+            },
+            "x-nullable": true
+        },
         "AgentFixIssuePlan": {
             "required": [
                 "issue",
@@ -146451,7 +146786,8 @@
                 "sample",
                 "open_job_id",
                 "issue_scenarios",
-                "defaults"
+                "defaults",
+                "ship"
             ],
             "type": "object",
             "properties": {
@@ -146478,6 +146814,9 @@
                 },
                 "defaults": {
                     "$ref": "#/definitions/AgentFixIssueDefaults"
+                },
+                "ship": {
+                    "$ref": "#/definitions/AgentFixShipReadiness"
                 }
             }
         },
@@ -147501,6 +147840,34 @@
                 }
             }
         },
+        "AgentFixLaunchBlocked": {
+            "required": [
+                "code",
+                "message",
+                "cluster_id"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cluster_id": {
+                    "title": "Cluster id",
+                    "description": "For issue_epoch_measuring, the issue whose epoch is starting in the environment; its page shows it. Null otherwise.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "AgentFixLaunchOptions": {
             "required": [
                 "source_run",
@@ -147512,7 +147879,9 @@
                 "defaults",
                 "limits",
                 "blocked",
-                "variations_blocked"
+                "variations_blocked",
+                "held_back_scenario_keys",
+                "ship"
             ],
             "type": "object",
             "properties": {
@@ -147547,10 +147916,133 @@
                     "$ref": "#/definitions/AgentFixLaunchLimits"
                 },
                 "blocked": {
-                    "$ref": "#/definitions/AgentFixFailure"
+                    "$ref": "#/definitions/AgentFixLaunchBlocked"
                 },
                 "variations_blocked": {
                     "$ref": "#/definitions/AgentFixFailure"
+                },
+                "held_back_scenario_keys": {
+                    "description": "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "ship": {
+                    "$ref": "#/definitions/AgentFixShipReadiness"
+                }
+            }
+        },
+        "AgentFixCandidateWording": {
+            "required": [
+                "headline",
+                "must_pass",
+                "must_pass_broken",
+                "changes",
+                "caveats"
+            ],
+            "type": "object",
+            "properties": {
+                "headline": {
+                    "title": "Headline",
+                    "type": "string"
+                },
+                "must_pass": {
+                    "title": "Must pass",
+                    "type": "string"
+                },
+                "must_pass_broken": {
+                    "title": "Must pass broken",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "changes": {
+                    "title": "Changes",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "caveats": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AgentFixCandidateDetail": {
+            "required": [
+                "attempt",
+                "agent_version_id",
+                "version_number",
+                "verdict",
+                "pull_request_url"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "attempt": {
+                    "title": "Attempt",
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": 0
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer"
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "rejected",
+                        "finalist",
+                        "winner"
+                    ]
+                },
+                "verdict": {
+                    "$ref": "#/definitions/AgentFixVerdict"
+                },
+                "check_runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixCheckRun"
+                    },
+                    "readOnly": true
+                },
+                "override": {
+                    "$ref": "#/definitions/AgentFixOverride"
+                },
+                "pull_request_url": {
+                    "title": "Pull request url",
+                    "type": "string"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "wording": {
+                    "$ref": "#/definitions/AgentFixCandidateWording"
                 }
             }
         },
@@ -147738,7 +148230,7 @@
                 "candidates": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/AgentFixCandidate"
+                        "$ref": "#/definitions/AgentFixCandidateDetail"
                     }
                 },
                 "started_at": {
@@ -147775,6 +148267,23 @@
                         "done",
                         "incomplete"
                     ],
+                    "readOnly": true
+                },
+                "flaky_protected_text": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "scenario_names": {
+                    "title": "Scenario names",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    },
                     "readOnly": true
                 }
             }
@@ -150934,7 +151443,8 @@
                 "last_updated",
                 "created_at",
                 "agent",
-                "last_run"
+                "last_run",
+                "epoch_pickable"
             ],
             "type": "object",
             "properties": {
@@ -151037,6 +151547,11 @@
                 },
                 "last_run": {
                     "$ref": "#/definitions/HarnessRunSummary"
+                },
+                "epoch_pickable": {
+                    "title": "Epoch pickable",
+                    "description": "Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing.",
+                    "type": "boolean"
                 }
             }
         },
@@ -153285,6 +153800,74 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
+                }
+            }
+        },
+        "HarnessLockRefusal": {
+            "required": [
+                "error",
+                "message",
+                "retryable"
+            ],
+            "type": "object",
+            "properties": {
+                "error": {
+                    "title": "Error",
+                    "description": "lock_not_ready, version_already_locked, lock_too_few_test, lock_too_few_train, version_locked, version_conflict or rebuild_running.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
+                },
+                "piece": {
+                    "title": "Piece",
+                    "description": "version_conflict: the piece whose default moved.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "train": {
+                    "title": "Train",
+                    "description": "lock_too_few_*: the train tasks a lock gives.",
+                    "type": "integer"
+                },
+                "test": {
+                    "title": "Test",
+                    "description": "lock_too_few_*: the test tasks a lock gives.",
+                    "type": "integer"
+                },
+                "locked_version_id": {
+                    "title": "Locked version id",
+                    "description": "version_locked: the locked version to unlock first.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "description": "version_locked: that locked version's label.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment_label": {
+                    "title": "Environment label",
+                    "description": "version_locked: its environment version's label.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "suite_label": {
+                    "title": "Suite label",
+                    "description": "version_locked: its suite version's label.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -158053,11 +158636,88 @@
                 }
             }
         },
+        "HarnessLockedVersion": {
+            "required": [
+                "id",
+                "label",
+                "environment_version_id",
+                "environment_label",
+                "suite_version_id",
+                "suite_label",
+                "locked_at",
+                "locked_by",
+                "unlocked_at",
+                "unlocked_by",
+                "train",
+                "test"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "environment_label": {
+                    "title": "Environment label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "suite_label": {
+                    "title": "Suite label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "locked_at": {
+                    "title": "Locked at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "locked_by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "unlocked_at": {
+                    "title": "Unlocked at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "unlocked_by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "train": {
+                    "title": "Train",
+                    "type": "integer"
+                },
+                "test": {
+                    "title": "Test",
+                    "type": "integer"
+                }
+            }
+        },
         "HarnessVersions": {
             "required": [
                 "agent",
                 "environment",
-                "suite"
+                "suite",
+                "locked_versions"
             ],
             "type": "object",
             "properties": {
@@ -158077,6 +158737,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessVersion"
+                    }
+                },
+                "locked_versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessLockedVersion"
                     }
                 }
             }
@@ -161329,6 +161995,102 @@
                 }
             }
         },
+        "HarnessRefusal": {
+            "required": [
+                "code",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessLockPreview": {
+            "required": [
+                "environment_version_id",
+                "suite_version_id",
+                "proved",
+                "can_lock",
+                "refusal",
+                "train",
+                "test",
+                "test_target"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "proved": {
+                    "title": "Proved",
+                    "description": "The suite version passed its proofs against this environment version.",
+                    "type": "boolean"
+                },
+                "can_lock": {
+                    "title": "Can lock",
+                    "type": "boolean"
+                },
+                "refusal": {
+                    "$ref": "#/definitions/HarnessRefusal"
+                },
+                "train": {
+                    "title": "Train",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "test": {
+                    "title": "Test",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "test_target": {
+                    "title": "Test target",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessLockVersion": {
+            "required": [
+                "environment_version_id",
+                "suite_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "description": "The default environment version the caller saw.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "description": "The default suite version the caller saw.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "additionalProperties": false
+        },
         "HarnessSuiteMember": {
             "required": [
                 "scenario_key",
@@ -161368,6 +162130,102 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                }
+            }
+        },
+        "HarnessUnlockVersion": {
+            "required": [
+                "locked_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "locked_version_id": {
+                    "title": "Locked version id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "additionalProperties": false
+        },
+        "HarnessUnlockForbidden": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "enum": [
+                        "viewer_read_only"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string"
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
                 }
             }
         },
@@ -178243,6 +179101,7 @@
                 "completed_at",
                 "ordinal",
                 "agent_version",
+                "connected_calls",
                 "agent_type",
                 "resume",
                 "summary"
@@ -178334,6 +179193,11 @@
                     "type": "integer",
                     "default": 1,
                     "minimum": 1
+                },
+                "connected_calls": {
+                    "title": "Connected calls",
+                    "description": "Calls that connected: a chat that completed, a voice call that ran for any time. Debug failures needs enough of them.",
+                    "type": "integer"
                 },
                 "seed": {
                     "title": "Seed",

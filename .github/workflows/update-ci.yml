@@ -466,7 +466,7 @@ jobs:
           command -v crontab
           dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-tools.XXXXXX")"
           plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
-          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          [[ -n $plugin && -f $plugin && -x $plugin ]] || exit 1
           ln -s "$plugin" "$dir/docker-compose"
           echo "$dir" >> "$GITHUB_PATH"
       - name: Ephemeral runner-only Docker Hub mirror and real RepoDigest probe
@@ -645,7 +645,7 @@ jobs:
           command -v crontab
           dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-tools.XXXXXX")"
           plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
-          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          [[ -n $plugin && -f $plugin && -x $plugin ]] || exit 1
           ln -s "$plugin" "$dir/docker-compose"
           echo "$dir" >> "$GITHUB_PATH"
       - uses: docker/setup-buildx-action@v3
@@ -754,7 +754,7 @@ jobs:
           docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
           dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-backup-tools.XXXXXX")"
           plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
-          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          [[ -n $plugin && -f $plugin && -x $plugin ]] || exit 1
           ln -s "$plugin" "$dir/docker-compose"
           echo "$dir" >> "$GITHUB_PATH"
       - name: Execute actual opted-in vendor tests serially, not a skipped discovery

@@ -167,35 +167,35 @@ function Checks({ tiers }) {
 }
 Checks.propTypes = { tiers: PropTypes.array.isRequired };
 
-function MustPassBreaks({ verdict }) {
-  const counted = verdict.must_pass_regressions || [];
-  const noise = verdict.must_pass_within_noise || [];
-  if (!counted.length && !noise.length) return null;
+// What a reviewer must know before trusting the winner, in the server's words:
+// the pull request lists the same sentences.
+function Caveats({ caveats }) {
+  if (!caveats.length) return null;
   return (
     <Box
-      data-testid="must-pass-breaks"
+      data-testid="verdict-caveats"
       sx={{ px: 2, py: 0.75, borderTop: "1px solid", borderColor: "divider" }}
     >
-      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-        Must-pass breaks
-      </Typography>
-      {counted.map((key) => (
-        <Typography key={key} sx={{ typography: "s2", color: BUILD_TONES.red }}>
-          {key}
-        </Typography>
-      ))}
-      {noise.map((key) => (
-        <Typography
-          key={key}
-          sx={{ typography: "s2", color: "text.secondary" }}
-        >
-          {`${key} · within normal noise, not counted`}
-        </Typography>
+      {caveats.map((caveat) => (
+        <Stack key={caveat} direction="row" spacing={1} alignItems="baseline">
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            width={14}
+            sx={{
+              color: BUILD_TONES.amber,
+              flexShrink: 0,
+              alignSelf: "center",
+            }}
+          />
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            {caveat}
+          </Typography>
+        </Stack>
       ))}
     </Box>
   );
 }
-MustPassBreaks.propTypes = { verdict: PropTypes.object.isRequired };
+Caveats.propTypes = { caveats: PropTypes.arrayOf(PropTypes.string).isRequired };
 
 // Platform evals the winner scores worse on than the base version. They are
 // shown, never counted: the verdict stands on the scenarios' own checks.
@@ -284,7 +284,7 @@ HeldBackTally.propTypes = {
 };
 
 // The design's verdict block: the headline, the cards side by side, the checks
-// on one line, then any must-pass breaks.
+// on one line, then its caveats.
 export default function FixVerdict({ fix }) {
   const winner = winnerOf(fix);
   const text = headline(fix);
@@ -375,11 +375,11 @@ export default function FixVerdict({ fix }) {
             winner.verdict.tiers,
             fix.request,
             winner.verdict,
-            fix.plan,
+            winner.wording,
           )}
         />
       )}
-      <MustPassBreaks verdict={winner.verdict} />
+      <Caveats caveats={winner.wording?.caveats || []} />
       {fix.eval_warnings?.length > 0 && (
         <EvalWarnings warnings={fix.eval_warnings} />
       )}
