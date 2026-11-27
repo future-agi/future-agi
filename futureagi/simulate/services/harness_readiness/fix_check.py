@@ -63,8 +63,10 @@ _UNANSWERED = "The builder chat's question went unanswered; answer it, then fix 
 
 def check(environment_id: Any) -> None:
     """Move the environment's fix along (see the module); failing for
-    ``CHECK_FAILING_GIVE_UP`` ends the run. Nothing while Fix is switched off."""
+    ``CHECK_FAILING_GIVE_UP`` ends the run. While Fix is switched off the run is
+    ended instead."""
     if not fix_groups.enabled():
+        _close_disabled(environment_id)
         return
     run = fix_runs.active_run(environment_id)
     if run is None:
@@ -76,6 +78,13 @@ def check(environment_id: Any) -> None:
         _record_failure(run)
     else:
         _clear_failure(run)
+
+
+def _close_disabled(environment_id: Any) -> None:
+    with transaction.atomic():
+        head = nudges._head(environment_id, lock=True)
+        if head is not None:
+            fix_runs.close_disabled(head)
 
 
 def _record_failure(run: ReadinessFixRun) -> None:
@@ -394,17 +403,19 @@ def _hand_off(run: ReadinessFixRun) -> None:
 
 def tick(*, limit: int = 200) -> int:
     """A check per environment with an active run, least recently ticked first and
-    one organization at a time. Nothing while Fix is switched off."""
+    one organization at a time. While Fix is switched off each is ended instead."""
     from simulate.tasks import harness_nudges as tasks
 
-    if not fix_groups.enabled():
-        return 0
     environments = rebuild._fair(
         ReadinessFixRun.no_workspace_objects.filter(state__in=ACTIVE)
         .order_by("updated_at")
         .values_list("organization_id", "job_id"),
         limit,
     )
+    if not fix_groups.enabled():
+        for environment_id in environments:
+            _close_disabled(environment_id)
+        return len(environments)
     ReadinessFixRun.no_workspace_objects.filter(
         job_id__in=environments, state__in=ACTIVE
     ).update(updated_at=timezone.now())

@@ -771,6 +771,38 @@ class TestTurnEvents:
         assert retired == [str(environment.id)]
         assert _lease_expired(conversation)
 
+    def test_an_answer_s_write_after_fix_was_switched_off_is_dropped(
+        self,
+        user,
+        workspace,
+        storage,
+        tasks,
+        settings,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-answer-off"
+        )
+        _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            _started(message),
+            _asked(),
+        )
+        reply = _answer(environment, _question_id(conversation))
+        key, digest = _checkpoint(environment, conversation, reply, storage)
+        _feed(conversation, django_capture_on_commit_callbacks, _started(reply))
+        refs = drafts.draft_refs(environment)
+        settings.HARNESS_READINESS_FIX_ENABLED = False
+
+        with _retires() as retired:
+            _promote(
+                conversation, reply, key, digest, django_capture_on_commit_callbacks
+            )
+
+        assert drafts.draft_refs(environment) == refs
+        assert retired == [str(environment.id)]
+
     def test_an_answer_sent_after_its_command_ended_is_the_persons_write(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
     ):
@@ -1122,18 +1154,66 @@ class TestGuards:
             rebuild.answer_rebuild(environment, nudge.id, user=user)
         assert refused.value.code == "fix_running"
 
-        # Switched off, a leftover run holds nothing and is left alone.
+        # Switched off, a leftover run holds nothing: each guard ends it instead.
         settings.HARNESS_READINESS_FIX_ENABLED = False
         current = environment.environment_version_id
         move_default(environment, "environment", current, expected_default_id=current)
-        fix_runs.require_no_fix_waiting(environment)
-        _run(environment).__class__.no_workspace_objects.filter(job=environment).update(
+        assert (_run(environment).state, _run(environment).error["code"]) == (
+            "stopped",
+            "feature_disabled",
+        )
+        ReadinessFixRun.no_workspace_objects.filter(job=environment).update(
             state="waiting_on_you"
         )
         fix_runs.require_no_fix_waiting(environment)
+        assert _run(environment).state == "stopped"
         assert fix_check.tick() == 0
-        fix_check.check(environment.id)
-        assert _run(environment).state == "waiting_on_you"
+
+    def test_switching_fix_off_ends_its_run_and_nothing_resumes_when_it_is_back(
+        self,
+        user,
+        workspace,
+        storage,
+        tasks,
+        settings,
+        django_capture_on_commit_callbacks,
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-switched-off"
+        )
+        key, digest = _checkpoint(environment, conversation, message, storage)
+        _feed(conversation, django_capture_on_commit_callbacks, _started(message))
+        refs = drafts.draft_refs(environment)
+        settings.HARNESS_READINESS_FIX_ENABLED = False
+
+        # The fix's checkpoint lands while Fix is off: dropped, its sandbox given up.
+        with _retires() as retired:
+            _promote(
+                conversation, message, key, digest, django_capture_on_commit_callbacks
+            )
+        assert drafts.draft_refs(environment) == refs
+        assert retired == [str(environment.id)]
+
+        # The tick ends the run for good.
+        with django_capture_on_commit_callbacks(execute=True):
+            assert fix_check.tick() == 1
+        run.refresh_from_db()
+        assert (run.state, run.error["code"]) == ("stopped", "feature_disabled")
+        assert run.lines[0]["state"] == "could_not_fix"
+        message.refresh_from_db()
+        assert message.state == "failed"
+
+        # Switched back on: the old run neither resumes nor saves anything.
+        settings.HARNESS_READINESS_FIX_ENABLED = True
+        with django_capture_on_commit_callbacks(execute=True):
+            assert fix_check.tick() == 0
+            fix_check.check(environment.id)
+            _promote(
+                conversation, message, key, digest, django_capture_on_commit_callbacks
+            )
+        run.refresh_from_db()
+        assert run.state == "stopped"
+        assert drafts.draft_refs(environment) == refs
 
     def test_deleting_the_environment_stops_its_fix(
         self,
@@ -1693,8 +1773,10 @@ class TestSwitchedOff:
             )
             assert fix_driver.last_settled_at(environment.id) is None
             assert fix_driver.run_for_command(reply) is None
-            assert fix_driver.draft_command(reply) == ("", {})
             fix_driver.on_published((run, run.commands[0]), None, wrote=False)
+        # A save still looks for the fix an answer belongs to: none here, so it keeps.
+        with django_assert_num_queries(1):
+            assert fix_driver.draft_command(reply) == ("", {})
 
         assert _run(environment).commands[0]["state"] == "dispatched"
 

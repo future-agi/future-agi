@@ -679,11 +679,11 @@ def on_publish_refused(
 
 
 def _answered_command(
-    command: Message,
+    command: Message, *, any_time: bool = False
 ) -> tuple[ReadinessFixRun, FixCommand] | None:
     """The run (locked) and command whose question ``command`` answers, within its
-    head; no query for other messages or while Fix is off."""
-    if not command.reply_to or not fix_groups.enabled():
+    head; no query for other messages, or while Fix is off unless ``any_time``."""
+    if not command.reply_to or not (any_time or fix_groups.enabled()):
         return None
     question = str(command.reply_to)
     run = (
@@ -720,7 +720,7 @@ def draft_command(command: Message | None) -> tuple[str, dict[str, Any]] | None:
         cmd = fix_runs.command(run, payload.get("_fix_command")) if run else None
         own = cmd is not None and str(cmd["message_id"]) == str(command.id)
     else:
-        fix = _answered_command(command)
+        fix = _answered_command(command, any_time=True)
         if fix is None:
             return "", {}
         run, cmd = fix
@@ -734,6 +734,7 @@ def draft_command(command: Message | None) -> tuple[str, dict[str, Any]] | None:
         and own
         and run.state in ACTIVE
         and cmd["state"] == "dispatched"
+        and fix_groups.enabled()
     ):
         return "", {}
     logger.info("harness_fix_late_write", message=str(command.id))

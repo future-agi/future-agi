@@ -230,16 +230,19 @@ def require_no_active_fix(
     message: str = "A fix is running; run the update when it finishes",
 ) -> None:
     """Refuse a rebuild or a default move while a fix runs; call under the head
-    lock. Nothing is held while Fix is switched off."""
+    lock. While Fix is switched off its run is ended instead, so it never resumes."""
     if not fix_groups.enabled():
+        close_disabled(locked)
         return
     if _runs(locked.id).filter(state__in=states).exists():
         raise version_error("fix_running", message, 409)
 
 
 def require_no_fix_waiting(locked: HostedHarnessJob) -> None:
-    """Refuse a manual Save while a fix waits on the user's answer in chat."""
+    """Refuse a manual Save while a fix waits on the user's answer in chat; while Fix
+    is switched off its run is ended instead."""
     if not fix_groups.enabled():
+        close_disabled(locked)
         return
     if not _runs(locked.id).filter(state=State.WAITING_ON_YOU).exists():
         return
@@ -1030,6 +1033,18 @@ def close_active(
     run.error = {"code": code, "message": message}
     run.finished_at = timezone.now()
     store(run, before)
+
+
+def close_disabled(locked: HostedHarnessJob) -> None:
+    """Fix is switched off: end the environment's active run for good (its command in
+    flight fails and its sandbox is given up), so turning Fix on again resumes nothing.
+    Call under the head lock."""
+    close_active(
+        locked,
+        state=State.STOPPED,
+        code="feature_disabled",
+        message="Fix was switched off; fix again",
+    )
 
 
 def end_without_save(
