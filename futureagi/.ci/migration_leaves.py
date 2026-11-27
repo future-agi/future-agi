@@ -47,7 +47,7 @@ def app_label(app_dir):
     if apps.is_file():
         try:
             tree = ast.parse(apps.read_text(encoding="utf-8"))
-        except (SyntaxError, ValueError, OSError) as error:
+        except (SyntaxError, ValueError, OSError, RecursionError) as error:
             raise NoVerdict(
                 f"{apps} cannot be read ({error.__class__.__name__})"
             ) from error
@@ -75,7 +75,7 @@ def own_parents(path, label):
     """The migrations of this app that the migration file at `path` names in `dependencies`."""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
-    except (SyntaxError, ValueError, OSError) as error:
+    except (SyntaxError, ValueError, OSError, RecursionError) as error:
         raise NoVerdict(
             f"{path} cannot be read ({error.__class__.__name__})"
         ) from error
