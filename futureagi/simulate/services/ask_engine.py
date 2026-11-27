@@ -60,8 +60,10 @@ from simulate.services.call_evidence import (
     CallNotInWorkspace,
     Kind,
     State,
+    kind_for_key,
     read_call_evidence,
 )
+from tfc.ee_gates import agent_criteria_read_context, agent_message_too_large
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.evaluation_denials import EvaluationDenied
 
@@ -147,6 +149,13 @@ class Definition:
     labels: tuple[str, ...]
     inputs: tuple[tuple[str, Kind], ...]
     descriptions: Mapping[str, str] = field(default_factory=dict)
+    # A configured eval: the template it runs on, and its own criteria before any
+    # block was added. A typed question has neither; its template is saved at launch.
+    eval_template_id: str | None = None
+    own_criteria: str | None = None
+    # The run's modality a configured eval's keys were read for, so the launch can
+    # offer it again on what the library holds then.
+    modality: str | None = None
 
     @property
     def kinds(self) -> tuple[Kind, ...]:
@@ -155,6 +164,16 @@ class Definition:
     @property
     def decision_model(self) -> str:
         return self.model
+
+    @property
+    def priced_by_use(self) -> bool:
+        # A configured eval runs on a platform model, billed on what it uses.
+        return self.eval_template_id is not None
+
+    def as_question(self) -> Question:
+        return Question(
+            self.name, self.kinds, self.model, priced_by_use=self.priced_by_use
+        )
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -166,6 +185,11 @@ class Definition:
             "labels": list(self.labels),
             "descriptions": dict(self.descriptions),
             "inputs": [[key, kind.value] for key, kind in self.inputs],
+            "eval_template_id": self.eval_template_id,
+            "own_criteria": (
+                self.criteria if self.own_criteria is None else self.own_criteria
+            ),
+            "modality": self.modality,
         }
 
 
@@ -238,6 +262,110 @@ def typed_question(
         inputs=tuple((kind.value, kind) for kind in kinds),
         descriptions=descriptions,
     )
+
+
+# --- a configured eval ----------------------------------------------------------------
+
+AGENT_EVALUATOR = "AgentEvaluator"
+# The head of the one block added after a configured eval's own criteria, naming each
+# input they don't name, so the evaluator passes it whole.
+CONFIGURED_BLOCK_HEAD = "The inputs to judge, each given in full:"
+_NOT_OFFERED = "This eval can't be asked over saved calls yet."
+
+
+def configured_eval(key: str, template, *, modality: str) -> Definition:
+    """A configured eval as a definition: its own keys, each read as one kind; its own
+    criteria, with one block after them naming any input they don't name; its model
+    and labels. Only an agent evaluator with a choice answer is offered here, whose
+    limits the step checks before sending. The template is not changed."""
+    config = template.config or {}
+    labels = _labels_of(template)
+    if (
+        config.get("eval_type_id") != AGENT_EVALUATOR
+        or config.get("output") == "Pass/Fail"
+        or getattr(template, "multi_choice", False)
+        or not labels
+        or any(label not in (template.choice_scores or {}) for label in labels)
+        or _is_decision_model(template.model)
+    ):
+        # A decision model is billed per answer and keyed per organisation, which
+        # the gate checks only for a typed question.
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    keys = config.get("required_keys")
+    # Sorted: a save in the library rebuilds required_keys from a set, so the same
+    # keys can come back in another order, and that is the same question.
+    keys = sorted(str(k) for k in keys) if isinstance(keys, list) else []
+    read: list[tuple[str, Kind]] = []
+    for k in keys:
+        kind = kind_for_key(k, modality)
+        if kind is None or kind == Kind.AUDIO:
+            # A key no kind fills, or the recording: the step sends text only.
+            raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+        read.append((k, kind))
+    if not read:
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    inputs = tuple(read)
+    own, held_by_version = _own_criteria(template)
+    if not own or not own.strip():
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    if agent_criteria_read_context(own, config.get("data_injection")):
+        # The evaluator fills these from context its caller passes; an ask passes
+        # none, so they would be graded with that context missing.
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    unnamed = [(k, kind) for k, kind in inputs if not _names(own, k)]
+    if unnamed and held_by_version:
+        # The version's own text replaces what the step sends, so a block added
+        # after it would never reach the model.
+        raise LaunchRefused("eval_not_offered", _NOT_OFFERED)
+    criteria = own
+    if unnamed:
+        named = "\n\n".join(
+            f"{KIND_LABELS[kind]} ({k}):\n{{{{{k}}}}}" for k, kind in unnamed
+        )
+        criteria = f"{own}\n\n{CONFIGURED_BLOCK_HEAD}\n\n{named}"
+    return Definition(
+        key=key,
+        name=template.name,
+        criteria=criteria,
+        model=template.model,
+        answer_type=(
+            AnswerType.YES_NO if labels == YES_NO_LABELS else AnswerType.CATEGORY
+        ),
+        labels=labels,
+        inputs=inputs,
+        eval_template_id=str(template.id),
+        own_criteria=own,
+        modality=modality,
+    )
+
+
+def _is_decision_model(model: Any) -> bool:
+    from evaluations.decision_models import get_decision_model
+    from tfc.ee_gates import is_jev_model
+
+    return bool(is_jev_model(model)) or get_decision_model(model) is not None
+
+
+def _names(criteria: str, key: str) -> bool:
+    return re.search(r"\{\{\s*" + re.escape(key) + r"\s*\}\}", criteria) is not None
+
+
+def _labels_of(template) -> tuple[str, ...]:
+    return tuple(template.choices or list((template.choice_scores or {}).keys()))
+
+
+def _own_criteria(template) -> tuple[str | None, bool]:
+    """The criteria the evaluator reads for this template, and whether its current
+    version holds them (that text then replaces whatever is sent)."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
+    from model_hub.utils.prompt_migration import prompt_messages_to_flat_config
+
+    current = EvalTemplateVersion.objects.get_default(template)
+    if current is not None:
+        held = prompt_messages_to_flat_config(current.prompt_messages or [])
+        if held.get("rule_prompt") is not None:
+            return held["rule_prompt"], True
+    return (template.config or {}).get("rule_prompt"), False
 
 
 def _clean_labels(labels: Sequence[str]) -> tuple[str, ...]:
@@ -467,10 +595,7 @@ def launch_ask(
         raise LaunchRefused(
             "questions", f"A question's key is at most {longest} characters."
         )
-    checked = [
-        Question(definition.name, definition.kinds, definition.decision_model)
-        for definition in definitions
-    ]
+    checked = [definition.as_question() for definition in definitions]
     shown = check_before_launch(
         selection, checked, organization=organization, workspace_id=workspace_id
     )
@@ -479,6 +604,11 @@ def launch_ask(
         workspace_id=workspace_id,
         questions=checked,
         answers=shown["answers"],
+        priced_answers=sum(
+            one["ready"]
+            for question, one in zip(checked, shown["questions"], strict=True)
+            if not question.priced_by_use
+        ),
     )
     if shown["credits_estimate"] != accepted_credits:
         raise LaunchRefused(
@@ -490,13 +620,18 @@ def launch_ask(
     with transaction.atomic():
         questions = []
         for index, definition in enumerate(definitions):
-            template, version = save_question_template(
-                definition,
-                organization=organization,
-                workspace_id=workspace_id,
-                user=asked_by,
-                at=at + timedelta(seconds=index),
-            )
+            if definition.eval_template_id is not None:
+                template, version = _configured_template(
+                    definition, organization, workspace_id
+                )
+            else:
+                template, version = save_question_template(
+                    definition,
+                    organization=organization,
+                    workspace_id=workspace_id,
+                    user=asked_by,
+                    at=at + timedelta(seconds=index),
+                )
             # Read back as stored, so a grading compares like with like.
             template.refresh_from_db()
             questions.append(
@@ -538,6 +673,43 @@ def launch_ask(
         )
         transaction.on_commit(lambda: _queue(ask.id))
     return ask
+
+
+def _configured_template(definition: Definition, organization, workspace_id):
+    """A configured eval's own template and its current version number, as the
+    definition read them. One the run offer doesn't show is refused as gone; one
+    that would not be offered as it was chosen is refused as changed."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    template = (
+        _offered_templates(organization.id, workspace_id)
+        .filter(id=definition.eval_template_id)
+        .first()
+        if definition.eval_template_id
+        else None
+    )
+    if template is None:
+        raise LaunchRefused("not_found", "This eval can't be found.")
+    changed = LaunchRefused(
+        "question_changed", "This eval was changed. Choose it again."
+    )
+    try:
+        offered = configured_eval(
+            definition.key, template, modality=definition.modality or ""
+        )
+    except LaunchRefused:
+        raise changed from None
+    if offered.as_json() != definition.as_json():
+        raise changed
+    current = EvalTemplateVersion.objects.get_default(template)
+    return template, None if current is None else current.version_number
+
+
+def _offered_templates(organization_id, workspace_id):
+    """The templates the run offer shows this workspace."""
+    from simulate.services.harness_evals import _visible_templates
+
+    return _visible_templates(organization_id, workspace_id)
 
 
 def _queue(ask_id) -> None:
@@ -905,7 +1077,9 @@ def _grade(row) -> dict[str, Any]:
     template = EvalTemplate.no_workspace_objects.filter(
         id=question["eval_template_id"], deleted=False
     ).first()
-    if template is None or not _as_launched(template, question):
+    if template is None or not _as_launched(
+        template, question, row.organization_id, row.workspace_id
+    ):
         # The template is in the org's library, so it can be edited or deleted
         # while the ask runs. The question is graded only as it was launched.
         return {
@@ -915,14 +1089,23 @@ def _grade(row) -> dict[str, Any]:
             "ask started, so it wasn't graded.",
             "evidence": evidence,
         }
-    if _too_large(question["model"], template, values):
+    if _too_large(question["model"], template, values, question["criteria"]):
         return {"state": RESULT.UNMEASURED, "cause": "too_large", "evidence": evidence}
     organization = row.ask.organization
+    # The row's id travels into the evaluator's log row, so a row closed as a dead
+    # worker's can still name the call that was charged.
+    run_config: dict[str, Any] = {
+        "run_config": {"model": question["model"]},
+        ROW_ID_KEY: str(row.id),
+    }
+    if question["criteria"] != question.get("own_criteria", question["criteria"]):
+        # A configured eval's block: sent with this grading, not saved on the
+        # template. The evaluator reads a rule prompt it is given over the
+        # template's own, and its version holds none (checked when defined).
+        run_config["config"] = {"rule_prompt": question["criteria"]}
     try:
         result = run_eval_func(
-            # The row's id travels into the evaluator's log row, so a row closed
-            # as a dead worker's can still name the call that was charged.
-            {"run_config": {"model": question["model"]}, ROW_ID_KEY: str(row.id)},
+            run_config,
             dict(values),
             template,
             organization,
@@ -930,6 +1113,11 @@ def _grade(row) -> dict[str, Any]:
             workspace=row.ask.workspace,
             source=EVAL_SOURCE,
             input_data_types=dict.fromkeys(values, "text"),
+            # Ground-truth and feedback examples would join the measured message
+            # past the size check, so an ask's grading carries none: what was
+            # measured is what is sent. An eval with examples can then answer
+            # differently here than in a run.
+            with_examples=False,
         )
     except EvaluationDenied:
         raise
@@ -969,16 +1157,28 @@ def _grade(row) -> dict[str, Any]:
     }
 
 
-def _as_launched(template, question: Mapping[str, Any]) -> bool:
+def _as_launched(
+    template, question: Mapping[str, Any], organization_id, workspace_id
+) -> bool:
     """Whether the template still grades what the launch saved: every field the
     library can change in place, and its current version."""
     from model_hub.models.evals_metric import EvalTemplateVersion
 
     current = EvalTemplateVersion.objects.get_default(template)
     return (
-        template_digest(template) == question.get("template_digest")
-        and current is not None
-        and current.version_number == question["template_version"]
+        # Still one the run offer shows this workspace: the organisation's own or a
+        # system template, in this workspace or none, and not a draft.
+        _offered_templates(organization_id, workspace_id)
+        .filter(id=template.id)
+        .exists()
+        # The criteria may be held by the current version, outside the digest.
+        and _own_criteria(template)[0]
+        == question.get("own_criteria", question["criteria"])
+        and template.model == question["model"]
+        and list(_labels_of(template)) == list(question["labels"])
+        and template_digest(template) == question.get("template_digest")
+        and (None if current is None else current.version_number)
+        == question["template_version"]
     )
 
 
@@ -1003,10 +1203,15 @@ def _confidence(metadata: Any) -> float | None:
     return None
 
 
-def _too_large(model: str, template, values: Mapping[str, str]) -> bool:
-    """Whether the request the decision model's evaluator would build is over its
-    limits. Built with that evaluator's own functions and limits, so nothing here
-    copies a number; over the limit, it is never sent."""
+def _too_large(model: str, template, values: Mapping[str, str], criteria: str) -> bool:
+    """Whether the request the evaluator would build is over its limits. Built with
+    that evaluator's own functions and limits, so nothing here copies a number; over
+    the limit, it is never sent."""
+    if (template.config or {}).get("eval_type_id") == AGENT_EVALUATOR:
+        # The template's own format, as the shared entry hands it to the evaluator.
+        return agent_message_too_large(
+            criteria, values, (template.config or {}).get("template_format", "mustache")
+        )
     try:
         from jinja2 import StrictUndefined
         from jinja2.sandbox import SandboxedEnvironment

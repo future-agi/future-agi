@@ -1049,7 +1049,7 @@ def test_a_row_closed_as_dead_while_its_grading_still_ran_keeps_the_charge(
     ask = _launch(selection, organization, workspace, user)
     row = _rows(ask)[0]
 
-    def closed_before_the_evaluator_logs(model, template, values):
+    def closed_before_the_evaluator_logs(*_args):
         # Closed before the evaluator writes its log row, so only the grading's
         # own late write can name what it charged.
         SimulateEvalResult.objects.filter(id=row.id).update(
