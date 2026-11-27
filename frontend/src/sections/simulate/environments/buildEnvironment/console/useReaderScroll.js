@@ -41,6 +41,8 @@ export default function useReaderScroll(listRef, onMove) {
     movedUp,
     movedDown,
     startOwnScroll,
+    // Whether the console started the scroll under way.
+    isOwnScroll: () => ownScroll.current,
     // The list scrolled: by the reader, unless the console is scrolling it.
     scrolled: (up) => {
       if (!ownScroll.current) moved(up);

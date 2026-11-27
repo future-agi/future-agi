@@ -165,6 +165,22 @@ describe("BuilderConsole", () => {
       expect(scrollTo).toHaveBeenCalledTimes(1);
     });
 
+    it("scrolls to a message a card asks for and keeps following the latest", () => {
+      const scrollRef = { current: null };
+      const turns = [{ id: "u1", role: "user", text: "Add files" }, toolTurn(1)];
+      const { rerender } = render(<BuilderConsole turns={turns} running={false} canStop scrollRef={scrollRef} />);
+      scrollList(1500);
+      scrollTo.mockClear();
+      act(() => scrollRef.current.show("u1"));
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 0 }));
+      // The list on its way up to the message isn't the person scrolling away.
+      scrollList(800);
+      rerender(
+        <BuilderConsole turns={[turns[0], toolTurn(2)]} running={false} canStop scrollRef={scrollRef} />,
+      );
+      expect(jump(CONSOLE_COPY.jumpWorking)).not.toBeInTheDocument();
+    });
+
     it("follows new events at the bottom", () => {
       const { rerender } = render(<BuilderConsole turns={[toolTurn(1)]} running={false} canStop />);
       scrollList(1500);

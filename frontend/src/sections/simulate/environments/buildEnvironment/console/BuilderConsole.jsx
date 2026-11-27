@@ -33,6 +33,7 @@ import OlderChat, { GapLine, WithoutSteps } from "./OlderChat";
 import SearchStatus from "./SearchStatus";
 import useOpenAtMessage from "./useOpenAtMessage";
 import useReaderScroll from "./useReaderScroll";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import { JumpToLatestBar, StopOrbit } from "./BuilderProgress";
 import { Turn } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
@@ -204,17 +205,19 @@ export default function BuilderConsole({
     },
   });
   const { startOwnScroll } = reader;
-  // Puts a message's top at the top of the list.
+  const reduceMotion = usePrefersReducedMotion();
+  // Where a `show` is scrolling the list, until it gets there.
+  const shownTop = useRef(null);
+  // Puts a message's top at the top of the list; returns where the list goes.
   const scrollToNode = useCallback(
     (target) => {
       const list = listRef.current;
+      const top = target.offsetTop - list.offsetTop;
       startOwnScroll();
-      list?.scrollTo?.({
-        top: target.offsetTop - list.offsetTop,
-        behavior: "smooth",
-      });
+      list.scrollTo?.({ top, behavior: reduceMotion ? "auto" : "smooth" });
+      return Math.max(0, Math.min(top, list.scrollHeight - list.clientHeight));
     },
-    [startOwnScroll],
+    [startOwnScroll, reduceMotion],
   );
   // A card in the chat shows itself once it has drawn; the list keeps following
   // the latest, since the person didn't scroll away.
@@ -225,7 +228,7 @@ export default function BuilderConsole({
         const target = listRef.current?.querySelector(
           `[data-message-id="${CSS.escape(messageId)}"]`,
         );
-        if (active && target) scrollToNode(target);
+        if (active && target) shownTop.current = scrollToNode(target);
       },
     }),
     [active, scrollToNode],
@@ -290,10 +293,15 @@ export default function BuilderConsole({
     const list = listRef.current;
     if (!list || !active) return;
     const { scrollTop, scrollHeight, clientHeight } = list;
+    // The list on its way to a message a card asked for: not the person scrolling away.
+    const showing = shownTop.current != null && reader.isOwnScroll();
+    if (!showing || Math.abs(scrollTop - shownTop.current) <= 1)
+      shownTop.current = null;
     if (scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_PX) {
       // Not on the way up: the first steps of a smooth scroll to an earlier message are still near the bottom.
       if (scrollTop >= lastScrollRef.current.top) setFollowing(true);
     } else if (
+      !showing &&
       scrollTop < lastScrollRef.current.top &&
       scrollHeight === lastScrollRef.current.height
     ) {
