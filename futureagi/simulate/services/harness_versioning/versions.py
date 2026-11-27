@@ -1757,6 +1757,12 @@ def _move_agent_default(
         return locked, None
     if (current.id if current is not None else None) != expected_default_id:
         raise _conflict("agent", current)
+    # Imported here: the Epoch's services import this module.
+    from simulate.services.agent_fix_runs import refuse_outside_the_epoch
+
+    refuse_outside_the_epoch(
+        organization_id=locked.organization_id, agent_version_id=version_id
+    )
     version = AgentVersion.no_workspace_objects.get(id=version_id)
     validation = gate_agent_move("hand", locked, version, user=user)
     if validation is not None:
