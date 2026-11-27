@@ -147,7 +147,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: update-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ ((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && github.run_id || 'candidate' }}
+  # PRs: one active run per PR, cancel stale. Push to dev: one group, never
+  # cancelled, so one run is running and one waits; a newer push replaces the
+  # waiting one. A real rehearsal takes about 3 h, and per-SHA dev runs piled
+  # up one pair per merge. Push to main: per-SHA, so release runs never cancel
+  # each other. Same rule as Backend CI.
+  group: update-ci-${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}-${{ ((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal')) && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
