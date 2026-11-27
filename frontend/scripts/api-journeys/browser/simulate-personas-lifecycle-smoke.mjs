@@ -85,6 +85,12 @@ async function main() {
         );
         await selectDropdownOption(
           page,
+          'input[placeholder="United States"]',
+          "Canada",
+        );
+        await closeMultiSelectMenu(page, "Canada");
+        await selectDropdownOption(
+          page,
           'input[placeholder="Select language"]',
           "English",
         );
@@ -336,6 +342,21 @@ async function selectDropdownOption(page, inputSelector, optionText) {
   await clickVisibleText(page, optionText, {
     selector: '[role="menu"] li, [role="presentation"] li, li',
   });
+}
+
+// A multi-select keeps its menu open after a pick. Click back into the
+// description to close it, then wait until the menu has gone so the next
+// click reaches the form instead of the closing menu.
+async function closeMultiSelectMenu(page, optionText) {
+  await page.click('textarea[aria-label="Description"]');
+  await page.waitForFunction(
+    (expected) =>
+      !Array.from(document.querySelectorAll('[role="menu"] li')).some(
+        (node) => String(node.textContent || "").trim() === expected,
+      ),
+    { timeout: 30000 },
+    optionText,
+  );
 }
 
 async function clickButtonByText(page, text) {
