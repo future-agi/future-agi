@@ -321,6 +321,44 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.queryByText("Environment not found")).toBeNull();
   });
 
+  it("offers a composition's repeats on the scenarios its run of everything covers", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-done\/$/.test(url)
+        ? Promise.resolve({
+            data: {
+              ...DETAIL_NOT_AUTHORED,
+              overview: {
+                ...DETAIL_NOT_AUTHORED.overview,
+                status: "completed",
+                agent_type: "chat",
+                scenario_count: 8,
+                run: { run_test_id: "rt1", test_execution_id: "ex1" },
+              },
+              composition: {
+                alignment: {
+                  unscorable: [
+                    { scenario_key: "reply", reason: "no tool" },
+                    { scenario_key: "draft", reason: "no tool" },
+                  ],
+                },
+              },
+            },
+          })
+        : base(url),
+    );
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    await userEvent.click(
+      await screen.findByText(/^Repeats:/, {}, { timeout: 8000 }),
+    );
+    expect(
+      screen.getByText(/6 scenarios × 1 repeat = 6 runs/),
+    ).toBeInTheDocument();
+  });
+
   it("offers a retry instead of half-filled tabs when the environment detail fails", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     let detailCalls = 0;

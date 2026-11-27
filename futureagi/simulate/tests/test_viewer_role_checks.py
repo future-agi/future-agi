@@ -11,6 +11,13 @@ from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion, RunTest
 from simulate.services.agent_definition import sync_provider_credentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
+from simulate.tests.test_harness_locked_versions import (
+    _environment,
+    _scenarios,
+    _suite,
+)
+from simulate.tests.test_harness_versioning_backfill import _RealisticStorage
+from tfc.utils import storage_client
 
 # Fixed, not uuid4(): these values are part of the pytest ids. Every CI shard
 # collects the tests in its own process, and pytest-split runs each case
@@ -36,6 +43,8 @@ VIEWER_REFUSALS = [
     ("patch", ENVIRONMENT, "edit an environment"),
     ("delete", ENVIRONMENT, "delete an environment"),
     ("post", f"{ENVIRONMENT}versions/agent/", "create an agent version"),
+    ("post", f"{ENVIRONMENT}versions/lock/", "lock versions"),
+    ("post", f"{ENVIRONMENT}versions/unlock/", "unlock versions"),
     ("post", f"{ENVIRONMENT}nudges/{OTHER}/answer/", "answer a rebuild prompt"),
     ("delete", f"{ENVIRONMENT}evaluations/{OTHER}/", "remove evaluations"),
     ("patch", f"{ENVIRONMENT}evaluations/{OTHER}/", "edit evaluations"),
@@ -52,10 +61,26 @@ VIEWER_REFUSALS = [
     ("post", "/simulate/agents/connect/", "connect an agent"),
     (
         "post",
+        "/simulate/api/harness-releases/fit/",
+        "check how an agent fits an environment",
+    ),
+    ("post", "/simulate/api/harness-adaptations/", "adapt an agent"),
+    (
+        "post",
+        f"/simulate/api/harness-adaptations/{ID}/approve/",
+        "approve an adaptation",
+    ),
+    ("post", "/simulate/api/harness-hosted-agents/", "create an environment"),
+    (
+        "post",
         f"{ENVIRONMENT}agent-policy/",
         "change whether an environment follows production",
     ),
 ]
+
+# A Member can't take these either, so the refusal names who can.
+ADVICE = {"unlock versions": "Ask a workspace admin or owner."}
+MEMBER_ROLE_ADVICE = "Ask a workspace admin for the Member role."
 
 LABELS_WITHOUT_A_ROUTE_CASE = {
     "add evaluations",
@@ -125,7 +150,7 @@ def test_a_viewer_is_told_which_action_needs_the_member_role(
     assert response.data["code"] == "viewer_read_only"
     assert response.data["action"] == action
     assert response.data["detail"] == (
-        f"Viewers can't {action}. Ask a workspace admin for the Member role."
+        f"Viewers can't {action}. {ADVICE.get(action, MEMBER_ROLE_ADVICE)}"
     )
 
 
@@ -142,6 +167,27 @@ def test_an_unlabelled_write_still_gets_the_viewer_message(organization, workspa
         "Viewers can't make changes in this workspace. "
         "Ask a workspace admin for the Member role."
     )
+
+
+@pytest.mark.django_db
+def test_a_viewer_reads_the_lock_preview(
+    organization, workspace, user, settings, monkeypatch
+):
+    settings.HARNESS_VERSIONING_ENABLED = True
+    storage = _RealisticStorage()
+    monkeypatch.setattr(storage_client, "_client", storage)
+    environment = _environment(user, workspace, storage)
+    _suite(environment, _scenarios(20))
+    viewer = _viewer_client(organization, workspace)
+
+    response = viewer.get(
+        f"/simulate/api/harness-environments/{environment.id}/versions/lock-preview/"
+    )
+
+    # A read: a viewer sees what a lock would give, though only a member may lock.
+    assert response.status_code == status.HTTP_200_OK, response.data
+    assert response.data["can_lock"] is True
+    assert (response.data["train"], response.data["test"]) == (14, 6)
 
 
 def test_a_write_outside_simulation_keeps_its_original_refusal():
@@ -161,8 +207,14 @@ def test_every_labelled_simulation_write_declares_the_viewer_refusal():
         f"{method.upper()} {route}"
         for route, method, _view_cls, handler in _simulation_write_handlers()
         if getattr(handler, "_viewer_denied_action", None)
-        and _declared_responses(handler, method).get(403)
-        is not ViewerReadOnlyErrorSerializer
+        # A subclass also describes the route's own 403, as unlock's does.
+        and not (
+            isinstance(_declared_responses(handler, method).get(403), type)
+            and issubclass(
+                _declared_responses(handler, method)[403],
+                ViewerReadOnlyErrorSerializer,
+            )
+        )
     ]
 
     assert undeclared == []

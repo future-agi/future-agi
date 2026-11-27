@@ -2377,46 +2377,30 @@
             },
             "parameters": []
         },
-        "/accounts/notifications/snooze/": {
+        "/accounts/notifications/email/unsubscribe/": {
             "get": {
-                "operationId": "accounts_notifications_snooze_list",
-                "description": "Snooze the realtime track for N days (default 7). Daily still fires.",
-                "parameters": [],
+                "operationId": "accounts_notifications_email_unsubscribe_list",
+                "description": "Per-category unsubscribe for notification emails. Token is signed.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML snooze result",
+                        "description": "HTML unsubscribe confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2426,52 +2410,201 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "accounts_notifications_email_unsubscribe_create",
+                "description": "Per-category unsubscribe for notification emails. Token is signed.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmailUnsubscribeRequest"
+                        }
+                    },
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML unsubscribe result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/accounts/notifications/snooze/": {
+            "get": {
+                "operationId": "accounts_notifications_snooze_list",
+                "description": "Snooze the realtime track for N days (default 7). Daily still fires.\nGET asks first, because link scanners prefetch URLs; POST snoozes.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "description": "Days to pause realtime digests, 1 to 30 (default 7).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML snooze confirmation page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "accounts_notifications_snooze_create",
+                "description": "Snooze the realtime track for N days (default 7). Daily still fires.\nGET asks first, because link scanners prefetch URLs; POST snoozes.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SnoozeRequest"
+                        }
+                    },
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "days",
+                        "in": "query",
+                        "description": "Days to pause realtime digests, 1 to 30 (default 7).",
+                        "required": false,
+                        "type": "integer"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML snooze result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML page: the link is invalid",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "accounts"
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
         "/accounts/notifications/unsubscribe/": {
             "get": {
                 "operationId": "accounts_notifications_unsubscribe_list",
-                "description": "One-click unsubscribe from both digest tracks. Token is HMAC-signed.",
-                "parameters": [],
+                "description": "Digest unsubscribe link from older emails. Token is HMAC-signed.",
+                "parameters": [
+                    {
+                        "name": "token",
+                        "in": "query",
+                        "description": "Signed token from the emailed link.",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
-                        "description": "HTML unsubscribe result",
+                        "description": "HTML unsubscribe confirmation page",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "",
+                        "description": "HTML page: the link is invalid",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "type": "string"
                         }
                     },
                     "default": {
@@ -2481,9 +2614,15 @@
                         }
                     }
                 },
+                "produces": [
+                    "text/html"
+                ],
                 "tags": [
                     "accounts"
-                ]
+                ],
+                "security": [],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -51901,6 +52040,14 @@
                         "type": "integer",
                         "maximum": 100,
                         "minimum": 1
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "description": "Comma-separated fix states to list, any of: queued, running, stopping, ready, no_improvement, not_reproduced, out_of_budget, stopped, failed, too_few_cases.",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
                     }
                 ],
                 "responses": {
@@ -53298,6 +53445,154 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-adaptations/": {
+            "post": {
+                "operationId": "simulate_api_harness-adaptations_create",
+                "description": "Adapt an agent to a release suite. The job is followed like any harness job.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReleaseAgentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessJobRead"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-adaptations/{id}/approve/": {
+            "post": {
+                "operationId": "simulate_api_harness-adaptations_approve",
+                "description": "Approve and build: the design is taken once the mapping has been checked on every case.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessAdaptationApproved"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-adaptations/{id}/design/": {
+            "get": {
+                "operationId": "simulate_api_harness-adaptations_design",
+                "description": "Review the design: what the adaptation takes from the ready world, before it's built.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessAdaptationDesign"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_list",
@@ -53339,6 +53634,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "awaiting_approval",
                             "building",
                             "running",
                             "completed",
@@ -53456,6 +53752,12 @@
                     },
                     "204": {
                         "description": "Deleted"
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
                     },
                     "default": {
                         "description": "Default error response",
@@ -55414,6 +55716,54 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/runs/{run_id}/report/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_runs_run_report",
+                "description": "The report of one run of a composition, optionally compared with a baseline run.",
+                "parameters": [
+                    {
+                        "name": "baseline",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessRunReport"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "run_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/scenarios/validate/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_validation_status",
@@ -56115,6 +56465,100 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/versions/lock-preview/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_versions_lock_preview",
+                "description": "Whether the default environment and suite versions can be locked now, why\nnot, and the train and test splits a lock would give. It plans as the lock does,\nso it reads the default run's environment contract and scenario documents by\ndesign, and the agent version's facts its bundle key needs, never its\ncredential blob; the versions list stays off them.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockPreview"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/versions/lock/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_versions_lock_version",
+                "description": "Lock the default environment and suite versions with train and test splits;\nreturns every version and the locked-version history: every locked one plus\nthe newest unlocked ones.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockVersion"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVersions"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessLockRefusal"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_versions_suite_suite_members",
@@ -56151,6 +56595,55 @@
                 },
                 {
                     "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/versions/unlock/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_versions_unlock_version",
+                "description": "Unlock a locked version, as a workspace admin or owner. Its versions, splits and\nscores stay; returns every version and the locked-version history: every\nlocked one plus the newest unlocked ones.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUnlockVersion"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessUnlockForbidden"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessVersions"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -56277,6 +56770,60 @@
                     "type": "string"
                 }
             ]
+        },
+        "/simulate/api/harness-hosted-agents/": {
+            "post": {
+                "operationId": "simulate_api_harness-hosted-agents_create",
+                "description": "Compose our own agent with a release suite; it answers the composed environment.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessHostedAgentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessHostedAgentResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/simulate/api/harness-jobs/": {
             "get": {
@@ -57033,6 +57580,73 @@
                     "type": "string"
                 }
             ]
+        },
+        "/simulate/api/harness-releases/": {
+            "get": {
+                "operationId": "simulate_api_harness-releases_list",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReleaseListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-releases/fit/": {
+            "post": {
+                "operationId": "simulate_api_harness-releases_fit",
+                "description": "How a connected agent fits a release suite: its tools paired with the world's and\nthe cases that pairing can measure. Nothing is built.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReleaseFitRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessReleaseFitResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
             "post": {
@@ -68870,6 +69484,101 @@
                     "type": "string"
                 }
             ]
+        },
+        "/tracer/feed/escalation-settings/": {
+            "get": {
+                "operationId": "tracer_feed_escalation-settings_list",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/FeedEscalationSettingsApiResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "tracer_feed_escalation-settings_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/FeedEscalationSettingsBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/FeedEscalationSettingsApiResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/tracer/feed/integrations/linear/teams/": {
             "get": {
@@ -92325,6 +93034,31 @@
                     "title": "Timezone",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "EmailUnsubscribeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "unsubscribe",
+                        "resubscribe"
+                    ]
+                }
+            }
+        },
+        "SnoozeRequest": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "snooze"
+                    ]
                 }
             }
         },
@@ -146022,6 +146756,28 @@
             },
             "x-nullable": true
         },
+        "AgentFixShipReadiness": {
+            "required": [
+                "path",
+                "blocked"
+            ],
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "description": "pull_request for a GitHub agent; make_default for an uploaded one.",
+                    "type": "string",
+                    "enum": [
+                        "pull_request",
+                        "make_default"
+                    ]
+                },
+                "blocked": {
+                    "$ref": "#/definitions/AgentFixFailure"
+                }
+            },
+            "x-nullable": true
+        },
         "AgentFixIssuePlan": {
             "required": [
                 "issue",
@@ -146030,7 +146786,8 @@
                 "sample",
                 "open_job_id",
                 "issue_scenarios",
-                "defaults"
+                "defaults",
+                "ship"
             ],
             "type": "object",
             "properties": {
@@ -146057,6 +146814,9 @@
                 },
                 "defaults": {
                     "$ref": "#/definitions/AgentFixIssueDefaults"
+                },
+                "ship": {
+                    "$ref": "#/definitions/AgentFixShipReadiness"
                 }
             }
         },
@@ -146359,7 +147119,8 @@
             "required": [
                 "job_id",
                 "cluster_id",
-                "project_id"
+                "project_id",
+                "title"
             ],
             "type": "object",
             "properties": {
@@ -146377,6 +147138,12 @@
                     "title": "Project id",
                     "type": "string",
                     "format": "uuid"
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             },
             "x-nullable": true
@@ -146672,6 +147439,12 @@
                 },
                 "issue": {
                     "$ref": "#/definitions/AgentFixEpochIssue"
+                },
+                "from_issue": {
+                    "title": "From issue",
+                    "description": "Run from an Error Feed issue, even once the issue is gone.",
+                    "type": "boolean",
+                    "readOnly": true
                 },
                 "check_runs": {
                     "description": "The base version's runs; each candidate lists its own.",
@@ -147067,6 +147840,34 @@
                 }
             }
         },
+        "AgentFixLaunchBlocked": {
+            "required": [
+                "code",
+                "message",
+                "cluster_id"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cluster_id": {
+                    "title": "Cluster id",
+                    "description": "For issue_epoch_measuring, the issue whose epoch is starting in the environment; its page shows it. Null otherwise.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "AgentFixLaunchOptions": {
             "required": [
                 "source_run",
@@ -147078,7 +147879,9 @@
                 "defaults",
                 "limits",
                 "blocked",
-                "variations_blocked"
+                "variations_blocked",
+                "held_back_scenario_keys",
+                "ship"
             ],
             "type": "object",
             "properties": {
@@ -147113,10 +147916,133 @@
                     "$ref": "#/definitions/AgentFixLaunchLimits"
                 },
                 "blocked": {
-                    "$ref": "#/definitions/AgentFixFailure"
+                    "$ref": "#/definitions/AgentFixLaunchBlocked"
                 },
                 "variations_blocked": {
                     "$ref": "#/definitions/AgentFixFailure"
+                },
+                "held_back_scenario_keys": {
+                    "description": "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "ship": {
+                    "$ref": "#/definitions/AgentFixShipReadiness"
+                }
+            }
+        },
+        "AgentFixCandidateWording": {
+            "required": [
+                "headline",
+                "must_pass",
+                "must_pass_broken",
+                "changes",
+                "caveats"
+            ],
+            "type": "object",
+            "properties": {
+                "headline": {
+                    "title": "Headline",
+                    "type": "string"
+                },
+                "must_pass": {
+                    "title": "Must pass",
+                    "type": "string"
+                },
+                "must_pass_broken": {
+                    "title": "Must pass broken",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "changes": {
+                    "title": "Changes",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "caveats": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "AgentFixCandidateDetail": {
+            "required": [
+                "attempt",
+                "agent_version_id",
+                "version_number",
+                "verdict",
+                "pull_request_url"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "attempt": {
+                    "title": "Attempt",
+                    "type": "integer",
+                    "maximum": 32767,
+                    "minimum": 0
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer"
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "rejected",
+                        "finalist",
+                        "winner"
+                    ]
+                },
+                "verdict": {
+                    "$ref": "#/definitions/AgentFixVerdict"
+                },
+                "check_runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixCheckRun"
+                    },
+                    "readOnly": true
+                },
+                "override": {
+                    "$ref": "#/definitions/AgentFixOverride"
+                },
+                "pull_request_url": {
+                    "title": "Pull request url",
+                    "type": "string"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "wording": {
+                    "$ref": "#/definitions/AgentFixCandidateWording"
                 }
             }
         },
@@ -147287,6 +148213,12 @@
                 "issue": {
                     "$ref": "#/definitions/AgentFixEpochIssue"
                 },
+                "from_issue": {
+                    "title": "From issue",
+                    "description": "Run from an Error Feed issue, even once the issue is gone.",
+                    "type": "boolean",
+                    "readOnly": true
+                },
                 "check_runs": {
                     "description": "The base version's runs; each candidate lists its own.",
                     "type": "array",
@@ -147298,7 +148230,7 @@
                 "candidates": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/AgentFixCandidate"
+                        "$ref": "#/definitions/AgentFixCandidateDetail"
                     }
                 },
                 "started_at": {
@@ -147335,6 +148267,23 @@
                         "done",
                         "incomplete"
                     ],
+                    "readOnly": true
+                },
+                "flaky_protected_text": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "scenario_names": {
+                    "title": "Scenario names",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1
+                    },
                     "readOnly": true
                 }
             }
@@ -149088,6 +150037,1371 @@
                 }
             }
         },
+        "SecretReference": {
+            "required": [
+                "manager",
+                "key",
+                "purpose"
+            ],
+            "type": "object",
+            "properties": {
+                "manager": {
+                    "title": "Manager",
+                    "type": "string",
+                    "enum": [
+                        "platform-vault",
+                        "platform-config"
+                    ]
+                },
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "purpose": {
+                    "title": "Purpose",
+                    "type": "string",
+                    "enum": [
+                        "target_provider",
+                        "simulator_provider",
+                        "source_checkout"
+                    ]
+                }
+            }
+        },
+        "HarnessAgent": {
+            "description": "How the hosted agent is reached. Omitted for an agent connected on the Agents page: its provider, agent id and stored key are read from the version.",
+            "required": [
+                "connector"
+            ],
+            "type": "object",
+            "properties": {
+                "connector": {
+                    "title": "Connector",
+                    "type": "string",
+                    "enum": [
+                        "livekit",
+                        "vapi",
+                        "retell",
+                        "retell_chat",
+                        "phone",
+                        "auto",
+                        "hosted_agent"
+                    ]
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                        "connect_only",
+                        "environment_backed",
+                        "provider_import"
+                    ],
+                    "x-nullable": true
+                },
+                "call_direction": {
+                    "title": "Call direction",
+                    "description": "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+                    "type": "string",
+                    "enum": [
+                        "inbound",
+                        "outbound"
+                    ],
+                    "x-nullable": true
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object",
+                    "default": {}
+                },
+                "secret_refs": {
+                    "title": "Secret refs",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/SecretReference"
+                    },
+                    "default": {}
+                }
+            }
+        },
+        "HarnessReleaseAgentRequest": {
+            "required": [
+                "suite_id",
+                "agent_version_id",
+                "name",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "suite_id": {
+                    "title": "Suite id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent": {
+                    "$ref": "#/definitions/HarnessAgent"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "parallelism": {
+                    "title": "Parallelism",
+                    "description": "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+                    "type": "integer",
+                    "maximum": 8,
+                    "minimum": 1
+                },
+                "pairing": {
+                    "title": "Pairing",
+                    "description": "World tool to the agent tool it is paired with, as the person reviewed it.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "x-nullable": true
+                    }
+                },
+                "mode": {
+                    "title": "Mode",
+                    "description": "review: the builder drafts the binding and the person approves its design. run: the binding is drafted and checked without a session, then the measurable cases run.",
+                    "type": "string",
+                    "enum": [
+                        "review",
+                        "run"
+                    ],
+                    "default": "review"
+                }
+            }
+        },
+        "HarnessJobInfo": {
+            "required": [
+                "job_id",
+                "run_id",
+                "source",
+                "metadata",
+                "run_test_id",
+                "test_execution_id"
+            ],
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "metadata": {
+                    "title": "Metadata",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                },
+                "runtime": {
+                    "title": "Runtime",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessJobStatus": {
+            "required": [
+                "state",
+                "stage",
+                "updated_at",
+                "attempt",
+                "completed_scenarios",
+                "failed_scenarios",
+                "total_scenarios",
+                "deadline_at",
+                "failure"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "updated_at": {
+                    "title": "Updated at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "attempt": {
+                    "title": "Attempt",
+                    "type": "integer"
+                },
+                "completed_scenarios": {
+                    "title": "Completed scenarios",
+                    "type": "integer"
+                },
+                "failed_scenarios": {
+                    "title": "Failed scenarios",
+                    "type": "integer"
+                },
+                "active_scenarios": {
+                    "title": "Active scenarios",
+                    "type": "integer"
+                },
+                "queued_scenarios": {
+                    "title": "Queued scenarios",
+                    "type": "integer"
+                },
+                "total_scenarios": {
+                    "title": "Total scenarios",
+                    "type": "integer"
+                },
+                "deadline_at": {
+                    "title": "Deadline at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "cancel_requested_at": {
+                    "title": "Cancel requested at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "cancel_confirmed_at": {
+                    "title": "Cancel confirmed at",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "cancel_confirmed_by": {
+                    "title": "Cancel confirmed by",
+                    "type": "string",
+                    "enum": [
+                        "sandbox_absent",
+                        "provider_call_ended",
+                        "cleanup_failed",
+                        "provider_call_open",
+                        "provider_unchecked",
+                        "unchecked_no_key",
+                        "unchecked_key_rejected",
+                        "unchecked_no_target",
+                        "unchecked_no_calls",
+                        "unchecked_too_many_calls"
+                    ],
+                    "x-nullable": true
+                },
+                "cancel_status": {
+                    "title": "Cancel status",
+                    "type": "string",
+                    "enum": [
+                        "requested",
+                        "confirmed",
+                        "unconfirmed",
+                        "cleanup_failed"
+                    ],
+                    "x-nullable": true
+                },
+                "failure": {
+                    "title": "Failure",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessJobEvent": {
+            "required": [
+                "event_id",
+                "sequence",
+                "stage",
+                "type",
+                "payload",
+                "emitted_at"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer"
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessStageOutput": {
+            "required": [
+                "id",
+                "title",
+                "summary",
+                "kind",
+                "data"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "data": {
+                    "title": "Data",
+                    "type": "object"
+                }
+            }
+        },
+        "HarnessScenario": {
+            "required": [
+                "scenario_key",
+                "scenario_id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_id": {
+                    "title": "Scenario id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "use_case": {
+                    "title": "Use case",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "call_execution_id": {
+                    "title": "Call execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessPlatform": {
+            "required": [
+                "run_test_id",
+                "test_execution_id",
+                "url"
+            ],
+            "type": "object",
+            "properties": {
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "url": {
+                    "title": "Url",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessDiagnostics": {
+            "required": [
+                "size",
+                "final",
+                "error"
+            ],
+            "type": "object",
+            "properties": {
+                "object_key": {
+                    "title": "Object key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sha256": {
+                    "title": "Sha256",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer"
+                },
+                "captured_at": {
+                    "title": "Captured at",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "final": {
+                    "title": "Final",
+                    "type": "boolean"
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessRuntimeRead": {
+            "type": "object",
+            "properties": {
+                "sandbox_id": {
+                    "title": "Sandbox id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "diagnostics": {
+                    "$ref": "#/definitions/HarnessDiagnostics"
+                }
+            }
+        },
+        "HarnessParallelism": {
+            "required": [
+                "requested",
+                "admitted",
+                "effective",
+                "degrade_reasons"
+            ],
+            "type": "object",
+            "properties": {
+                "requested": {
+                    "title": "Requested",
+                    "type": "integer"
+                },
+                "admitted": {
+                    "title": "Admitted",
+                    "type": "integer"
+                },
+                "effective": {
+                    "title": "Effective",
+                    "type": "integer"
+                },
+                "degrade_reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessConversationBlockingInput": {
+            "required": [
+                "message_id",
+                "kind"
+            ],
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "description": "question_requested or confirmation_requested.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "prompt": {
+                    "title": "Prompt",
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "options_only": {
+                    "title": "Options only",
+                    "description": "True when only one of its options answers it: free text is not an answer.",
+                    "type": "boolean"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessConversationMessage": {
+            "required": [
+                "message_id",
+                "sequence",
+                "role",
+                "kind",
+                "state",
+                "stage",
+                "content",
+                "payload",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant",
+                        "system"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "message",
+                        "question",
+                        "confirmation",
+                        "status"
+                    ]
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "delivered",
+                        "streaming",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reply_to": {
+                    "title": "Reply to",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationEventRead": {
+            "required": [
+                "event_id",
+                "sequence",
+                "kind",
+                "stage",
+                "payload",
+                "emitted_at"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationWindow": {
+            "required": [
+                "oldest_sequence",
+                "has_older"
+            ],
+            "type": "object",
+            "properties": {
+                "oldest_sequence": {
+                    "title": "Oldest sequence",
+                    "description": "The oldest sequence in this read; read what came before it with `before` set to it.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "has_older": {
+                    "title": "Has older",
+                    "description": "Items before `oldest_sequence` this read leaves out.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessConversationHistory": {
+            "description": "Where `messages` and `events` start, and whether older ones can be read with the history read.",
+            "required": [
+                "messages"
+            ],
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "$ref": "#/definitions/HarnessConversationWindow"
+                },
+                "events": {
+                    "$ref": "#/definitions/HarnessConversationWindow"
+                }
+            }
+        },
+        "HarnessConversationRuntime": {
+            "required": [
+                "state",
+                "warm_until",
+                "degraded",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "warm_until": {
+                    "title": "Warm until",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "degraded": {
+                    "title": "Degraded",
+                    "type": "boolean"
+                },
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessConversationRead": {
+            "required": [
+                "conversation_id",
+                "job_id",
+                "state",
+                "stage",
+                "active_invocation_id",
+                "blocking_input",
+                "messages",
+                "events",
+                "event_watermark",
+                "history",
+                "events_has_newer",
+                "runtime"
+            ],
+            "type": "object",
+            "properties": {
+                "conversation_id": {
+                    "title": "Conversation id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "active_invocation_id": {
+                    "title": "Active invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "blocking_input": {
+                    "$ref": "#/definitions/HarnessConversationBlockingInput"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationMessage"
+                    }
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationEventRead"
+                    }
+                },
+                "event_watermark": {
+                    "title": "Event watermark",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "history": {
+                    "$ref": "#/definitions/HarnessConversationHistory"
+                },
+                "events_has_newer": {
+                    "title": "Events has newer",
+                    "description": "On a read with `events_after`, whether more events past the last one here are left to read.",
+                    "type": "boolean"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/HarnessConversationRuntime"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessConsumption": {
+            "required": [
+                "text_sim_tokens",
+                "voice_sim_minutes",
+                "ai_credits",
+                "sandbox_seconds"
+            ],
+            "type": "object",
+            "properties": {
+                "text_sim_tokens": {
+                    "title": "Text sim tokens",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "voice_sim_minutes": {
+                    "title": "Voice sim minutes",
+                    "type": "number",
+                    "minimum": 0
+                },
+                "ai_credits": {
+                    "title": "Ai credits",
+                    "type": "number",
+                    "minimum": 0,
+                    "x-nullable": true
+                },
+                "sandbox_seconds": {
+                    "title": "Sandbox seconds",
+                    "type": "number",
+                    "minimum": 0
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessVersioningFlags": {
+            "required": [
+                "enabled",
+                "nudges_enabled"
+            ],
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "title": "Enabled",
+                    "type": "boolean"
+                },
+                "nudges_enabled": {
+                    "title": "Nudges enabled",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessJobRead": {
+            "required": [
+                "job",
+                "status",
+                "events",
+                "stage_outputs",
+                "scenarios",
+                "receipts",
+                "platform"
+            ],
+            "type": "object",
+            "properties": {
+                "job": {
+                    "$ref": "#/definitions/HarnessJobInfo"
+                },
+                "status": {
+                    "$ref": "#/definitions/HarnessJobStatus"
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessJobEvent"
+                    }
+                },
+                "stage_outputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessStageOutput"
+                    }
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessScenario"
+                    }
+                },
+                "receipts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "platform": {
+                    "$ref": "#/definitions/HarnessPlatform"
+                },
+                "runtime": {
+                    "$ref": "#/definitions/HarnessRuntimeRead"
+                },
+                "parallelism": {
+                    "$ref": "#/definitions/HarnessParallelism"
+                },
+                "conversation": {
+                    "$ref": "#/definitions/HarnessConversationRead"
+                },
+                "consumption": {
+                    "$ref": "#/definitions/HarnessConsumption"
+                },
+                "usage_limit": {
+                    "title": "Usage limit",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "versioning": {
+                    "$ref": "#/definitions/HarnessVersioningFlags"
+                }
+            }
+        },
+        "HarnessAdaptationApproved": {
+            "required": [
+                "id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "The adaptation that was approved.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "HarnessReleaseFitAgent": {
+            "required": [
+                "name",
+                "version"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "version": {
+                    "title": "Version",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReleaseFitTool": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessReleaseAgentRule": {
+            "required": [
+                "id",
+                "text"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessAdaptationWorld": {
+            "required": [
+                "name",
+                "title",
+                "summary",
+                "channel",
+                "release",
+                "records",
+                "tools",
+                "rules",
+                "people"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "channel": {
+                    "title": "Channel",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "release": {
+                    "title": "Release",
+                    "description": "The release's digest.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "records": {
+                    "title": "Records",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitTool"
+                    }
+                },
+                "rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseAgentRule"
+                    }
+                },
+                "people": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessAdaptationCase": {
+            "required": [
+                "key",
+                "title"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReleaseFitRow": {
+            "required": [
+                "world",
+                "agent",
+                "kind"
+            ],
+            "type": "object",
+            "properties": {
+                "world": {
+                    "title": "World",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent": {
+                    "title": "Agent",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "matched",
+                        "mapped",
+                        "missing"
+                    ]
+                }
+            }
+        },
+        "HarnessReleaseFitCase": {
+            "required": [
+                "key",
+                "title"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReleaseFitResponse": {
+            "required": [
+                "agent",
+                "agent_tools",
+                "rows",
+                "platform_actions",
+                "total",
+                "unmeasured"
+            ],
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "$ref": "#/definitions/HarnessReleaseFitAgent"
+                },
+                "agent_tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitTool"
+                    }
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitRow"
+                    }
+                },
+                "platform_actions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitTool"
+                    }
+                },
+                "total": {
+                    "title": "Total",
+                    "type": "integer"
+                },
+                "unmeasured": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseFitCase"
+                    }
+                }
+            }
+        },
+        "HarnessReleaseConflict": {
+            "required": [
+                "rule",
+                "policy",
+                "agent"
+            ],
+            "type": "object",
+            "properties": {
+                "rule": {
+                    "title": "Rule",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "policy": {
+                    "title": "Policy",
+                    "description": "The rule as the world states it.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent": {
+                    "title": "Agent",
+                    "description": "The agent's instruction, quoted.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessReleaseConflictsResponse": {
+            "required": [
+                "checked",
+                "conflicts"
+            ],
+            "type": "object",
+            "properties": {
+                "checked": {
+                    "title": "Checked",
+                    "description": "False when the instructions couldn't be read against the rules yet.",
+                    "type": "boolean"
+                },
+                "conflicts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseConflict"
+                    }
+                }
+            }
+        },
+        "HarnessAdaptationDesign": {
+            "required": [
+                "state",
+                "failure",
+                "composition_id",
+                "agent",
+                "world",
+                "suite",
+                "scenarios",
+                "fit",
+                "conflicts",
+                "check"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "description": "checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists.",
+                    "type": "string",
+                    "enum": [
+                        "checking",
+                        "awaiting_approval",
+                        "building",
+                        "ready",
+                        "failed"
+                    ]
+                },
+                "failure": {
+                    "title": "Failure",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "composition_id": {
+                    "title": "Composition id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "agent": {
+                    "$ref": "#/definitions/HarnessReleaseFitAgent"
+                },
+                "world": {
+                    "$ref": "#/definitions/HarnessAdaptationWorld"
+                },
+                "suite": {
+                    "title": "Suite",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessAdaptationCase"
+                    }
+                },
+                "fit": {
+                    "$ref": "#/definitions/HarnessReleaseFitResponse"
+                },
+                "conflicts": {
+                    "$ref": "#/definitions/HarnessReleaseConflictsResponse"
+                },
+                "check": {
+                    "title": "Check",
+                    "description": "What checking the mapping on every case found, once it has: the approval's data.",
+                    "type": "object",
+                    "x-nullable": true
+                }
+            }
+        },
         "HarnessEnvironmentAgentRef": {
             "required": [
                 "id",
@@ -149129,7 +151443,8 @@
                 "last_updated",
                 "created_at",
                 "agent",
-                "last_run"
+                "last_run",
+                "epoch_pickable"
             ],
             "type": "object",
             "properties": {
@@ -149172,6 +151487,7 @@
                     "title": "Status",
                     "type": "string",
                     "enum": [
+                        "awaiting_approval",
                         "building",
                         "running",
                         "completed",
@@ -149231,11 +151547,17 @@
                 },
                 "last_run": {
                     "$ref": "#/definitions/HarnessRunSummary"
+                },
+                "epoch_pickable": {
+                    "title": "Epoch pickable",
+                    "description": "Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing.",
+                    "type": "boolean"
                 }
             }
         },
         "HarnessEnvironmentStatusCounts": {
             "required": [
+                "awaiting_approval",
                 "building",
                 "running",
                 "completed",
@@ -149243,6 +151565,10 @@
             ],
             "type": "object",
             "properties": {
+                "awaiting_approval": {
+                    "title": "Awaiting approval",
+                    "type": "integer"
+                },
                 "building": {
                     "title": "Building",
                     "type": "integer"
@@ -149443,6 +151769,7 @@
                     "title": "Status",
                     "type": "string",
                     "enum": [
+                        "awaiting_approval",
                         "building",
                         "running",
                         "completed",
@@ -151163,6 +153490,250 @@
                 }
             }
         },
+        "HarnessCompositionRelease": {
+            "required": [
+                "digest",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessCompositionRule": {
+            "description": "The environment's agent_policy rules no scenario in this suite grades.",
+            "required": [
+                "id",
+                "text"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "text": {
+                    "title": "Text",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessCompositionScenario": {
+            "required": [
+                "key",
+                "origin",
+                "derived_from"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "origin": {
+                    "title": "Origin",
+                    "type": "string",
+                    "enum": [
+                        "base",
+                        "specialized",
+                        "custom"
+                    ]
+                },
+                "derived_from": {
+                    "title": "Derived from",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessCompositionSuite": {
+            "required": [
+                "digest",
+                "name",
+                "parent_digest",
+                "policy_profile",
+                "unscored_agent_rules",
+                "scenarios"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "parent_digest": {
+                    "title": "Parent digest",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "policy_profile": {
+                    "title": "Policy profile",
+                    "type": "object"
+                },
+                "unscored_agent_rules": {
+                    "description": "The environment's agent_policy rules no scenario in this suite grades.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessCompositionRule"
+                    }
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessCompositionScenario"
+                    }
+                }
+            }
+        },
+        "HarnessCompositionBinding": {
+            "required": [
+                "digest",
+                "mode",
+                "agent_tools",
+                "tools"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "enum": [
+                        "canonical",
+                        "tool_routed"
+                    ]
+                },
+                "agent_tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "HarnessCompositionAgent": {
+            "required": [
+                "agent_definition_id",
+                "agent_version_id",
+                "connector",
+                "name",
+                "version_name"
+            ],
+            "type": "object",
+            "properties": {
+                "agent_definition_id": {
+                    "title": "Agent definition id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "connector": {
+                    "title": "Connector",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "version_name": {
+                    "title": "Version name",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessCompositionProof": {
+            "required": [
+                "passed",
+                "scenarios"
+            ],
+            "type": "object",
+            "properties": {
+                "passed": {
+                    "title": "Passed",
+                    "type": "boolean"
+                },
+                "scenarios": {
+                    "title": "Scenarios",
+                    "type": "object"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessComposition": {
+            "required": [
+                "environment",
+                "suite",
+                "binding",
+                "agent",
+                "alignment",
+                "binding_proof"
+            ],
+            "type": "object",
+            "properties": {
+                "environment": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessCompositionRelease"
+                    }
+                },
+                "suite": {
+                    "$ref": "#/definitions/HarnessCompositionSuite"
+                },
+                "binding": {
+                    "$ref": "#/definitions/HarnessCompositionBinding"
+                },
+                "agent": {
+                    "$ref": "#/definitions/HarnessCompositionAgent"
+                },
+                "alignment": {
+                    "title": "Alignment",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "binding_proof": {
+                    "$ref": "#/definitions/HarnessCompositionProof"
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessEnvironmentDetail": {
             "required": [
                 "id",
@@ -151172,7 +153743,8 @@
                 "scenarios",
                 "evaluations",
                 "settings",
-                "actors_tab"
+                "actors_tab",
+                "composition"
             ],
             "type": "object",
             "properties": {
@@ -151211,6 +153783,9 @@
                         "list"
                     ],
                     "x-nullable": true
+                },
+                "composition": {
+                    "$ref": "#/definitions/HarnessComposition"
                 }
             }
         },
@@ -151225,6 +153800,74 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
+                }
+            }
+        },
+        "HarnessLockRefusal": {
+            "required": [
+                "error",
+                "message",
+                "retryable"
+            ],
+            "type": "object",
+            "properties": {
+                "error": {
+                    "title": "Error",
+                    "description": "lock_not_ready, version_already_locked, lock_too_few_test, lock_too_few_train, version_locked, version_conflict or rebuild_running.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
+                },
+                "piece": {
+                    "title": "Piece",
+                    "description": "version_conflict: the piece whose default moved.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "train": {
+                    "title": "Train",
+                    "description": "lock_too_few_*: the train tasks a lock gives.",
+                    "type": "integer"
+                },
+                "test": {
+                    "title": "Test",
+                    "description": "lock_too_few_*: the test tasks a lock gives.",
+                    "type": "integer"
+                },
+                "locked_version_id": {
+                    "title": "Locked version id",
+                    "description": "version_locked: the locked version to unlock first.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "description": "version_locked: that locked version's label.",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment_label": {
+                    "title": "Environment label",
+                    "description": "version_locked: its environment version's label.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "suite_label": {
+                    "title": "Suite label",
+                    "description": "version_locked: its suite version's label.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -155993,11 +158636,88 @@
                 }
             }
         },
+        "HarnessLockedVersion": {
+            "required": [
+                "id",
+                "label",
+                "environment_version_id",
+                "environment_label",
+                "suite_version_id",
+                "suite_label",
+                "locked_at",
+                "locked_by",
+                "unlocked_at",
+                "unlocked_by",
+                "train",
+                "test"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "environment_label": {
+                    "title": "Environment label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "suite_label": {
+                    "title": "Suite label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "locked_at": {
+                    "title": "Locked at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "locked_by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "unlocked_at": {
+                    "title": "Unlocked at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "unlocked_by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "train": {
+                    "title": "Train",
+                    "type": "integer"
+                },
+                "test": {
+                    "title": "Test",
+                    "type": "integer"
+                }
+            }
+        },
         "HarnessVersions": {
             "required": [
                 "agent",
                 "environment",
-                "suite"
+                "suite",
+                "locked_versions"
             ],
             "type": "object",
             "properties": {
@@ -156017,6 +158737,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessVersion"
+                    }
+                },
+                "locked_versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessLockedVersion"
                     }
                 }
             }
@@ -157739,6 +160465,307 @@
                 }
             }
         },
+        "HarnessRunReportManifest": {
+            "required": [
+                "digest",
+                "environment",
+                "suite",
+                "binding",
+                "agent",
+                "selection",
+                "simulator",
+                "scorer",
+                "runtime"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "environment": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "suite": {
+                    "title": "Suite",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "binding": {
+                    "title": "Binding",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "binding_proof": {
+                    "title": "Binding proof",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "agent": {
+                    "title": "Agent",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "selection": {
+                    "title": "Selection",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "simulator": {
+                    "title": "Simulator",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "scorer": {
+                    "title": "Scorer",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "runtime": {
+                    "title": "Runtime",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                }
+            }
+        },
+        "HarnessRunReportComparability": {
+            "required": [
+                "baseline_run_id",
+                "comparable",
+                "differing"
+            ],
+            "type": "object",
+            "properties": {
+                "baseline_run_id": {
+                    "title": "Baseline run id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "comparable": {
+                    "title": "Comparable",
+                    "type": "boolean"
+                },
+                "differing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessRunReportCoverage": {
+            "required": [
+                "runnable",
+                "suite_scenarios",
+                "base_scenarios",
+                "unscorable",
+                "extension_tools"
+            ],
+            "type": "object",
+            "properties": {
+                "runnable": {
+                    "title": "Runnable",
+                    "type": "integer"
+                },
+                "suite_scenarios": {
+                    "title": "Suite scenarios",
+                    "type": "integer"
+                },
+                "base_scenarios": {
+                    "title": "Base scenarios",
+                    "type": "integer"
+                },
+                "unscorable": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "extension_tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessRunReportUseCase": {
+            "required": [
+                "use_case",
+                "scenarios",
+                "trials",
+                "pass_1",
+                "pass_k"
+            ],
+            "type": "object",
+            "properties": {
+                "use_case": {
+                    "title": "Use case",
+                    "type": "string"
+                },
+                "scenarios": {
+                    "title": "Scenarios",
+                    "type": "integer"
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer"
+                },
+                "pass_1": {
+                    "title": "Pass 1",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "pass_k": {
+                    "title": "Pass k",
+                    "type": "number",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessRunReportScenario": {
+            "required": [
+                "scenario_key",
+                "name",
+                "use_case",
+                "origin",
+                "trials",
+                "pass_1",
+                "passed_all"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "use_case": {
+                    "title": "Use case",
+                    "type": "string"
+                },
+                "origin": {
+                    "title": "Origin",
+                    "type": "string",
+                    "enum": [
+                        "base",
+                        "specialized",
+                        "custom"
+                    ]
+                },
+                "trials": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "passed",
+                            "failed",
+                            "errored",
+                            "skipped"
+                        ],
+                        "x-nullable": true
+                    }
+                },
+                "pass_1": {
+                    "title": "Pass 1",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "passed_all": {
+                    "title": "Passed all",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessRunReport": {
+            "required": [
+                "run_mode",
+                "manifest",
+                "comparability",
+                "coverage",
+                "use_cases",
+                "scenarios",
+                "environment_faults"
+            ],
+            "type": "object",
+            "properties": {
+                "run_mode": {
+                    "title": "Run mode",
+                    "type": "string",
+                    "enum": [
+                        "canonical",
+                        "tool_routed",
+                        "conversation_only"
+                    ]
+                },
+                "manifest": {
+                    "$ref": "#/definitions/HarnessRunReportManifest"
+                },
+                "comparability": {
+                    "$ref": "#/definitions/HarnessRunReportComparability"
+                },
+                "coverage": {
+                    "$ref": "#/definitions/HarnessRunReportCoverage"
+                },
+                "use_cases": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessRunReportUseCase"
+                    }
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessRunReportScenario"
+                    }
+                },
+                "environment_faults": {
+                    "title": "Environment faults",
+                    "type": "integer"
+                }
+            }
+        },
         "HarnessScenarioValidationStatus": {
             "required": [
                 "state",
@@ -158968,6 +161995,102 @@
                 }
             }
         },
+        "HarnessRefusal": {
+            "required": [
+                "code",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessLockPreview": {
+            "required": [
+                "environment_version_id",
+                "suite_version_id",
+                "proved",
+                "can_lock",
+                "refusal",
+                "train",
+                "test",
+                "test_target"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "proved": {
+                    "title": "Proved",
+                    "description": "The suite version passed its proofs against this environment version.",
+                    "type": "boolean"
+                },
+                "can_lock": {
+                    "title": "Can lock",
+                    "type": "boolean"
+                },
+                "refusal": {
+                    "$ref": "#/definitions/HarnessRefusal"
+                },
+                "train": {
+                    "title": "Train",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "test": {
+                    "title": "Test",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "test_target": {
+                    "title": "Test target",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessLockVersion": {
+            "required": [
+                "environment_version_id",
+                "suite_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "description": "The default environment version the caller saw.",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "suite_version_id": {
+                    "title": "Suite version id",
+                    "description": "The default suite version the caller saw.",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "additionalProperties": false
+        },
         "HarnessSuiteMember": {
             "required": [
                 "scenario_key",
@@ -159007,6 +162130,102 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                }
+            }
+        },
+        "HarnessUnlockVersion": {
+            "required": [
+                "locked_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "locked_version_id": {
+                    "title": "Locked version id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            },
+            "additionalProperties": false
+        },
+        "HarnessUnlockForbidden": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "enum": [
+                        "viewer_read_only"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string"
+                },
+                "retryable": {
+                    "title": "Retryable",
+                    "type": "boolean"
                 }
             }
         },
@@ -159069,845 +162288,73 @@
                 }
             }
         },
-        "HarnessJobInfo": {
+        "HarnessHostedAgentRequest": {
             "required": [
-                "job_id",
-                "run_id",
-                "source",
-                "metadata",
-                "run_test_id",
-                "test_execution_id"
+                "suite_id",
+                "name",
+                "instructions",
+                "model",
+                "idempotency_key"
             ],
             "type": "object",
             "properties": {
-                "job_id": {
-                    "title": "Job id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "run_id": {
-                    "title": "Run id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "source": {
-                    "title": "Source",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    }
-                },
-                "metadata": {
-                    "title": "Metadata",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "object",
-                        "x-nullable": true,
-                        "x-json-value": true,
-                        "description": "Any valid JSON value."
-                    }
-                },
-                "runtime": {
-                    "title": "Runtime",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    }
-                },
-                "run_test_id": {
-                    "title": "Run test id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "test_execution_id": {
-                    "title": "Test execution id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessJobStatus": {
-            "required": [
-                "state",
-                "stage",
-                "updated_at",
-                "attempt",
-                "completed_scenarios",
-                "failed_scenarios",
-                "total_scenarios",
-                "deadline_at",
-                "failure"
-            ],
-            "type": "object",
-            "properties": {
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "updated_at": {
-                    "title": "Updated at",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "attempt": {
-                    "title": "Attempt",
-                    "type": "integer"
-                },
-                "completed_scenarios": {
-                    "title": "Completed scenarios",
-                    "type": "integer"
-                },
-                "failed_scenarios": {
-                    "title": "Failed scenarios",
-                    "type": "integer"
-                },
-                "active_scenarios": {
-                    "title": "Active scenarios",
-                    "type": "integer"
-                },
-                "queued_scenarios": {
-                    "title": "Queued scenarios",
-                    "type": "integer"
-                },
-                "total_scenarios": {
-                    "title": "Total scenarios",
-                    "type": "integer"
-                },
-                "deadline_at": {
-                    "title": "Deadline at",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "cancel_requested_at": {
-                    "title": "Cancel requested at",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "cancel_confirmed_at": {
-                    "title": "Cancel confirmed at",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "cancel_confirmed_by": {
-                    "title": "Cancel confirmed by",
-                    "type": "string",
-                    "enum": [
-                        "sandbox_absent",
-                        "provider_call_ended",
-                        "cleanup_failed",
-                        "provider_call_open",
-                        "provider_unchecked",
-                        "unchecked_no_key",
-                        "unchecked_key_rejected",
-                        "unchecked_no_target",
-                        "unchecked_no_calls",
-                        "unchecked_too_many_calls"
-                    ],
-                    "x-nullable": true
-                },
-                "cancel_status": {
-                    "title": "Cancel status",
-                    "type": "string",
-                    "enum": [
-                        "requested",
-                        "confirmed",
-                        "unconfirmed",
-                        "cleanup_failed"
-                    ],
-                    "x-nullable": true
-                },
-                "failure": {
-                    "title": "Failure",
-                    "type": "object",
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessJobEvent": {
-            "required": [
-                "event_id",
-                "sequence",
-                "stage",
-                "type",
-                "payload",
-                "emitted_at"
-            ],
-            "type": "object",
-            "properties": {
-                "event_id": {
-                    "title": "Event id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer"
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "type": {
-                    "title": "Type",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "emitted_at": {
-                    "title": "Emitted at",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "HarnessStageOutput": {
-            "required": [
-                "id",
-                "title",
-                "summary",
-                "kind",
-                "data"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "title": {
-                    "title": "Title",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "summary": {
-                    "title": "Summary",
-                    "type": "string"
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "data": {
-                    "title": "Data",
-                    "type": "object"
-                }
-            }
-        },
-        "HarnessScenario": {
-            "required": [
-                "scenario_key",
-                "scenario_id",
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "scenario_key": {
-                    "title": "Scenario key",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "scenario_id": {
-                    "title": "Scenario id",
+                "suite_id": {
+                    "title": "Suite id",
                     "type": "string",
                     "format": "uuid"
                 },
                 "name": {
                     "title": "Name",
-                    "type": "string"
-                },
-                "instruction": {
-                    "title": "Instruction",
                     "type": "string",
-                    "x-nullable": true
-                },
-                "use_case": {
-                    "title": "Use case",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "call_execution_id": {
-                    "title": "Call execution id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessPlatform": {
-            "required": [
-                "run_test_id",
-                "test_execution_id",
-                "url"
-            ],
-            "type": "object",
-            "properties": {
-                "run_test_id": {
-                    "title": "Run test id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "test_execution_id": {
-                    "title": "Test execution id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "url": {
-                    "title": "Url",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                }
-            }
-        },
-        "HarnessDiagnostics": {
-            "required": [
-                "size",
-                "final",
-                "error"
-            ],
-            "type": "object",
-            "properties": {
-                "object_key": {
-                    "title": "Object key",
-                    "type": "string",
+                    "maxLength": 255,
                     "minLength": 1
                 },
-                "sha256": {
-                    "title": "Sha256",
+                "instructions": {
+                    "title": "Instructions",
                     "type": "string",
+                    "maxLength": 65536,
                     "minLength": 1
                 },
-                "size": {
-                    "title": "Size",
-                    "type": "integer"
-                },
-                "captured_at": {
-                    "title": "Captured at",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "final": {
-                    "title": "Final",
-                    "type": "boolean"
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "string"
-                }
-            }
-        },
-        "HarnessRuntimeRead": {
-            "type": "object",
-            "properties": {
-                "sandbox_id": {
-                    "title": "Sandbox id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "diagnostics": {
-                    "$ref": "#/definitions/HarnessDiagnostics"
-                }
-            }
-        },
-        "HarnessParallelism": {
-            "required": [
-                "requested",
-                "admitted",
-                "effective",
-                "degrade_reasons"
-            ],
-            "type": "object",
-            "properties": {
-                "requested": {
-                    "title": "Requested",
-                    "type": "integer"
-                },
-                "admitted": {
-                    "title": "Admitted",
-                    "type": "integer"
-                },
-                "effective": {
-                    "title": "Effective",
-                    "type": "integer"
-                },
-                "degrade_reasons": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    }
-                }
-            }
-        },
-        "HarnessConversationBlockingInput": {
-            "required": [
-                "message_id",
-                "kind"
-            ],
-            "type": "object",
-            "properties": {
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "kind": {
-                    "title": "Kind",
-                    "description": "question_requested or confirmation_requested.",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "prompt": {
-                    "title": "Prompt",
-                    "type": "string"
-                },
-                "options": {
-                    "type": "array",
-                    "items": {
-                        "type": "object"
-                    }
-                },
-                "options_only": {
-                    "title": "Options only",
-                    "description": "True when only one of its options answers it: free text is not an answer.",
-                    "type": "boolean"
-                }
-            },
-            "x-nullable": true
-        },
-        "HarnessConversationMessage": {
-            "required": [
-                "message_id",
-                "sequence",
-                "role",
-                "kind",
-                "state",
-                "stage",
-                "content",
-                "payload",
-                "created_at"
-            ],
-            "type": "object",
-            "properties": {
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "role": {
-                    "title": "Role",
+                "model": {
+                    "title": "Model",
                     "type": "string",
                     "enum": [
-                        "user",
-                        "assistant",
-                        "system"
+                        "vertex_ai/gemini-3.7-flash",
+                        "vertex_ai/gemini-3.8-flash"
                     ]
                 },
-                "kind": {
-                    "title": "Kind",
+                "idempotency_key": {
+                    "title": "Idempotency key",
                     "type": "string",
-                    "enum": [
-                        "message",
-                        "question",
-                        "confirmation",
-                        "status"
-                    ]
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "enum": [
-                        "queued",
-                        "delivered",
-                        "streaming",
-                        "completed",
-                        "failed"
-                    ]
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string"
-                },
-                "content": {
-                    "title": "Content",
-                    "type": "string"
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object"
-                },
-                "invocation_id": {
-                    "title": "Invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "function_call_id": {
-                    "title": "Function call id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "reply_to": {
-                    "title": "Reply to",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time"
-                }
-            }
-        },
-        "HarnessConversationEventRead": {
-            "required": [
-                "event_id",
-                "sequence",
-                "kind",
-                "stage",
-                "payload",
-                "emitted_at"
-            ],
-            "type": "object",
-            "properties": {
-                "event_id": {
-                    "title": "Event id",
-                    "type": "string",
+                    "maxLength": 255,
                     "minLength": 1
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string"
-                },
-                "invocation_id": {
-                    "title": "Invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "function_call_id": {
-                    "title": "Function call id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object"
-                },
-                "emitted_at": {
-                    "title": "Emitted at",
-                    "type": "string",
-                    "format": "date-time"
-                }
-            }
-        },
-        "HarnessConversationWindow": {
-            "required": [
-                "oldest_sequence",
-                "has_older"
-            ],
-            "type": "object",
-            "properties": {
-                "oldest_sequence": {
-                    "title": "Oldest sequence",
-                    "description": "The oldest sequence in this read; read what came before it with `before` set to it.",
-                    "type": "integer",
-                    "x-nullable": true
-                },
-                "has_older": {
-                    "title": "Has older",
-                    "description": "Items before `oldest_sequence` this read leaves out.",
-                    "type": "boolean"
-                }
-            }
-        },
-        "HarnessConversationHistory": {
-            "description": "Where `messages` and `events` start, and whether older ones can be read with the history read.",
-            "required": [
-                "messages"
-            ],
-            "type": "object",
-            "properties": {
-                "messages": {
-                    "$ref": "#/definitions/HarnessConversationWindow"
-                },
-                "events": {
-                    "$ref": "#/definitions/HarnessConversationWindow"
-                }
-            }
-        },
-        "HarnessConversationRuntime": {
-            "required": [
-                "state",
-                "warm_until",
-                "degraded",
-                "available"
-            ],
-            "type": "object",
-            "properties": {
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "warm_until": {
-                    "title": "Warm until",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "degraded": {
-                    "title": "Degraded",
-                    "type": "boolean"
-                },
-                "available": {
-                    "title": "Available",
-                    "type": "boolean"
-                }
-            }
-        },
-        "HarnessConversationRead": {
-            "required": [
-                "conversation_id",
-                "job_id",
-                "state",
-                "stage",
-                "active_invocation_id",
-                "blocking_input",
-                "messages",
-                "events",
-                "event_watermark",
-                "history",
-                "events_has_newer",
-                "runtime"
-            ],
-            "type": "object",
-            "properties": {
-                "conversation_id": {
-                    "title": "Conversation id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "job_id": {
-                    "title": "Job id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "active_invocation_id": {
-                    "title": "Active invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "blocking_input": {
-                    "$ref": "#/definitions/HarnessConversationBlockingInput"
-                },
-                "messages": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessConversationMessage"
-                    }
-                },
-                "events": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessConversationEventRead"
-                    }
-                },
-                "event_watermark": {
-                    "title": "Event watermark",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "history": {
-                    "$ref": "#/definitions/HarnessConversationHistory"
-                },
-                "events_has_newer": {
-                    "title": "Events has newer",
-                    "description": "On a read with `events_after`, whether more events past the last one here are left to read.",
-                    "type": "boolean"
-                },
-                "runtime": {
-                    "$ref": "#/definitions/HarnessConversationRuntime"
-                }
-            },
-            "x-nullable": true
-        },
-        "HarnessConsumption": {
-            "required": [
-                "text_sim_tokens",
-                "voice_sim_minutes",
-                "ai_credits",
-                "sandbox_seconds"
-            ],
-            "type": "object",
-            "properties": {
-                "text_sim_tokens": {
-                    "title": "Text sim tokens",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "voice_sim_minutes": {
-                    "title": "Voice sim minutes",
-                    "type": "number",
-                    "minimum": 0
-                },
-                "ai_credits": {
-                    "title": "Ai credits",
-                    "type": "number",
-                    "minimum": 0,
-                    "x-nullable": true
-                },
-                "sandbox_seconds": {
-                    "title": "Sandbox seconds",
-                    "type": "number",
-                    "minimum": 0
-                }
-            },
-            "x-nullable": true
-        },
-        "HarnessVersioningFlags": {
-            "required": [
-                "enabled",
-                "nudges_enabled"
-            ],
-            "type": "object",
-            "properties": {
-                "enabled": {
-                    "title": "Enabled",
-                    "type": "boolean"
-                },
-                "nudges_enabled": {
-                    "title": "Nudges enabled",
-                    "type": "boolean"
-                }
-            }
-        },
-        "HarnessJobRead": {
-            "required": [
-                "job",
-                "status",
-                "events",
-                "stage_outputs",
-                "scenarios",
-                "receipts",
-                "platform"
-            ],
-            "type": "object",
-            "properties": {
-                "job": {
-                    "$ref": "#/definitions/HarnessJobInfo"
-                },
-                "status": {
-                    "$ref": "#/definitions/HarnessJobStatus"
-                },
-                "events": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessJobEvent"
-                    }
-                },
-                "stage_outputs": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessStageOutput"
-                    }
-                },
-                "scenarios": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessScenario"
-                    }
-                },
-                "receipts": {
-                    "type": "array",
-                    "items": {
-                        "type": "object"
-                    }
-                },
-                "platform": {
-                    "$ref": "#/definitions/HarnessPlatform"
-                },
-                "runtime": {
-                    "$ref": "#/definitions/HarnessRuntimeRead"
                 },
                 "parallelism": {
-                    "$ref": "#/definitions/HarnessParallelism"
+                    "title": "Parallelism",
+                    "description": "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+                    "type": "integer",
+                    "maximum": 8,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessHostedAgentResponse": {
+            "required": [
+                "id",
+                "agent_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "description": "The composition, an environment id.",
+                    "type": "string",
+                    "format": "uuid"
                 },
-                "conversation": {
-                    "$ref": "#/definitions/HarnessConversationRead"
-                },
-                "consumption": {
-                    "$ref": "#/definitions/HarnessConsumption"
-                },
-                "usage_limit": {
-                    "title": "Usage limit",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "versioning": {
-                    "$ref": "#/definitions/HarnessVersioningFlags"
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         },
@@ -159992,99 +162439,6 @@
                         "maxLength": 65536,
                         "minLength": 1
                     }
-                }
-            }
-        },
-        "SecretReference": {
-            "required": [
-                "manager",
-                "key",
-                "purpose"
-            ],
-            "type": "object",
-            "properties": {
-                "manager": {
-                    "title": "Manager",
-                    "type": "string",
-                    "enum": [
-                        "platform-vault",
-                        "platform-config"
-                    ]
-                },
-                "key": {
-                    "title": "Key",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "version": {
-                    "title": "Version",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "purpose": {
-                    "title": "Purpose",
-                    "type": "string",
-                    "enum": [
-                        "target_provider",
-                        "simulator_provider",
-                        "source_checkout"
-                    ]
-                }
-            }
-        },
-        "HarnessAgent": {
-            "required": [
-                "connector"
-            ],
-            "type": "object",
-            "properties": {
-                "connector": {
-                    "title": "Connector",
-                    "type": "string",
-                    "enum": [
-                        "livekit",
-                        "vapi",
-                        "retell",
-                        "retell_chat",
-                        "phone",
-                        "auto"
-                    ]
-                },
-                "mode": {
-                    "title": "Mode",
-                    "type": "string",
-                    "enum": [
-                        "connect_only",
-                        "environment_backed",
-                        "provider_import"
-                    ],
-                    "x-nullable": true
-                },
-                "call_direction": {
-                    "title": "Call direction",
-                    "description": "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
-                    "type": "string",
-                    "enum": [
-                        "inbound",
-                        "outbound"
-                    ],
-                    "x-nullable": true
-                },
-                "config": {
-                    "title": "Config",
-                    "type": "object",
-                    "default": {}
-                },
-                "secret_refs": {
-                    "title": "Secret refs",
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/SecretReference"
-                    },
-                    "default": {}
                 }
             }
         },
@@ -161794,6 +164148,351 @@
                 }
             }
         },
+        "HarnessReleaseParent": {
+            "required": [
+                "digest",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessReleaseTool": {
+            "required": [
+                "name",
+                "description",
+                "mutates_state"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "mutates_state": {
+                    "title": "Mutates state",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessReleasePolicyParameter": {
+            "required": [
+                "name",
+                "type",
+                "default",
+                "allowed"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "string",
+                        "integer",
+                        "number",
+                        "boolean"
+                    ]
+                },
+                "default": {
+                    "title": "Default",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "allowed": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessReleasePolicy": {
+            "required": [
+                "parameters",
+                "agent_rules"
+            ],
+            "type": "object",
+            "properties": {
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleasePolicyParameter"
+                    }
+                },
+                "agent_rules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseAgentRule"
+                    }
+                }
+            }
+        },
+        "HarnessSuiteOrigins": {
+            "required": [
+                "base",
+                "specialized",
+                "custom"
+            ],
+            "type": "object",
+            "properties": {
+                "base": {
+                    "title": "Base",
+                    "type": "integer"
+                },
+                "specialized": {
+                    "title": "Specialized",
+                    "type": "integer"
+                },
+                "custom": {
+                    "title": "Custom",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessSuiteSummary": {
+            "required": [
+                "id",
+                "digest",
+                "name",
+                "scenario_count",
+                "origins",
+                "policy_profile"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "origins": {
+                    "$ref": "#/definitions/HarnessSuiteOrigins"
+                },
+                "policy_profile": {
+                    "title": "Policy profile",
+                    "type": "object"
+                }
+            }
+        },
+        "HarnessReleaseApp": {
+            "required": [
+                "capability",
+                "server",
+                "tools",
+                "records"
+            ],
+            "type": "object",
+            "properties": {
+                "capability": {
+                    "title": "Capability",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "server": {
+                    "title": "Server",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "records": {
+                    "title": "Records",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessReleaseCatalogue": {
+            "description": "Null for a release sealed before catalogue metadata existed.",
+            "required": [
+                "title",
+                "summary",
+                "channel",
+                "records",
+                "apps",
+                "example_requests"
+            ],
+            "type": "object",
+            "properties": {
+                "title": {
+                    "title": "Title",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "channel": {
+                    "title": "Channel",
+                    "type": "string",
+                    "enum": [
+                        "chat",
+                        "voice"
+                    ]
+                },
+                "records": {
+                    "title": "Records",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "apps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseApp"
+                    }
+                },
+                "example_requests": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessRelease": {
+            "required": [
+                "id",
+                "digest",
+                "name",
+                "system",
+                "parent",
+                "tools",
+                "policy",
+                "suites",
+                "catalogue"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "system": {
+                    "title": "System",
+                    "type": "boolean"
+                },
+                "parent": {
+                    "$ref": "#/definitions/HarnessReleaseParent"
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessReleaseTool"
+                    }
+                },
+                "policy": {
+                    "$ref": "#/definitions/HarnessReleasePolicy"
+                },
+                "suites": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessSuiteSummary"
+                    }
+                },
+                "catalogue": {
+                    "$ref": "#/definitions/HarnessReleaseCatalogue"
+                }
+            }
+        },
+        "HarnessReleaseListResponse": {
+            "required": [
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessRelease"
+                    }
+                }
+            }
+        },
+        "HarnessReleaseFitRequest": {
+            "required": [
+                "suite_id",
+                "agent_version_id"
+            ],
+            "type": "object",
+            "properties": {
+                "suite_id": {
+                    "title": "Suite id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "agent_version_id": {
+                    "title": "Agent version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "pairing": {
+                    "title": "Pairing",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "x-nullable": true
+                    }
+                }
+            }
+        },
         "HarnessManifestEntry": {
             "required": [
                 "artifact_id",
@@ -162929,6 +165628,7 @@
                         "tool_result",
                         "question_requested",
                         "confirmation_requested",
+                        "question_answered",
                         "turn_interrupted",
                         "turn_completed",
                         "checkpoint_committed",
@@ -176401,6 +179101,7 @@
                 "completed_at",
                 "ordinal",
                 "agent_version",
+                "connected_calls",
                 "agent_type",
                 "resume",
                 "summary"
@@ -176492,6 +179193,11 @@
                     "type": "integer",
                     "default": 1,
                     "minimum": 1
+                },
+                "connected_calls": {
+                    "title": "Connected calls",
+                    "description": "Calls that connected: a chat that completed, a voice call that ran for any time. Debug failures needs enough of them.",
+                    "type": "integer"
                 },
                 "seed": {
                     "title": "Seed",
@@ -187895,6 +190601,217 @@
                 }
             }
         },
+        "FeedEscalationValues": {
+            "required": [
+                "min_findings",
+                "entry_multiplier",
+                "entry_delta",
+                "entry_confirmation_minutes",
+                "recovery_min",
+                "recovery_multiplier",
+                "recovery_delta",
+                "recovery_confirmation_minutes"
+            ],
+            "type": "object",
+            "properties": {
+                "min_findings": {
+                    "title": "Min findings",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 2
+                },
+                "entry_multiplier": {
+                    "title": "Entry multiplier",
+                    "type": "string",
+                    "format": "decimal"
+                },
+                "entry_delta": {
+                    "title": "Entry delta",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 1
+                },
+                "entry_confirmation_minutes": {
+                    "title": "Entry confirmation minutes",
+                    "type": "integer",
+                    "maximum": 60,
+                    "minimum": 5
+                },
+                "recovery_min": {
+                    "title": "Recovery min",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "recovery_multiplier": {
+                    "title": "Recovery multiplier",
+                    "type": "string",
+                    "format": "decimal"
+                },
+                "recovery_delta": {
+                    "title": "Recovery delta",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "recovery_confirmation_minutes": {
+                    "title": "Recovery confirmation minutes",
+                    "type": "integer",
+                    "maximum": 60,
+                    "minimum": 5
+                }
+            }
+        },
+        "FeedEscalationSettings": {
+            "required": [
+                "values",
+                "defaults",
+                "ranges",
+                "revision",
+                "algorithm_version",
+                "defaults_version",
+                "workspace_id",
+                "workspace_name",
+                "can_edit",
+                "window_minutes",
+                "baseline_hours",
+                "cadence_minutes",
+                "processing_allowance_minutes"
+            ],
+            "type": "object",
+            "properties": {
+                "values": {
+                    "$ref": "#/definitions/FeedEscalationValues"
+                },
+                "defaults": {
+                    "$ref": "#/definitions/FeedEscalationValues"
+                },
+                "ranges": {
+                    "title": "Ranges",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "number"
+                        }
+                    }
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                },
+                "algorithm_version": {
+                    "title": "Algorithm version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "defaults_version": {
+                    "title": "Defaults version",
+                    "type": "integer"
+                },
+                "workspace_id": {
+                    "title": "Workspace id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "workspace_name": {
+                    "title": "Workspace name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "can_edit": {
+                    "title": "Can edit",
+                    "type": "boolean"
+                },
+                "window_minutes": {
+                    "title": "Window minutes",
+                    "type": "integer"
+                },
+                "baseline_hours": {
+                    "title": "Baseline hours",
+                    "type": "integer"
+                },
+                "cadence_minutes": {
+                    "title": "Cadence minutes",
+                    "type": "integer"
+                },
+                "processing_allowance_minutes": {
+                    "title": "Processing allowance minutes",
+                    "type": "integer"
+                }
+            }
+        },
+        "FeedEscalationSettingsApiResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/FeedEscalationSettings"
+                }
+            }
+        },
+        "FeedEscalationSettingsBody": {
+            "required": [
+                "revision"
+            ],
+            "type": "object",
+            "properties": {
+                "min_findings": {
+                    "title": "Min findings",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 2
+                },
+                "entry_multiplier": {
+                    "title": "Entry multiplier",
+                    "type": "string",
+                    "format": "decimal"
+                },
+                "entry_delta": {
+                    "title": "Entry delta",
+                    "type": "integer",
+                    "maximum": 1000000,
+                    "minimum": 1
+                },
+                "entry_confirmation_minutes": {
+                    "title": "Entry confirmation minutes",
+                    "type": "integer",
+                    "maximum": 60,
+                    "minimum": 5
+                },
+                "recovery_min": {
+                    "title": "Recovery min",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "recovery_multiplier": {
+                    "title": "Recovery multiplier",
+                    "type": "string",
+                    "format": "decimal"
+                },
+                "recovery_delta": {
+                    "title": "Recovery delta",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "recovery_confirmation_minutes": {
+                    "title": "Recovery confirmation minutes",
+                    "type": "integer",
+                    "maximum": 60,
+                    "minimum": 5
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
         "LinearTeam": {
             "required": [
                 "id",
@@ -187953,6 +190870,92 @@
                     "$ref": "#/definitions/LinearTeamsResult"
                 }
             }
+        },
+        "FeedEscalation": {
+            "required": [
+                "current_count",
+                "affected_trace_count",
+                "baseline",
+                "entry_threshold",
+                "recovery_threshold",
+                "unit",
+                "window_start",
+                "window_end",
+                "evaluated_at",
+                "algorithm_version",
+                "policy_revision",
+                "input_revision",
+                "entry_confirmation_minutes",
+                "recovery_confirmation_minutes"
+            ],
+            "type": "object",
+            "properties": {
+                "current_count": {
+                    "title": "Current count",
+                    "type": "integer"
+                },
+                "affected_trace_count": {
+                    "title": "Affected trace count",
+                    "type": "integer"
+                },
+                "baseline": {
+                    "title": "Baseline",
+                    "type": "number"
+                },
+                "entry_threshold": {
+                    "title": "Entry threshold",
+                    "type": "number"
+                },
+                "recovery_threshold": {
+                    "title": "Recovery threshold",
+                    "type": "number"
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "enum": [
+                        "findings",
+                        "failed_evaluations"
+                    ]
+                },
+                "window_start": {
+                    "title": "Window start",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "window_end": {
+                    "title": "Window end",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "evaluated_at": {
+                    "title": "Evaluated at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "algorithm_version": {
+                    "title": "Algorithm version",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "policy_revision": {
+                    "title": "Policy revision",
+                    "type": "integer"
+                },
+                "input_revision": {
+                    "title": "Input revision",
+                    "type": "integer"
+                },
+                "entry_confirmation_minutes": {
+                    "title": "Entry confirmation minutes",
+                    "type": "integer"
+                },
+                "recovery_confirmation_minutes": {
+                    "title": "Recovery confirmation minutes",
+                    "type": "integer"
+                }
+            },
+            "x-nullable": true
         },
         "ErrorName": {
             "required": [
@@ -188024,6 +191027,32 @@
             ],
             "type": "object",
             "properties": {
+                "status_origin": {
+                    "title": "Status origin",
+                    "type": "string",
+                    "enum": [
+                        "system",
+                        "manual",
+                        "legacy_unknown"
+                    ]
+                },
+                "status_revision": {
+                    "title": "Status revision",
+                    "type": "integer"
+                },
+                "escalation": {
+                    "$ref": "#/definitions/FeedEscalation"
+                },
+                "escalation_error": {
+                    "title": "Escalation error",
+                    "description": "Why the latest automatic escalation check failed; null when it succeeded.",
+                    "type": "string",
+                    "enum": [
+                        "evidence_unavailable",
+                        "calculation_failed"
+                    ],
+                    "x-nullable": true
+                },
                 "severity_assessment_status": {
                     "title": "Severity assessment status",
                     "type": "string",

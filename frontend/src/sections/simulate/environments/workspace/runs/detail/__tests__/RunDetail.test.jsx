@@ -2045,3 +2045,181 @@ describe("RunDetail build notice", () => {
     expect(screen.queryByTestId("run-build-notice")).toBeNull();
   });
 });
+
+describe("RunDetail Debug failures needs connected calls and a failure", () => {
+  const withCounts = (connected, failed) =>
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, connected, failed },
+      isLoading: false,
+    });
+  const unanalyzed = () => {
+    const hook = debugHook({
+      ...ANALYSIS,
+      status: "not_requested",
+      goals: [],
+      oneOffs: [],
+    });
+    useDebugAnalysis.mockClear();
+    useDebugAnalysis.mockReturnValue(hook);
+    return hook;
+  };
+
+  it.each([
+    [14, 4, "You need at least 15 connected calls to debug failures."],
+    [15, 0, "Nothing failed in this run, so there’s nothing to debug."],
+  ])(
+    "with %i connected and %i failing it is disabled, says why, and never requests a diagnosis",
+    async (connected, failed, reason) => {
+      withCounts(connected, failed);
+      const hook = unanalyzed();
+      // A disabled MUI button takes no pointer events; force the click through.
+      const user = userEvent.setup({ pointerEventsCheck: 0 });
+      renderDetail();
+
+      const button = screen.getByRole("button", { name: "Debug failures" });
+      expect(button).toBeDisabled();
+      // The reason reaches the keyboard through the focusable wrapper.
+      expect(button.parentElement).toHaveAttribute("tabindex", "0");
+      await user.hover(button.parentElement);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+
+      await user.click(button);
+      expect(hook.request).not.toHaveBeenCalled();
+    },
+  );
+
+  it("on a run the rule blocks, a diagnosis already made stays openable", async () => {
+    withCounts(5, 0);
+    const diagnosed = debugHook();
+    // The page reads the run's diagnosis by its id; a closed read is empty.
+    useDebugAnalysis.mockImplementation((id) =>
+      id
+        ? diagnosed
+        : debugHook({ ...ANALYSIS, status: "not_requested", goals: [] }),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    const button = screen.getByRole("button", { name: "Debug failures" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+
+    expect(
+      screen.getByText("Opens the call with the exact mandatory greeting"),
+    ).toBeInTheDocument();
+    expect(diagnosed.request).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [5, 0, false],
+    [15, 1, true],
+  ])(
+    "a failed diagnosis on a run with %i connected and %i failing offers Try again: %s",
+    async (connected, failed, retryable) => {
+      withCounts(connected, failed);
+      const hook = debugHook({
+        ...ANALYSIS,
+        status: "failed",
+        errorMessage: "Debug analysis failed",
+        goals: [],
+        oneOffs: [],
+      });
+      useDebugAnalysis.mockReturnValue(hook);
+      const user = userEvent.setup();
+      renderDetail();
+
+      await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+      expect(screen.getByText(/Debug analysis failed/)).toBeInTheDocument();
+      if (retryable) {
+        await user.click(screen.getByRole("button", { name: "Try again" }));
+        expect(hook.request).toHaveBeenCalledTimes(1);
+      } else {
+        // A retry would be refused: the run needs more connected calls first.
+        expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+        expect(
+          screen.getByText(
+            "Debug analysis failed. You need at least 15 connected calls to debug failures.",
+          ),
+        ).toBeInTheDocument();
+      }
+    },
+  );
+
+  it("a rule refusal says why and offers no Try again", async () => {
+    withCounts(15, 1);
+    useDebugAnalysis.mockReturnValue(
+      debugHook(
+        { ...ANALYSIS, status: "not_requested", goals: [], oneOffs: [] },
+        { requestError: { code: "investigation_too_few_calls" } },
+      ),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(
+      screen.getByText(
+        "You need at least 15 connected calls to debug failures.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    expect(screen.queryByText("Couldn't finish the diagnosis")).toBeNull();
+  });
+
+  it("a server error still offers Try again", async () => {
+    withCounts(15, 1);
+    const hook = debugHook(
+      { ...ANALYSIS, status: "not_requested", goals: [], oneOffs: [] },
+      { requestError: { statusCode: 500, message: "Internal Server Error" } },
+    );
+    useDebugAnalysis.mockReturnValue(hook);
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(hook.request).toHaveBeenCalledTimes(2);
+  });
+
+  it("with 15 connected and a failing call it is enabled and requests the diagnosis on open", async () => {
+    withCounts(15, 1);
+    const hook = unanalyzed();
+    const user = userEvent.setup();
+    renderDetail();
+
+    const button = screen.getByRole("button", { name: "Debug failures" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(hook.request).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the server's refusal in the same words", async () => {
+    withCounts(15, 1);
+    useDebugAnalysis.mockReturnValue(
+      debugHook(
+        { ...ANALYSIS, status: "not_requested", goals: [], oneOffs: [] },
+        {
+          requestError: {
+            code: "investigation_nothing_failed",
+            detail: "raw server text",
+          },
+        },
+      ),
+    );
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+
+    expect(
+      screen.getByText(
+        "Nothing failed in this run, so there’s nothing to debug.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("raw server text")).toBeNull();
+  });
+});

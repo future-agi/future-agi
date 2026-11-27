@@ -1,0 +1,214 @@
+"""Environment releases, adaptations and our hosted agents (`environment-releases.md` §6.4, §7.6).
+
+Organization-scoped like the other harness routes: an organization sees system releases and its
+own, never another organization's. A customer's agent is composed with a release only through
+adaptation; our own hosted agent through the binding the platform builds for it.
+"""
+
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from accounts.authentication import viewer_denied
+from simulate.models import HostedHarnessJob
+from simulate.serializers.harness_job import HarnessJobReadSerializer
+from simulate.serializers.harness_release import (
+    HarnessAdaptationApprovedSerializer,
+    HarnessAdaptationDesignSerializer,
+    HarnessHostedAgentRequestSerializer,
+    HarnessHostedAgentResponseSerializer,
+    HarnessReleaseAgentRequestSerializer,
+    HarnessReleaseFitRequestSerializer,
+    HarnessReleaseFitResponseSerializer,
+    HarnessReleaseListResponseSerializer,
+)
+from simulate.services.harness_fit import adaptation_design, release_fit
+from simulate.services.harness_provider import (
+    HostedHarnessProvider,
+    request_organization,
+    request_workspace,
+    scope_jobs,
+)
+from simulate.services.harness_releases import (
+    adaptation_of,
+    approve_adaptation,
+    create_hosted_agent_composition,
+    list_releases,
+    organization_agent_version,
+    visible_suite,
+)
+from simulate.services.hosted_harness import HostedHarnessError
+from simulate.views.harness_environment import _uuid_or_none
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
+from tfc.utils.api_serializers import (
+    ApiTextErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
+
+
+def _adaptation(request, pk) -> HostedHarnessJob | None:
+    """An adaptation under the caller's organization and workspace, as any job is found."""
+    identifier = _uuid_or_none(pk)
+    organization = request_organization(request)
+    if identifier is None or organization is None:
+        return None
+    job = scope_jobs(
+        HostedHarnessJob.no_workspace_objects.filter(
+            id=identifier, organization=organization, deleted=False
+        ),
+        request,
+    ).first()
+    return job if job is not None and adaptation_of(job) is not None else None
+
+
+def _adaptation_not_found() -> Response:
+    return Response(
+        build_error_envelope(
+            "adaptation not found", status_code=status.HTTP_404_NOT_FOUND
+        ),
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+def _no_organization() -> Response:
+    return Response(
+        build_error_envelope(
+            "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+        ),
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+class HarnessReleaseViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(responses={200: HarnessReleaseListResponseSerializer})
+    def list(self, request):
+        organization = request_organization(request)
+        if organization is None:
+            return _no_organization()
+        return Response({"results": list_releases(organization)})
+
+    @viewer_denied("check how an agent fits an environment")
+    @validated_request(
+        request_serializer=HarnessReleaseFitRequestSerializer,
+        responses={200: HarnessReleaseFitResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=False, methods=["post"])
+    def fit(self, request):
+        """How a connected agent fits a release suite: its tools paired with the world's and
+        the cases that pairing can measure. Nothing is built."""
+        organization = request_organization(request)
+        if organization is None:
+            return _no_organization()
+        data = request.validated_data
+        try:
+            return Response(
+                release_fit(
+                    visible_suite(organization, data["suite_id"]),
+                    organization_agent_version(
+                        organization,
+                        request_workspace(request),
+                        data["agent_version_id"],
+                    ),
+                    data.get("pairing"),
+                )
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+
+
+class HarnessAdaptationViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @viewer_denied("adapt an agent")
+    @validated_request(
+        request_serializer=HarnessReleaseAgentRequestSerializer,
+        responses={202: HarnessJobReadSerializer, 404: ApiTextErrorResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    def create(self, request):
+        """Adapt an agent to a release suite. The job is followed like any harness job."""
+        return HostedHarnessProvider().create_adaptation(request)
+
+    @validated_request(
+        responses={
+            200: HarnessAdaptationDesignSerializer,
+            404: ApiTextErrorResponseSerializer,
+        },
+    )
+    @action(detail=True, methods=["get"])
+    def design(self, request, pk=None):
+        """Review the design: what the adaptation takes from the ready world, before it's built."""
+        job = _adaptation(request, pk)
+        if job is None:
+            return _adaptation_not_found()
+        try:
+            return Response(adaptation_design(job))
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+
+    @viewer_denied("approve an adaptation")
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            202: HarnessAdaptationApprovedSerializer,
+            404: ApiTextErrorResponseSerializer,
+            409: ApiTextErrorResponseSerializer,
+        },
+    )
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """Approve and build: the design is taken once the mapping has been checked on every case."""
+        job = _adaptation(request, pk)
+        if job is None:
+            return _adaptation_not_found()
+        try:
+            job = approve_adaptation(job)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response({"id": str(job.id)}, status=status.HTTP_202_ACCEPTED)
+
+
+class HarnessHostedAgentViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @viewer_denied("create an environment")
+    @validated_request(
+        request_serializer=HarnessHostedAgentRequestSerializer,
+        responses={
+            201: HarnessHostedAgentResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            409: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    def create(self, request):
+        """Compose our own agent with a release suite; it answers the composed environment."""
+        organization = request_organization(request)
+        if organization is None:
+            return _no_organization()
+        data = request.validated_data
+        try:
+            job = create_hosted_agent_composition(
+                organization,
+                request_workspace(request),
+                suite=visible_suite(organization, data["suite_id"]),
+                name=data["name"],
+                instructions=data["instructions"],
+                model=data["model"],
+                idempotency_key=data["idempotency_key"],
+                parallelism=data.get("parallelism"),
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        run_test = job.run_test
+        version_id = run_test.agent_version_id if run_test is not None else None
+        return Response(
+            {"id": str(job.id), "agent_version_id": str(version_id)},
+            status=status.HTTP_201_CREATED,
+        )

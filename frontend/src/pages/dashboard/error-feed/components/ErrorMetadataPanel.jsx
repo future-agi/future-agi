@@ -37,6 +37,7 @@ import { useErrorFeedStore } from "../store";
 import { useSharedIssue } from "../sharedIssueContext";
 import ErrorStatusChip from "./ErrorStatusChip";
 import ErrorSeverityBadge from "./ErrorSeverityBadge";
+import { severityExplanation } from "./ErrorSeverityBadge";
 import PropTypes from "prop-types";
 import { statusColors } from "src/utils/runStatus";
 
@@ -202,17 +203,21 @@ const STATUS_OPTIONS = [
   },
 ];
 
-function StatusDropdown({ clusterId, current }) {
+export function StatusDropdown({ clusterId, current }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const updateIssue = useUpdateErrorFeedIssue();
   const theme = useTheme();
   const cur =
-    STATUS_OPTIONS.find((s) => s.value === current) || STATUS_OPTIONS[0];
+    STATUS_OPTIONS.find((s) => s.value === current) ||
+    STATUS_OPTIONS.find((s) => s.value === "for_review");
   const curColors = statusColors(theme, cur.role);
 
   return (
     <>
       <Box
+        component="button"
+        type="button"
+        aria-label="Change status"
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
@@ -225,14 +230,24 @@ function StatusDropdown({ clusterId, current }) {
           py: 0.35,
           borderRadius: "4px",
           cursor: "pointer",
+          // A real button for keyboard use, so drop the browser's own border
+          // and font; it then matches the Severity control below it.
+          border: "1px solid",
+          borderColor: curColors.border,
           bgcolor: curColors.bg,
           color: curColors.fg,
-          "&:hover": { opacity: 0.85 },
+          font: "inherit",
+          "&:hover": { borderColor: curColors.solid },
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "border.focus",
+            outlineOffset: 1,
+          },
           transition: "all 0.15s",
         }}
       >
         <Iconify icon={cur.icon} width={12} sx={{ color: "inherit" }} />
-        <Typography fontSize="12px" fontWeight={500} sx={{ color: "inherit" }}>
+        <Typography fontSize="12px" fontWeight={600} sx={{ color: "inherit" }}>
           {cur.label}
         </Typography>
         <Iconify
@@ -267,28 +282,27 @@ function StatusDropdown({ clusterId, current }) {
           </Typography>
         </Box>
         <Divider sx={{ borderColor: "divider" }} />
-        {STATUS_OPTIONS.filter((option) => option.value !== current).map(
-          (option) => {
-            const statusColor = statusColors(theme, option.role).fg;
-            return (
-              <MenuItem
-                key={option.value}
-                onClick={() => {
-                  updateIssue.mutate({ clusterId, status: option.value });
-                  setAnchorEl(null);
-                }}
-                sx={{ gap: 1, py: 0.75 }}
-              >
-                <Iconify
-                  icon={option.icon}
-                  width={16}
-                  sx={{ color: statusColor }}
-                />
-                <Typography fontSize="12px">{option.label}</Typography>
-              </MenuItem>
-            );
-          },
-        )}
+        {STATUS_OPTIONS.map((option) => {
+          const statusColor = statusColors(theme, option.role).fg;
+          return (
+            <MenuItem
+              key={option.value}
+              selected={option.value === current}
+              onClick={() => {
+                updateIssue.mutate({ clusterId, status: option.value });
+                setAnchorEl(null);
+              }}
+              sx={{ gap: 1, py: 0.75 }}
+            >
+              <Iconify
+                icon={option.icon}
+                width={16}
+                sx={{ color: statusColor }}
+              />
+              <Typography fontSize="12px">{option.label}</Typography>
+            </MenuItem>
+          );
+        })}
       </Menu>
     </>
   );
@@ -326,7 +340,7 @@ const SEVERITY_OPTIONS = [
   },
 ];
 
-function SeverityDropdown({ current, onChange }) {
+function SeverityDropdown({ current, onChange, fallbackLabel }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const cur =
     SEVERITY_OPTIONS.find((s) => s.value === current) || SEVERITY_OPTIONS[1];
@@ -367,7 +381,7 @@ function SeverityDropdown({ current, onChange }) {
           fontWeight={600}
           sx={{ color: `status.${cur.role}.fg` }}
         >
-          {cur.label}
+          {fallbackLabel || cur.label}
         </Typography>
         <Iconify
           icon="solar:alt-arrow-down-linear"
@@ -433,6 +447,7 @@ function SeverityDropdown({ current, onChange }) {
 SeverityDropdown.propTypes = {
   current: PropTypes.string,
   onChange: PropTypes.func,
+  fallbackLabel: PropTypes.string,
 };
 
 // ── Assignee dropdown ─────────────────────────────────────────────────────────
@@ -452,7 +467,12 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
 
   return (
     <>
+      {/* A real button like Status and Severity: neutral, not greyed out,
+          so it reads as something you can click. */}
       <Box
+        component="button"
+        type="button"
+        aria-label="Change assignee"
         onClick={(e) => {
           e.stopPropagation();
           setAnchorEl(e.currentTarget);
@@ -461,17 +481,21 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         sx={{
           display: "inline-flex",
           alignItems: "center",
-          gap: 0.6,
-          px: 0.75,
-          py: 0.3,
+          gap: 0.5,
+          px: 0.9,
+          py: 0.35,
           borderRadius: "4px",
           cursor: "pointer",
           border: "1px solid",
           borderColor: "divider",
-          bgcolor: "action.hover",
-          "&:hover": {
-            borderColor: "status.discovery.solid",
-            bgcolor: "status.discovery.bg",
+          bgcolor: "background.paper",
+          color: "text.secondary",
+          font: "inherit",
+          "&:hover": { borderColor: "text.disabled", bgcolor: "action.hover" },
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "border.focus",
+            outlineOffset: 1,
           },
           transition: "all 0.15s",
         }}
@@ -512,9 +536,13 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
             <Iconify
               icon="solar:user-plus-linear"
               width={12}
-              sx={{ color: "text.disabled" }}
+              sx={{ color: "inherit" }}
             />
-            <Typography fontSize="12px" color="text.disabled">
+            <Typography
+              fontSize="12px"
+              fontWeight={600}
+              sx={{ color: "inherit" }}
+            >
               Assign
             </Typography>
           </>
@@ -522,7 +550,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         <Iconify
           icon="solar:alt-arrow-down-linear"
           width={12}
-          sx={{ color: "text.disabled", opacity: 0.7 }}
+          sx={{ color: "inherit", opacity: 0.7 }}
         />
       </Box>
       <Menu
@@ -1307,7 +1335,44 @@ export default function ErrorMetadataPanel({ error }) {
                   reason={error.severity_reason}
                 />
               ) : (
-                <SeverityDropdown current={severity} onChange={setSeverity} />
+                // Why it has this severity: the header no longer shows the
+                // severity badge, so its explanation lives here.
+                <Tooltip
+                  title={
+                    // Only when it says more than the label: a reason, or a
+                    // severity that isn't settled yet.
+                    error.severity_reason ||
+                    error.severity_assessment_status === "pending" ||
+                    (error.severity_source === "default" &&
+                      error.severity_assessment_status !== "completed")
+                      ? severityExplanation({
+                          severity: error.severity,
+                          assessmentStatus: error.severity_assessment_status,
+                          source: error.severity_source,
+                          reason: error.severity_reason,
+                          label: SEVERITY_OPTIONS.find(
+                            (s) => s.value === error.severity,
+                          )?.label,
+                        })
+                      : ""
+                  }
+                  placement="left"
+                >
+                  <span>
+                    <SeverityDropdown
+                      current={severity}
+                      onChange={setSeverity}
+                      fallbackLabel={
+                        error.severity_source === "default" &&
+                        error.severity_assessment_status !== "completed"
+                          ? error.severity_assessment_status === "pending"
+                            ? "Pending"
+                            : "Unassessed"
+                          : null
+                      }
+                    />
+                  </span>
+                </Tooltip>
               )}
             </FieldRow>
             <FieldRow label="Assignee">

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import BooleanField, ExpressionWrapper, Q
 from django.utils import timezone
 
 from simulate.models import (
@@ -402,7 +402,11 @@ def create_selected_harness_run(
             status_code=409,
         )
     metadata = dict((environment.payload or {}).get("metadata") or {})
-    if not environment.run_test_id or not metadata.get("authoring_object_key"):
+    # A composition's snapshot is its immutable releases rather than an authoring archive.
+    snapshot = metadata.get("authoring_object_key") or metadata.get(
+        "release_composition"
+    )
+    if not environment.run_test_id or not snapshot:
         raise HostedHarnessError(
             "environment_snapshot_missing",
             "environment has no durable validated snapshot",
@@ -487,12 +491,14 @@ def create_selected_harness_run(
                 "environment was deleted while submitting this Run",
                 status_code=409,
             ) from exc
+        locked_metadata = environment.payload.get("metadata") or {}
         if (
             environment.deleted
             or environment.state != HostedHarnessJob.State.COMPLETED
             or not environment.run_test_id
-            or not (environment.payload.get("metadata") or {}).get(
-                "authoring_object_key"
+            or not (
+                locked_metadata.get("authoring_object_key")
+                or locked_metadata.get("release_composition")
             )
         ):
             raise HostedHarnessError(
@@ -746,6 +752,12 @@ def create_selected_harness_run(
         child_payload = dict(child.payload)
         child_metadata = dict(child_payload.get("metadata") or {})
         child_metadata["execution_manifest"] = manifest
+        if child_metadata.get("release_composition"):
+            from simulate.services.harness_releases import freeze_run_manifest
+
+            child_metadata["run_manifest"] = freeze_run_manifest(
+                environment, child, scenario_keys=scenario_keys, trials=trials
+            )
         child_payload["metadata"] = child_metadata
         child.payload = child_payload
         execution_metadata = dict(test_execution.execution_metadata or {})
@@ -1273,15 +1285,17 @@ def all_run_keys(
 
     resolved = resolve_run_pins(environment, rerun_of=None, picks=picks, fix_run=None)
     if resolved is not None:
-        keys = HarnessSuiteMember.no_workspace_objects.filter(
+        listed = HarnessSuiteMember.no_workspace_objects.filter(
             suite_version=resolved.suite_version
         ).order_by("number", "scenario_key")
+        found = list(listed.values_list("scenario_key", flat=True))
     else:
-        keys = HostedHarnessScenario.no_workspace_objects.filter(
+        scenarios = HostedHarnessScenario.no_workspace_objects.filter(
             job=environment
         ).order_by("created_at", "id")
+        found = list(scenarios.values_list("scenario_key", flat=True))
     left_out = set(hidden)
-    ordered = dict.fromkeys(keys.values_list("scenario_key", flat=True))
+    ordered = dict.fromkeys(found)
     return [key for key in ordered if key not in left_out]
 
 
@@ -1291,6 +1305,8 @@ def resolve_run_pins(
     rerun_of: HostedHarnessJob | None = None,
     picks: VersionPicks | None = None,
     fix_run: Any = None,
+    credential_blob: bool = True,
+    documents: bool = True,
 ) -> ResolvedPins | None:
     """The versions a new run would be pinned to, when versioning pins runs.
 
@@ -1298,7 +1314,9 @@ def resolve_run_pins(
     rerun keeps its source's pins when they can run: they are the defaults, their
     bundle is cached, or certifying is on; otherwise it runs the defaults. Picks that
     cannot run are refused rather than run as the defaults. Only a check run of
-    ``fix_run`` may pick the suite version private to it.
+    ``fix_run`` may pick the suite version private to it. Without ``credential_blob``
+    the agent's side row comes without its blob, for a caller that never runs it;
+    without ``documents`` the version rows come without their documents.
     """
     from simulate.services.harness_versioning.assembly import (
         bundle_ready,
@@ -1324,7 +1342,12 @@ def resolve_run_pins(
         and rerun_of.environment_version_id is not None
         and rerun_of.suite_version_id is not None
     ):
-        loaded = _load_pins(environment, rerun_of)
+        loaded = _load_pins(
+            environment,
+            rerun_of,
+            credential_blob=credential_blob,
+            documents=documents,
+        )
         _, environment_version, suite_version, runtime = loaded
         kept = _source_bundle(environment, rerun_of)
         if pin_ids(rerun_of) == defaults or (
@@ -1357,7 +1380,9 @@ def resolve_run_pins(
         if picked != ids:
             ids, loaded = picked, None
     if loaded is None:
-        loaded = load_ids(environment, ids)
+        loaded = load_ids(
+            environment, ids, credential_blob=credential_blob, documents=documents
+        )
     agent_version, environment_version, suite_version, runtime = loaded
     # A rerun of its source's very pins replays the bundle its source ran.
     if source is not rerun_of or ids != pin_ids(rerun_of) or runtime is None:
@@ -1688,19 +1713,33 @@ def pin_ids(job: HostedHarnessJob) -> tuple[Any, Any, Any]:
 
 
 def _load_pins(
-    environment: HostedHarnessJob, source: HostedHarnessJob
+    environment: HostedHarnessJob,
+    source: HostedHarnessJob,
+    *,
+    credential_blob: bool = True,
+    documents: bool = True,
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions ``source`` is pinned to, and the agent's
     side row."""
-    return load_ids(environment, pin_ids(source))
+    return load_ids(
+        environment,
+        pin_ids(source),
+        credential_blob=credential_blob,
+        documents=documents,
+    )
 
 
 def load_ids(
-    environment: HostedHarnessJob, ids: tuple[Any, Any, Any]
+    environment: HostedHarnessJob,
+    ids: tuple[Any, Any, Any],
+    *,
+    credential_blob: bool = True,
+    documents: bool = True,
 ) -> tuple[Any, Any, Any, Any]:
     """The agent, environment and suite versions of these ids, and the agent's side
     row with the facts it runs with in ``environment``: a shared legacy row stands
-    for the environment's own."""
+    for the environment's own. Without ``credential_blob`` the row's blob is unread;
+    without ``documents`` the version rows' documents are."""
     from simulate.models import (
         AgentVersion,
         HarnessAgentVersionRuntime,
@@ -1709,10 +1748,13 @@ def load_ids(
     )
 
     agent_version_id, environment_version_id, suite_version_id = ids
-    environment_version = HarnessEnvironmentVersion._base_manager.get(
-        id=environment_version_id
-    )
-    suite_version = HarnessSuiteVersion._base_manager.get(id=suite_version_id)
+    environment_versions = HarnessEnvironmentVersion._base_manager.all()
+    suite_versions = HarnessSuiteVersion._base_manager.all()
+    if not documents:
+        environment_versions = environment_versions.defer("documents")
+        suite_versions = suite_versions.defer("documents")
+    environment_version = environment_versions.get(id=environment_version_id)
+    suite_version = suite_versions.get(id=suite_version_id)
     # A soft-deleted agent version is never pinned onto a run.
     agent_version = (
         AgentVersion.no_workspace_objects.select_related("agent_definition")
@@ -1729,17 +1771,59 @@ def load_ids(
         )
     from simulate.services.harness_versioning.backfill import effective_runtime
 
-    runtime = (
-        effective_runtime(
-            environment,
-            HarnessAgentVersionRuntime.no_workspace_objects.filter(
-                agent_version=agent_version
-            ).first(),
+    runtimes = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=agent_version
+    )
+    if not credential_blob:
+        runtimes = runtimes.defer("credential_blob").annotate(
+            # Whether a discarded row was a legacy one, without reading its blob.
+            blobless=ExpressionWrapper(
+                Q(credential_blob__isnull=True) | Q(credential_blob=""),
+                output_field=BooleanField(),
+            )
         )
+    runtime = (
+        effective_runtime(environment, runtimes.first())
         if agent_version is not None
         else None
     )
     return agent_version, environment_version, suite_version, runtime
+
+
+def sub_goal_catalogue(sub_goals: object) -> frozenset[str]:
+    """The sub-goal names an environment version grades, from its ``sub_goals``
+    document: a list of goal objects, each named by ``name``. Empty for a version
+    recorded before the catalogue was, and for any other shape."""
+    if not isinstance(sub_goals, list):
+        return frozenset()
+    return frozenset(
+        str(goal["name"])
+        for goal in sub_goals
+        if isinstance(goal, dict) and goal.get("name")
+    )
+
+
+def _goal_names(sub_goals: object) -> list[str] | None:
+    """The goal names a scenario's ``sub_goals`` field gives: a list of goal objects,
+    or of bare names as legacy members wrote them. None for a missing field or any
+    other shape, which predates sub-goals."""
+    if not isinstance(sub_goals, list):
+        return None
+    return [
+        str(goal.get("name")) if isinstance(goal, Mapping) else str(goal)
+        for goal in sub_goals
+    ]
+
+
+def grades_nothing(sub_goals: object, catalogue: Collection[str]) -> bool:
+    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
+    cannot score it. A scenario without the field predates sub-goals and an empty
+    catalogue grades anything: neither is refused. The catalogue is any collection
+    of goal names, a mapping keyed by name included."""
+    names = _goal_names(sub_goals)
+    if not catalogue or names is None:
+        return False
+    return not any(name in catalogue for name in names)
 
 
 def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
@@ -1748,11 +1832,11 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
     Certifying drops them from the bundle, so the run could not play them. A member
     without a ``sub_goals`` field predates them and is left to the run.
     """
-    catalogue = {
-        str(goal.get("name"))
-        for goal in (pins.environment_version.documents or {}).get("sub_goals") or []
-        if isinstance(goal, dict) and goal.get("name")
-    }
+    catalogue = sub_goal_catalogue(
+        (pins.environment_version.documents or {}).get("sub_goals")
+    )
+    if not catalogue:
+        return
     ungradable = [
         key
         for key in scenario_keys
@@ -1771,19 +1855,6 @@ def _refuse_ungradable(pins: _RunPins, scenario_keys: list[str]) -> None:
             + " no sub-goal of this environment version, so the run cannot score it",
             status_code=422,
         )
-
-
-def grades_nothing(sub_goals: Any, catalogue: Collection[str]) -> bool:
-    """Whether a scenario's ``sub_goals`` name no sub-goal of the catalogue, so a run
-    cannot score it. A scenario without the field predates sub-goals and an empty
-    catalogue grades anything: neither is refused."""
-    if not catalogue or not isinstance(sub_goals, list):
-        return False
-    names = {
-        str(goal.get("name") if isinstance(goal, Mapping) else goal)
-        for goal in sub_goals
-    }
-    return not names & set(catalogue)
 
 
 def _member_registrations(
@@ -2239,6 +2310,33 @@ def keep_delivered_attempt(attempt: HostedHarnessAttempt) -> bool:
     return True
 
 
+def fail_unscheduled_run(run: HostedHarnessJob) -> bool:
+    """Fail a Run whose workflow could not be started, and say whether it was still queued."""
+    failure = {
+        "domain": "infrastructure",
+        "stage": "queued",
+        "code": "scheduler_unavailable",
+        "message": "Selected harness Run could not be scheduled",
+    }
+    with transaction.atomic():
+        failed = HostedHarnessJob.no_workspace_objects.filter(
+            id=run.id,
+            state=HostedHarnessJob.State.QUEUED,
+        ).update(
+            state=HostedHarnessJob.State.FAILED,
+            current_stage="failed",
+            terminal_at=timezone.now(),
+            failure=failure,
+        )
+        if failed and run.test_execution_id:
+            TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
+                status=TestExecution.ExecutionStatus.FAILED,
+                completed_at=timezone.now(),
+                error_reason=failure["message"],
+            )
+    return bool(failed)
+
+
 # The failures the platform records when it loses an attempt: the sandbox went away or
 # stopped answering, the guest crashed, or its ending or manifest never arrived. None of
 # them describes a Run whose every call delivered its result.
@@ -2517,7 +2615,7 @@ def _lock_job_and_current_attempt(
         current = (
             HostedHarnessAttempt.no_workspace_objects.select_for_update()
             .select_related("job")
-            .get(job_id=job_id, attempt_number=number)
+            .get(job_id=uuid.UUID(str(job_id)), attempt_number=number)
         )
         # Registration moves the number only under these locks; re-read if one did.
         if current.job.current_attempt_number == number:
@@ -2621,6 +2719,8 @@ def _register_attempt(
     snapshot_name: str | None = None,
     snapshot_digest: str | None = None,
 ) -> AttemptCapability:
+    from simulate.services.harness_releases import reset_approval
+
     now = timezone.now()
     token = secrets.token_urlsafe(32)
     fence = secrets.token_urlsafe(32)
@@ -2667,6 +2767,8 @@ def _register_attempt(
         job.current_attempt_number = attempt_number
         if attempt_number == 1:
             _freeze_build_pin(job)
+        else:
+            reset_approval(job)
         job.state = HostedHarnessJob.State.PROVISIONING
         # A retry is a fresh active attempt. Do not keep presenting the previous
         # attempt's terminal state while Daytona is launching (or even running)
@@ -2800,6 +2902,11 @@ def delete_environment(job: HostedHarnessJob) -> None:
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=job.id
         )
+        from simulate.services.harness_versioning.locked_versions import (
+            require_no_locked_version,
+        )
+
+        require_no_locked_version(locked)
         from simulate.services.harness_versioning.nudges import (
             close_environment_nudges,
         )
@@ -3281,18 +3388,18 @@ def _environment_definition_for(
 
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     """Resolve target instructions without reducing an Others prompt."""
-    connector = str((job.payload.get("agent") or {}).get("connector") or "")
-    if connector in {"phone", "livekit"}:
-        # "Others" is configured from a user-supplied system prompt.  Keep that
-        # complete prompt as the agent definition's source of truth: the hosted
-        # guest's ``agent_prompt`` may only be the short contract excerpt used
-        # during authoring and must not replace it.
-        configured = str(
-            ((job.payload.get("agent") or {}).get("config") or {}).get(
-                "target_system_prompt"
-            )
-            or ""
-        ).strip()
+    agent = job.payload.get("agent") or {}
+    # "Others" is configured from a user-supplied system prompt, and our hosted agent carries
+    # its instructions. Keep that complete prompt as the agent definition's source of truth:
+    # the hosted guest's ``agent_prompt`` may only be the short contract excerpt used during
+    # authoring and must not replace it.
+    configured_key = {
+        "phone": "target_system_prompt",
+        "livekit": "target_system_prompt",
+        "hosted_agent": "instructions",
+    }.get(str(agent.get("connector") or ""))
+    if configured_key:
+        configured = str((agent.get("config") or {}).get(configured_key) or "").strip()
         if configured:
             return configured
     supplied = str(payload.get("agent_prompt") or "").strip()
@@ -3772,6 +3879,8 @@ def record_cleanup(
     retry_pending: bool = False,
     details: dict[str, Any] | None = None,
 ) -> HostedHarnessJob:
+    from simulate.services.harness_releases import adaptation_settled
+
     if not verified_absent:
         raise HostedHarnessError(
             "sandbox_cleanup_unverified",
@@ -3815,6 +3924,10 @@ def record_cleanup(
             id=attempt.job_id
         )
         if attempt.attempt_number < job.current_attempt_number:
+            return job
+        if adaptation_settled(job):
+            if hidden := finish_deferred_delete(job):
+                job.save(update_fields=[*hidden, "updated_at"])
             return job
         missing = executions_without_result(job, attempt.attempt_number)
         # With every call's result in, a relaunch would only run them and charge them
@@ -3867,6 +3980,8 @@ def _settle_job(
         job.environment_id is None
         and job.test_execution_id is None
         and attempt.terminal_stage == "completed"
+        # An adaptation job is completed by complete_adaptation, not by an authoring archive.
+        and not (job.payload.get("metadata") or {}).get("adaptation")
         and (
             not job.run_test_id
             or not (job.payload.get("metadata") or {}).get("authoring_object_key")

@@ -69,7 +69,7 @@ class TestExecutionDebugAnalysisView(APIView):
                 build_error_envelope(
                     str(exc),
                     status_code=status.HTTP_409_CONFLICT,
-                    code="execution_not_completed",
+                    code=exc.code,
                 ),
                 status=status.HTTP_409_CONFLICT,
             )

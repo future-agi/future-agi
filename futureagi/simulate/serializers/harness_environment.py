@@ -11,6 +11,7 @@ from simulate.constants.harness_environment import (
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
     RUN_KIND_SIMULATE,
+    STATUS_AWAITING_APPROVAL,
     STATUS_BUILDING,
     STATUS_COMPLETED,
     STATUS_FAILED,
@@ -42,7 +43,10 @@ from simulate.types import (
     WorkerBinding,
     WorkerEnforcement,
 )
-from tfc.utils.api_serializers import StrictInputSerializer
+from tfc.utils.api_serializers import (
+    StrictInputSerializer,
+    ViewerReadOnlyErrorSerializer,
+)
 from tfc.utils.serializer_fields import JsonValueField, StringOrArrayField
 
 
@@ -69,7 +73,13 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     )
     status = serializers.ChoiceField(
         required=False,
-        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED),
+        choices=(
+            STATUS_AWAITING_APPROVAL,
+            STATUS_BUILDING,
+            STATUS_RUNNING,
+            STATUS_COMPLETED,
+            STATUS_FAILED,
+        ),
     )
     agent_type = serializers.ChoiceField(
         required=False, choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT)
@@ -114,7 +124,13 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     source_kind = serializers.CharField()
     agent_type = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
     status = serializers.ChoiceField(
-        choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+        choices=(
+            STATUS_AWAITING_APPROVAL,
+            STATUS_BUILDING,
+            STATUS_RUNNING,
+            STATUS_COMPLETED,
+            STATUS_FAILED,
+        )
     )
     # The fine-grained pipeline stage behind ``status``, so a caller that draws a
     # progress bar does not have to infer it from the four-state pill.
@@ -198,9 +214,15 @@ class HarnessEnvironmentAgentRefSerializer(serializers.Serializer):
 class HarnessEnvironmentSerializer(HarnessEnvironmentFieldsSerializer):
     agent = HarnessEnvironmentAgentRefSerializer(allow_null=True)
     last_run = HarnessRunSummarySerializer(allow_null=True)
+    epoch_pickable = serializers.BooleanField(
+        help_text="Whether Run Epoch can be picked for it: an uploaded or GitHub agent,"
+        " with or without its agent version yet. Once picked, the plan says what is"
+        " still missing."
+    )
 
 
 class HarnessEnvironmentStatusCountsSerializer(serializers.Serializer):
+    awaiting_approval = serializers.IntegerField()
     building = serializers.IntegerField()
     running = serializers.IntegerField()
     completed = serializers.IntegerField()
@@ -972,8 +994,73 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     enable_tool_evaluation = serializers.BooleanField()
 
 
+class HarnessCompositionReleaseSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField()
+
+
+class HarnessCompositionScenarioSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    origin = serializers.ChoiceField(choices=("base", "specialized", "custom"))
+    derived_from = serializers.CharField(allow_null=True)
+
+
+class HarnessCompositionRuleSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    text = serializers.CharField(allow_blank=True)
+
+
+class HarnessCompositionSuiteSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    name = serializers.CharField()
+    parent_digest = serializers.CharField(allow_null=True)
+    policy_profile = serializers.JSONField()
+    unscored_agent_rules = HarnessCompositionRuleSerializer(
+        many=True,
+        help_text="The environment's agent_policy rules no scenario in this suite grades.",
+    )
+    scenarios = HarnessCompositionScenarioSerializer(many=True)
+
+
+class HarnessCompositionBindingSerializer(serializers.Serializer):
+    digest = serializers.CharField()
+    mode = serializers.ChoiceField(choices=("canonical", "tool_routed"))
+    agent_tools = serializers.ListField(child=serializers.JSONField())
+    tools = serializers.ListField(child=serializers.JSONField())
+
+
+class HarnessCompositionAgentSerializer(serializers.Serializer):
+    agent_definition_id = serializers.UUIDField()
+    agent_version_id = serializers.UUIDField()
+    connector = serializers.CharField()
+    name = serializers.CharField(allow_null=True)
+    version_name = serializers.CharField(allow_null=True)
+
+
+class HarnessCompositionProofSerializer(serializers.Serializer):
+    passed = serializers.BooleanField()
+    scenarios = serializers.JSONField()
+
+
+class HarnessCompositionSerializer(serializers.Serializer):
+    """What a composition is made of: releases, suite, binding and its proof.
+
+    ``alignment`` is the adaptation's alignment (admission, mapped and unsupported tools,
+    extension candidates, unscorable scenarios, policy conflicts); null for a canonical
+    composition.
+    """
+
+    environment = HarnessCompositionReleaseSerializer(many=True)
+    suite = HarnessCompositionSuiteSerializer()
+    binding = HarnessCompositionBindingSerializer()
+    agent = HarnessCompositionAgentSerializer()
+    alignment = serializers.JSONField(allow_null=True)
+    binding_proof = HarnessCompositionProofSerializer(allow_null=True)
+
+
 class HarnessEnvironmentDetailSerializer(serializers.Serializer):
-    """One environment. ``contract`` and ``world`` are null until authoring finishes."""
+    """One environment. ``contract`` and ``world`` are null until authoring finishes;
+    ``composition`` is null unless the environment is a release composition."""
 
     id = serializers.UUIDField()
     overview = HarnessEnvironmentOverviewSerializer()
@@ -987,6 +1074,7 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
         allow_null=True,
         help_text="edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab.",
     )
+    composition = HarnessCompositionSerializer(allow_null=True)
 
 
 class HarnessScenarioFaultSerializer(serializers.Serializer):
@@ -1531,12 +1619,119 @@ class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
     agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
 
 
+class HarnessLockedVersionSerializer(serializers.Serializer):
+    """A locked environment and suite version pair, with its split counts."""
+
+    id = serializers.UUIDField()
+    label = serializers.CharField()  # type: ignore[assignment]  # the API field is named label, as DRF Field's own
+    environment_version_id = serializers.UUIDField()
+    environment_label = serializers.CharField(allow_null=True)
+    suite_version_id = serializers.UUIDField()
+    suite_label = serializers.CharField(allow_null=True)
+    locked_at = serializers.DateTimeField()
+    locked_by = HarnessVersionPersonSerializer(allow_null=True)
+    unlocked_at = serializers.DateTimeField(allow_null=True)
+    unlocked_by = HarnessVersionPersonSerializer(allow_null=True)
+    train = serializers.IntegerField()
+    test = serializers.IntegerField()
+
+
+class HarnessRefusalSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    message = serializers.CharField()
+
+
+class HarnessLockPreviewSerializer(serializers.Serializer):
+    """Whether the default pair can be locked now, and the splits it would get."""
+
+    environment_version_id = serializers.UUIDField(allow_null=True)
+    suite_version_id = serializers.UUIDField(allow_null=True)
+    proved = serializers.BooleanField(
+        help_text="The suite version passed its proofs against this environment version."
+    )
+    can_lock = serializers.BooleanField()
+    refusal = HarnessRefusalSerializer(allow_null=True)
+    train = serializers.IntegerField(allow_null=True)
+    test = serializers.IntegerField(allow_null=True)
+    test_target = serializers.IntegerField(allow_null=True)
+
+
 class HarnessVersionsSerializer(serializers.Serializer):
     """Every version of an environment's three pieces, newest first."""
 
     agent = HarnessVersionSerializer(many=True)
     environment = HarnessVersionSerializer(many=True)
     suite = HarnessVersionSerializer(many=True)
+    locked_versions = HarnessLockedVersionSerializer(many=True)
+
+
+class HarnessLockVersionSerializer(StrictInputSerializer):
+    environment_version_id = serializers.UUIDField(
+        help_text="The default environment version the caller saw."
+    )
+    suite_version_id = serializers.UUIDField(
+        help_text="The default suite version the caller saw."
+    )
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class HarnessUnlockVersionSerializer(StrictInputSerializer):
+    locked_version_id = serializers.UUIDField()
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class HarnessLockRefusalSerializer(serializers.Serializer):
+    """A refused lock, unlock, or delete of an environment with a locked version."""
+
+    error = serializers.CharField(
+        help_text=(
+            "lock_not_ready, version_already_locked, lock_too_few_test,"
+            " lock_too_few_train, version_locked, version_conflict or"
+            " rebuild_running."
+        )
+    )
+    message = serializers.CharField()
+    retryable = serializers.BooleanField()
+    piece = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_conflict: the piece whose default moved.",
+    )
+    train = serializers.IntegerField(
+        required=False, help_text="lock_too_few_*: the train tasks a lock gives."
+    )
+    test = serializers.IntegerField(
+        required=False, help_text="lock_too_few_*: the test tasks a lock gives."
+    )
+    locked_version_id = serializers.UUIDField(
+        required=False, help_text="version_locked: the locked version to unlock first."
+    )
+    label = serializers.CharField(  # type: ignore[assignment]  # the API field is named label, as DRF Field's own
+        required=False, help_text="version_locked: that locked version's label."
+    )
+    environment_label = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_locked: its environment version's label.",
+    )
+    suite_label = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="version_locked: its suite version's label.",
+    )
+
+
+class HarnessUnlockForbiddenSerializer(ViewerReadOnlyErrorSerializer):
+    """A Viewer's refusal (``code``, ``detail``, ``action``), or a Member's
+    unlock_admin_only refusal (``error``, ``message``, ``retryable``)."""
+
+    detail = serializers.CharField(required=False, allow_blank=True)
+    error = serializers.CharField(required=False)
+    retryable = serializers.BooleanField(required=False)
 
 
 class HarnessPairValidationSerializer(serializers.Serializer):
