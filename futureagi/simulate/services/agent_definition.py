@@ -442,12 +442,13 @@ def delete_agent(organization, agent_id) -> tuple[int, int]:
         )
         if agent is None:
             return 0, 0
-        total = testing_environment_counts([agent.id]).get(agent.id, 0)
-        if total:
+        if testing_environment_counts([agent.id]).get(agent.id):
+            # The agent's tab may list none of what tests it, so the refusal names no
+            # count and asks for nothing the page doesn't show.
             raise HostedHarnessError(
                 "agent_in_use",
-                f"{agent.agent_name} is tested by {total} environment"
-                f"{'s' if total != 1 else ''}. Delete those environments first.",
+                f"{agent.agent_name} is still tested by an environment, so it can't"
+                " be deleted.",
                 status_code=409,
             )
         return _soft_delete([agent.id])
