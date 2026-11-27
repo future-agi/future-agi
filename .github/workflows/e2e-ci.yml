@@ -60,9 +60,11 @@ env:
   # exactly once. Raise it only with measurements: each leg pays the fixed cost
   # of building, pulling and booting a stack before its first test (11 to 15
   # minutes; the boot alone took 7 to 11, most of it the database migrate).
-  # Measured at 6 legs: 22 to 30 minutes per leg, 10 to 15 of them tests. Two
-  # more legs would cut about 3 minutes and cost about 25 runner-minutes.
-  E2E_SHARDS: "6"
+  # Measured at 6 legs on three queue runs (27 Nov 2026): Distributed suite
+  # steps took 700 to 1,170 s and set the queue's wall time; Standalone legs
+  # finished 5 to 10 minutes earlier, so Standalone stays at 6.
+  E2E_SHARDS: "8"
+  E2E_STANDALONE_SHARDS: "6"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
@@ -83,8 +85,7 @@ jobs:
       legs: ${{ steps.shards.outputs.legs }}
       scope: ${{ steps.filter.outputs.scope }}
       stacks: ${{ steps.stacks.outputs.stacks }}
-      shards: ${{ steps.shards.outputs.shards }}
-      shard_total: ${{ steps.shards.outputs.total }}
+      shard_totals: ${{ steps.shards.outputs.totals }}
       today: ${{ steps.shards.outputs.today }}
     steps:
       - name: Validate host update fallibility opt-in
@@ -215,17 +216,22 @@ jobs:
           STACKS: ${{ steps.stacks.outputs.stacks }}
           FALLIBILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility }}
         run: |
-          total=$E2E_SHARDS
+          distributed=$E2E_SHARDS standalone=$E2E_STANDALONE_SHARDS
           # The fallibility proof follows the whole suite inside one job.
-          if [ "$FALLIBILITY" = true ]; then total=1; fi
-          [[ $total =~ ^[1-9][0-9]*$ ]]
-          legs=$(jq -cn --argjson active "$ANY" --argjson stacks "$STACKS" --argjson n "$total" '
-            [select($active) | $stacks[] as $stack | range(1;$n+1) as $i |
+          if [ "$FALLIBILITY" = true ]; then distributed=1 standalone=1; fi
+          if ! [[ $distributed =~ ^[1-9][0-9]*$ && $standalone =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Shard counts must be positive integers: E2E_SHARDS=$distributed E2E_STANDALONE_SHARDS=$standalone"
+            exit 1
+          fi
+          totals=$(jq -cn --argjson stacks "$STACKS" --argjson distributed "$distributed" --argjson standalone "$standalone" '
+            [$stacks[] | {key: ., value: ({$distributed, $standalone}[.] // error("no shard count for stack \(.)"))}]
+            | from_entries')
+          legs=$(jq -cn --argjson active "$ANY" --argjson totals "$totals" '
+            [select($active) | $totals | to_entries[] | .key as $stack | .value as $n | range(1;$n+1) as $i |
               {stack:$stack, shard:$i, total:$n, catalog_and_sdk:($i == $n)}]')
           echo "legs=$legs" >> "$GITHUB_OUTPUT"
           echo "Expected E2E legs: $legs"
-          echo "total=$total" >> "$GITHUB_OUTPUT"
-          echo "shards=[$(seq -s, 1 "$total")]" >> "$GITHUB_OUTPUT"
+          echo "totals=$totals" >> "$GITHUB_OUTPUT"
           # One date for the whole run: a quarantine entry that expires today
           # must be in or out for every shard and for the report job alike.
           created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
@@ -275,7 +281,7 @@ jobs:
           retention-days: 14
 
   e2e:
-    name: e2e (${{ matrix.stack }}, ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }})
+    name: e2e (${{ matrix.stack }}, ${{ matrix.shard }}/${{ matrix.total }})
     # lock-wheels: the verified wheels the Distributed (standard) backend
     # build installs. A plan with a Distributed stack needs it: if it failed,
     # every leg is skipped and E2E Tests Pass fails closed. A Standalone-only
@@ -290,14 +296,14 @@ jobs:
       # One failing leg must not cancel the others: a labelled PR runs both
       # stacks, and every shard's result is part of the report job's proof.
       fail-fast: false
+      # One leg per stack and shard, each stack with its own shard count
+      # (E2E_SHARDS, E2E_STANDALONE_SHARDS). Each shard builds the images from
+      # the registry cache, boots its own stack and runs its share of the spec
+      # files (E2E_SHARD below). Work that runs once per stack runs on the last
+      # shard (E2E_LAST_SHARD): the flow catalog check and the SDK live suites.
+      # The last shard, because the longest spec file always goes to shard 1.
       matrix:
-        stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
-        # Each shard builds the images from the registry cache, boots its own
-        # stack and runs its share of the spec files (E2E_SHARD below). Work
-        # that runs once per stack runs on the last shard (E2E_LAST_SHARD):
-        # the flow catalog check and the SDK live suites. The last shard,
-        # because the longest spec file always goes to shard 1.
-        shard: ${{ fromJSON(needs.changes.outputs.shards) }}
+        include: ${{ fromJSON(needs.changes.outputs.legs) }}
     runs-on: ubuntu-latest
     # One job is the image builds, the stack boot and the suite; the unsharded
     # job (a fallibility dispatch) also runs the whole suite. The longest
@@ -325,7 +331,7 @@ jobs:
       # touch agentcc-gateway/ would otherwise run them against a released
       # :latest that predates that behavior.
       BUILD_GATEWAY: "true"
-      E2E_LAST_SHARD: ${{ matrix.shard == needs.changes.outputs.shard_total }}
+      E2E_LAST_SHARD: ${{ matrix.shard == matrix.total }}
       E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
     steps:
       - uses: actions/checkout@v4
@@ -554,7 +560,7 @@ jobs:
         id: suite
         env:
           # This leg's share of the spec files (e2e/lib/shard.ts).
-          E2E_SHARD: ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }}
+          E2E_SHARD: ${{ matrix.shard }}/${{ matrix.total }}
         run: bin/e2e test
 
       - name: Prove host update assertion fallibility
@@ -761,7 +767,7 @@ jobs:
           SDK_PYTHON: ${{ steps.sdk-python.outcome }}
           SDK_TYPESCRIPT: ${{ steps.sdk-typescript.outcome }}
           SDK_SHA: ${{ steps.sdk-ref.outputs.ref }}
-          TOTAL: ${{ needs.changes.outputs.shard_total }}
+          TOTAL: ${{ matrix.total }}
         run: |
           mkdir -p "$RUNNER_TEMP/once-per-stack"
           [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
@@ -855,7 +861,7 @@ jobs:
       - name: Download verified shard and once-per-stack receipts
         env:
           GH_TOKEN: ${{ github.token }}
-          SHARD_TOTAL: ${{ needs.changes.outputs.shard_total }}
+          SHARD_TOTAL: ${{ fromJSON(needs.changes.outputs.shard_totals)[matrix.stack] }}
         run: node scripts/shard-report.mjs receipts
 
       - name: Merge the shards into one report

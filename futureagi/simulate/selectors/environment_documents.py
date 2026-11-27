@@ -82,7 +82,8 @@ def default_bundle_key(job: HostedHarnessJob) -> str | None:
     from simulate.services.hosted_harness import HostedHarnessError, resolve_run_pins
 
     try:
-        pins = resolve_run_pins(job)
+        # A key needs the agent's side row, never its credential blob.
+        pins = resolve_run_pins(job, credential_blob=False)
     except HostedHarnessError:
         return None
     return pins_bundle_key(pins) if pins is not None else None

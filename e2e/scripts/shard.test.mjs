@@ -244,14 +244,16 @@ test("the committed durations split the real spec files into CI shards of simila
       "utf8",
     ),
   );
-  const total = Number(workflow.env.E2E_SHARDS);
-  assert.ok(
-    Number.isInteger(total) && total >= 2,
-    `E2E_SHARDS=${workflow.env.E2E_SHARDS}`,
-  );
-  const groups = planShards(files, durations, total);
-  assert.deepEqual(flat(groups), files);
-  assert.ok(groups.every((group) => group.length > 0));
+  for (const name of ["E2E_SHARDS", "E2E_STANDALONE_SHARDS"]) {
+    const total = Number(workflow.env[name]);
+    assert.ok(
+      Number.isInteger(total) && total >= 2,
+      `${name}=${workflow.env[name]}`,
+    );
+    const groups = planShards(files, durations, total);
+    assert.deepEqual(flat(groups), files);
+    assert.ok(groups.every((group) => group.length > 0));
+  }
   for (const [file, seconds] of Object.entries(durations))
     assert.ok(Number.isFinite(seconds) && seconds >= 0, file);
   assert.deepEqual(SPEC_GLOBS, ["flows/**/*.spec.ts", "harness/**/*.spec.ts"]);
@@ -1009,17 +1011,17 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
   const step = (job, name) => job.steps.find((entry) => entry.name === name);
   assert.equal(
     step(jobs.e2e, "Run E2E suite").env.E2E_SHARD,
-    "${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }}",
+    "${{ matrix.shard }}/${{ matrix.total }}",
   );
   assert.equal(
-    jobs.e2e.strategy.matrix.shard,
-    "${{ fromJSON(needs.changes.outputs.shards) }}",
+    jobs.e2e.strategy.matrix.include,
+    "${{ fromJSON(needs.changes.outputs.legs) }}",
   );
   assert.equal(jobs.e2e.strategy["fail-fast"], false);
   // Once per stack: on the last shard, never on none.
   assert.equal(
     jobs.e2e.env.E2E_LAST_SHARD,
-    "${{ matrix.shard == needs.changes.outputs.shard_total }}",
+    "${{ matrix.shard == matrix.total }}",
   );
   assert.equal(
     step(jobs.e2e, "Flow catalog is current").if,
@@ -1075,6 +1077,98 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
     workflow().concurrency.group,
     /-\$\{\{ github\.workflow == 'Retarget proof' && github\.run_id \|\| 'candidate' \}\}$/,
   );
+});
+
+test("each stack gets its own shard count, and every leg and report agree on it", (t) => {
+  const { env, jobs } = workflow();
+  const step = jobs.changes.steps.find((s) => s.id === "shards");
+  assert.equal(jobs.changes.outputs.legs, "${{ steps.shards.outputs.legs }}");
+  assert.equal(
+    jobs.changes.outputs.shard_totals,
+    "${{ steps.shards.outputs.totals }}",
+  );
+  assert.equal(
+    jobs.report.steps.find(
+      (s) => s.name === "Download verified shard and once-per-stack receipts",
+    ).env.SHARD_TOTAL,
+    "${{ fromJSON(needs.changes.outputs.shard_totals)[matrix.stack] }}",
+  );
+  const dir = mkdtempSync(path.join(tmpdir(), "e2e-shards-step-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, "bin"));
+  writeFileSync(
+    path.join(dir, "bin", "gh"),
+    "#!/usr/bin/env bash\necho 2026-11-27T08:00:00Z\n",
+    { mode: 0o755 },
+  );
+  const run = (stacks, extra = {}) => {
+    const output = path.join(dir, "output");
+    writeFileSync(output, "");
+    const result = spawnSync("bash", ["-e", "-c", step.run], {
+      encoding: "utf8",
+      env: {
+        PATH: `${path.join(dir, "bin")}${path.delimiter}${process.env.PATH}`,
+        GITHUB_OUTPUT: output,
+        GITHUB_REPOSITORY: "owner/repo",
+        GITHUB_RUN_ID: "1",
+        E2E_SHARDS: env.E2E_SHARDS,
+        E2E_STANDALONE_SHARDS: env.E2E_STANDALONE_SHARDS,
+        ANY: "true",
+        STACKS: JSON.stringify(stacks),
+        FALLIBILITY: "false",
+        ...extra,
+      },
+    });
+    const out = Object.fromEntries(
+      readFileSync(output, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => [
+          line.slice(0, line.indexOf("=")),
+          line.slice(line.indexOf("=") + 1),
+        ]),
+    );
+    return { status: result.status, stderr: result.stderr, out };
+  };
+  const both = run(["distributed", "standalone"]);
+  assert.equal(both.status, 0, both.stderr);
+  const totals = {
+    distributed: Number(env.E2E_SHARDS),
+    standalone: Number(env.E2E_STANDALONE_SHARDS),
+  };
+  assert.deepEqual(JSON.parse(both.out.totals), totals);
+  const legs = JSON.parse(both.out.legs);
+  for (const stack of ["distributed", "standalone"]) {
+    const mine = legs.filter((leg) => leg.stack === stack);
+    assert.deepEqual(
+      mine.map((leg) => leg.shard),
+      [...Array(totals[stack]).keys()].map((i) => i + 1),
+    );
+    assert.ok(mine.every((leg) => leg.total === totals[stack]));
+    // Exactly one leg per stack runs the once-per-stack steps: the last.
+    assert.deepEqual(
+      mine.filter((leg) => leg.catalog_and_sdk).map((leg) => leg.shard),
+      [totals[stack]],
+    );
+  }
+  assert.equal(both.out.today, "2026-11-27");
+  // A plan without Standalone has no Standalone legs and no Standalone total.
+  assert.deepEqual(JSON.parse(run(["distributed"]).out.totals), {
+    distributed: totals.distributed,
+  });
+  // The fallibility proof runs the whole suite in one job.
+  const one = run(["distributed"], { FALLIBILITY: "true" });
+  assert.deepEqual(JSON.parse(one.out.legs), [
+    { stack: "distributed", shard: 1, total: 1, catalog_and_sdk: true },
+  ]);
+  // No legs when nothing E2E covers changed; a stack with no count fails the plan.
+  assert.deepEqual(
+    JSON.parse(run(["distributed"], { ANY: "false" }).out.legs),
+    [],
+  );
+  assert.notEqual(run(["unknown"]).status, 0);
+  assert.notEqual(run(["distributed"], { E2E_SHARDS: "0" }).status, 0);
 });
 
 test("a pull request run also reads its current labels, adds Standalone only, and keeps the event's labels when the read fails", (t) => {
@@ -1255,7 +1349,7 @@ test("the report job requires proof that the once-per-stack steps ran and passed
     SDK_PYTHON: "${{ steps.sdk-python.outcome }}",
     SDK_TYPESCRIPT: "${{ steps.sdk-typescript.outcome }}",
     SDK_SHA: "${{ steps.sdk-ref.outputs.ref }}",
-    TOTAL: "${{ needs.changes.outputs.shard_total }}",
+    TOTAL: "${{ matrix.total }}",
   });
   assert.equal(step(jobs.e2e, "Flow catalog is current").id, "catalog");
   assert.equal(step(jobs.e2e, "Python SDK live suite").id, "sdk-python");
