@@ -1254,11 +1254,11 @@ class TestLineage:
 
         self._won(first, won, dispatch=second_hand_off_fails)
         _reached, unreached = handed
-        baseline.refresh_from_db()
-        assert baseline.graded_at is not None
         second, winner = self._second(auth_client, source_run, first, baseline)
+        # Read again, it is not adopted: attempt 1 claimed it, its grading reached a call.
         baseline.refresh_from_db()
         assert baseline.graded_for_id is None
+        assert baseline.graded_at is not None
 
         assert self._won(second, winner) == {unreached: [config_id]}
         baseline.refresh_from_db()
@@ -1349,6 +1349,9 @@ class TestLineage:
         _degraded(repeats[2], to=1)
 
         assert outside_attempt_hold_usd(source_run, request, first) == nothing - saved
+        AgentFixRun.no_workspace_objects.filter(id=first.id).update(
+            state=State.NO_IMPROVEMENT
+        )
         second = _attempt(source_run, 2, previous=first, state=State.RUNNING)
         read_again = [
             _check(second, label=f"baseline-r{n}", keys=KEYS, repeat=n).id == run.id
