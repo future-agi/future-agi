@@ -20,6 +20,7 @@ import ActorRelations from "./ActorRelations";
 import ActorRow from "./ActorRow";
 import ActorsSkeleton from "./ActorsSkeleton";
 import { ACTORS_COPY } from "./actors.constants";
+import { groupsByRole } from "./actorUtils";
 
 const C = ACTORS_COPY.worldActors;
 const OUTLINED = {
@@ -135,10 +136,11 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     edit.isPending && edit.variables?.op === "delete"
       ? edit.variables.actorId
       : null;
-  const rows = (group) =>
+  const rows = (group, byName = false) =>
     group.map((actor) => (
       <ActorRow
         key={actor.id}
+        byName={byName}
         envId={envId}
         actor={actor}
         locked={locked}
@@ -275,7 +277,35 @@ export default function WorldActorsPanel({ envId, locked = false }) {
               <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
             }
           >
-            {rows(cast)}
+            {/* Actors alone in their role first, then each role with several people, so a group is never
+                followed by a row outside it. */}
+            {[
+              ...groupsByRole(cast).filter((group) => group.actors.length < 2),
+              ...groupsByRole(cast).filter((group) => group.actors.length > 1),
+            ].flatMap((group) =>
+              group.actors.length > 1
+                ? [
+                    <Typography
+                      key={`role:${group.role}`}
+                      noWrap
+                      sx={{
+                        px: 1.5,
+                        py: 0.75,
+                        typography: "s2",
+                        fontWeight: 600,
+                        bgcolor: "background.neutral",
+                      }}
+                    >
+                      {group.role}
+                      <Box
+                        component="span"
+                        sx={{ color: "text.secondary", fontWeight: 400 }}
+                      >{` · ${C.people(group.actors.length)}`}</Box>
+                    </Typography>,
+                    ...rows(group.actors, true),
+                  ]
+                : rows(group.actors),
+            )}
           </Stack>
         )}
       </SectionCard>

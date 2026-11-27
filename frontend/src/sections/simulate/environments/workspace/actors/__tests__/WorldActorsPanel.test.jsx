@@ -1766,6 +1766,28 @@ describe("WorldActorsPanel", () => {
     expect(title("Dana")).toBeInTheDocument();
   });
 
+  it("lists several people in one role under that role, each by name", () => {
+    actorsData = cast([
+      MANAGER,
+      typedActor({ id: "sam", name: "Sam Rivera", role: "Sales  Manager" }),
+      typedActor({ id: "lee", name: "Lee", role: "Fraud desk" }),
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    const text = (value) =>
+      screen.getByText(
+        (_, el) => el?.tagName === "P" && el.textContent === value,
+      );
+    expect(text("sales manager · 2 people")).toBeInTheDocument();
+    expect(text("Priya Raman")).toBeInTheDocument();
+    expect(text("Sam Rivera")).toBeInTheDocument();
+    // A role with one person keeps its own row, above the groups, so no group is followed by a row outside it.
+    const lone = text("Fraud desk · speaks as Lee");
+    expect(
+      lone.compareDocumentPosition(text("sales manager · 2 people")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("offers the full name in a tooltip only when it is cut off", async () => {
     render(<WorldActorsPanel envId="env-1" locked />);
     const name = screen.getByText("sales manager");

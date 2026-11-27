@@ -7,6 +7,30 @@ export const lines = (value) =>
 export const words = (key) => key.replace(/_/g, " ");
 
 // The role is an actor's main label; the name is who they speak as, shown only beside a role.
+const roleText = (role) =>
+  String(role ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+// Actors whose role matches, ignoring case and spacing, in one group under the role as first written, in the order
+// each group's first actor appears; an actor with no role is a group of its own.
+export const groupsByRole = (cast) => {
+  const groups = [];
+  const byRole = new Map();
+  cast.forEach((actor) => {
+    const role = roleText(actor.role);
+    const key = role.toLowerCase();
+    if (key && byRole.has(key)) {
+      byRole.get(key).actors.push(actor);
+      return;
+    }
+    const group = { role: role || null, actors: [actor] };
+    groups.push(group);
+    if (key) byRole.set(key, group);
+  });
+  return groups;
+};
+
 export const actorTitle = (actor) => ({
   main: actor.role || actor.name || actor.id,
   speaksAs: actor.role ? actor.name || "" : "",

@@ -4,6 +4,7 @@ import {
   changesOf,
   fallbackActs,
   fallbackKey,
+  groupsByRole,
   hasEdits,
   initialFields,
   parsedArguments,
@@ -273,5 +274,27 @@ describe("withStart", () => {
       { value: "robot", label: "Robot" },
     ]);
     expect(withStart(options, "")).toBe(options);
+  });
+});
+
+describe("groupsByRole", () => {
+  it("puts actors whose role matches, ignoring case and spacing, under the role as first written", () => {
+    const one = (id, role) => typedActor({ id, name: id, role });
+    const cast = [
+      one("priya", "Sales manager"),
+      one("dana", ""),
+      one("sam", "  sales   MANAGER "),
+      one("lee", "Fraud desk"),
+    ];
+    expect(
+      groupsByRole(cast).map((group) => [
+        group.role,
+        group.actors.map((actor) => actor.id),
+      ]),
+    ).toEqual([
+      ["Sales manager", ["priya", "sam"]],
+      [null, ["dana"]],
+      ["Fraud desk", ["lee"]],
+    ]);
   });
 });

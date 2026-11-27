@@ -78,6 +78,7 @@ export const ACTORS_COPY = {
       "No connection: your change is kept and saves once you are back online",
     inThisEnvironment: "In this environment",
     speaksAs: (name) => `speaks as ${name}`,
+    people: (count) => `${count} people`,
     add: "Add actor",
     edit: "Edit",
     editNamed: (name) => `Edit ${name}`,

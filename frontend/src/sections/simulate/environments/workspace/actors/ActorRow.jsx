@@ -64,9 +64,13 @@ export default function ActorRow({
   loudChannels,
   deleting,
   busy,
+  byName = false,
 }) {
   const [open, setOpen] = useState(false);
-  const title = actorTitle(actor);
+  // Under a role heading the role is already said, so the row goes by the person's name.
+  const title = byName
+    ? { main: actor.name || actor.id, speaksAs: "" }
+    : actorTitle(actor);
   // Off while removing so the removed actor's view is not refetched.
   const {
     data: view,
@@ -322,4 +326,6 @@ ActorRow.propTypes = {
   loudChannels: PropTypes.arrayOf(PropTypes.string),
   deleting: PropTypes.bool,
   busy: PropTypes.bool,
+  // Shown under its role's heading, titled by name.
+  byName: PropTypes.bool,
 };
