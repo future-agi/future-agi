@@ -79,7 +79,7 @@ jobs:
           persist-credentials: false
       - name: Exercise the candidate policy against Git fixtures
         run: python3 -I .github/scripts/test_ci_scope.py
-      - name: "\"CI ran on this base\" verdicts on recorded API payloads"
+      - name: '"CI ran on this base" verdicts on recorded API payloads'
         run: python3 -I .github/scripts/test_ci_base_gate.py
 
   changes:
@@ -419,7 +419,7 @@ jobs:
         uses: ./.github/actions/backend-test-packages/database
         with:
           profile: ${{ inputs.backend_setup }}
-          handoff: 'true'
+          handoff: "true"
       - name: Dump producer service logs on failure
         if: failure() && steps.cold.outcome == 'failure'
         working-directory: futureagi
@@ -440,7 +440,6 @@ jobs:
           # include-hidden-files: false, dropping it even when named literally.
           include-hidden-files: true
           if-no-files-found: error
-
 
   test:
     # "pytest shard N" and "metrics shard N" share these steps; the changes
@@ -1095,7 +1094,11 @@ jobs:
     # that job's script through to the end of this file.
     name: Record the tested merge candidate
     needs: [changes, backend-tests]
-    if: ${{ github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
+    # !cancelled(): without a status check the implicit success() also needs
+    # every job upstream of backend-tests to succeed, and the pin check and
+    # other selected-out jobs are skipped, so the receipt was never recorded
+    # (run 45819635797: suites passed, receipt skipped).
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
