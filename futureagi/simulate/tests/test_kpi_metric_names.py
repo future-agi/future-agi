@@ -86,7 +86,12 @@ def kpis(call, auth_client):
             f"/simulate/test-executions/{call.test_execution_id}/kpis/"
         )
         assert response.status_code == 200
-        return response.json()
+        data = response.json()
+        # The failing count follows the evals (a failed eval fails the call), so
+        # it differs between these reads by design. Its own tests are in
+        # test_optimiser_analysis_refusals.py.
+        data.pop("failing_calls")
+        return data
 
     return get
 
@@ -330,4 +335,6 @@ def test_responses_without_projection_collisions_are_unchanged(
         response = auth_client.get(url)
         # Compared byte for byte with the same run on the previous revision.
         _save_payload(f"{name}.bytes", response.content)
-        assert response.json() == data == system | evals
+        raw = response.json()
+        raw.pop("failing_calls")  # As the kpis fixture does.
+        assert raw == data == system | evals

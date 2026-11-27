@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import { useNavigate } from "react-router-dom";
-import { enqueueSnackbar } from "notistack";
 import { paths } from "src/routes/paths";
-import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import {
   useMyEnvironments,
   useDeleteEnvironment,
@@ -12,6 +10,7 @@ import {
 import { hasActiveFilters } from "src/api/simulate-environments/environmentListParams";
 import { EMPTY_MESSAGE, DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
 import useEnvironmentFilters from "./hooks/useEnvironmentFilters";
+import useDeleteRefusal from "./hooks/useDeleteRefusal";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
 import EnvironmentFilters from "./components/EnvironmentFilters";
 import EmptyState from "src/components/empty-state";
@@ -54,6 +53,7 @@ export default function MyEnvironmentsTab({ onBuild }) {
   const showError = isError && !loading && total === 0;
 
   const deleteEnvironment = useDeleteEnvironment();
+  const { showDeleteRefusal, unlockConfirm } = useDeleteRefusal();
 
   const onOpen = (env) =>
     navigate(paths.dashboard.simulate.environments.detail(env.id));
@@ -63,8 +63,7 @@ export default function MyEnvironmentsTab({ onBuild }) {
     );
   const onDelete = (env) =>
     deleteEnvironment.mutate(env.id, {
-      onError: (error) =>
-        enqueueSnackbar(errorMessage(error), { variant: "error" }),
+      onError: (error) => showDeleteRefusal(env.id, error),
     });
 
   return (
@@ -145,6 +144,7 @@ export default function MyEnvironmentsTab({ onBuild }) {
           onDelete={onDelete}
         />
       )}
+      {unlockConfirm}
     </Box>
   );
 }

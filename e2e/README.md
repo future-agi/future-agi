@@ -373,7 +373,7 @@ one real envelope.
 ### The flow annotation is a contract
 
 `flowAnnotation({ id, area, userGoal, steps, backendChecks })` plus the `@flow` tag is what puts a
-spec in `FLOWS.md` — the file is _generated_ from these annotations, so an annotation that claims a
+spec in the flow catalog — the catalog is _generated_ from these annotations, so an annotation that claims a
 step the spec does not perform, or a backend check it does not assert, is a bug in the same way a
 wrong assertion is. Update the annotation in the same commit as the spec. `id` follows
 `<AREA>-E2E-<nnn>` (`AUTH-`, `OBS-`, `EVAL-`, …), must be unique, and `area` must equal the
@@ -489,11 +489,12 @@ and `yarn selftest` (unit tests for the catalog generator).
 
 ## The flow catalog
 
-`FLOWS.md` is the answer to "what is tested". It is generated — never edit it by hand:
+`FLOWS.md` is the answer to "what is tested". It is generated and not committed: every PR that
+added or moved a flow rewrote it, so any two flow PRs conflicted on it.
 
 ```bash
-yarn catalog          # regenerate FLOWS.md from the specs' annotations
-yarn catalog:check    # fail if the committed FLOWS.md is stale (CI gate)
+yarn catalog          # write FLOWS.md (gitignored) from the specs' annotations
+yarn catalog:check    # validate the annotations and render the catalog into the CI job summary
 ```
 
 `yarn catalog` lists the suite with a custom reporter, extracts every `@flow` test's annotation,
@@ -504,8 +505,9 @@ contains no flows at all.
 
 The listing runs with `E2E_INCLUDE_QUARANTINED=1` and `E2E_LIVE_LLM=1` on purpose: the catalog
 describes which flows _exist_, so quarantining a flow or gating it behind a live LLM must never
-delete it from `FLOWS.md`. CI runs `yarn catalog:check` before booting the stack, so a spec whose
-annotation changed without a regenerated catalog fails fast.
+delete it from the catalog. CI runs `yarn catalog:check` before booting the stack, so a bad
+annotation fails fast. The check also fails when a flow id is not a quoted string literal or an
+area is not an `area:` literal, because `yarn coverage` reads ids and areas from the spec text.
 
 ---
 
@@ -518,8 +520,8 @@ to product areas, checks whether any existing flow pins an endpoint, route, tabl
 touched, looks for new-surface signals (a new route, `paths.js` key, `urls.py` entry, views module,
 page, collector handler, a migration surfaced by a serializer, or a `feat` title in an area that has
 no flow yet), and tells you which line to write. Docs, CI, tests-only, and stack-shape changes are
-exempt without a line. A behaviour change with no line is `needs-marker`; a `new` id must appear in
-the `FLOWS.md` diff; a change that adds user-visible surface needs a new flow, so any other line on
+exempt without a line. A behaviour change with no line is `needs-marker`; a `new` id must be declared by a
+spec under `e2e/flows` and be absent at the merge base; a change that adds user-visible surface needs a new flow, so any other line on
 it needs a reviewer to accept it.
 
 `yarn coverage --pr <n>` reads the title, body and base from GitHub. Without a PR, supply the title
@@ -583,7 +585,7 @@ passing the live-LLM filter on the command line would silently un-quarantine eve
 ## CI
 
 `.github/workflows/e2e-ci.yml` runs on PRs to and pushes on `dev`/`main`, plus merge queue entries.
-The suite runs as six shards per stack (see [Shards](#shards) below). Each shard builds the images
+The suite runs as eight Distributed and six Standalone shards (see [Shards](#shards) below). Each shard builds the images
 from the PR's code (tagged `:e2e-ci`) with the registry layer cache, boots its own stack with
 `bin/e2e up` and runs its share of the spec files with `bin/e2e test`; on failure it dumps
 `bin/e2e ps` and the last 200 log lines and uploads its own Playwright report. A `report` job then
@@ -634,7 +636,8 @@ there.
 ### Shards
 
 `E2E_SHARD=k/N` makes `bin/e2e test` run one of `N` shares of the spec files. CI sets it per matrix
-leg (`E2E_SHARDS` in the workflow, currently 6); it works locally too:
+leg (`E2E_SHARDS` in the workflow, currently 8 for Distributed; `E2E_STANDALONE_SHARDS`, currently 6
+for Standalone); it works locally too:
 
 ```bash
 E2E_SHARD=2/6 bin/e2e test     # the second of six shares
@@ -663,6 +666,10 @@ runners in November 2026:
   API does not return. A backend unit test pins the 30-minute default.
 - With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
   alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
+- On three queue runs (27 November) the six Distributed suite steps took 700 to 1,170 s, because
+  the durations file was 2,400 s short of the measured suite. With refreshed durations the plan puts
+  about 1,380 test-seconds on each of eight Distributed shards. Standalone legs finished 5 to 10
+  minutes before Distributed, so Standalone stays at six.
 
 **Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
 compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
@@ -908,7 +915,7 @@ judge model to compose its own JSON — which is why `EVAL-E2E-001` authors its 
 
 ## Reference
 
-- Flow catalog (generated): [`FLOWS.md`](FLOWS.md)
+- Flow catalog (generated, not committed): `yarn catalog` writes `FLOWS.md`
 - Agent skills: `.agents/skills/writing-e2e-flows`, `.agents/skills/reviewing-prs` (Claude Code reads
   them through `.claude/skills/` symlinks). To use `reviewing-prs` in another repo, link it into your
   home skill directories — **run this from the future-agi repo root**, because `$PWD` is what makes

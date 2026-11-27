@@ -14,6 +14,7 @@ import ToolEvaluationCellRenderer from "./CellRenderers/ToolEvaluationCellRender
 import { getLabel } from "./PerformanceMetrics/common";
 import EvalReasonCellRenderer from "./CellRenderers/EvalReasonCellRenderer";
 import ToolReasonCellRenderer from "./CellRenderers/ToolReasonCellRenderer";
+import { debugFailuresBlockedReason } from "./debugFailuresRule";
 import {
   reorderMenuList,
   setMenuIcons,
@@ -690,6 +691,10 @@ const IGNORED_KEYS = [
   // would paint a phantom eval. The simulate harness reads
   // `kpis.completed_calls` directly and never comes through here.
   "completed_calls",
+  // Debug failures' counts and flag, read by useFixMyAgentBlocked; no card shows them.
+  "debug_failures_connected_calls",
+  "failing_calls",
+  "has_debug_failures_analysis",
   "avg_response",
   "avg_user_interruption_count",
   "avg_ai_interruption_rate",
@@ -1021,12 +1026,18 @@ export const useFixMyAgentBlocked = (executionId) => {
           }
         : CHECKING;
     }
-    // An older backend sends no count: undefined < 15 is false, so it stays open.
-    if (kpis?.connected_calls < 15) {
-      return {
-        disabled: true,
-        reason: "You need at least 15 connected calls to debug failures.",
-      };
+    // The rule stops a new analysis, not the one the run already has.
+    if (kpis?.has_debug_failures_analysis === true) {
+      return { disabled: false, reason: "" };
+    }
+    // An older backend sends no count, and a count it did not send blocks nothing.
+    const blockedReason = debugFailuresBlockedReason({
+      // The rule's own count, not the Connected card's.
+      connectedCalls: kpis?.debug_failures_connected_calls,
+      failingCalls: kpis?.failing_calls,
+    });
+    if (blockedReason) {
+      return { disabled: true, reason: blockedReason };
     }
   }
 

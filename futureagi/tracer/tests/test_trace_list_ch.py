@@ -11,6 +11,12 @@ import pytest
 from django.test import override_settings
 
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
+from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+    ObserveTraceListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.query_builders.trace_list import (
+    TraceListQueryBuilderV2,
+)
 
 
 @pytest.fixture
@@ -149,7 +155,28 @@ class TestExistingBehaviorPreserved:
     def test_default_sort_is_start_time_desc(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
         query, _ = builder.build()
-        assert "ORDER BY start_time DESC" in query
+        assert "ORDER BY start_time DESC, trace_id DESC" in query
+        assert "project_id DESC" not in query
+
+    def test_multi_project_default_sort(self, project_id):
+        builder = TraceListQueryBuilder(project_ids=[project_id, str(uuid.uuid4())])
+        query, _ = builder.build()
+        assert "ORDER BY start_time DESC, trace_id DESC, project_id DESC" in query
+
+    def test_custom_sort_remains_unsupported(self, project_id):
+        builder = TraceListQueryBuilder(
+            project_id=project_id,
+            sort_params=[{"column_id": "latency", "direction": "desc"}],
+        )
+        with pytest.raises(ValueError, match="unsupported_filter_modifiers"):
+            builder.build()
+
+    @pytest.mark.parametrize(
+        "builder_cls", [TraceListQueryBuilderV2, ObserveTraceListQueryBuilderV2]
+    )
+    def test_v2_default_sort(self, project_id, builder_cls):
+        query, _ = builder_cls(project_id=project_id).build()
+        assert "ORDER BY start_time DESC, trace_id DESC" in query
 
     def test_pagination_params(self, project_id):
         builder = TraceListQueryBuilder(
