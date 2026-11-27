@@ -41,10 +41,17 @@ const FixMyAgentSections = ({ refetch, optimizerAnalysis, refusal }) => {
             {refusal ||
               "There are no suggestions yet, click the refresh button to get suggestions"}
           </Typography>
-          {/* A run nobody has analysed has no other way to start one. */}
-          <Button variant="contained" size="small" onClick={() => refetch?.()}>
-            Refresh
-          </Button>
+          {/* A run nobody has analysed has no other way to start one; a run
+              the rule refuses gets no Refresh that would be refused again. */}
+          {!refusal && (
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => refetch?.()}
+            >
+              Refresh
+            </Button>
+          )}
         </Box>
       </ShowComponent>
       <ShowComponent condition={optimizerAnalysis?.response}>
