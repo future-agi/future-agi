@@ -1393,7 +1393,7 @@ describe("RunDetail", () => {
     stubTickable = true;
   });
 
-  it("names the run's locked version and split with its versions", () => {
+  it("names the run's locked version and split in the sub-line's hover card", async () => {
     useRunDetail.mockReturnValue({
       identity: {
         ...IDENTITY,
@@ -1408,11 +1408,11 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    expect(
-      screen.getByText(
-        "Run 3 · agent v4 · env v2 · scenarios v3 · lock 2026.11.1 · train",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Run 3")).toBeInTheDocument();
+    await userEvent.setup().hover(screen.getByText(/^agent v4 · env v2/));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      /scenarios v3 · lock 2026\.11\.1 · train/,
+    );
   });
 
   it("re-runs ticked calls with the run's versions pre-selected", async () => {

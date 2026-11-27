@@ -21,8 +21,8 @@ import { seedHarnessEnvironment } from '../../lib/simulate-seed';
 //    (select_split): the run records all 12 scenarios, not the 4 test ones.
 // 3. drop "split" and "locked_version" from the run's update_fields in simulate/services/hosted_harness.py
 //    (create_selected_harness_run): the 202 still names them, the job row has neither.
-// 4. drop lockedVersionSplitInline from the header in workspace/runs/detail/RunDetail.jsx: the header has no
-//    "lock <label> · test".
+// 4. drop lockedVersionSplitInline from the header in workspace/runs/detail/RunDetail.jsx: the sub-line's
+//    hover card has no "lock <label> · test".
 // 5. drop LockedVersionSplitTag from workspace/runs/summary/SummaryTable.jsx: the run's row has no tag.
 
 // One browser action's first-paint budget (see README "UI_READY").
@@ -79,7 +79,7 @@ test(
         'lock its default environment and scenario versions through the API (versions/lock)',
         'open the environment and choose Run simulation',
         'in the Run dialog pick "Test split · 4 scenarios" in the Split field, read the split line, and choose Run',
-        'land on the run\'s page and read its header',
+        'land on the run\'s page, read its title, and hover its sub-line',
         'open the Runs tab and read the run\'s row',
       ],
       backendChecks: [
@@ -89,7 +89,7 @@ test(
       ],
       browserChecks: [
         'the dialog offers "Test split · 4 scenarios" and, once picked, reads "Runs the test split of lock <label>: 4 scenarios."',
-        'the run header reads "Run <n> · agent <vN> · env <vN> · scenarios <vN> · lock <label> · test"',
+        'the run title reads "Run <n>", its sub-line starts "agent <vN> · env <vN>", and the sub-line\'s hover card reads "scenarios <vN> · lock <label> · test"',
         'the run\'s row in the runs table carries the "Lock <label> · Test" tag',
       ],
     }),
@@ -182,17 +182,22 @@ test(
     expect(created.scenario_count).toBe(TEST_TASKS);
 
     const agentLabel = created.versions.agent?.label ?? '-';
-    const ordinal = await test.step('read the run header', async () => {
+    const ordinal = await test.step('read the run header and its hover card', async () => {
       await expect(page).toHaveURL(
         new RegExp(`/dashboard/simulate/environments/${env}/runs/${created.run_test_id}/${created.test_execution_id}`),
         { timeout: UI_READY },
       );
-      const header = page.getByText(new RegExp(
-        `^Run \\d+ · agent ${escape(agentLabel)} · env ${environmentLabel} · scenarios ${suiteLabel}`
-          + ` · lock ${escape(lockedVersion.label)} · test(?: · seed \\d+)?$`,
-      ));
-      await expect(header).toBeVisible({ timeout: UI_READY });
-      return /^Run (\d+) /.exec((await header.textContent()) ?? '')?.[1];
+      // The title is "Run <n>". The sub-line keeps agent, env and when; its hover card names the rest of
+      // what the run was pinned to: scenarios version, lock and split (RunDetail.jsx, runDetails).
+      const title = page.getByText(/^Run \d+$/);
+      await expect(title).toBeVisible({ timeout: UI_READY });
+      const subLine = page.getByText(new RegExp(`^agent ${escape(agentLabel)} · env ${environmentLabel}(?: · |$)`));
+      await subLine.hover();
+      await expect(page.getByRole('tooltip')).toContainText(
+        `scenarios ${suiteLabel} · lock ${lockedVersion.label} · test`,
+        { timeout: UI_READY },
+      );
+      return /^Run (\d+)$/.exec(((await title.textContent()) ?? '').trim())?.[1];
     });
     expect(ordinal).toMatch(/^\d+$/);
 
