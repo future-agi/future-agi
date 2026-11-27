@@ -2011,7 +2011,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             protected_scenario_keys=[
                 one.key
                 for one in scenarios
-                if one.passed and one.split != TaskSplit.TEST
+                if one.passed and one.split != TaskSplit.TEST.value
             ],
         ),
         surfaces=launch_surfaces(offered),

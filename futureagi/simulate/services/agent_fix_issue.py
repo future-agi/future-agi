@@ -559,7 +559,7 @@ def advance_issue_job(job_id: str) -> bool:
             )
             if refusal is None or refusal.retryable:
                 raise
-            if refusal.code == "fix_targets_all_test":
+            if refusal.code == "fix_targets_all_test" and refusal.details:
                 # Nobody picked these cases, so there are no others to pick.
                 refusal = all_in_test_split(refusal.details["cases"], picked=False)
             _set_ending(job, IssueJobEnding(code=refusal.code, message=refusal.message))
