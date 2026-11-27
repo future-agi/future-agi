@@ -4200,3 +4200,32 @@
 
 - the URL agent's Run reads Stop requested, its hover says the stop can't be confirmed, and its note says why
 - the runs list reads Stop requested for the URL agent's Run and Stopped for the sandboxed Run
+
+### SIM-E2E-045 — Ask a question about the calls I ticked in a run and read each call's answer
+
+**Goal:** Tick some calls in a finished run, ask a yes/no question about them, and read how each ticked call was answered, with the counts adding up and the unticked call left out
+
+**Spec:** `flows/simulate/run-page-ask.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a finished run of three chat calls, one whose reply the mock answers No (e2e/lib/harness_environment_seed.py)
+2. save the org TypeSafe key through the endpoint AI Providers uses
+3. open the run, tick two of the three calls and choose Ask a question
+4. type a yes/no question, click Check and read what it found, then click Ask
+5. watch the ask finish on the Questions tab and read its answers per call
+
+**Backend state verified:**
+
+- POST .../asks/check/ and POST .../asks/ are sent for exactly the two ticked calls; the launch answers 201
+- GET .../asks/{id}/ reaches finished with 2 answered of 2 requested, rate Yes 1 and No 1, and each ticked call's expected answer
+- GET .../asks/ lists exactly this ask for the run
+- simulate_ask is finished and simulate_eval_result holds one answered row per ticked call with its label, none for the unticked call
+
+**Browser observations:**
+
+- the check reads 2 calls requested and 2 ready, 0 unmeasured, 0 not applicable
+- the ask card reads Finished, its counts and its rate
+- the answers table lists exactly the two ticked calls, each with the same answer as the API
