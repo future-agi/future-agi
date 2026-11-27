@@ -1,0 +1,30 @@
+name: Devflow approval self-test
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/devflow_approval.py"
+      - ".github/scripts/merge_chain.py"
+      - ".github/scripts/test_admin_pr_approval.py"
+      - ".github/scripts/test_devflow_approval.py"
+      - ".github/scripts/test_merge_chain.py"
+      - ".github/workflows/admin-pr-approval.yml"
+      - ".github/workflows/devflow-approval-sweep.yml"
+      - ".github/workflows/devflow-approval-selftest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Approval decision tests
+        run: |
+          python3 -I .github/scripts/test_admin_pr_approval.py -v
+          python3 -I .github/scripts/test_devflow_approval.py -v
+          python3 -I .github/scripts/test_merge_chain.py -v

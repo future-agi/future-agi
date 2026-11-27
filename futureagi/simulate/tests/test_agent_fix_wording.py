@@ -28,6 +28,9 @@ from simulate.selectors.agent_fix_wording import (
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
 from simulate.services.agent_fix_engine import patch_files
+from simulate.tests.test_agent_fix_api import (  # noqa: F401 - fixture
+    browser_client as browser_client,
+)
 from simulate.tests.test_agent_fix_services import (
     _TIERS,
     BASE_AGENT,
@@ -153,13 +156,14 @@ def _winner(source_run, storage, *, noise=(), summary=_LAST_ROUND):
     ).get(id=candidate.id)
 
 
-def _read(auth_client, fix_run, review):
-    # A read never reads a patch from storage.
+def _read(client, fix_run, review):
+    # A read never reads a patch from storage. The page is a person's signed-in session
+    # (browser_client); any other caller is worded without the held-back cases.
     with (
         patch("simulate.serializers.agent_fix.eval_review", return_value=review),
         patch("simulate.services.agent_fix_engine.load_object") as load,
     ):
-        response = auth_client.get(f"{BASE}/{fix_run.id}/")
+        response = client.get(f"{BASE}/{fix_run.id}/")
     load.assert_not_called()
     assert response.status_code == 200, response.content
     (candidate,) = response.json()["candidates"]
@@ -195,11 +199,11 @@ class TestOneWording:
         assert "instructions.md only" not in read["wording"]["changes"]
 
     def test_a_must_pass_scenario_within_noise_is_counted_once_on_both(
-        self, auth_client, source_run, storage, named
+        self, browser_client, source_run, storage, named
     ):
         fix_run, candidate = _winner(source_run, storage, noise=_NOISE)
 
-        wording = _read(auth_client, fix_run, _DONE)["wording"]
+        wording = _read(browser_client, fix_run, _DONE)["wording"]
         body = _body(candidate, _DONE)
 
         # Four checks on three scenarios: three moved, and none broke.
@@ -257,11 +261,11 @@ class TestOneWording:
         assert body.count("did not finish") == 1
 
     def test_every_sentence_the_page_reads_is_in_the_pull_request(
-        self, auth_client, source_run, storage, named
+        self, browser_client, source_run, storage, named
     ):
         fix_run, candidate = _winner(source_run, storage, noise=_NOISE)
 
-        wording = _read(auth_client, fix_run, _INCOMPLETE)["wording"]
+        wording = _read(browser_client, fix_run, _INCOMPLETE)["wording"]
         body = _body(candidate, _INCOMPLETE)
 
         said = [
@@ -274,15 +278,37 @@ class TestOneWording:
         for sentence in said:
             assert sentence in body
 
+    def test_a_read_that_is_not_a_session_is_worded_without_the_held_back_cases(
+        self, auth_client, browser_client, source_run, storage, named
+    ):
+        fix_run, candidate = _winner(source_run, storage, noise=_NOISE)
+
+        page = _read(browser_client, fix_run, _DONE)["wording"]
+        hidden = _read(auth_client, fix_run, _DONE)["wording"]
+        body = _body(candidate, _DONE)
+
+        # The held-back pass rate is a result on held-back cases: only the page says it.
+        assert page["headline"].startswith("Held-back pass rate 17% → 50%.")
+        assert page["headline"] in body
+        assert hidden["headline"] == (
+            "Target pass rate 25% → 75%."
+            " No must-pass scenario broke (3 moved within normal noise)."
+        )
+        assert "17%" not in str(hidden) and "50%" not in str(hidden)
+        # No must-pass check here is on a held-back case, so the rest reads the same.
+        assert {k: v for k, v in hidden.items() if k != "headline"} == {
+            k: v for k, v in page.items() if k != "headline"
+        }
+
     def test_files_never_counted_read_as_no_change_line_and_no_patch_is_read(
-        self, auth_client, source_run, storage
+        self, browser_client, source_run, storage
     ):
         fix_run, candidate = _winner(source_run, storage)
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             changed_files=None
         )
 
-        wording = _read(auth_client, fix_run, _DONE)["wording"]
+        wording = _read(browser_client, fix_run, _DONE)["wording"]
 
         assert wording["changes"] is None
         assert wording["headline"].startswith("Held-back pass rate 17% → 50%.")

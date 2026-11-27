@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import structlog
+from django.conf import settings
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -50,6 +51,9 @@ class CapabilitiesView(APIView):
             "license_state": license_state.value,
             "features": features,
             "metrics_enabled": metrics_enabled(org=org),
+            "coding_agent_attempts_enabled": (
+                settings.AGENT_FIX_OUTSIDE_ATTEMPTS_ENABLED
+            ),
         }
 
         is_admin_view = location == DeploymentLocation.SELF_HOSTED and self._is_admin(
