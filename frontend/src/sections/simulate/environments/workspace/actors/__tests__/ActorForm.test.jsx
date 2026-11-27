@@ -73,6 +73,18 @@ describe("ActorForm", () => {
     ).toBeInTheDocument();
   });
 
+  it("asks for the role first, as the main label, then the name they speak as", () => {
+    verdict = CLEAN;
+    renderForm(newActor("world"));
+    const role = screen.getByLabelText("Role (optional)");
+    const name = screen.getByLabelText("Name");
+    expect(
+      role.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByText(/such as Sales manager/)).toBeInTheDocument();
+    expect(screen.getByText(/such as Priya Sharma/)).toBeInTheDocument();
+  });
+
   it("titles a new actor's form Add actor, added to the draft", () => {
     verdict = CLEAN;
     renderForm(newActor("caller"));

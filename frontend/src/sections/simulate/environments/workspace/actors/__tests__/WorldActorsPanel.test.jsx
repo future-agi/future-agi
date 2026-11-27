@@ -704,7 +704,7 @@ describe("WorldActorsPanel", () => {
           .map((one) => one.textContent),
       );
     expect(priya).toEqual([
-      "Priya Raman · sales manager",
+      "sales manager · Priya Raman",
       "When contacted",
       "—",
       "Dana",
@@ -1571,9 +1571,23 @@ describe("WorldActorsPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the role as the main label and the name as who they speak as", () => {
+    actorsData = cast([
+      MANAGER,
+      typedActor({ id: "caller", name: "Dana", role: "", side: "caller" }),
+    ]);
+    render(<WorldActorsPanel envId="env-1" />);
+    const title = (text) =>
+      screen.getByText(
+        (_, el) => el?.tagName === "P" && el.textContent === text,
+      );
+    expect(title("sales manager · speaks as Priya Raman")).toBeInTheDocument();
+    expect(title("Dana")).toBeInTheDocument();
+  });
+
   it("offers the full name in a tooltip only when it is cut off", async () => {
     render(<WorldActorsPanel envId="env-1" locked />);
-    const name = screen.getByText(/Priya Raman/);
+    const name = screen.getByText("sales manager");
     fireEvent.mouseEnter(name);
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect(screen.queryByRole("tooltip")).toBeNull();

@@ -3,6 +3,7 @@ import { Box, Stack, Typography } from "@mui/material";
 import SectionCard from "../../components/SectionCard";
 import { genderLabel } from "../scenarios/personaLabels";
 import { ACTORS_COPY } from "./actors.constants";
+import { actorTitle } from "./actorUtils";
 
 const C = ACTORS_COPY.callActors;
 
@@ -18,13 +19,13 @@ export default function CallActorsPanel({ callActors }) {
         {callActors.map((one) => (
           <Stack key={one.id} spacing={0.25} sx={{ px: 2.5, py: 1.25 }}>
             <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-              {one.name}
-              {one.role ? (
+              {actorTitle(one).main}
+              {actorTitle(one).speaksAs ? (
                 <Box
                   component="span"
                   sx={{ color: "text.secondary", fontWeight: 400 }}
                 >
-                  {` · ${one.role}`}
+                  {` · ${ACTORS_COPY.worldActors.speaksAs(actorTitle(one).speaksAs)}`}
                 </Box>
               ) : null}
             </Typography>

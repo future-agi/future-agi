@@ -16,6 +16,7 @@ import { useActorView } from "src/api/simulate-environments/versions";
 import ContentSkeleton from "src/components/content-skeleton";
 import ErrorState from "src/components/error-state";
 import { ACTORS_COPY } from "./actors.constants";
+import { actorTitle } from "./actorUtils";
 
 const C = ACTORS_COPY.worldActors;
 const CHANNEL_LABELS = ACTORS_COPY.callActors.channels;
@@ -65,6 +66,7 @@ export default function ActorRow({
   busy,
 }) {
   const [open, setOpen] = useState(false);
+  const title = actorTitle(actor);
   // Off while removing so the removed actor's view is not refetched.
   const {
     data: view,
@@ -110,20 +112,22 @@ export default function ActorRow({
         >
           <Box>
             <OverflowTooltip
-              title={[actor.name || actor.id, actor.role]
-                .filter(Boolean)
-                .join(" · ")}
+              title={
+                title.speaksAs
+                  ? `${title.main} · ${C.speaksAs(title.speaksAs)}`
+                  : title.main
+              }
             >
               <Typography
                 noWrap
                 sx={{ typography: "s1", fontWeight: 600, ...ONE_LINE }}
               >
-                {actor.name || actor.id}
-                {actor.role ? (
+                {title.main}
+                {title.speaksAs ? (
                   <Box
                     component="span"
                     sx={{ color: "text.secondary", fontWeight: 400 }}
-                  >{` · ${actor.role}`}</Box>
+                  >{` · ${C.speaksAs(title.speaksAs)}`}</Box>
                 ) : null}
               </Typography>
             </OverflowTooltip>

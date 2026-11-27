@@ -77,6 +77,7 @@ export const ACTORS_COPY = {
     offline:
       "No connection: your change is kept and saves once you are back online",
     inThisEnvironment: "In this environment",
+    speaksAs: (name) => `speaks as ${name}`,
     add: "Add actor",
     edit: "Edit",
     editNamed: (name) => `Edit ${name}`,
@@ -142,11 +143,10 @@ export const ACTORS_COPY = {
       idFixed:
         "Fixed once saved, so scenarios and past runs keep pointing at this actor.",
       name: "Name",
-      nameHelp: "Name them by role, such as Sales managers",
+      nameHelp: "The person they speak as, such as Priya Sharma",
       role: "Role (optional)",
       roleRequired: "Role",
-      roleHelp:
-        "Who they are, in a few words, such as a manager or a family member",
+      roleHelp: "Their main label, such as Sales manager",
       tooLong: (over) =>
         `This actor is ${over.toLocaleString()} characters too long to save. Shorten what they know or their other long fields.`,
       kind: "Kind (optional)",

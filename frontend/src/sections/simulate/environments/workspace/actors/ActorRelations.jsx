@@ -9,6 +9,7 @@ import {
 } from "@mui/material";
 import SectionCard from "../../components/SectionCard";
 import { ACTORS_COPY } from "./actors.constants";
+import { actorTitle } from "./actorUtils";
 
 const R = ACTORS_COPY.relations;
 const CELL = {
@@ -20,7 +21,7 @@ const CELL = {
 export default function ActorRelations({ cast }) {
   if (!cast.length) return null;
   const names = Object.fromEntries(
-    cast.map((one) => [one.id, one.name || one.id]),
+    cast.map((one) => [one.id, actorTitle(one).main]),
   );
   return (
     <SectionCard title={R.title} subtitle={R.subtitle}>
@@ -49,7 +50,7 @@ export default function ActorRelations({ cast }) {
               return (
                 <TableRow key={actor.id}>
                   <TableCell sx={{ ...CELL, fontWeight: 600 }}>
-                    {[actor.name || actor.id, actor.role]
+                    {[actorTitle(actor).main, actorTitle(actor).speaksAs]
                       .filter(Boolean)
                       .join(" · ")}
                   </TableCell>

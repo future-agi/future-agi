@@ -26,6 +26,14 @@ export default function ActorIdentityFields({
     <>
       <ActorField
         form={form}
+        name="role"
+        label={
+          chosen?.required_fields.includes("role") ? F.roleRequired : F.role
+        }
+        helperText={F.roleHelp}
+      />
+      <ActorField
+        form={form}
         name="name"
         label={F.name}
         helperText={F.nameHelp}
@@ -50,14 +58,6 @@ export default function ActorIdentityFields({
           helperText={F.idHelp(idHint)}
         />
       )}
-      <ActorField
-        form={form}
-        name="role"
-        label={
-          chosen?.required_fields.includes("role") ? F.roleRequired : F.role
-        }
-        helperText={F.roleHelp}
-      />
       <ActorField
         form={form}
         name="kind"

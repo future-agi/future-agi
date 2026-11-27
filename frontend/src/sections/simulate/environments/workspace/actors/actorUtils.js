@@ -6,6 +6,12 @@ export const lines = (value) =>
 
 export const words = (key) => key.replace(/_/g, " ");
 
+// The role is an actor's main label; the name is who they speak as, shown only beside a role.
+export const actorTitle = (actor) => ({
+  main: actor.role || actor.name || actor.id,
+  speaksAs: actor.role ? actor.name || "" : "",
+});
+
 // Keeps the starting value listed so a select never goes blank on it.
 export const withStart = (options, start, label = start) =>
   start && !options.some((one) => one.value === start)
