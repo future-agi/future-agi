@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import copy
 import gzip
@@ -24,7 +25,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import quote, unquote, urlparse
 
 import structlog
@@ -867,8 +868,8 @@ class GitHubAppTokenProvider:
             ) from exc
 
 
-# Dependency manifests, code and config are where a voice framework shows up; README and
-# docs are skipped. Data files are read too, so a connector signature must never match prose.
+# Manifests, code, config and data files are read; README and docs are not.
+# ``_connectors_in`` decides which signal counts in which kind of file.
 _SOURCE_SCAN_SUFFIXES = (
     ".py",
     ".js",
@@ -892,38 +893,57 @@ _SOURCE_SCAN_MAX_FILE_BYTES = 512 * 1024
 _SOURCE_SCAN_MAX_FILES = 4000
 
 
+class _ConnectorSignature(NamedTuple):
+    package: re.Pattern[str]
+    js_import: re.Pattern[str]
+    modules: frozenset[str]
+    runtime: re.Pattern[str]
+
+
 def _connector_signature(
-    *, packages: str, modules: str, host: str, env: str
-) -> re.Pattern[str]:
-    """A provider's real footprint: an SDK package, a Python import, its API host or an
-    env name with its prefix. Case-sensitive, so "Vapi" or "retell" in prose never counts."""
-    return re.compile(
-        rf"(?<![\w-])(?:{packages})(?![\w-])"
-        rf"|^\s*(?:from|import)\s+(?:{modules})\b"
-        rf"|{host}"
-        rf"|(?<![A-Za-z0-9]){env}_[A-Z]",
-        re.MULTILINE,
+    *, names: str, prefixes: str = "", modules: set[str], host: str, env: str
+) -> _ConnectorSignature:
+    """A provider's real footprint: an SDK dependency (an exact package name, or a
+    package prefix such as an npm scope), an import of it, its API host or an env name
+    with its prefix. Each pattern is anchored on a literal or a line start, so a long
+    token scans in linear time."""
+    either = f"|{prefixes}" if prefixes else ""
+    return _ConnectorSignature(
+        # A dependency entry starts a line or follows a quote or a lock-file path slash,
+        # and an exact name ends at a version, an extra, a quote, a colon or the line end.
+        package=re.compile(
+            rf"(?:^[ \t-]*|[\"'/])(?:(?:{names})(?=[ \t]*(?:[=<>~!;:,\[@\"']|$)){either})",
+            re.MULTILINE | re.IGNORECASE,
+        ),
+        js_import=re.compile(
+            rf"(?:\bfrom\s*|\bimport\s*(?:\(\s*)?|\brequire\s*\(\s*)[\"']"
+            rf"(?:(?:{names})[\"'/]{either})"
+        ),
+        modules=frozenset(modules),
+        runtime=re.compile(rf"{host}|(?<![A-Za-z0-9]){env}_[A-Z]"),
     )
 
 
 _CONNECTOR_SIGNATURES = {
     "livekit": _connector_signature(
-        packages=r"livekit[-_](?:agents|api|protocol|plugins[-_][\w-]+)"
-        r"|livekit-server-sdk|livekit-client|@livekit/[\w-]+",
-        modules="livekit",
-        host=r"[\w-]+\.livekit\.cloud\b",
+        names=r"livekit|livekit[-_.](?:agents|api|protocol)"
+        r"|livekit-server-sdk|livekit-client",
+        prefixes=r"@livekit/|livekit[-_.]plugins[-_.]",
+        modules={"livekit"},
+        host=r"\.livekit\.cloud\b",
         env="LIVEKIT",
     ),
     "vapi": _connector_signature(
-        packages=r"vapi[-_]server[-_]sdk|vapi[-_]python|@vapi-ai/[\w-]+",
-        modules="vapi|vapi_python",
-        host=r"\bapi\.vapi\.ai\b",
+        names=r"vapi[-_.]server[-_.]sdk|vapi[-_.]python",
+        prefixes="@vapi-ai/",
+        modules={"vapi", "vapi_python"},
+        host=r"(?<![\w.-])api\.vapi\.ai\b",
         env="VAPI",
     ),
     "retell": _connector_signature(
-        packages=r"retell[-_]sdk|retell-client-js-sdk",
-        modules="retell",
-        host=r"\bapi\.retellai\.com\b",
+        names=r"retell[-_.]sdk|retell-client-js-sdk",
+        modules={"retell"},
+        host=r"(?<![\w.-])api\.retellai\.com\b",
         env="RETELL",
     ),
 }
@@ -933,6 +953,55 @@ _VAPI_ASSISTANT_KEYS = (
     re.compile(r'"firstMessage"\s*:'),
     re.compile(r'"(?:voice|transcriber)"\s*:'),
 )
+_MANIFEST_NAMES = {"package.json", "pyproject.toml", "pipfile", "pnpm-lock.yaml"}
+
+
+def _is_manifest(name: str) -> bool:
+    return (
+        name in _MANIFEST_NAMES
+        or name.endswith((".lock", "-lock.json"))
+        or (name.startswith("requirements") and name.endswith(".txt"))
+    )
+
+
+def _python_imports(text: str) -> set[str]:
+    """Top-level modules a Python file imports; none when it doesn't parse."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError):
+        return set()
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            modules.add(node.module.split(".")[0])
+    return modules
+
+
+def _connectors_in(name: str, text: str) -> set[str]:
+    """Connectors one file shows. Packages count in manifests and lock files, imports
+    in code, the host and env names in code and config, and in any other .json only a
+    Vapi assistant config. Other .txt files are data and never count."""
+    signatures = _CONNECTOR_SIGNATURES.items()
+    if _is_manifest(name):
+        return {connector for connector, sig in signatures if sig.package.search(text)}
+    if name.endswith(".json"):
+        is_assistant = all(key.search(text) for key in _VAPI_ASSISTANT_KEYS)
+        return {"vapi"} if is_assistant else set()
+    if name.endswith(".txt"):
+        return set()
+    code = _code_only(name, text)
+    found = {connector for connector, sig in signatures if sig.runtime.search(code)}
+    if name.endswith(".py"):
+        imported = _python_imports(text)
+        found |= {connector for connector, sig in signatures if sig.modules & imported}
+    elif name.endswith(_SCRIPT_SUFFIXES):
+        found |= {
+            connector for connector, sig in signatures if sig.js_import.search(code)
+        }
+    return found
+
 
 # Strong signals that the submitted agent expects Google Application Default
 # Credentials inside its own process.  Merely importing a Google SDK is not
@@ -1001,12 +1070,7 @@ def detect_source_credentials(
     try:
         for name, text in _source_texts(archive, subfolder):
             scanned += 1
-            code = _code_only(name, text)
-            for connector, signature in _CONNECTOR_SIGNATURES.items():
-                if connector not in found and signature.search(code):
-                    found.add(connector)
-            if all(key.search(code) for key in _VAPI_ASSISTANT_KEYS):
-                found.add("vapi")
+            found |= _connectors_in(name, text)
             if any(signature.search(text) for signature in _VERTEX_ADC_SIGNATURES):
                 required_files.add(TARGET_GOOGLE_ADC_ALIAS)
     except (tarfile.TarError, OSError, EOFError):
