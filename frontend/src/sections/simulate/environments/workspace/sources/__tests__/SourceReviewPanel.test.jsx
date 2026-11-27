@@ -227,7 +227,7 @@ describe("Prebuild source review", () => {
     expect(show).toBeEnabled();
     fireEvent.click(show);
     expect(await screen.findByText("First business rule.")).toBeVisible();
-    expect(screen.getByText("3 pages · 9 words")).toBeVisible();
+    expect(screen.getByText("4 pages · 11 words")).toBeVisible();
     expect(screen.queryByText("Refund policy")).toBeNull();
   });
   it("shows safe row and column counts before a preselected destination", async () => {

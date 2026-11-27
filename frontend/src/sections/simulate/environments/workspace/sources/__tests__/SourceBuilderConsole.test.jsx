@@ -98,7 +98,7 @@ describe("Builder chat source files", () => {
       ).toHaveTextContent("orders.csv");
       expect(
         screen.getByRole("region", { name: "Proposed changes" }),
-      ).toBeVisible();
+      ).toHaveTextContent("Nothing changes until you add them.");
     } finally {
       mocks.activeId = null;
       mocks.review.mockReset();

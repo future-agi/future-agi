@@ -102,6 +102,7 @@ function SourceReviewEditor({
   onRepair,
   stale,
   actionsEl,
+  inlineActions,
 }) {
   const { id, state, revision, draft_digest: digest, preview, scope } = review;
   // A page with its own header shows Cancel and Approve there, not at the foot.
@@ -153,12 +154,13 @@ function SourceReviewEditor({
       mapping.is_stable_id ? [index] : [],
     ),
   );
-  // An accepted review shows what was accepted; otherwise every checkable rule starts ticked.
-  const [ruleIds, setRuleIds] = useState(() =>
-    state === "accepted"
-      ? sources.flatMap((source) => source.accepted_rule_ids || [])
-      : checkableRuleIds(preview),
-  );
+  // An accepted review shows what was accepted; an open one starts with every
+  // checkable rule ticked; a cancelled or expired one adds nothing.
+  const [ruleIds, setRuleIds] = useState(() => {
+    if (state === "accepted")
+      return sources.flatMap((source) => source.accepted_rule_ids || []);
+    return unfinished.includes(state) ? checkableRuleIds(preview) : [];
+  });
   const [joinIndexes, setJoinIndexes] = useState([]);
   const [testedAgent, setTestedAgent] = useState(true);
   const [personalDataModes, setPersonalDataModes] = useState(() =>
@@ -447,6 +449,8 @@ function SourceReviewEditor({
         item={item}
         inset={0}
         foldText={compact}
+        // A repair remounts the review, so ticks before it are only decided once it's ready.
+        hideCheckbox={["reading", "needs_repair"].includes(state)}
         checked={ruleIds.includes(item.id)}
         onToggle={(event) =>
           setRuleIds(toggled(ruleIds, item.id, event.target.checked))
@@ -666,18 +670,20 @@ function SourceReviewEditor({
               actionsEl
                 ? undefined
                 : {
-                    mt:
-                      scope.kind === "environment"
-                        ? "auto !important"
-                        : undefined,
-                    position: "sticky",
-                    bottom: 0,
-                    zIndex: 1,
-                    bgcolor: "background.paper",
                     py: 1.25,
                     borderTop: "1px solid",
                     borderColor: "divider",
                     justifyContent: "flex-end",
+                    ...(!inlineActions && {
+                      mt:
+                        scope.kind === "environment"
+                          ? "auto !important"
+                          : undefined,
+                      position: "sticky",
+                      bottom: 0,
+                      zIndex: 1,
+                      bgcolor: "background.paper",
+                    }),
                   }
             }
           >
@@ -745,6 +751,8 @@ SourceReviewEditor.propTypes = {
   onRepair: PropTypes.func.isRequired,
   stale: PropTypes.bool,
   actionsEl: PropTypes.object,
+  // In a chat card the footer follows the review instead of sticking to the scroll box.
+  inlineActions: PropTypes.bool,
   defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
 };
 
@@ -822,4 +830,5 @@ SourceReviewPanel.propTypes = {
   onCancelled: PropTypes.func,
   onDismiss: PropTypes.func,
   actionsEl: PropTypes.object,
+  inlineActions: PropTypes.bool,
 };

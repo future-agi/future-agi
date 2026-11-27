@@ -94,6 +94,8 @@ describe("reviewItems", () => {
       "Refunds are paid back to the original payment method within 5 business days.",
     ]);
     expect(reference.rules).toBe(3);
+    // Read counts the whole file, not only the passages left as background.
+    expect(reference.read).toMatchObject({ sections: 1, words: 36 });
     expect(checkableRuleIds(policyCheckable)).toEqual(rules.map((r) => r.id));
   });
 

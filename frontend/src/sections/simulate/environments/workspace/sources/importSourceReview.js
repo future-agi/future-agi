@@ -173,7 +173,11 @@ export function reviewItems(preview, { testedAgent } = {}) {
       .filter((statement) => !ruled.has(statement.statement_id));
     const withheld = statements.some((statement) => !statement.text);
     if (!passages.length && !withheld) continue;
-    const pageOf = (statement) => statement.page ?? null;
+    const pages = new Set(
+      statements
+        .map((statement) => statement.page)
+        .filter((page) => page != null),
+    ).size;
     items.push({
       id: `${pin.source_id}:reference`,
       kind: "reference",
@@ -190,20 +194,19 @@ export function reviewItems(preview, { testedAgent } = {}) {
       role: pin.role,
       testedAgent,
       rules: rules.filter((one) => one.source === source).length,
+      // Read counts the whole file, not only the passages left as background.
       read: {
-        sections: new Set(passages.map(pageOf)).size,
-        words: passages.reduce(
-          (sum, { text }) => sum + text.trim().split(/\s+/).length,
-          0,
-        ),
+        sections: pages,
+        words: statements
+          .filter((statement) => statement.text)
+          .reduce((sum, { text }) => sum + text.trim().split(/\s+/).length, 0),
         passages: passages.map((statement) => ({
           id: statement.statement_id,
           where: statement.page != null ? String(statement.page) : "",
           text: clipped(statement) ? `${statement.text}…` : statement.text,
         })),
       },
-      pages: new Set(statements.map(pageOf).filter((page) => page != null))
-        .size,
+      pages,
       withheld,
     });
   }

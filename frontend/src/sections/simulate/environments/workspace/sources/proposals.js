@@ -242,13 +242,12 @@ export const PROPOSALS_COPY = {
   reference: {
     file: "File",
     usedAs: "Used as",
-    // Role only when the tested-agent switch isn't known (outside a ready review).
-    usedAsValue: (role, testedAgent) => {
-      const what = role === "policy" ? "Policy background" : "Background";
-      if (testedAgent == null) return what;
+    // Plain "Background" when the tested-agent switch isn't known (outside a ready review).
+    usedAsValue: (testedAgent) => {
+      if (testedAgent == null) return "Background";
       return testedAgent
-        ? `${what}, the agent can look things up in it`
-        : `${what}, kept from the tested agent`;
+        ? "Background, the agent can look things up in it"
+        : "Background, kept from the tested agent";
     },
     rules: "Rules",
     // Withheld policy text has no titles yet, so its count would be false.

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -16,6 +16,7 @@ import {
 } from "src/api/simulate-environments/sourceImports";
 import { draftsKey } from "src/api/simulate-environments/versions";
 import BuilderConsole from "../../buildEnvironment/console/BuilderConsole";
+import { focusBuilderChat } from "../../buildEnvironment/console/builderChatFocusBus";
 import Iconify from "src/components/iconify";
 import ShimmerText from "../../components/ShimmerText";
 import useSourceAcceptedToast from "./useSourceAcceptedToast";
@@ -41,6 +42,23 @@ export default function SourceBuilderConsole({
       : [];
   const client = useQueryClient();
   const pending = useRef(null);
+  // The review just sent from here, brought into view once its files are read.
+  const focusOnRead = useRef(null);
+  const cardShown =
+    Boolean(reviewId) && turns.some((turn) => turn.sourceReviewId === reviewId);
+  const readState = activeReview?.state;
+  useEffect(() => {
+    if (
+      focusOnRead.current !== reviewId ||
+      !cardShown ||
+      !readState ||
+      readState === "reading"
+    )
+      return;
+    focusOnRead.current = null;
+    // The chat's own focus bus scrolls to the card's top, as for any named message.
+    focusBuilderChat(`sources-${reviewId}`);
+  }, [reviewId, cardShown, readState]);
   const [state, setState] = useState(null);
 
   const prepare = async () => {
@@ -87,6 +105,7 @@ export default function SourceBuilderConsole({
         client_request_id: batch.key,
       });
       setReviewId(batch.reviewId);
+      focusOnRead.current = batch.reviewId;
       client.invalidateQueries({ queryKey: ["harness-job", envId] });
       pending.current = null;
       setState(null);
@@ -136,6 +155,7 @@ export default function SourceBuilderConsole({
       </Box>
       <Box sx={{ px: 1.5, pb: 1.5 }}>
         <SourceReviewPanel
+          inlineActions
           reviewId={id}
           ownerId={envId}
           canEdit={capabilities.isSuccess}
