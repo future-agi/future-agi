@@ -209,7 +209,8 @@ class WiringTest(unittest.TestCase):
         self.assertEqual(producer.count("-p migrate_inputs"), 1)
         first = producer.index("--create-db")
         self.assertIn(
-            'CI_PRESEED_DIGEST="$fresh/preseed" CI_MIGRATE_INPUTS="$RUNNER_TEMP/migrate-inputs" PYTHONPATH=.ci \\\n'
+            'CI_PRESEED_DIGEST="$fresh/preseed" CI_PRESEED_DUMP="$fresh/fresh.sql.gz" \\\n'
+            '  CI_MIGRATE_INPUTS="$RUNNER_TEMP/migrate-inputs" PYTHONPATH=.ci \\\n'
             "  uv run pytest -p migrate_inputs .ci/migrated_db.py --create-db -q\n",
             producer,
         )
