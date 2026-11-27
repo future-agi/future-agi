@@ -19,7 +19,7 @@ MISSING_SNAPSHOT = "source_world_snapshot_missing"
 def missing_snapshot_error():
     return HostedHarnessError(
         MISSING_SNAPSHOT,
-        "Rebuild this environment to create its world snapshot, then add the source again.",
+        "Rebuild this environment to create its world snapshot. Discard this draft first, then add the source again after the rebuild.",
         status_code=409,
     )
 

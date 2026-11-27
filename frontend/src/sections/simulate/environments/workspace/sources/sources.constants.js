@@ -5,7 +5,7 @@ import { relativeTime } from "src/utils/format-time";
 
 export const missingSnapshotMessage = (generation) =>
   generation?.error === "source_world_snapshot_missing"
-    ? "Rebuild this environment to create its world snapshot, then add the source again."
+    ? "Rebuild this environment to create its world snapshot. Discard this draft first, then add the source again after the rebuild."
     : null;
 
 const MB = 1024 * 1024;
