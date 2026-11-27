@@ -834,8 +834,10 @@ describe("WorldActorsPanel", () => {
       { target: { value: "The limit is 25%" } },
     );
     choose("Answers", "After a delay");
-    // A delay starts with no seconds, which the server would save as answering straight away; Save asks for them.
-    expect(screen.getByLabelText(starred("Seconds"))).toHaveValue(null);
+    // A delay with its seconds cleared, which the server would take as none; Save asks for them.
+    fireEvent.change(screen.getByLabelText(starred("Seconds")), {
+      target: { value: "" },
+    });
     refusesSave();
     expect(
       screen.getByLabelText(starred("Seconds")),
