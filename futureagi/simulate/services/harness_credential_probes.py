@@ -375,7 +375,7 @@ def _request(
             url,
             method=method,
             timeout=timeout,
-            headers=kwargs.get("headers"),
+            headers=dict(kwargs.get("headers") or {}),
             follow_redirects=False,
             allow_private=private_provider_urls_allowed(),
         )
