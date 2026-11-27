@@ -17,31 +17,8 @@ import Iconify from "src/components/iconify";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { OUTLINED_BTN_SX, T13 } from "../drawerStyles";
 import { WORLD_TYPES, filterWorlds } from "../worlds";
-import { SANDBOX_APPS } from "./sandboxApps";
 import { QuietTag } from "./startBits";
-import { SaasSandboxCard } from "./worldCards";
 import ReadyEnvironmentCard from "./ReadyEnvironmentCard";
-
-const SANDBOX_TYPE = {
-  id: "any",
-  label: "Any agent",
-  icon: "solar:widget-4-linear",
-};
-
-// The sandbox is pinned first, when nothing narrows it out. It isn't a ready environment, so the
-// counts leave it out.
-function sandboxMatches({ query, type, domain }) {
-  if (domain !== "all" || (type !== "all" && type !== SANDBOX_TYPE.id)) {
-    return false;
-  }
-  const q = query.trim().toLowerCase();
-  return (
-    !q ||
-    `saas sandbox any agent ${SANDBOX_APPS.map((a) => a.name).join(" ")}`
-      .toLowerCase()
-      .includes(q)
-  );
-}
 
 const selectSx = {
   height: 32,
@@ -58,7 +35,7 @@ const selectSx = {
 };
 
 /**
- * Every ready environment, filterable, with the SaaS sandbox pinned first. One
+ * Every ready environment, filterable. One
  * opens its panel. The drawer's header names the view and carries the way back.
  */
 export default function WorldsBrowser({
@@ -67,7 +44,6 @@ export default function WorldsBrowser({
   error = null,
   onRetry,
   onOpenWorld,
-  onOpenSandbox,
 }) {
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
@@ -84,19 +60,12 @@ export default function WorldsBrowser({
     [worlds],
   );
   const total = worlds.length;
-  const withSandbox = sandboxMatches({ query, type, domain });
   const countOf = (id) =>
-    id === "all"
-      ? total
-      : id === SANDBOX_TYPE.id
-        ? null
-        : worlds.filter((w) => w.type === id).length;
-  const types = [
-    { id: "all", label: "All types" },
-    SANDBOX_TYPE,
-    ...WORLD_TYPES,
-  ].filter((t) => t.id === "all" || countOf(t.id) !== 0);
-  const listed = type === SANDBOX_TYPE.id ? [] : shown;
+    id === "all" ? total : worlds.filter((w) => w.type === id).length;
+  const types = [{ id: "all", label: "All types" }, ...WORLD_TYPES].filter(
+    (t) => t.id === "all" || countOf(t.id) !== 0,
+  );
+  const listed = shown;
   const clear = () => {
     setQuery("");
     setType("all");
@@ -208,7 +177,7 @@ export default function WorldsBrowser({
           onRetry={onRetry}
           sx={{ height: "auto", flexGrow: 0, py: 3 }}
         />
-      ) : listed.length || withSandbox ? (
+      ) : listed.length ? (
         <Box
           component="ul"
           aria-label="Ready environments"
@@ -221,7 +190,6 @@ export default function WorldsBrowser({
             gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
           }}
         >
-          {withSandbox && <SaasSandboxCard onOpen={onOpenSandbox} />}
           {listed.map((w) => (
             <ReadyEnvironmentCard key={w.id} world={w} onOpen={onOpenWorld} />
           ))}
@@ -251,5 +219,4 @@ WorldsBrowser.propTypes = {
   error: PropTypes.object,
   onRetry: PropTypes.func,
   onOpenWorld: PropTypes.func.isRequired,
-  onOpenSandbox: PropTypes.func.isRequired,
 };
