@@ -461,15 +461,22 @@ const menuOrder = [
   "Reset Columns",
 ];
 
-const DynamicColumnOriginTypes = [
-  "vector_db",
-  "extracted_entities",
-  "extracted_json",
-  "python_code",
-  "classification",
-  "api_call",
-  "conditional",
-];
+// operation_type the rerun-operation endpoint expects for each dynamic
+// column origin_type (the same values each Configure Dynamic Column drawer
+// sends).
+export const DynamicColumnOperationTypes = {
+  vector_db: "vector_db",
+  extracted_entities: "extract_entities",
+  extracted_json: "extract_json",
+  python_code: "execute_code",
+  classification: "classify",
+  api_call: "api_call",
+  conditional: "conditional",
+};
+
+export const DynamicColumnOriginTypes = Object.keys(
+  DynamicColumnOperationTypes,
+);
 
 const getMainMenuItems =
   (currentDataset, isViewerRole = false) =>
