@@ -41,13 +41,16 @@ permissions:
   contents: read
 
 concurrency:
-  # PRs: one active run per PR, cancel stale. Push: per-SHA so dev/main runs
-  # never cancel each other (their checks gate release PRs and deploys).
+  # PRs: one active run per PR, cancel stale. Push to dev: one group, never
+  # cancelled, so one run is running and one waits; a newer push replaces the
+  # waiting one. Every dev push was already tested in the merge queue, and at
+  # 400 landings a day per-SHA runs would hold the runners. Push to main:
+  # per-SHA, so release runs never cancel each other (they gate deploys).
   # Keyed on github.ref, not head_ref: for PRs that is refs/pull/N/merge, unique
   # per PR even across forks, whereas a fork branch also named "dev" would share
   # a head_ref group with internal dev runs and cancel them.
   # Manual profiles can be dispatched together without replacing a pending trial.
-  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}
+  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
