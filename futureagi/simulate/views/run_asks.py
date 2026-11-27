@@ -65,7 +65,10 @@ class _AskPages(ExtendedPageNumberPagination):
     """A run's asks, newest first, 20 to a page; older ones on the next pages."""
 
     page_size = 20
-    page_size_query_param = None
+
+    def get_page_size(self, request) -> int:
+        # Fixed: the page holds 20 whatever the request asks for.
+        return self.page_size
 
 
 # Refusals about what was sent; the rest are about the run's calls or the launch
