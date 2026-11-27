@@ -29,6 +29,11 @@ OWNER = Case(
 )
 
 
+def in_scope(workspace: Any) -> Q:
+    """The tenant scope a request sees: exactly its workspace, or no workspace when it has none."""
+    return Q(workspace__isnull=True) if workspace is None else Q(workspace=workspace)
+
+
 def owned_by(agent_id: Any) -> Q:
     """The environments that test ``agent_id``: ``OWNER`` as a filter that can use indexes."""
     return Q(run_test__isnull=True, agent_version__agent_definition_id=agent_id) | Q(

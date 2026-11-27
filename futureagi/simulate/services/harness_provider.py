@@ -33,6 +33,7 @@ from simulate.models import (
     RunTest,
     TestExecution,
 )
+from simulate.selectors.agent_environments import in_scope
 from simulate.selectors.runs import user_runs
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.hosted_harness_conversation import serialize_conversation
@@ -308,10 +309,7 @@ def request_workspace(request):
 
 def scope_jobs(queryset, request):
     """Apply the exact tenant scope captured by the submitting request."""
-    workspace = request_workspace(request)
-    if workspace is None:
-        return queryset.filter(workspace__isnull=True)
-    return queryset.filter(workspace=workspace)
+    return queryset.filter(in_scope(request_workspace(request)))
 
 
 def _scoped_job(request, pk):

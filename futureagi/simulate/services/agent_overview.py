@@ -29,7 +29,12 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
-from simulate.selectors.agent_environments import OWNER, listed_environment_jobs
+from simulate.selectors.agent_environments import (
+    OWNER,
+    environment_jobs,
+    in_scope,
+    listed_environment_jobs,
+)
 from simulate.selectors.runs import user_executions
 from simulate.services.harness_environment import environment_name, run_summaries
 
@@ -60,20 +65,25 @@ class _JobOwner(TypedDict):
     _owner: Any
 
 
-def _environment_jobs() -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
-    # The environments the list shows, each with the agent it tests: an agent counts
-    # exactly the rows its Environments tab lists.
-    return listed_environment_jobs().annotate(_owner=OWNER)
+def _environment_jobs(
+    workspace: Any,
+) -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
+    # The environments the list shows the viewer in ``workspace``, each with the agent it
+    # tests: an agent counts exactly the rows its Environments tab lists.
+    return listed_environment_jobs().filter(in_scope(workspace)).annotate(_owner=OWNER)
 
 
-def _environments() -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
-    return _environment_jobs().filter(_owner=OuterRef("pk"))
+def _environments(
+    workspace: Any,
+) -> "QuerySet[WithAnnotations[HostedHarnessJob, _JobOwner]]":
+    return _environment_jobs(workspace).filter(_owner=OuterRef("pk"))
 
 
 def annotate_agent_rows(
-    queryset: QuerySet[AgentDefinition],
+    queryset: QuerySet[AgentDefinition], *, workspace: Any
 ) -> QuerySet[AgentDefinition]:
-    environments = _environments()
+    """The agent rows, each counting the environments the viewer in ``workspace`` lists."""
+    environments = _environments(workspace)
     first_environment = environments.order_by("created_at")
     stored_setups = AgentVersionSetup.no_workspace_objects.filter(
         agent_version__agent_definition=OuterRef("pk"),
@@ -159,10 +169,12 @@ def filter_agent_rows(
     return queryset
 
 
-def environment_refs(agents: list[AgentDefinition]) -> dict[UUID, list[dict[str, str]]]:
+def environment_refs(
+    agents: list[AgentDefinition], *, workspace: Any
+) -> dict[UUID, list[dict[str, str]]]:
     refs: dict[UUID, list[dict[str, str]]] = {}
     jobs = (
-        _environment_jobs()
+        _environment_jobs(workspace)
         .filter(_owner__in=[agent.id for agent in agents])
         .annotate(
             position=Window(
@@ -203,10 +215,13 @@ def observe_project(agent: AgentDefinition, kind: str | None) -> dict[str, str] 
     return {"id": str(project.id), "name": project.name}
 
 
-def environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:
-    """How many environments test each agent, keyed by agent id; absent when none."""
+def testing_environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:
+    """How many environments test each agent, in any workspace and whether or not the
+    list shows them, keyed by agent id; absent when none. For the delete guard: what
+    still tests an agent, not what one viewer's tab lists."""
     rows = (
-        _environment_jobs()
+        environment_jobs()
+        .annotate(_owner=OWNER)
         .filter(_owner__in=agent_ids)
         .values("_owner")
         .annotate(total=Count("id"))
