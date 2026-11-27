@@ -1,20 +1,15 @@
 name: Reviewer Assigner
 
 on:
-  # Every merge to dev runs the assign and reassign sweeps from dev's copy,
-  # with the approver App token: the approval job trusts only that App's
-  # review requests. A pull request run never gets the key, so a new pull
-  # request gets its reviewer at the next merge to dev. Schedules run main's
-  # copy, which lags dev, so the sweeps have no cron.
+  # The sweep runs on every merge to dev and every 10 minutes, with the
+  # approver App token: the approval job trusts only that App's review
+  # requests. A pull request run never gets the key, so the cron is what gives a
+  # new pull request its reviewer within 10 minutes on a quiet dev. Schedules
+  # run the default branch's copy, which lags dev until the next promotion.
   push:
     branches: [dev]
   workflow_dispatch:
     inputs:
-      mode:
-        description: "assign: request a reviewer. reassign: move requests with no agent review after 4 working hours."
-        type: choice
-        options: [assign, reassign]
-        default: assign
       dry_run:
         description: "Log what would change, write nothing."
         type: boolean
@@ -29,12 +24,14 @@ on:
   schedule:
     # 10:00 IST (UTC+5:30) → 04:30 UTC — same morning slot as pr-digest.
     - cron: "30 4 * * *"
+    - cron: "*/10 * * * *"
 
 jobs:
   sweep:
     if: >-
       github.repository == 'future-agi/future-agi' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+       github.event.schedule == '*/10 * * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # The approver App key; the environment admits only main and dev.
@@ -43,7 +40,7 @@ jobs:
       deployment: false
     concurrency:
       group: reviewer-sweep
-      cancel-in-progress: false
+      cancel-in-progress: true # the script finishes the PR it is writing, then stops
     permissions:
       contents: read
     steps:
@@ -73,23 +70,13 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
-      - name: Assign reviewers
-        if: github.event_name == 'push' || inputs.mode != 'reassign'
+      - name: Assign reviewers and move stale requests
         env:
-          MODE: assign
+          MODE: sweep
           GITHUB_TOKEN: ${{ steps.approver.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           ASSIGNER_LOGIN: ${{ vars.DEVFLOW_APPROVER_BOT }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: node .github/scripts/reviewer-assigner.mjs
-      - name: Reassign stale review requests
-        if: github.event_name == 'push' || inputs.mode == 'reassign'
-        env:
-          MODE: reassign
-          GITHUB_TOKEN: ${{ steps.approver.outputs.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          ASSIGNER_LOGIN: ${{ vars.DEVFLOW_APPROVER_BOT }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: node .github/scripts/reviewer-assigner.mjs
 
