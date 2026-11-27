@@ -11,6 +11,25 @@ from django.db.migrations.executor import MigrationExecutor
 from tracer.tests.test_feed_escalation_policy import T
 
 
+def _unapply_feed_escalation(executor):
+    """Return tracer to its 0116 shape for the Error Feed escalation branch only.
+
+    Unapplies 0117_feed_escalation_policy and everything that depends on it, in
+    the order Django's own backwards migration uses. Other branches after 0116
+    stay applied: none of them changes the tables this test writes through the
+    0116 models, and some (the attachment fences) are irreversible by design.
+    """
+    graph = executor.loader.graph
+    applied = executor.loader.applied_migrations
+    plan = [
+        (graph.nodes[key], True)
+        for key in graph.backwards_plan(("tracer", "0117_feed_escalation_policy"))
+        if key in applied
+    ]
+    assert plan, "the Error Feed escalation branch is not applied"
+    executor.migrate([], plan=plan)
+
+
 @pytest.mark.integration
 @pytest.mark.django_db(transaction=True)
 def test_upgrade_keeps_legacy_statuses_and_automation_adopts_open_issues(
@@ -38,7 +57,7 @@ def test_upgrade_keeps_legacy_statuses_and_automation_adopts_open_issues(
         workspace_id=observe_project.workspace_id,
     )
     execution = TestExecution.no_workspace_objects.create(run_test=run)
-    executor.migrate([("tracer", "0116_error_feed_alert_models")])
+    _unapply_feed_escalation(executor)
     try:
         old_apps = executor.loader.project_state(
             [("tracer", "0116_error_feed_alert_models")]

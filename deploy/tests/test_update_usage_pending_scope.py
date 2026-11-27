@@ -200,6 +200,7 @@ class Operation:
             'AddField': ('model_name', 'name', 'field'),
             'AlterField': ('model_name', 'name', 'field'),
             'RemoveField': ('model_name', 'name'),
+            'DeleteModel': ('name',),
             'AddConstraint': ('model_name', 'constraint'),
             'RemoveConstraint': ('model_name', 'name'),
         }.get(kind, ())
@@ -220,6 +221,7 @@ class Operation:
         if kind=='CreateModel': state.models[(app,self.name.lower())]=model(self.node)
         elif kind in ('AddField','AlterField'): state.models[(app,self.model_name)].fields[self.name]=self.field
         elif kind=='RemoveField': state.models[(app,self.model_name)].fields.pop(self.name,None)
+        elif kind=='DeleteModel': state.models.pop((app,self.name.lower()),None)
         elif kind=='RenameField':
             fields=state.models[(app,self.model_name)].fields
             fields[self.new_name]=fields.pop(self.old_name)
@@ -231,7 +233,7 @@ class Operation:
 
 
 def operation_types():
-    kinds=('CreateModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
+    kinds=('CreateModel','DeleteModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
         'RemoveIndex','AddConstraint','RemoveConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
     result={kind:type(kind,(Operation,),{'__module__':'django.db.migrations.operations.fixtures'}) for kind in kinds}
     result['AddIndexConcurrently']=type('AddIndexConcurrently',(result['AddIndex'],),

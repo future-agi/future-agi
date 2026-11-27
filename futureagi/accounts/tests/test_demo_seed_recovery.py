@@ -327,7 +327,9 @@ def test_legacy_reseed_works_before_publication_table_exists(legacy_seed_databas
     connection = legacy_seed_database
     old = [
         ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
-        ("tracer", "0135_eval_put_back"),  # Last node before attachment migrations.
+        # Every tracer migration except the attachment chain, which is irreversible:
+        # the seeder's workspace signal needs the Error Feed escalation tables.
+        ("tracer", "0143_merge_feed_escalation_and_metrics"),
     ]
     new = ("accounts", "0030_queue_existing_demo_trace_publications")
     executor = MigrationExecutor(connection)
@@ -376,7 +378,9 @@ def test_shipped_0020_reseeds_a_broken_demo_org_before_the_outbox_exists(
     connection = legacy_seed_database
     old = [
         ("accounts", "0028_merge_authtoken_scope_and_simulation_agent_key"),
-        ("tracer", "0135_eval_put_back"),  # Last node before attachment migrations.
+        # Every tracer migration except the attachment chain, which is irreversible:
+        # the seeder's workspace signal needs the Error Feed escalation tables.
+        ("tracer", "0143_merge_feed_escalation_and_metrics"),
     ]
     executor = MigrationExecutor(connection)
     apps = executor.migrate(old).apps
