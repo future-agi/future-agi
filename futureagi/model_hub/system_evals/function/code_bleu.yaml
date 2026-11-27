@@ -44,8 +44,8 @@ config:
             hn = Counter(_ng(ht, n))
             tot = sum(hn.values())
             cl = sum(min(hn[ng], rn.get(ng, 0)) for ng in hn)
-            # Keep add-1 smoothing for matches, but only epsilon mass for no overlap.
-            p = (cl + 1) / (tot + 1) if cl else 0.1 / tot
+            # Use add-one except for unmatched orders in hypotheses shorter than four tokens.
+            p = (cl + 1) / (tot + 1) if cl or len(ht) >= 4 else 0.1 / tot
             lp.append(math.log(p))
         bp = 1.0 if len(ht) >= len(rt) else math.exp(1 - len(rt)/max(len(ht), 1))
         bleu = bp * math.exp(sum(lp) / max_n)

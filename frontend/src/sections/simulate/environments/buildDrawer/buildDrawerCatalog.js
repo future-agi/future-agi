@@ -165,7 +165,7 @@ const ALL_CATALOG_ITEMS = [
     next: "Install the GitHub app, then pick the repository",
     logo: "github",
     keywords: "git repo repository code",
-    setup: { panel: "repo" },
+    setup: { panel: "repo", flush: true },
   },
   {
     id: "gitlab",
@@ -207,7 +207,7 @@ const ALL_CATALOG_ITEMS = [
     next: "Up to 200 MB · built in our sandbox for every run",
     icon: "solar:upload-minimalistic-linear",
     keywords: "upload zip folder files local code",
-    setup: { panel: "upload", title: "Upload a folder" },
+    setup: { panel: "upload", title: "Upload a folder", flush: true },
   },
   hosted(
     "vapi",
