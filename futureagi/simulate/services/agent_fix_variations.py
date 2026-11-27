@@ -45,13 +45,14 @@ from simulate.selectors.agent_fix import (
     VARIATIONS_LABEL,
     fresh_draft_pieces,
     scenario_results,
+    split_held_back,
     unsaved_changes,
     variations_minutes,
     variations_source_moved,
     written_variations,
 )
 from simulate.services.agent_fix_engine import start_check_run
-from simulate.services.agent_fix_runs import close_fix_run, split_held_back
+from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.agent_fix_sandbox import claim
 from simulate.services.harness_scenarios import pair_scenarios
 from simulate.services.harness_versioning import archives, drafts

@@ -65,12 +65,14 @@ import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 import ReliabilityHeadline from "./ReliabilityHeadline";
+import RunReport from "./RunReport";
 import useCallListNavigation from "./useCallListNavigation";
 import { trialsOf } from "./trialsOf";
 import useOpenCallParam from "./useOpenCallParam";
 import AskQuestionDialog from "./asks/AskQuestionDialog";
 import RunAsksPanel from "./asks/RunAsksPanel";
 import { runAsksKey } from "src/api/simulate-environments/runAsks";
+import { debugFailuresBlockedReason } from "src/sections/test-detail/debugFailuresRule";
 
 /**
  * The designer-style run/execution detail page.
@@ -190,12 +192,28 @@ export default function RunDetail({
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
   const stopNotice = stopNoticeOf(identity, live);
+  // A new diagnosis needs enough connected calls and a failing one; the server
+  // refuses the rest. Judged once the run has loaded; until then the server's refusal
+  // is the guard, and the drawer shows it.
+  const ruleBlocked = identity
+    ? debugFailuresBlockedReason({
+        connectedCalls: stats.connected,
+        failingCalls: stats.failed,
+      })
+    : null;
   // The header launches from failing cases without opening the diagnosis drawer.
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
     enabled: fixAllowed && !!identity && !live && !fixRun,
   });
   const headerLaunchOpen = fixLaunching && !!fixTargets;
-  const diagnosis = useDebugAnalysis(headerLaunchOpen ? executionId : null);
+  // A run the rule blocks may hold a diagnosis already made; that one stays
+  // openable. Until the read says so, the button stays blocked.
+  const readDiagnosis = headerLaunchOpen || (!!ruleBlocked && !live && !fixRun);
+  const diagnosis = useDebugAnalysis(readDiagnosis ? executionId : null);
+  const debugBlocked =
+    ruleBlocked && diagnosis.analysis.status === "not_requested"
+      ? ruleBlocked
+      : null;
   const epoch = epochTargets(fixOptions);
   const importedCount = epoch.imported.length;
   const canOfferEpoch =
@@ -481,9 +499,7 @@ export default function RunDetail({
                 onClick={() => {
                   setFixTargets({
                     keys: importedCount ? epoch.keys : undefined,
-                    note: importedCount
-                      ? epochTargetsNote(epoch)
-                      : undefined,
+                    note: importedCount ? epochTargetsNote(epoch) : undefined,
                   });
                   setFixLaunching(true);
                 }}
@@ -498,16 +514,32 @@ export default function RunDetail({
         )}
         {!fixRun && (
           <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
-            <Button
-              variant="contained"
-              color="primary"
-              size="small"
-              onClick={() => setDebugging(true)}
-              disabled={!access.canRun || live}
-              startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            <Tooltip
+              arrow
+              describeChild
+              title={access.canRun && !live ? debugBlocked ?? "" : ""}
             >
-              Debug failures
-            </Button>
+              {/* A disabled button takes no focus; its wrapper does, so the reason
+                  reaches the keyboard and screen readers. */}
+              <Box
+                component="span"
+                tabIndex={debugBlocked ? 0 : undefined}
+                sx={{ display: "inline-flex" }}
+              >
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  onClick={() => setDebugging(true)}
+                  disabled={!access.canRun || live || !!debugBlocked}
+                  startIcon={
+                    <Iconify icon="solar:magnifer-linear" width={15} />
+                  }
+                >
+                  Debug failures
+                </Button>
+              </Box>
+            </Tooltip>
           </ViewerLock>
         )}
       </Stack>
@@ -588,6 +620,7 @@ export default function RunDetail({
             )}
             <Tab value="analytics" label="Analytics" />
             {backed && <Tab value="questions" label="Questions" />}
+            {env?.composition && <Tab value="report" label="Report" />}
           </CustomTabs>
 
           {tab === "tasks" && (
@@ -692,6 +725,10 @@ export default function RunDetail({
               onOpenCalls={openCallsWith}
             />
           )}
+
+          {tab === "report" && env?.composition && (
+            <RunReport env={env} executionId={executionId} live={live} />
+          )}
         </Box>
       </Box>
 
@@ -781,6 +818,7 @@ export default function RunDetail({
         onClose={() => setDebugging(false)}
         executionId={executionId}
         stats={stats}
+        blockedReason={ruleBlocked}
         onLaunch={() => {
           setDebugging(false);
           setFixTargets(null);
@@ -801,7 +839,9 @@ export default function RunDetail({
           initialTargets={fixTargets?.keys}
           initialNote={fixTargets?.note}
           diagnosisUnavailable={
-            headerLaunchOpen && !diagnosis.isLoading && !diagnosis.loadError &&
+            headerLaunchOpen &&
+            !diagnosis.isLoading &&
+            !diagnosis.loadError &&
             diagnosis.analysis.status !== "completed"
           }
         />
@@ -830,6 +870,8 @@ RunDetail.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    // Present on a composition: its runs have a report (environment-releases.md §7.7).
+    composition: PropTypes.object,
   }).isRequired,
   // Client store state — only read for a non-backed env, to drive the
   // fixture-only `AddEvalsDrawer` fallback the same way it always has.

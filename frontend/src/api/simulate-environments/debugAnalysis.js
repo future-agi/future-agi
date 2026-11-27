@@ -121,6 +121,8 @@ export function useDebugAnalysis(executionId) {
         .post(endpoints.testExecutions.debugAnalysis(executionId), {})
         .then((res) => res.data),
     onSuccess: (data) => queryClient.setQueryData(queryKey, data),
+    // The drawer shows every refusal and failure itself; no second, global toast.
+    meta: { errorHandled: true },
   });
 
   const analysis = useMemo(() => mapDebugAnalysis(query.data), [query.data]);

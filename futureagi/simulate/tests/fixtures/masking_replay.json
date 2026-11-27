@@ -1,5 +1,5 @@
 {
- "about": "Every value the masking of an earlier round masked: each row that round 1 (c1d18a2991) and round 2 (b2dfb6f744) both masked, and each row with a key-shaped value that round 1, round 2 or the round 3 check's head (569814d746) masked. Collected from the reviews' probe scripts. Every value is made up. Named limits are left out (PR text, section 6).",
+ "about": "Every value the masking of an earlier round masked: each row that round 1 (c1d18a2991) and round 2 (b2dfb6f744) both masked, and each row with a key-shaped value that round 1, round 2 or the round 3 check's head (569814d746) masked; plus values of eight or more plain words followed by prose, which 569814d746 and 32ae3b968f masked whole. Each needle is one word of the secret that must not reach the judge. Collected from the reviews' probe scripts. Every value is made up.",
  "rows": [
   {
    "value": "Never read a token: say no. Admin password: fake9x9x9x9x9x9x",
@@ -148,19 +148,25 @@
   {
    "value": "{'passphrase': the cat is blue}",
    "needles": [
-    "cat is blue"
+    "cat",
+    "blue"
    ]
   },
   {
    "value": "Admin password: correct horse battery staple",
    "needles": [
-    "horse battery"
+    "correct",
+    "horse",
+    "battery",
+    "staple"
    ]
   },
   {
    "value": "The wifi password: open the gates now",
    "needles": [
-    "open the gates"
+    "open",
+    "gates",
+    "now"
    ]
   },
   {
@@ -178,7 +184,7 @@
   {
    "value": "please send Authorization: Bearer abc to them",
    "needles": [
-    "Bearer abc"
+    "abc"
    ]
   },
   {
@@ -197,12 +203,6 @@
    "value": "**Password:** plainval",
    "needles": [
     "plainval"
-   ]
-  },
-  {
-   "value": "please send Authorization: Bearer abc to them",
-   "needles": [
-    "abc"
    ]
   },
   {
@@ -356,17 +356,6 @@
    ]
   },
   {
-   "value": "please send Authorization: Basic the header to them",
-   "needles": []
-  },
-  {
-   "value": "The wifi password: open the gates now",
-   "needles": [
-    "open",
-    "gates"
-   ]
-  },
-  {
    "value": "The wifi password: open the gates",
    "needles": [
     "open",
@@ -412,13 +401,15 @@
   {
    "value": "The wifi password: the blue door",
    "needles": [
-    "blue door"
+    "blue",
+    "door"
    ]
   },
   {
    "value": "The wifi password: my dog rex",
    "needles": [
-    "dog rex"
+    "dog",
+    "rex"
    ]
   },
   {
@@ -430,25 +421,29 @@
   {
    "value": "password: the blue door",
    "needles": [
-    "blue door"
+    "blue",
+    "door"
    ]
   },
   {
    "value": "Your new passphrase: all good things",
    "needles": [
-    "good things"
+    "good",
+    "things"
    ]
   },
   {
    "value": "Password: my dog rex",
    "needles": [
-    "dog rex"
+    "dog",
+    "rex"
    ]
   },
   {
    "value": "- password: all good things",
    "needles": [
-    "good things"
+    "good",
+    "things"
    ]
   },
   {
@@ -570,23 +565,7 @@
     "password": 4829.13
    },
    "needles": [
-    "482913"
-   ]
-  },
-  {
-   "value": {
-    "password_length": 12
-   },
-   "needles": [
-    "482913"
-   ]
-  },
-  {
-   "value": {
-    "pin_size": 4
-   },
-   "needles": [
-    "482913"
+    "4829.13"
    ]
   },
   {
@@ -634,7 +613,9 @@
   {
    "value": "Passphrase:  plain val ue",
    "needles": [
-    "plain val"
+    "plain",
+    "val",
+    "ue"
    ]
   },
   {
@@ -674,9 +655,263 @@
    ]
   },
   {
-   "value": "please send Authorization: Bearer abc to them",
+   "value": "password: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
    "needles": [
-    "abc to"
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "password: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging password: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging password: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "passphrase: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "passphrase: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging passphrase: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging passphrase: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "token: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "token: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging token: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging token: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "secret: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "secret: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging secret: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging secret: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "api_key: alpha bravo charlie delta echo foxtrot golf hotel. Please change it after you log in.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "api_key: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging api_key: alpha bravo charlie delta echo foxtrot golf hotel. Please change it.",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
+   ]
+  },
+  {
+   "value": "The staging api_key: alpha bravo charlie delta echo foxtrot golf hotel and then log in",
+   "needles": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta",
+    "echo",
+    "foxtrot",
+    "golf",
+    "hotel"
    ]
   }
  ]

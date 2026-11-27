@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import tarfile
 import uuid
 import zlib
@@ -2412,6 +2413,21 @@ def test_every_value_an_earlier_round_masked_is_still_masked(row):
     assert not [needle for needle in row["needles"] if needle in sent]
 
 
+def test_every_replay_row_can_fail():
+    # A row whose needles are not in its own value, or a phrase that a partial
+    # mask would split, passes whatever the masking does.
+    values = [json.dumps(row["value"], sort_keys=True) for row in _REPLAY]
+    assert len(values) == len(set(values))
+    for row in _REPLAY:
+        raw = (
+            row["value"] if isinstance(row["value"], str) else json.dumps(row["value"])
+        )
+        assert row["needles"], row
+        assert all(needle in raw and " " not in needle for needle in row["needles"]), (
+            row
+        )
+
+
 FAKE_SHORT_KEY = "Fake" + "9x" * 3  # digits, under 16 characters
 
 
@@ -2490,6 +2506,22 @@ def test_a_short_rule_after_a_passwords_name_is_masked_with_the_mark(rule):
 )
 def test_a_small_number_in_a_rule_is_not_read_as_a_key(rule):
     assert _text_masked(rule) == (rule, ())
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "secret: the code 123",
+        "token: the pin is 482",
+        "The staging secret: the code 123 for the demo",
+    ],
+)
+def test_a_small_number_with_no_unit_after_a_secrets_name_is_masked(said):
+    # Only a count with its unit ("5 minutes") is read as part of a rule.
+    masked, marks = _text_masked(said)
+
+    assert not re.search(r"\b(123|482)\b", masked)
+    assert marks == (reader.SECRETS_MASKED,)
 
 
 @pytest.mark.django_db

@@ -8,6 +8,7 @@ import { SHARED_ISSUE } from './shared-issue.payload';
 import {
   ENV_ID,
   ENV_NAME,
+  ISSUE_TITLE,
   PROJECT_ID,
   RUN_BODY,
   createBody,
@@ -84,17 +85,19 @@ async function stubApi(page: Page, ids: Ids) {
     route.fulfill({ json: { status: true, result: { data: [issueRow], total: 1, limit: 25, offset: 0 } } }),
   );
   // The environments list (HarnessEnvironmentListResponseSerializer): one GitHub
-  // agent's environment and one hosted agent's, which the picker must leave out.
-  const envRow = (id: string, name: string, sourceKind: string) => ({
+  // agent's environment and one hosted agent's, which the server says Run Epoch can't
+  // pick and the picker must leave out.
+  const envRow = (id: string, name: string, sourceKind: string, pickable: boolean) => ({
     id, name, description: null, domain: null, source_kind: sourceKind, agent_type: 'chat',
     status: 'completed', stage: 'completed', scenario_count: 12, sub_goals_count: null,
-    tools_count: null, runs_count: 1, last_updated: null, created_at: '2026-11-10T09:00:00Z', last_run: null,
+    tools_count: null, runs_count: 1, agent_version: null, agent_policy: 'follow',
+    last_updated: null, created_at: '2026-11-10T09:00:00Z', last_run: null, epoch_pickable: pickable,
   });
   await page.route(endsWith('/simulate/api/harness-environments/'), (route) =>
     route.fulfill({
       json: {
         count: 2, next: null, previous: null, total_pages: 1, current_page: 1,
-        results: [envRow(ENV_ID, ENV_NAME, 'github'), envRow(randomUUID(), 'Phone line', 'provider')],
+        results: [envRow(ENV_ID, ENV_NAME, 'github', true), envRow(randomUUID(), 'Phone line', 'provider', false)],
       },
     }),
   );
@@ -143,7 +146,7 @@ test('ERR-E2E-006: a developer runs an Epoch from an Error Feed issue and follow
       'the create POST body is exactly the issue, project, environment and the picks after the swap',
       'the run POST body is exactly the kept scenario and the review\'s launch rows at their defaults',
       'the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload',
-      'the epoch page\'s breadcrumb is the issue\'s cluster id linking to the issue, and it survives a reload',
+      'the epoch page\'s breadcrumb is the environment linking to the environment, then Epochs linking to its Epochs tab, the header reads "From issue: <title>" linking to the issue, and both survive a reload',
       'the list reads the page\'s cluster ids in one batch and the issue\'s icon reads "Epoch 3 · Ready for review"',
     ],
   }),
@@ -219,19 +222,26 @@ test('ERR-E2E-006: a developer runs an Epoch from an Error Feed issue and follow
     await expect(strip.getByText(READY_LINE, { exact: true })).toBeVisible();
   }, { timeout: UI_READY });
 
-  const crumb = page.getByTestId('epoch-issue-crumb');
-  await test.step('ui: check 5, the epoch page starts its breadcrumb at the issue', async () => {
+  const crumb = page.getByTestId('epoch-environment-crumb');
+  const origin = page.getByTestId('epoch-origin');
+  await test.step('ui: check 5, the epoch page names its environment and the issue it came from', async () => {
     await strip.getByRole('link', { name: 'View Epoch 3' }).click();
     await expect(page).toHaveURL(
       exactPath(`/dashboard/simulate/environments/${ENV_ID}/improvements/${ids.epoch}`), { timeout: UI_READY },
     );
-    await expect(crumb).toHaveText(ids.cluster, { timeout: UI_READY });
-    await expect(crumb).toHaveAttribute('href', `/dashboard/error-feed/${ids.cluster}`);
+    await expect(crumb).toHaveText(ENV_NAME, { timeout: UI_READY });
+    await expect(crumb).toHaveAttribute('href', `/dashboard/simulate/environments/${ENV_ID}`);
+    const epochs = page.getByTestId('epoch-epochs-crumb');
+    await expect(epochs).toHaveText('Epochs');
+    await expect(epochs).toHaveAttribute('href', `/dashboard/simulate/environments/${ENV_ID}?tab=improvements`);
+    await expect(origin).toHaveText(`From issue: ${ISSUE_TITLE}`);
+    await expect(origin).toHaveAttribute('href', `/dashboard/error-feed/${ids.cluster}`);
   }, { timeout: UI_READY });
 
-  await test.step('ui: check 5, the breadcrumb survives a reload', async () => {
+  await test.step('ui: check 5, the header survives a reload', async () => {
     await page.reload();
-    await expect(crumb).toHaveText(ids.cluster, { timeout: UI_READY });
+    await expect(crumb).toHaveText(ENV_NAME, { timeout: UI_READY });
+    await expect(origin).toHaveText(`From issue: ${ISSUE_TITLE}`, { timeout: UI_READY });
   }, { timeout: UI_READY });
 
   await test.step('ui: check 6, the list shows the epoch after the issue name', async () => {
