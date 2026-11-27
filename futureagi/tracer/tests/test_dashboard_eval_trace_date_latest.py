@@ -1480,6 +1480,59 @@ def test_untyped_text_filter_does_not_fail_or_broaden_widget(
     assert _points(result, "trace_count") == {}
 
 
+@pytest.mark.parametrize("filter_type", ["text", "string", "categorical"])
+@pytest.mark.parametrize(
+    ("filter_op", "expected"),
+    [
+        pytest.param("is_not_null", "recorded", id="is_set"),
+        pytest.param("is_null", "missing", id="is_not_set"),
+    ],
+)
+def test_untyped_text_presence_filters_use_elected_membership(
+    observe_project, seed, filter_type, filter_op, expected
+):
+    """Previous PR head fails: an untyped text filter emitted ``0 = 1`` for
+    presence operators too, so "is set" and "is not set" both returned nothing
+    and "is not set" dropped traces that never ran the eval.
+    Fixed: presence goes through the elected-result membership. A recorded
+    text result and a recorded number are both present; a trace that never ran
+    the eval and one whose latest output is null are missing.
+    """
+
+    template = str(uuid4())
+    day0 = _day(datetime.now(UTC) - timedelta(days=5))
+    text = seed.trace(observe_project, day0 + timedelta(hours=10))
+    seed.result(text, template, day0 + timedelta(hours=11), value="good")
+    number = seed.trace(observe_project, day0 + timedelta(days=1, hours=10))
+    seed.result(number, template, day0 + timedelta(days=1, hours=11), value=0.4)
+    seed.trace(observe_project, day0 + timedelta(days=2, hours=10))
+    null = seed.trace(observe_project, day0 + timedelta(days=3, hours=10))
+    seed.result(null, template, day0 + timedelta(days=3, hours=11), value=None)
+    leaf = {
+        "column_id": template,
+        "source": "traces",
+        "filter_config": {
+            "col_type": "EVAL_METRIC",
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": None,
+        },
+    }
+    result = _run_worker(
+        seed,
+        _config(
+            [observe_project],
+            _custom(day0 - timedelta(days=1), day0 + timedelta(days=5)),
+            [_system_metric("trace_count", "count", filters=[leaf])],
+        ),
+    )
+    recorded = {day0: 1, day0 + timedelta(days=1): 1}
+    missing = {day0 + timedelta(days=2): 1, day0 + timedelta(days=3): 1}
+    assert _points(result, "trace_count") == (
+        recorded if expected == "recorded" else missing
+    )
+
+
 def test_eval_window_subjects_exclude_empty_and_nil_trace_ids():
     from tracer.services.clickhouse.query_builders.dashboard import (
         _eval_window_subjects_sql,

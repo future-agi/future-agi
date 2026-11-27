@@ -3961,6 +3961,7 @@ class DashboardQueryBuilder:
                 # collapse row versions. Live/status predicates deliberately
                 # stay outside LIMIT 1 BY so a tombstone cannot resurrect an
                 # older successful version.
+                untyped_presence = False
                 if output_type is None:
                     canonical_filter = f.get("canonical_filter")
                     filter_config = (
@@ -3974,9 +3975,17 @@ class DashboardQueryBuilder:
                         else ""
                     )
                     if saved_filter_type in {"text", "string", "categorical"}:
-                        clauses.append("0 = 1")
-                        idx += 1
-                        continue
+                        if not is_presence:
+                            # No safe column to compare text with.
+                            clauses.append("0 = 1")
+                            idx += 1
+                            continue
+                        # Presence compares nothing: it asks whether the
+                        # elected result recorded any output, so "is not set"
+                        # still admits traces that never ran the eval
+                        # (TH-10545).
+                        output_type = "CHOICE"
+                        untyped_presence = True
 
                 if output_type == "PASS_FAIL":
                     # Use the same score-or-text predicate as the time-series
@@ -4049,10 +4058,18 @@ class DashboardQueryBuilder:
                     # typed output only for presence/ranges, preserving a real
                     # zero. Other queries never project the raw config; the
                     # election reads only its project stamp and target type.
-                    filter_condition = eval_output_presence_expr(
-                        f"JSONExtractString({latest_alias}.config), 'output', 'output'",
-                        output_type,
+                    output_json = (
+                        f"JSONExtractString({latest_alias}.config), 'output', 'output'"
                     )
+                    filter_condition = eval_output_presence_expr(
+                        output_json, output_type
+                    )
+                    if untyped_presence:
+                        # Text, a choice, a verdict or a number all count.
+                        filter_condition = (
+                            f"({filter_condition} OR "
+                            f"{eval_output_presence_expr(output_json, 'PASS_FAIL')})"
+                        )
                     if is_range:
                         filter_condition += f" AND {eval_col} {range_condition}"
                 else:
