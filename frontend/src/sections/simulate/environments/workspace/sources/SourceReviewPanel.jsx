@@ -68,6 +68,10 @@ const TEXT_REPAIRS = {
   replace: "synthetic_text_sources",
   remove: "redact_text_sources",
 };
+const TEXT_NOTES = {
+  keep: "The details stay in the text as they are.",
+  replace: "Emails and phone numbers are swapped for made-up ones.",
+};
 const toggled = (items, value, checked) =>
   checked ? [...items, value] : items.filter((item) => item !== value);
 
@@ -174,6 +178,8 @@ function SourceReviewEditor({
     return unfinished.includes(state) ? checkableRuleIds(preview) : [];
   });
   const [joinIndexes, setJoinIndexes] = useState([]);
+  // A text choice is one-way, so a pick is only applied on Apply.
+  const [textChoices, setTextChoices] = useState({});
   const [testedAgent, setTestedAgent] = useState(true);
   const [personalDataModes, setPersonalDataModes] = useState(() =>
     Object.fromEntries(
@@ -410,15 +416,31 @@ function SourceReviewEditor({
                 ? ` on ${privacyPages.length === 1 ? "page" : "pages"} ${privacyPages.join(", ")}`
                 : ""}
               . Keep, replace or remove those details, or upload a sanitized
-              file. The choice applies at once and can&apos;t be changed in this
+              file. Once applied, the choice can&apos;t be changed in this
               review.
             </Alert>
             <PersonalDataChoice
               compact
+              vertical
+              choice={textChoices[sid]}
+              notes={TEXT_NOTES}
               availableChoices={Object.keys(TEXT_REPAIRS)}
               readOnly={!editable}
-              onChoose={(choice) => doRepair({ [TEXT_REPAIRS[choice]]: [sid] })}
+              onChoose={(choice) =>
+                setTextChoices({ ...textChoices, [sid]: choice })
+              }
             />
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!editable || !textChoices[sid]}
+              onClick={() =>
+                doRepair({ [TEXT_REPAIRS[textChoices[sid]]]: [sid] })
+              }
+              sx={{ alignSelf: "flex-start" }}
+            >
+              Apply
+            </Button>
           </>
         ) : (
           <>

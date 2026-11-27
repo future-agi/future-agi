@@ -69,7 +69,7 @@ beforeEach(() => {
   api.post.mockReset();
 });
 
-function mount(onAccepted, cachedReview, compact = false) {
+function mount(onAccepted, cachedReview, compact = false, personalMode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -82,6 +82,7 @@ function mount(onAccepted, cachedReview, compact = false) {
         ownerId="job-1"
         canEdit
         compact={compact}
+        defaultPersonalDataMode={personalMode}
         acceptLabel="Approve sources and start build"
         onAccepted={onAccepted}
       />
@@ -370,6 +371,8 @@ describe("Prebuild source review", () => {
     expect(await screen.findByText(/detected on page 3/)).toBeVisible();
     expect(screen.getByText("Personal data, your choice")).toBeVisible();
     fireEvent.click(screen.getByRole("radio", { name: label }));
+    expect(api.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await screen.findByRole("button", {
       name: "Approve sources and start build",
     });
@@ -579,11 +582,12 @@ describe("Prebuild source review", () => {
     api.post.mockResolvedValue({
       data: { ...serverReview, state: "accepted", revision: 3 },
     });
-    mount();
-    fireEvent.click(await screen.findByRole("radio", { name: "Keep" }));
-    const approve = screen.getByRole("button", {
+    mount(undefined, undefined, false, "none");
+    const approve = await screen.findByRole("button", {
       name: "Approve sources and start build",
     });
+    expect(approve).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: "Keep" }));
     expect(approve).toBeEnabled();
     fireEvent.click(approve);
     await screen.findByText("Source review accepted.");

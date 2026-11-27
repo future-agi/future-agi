@@ -102,6 +102,8 @@ export default function PersonalDataChoice({
   readOnly = false,
   compact = false,
   availableChoices = ["keep", "replace", "none", "custom"],
+  notes = {},
+  vertical = false,
 }) {
   const name = useId();
   const choices = shownChoices(choice).filter((one) =>
@@ -111,16 +113,16 @@ export default function PersonalDataChoice({
   if (compact) {
     return (
       <Stack
-        direction="row"
+        direction={vertical ? "column" : "row"}
         role="radiogroup"
         aria-label="Personal data"
-        spacing={2}
+        spacing={vertical ? 0 : 2}
         useFlexGap
         flexWrap="wrap"
       >
         {choices.map((one) => (
-          <Tooltip key={one.id} title={one.note} arrow>
-            <Box>
+          <Tooltip key={one.id} title={notes[one.id] ?? one.note} arrow>
+            <Box sx={{ alignSelf: "flex-start" }}>
               <Option
                 name={name}
                 checked={choice === one.id}
@@ -210,6 +212,10 @@ export default function PersonalDataChoice({
 
 PersonalDataChoice.propTypes = {
   availableChoices: PropTypes.arrayOf(PropTypes.string),
+  // Hover notes by choice id, where a caller's files need other wording.
+  notes: PropTypes.object,
+  // Compact only: one choice per row.
+  vertical: PropTypes.bool,
   suggested: PropTypes.string,
   // keep, replace, none or custom; null until the person picks.
   choice: PropTypes.string,
