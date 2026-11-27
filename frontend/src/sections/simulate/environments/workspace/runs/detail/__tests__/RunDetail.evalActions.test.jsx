@@ -4,6 +4,7 @@ import { useState } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // The run page's eval actions end to end: the real All Evaluations drawer, the
@@ -149,23 +150,30 @@ beforeEach(() => {
   });
 });
 
+// The product theme carries the run colours the header badge tints from.
+const theme = createTheme({
+  palette: { data: Array.from({ length: 8 }, () => "#7857fc") },
+});
+
 const renderDetail = () =>
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <MemoryRouter>
-        <RunDetail
-          env={{ id: "env-1", name: "Refund Copilot", platform: {} }}
-          envState={{ evals: [] }}
-          backed
-          testId="rt1"
-          executionId="ex1"
-        />
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <ThemeProvider theme={theme}>
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <MemoryRouter>
+          <RunDetail
+            env={{ id: "env-1", name: "Refund Copilot", platform: {} }}
+            envState={{ evals: [] }}
+            backed
+            testId="rt1"
+            executionId="ex1"
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 
 // Outlast a modal's exit transition.
