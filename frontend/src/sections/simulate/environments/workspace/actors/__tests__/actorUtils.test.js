@@ -278,23 +278,53 @@ describe("withStart", () => {
 });
 
 describe("groupsByRole", () => {
-  it("puts actors whose role matches, ignoring case and spacing, under the role as first written", () => {
-    const one = (id, role) => typedActor({ id, name: id, role });
-    const cast = [
-      one("priya", "Sales manager"),
-      one("dana", ""),
-      one("sam", "  sales   MANAGER "),
-      one("lee", "Fraud desk"),
-    ];
+  const one = (id, role) => typedActor({ id, name: id, role });
+  const shape = (cast) =>
+    groupsByRole(cast).map((group) => [
+      group.role,
+      group.actors.map((actor) => actor.id),
+    ]);
+
+  it("groups a role however its case and spacing are typed, under the role as first written, in cast order", () => {
     expect(
-      groupsByRole(cast).map((group) => [
-        group.role,
-        group.actors.map((actor) => actor.id),
+      shape([
+        one("priya", " Sales  manager"),
+        one("dana", "Fraud desk"),
+        one("sam", "SALES MANAGER"),
+        one("lee", "sales manager "),
+        one("ana", "Sales\tManager\n"),
       ]),
     ).toEqual([
-      ["Sales manager", ["priya", "sam"]],
-      [null, ["dana"]],
-      ["Fraud desk", ["lee"]],
+      ["Sales manager", ["priya", "sam", "lee", "ana"]],
+      ["Fraud desk", ["dana"]],
     ]);
+  });
+
+  it("never puts actors without a role together, however the role is missing", () => {
+    expect(
+      shape([
+        one("a", ""),
+        one("b", "   "),
+        one("c", null),
+        one("d", undefined),
+      ]),
+    ).toEqual([
+      [null, ["a"]],
+      [null, ["b"]],
+      [null, ["c"]],
+      [null, ["d"]],
+    ]);
+  });
+
+  it("keeps roles that only look alike apart: a typo, a plural, other punctuation or extra words", () => {
+    expect(
+      shape([
+        one("a", "Sales manager"),
+        one("b", "Saless manager"),
+        one("c", "Sales managers"),
+        one("d", "Sales-manager"),
+        one("e", "Senior sales manager"),
+      ]).map(([, ids]) => ids.length),
+    ).toEqual([1, 1, 1, 1, 1]);
   });
 });
