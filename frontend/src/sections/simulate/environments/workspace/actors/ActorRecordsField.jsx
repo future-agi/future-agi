@@ -14,6 +14,7 @@ export default function ActorRecordsField({
   return (
     <Autocomplete
       multiple
+      disableCloseOnSelect
       size="small"
       options={sources}
       value={records}

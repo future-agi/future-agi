@@ -939,7 +939,7 @@ describe("WorldActorsPanel", () => {
     );
     expect(saveButton()).not.toBeDisabled();
     answer = heldBy("crm.approve_discount", "crm.request_approval");
-    fireEvent.mouseDown(field);
+    // The list stays open after a pick, so the next one is picked from it.
     fireEvent.click(
       screen.getByRole("option", { name: /crm.request_approval/ }),
     );

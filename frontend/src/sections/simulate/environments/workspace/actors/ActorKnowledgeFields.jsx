@@ -31,6 +31,7 @@ export default function ActorKnowledgeFields({
     <>
       <Autocomplete
         multiple
+        disableCloseOnSelect
         size="small"
         options={[...sources.files, ...evaluatorOnly]}
         getOptionDisabled={(path) => evaluatorOnly.includes(path)}

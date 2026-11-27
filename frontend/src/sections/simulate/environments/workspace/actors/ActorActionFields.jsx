@@ -29,6 +29,7 @@ export default function ActorActionFields({
     <>
       <Autocomplete
         multiple
+        disableCloseOnSelect
         size="small"
         options={actions.map((one) => one.action)}
         value={permitted}
