@@ -2205,3 +2205,193 @@ def test_a_code_error_or_a_cancellation_is_not_called_unreadable(voice_call, err
 
     with pytest.raises(type(raised)):
         _unreadable_traces(voice_call, raised)
+
+
+# --- round 3 check: a plain secret inside a sentence, rules at a line's start ------
+#
+# The reading, for a bare value after a secret's name: a value that starts with a
+# plain sentence word (or explain, refuse, decline) is a rule, and is kept. Any other
+# plain value followed by prose is a secret, and its first word is masked. A short
+# value after a password's or passphrase's name, or at a line's start, is masked
+# whole. Ties go to masking: a blanked rule is marked, a leaked secret is not.
+
+FAKE_WORD = "blueberry"  # a dictionary word: no digit, under 16 characters
+
+
+def _text_masked(text):
+    masked, marks = reader._masked(text)
+    return masked, marks
+
+
+@pytest.mark.parametrize(
+    ("said", "gone", "kept"),
+    [
+        (
+            f"Your new password: {FAKE_WORD}. Please change it after you log in.",
+            FAKE_WORD,
+            "Please change it after you log in.",
+        ),
+        (f"Use secret: {FAKE_WORD} to log in.", FAKE_WORD, "Use secret:"),
+        (f"The api_key: {FAKE_WORD} is for staging only", FAKE_WORD, "is for staging"),
+        (f"INFO request token: {FAKE_WORD} for the user", FAKE_WORD, "for the user"),
+        (
+            f"Never read the token: say no. The admin password: {FAKE_WORD} and the pin",
+            FAKE_WORD,
+            "Never read the token: say no.",
+        ),
+        (f"I set the token: {FAKE_WORD} for the demo", FAKE_WORD, "for the demo"),
+        (f"send the api-key: {FAKE_WORD} to them now", FAKE_WORD, "to them now"),
+        (f"I said my password: {FAKE_WORD} thanks", FAKE_WORD, "I said my password:"),
+    ],
+)
+def test_a_plain_secret_inside_a_sentence_that_goes_on_is_masked(said, gone, kept):
+    masked, marks = _text_masked(said)
+
+    assert gone not in masked
+    assert kept in masked
+    assert marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.parametrize(
+    ("said", "phrase"),
+    [
+        ("The wifi password: open the gates now", "gates"),
+        ("her passphrase: maple syrup and toast", "syrup"),
+        ("my passphrase: up and over it", "over"),
+    ],
+)
+def test_a_short_phrase_after_a_passwords_name_is_masked_whole(said, phrase):
+    masked, _ = _text_masked(said)
+
+    assert phrase not in masked
+
+
+@pytest.mark.parametrize("scheme", ["Basic", "Digest", "Token", "Bearer"])
+@pytest.mark.parametrize("credential", ["plainvalue", "abc"])
+def test_an_authorization_credential_inside_a_sentence_is_masked(scheme, credential):
+    masked, marks = _text_masked(
+        f"please send Authorization: {scheme} {credential} to them"
+    )
+
+    assert credential not in masked
+    assert "to them" in masked
+    assert marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "Password: never ask the caller for it.",
+        "- Password: never ask the caller for it.\n- Token: say no and move on.",
+        "* Secret: the refund limit is only for staff to know.",
+        "## Password:\nNever ask the caller for it.",
+        "## Password:\n\nNever ask the caller for it.",
+        "Secret: there is none, it's all in the app.",
+        "token: explain codes expire.",
+        "Token: refuse to read it aloud.",
+        "Agent: Your password: we never ask for it on a call.",
+        "Ask for the password: then verify it.",
+        # A contraction is one word: "don't" is read whole, not cut at its quote.
+        "Password: don't ask the caller for it.",
+        "The password: it's not something we ask for.",
+    ],
+)
+def test_a_rule_at_the_start_of_a_line_or_under_a_heading_is_kept(rule):
+    assert _text_masked(rule) == (rule, ())
+
+
+@pytest.mark.parametrize(
+    ("rule", "masked_rule"),
+    [
+        (
+            "Password: callers are never asked for one.",
+            "Password: [REDACTED] are never asked for one.",
+        ),
+        (
+            "## Password:\n\nCustomers reset it in the app.",
+            "## Password:\n\n[REDACTED] reset it in the app.",
+        ),
+    ],
+)
+def test_a_rule_that_starts_with_a_plain_word_loses_only_that_word(rule, masked_rule):
+    assert _text_masked(rule) == (masked_rule, (reader.SECRETS_MASKED,))
+
+
+@pytest.mark.parametrize(
+    ("said", "secret"),
+    [
+        (f"password:\n\n  {FAKE_PLAIN}", FAKE_PLAIN),
+        (f"password:\n\n  {FAKE_WORD}", FAKE_WORD),
+        (f"token\n\n:  {FAKE_PLAIN}", FAKE_PLAIN),
+        (f"password:\r\n  {FAKE_PLAIN}", FAKE_PLAIN),
+        (f"password:\r\n\r\n  {FAKE_PLAIN}", FAKE_PLAIN),
+        ("secret: open the door", "open the door"),
+        ("secret: open the door", "the door"),
+    ],
+)
+def test_a_value_after_a_blank_line_a_crlf_or_at_a_lines_start_is_masked(said, secret):
+    masked, _ = _text_masked(said)
+
+    assert secret not in masked
+
+
+@pytest.mark.parametrize(
+    ("row", "masked"),
+    [
+        ({"password": [482913, 551177]}, {"password": ["[REDACTED]", "[REDACTED]"]}),
+        ({"otp_tokens": [482913]}, {"otp_tokens": ["[REDACTED]"]}),
+        ({"passwords": [482913]}, {"passwords": ["[REDACTED]"]}),
+        ({"secrets": 482913}, {"secrets": "[REDACTED]"}),
+        ({"recovery_tokens": 482913}, {"recovery_tokens": "[REDACTED]"}),
+        ({"apikey": 482913}, {"apikey": "[REDACTED]"}),
+        ({"APIKEY": 482913}, {"APIKEY": "[REDACTED]"}),
+        ({"api_key": 482913}, {"api_key": "[REDACTED]"}),
+        ({"cookie": 482913}, {"cookie": "[REDACTED]"}),
+        ({"credential": 482913}, {"credential": "[REDACTED]"}),
+        ({"authorization": 482913}, {"authorization": "[REDACTED]"}),
+        ({"private_key": 482913}, {"private_key": "[REDACTED]"}),
+        # Counts, limits and ids below a secret's table stay.
+        ({"password_length": 12}, {"password_length": 12}),
+        ({"secret_max": 3}, {"secret_max": 3}),
+        (
+            {"token_count": 12, "max_tokens": 100},
+            {"token_count": 12, "max_tokens": 100},
+        ),
+        ({"password_resets": [{"id": 7}]}, {"password_resets": [{"id": 7}]}),
+        ({"password_lengths": [8, 12]}, {"password_lengths": [8, 12]}),
+    ],
+)
+def test_a_number_or_a_list_of_numbers_under_a_secrets_name_is_masked(row, masked):
+    assert reader._masked(row)[0] == masked
+
+
+@pytest.mark.django_db
+def test_a_plain_secret_said_inside_a_sentence_is_masked_by_the_reader(voice_call):
+    _turn(voice_call, "user", f"Use secret: {FAKE_WORD} to log in.", 0)
+
+    evidence = _one(voice_call, Kind.TRANSCRIPT)
+
+    assert FAKE_WORD not in json.dumps(evidence.content)
+    assert evidence.marks == (reader.SECRETS_MASKED,)
+
+
+@pytest.mark.django_db
+def test_bulleted_rules_in_the_instructions_reach_the_reader_whole(
+    voice_call, agent_version
+):
+    rules = (
+        "You are a bank agent.\n"
+        "- Password: never ask the caller for it.\n"
+        "- Token: say no and move on.\n"
+        "## Password:\n\nNever ask the caller for it."
+    )
+    agent_version.configuration_snapshot = {
+        **agent_version.configuration_snapshot,
+        "description": rules,
+    }
+    agent_version.save(update_fields=["configuration_snapshot"])
+
+    evidence = _one(voice_call, Kind.AGENT_INSTRUCTIONS)
+
+    assert evidence.content == rules
+    assert evidence.marks == ()
