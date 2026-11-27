@@ -1639,6 +1639,68 @@ def test_a_queued_build_without_a_test_yet_still_holds_its_agent(
 
 
 @pytest.mark.django_db
+def test_the_agent_tab_lists_every_build_of_the_agent_and_its_count_agrees(
+    auth_client, organization, workspace
+):
+    # A build is linked to a test only once its scenarios are submitted. One that fails, is
+    # cancelled or is still running before that holds its agent through the version it was built
+    # from, and the agent's tab lists it, as the agent's count already counts it.
+    agent = _agent(organization, workspace, "Tabbed")
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    early = {}
+    for minutes, state in enumerate(
+        (
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+            HostedHarnessJob.State.RUNNING,
+        ),
+        1,
+    ):
+        job = _environment(agent, minutes)
+        HostedHarnessJob.all_objects.filter(id=job.id).update(
+            run_test=None, agent_version=version, state=state
+        )
+        early[state] = job
+    linked = _environment(agent, 4)
+    gone = _environment(agent, 5)
+    RunTest.all_objects.filter(id=gone.run_test_id).update(deleted=True)
+    # Another agent's builds, linked or not, and a build with neither a test nor a version.
+    other = _agent(organization, workspace, "Elsewhere")
+    others = _environment(other, 6)
+    others_early = _environment(other, 7)
+    HostedHarnessJob.all_objects.filter(id=others_early.id).update(
+        run_test=None,
+        agent_version=other.create_version(
+            description="p", commit_message="v1", status="active"
+        ),
+    )
+    orphan = _environment(agent, 8)
+    HostedHarnessJob.all_objects.filter(id=orphan.id).update(
+        run_test=None, agent_version=None
+    )
+
+    listed = {row["id"] for row in _list(auth_client, agent)}
+    detail = auth_client.get(f"{AGENTS}{agent.id}/").json()
+
+    assert listed == {str(job.id) for job in (*early.values(), linked)}
+    assert detail["environment_count"] == len(listed)
+    assert _rows(auth_client)["Tabbed"]["environment_count"] == len(listed)
+    assert {row["id"] for row in _list(auth_client, other)} == {
+        str(others.id),
+        str(others_early.id),
+    }
+    # The main Environments page, with no agent asked for, is unchanged: every build.
+    everything = {
+        row["id"]
+        for row in auth_client.get(ENVIRONMENTS, {"limit": 50}).json()["results"]
+    }
+    assert listed | {str(others.id), str(others_early.id), str(gone.id)} <= everything
+    assert str(orphan.id) in everything
+
+
+@pytest.mark.django_db
 def test_a_simulate_run_shows_no_pass_rate_even_with_finished_calls(
     auth_client, organization, workspace
 ):
