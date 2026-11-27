@@ -7,6 +7,7 @@ import {
   Typography,
   useMediaQuery,
 } from "@mui/material";
+import Iconify from "src/components/iconify";
 import ActorFallbackFields from "./ActorFallbackFields";
 import ActorField from "./ActorField";
 import ActorRecordsField from "./ActorRecordsField";
@@ -36,13 +37,29 @@ export default function ActorAdvancedFields({
   const still = useMediaQuery("(prefers-reduced-motion: reduce)");
   return (
     <>
-      {/* The small text button's 8px inset, pulled back so its label starts where the fields do. */}
       <Button
         size="small"
-        sx={{ alignSelf: "flex-start", ml: -1 }}
+        variant="outlined"
+        aria-expanded={open}
         onClick={onToggle}
+        endIcon={
+          <Iconify
+            icon="solar:alt-arrow-down-linear"
+            width={14}
+            sx={{
+              transform: open ? "rotate(180deg)" : "none",
+              transition: (theme) => theme.transitions.create("transform"),
+              "@media (prefers-reduced-motion: reduce)": { transition: "none" },
+            }}
+          />
+        }
+        sx={{
+          alignSelf: "flex-start",
+          color: "text.primary",
+          borderColor: "divider",
+        }}
       >
-        {open ? F.lessAdvanced : F.advanced}
+        {F.advanced}
       </Button>
       {/* The fields fade in while the space opens, so nothing pops in. */}
       <Collapse in={open} timeout={still ? 0 : "auto"} sx={{ flexShrink: 0 }}>

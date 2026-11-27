@@ -504,9 +504,11 @@ describe("WorldActorsPanel", () => {
       screen.getByLabelText("May agree to (optional, one per line)"),
       { target: { value: "A refund under $50" } },
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Hide advanced settings" }),
-    );
+    // One toggle, as the design has it: the same label, open or closed.
+    const toggle = screen.getByRole("button", { name: "Advanced settings" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
     await settle();
     fireEvent.click(saveButton());
     expect(sent().op).toBe("replace");
@@ -1588,9 +1590,7 @@ describe("WorldActorsPanel", () => {
     choose("If they do not answer", "crm.approve_discount is taken for them");
     const taken = screen.getByLabelText(starred("Taken with (JSON)"));
     fireEvent.change(taken, { target: { value: "{not json" } });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Hide advanced settings" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Advanced settings" }));
     await settle();
     expect(taken).toBeVisible();
     refusesSave();

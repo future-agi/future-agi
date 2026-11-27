@@ -122,7 +122,6 @@ export const ACTORS_COPY = {
       createTitle: "Add actor",
       createSubtitle: "Added to this environment's draft",
       advanced: "Advanced settings",
-      lessAdvanced: "Hide advanced settings",
       pressure: "Pressure",
       pressureHelp:
         "Given to them as background whenever they speak or decide in the moment. Someone who only takes the actions each scenario lists does not use them.",
