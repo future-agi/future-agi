@@ -967,7 +967,7 @@ def _give_chat_back(environment_id: str, after: int) -> None:
     with transaction.atomic():
         conversation = (
             HostedHarnessConversation.no_workspace_objects.select_for_update()
-            .filter(job_id=environment_id)
+            .filter(job_id=UUID(environment_id))
             .first()
         )
         if conversation is not None:
