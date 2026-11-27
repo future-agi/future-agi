@@ -196,6 +196,44 @@ export default function ActorForm({
   // Save is always on. It is the final check: it shows every problem, closes a form with nothing to save, and waits
   // on the button for a check still running.
   const [saveAsked, setSaveAsked] = useState(false);
+  // A blocked Save takes the person to the first field it marked, so a problem out of view is never missed.
+  const body = useRef(null);
+  const [blockedSaves, setBlockedSaves] = useState(0);
+  useEffect(() => {
+    const marked = blockedSaves
+      ? body.current?.querySelector(
+          '.MuiInputBase-root.Mui-error, [data-testid="actor-permission-conflict"]',
+        )
+      : null;
+    if (!marked) return undefined;
+    const go = () => {
+      marked.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      marked
+        .querySelector(
+          '[role="combobox"], textarea, input:not([type="hidden"]):not([aria-hidden="true"])',
+        )
+        ?.focus({ preventScroll: true });
+    };
+    // A field in the opening fold has no room to scroll to until the fold has opened.
+    const fold = marked.closest(".MuiCollapse-root:not(.MuiCollapse-entered)");
+    if (!fold) {
+      go();
+      return undefined;
+    }
+    // Its own transition end, else a moment later when motion is reduced and none plays.
+    let done = false;
+    const once = (event) => {
+      if (done || (event && event.target !== fold)) return;
+      done = true;
+      go();
+    };
+    fold.addEventListener("transitionend", once);
+    const timer = setTimeout(once, 1000);
+    return () => {
+      fold.removeEventListener("transitionend", once);
+      clearTimeout(timer);
+    };
+  }, [blockedSaves]);
   const submit = () => {
     setRevealed(
       new Set([
@@ -213,11 +251,14 @@ export default function ActorForm({
       found.length > 0 ||
       verdict.over_by > 0 ||
       (conflicts.length > 0 && !shareConfirmed);
-    if (!blocked)
-      onSave(
-        request,
-        conflicts.map((one) => one.action),
-      );
+    if (blocked) {
+      setBlockedSaves((count) => count + 1);
+      return;
+    }
+    onSave(
+      request,
+      conflicts.map((one) => one.action),
+    );
   };
   const attemptSave = () => {
     if (busy || saveAsked) return;
@@ -251,6 +292,7 @@ export default function ActorForm({
             conflict={conflict}
           />
           <Stack
+            ref={body}
             spacing={2}
             sx={{ p: 2.5, flex: 1, minHeight: 0, overflowY: "auto" }}
           >

@@ -368,6 +368,8 @@ describe("ActorForm", () => {
     expect(
       screen.getByLabelText(starred("Comes in")),
     ).toHaveAccessibleDescription("Pick the agent turn they come in on.");
+    // The blocked Save takes the person to the first field it marked.
+    expect(screen.getByLabelText(starred("Name"))).toHaveFocus();
     expect(screen.queryByTestId("actor-problems")).toBeNull();
     refusesSave();
   });
