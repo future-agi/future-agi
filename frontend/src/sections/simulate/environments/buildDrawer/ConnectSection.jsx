@@ -21,10 +21,6 @@ import {
   focusRing,
 } from "./drawerStyles";
 import { SectionHead } from "./starts/startBits";
-import UploadDropZone from "src/sections/agent-playground/connect/UploadDropZone";
-import { saveConnectDraft } from "src/sections/agent-playground/connect/connectDraft";
-import { UPLOAD_SOURCE } from "src/sections/agent-playground/connect/connectSources";
-import { buildDraftKey } from "./buildDraft";
 
 // One way in: a button that opens its setup. A UI-only one says so beside
 // Connect.
@@ -216,9 +212,9 @@ SearchBox.propTypes = {
  * `items` narrows the ways (to those for one type of agent); a tab left empty
  * isn't shown. `head` is off where the drawer's header already says what this
  * is, and the MCP link shows only with `onPickMcp`. `aside` sits at the right
- * end of the tabs. "Without a repository" is the folder drop zone, which
- * opens the upload on the agents it found; `uploadSlot` puts the page's own
- * there instead, and `sdkSlot` replaces the rows under "Through our SDK".
+ * end of the tabs. `uploadSlot` fills "Without a repository" (a node, or
+ * `({ item, onPick }) => node`), and `sdkSlot` the rows under "Through our
+ * SDK". This file imports nothing from the Agents page, which uses it.
  */
 export default function ConnectSection({
   onPick,
@@ -267,20 +263,9 @@ export default function ConnectSection({
         })}
         {upload && (
           <UploadGroup>
-            {uploadSlot || (
-              <UploadDropZone
-                onScanned={({ folder, scanId }) => {
-                  // Opening the upload clears its drafts, so the found agents
-                  // are saved after it, for its form to open on.
-                  onPick(upload);
-                  saveConnectDraft(
-                    { stage: "agents", folder, scanId },
-                    UPLOAD_SOURCE,
-                    buildDraftKey(upload.id, "flow"),
-                  );
-                }}
-              />
-            )}
+            {typeof uploadSlot === "function"
+              ? uploadSlot({ item: upload, onPick })
+              : uploadSlot}
           </UploadGroup>
         )}
       </Stack>
@@ -359,6 +344,6 @@ ConnectSection.propTypes = {
   head: PropTypes.bool,
   onPickMcp: PropTypes.func,
   aside: PropTypes.node,
-  uploadSlot: PropTypes.node,
+  uploadSlot: PropTypes.oneOfType([PropTypes.node, PropTypes.func]),
   sdkSlot: PropTypes.node,
 };

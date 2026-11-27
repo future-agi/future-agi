@@ -8,6 +8,7 @@ import ErrorState from "src/components/error-state";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import UiOnlyFlag from "../components/UiOnlyFlag";
 import ConnectSection from "./ConnectSection";
+import DrawerUploadZone from "./forms/DrawerUploadZone";
 import { useReadyEnvironments } from "./readyEnvironments";
 import {
   BTN_SX,
@@ -340,6 +341,7 @@ export default function DrawerCatalog({
       <ConnectSection
         onPick={onPick}
         onPickMcp={SHOW_MCP_WORLD ? () => onPick(MCP_ITEM) : undefined}
+        uploadSlot={(slot) => <DrawerUploadZone {...slot} />}
       />
       <YourAgentsSection
         resumeAgentId={resumeAgentId}

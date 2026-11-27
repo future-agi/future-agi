@@ -58,7 +58,7 @@ export function guessEntryFile(fileNames = []) {
 // A picked folder's files carry webkitRelativePath ("agent/main.py"); a
 // dropped folder's carry react-dropzone's path ("/agent/main.py" or
 // "./agent/main.py") instead. Both become "agent/main.py".
-const relativePathOf = (file) =>
+export const relativePathOf = (file) =>
   file.webkitRelativePath ||
   (typeof file.path === "string" && file.path.replace(/^\.?\//, "")) ||
   file.name;

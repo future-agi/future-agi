@@ -23,6 +23,7 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import SideDrawer from "../components/SideDrawer";
 import DrawerCatalog from "./DrawerCatalog";
 import ConnectSection from "./ConnectSection";
+import DrawerUploadZone from "./forms/DrawerUploadZone";
 import { CATALOG_ITEMS, connectItemsFor } from "./buildDrawerCatalog";
 import { AGENT_WAY_PREFIX, clearBuildDrafts } from "./buildDraft";
 import {
@@ -403,6 +404,7 @@ export default function BuildEnvironmentDrawer({
             items={connectItemsFor(layer.modality)}
             head={false}
             onPick={pickToConnect(layer)}
+            uploadSlot={(slot) => <DrawerUploadZone {...slot} />}
           />
         </Box>
       );

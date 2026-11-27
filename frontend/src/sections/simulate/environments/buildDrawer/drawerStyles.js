@@ -37,14 +37,8 @@ export const BUTTON_LOOK_SX = {
   whiteSpace: "nowrap",
 };
 
-// The catalog's per-row Connect: a filled button, like the page's main action.
-export const CONNECT_BTN_SX = {
-  ...BUTTON_LOOK_SX,
-  minWidth: 70,
-  borderColor: "primary.main",
-  bgcolor: "primary.main",
-  color: "primary.contrastText",
-};
+// The catalog's per-row Connect.
+export const CONNECT_BTN_SX = { ...BUTTON_LOOK_SX, minWidth: 70 };
 
 // A selectable chip: tabs, Voice/Chat, Public/Private.
 export const chipSx = (on) => ({

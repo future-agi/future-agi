@@ -8,15 +8,13 @@ import { useStartScan } from "src/api/agents/agentConnect";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import {
   prepareSourceFolder,
+  relativePathOf,
   uploadErrorText,
   uploadSourceFolder,
 } from "src/pages/dashboard/harness/sourceUpload";
 import FolderInput from "src/sections/simulate/environments/components/FolderInput";
 import { fData } from "src/utils/format-number";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-
-const relativePath = (file) =>
-  file.webkitRelativePath || String(file.path || "").replace(/^\.?\//, "");
 
 /**
  * Drop or browse a folder right on the New agent page. The folder is uploaded
@@ -79,9 +77,12 @@ export default function UploadDropZone({ onScanned, disabled = false }) {
     );
   };
 
+  const busy = stage !== "idle";
+  /* The zone stays mounted while it uploads, so a second drop lands here
+     (and is ignored) instead of the browser opening the file. */
   const drop = (accepted) => {
-    if (disabled || !accepted.length) return;
-    if (!accepted.some((file) => relativePath(file).includes("/"))) {
+    if (inert || disabled || busy || !accepted.length) return;
+    if (!accepted.some((file) => relativePathOf(file).includes("/"))) {
       setError("Drop the folder itself, not files from inside it.");
       return;
     }
@@ -92,100 +93,90 @@ export default function UploadDropZone({ onScanned, disabled = false }) {
     multiple: true,
     noClick: true,
     noKeyboard: true,
-    disabled: inert,
     onDrop: (accepted) => drop(accepted),
   });
 
   const browse = () => {
-    if (inert || disabled || stage !== "idle") return;
+    if (inert || disabled || busy) return;
     pickerRef.current?.querySelector("input")?.click();
   };
 
   return (
     <Stack spacing={1} sx={{ m: 1 }}>
-      {stage === "idle" ? (
-        <Box
-          {...getRootProps({ onClick: browse })}
-          data-testid="connect-upload-folder"
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: 1.5,
-            px: 2,
-            py: 1.25,
-            borderRadius: 1,
-            border: "1px dashed",
-            borderColor: isDragActive ? "primary.main" : "divider",
-            bgcolor: isDragActive ? "action.selected" : "transparent",
-            cursor: inert ? "default" : "pointer",
-            outline: "none",
-            transition: "background-color 120ms, border-color 120ms",
-            "&:hover": inert ? undefined : { bgcolor: "action.hover" },
-            ...(inert && { opacity: 0.48 }),
-          }}
-        >
-          <input {...getInputProps()} />
-          <Iconify
-            icon="solar:upload-minimalistic-linear"
-            width={20}
-            sx={{ color: "text.secondary", flexShrink: 0 }}
-          />
-          <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-              Choose a folder or drag &amp; drop it here
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              Up to 200 MB · secrets and dependencies are left out
-            </Typography>
-          </Box>
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={inert}
-            sx={{ flexShrink: 0 }}
-          >
-            Browse folder
-          </Button>
-        </Box>
-      ) : (
-        <Stack
-          spacing={1.25}
-          data-testid="connect-upload-progress"
-          sx={{
-            px: 2,
-            py: 1.5,
-            borderRadius: 1,
-            border: "1px dashed",
-            borderColor: "divider",
-          }}
-        >
-          <Stack direction="row" alignItems="center" spacing={1.25}>
+      <Box
+        {...getRootProps({ onClick: browse })}
+        data-testid="connect-upload-folder"
+        sx={{
+          px: 2,
+          py: busy ? 1.5 : 1.25,
+          borderRadius: 1,
+          border: "1px dashed",
+          borderColor:
+            isDragActive && !busy && !inert ? "primary.main" : "divider",
+          bgcolor:
+            isDragActive && !busy && !inert ? "action.selected" : "transparent",
+          cursor: inert || busy ? "default" : "pointer",
+          outline: "none",
+          transition: "background-color 120ms, border-color 120ms",
+          "&:hover": inert || busy ? undefined : { bgcolor: "action.hover" },
+          ...(inert && { opacity: 0.48 }),
+        }}
+      >
+        <input {...getInputProps()} />
+        {busy ? (
+          <Stack spacing={1.25} data-testid="connect-upload-progress">
+            <Stack direction="row" alignItems="center" spacing={1.25}>
+              <Iconify
+                icon="solar:folder-with-files-linear"
+                width={20}
+                sx={{ color: "text.secondary" }}
+              />
+              <Box flex={1} minWidth={0}>
+                <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>
+                  {folder?.name}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {`${folder?.files} file${folder?.files === 1 ? "" : "s"} · ${fData(folder?.bytes)}`}
+                </Typography>
+              </Box>
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {stage === "uploading"
+                  ? `Uploading ${progress}%`
+                  : "Finding agents"}
+              </Typography>
+            </Stack>
+            <LinearProgress
+              variant={stage === "uploading" ? "determinate" : "indeterminate"}
+              value={progress}
+            />
+          </Stack>
+        ) : (
+          <Stack direction="row" alignItems="center" spacing={1.5}>
             <Iconify
-              icon="solar:folder-with-files-linear"
+              icon="solar:upload-minimalistic-linear"
               width={20}
-              sx={{ color: "text.secondary" }}
+              sx={{ color: "text.secondary", flexShrink: 0 }}
             />
             <Box flex={1} minWidth={0}>
-              <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>
-                {folder?.name}
+              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                Choose a folder or drag &amp; drop it here
               </Typography>
               <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                {`${folder?.files} file${folder?.files === 1 ? "" : "s"} · ${fData(folder?.bytes)}`}
+                Up to 200 MB · secrets and dependencies are left out
               </Typography>
             </Box>
-            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {stage === "uploading"
-                ? `Uploading ${progress}%`
-                : "Finding agents"}
-            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disabled={inert}
+              sx={{ flexShrink: 0 }}
+            >
+              Browse folder
+            </Button>
           </Stack>
-          <LinearProgress
-            variant={stage === "uploading" ? "determinate" : "indeterminate"}
-            value={progress}
-          />
-        </Stack>
-      )}
+        )}
+      </Box>
       {!disabled && (
         <Box ref={pickerRef} component="span" sx={{ display: "none" }}>
           <FolderInput onPick={upload} />

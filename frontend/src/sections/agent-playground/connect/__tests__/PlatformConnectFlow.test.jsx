@@ -106,6 +106,20 @@ describe("PlatformConnectFlow", () => {
     });
   });
 
+  it("holds a number the agent API won't save, and says why", () => {
+    renderFlow("phone");
+
+    type("Agent name", "Front desk");
+    fireEvent.change(screen.getByPlaceholderText(/Number to call/), {
+      target: { value: "+4915123456789" },
+    });
+
+    expect(connect()).toBeDisabled();
+    expect(
+      screen.getByText("Use 10–12 digits with the country code"),
+    ).toBeInTheDocument();
+  });
+
   it("won't let a viewer connect", () => {
     auth.role = "Viewer";
     renderFlow("retell");

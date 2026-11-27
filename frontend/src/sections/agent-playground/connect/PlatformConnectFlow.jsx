@@ -39,6 +39,9 @@ const PLATFORMS = {
 };
 
 const DEFAULT_CONCURRENCY = 5;
+/* Digits the agent API saves for a contact number, country code included
+   (AgentDefinitionCreateRequestSerializer.validate). */
+const SAVED_DIGITS = { min: 10, max: 12 };
 const COMMIT_MESSAGE = "Connected from Agents";
 
 // "+14155551234" from the country picker and the typed number.
@@ -94,7 +97,14 @@ export default function PlatformConnectFlow({ platform }) {
 
   const dial = COUNTRY_BY_ISO[form.countryIso]?.dial || "";
   const byPhone = spec.phoneOnly || form.simMode === "phone";
-  const phoneOk = !byPhone || isValidPhoneNumber(dial, form.contactNumber);
+  /* The agent API takes 10 to 12 digits with the country code, a narrower
+     range than the phone field allows, so a number it would refuse is
+     caught here, before Connect agent. */
+  const digits = fullNumber(dial, form.contactNumber).replace(/\D/g, "");
+  const savable =
+    digits.length >= SAVED_DIGITS.min && digits.length <= SAVED_DIGITS.max;
+  const phoneOk =
+    !byPhone || (isValidPhoneNumber(dial, form.contactNumber) && savable);
   const missing = [
     !form.name.trim() && "Name the agent",
     !spec.phoneOnly &&
@@ -105,7 +115,10 @@ export default function PlatformConnectFlow({ platform }) {
       `Add the ${spec.keyLabel || "API key"}`,
     spec.livekit && !form.livekitUrl.trim() && "Add the LiveKit URL",
     spec.livekit && !form.apiSecret.trim() && "Add the LiveKit API secret",
-    !phoneOk && "Add a valid contact number",
+    !phoneOk &&
+      (form.contactNumber.trim() && !savable
+        ? `Use ${SAVED_DIGITS.min}–${SAVED_DIGITS.max} digits with the country code`
+        : "Add a valid contact number"),
   ].filter(Boolean);
 
   const inbound = spec.phoneOnly || spec.livekit ? true : form.inboundCalls;
@@ -203,7 +216,7 @@ export default function PlatformConnectFlow({ platform }) {
             type="password"
             autoComplete="new-password"
             mono
-            helper="Stored encrypted; used only to call the agent on your behalf."
+            helper="Used only to call the agent on your behalf."
             inputProps={{ "aria-label": spec.keyLabel || "API key" }}
           />
         )}
