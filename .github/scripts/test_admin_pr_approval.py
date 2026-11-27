@@ -115,6 +115,10 @@ class AdminCheckTests(unittest.TestCase):
     def test_main_and_dev_both_trigger(self):
         self.assertIn("branches: [dev, main]", text())
 
+    def test_main_keeps_the_admin_rule_in_devflow_mode(self):
+        self.assertIn("vars.APPROVAL_MODE != 'devflow' || github.event.pull_request.base.ref == 'main'", job("admin"))
+        self.assertIn("github.event.pull_request.base.ref == 'dev'", job("devflow"))
+
     def test_a_non_admin_author_or_sender_does_not(self):
         self.assertEqual(self.check("dev", "dev", {"dev": "write"}), "")
         self.assertEqual(self.check("boss", "dev", {"boss": "admin", "dev": "write"}), "")
