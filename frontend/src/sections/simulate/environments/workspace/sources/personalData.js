@@ -16,6 +16,12 @@ export const PERSONAL_CHOICES = [
     label: "No personal data present",
     note: "Nothing in this file identifies a person.",
   },
+  // Text files only, so shown only when a caller lists it.
+  {
+    id: "remove",
+    label: "Remove personal details",
+    note: "Emails and phone numbers are taken out of the review copy.",
+  },
   // Shown only once a column is set apart from the file's choice.
   {
     id: "custom",

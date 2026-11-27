@@ -104,13 +104,15 @@ describe("DesignForm", () => {
     fireEvent.click(policy);
     expect(screen.getByText(/· Policy/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Channel")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Replace with stand-ins")).toBeChecked();
+    fireEvent.click(screen.getByLabelText("Keep as is"));
     fireEvent.click(screen.getByRole("button", { name: "Build environment" }));
     await waitFor(() =>
       expect(mocks.create).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "Refund desk",
           requirements: description,
-          personal_data_mode: "synthetic_replace",
+          personal_data_mode: "keep",
           source_selection: {
             document_ids: ["doc-17"],
             document_purposes: { "doc-17": "policy" },
@@ -127,7 +129,7 @@ describe("DesignForm", () => {
       screen.getByRole("button", { name: "Select Knowledge Base" }),
     ).toBeDisabled();
     expect(policy).toBeDisabled();
-    expect(screen.getByLabelText("Replace with stand-ins")).toBeDisabled();
+    expect(screen.getByLabelText("Keep as is")).toBeDisabled();
     expect(
       screen.queryByRole("button", { name: "Remove returns.pdf" }),
     ).not.toBeInTheDocument();

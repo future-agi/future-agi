@@ -31,6 +31,7 @@ import BuildSourceFields from "src/sections/simulate/environments/buildDrawer/fo
 import useBuildSources from "src/sections/simulate/environments/buildDrawer/forms/shared/useBuildSources";
 
 import DescribeFlowCard from "src/sections/simulate/environments/buildDrawer/starts/DescribeFlowCard";
+import { PERSONAL_DATA } from "src/sections/simulate/environments/buildDrawer/starts/startUtils";
 import { BUILD_FILES_ACCEPT } from "src/sections/simulate/environments/buildDrawer/forms/shared/buildFiles";
 import { suggestedNameOf } from "src/sections/simulate/environments/design/design";
 import { errorMessage } from "./harnessShared";
@@ -171,16 +172,16 @@ export default function DesignForm({
                     value={privacy}
                     onChange={(event) => setPrivacy(event.target.value)}
                   >
-                    <FormControlLabel
-                      value="synthetic_replace"
-                      control={<Radio disabled={!canEdit || submitting} />}
-                      label="Replace with stand-ins"
-                    />
-                    <FormControlLabel
-                      value="none"
-                      control={<Radio disabled={!canEdit || submitting} />}
-                      label="There’s no personal data"
-                    />
+                    {PERSONAL_DATA.map(([value, label]) => (
+                      <FormControlLabel
+                        key={value}
+                        value={
+                          value === "replace" ? "synthetic_replace" : value
+                        }
+                        control={<Radio disabled={!canEdit || submitting} />}
+                        label={label}
+                      />
+                    ))}
                   </RadioGroup>
                 </Stack>
               )}

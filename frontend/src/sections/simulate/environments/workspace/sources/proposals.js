@@ -136,8 +136,7 @@ export const mergePrepared = (current, next) => {
   };
 };
 
-// The sources API knows two modes; "Keep" and "No personal data present" both leave the values as they are.
-const PERSONAL_MODE = { replace: "synthetic_replace" };
+const PERSONAL_MODE = { replace: "synthetic_replace", keep: "keep" };
 const SYNTHETIC_COLUMNS = ["replace", "mask"];
 
 // Custom sends synthetic values once any column is replaced or masked.

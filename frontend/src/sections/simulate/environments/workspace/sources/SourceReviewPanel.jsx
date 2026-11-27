@@ -57,6 +57,17 @@ const diagnosticMessages = {
   source_schema_needs_repair: "Review the column types and row identifier.",
 };
 const unfinished = ["reading", "needs_repair", "ready"];
+// What each personal data choice sends: a records mode, or a text reprepare field.
+const RECORD_MODES = {
+  keep: "keep",
+  replace: "synthetic_replace",
+  none: "none",
+};
+const TEXT_REPAIRS = {
+  keep: "keep_text_sources",
+  replace: "synthetic_text_sources",
+  remove: "redact_text_sources",
+};
 const toggled = (items, value, checked) =>
   checked ? [...items, value] : items.filter((item) => item !== value);
 
@@ -234,7 +245,9 @@ function SourceReviewEditor({
     !mappingIndexes.some(
       (index) =>
         mappings[index].mapping.personal_data &&
-        personalDataModes[mappings[index].source_id] !== "synthetic_replace",
+        !["keep", "synthetic_replace"].includes(
+          personalDataModes[mappings[index].source_id],
+        ),
     ) &&
     !changingTable;
 
@@ -396,43 +409,36 @@ function SourceReviewEditor({
               {privacyPages.length
                 ? ` on ${privacyPages.length === 1 ? "page" : "pages"} ${privacyPages.join(", ")}`
                 : ""}
-              . Remove or replace those details in the review copy, or upload a
-              sanitized file.
+              . Keep, replace or remove those details, or upload a sanitized
+              file. The choice applies at once and can&apos;t be changed in this
+              review.
             </Alert>
-            <Stack direction="row" spacing={1}>
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={!editable}
-                onClick={() => doRepair({ synthetic_text_sources: [sid] })}
-              >
-                Replace with synthetic contacts
-              </Button>
-              <Button
-                size="small"
-                disabled={!editable}
-                onClick={() => doRepair({ redact_text_sources: [sid] })}
-              >
-                Remove personal details and prepare again
-              </Button>
-            </Stack>
+            <PersonalDataChoice
+              compact
+              availableChoices={Object.keys(TEXT_REPAIRS)}
+              readOnly={!editable}
+              onChoose={(choice) => doRepair({ [TEXT_REPAIRS[choice]]: [sid] })}
+            />
           </>
         ) : (
           <>
             <Typography variant="body2">
-              Fields marked as personal must be replaced or excluded.
+              Fields marked as personal must be kept, replaced or excluded.
             </Typography>
             <PersonalDataChoice
               compact
-              choice={mode === "synthetic_replace" ? "replace" : "none"}
+              choice={Object.keys(RECORD_MODES).find(
+                (choice) => RECORD_MODES[choice] === mode,
+              )}
               availableChoices={[
+                "keep",
                 "replace",
                 ...(selectedPersonal.length ? [] : ["none"]),
               ]}
               onChoose={(choice) =>
                 setPersonalDataModes({
                   ...personalDataModes,
-                  [sid]: choice === "replace" ? "synthetic_replace" : "none",
+                  [sid]: RECORD_MODES[choice],
                 })
               }
             />
@@ -761,7 +767,7 @@ SourceReviewEditor.propTypes = {
   inlineActions: PropTypes.bool,
   // Called once the review's body has drawn in full.
   onShown: PropTypes.func,
-  defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
+  defaultPersonalDataMode: PropTypes.oneOf(Object.values(RECORD_MODES)),
 };
 
 export default function SourceReviewPanel({
@@ -831,7 +837,7 @@ SourceReviewPanel.propTypes = {
   environmentBasis: PropTypes.object,
   readingNames: PropTypes.arrayOf(PropTypes.string),
   compact: PropTypes.bool,
-  defaultPersonalDataMode: PropTypes.oneOf(["synthetic_replace", "none"]),
+  defaultPersonalDataMode: PropTypes.oneOf(Object.values(RECORD_MODES)),
   acceptLabel: PropTypes.string.isRequired,
   canEdit: PropTypes.bool,
   onAccepted: PropTypes.func,

@@ -101,11 +101,11 @@ export default function PersonalDataChoice({
   onColumn,
   readOnly = false,
   compact = false,
-  availableChoices,
+  availableChoices = ["keep", "replace", "none", "custom"],
 }) {
   const name = useId();
-  const choices = shownChoices(choice).filter(
-    (one) => !availableChoices || availableChoices.includes(one.id),
+  const choices = shownChoices(choice).filter((one) =>
+    availableChoices.includes(one.id),
   );
   const timeout = usePrefersReducedMotion() ? 0 : "auto";
   if (compact) {

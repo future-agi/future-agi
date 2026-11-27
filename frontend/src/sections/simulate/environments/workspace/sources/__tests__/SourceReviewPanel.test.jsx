@@ -340,8 +340,9 @@ describe("Prebuild source review", () => {
   });
 
   it.each([
-    ["Remove personal details and prepare again", "redact_text_sources"],
-    ["Replace with synthetic contacts", "synthetic_text_sources"],
+    ["Keep", "keep_text_sources"],
+    ["Replace (suggested)", "synthetic_text_sources"],
+    ["Remove personal details", "redact_text_sources"],
   ])("repairs a flagged text source with %s", async (label, field) => {
     serverReview = {
       ...repair,
@@ -368,7 +369,7 @@ describe("Prebuild source review", () => {
     mount();
     expect(await screen.findByText(/detected on page 3/)).toBeVisible();
     expect(screen.getByText("Personal data, your choice")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: label }));
+    fireEvent.click(screen.getByRole("radio", { name: label }));
     await screen.findByRole("button", {
       name: "Approve sources and start build",
     });
@@ -553,6 +554,42 @@ describe("Prebuild source review", () => {
     expect(
       api.post.mock.calls[0][1].decisions.record_reviews[0].fields[0],
     ).toMatchObject({ source_field: "item", is_stable_id: true });
+  });
+  it("records: choosing Keep sends personal_data_mode keep and allows accept", async () => {
+    serverReview = {
+      ...repair,
+      state: "ready",
+      preview: {
+        ...preview,
+        proposals: {
+          field_mappings: [
+            {
+              source_id: "orders",
+              mapping: {
+                source_field: "order_id",
+                target_field: "order_id",
+                is_stable_id: true,
+                personal_data: true,
+              },
+            },
+          ],
+        },
+      },
+    };
+    api.post.mockResolvedValue({
+      data: { ...serverReview, state: "accepted", revision: 3 },
+    });
+    mount();
+    fireEvent.click(await screen.findByRole("radio", { name: "Keep" }));
+    const approve = screen.getByRole("button", {
+      name: "Approve sources and start build",
+    });
+    expect(approve).toBeEnabled();
+    fireEvent.click(approve);
+    await screen.findByText("Source review accepted.");
+    expect(
+      api.post.mock.calls[0][1].decisions.record_reviews[0].personal_data_mode,
+    ).toBe("keep");
   });
   it("keeps clipped policy wording as a reference passage without a tick", async () => {
     const text = "The response must contain " + "X".repeat(1974);
