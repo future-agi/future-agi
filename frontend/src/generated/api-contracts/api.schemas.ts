@@ -19796,6 +19796,17 @@ export interface AgentFixCodingAgentBriefApi {
   instructions: string;
 }
 
+/**
+ * What chooses the held-back cases: the run's locked version's test split, or a sample of the run's failing cases.
+ */
+export type AgentFixLaunchOptionsApiHeldBackFrom =
+  (typeof AgentFixLaunchOptionsApiHeldBackFrom)[keyof typeof AgentFixLaunchOptionsApiHeldBackFrom];
+
+export const AgentFixLaunchOptionsApiHeldBackFrom = {
+  locked_version: "locked_version",
+  sample: "sample",
+} as const;
+
 export interface AgentFixLaunchScenarioApi {
   /** @minLength 1 */
   key: string;
@@ -19804,6 +19815,7 @@ export interface AgentFixLaunchScenarioApi {
   passed: boolean | null;
   failing_sub_goals: string[];
   evidence_import_id: string | null;
+  split: "train" | "test" | null;
 }
 
 export interface AgentFixLaunchSuggestedApi {
@@ -19863,6 +19875,9 @@ export interface AgentFixLaunchOptionsApi {
   variations_blocked: AgentFixFailureApi | null;
   held_back_scenario_keys: string[] | null;
   ship: AgentFixShipReadinessApi | null;
+  /** What chooses the held-back cases: the run's locked version's test split, or a sample of the run's failing cases. */
+  held_back_from: AgentFixLaunchOptionsApiHeldBackFrom;
+  locked_version_label: string | null;
 }
 
 export type AgentFixRunDetailApiState =
@@ -30972,6 +30987,12 @@ export interface RunTestKPIsResponseApi {
   readonly avg_turn_count?: number;
   readonly avg_csat_score?: number;
   readonly failed_calls?: number;
+  /** Connected calls as Debug failures counts them: per call and live calls only. Null until the run finishes. Unlike connected_calls, it counts a completed chat on a voice run and skips a deleted call. */
+  readonly debug_failures_connected_calls?: number;
+  /** Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals. */
+  readonly failing_calls?: number;
+  /** Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes. */
+  readonly has_debug_failures_analysis?: boolean;
   readonly total_duration?: number;
 }
 

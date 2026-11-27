@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,11 +18,11 @@ SPEC = importlib.util.spec_from_file_location("db_dump", SCRIPT)
 db_dump = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(db_dump)
 
-# The two parts pg_dump writes: the schema, then the rows of django_migrations.
+# One pg_dump of the migrated database: schema, every row, every sequence.
 # The sample holds no schema statement on purpose: the update-safety gate
 # scans every source file for them and asks for a reviewed declaration. The
 # tool compares lines, so any multi-line statement exercises it.
-SCHEMA = textwrap.dedent(
+DUMP = textwrap.dedent(
     """\
     --
     -- PostgreSQL database dump
@@ -50,26 +51,15 @@ SCHEMA = textwrap.dedent(
         app{extra_column}
     FROM public.django_migrations;
 
-    \\unrestrict {token}
-
-    --
-    -- PostgreSQL database dump complete
-    --
-
-    """
-)
-DATA = textwrap.dedent(
-    """\
-    --
-    -- PostgreSQL database dump
-    --
-
-    \\restrict {token}
-
-    -- Dumped from database version {version}
-
     COPY public.django_migrations (id, app, name, applied) FROM stdin;
     {rows}
+    \\.
+
+    COPY public.some_seed (id, created_at, slug) FROM stdin;
+    {seeds}
+    \\.
+
+    COPY public.empty_table (id) FROM stdin;
     \\.
 
     SELECT pg_catalog.setval('public.django_migrations_id_seq', {count}, true);
@@ -84,28 +74,39 @@ DATA = textwrap.dedent(
 )
 KEEP = "  -- keep the row's stamp"
 ROWS = ("1\taccounts\t0001\t2026-11-21", "2\ttracer\t0002\t2026-11-21")
+# Rows a migration seeds: a generated id and write time, then real content.
+SEEDS = (
+    "6f1c2a3b-1111-2222-3333-444455556666\t2026-11-27 11:08:40.123456+00\tcluster-rca",
+    "0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff\t2026-11-27 11:08:40.2+00\tdebug-traces",
+)
+# The same content, migrated again: other ids, other times.
+SEEDS_AGAIN = (
+    "99999999-8888-7777-6666-555544443333\t2026-12-01 09:00:00+00\tdebug-traces",
+    "12345678-1234-1234-1234-123456789abc\t2026-12-01 09:00:01.5+00\tcluster-rca",
+)
 
 
-def schema(token="tokenA", version="16.4", extra_column="", body=KEEP):
-    return SCHEMA.format(
-        token=token, version=version, extra_column=extra_column, body=body
+def sql(
+    token="tokenA",
+    version="16.4",
+    extra_column="",
+    body=KEEP,
+    rows=ROWS,
+    seeds=SEEDS,
+):
+    return DUMP.format(
+        token=token,
+        version=version,
+        extra_column=extra_column,
+        body=body,
+        rows="\n".join(rows),
+        count=len(rows),
+        seeds="\n".join(seeds),
     )
 
 
-def data(token="tokenA", version="16.4", rows=ROWS):
-    return DATA.format(
-        token=token, version=version, rows="\n".join(rows), count=len(rows)
-    )
-
-
-def sql(**changes):
-    schema_args = {
-        k: changes[k]
-        for k in ("token", "version", "extra_column", "body")
-        if k in changes
-    }
-    data_args = {k: changes[k] for k in ("token", "version", "rows") if k in changes}
-    return schema(**schema_args) + data(**data_args)
+def cut(text):
+    return text.split("\\unrestrict", 1)[0]
 
 
 class Workspace(unittest.TestCase):
@@ -122,10 +123,12 @@ class Workspace(unittest.TestCase):
 
 
 class CompareTest(Workspace):
-    def test_two_correct_migrates_are_equal_despite_tokens_order_and_times(self):
+    def test_two_correct_migrates_are_equal_despite_tokens_order_ids_and_times(self):
         cached = self.gz("cached.sql.gz", sql())
         later = ("1\taccounts\t0001\t2026-12-01", "2\ttracer\t0002\t2026-12-01")
-        fresh = self.gz("fresh.sql.gz", sql(token="tokenB", rows=later[::-1]))
+        fresh = self.gz(
+            "fresh.sql.gz", sql(token="tokenB", rows=later[::-1], seeds=SEEDS_AGAIN)
+        )
         self.assertEqual(db_dump.compare(cached, fresh), [])
 
     def test_a_schema_difference_is_reported(self):
@@ -138,6 +141,33 @@ class CompareTest(Workspace):
         more = (*ROWS, "3\tmodel_hub\t0001\tx")
         fresh = self.gz("fresh.sql.gz", sql(rows=more))
         self.assertIn("+model_hub\t0001", "\n".join(db_dump.compare(cached, fresh)))
+
+    def test_seeded_content_is_compared_with_only_generated_values_masked(self):
+        cached = self.gz("cached.sql.gz", sql())
+        renamed = (SEEDS[0], SEEDS[1].replace("debug-traces", "debug-spans"))
+        fresh = self.gz("fresh.sql.gz", sql(seeds=renamed))
+        self.assertIn(
+            "+<uuid>\t<time>\tdebug-spans", "\n".join(db_dump.compare(cached, fresh))
+        )
+        missing = self.gz("missing.sql.gz", sql(seeds=SEEDS[:1]))
+        self.assertTrue(db_dump.compare(cached, missing))
+        twice = self.gz("twice.sql.gz", sql(seeds=(*SEEDS, SEEDS_AGAIN[0])))
+        self.assertTrue(db_dump.compare(cached, twice))
+        # Only a whole field is a generated value, never part of real content.
+        inside = (
+            SEEDS[0],
+            SEEDS[1].replace("debug-traces", "id 0a1b2c3d-aaaa-bbbb-cccc-ddddeeeeffff"),
+        )
+        moved = (
+            SEEDS[0],
+            SEEDS[1].replace("debug-traces", "id 99999999-aaaa-bbbb-cccc-ddddeeeeffff"),
+        )
+        self.assertTrue(
+            db_dump.compare(
+                self.gz("inside.sql.gz", sql(seeds=inside)),
+                self.gz("moved.sql.gz", sql(seeds=moved)),
+            )
+        )
 
     def test_same_count_different_identity_or_tool_version_is_not_a_match(self):
         cached = self.gz("cached.gz", sql())
@@ -157,21 +187,17 @@ class CompareTest(Workspace):
         self.assertNotEqual(db_dump.compare(cached, blank), [])
 
     def test_unusual_line_separator_in_the_timestamp_is_not_a_row_boundary(self):
-        odd = tuple(row + "\u2028x" for row in ROWS)
+        odd = tuple(row + " x" for row in ROWS)
         self.assertEqual(
             db_dump.compare(self.gz("base", sql()), self.gz("odd", sql(rows=odd))), []
         )
 
     def test_an_unfinished_or_unreadable_dump_is_refused(self):
         complete = self.gz("complete.sql.gz", sql())
-        cut_data = data().split("\\unrestrict", 1)[0]
-        cut_schema = schema().split("\\unrestrict", 1)[0]
         for name, text in (
-            ("schema-only.sql.gz", schema()),
-            ("cut-data.sql.gz", schema() + cut_data),
-            ("cut-schema.sql.gz", cut_schema + data()),
+            ("cut.sql.gz", cut(sql())),
             ("empty.sql.gz", ""),
-            ("three-parts.sql.gz", sql() + data()),
+            ("two-dumps.sql.gz", sql() + sql()),
         ):
             broken = self.gz(name, text)
             with self.assertRaisesRegex(db_dump.DumpError, "incomplete", msg=name):
@@ -182,18 +208,28 @@ class CompareTest(Workspace):
         plain.write_text(sql())
         with self.assertRaisesRegex(db_dump.DumpError, "not a readable gzip"):
             db_dump.read_dump(plain)
-        cut = self.dir / "cut.sql.gz"
-        cut.write_bytes(complete.read_bytes()[:-20])
+        truncated = self.dir / "truncated.sql.gz"
+        truncated.write_bytes(complete.read_bytes()[:-20])
         with self.assertRaisesRegex(db_dump.DumpError, "not a readable gzip"):
-            db_dump.read_dump(cut)
+            db_dump.read_dump(truncated)
         for invalid in (
             "COPY public.t (id) FROM stdin;\n1\n",
             db_dump.LEDGER + "\n1\ta\tb\tt\n",
             sql(rows=(ROWS[0], ROWS[0])),
             sql(rows=("one-field",)),
+            sql(rows=()),
+            sql().replace(db_dump.LEDGER, "COPY public.other (id) FROM stdin;"),
+            sql().replace("COPY public.empty_table (id) FROM stdin;", db_dump.LEDGER),
         ):
             with self.assertRaises(db_dump.DumpError):
                 db_dump.normalise(invalid)
+
+    def test_tables_names_only_tables_that_hold_rows_with_their_counts(self):
+        path = self.gz("dump.sql.gz", sql(seeds=(*SEEDS, SEEDS_AGAIN[0])))
+        self.assertEqual(
+            db_dump.tables(path),
+            [("public.django_migrations", 2), ("public.some_seed", 3)],
+        )
 
     def test_the_command_line_fails_on_a_difference_and_says_what_to_do(self):
         cached = self.gz("cached.sql.gz", sql())
@@ -210,9 +246,13 @@ class CompareTest(Workspace):
             text=True,
         )
         self.assertEqual(differs.returncode, db_dump.COMPARE_DIFFERENT)
-        self.assertIn("Raise VERSION in futureagi/.ci/db_dump.py", differs.stdout)
+        self.assertIn(
+            "Add it to KEY_FILES or KEY_DIRS, or raise VERSION", differs.stdout
+        )
+        # The fresh side can hold private schema: never print the diff itself.
+        self.assertNotIn("name", differs.stdout.replace("KEY_", ""))
 
-        for broken in (self.dir / "missing", self.gz("invalid.gz", schema())):
+        for broken in (self.dir / "missing", self.gz("invalid.gz", cut(sql()))):
             refused = subprocess.run(
                 [
                     sys.executable,
@@ -238,9 +278,8 @@ STUB = textwrap.dedent(
     plan["calls"].append(args)
     kind = args[0]
     if kind == "pg_dump":
-        part = "data" if "--data-only" in args else "schema"
-        sys.stdout.write(plan[part + "_output"])
-        code = plan[part + "_exit"]
+        sys.stdout.write(plan["dump_output"])
+        code = plan["dump_exit"]
     elif "--single-transaction" in args:
         plan["loaded"] = sys.stdin.read()
         code = plan["load_exit"]
@@ -262,10 +301,8 @@ class RestoreAndDumpTest(Workspace):
         state = self.dir / "state.json"
         defaults = {
             "calls": [],
-            "schema_output": schema(),
-            "schema_exit": 0,
-            "data_output": data(),
-            "data_exit": 0,
+            "dump_output": sql(),
+            "dump_exit": 0,
             "load_exit": 0,
             "replies": [["0\n", 0], ["tracer\t0002\naccounts\t0001\n", 0]],
             "loaded": None,
@@ -292,7 +329,7 @@ class RestoreAndDumpTest(Workspace):
     def test_an_incomplete_dump_never_reaches_the_database(self):
         prefix, state = self.stub()
         with self.assertRaisesRegex(db_dump.DumpError, "incomplete"):
-            db_dump.restore(self.gz("dump.sql.gz", schema()), "user", "db", prefix)
+            db_dump.restore(self.gz("dump.sql.gz", cut(sql())), "user", "db", prefix)
         self.assertEqual(state()["calls"], [])
 
     def test_a_database_that_is_not_empty_is_refused(self):
@@ -312,25 +349,18 @@ class RestoreAndDumpTest(Workspace):
         with self.assertRaisesRegex(db_dump.DumpError, "identities do not match"):
             db_dump.restore(self.gz("dump.sql.gz", sql()), "user", "db", prefix)
 
-    def test_the_dump_is_the_schema_and_the_applied_migrations_and_no_other_row(self):
+    def test_the_dump_is_one_pg_dump_of_the_whole_database(self):
         prefix, state = self.stub()
         target = self.dir / "out" / "dump.sql.gz"
         db_dump.dump(target, "user", "db", prefix)
         self.assertEqual(db_dump.read_dump(target), sql())
-        self.assertEqual(
-            state()["calls"],
-            [
-                [*PG_DUMP, "--schema-only", "db"],
-                [*PG_DUMP, "--data-only", "--table=django_migrations", "db"],
-            ],
-        )
+        self.assertEqual(state()["calls"], [[*PG_DUMP, "db"]])
 
     def test_dump_writes_only_a_complete_file(self):
         for plan in (
-            {"schema_exit": 1},
-            {"data_exit": 1},
-            {"data_output": data().split("\\unrestrict", 1)[0]},
-            {"schema_output": schema().split("\\unrestrict", 1)[0]},
+            {"dump_exit": 1},
+            {"dump_output": cut(sql())},
+            {"dump_output": sql() + sql()},
         ):
             prefix, _ = self.stub(**plan)
             failed = self.dir / "failed" / "dump.sql.gz"
@@ -377,16 +407,15 @@ class KeyTest(Workspace):
             "futureagi/tfc/settings/test.py": "settings\n",
             "futureagi/conftest.py": "conftest\n",
             "futureagi/pytest.ini": "[pytest]\n",
-            "futureagi/docker-compose.test.yml": "image: postgres:16-alpine\n",
             "futureagi/.ci/db_dump.py": "tool\n",
             "futureagi/.ci/migrated_db.py": "producer\n",
             "futureagi/.ci/collected_ids.py": "plugin\n",
             "futureagi/accounts/views.py": "view\n",
+            "futureagi/accounts/migrations.py": "not a migrations package\n",
+            "README.md": "outside the backend\n",
         }
         for name, text in files.items():
-            path = root / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text)
+            self.edit(root, name, text)
         self.git(root, "init", "-q")
         self.commit(root)
         return root
@@ -408,43 +437,65 @@ class KeyTest(Workspace):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
 
-    def test_key_follows_all_source_and_runtime_but_not_untracked_files(self):
+    def test_a_change_to_a_migrate_input_misses(self):
         root = self.repo()
-        key = db_dump.cache_key(root, "pg-image-A|tools-A")
-        self.assertRegex(key, r"^migrated-db-pytest-v\d+-[0-9a-f]{40}$")
+        key = db_dump.inputs_key(root)
+        self.assertRegex(key, r"^migrated-db-v\d+-[0-9a-f]{40}$")
+        for name in (
+            "futureagi/accounts/migrations/0002_new.py",
+            "futureagi/ee/usage/migrations/0001_initial.py",
+            "futureagi/uv.lock",
+            "futureagi/tfc/settings/test.py",
+            "futureagi/conftest.py",
+            "futureagi/.ci/db_dump.py",
+            "futureagi/.ci/migrated_db.py",
+            "futureagi/pyproject.toml",
+            "futureagi/pytest.ini",
+            "futureagi/tfc/ee_loader.py",
+            # Data a migration reads before post_migrate.
+            "futureagi/ee/falcon_ai/builtin_skills/cluster-rca.yaml",
+            "futureagi/ee/falcon_ai/builtin_skills_loader.py",
+        ):
+            self.edit(root, name, "changed\n")
+            self.commit(root)
+            self.assertNotEqual(db_dump.inputs_key(root), key, name)
+            key = db_dump.inputs_key(root)
+
+    def test_code_migrate_does_not_read_and_uncommitted_files_keep_the_key(self):
+        root = self.repo()
+        key = db_dump.inputs_key(root)
+        for name in (
+            "futureagi/accounts/views.py",
+            "futureagi/accounts/migrations.py",
+            "futureagi/.ci/collected_ids.py",
+            "README.md",
+        ):
+            self.edit(root, name, "changed\n")
+            self.commit(root)
+            self.assertEqual(db_dump.inputs_key(root), key, name)
+        self.edit(root, "futureagi/accounts/migrations/0003_draft.py", "untracked\n")
         self.edit(root, "futureagi/.venv/stale", "ignored")
-        self.assertEqual(db_dump.cache_key(root, "pg-image-A|tools-A"), key)
-        self.assertNotEqual(db_dump.cache_key(root, "pg-image-B|tools-A"), key)
-        self.edit(root, "futureagi/accounts/views.py", "changed helper")
-        self.commit(root)
-        self.assertNotEqual(db_dump.cache_key(root, "pg-image-A|tools-A"), key)
-        with self.assertRaisesRegex(db_dump.DumpError, "runtime"):
-            db_dump.cache_key(root, "")
+        self.assertEqual(db_dump.inputs_key(root), key)
 
-    def test_collection_record_is_not_keyed_but_committed_plugin_source_is(self):
+    def test_the_private_overlay_is_never_part_of_the_key(self):
         root = self.repo()
-        runtime = "runtime"
-        original = db_dump.cache_key(root, runtime)
-        self.edit(root, "collected-ids.txt", "a test id")
-        self.assertEqual(db_dump.cache_key(root, runtime), original)
-        plugin = "futureagi/.ci/collected_ids.py"
-        self.edit(root, plugin, "changed plugin")
-        self.git(root, "commit", "-qm", "change plugin only", "--", plugin)
-        self.assertNotEqual(db_dump.cache_key(root, runtime), original)
-
-    def test_overlay_requires_real_revision_not_just_presence(self):
-        root = self.repo()
-        public = db_dump.cache_key(root, "runtime")
-        overlay = root / db_dump.OVERLAY
-        self.edit(overlay, "models.py", "first")
-        with self.assertRaisesRegex(db_dump.DumpError, "metadata"):
-            db_dump.cache_key(root, "runtime")
+        key = db_dump.inputs_key(root)
+        overlay = root / "futureagi/ee/cloud"
+        self.edit(overlay, "control_plane/migrations/0001_initial.py", "private\n")
         self.git(overlay, "init", "-q")
         self.commit(overlay)
-        first = db_dump.cache_key(root, "runtime")
-        self.edit(overlay, "models.py", "second")
-        self.commit(overlay)
-        self.assertEqual(len({public, first, db_dump.cache_key(root, "runtime")}), 3)
+        self.assertEqual(db_dump.inputs_key(root), key)
+
+    def test_the_recipe_is_the_inputs_key_plus_the_runtime(self):
+        root = self.repo()
+        key = db_dump.inputs_key(root)
+        recipe = db_dump.cache_key(root, "pg-image-A|tools-A")
+        self.assertRegex(recipe, rf"^{key}-[0-9a-f]{{16}}$")
+        self.assertEqual(recipe.rpartition("-")[0], key)
+        self.assertEqual(db_dump.cache_key(root, "pg-image-A|tools-A"), recipe)
+        self.assertNotEqual(db_dump.cache_key(root, "pg-image-B|tools-A"), recipe)
+        with self.assertRaisesRegex(db_dump.DumpError, "runtime"):
+            db_dump.cache_key(root, " ")
 
 
 class SeedParityTest(unittest.TestCase):
@@ -471,6 +522,32 @@ class SeedParityTest(unittest.TestCase):
             self.assertNotEqual(original, db_dump.fingerprint_rows(different))
         with self.assertRaises(db_dump.DumpError):
             db_dump.fingerprint_rows(b"COPY public.t (v) FROM stdin;\nx\n")
+
+    def test_table_and_sequence_order_is_not_data(self):
+        # A data-only dump orders tables by foreign keys, ties by object id,
+        # and a restore renumbers object ids.
+        first = self.snapshot(("1\ta",), table="first")
+        second = self.snapshot(("2\tb",), sequence=5, table="second")
+
+        def body(dump):
+            return dump.rsplit(db_dump.COMPLETE.encode(), 1)[0]
+
+        end = db_dump.COMPLETE.encode() + b"\n"
+        self.assertEqual(
+            db_dump.fingerprint_rows(body(first) + body(second) + end),
+            db_dump.fingerprint_rows(body(second) + body(first) + end),
+        )
+        # A row moved to another table is a different database.
+        moved = self.snapshot(("2\tb",), table="first")
+        self.assertNotEqual(
+            db_dump.fingerprint_rows(body(first) + body(second) + end),
+            db_dump.fingerprint_rows(
+                body(self.snapshot((), table="first"))
+                + body(moved)
+                + body(self.snapshot(("1\ta",), sequence=5, table="second"))
+                + end
+            ),
+        )
 
 
 class SetupTest(Workspace):
@@ -514,24 +591,33 @@ class ProducerTest(Workspace):
         self.work = self.dir / "backend"
         (self.work / "ee/cloud").mkdir(parents=True)
         self.stage = self.dir / "migrated-db"
+        self.migrates = self.dir / "migrates"
         tools = self.dir / "bin"
         tools.mkdir()
         self.env = dict(
             os.environ,
             PATH=f"{tools}:{os.environ['PATH']}",
-            CACHE_HIT="false",
+            FOUND="false",
+            PRODUCE="true",
             RECIPE="recipe",
+            SAVED="recipe",
             RUNNER_TEMP=str(self.dir),
             DIGEST="a" * 64,
-            REBUILT="a" * 64,
+            REPLAYED="a" * 64,
+            MIGRATES=str(self.migrates),
         )
+        # uv stands in for pytest's migrate: it records the boundary digest and
+        # a dump that says whether the private checkout was present.
         tools_by_name = {
             "docker": "exit 0",
-            "uv": 'if [ -n "${CI_PRESEED_DIGEST:-}" ]; then echo "$DIGEST" > "$CI_PRESEED_DIGEST"; fi',
+            "uv": """overlay=public; if [ -d ee/cloud ]; then overlay=private; fi
+              echo "${PG_TEST_DB:-test_tfc_test} $overlay" >> "$MIGRATES"
+              digest=$DIGEST; if [ "${PG_TEST_DB:-}" = test_ci_roundtrip ]; then digest=$REPLAYED; fi
+              if [ -n "${CI_PRESEED_DIGEST:-}" ]; then echo "$digest" > "$CI_PRESEED_DIGEST"; fi
+              if [ -n "${CI_PRESEED_DUMP:-}" ]; then echo "$overlay" > "$CI_PRESEED_DUMP"; fi""",
             "python3": """case "$3" in
-              dump) if [ -d ee/cloud ]; then echo private; else echo public; fi > "$4" ;;
               restore) exit "${RESTORE_STATUS:-0}" ;;
-              seed-digest) echo "$REBUILT" ;;
+              dump) echo restored > "$4" ;;
               compare) exit "${COMPARE_STATUS:-0}" ;;
               *) exit 1 ;;
             esac""",
@@ -542,11 +628,14 @@ class ProducerTest(Workspace):
             tool.chmod(0o755)
 
     def produce(self, **env):
+        shutil.rmtree(self.dir / "fresh-db", ignore_errors=True)
+        self.migrates.unlink(missing_ok=True)
         return subprocess.run(
             ["bash", str(self.scripts / "producer.sh")],
             cwd=self.work,
             env={**self.env, **env},
             capture_output=True,
+            text=True,
         )
 
     def verify(self, recipe="recipe"):
@@ -555,47 +644,127 @@ class ProducerTest(Workspace):
             capture_output=True,
         )
 
-    def test_only_equivalent_public_bytes_can_be_transferred(self):
-        self.assertEqual(self.produce().returncode, 0)
+    def staged(self):
+        return sorted(path.name for path in self.stage.iterdir())
+
+    def test_a_dev_push_saves_only_public_bytes_that_replay_to_the_control(self):
+        result = self.produce()
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.work / "ee/cloud").is_dir())
         self.assertEqual((self.stage / "dump.sql.gz").read_text(), "public\n")
-        self.assertEqual(self.verify().stdout, b"true\n")
+        # The control and the replay of the public dump ran with the overlay.
+        self.assertEqual(
+            self.migrates.read_text().splitlines(),
+            [
+                "test_tfc_test private",
+                "test_ci_public public",
+                "test_ci_roundtrip private",
+            ],
+        )
+        self.assertEqual(self.verify().returncode, 0)
         self.assertNotEqual(self.verify("other").returncode, 0)
         (self.stage / "dump.sql.gz").write_bytes(b"corrupt")
         self.assertNotEqual(self.verify().returncode, 0)
-        self.assertNotEqual(self.produce(CACHE_HIT="true").returncode, 0)
 
-    def test_unreconstructible_seed_stages_no_sql(self):
-        self.assertEqual(self.produce(REBUILT="b" * 64).returncode, 0)
-        self.assertEqual(list(self.stage.iterdir()), [self.stage / "cold-only"])
-        self.assertEqual(self.verify().stdout, b"false\n")
-
-    def test_private_schema_difference_stages_no_sql_and_restores_checkout(self):
+    def test_without_the_overlay_the_control_itself_is_the_public_dump(self):
+        shutil.rmtree(self.work / "ee")
+        self.assertEqual(self.produce().returncode, 0)
+        self.assertEqual((self.stage / "dump.sql.gz").read_text(), "public\n")
         self.assertEqual(
-            self.produce(COMPARE_STATUS=str(db_dump.COMPARE_DIFFERENT)).returncode, 0
+            self.migrates.read_text().splitlines(),
+            ["test_tfc_test public", "test_ci_roundtrip public"],
         )
-        self.assertTrue((self.work / "ee/cloud").is_dir())
-        self.assertEqual(self.verify().stdout, b"false\n")
 
-    def test_schema_comparison_error_fails_without_a_record(self):
+    def test_a_run_that_is_not_a_dev_push_saves_nothing(self):
+        self.assertEqual(self.produce(PRODUCE="false").returncode, 0)
+        self.assertEqual(self.staged(), [])
+        self.assertEqual(len(self.migrates.read_text().splitlines()), 1)
+
+    def test_a_replay_that_changes_the_public_dump_saves_nothing(self):
+        result = self.produce(REPLAYED="b" * 64)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("::warning title=Database dump::", result.stdout)
+        self.assertEqual(self.staged(), [])
+
+    def test_public_plus_overlay_unlike_the_control_saves_nothing(self):
+        result = self.produce(COMPARE_STATUS=str(db_dump.COMPARE_DIFFERENT))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.work / "ee/cloud").is_dir())
+        self.assertEqual(self.staged(), [])
+
+    def test_a_comparison_error_fails_without_a_record(self):
         self.assertNotEqual(self.produce(COMPARE_STATUS="1").returncode, 0)
         self.assertTrue((self.work / "ee/cloud").is_dir())
-        self.assertEqual(list(self.stage.iterdir()), [])
+        self.assertEqual(self.staged(), [])
 
-    def test_invalid_seed_digest_fails_without_a_record(self):
-        self.assertNotEqual(self.produce(REBUILT="invalid").returncode, 0)
-        self.assertEqual(list(self.stage.iterdir()), [])
-
-    def test_failed_seed_comparison_fails_without_a_record(self):
+    def test_a_failed_seed_comparison_fails_without_a_record(self):
         cmp = self.dir / "bin/cmp"
         cmp.write_text("#!/bin/sh\nexit 2\n")
         cmp.chmod(0o755)
         self.assertEqual(self.produce().returncode, 2)
-        self.assertEqual(list(self.stage.iterdir()), [])
+        self.assertEqual(self.staged(), [])
 
-    def test_partial_restore_is_an_error_and_nothing_is_published(self):
+    def test_a_partial_restore_is_an_error_and_nothing_is_saved(self):
         self.assertNotEqual(self.produce(RESTORE_STATUS="1").returncode, 0)
-        self.assertEqual(list(self.stage.iterdir()), [])
+        self.assertEqual(self.staged(), [])
+
+    def test_a_reused_dump_must_equal_this_checkout_or_the_run_fails(self):
+        self.assertEqual(self.produce().returncode, 0)
+        record = self.staged()
+        for found in (
+            {},
+            {"PRODUCE": "false"},
+        ):
+            result = self.produce(FOUND="true", **found)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.staged(), record)
+            # A reused dump is checked, not produced again.
+            self.assertEqual(
+                self.migrates.read_text().splitlines(),
+                ["test_tfc_test private", "test_ci_roundtrip private"],
+            )
+        self.assertEqual(
+            self.produce(
+                FOUND="true", COMPARE_STATUS=str(db_dump.COMPARE_DIFFERENT)
+            ).returncode,
+            db_dump.COMPARE_DIFFERENT,
+        )
+        self.assertNotEqual(self.produce(FOUND="true", REPLAYED="b" * 64).returncode, 0)
+        self.assertNotEqual(self.produce(FOUND="true", SAVED="other").returncode, 0)
+        # Not found, but something is staged: not a clean directory.
+        self.assertNotEqual(self.produce().returncode, 0)
+
+    def test_a_dev_push_replaces_a_dump_saved_under_another_runtime(self):
+        self.assertEqual(self.produce(RECIPE="old-runtime").returncode, 0)
+        # Same inputs, a new test-db image: this run's recipe differs. The
+        # digest holds pg_dump's version lines, so only the compare applies.
+        result = self.produce(
+            FOUND="true",
+            SAVED="old-runtime",
+            RECIPE="new-runtime",
+            DIGEST="c" * 64,
+            REPLAYED="c" * 64,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.stage / "recipe").read_text(), "new-runtime\n")
+        self.assertEqual(self.verify("new-runtime").returncode, 0)
+        # Off dev pushes nothing is replaced, and a difference is still red.
+        self.assertEqual(
+            self.produce(
+                FOUND="true", SAVED="new-runtime", RECIPE="newer", PRODUCE="false"
+            ).returncode,
+            0,
+        )
+        self.assertEqual((self.stage / "recipe").read_text(), "new-runtime\n")
+        self.assertEqual(
+            self.produce(
+                FOUND="true",
+                SAVED="new-runtime",
+                RECIPE="newer",
+                COMPARE_STATUS=str(db_dump.COMPARE_DIFFERENT),
+            ).returncode,
+            db_dump.COMPARE_DIFFERENT,
+        )
 
 
 class BackendWorkflowTest(unittest.TestCase):
@@ -633,7 +802,7 @@ class BackendWorkflowTest(unittest.TestCase):
         )
         checkout = "uses: future-agi/future-agi/.github/actions/checkout-ee@"
         steps = [step for step in self.workflow.split("\n      - ") if checkout in step]
-        self.assertEqual(len(steps), 3)
+        self.assertEqual(len(steps), 2)  # shards, control
         for step in steps:
             condition = next(
                 line.strip()
@@ -682,16 +851,18 @@ class BackendWorkflowTest(unittest.TestCase):
             self.workflow,
         )
 
-    def test_warm_shards_do_not_depend_on_the_fresh_control(self):
+    def test_shards_restore_only_this_runs_copy_of_a_dev_push_dump(self):
+        plan = self.workflow.split("\n  plan:\n", 1)[1].split("\n  test:\n", 1)[0]
         self.assertIn("needs: [changes, plan]", self.shard)
-        self.assertIn(
-            "if: inputs.backend_cold_fanout && steps.present.outputs.cache-hit != 'true'",
-            self.workflow,
-        )
-        self.assertIn("if: needs.plan.outputs.cold_control != 'success'", self.workflow)
-        self.assertIn("lookup-only: true", self.workflow)
-        self.assertNotIn("restore-keys:", self.shard)
-        self.assertNotIn("actions/cache/save@", self.shard)
+        # One store: a dev-push artifact the plan job reads once per run.
+        # actions/cache is not readable from queue refs and evicts at 10 GB.
+        for text in (self.shard, self.control, plan):
+            self.assertNotIn("migrated-db-pytest", text)
+        self.assertNotIn("actions/cache", self.shard + self.control)
+        self.assertIn("python3 -I futureagi/.ci/fetch_migrated_db.py", plan)
+        self.assertIn("actions: read", plan)
+        self.assertNotIn("secrets.", plan)
+        self.assertIn("name: ${{ steps.saved-db.outputs.artifact }}", plan)
         self.assertIn(
             "needs.plan.outputs.db_recipe == steps.db-key.outputs.key", self.shard
         )
@@ -702,6 +873,32 @@ class BackendWorkflowTest(unittest.TestCase):
             self.shard.index('cmp "$RUNNER_TEMP/replayed"'),
             self.shard.index("- name: Run shard"),
         )
+        self.assertIn("if: steps.saved-db.outcome != 'success'", self.shard)
+        self.assertNotIn("backend_cold_fanout", self.workflow)
+
+    def test_only_a_dev_push_saves_a_dump_and_it_is_named_by_its_inputs(self):
+        control_job = self.workflow.split("\n  migrated-database:\n")[1].split(
+            "\n  agentic-eval:"
+        )[0]
+        self.assertIn(
+            "save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}",
+            control_job,
+        )
+        self.assertIn("artifact: ${{ needs.plan.outputs.db_artifact }}", control_job)
+        self.assertIn("recipe: ${{ needs.plan.outputs.db_recipe }}", control_job)
+        self.assertIn('echo "name=${key%-*}"', self.control)
+        upload = self.control.split("- if: steps.record.outputs.saved == 'true'")[1]
+        self.assertIn("name: ${{ steps.key.outputs.name }}", upload)
+        self.assertIn("if: inputs.save == 'true'", self.control)
+        # The control checks every dump the plan handed out, whatever its own
+        # recipe: a shard of this run (or of a re-run) may have restored it.
+        self.assertIn("- if: inputs.artifact != ''\n", self.control)
+        self.assertIn("FOUND: ${{ inputs.artifact != '' }}", self.control)
+        self.assertIn('verify-record.sh" "$stage" "$SAVED"', self.producer)
+        # Same-run copies live as long as a re-run of failed jobs can need them.
+        plan = self.workflow.split("\n  plan:\n", 1)[1].split("\n  test:\n", 1)[0]
+        handoff = plan.split("name: ${{ steps.saved-db.outputs.artifact }}", 1)[1]
+        self.assertNotIn("retention-days", handoff.split("\n      - ", 1)[0])
 
     def test_the_from_zero_job_creates_its_database_as_a_shard_does(self):
         control_job = self.workflow.split("\n  migrated-database:\n")[1].split(
@@ -720,7 +917,8 @@ class BackendWorkflowTest(unittest.TestCase):
             self.assertIn(line, env)
         for job in (self.shard, control_job):
             self.assertIn("env: *backend_database_env", job)
-            self.assertIn("with: *ee_checkout", job)
+        self.assertIn("with: &ee_checkout", self.shard)
+        self.assertIn("with: *ee_checkout", control_job)
         self.assertIn(
             "uses: ./.github/actions/backend-test-packages/database\n", control_job
         )
@@ -750,38 +948,33 @@ class BackendWorkflowTest(unittest.TestCase):
 
         # Exercise key.sh's exact recipe output against a stable, synthetic
         # service snapshot. Changing only the runner release must not change
-        # the key that the plan job's probe hands to every shard.
+        # the recipe every job of the run computes.
         with tempfile.TemporaryDirectory() as directory:
+            work = pathlib.Path(directory) / "futureagi"
+            (work / ".ci").mkdir(parents=True)
+            (work / ".ci/db_dump.py").symlink_to(SCRIPT)
+            shutil.copy(ROOT / "futureagi/docker-compose.test.yml", work)
             bin_dir = pathlib.Path(directory) / "bin"
             bin_dir.mkdir()
-            docker = bin_dir / "docker"
-            docker.write_text(
-                textwrap.dedent(
+            (work / ".venv/bin").mkdir(parents=True)
+            fakes = {
+                work / ".venv/bin/python": "echo 3.12.3",
+                bin_dir / "uv": "echo 'uv 0.13.9'",
+                bin_dir / "docker": textwrap.dedent(
                     """\
-                    #!/usr/bin/env python3
-                    import sys
-
-                    args = sys.argv[1:]
-                    if (
-                        args[0] == "compose"
-                        and args[-2:] == ["config", "--services"]
-                    ):
-                        print("test-db")
-                    elif (
-                        args[0] == "compose"
-                        and args[-3:-1] == ["config", "--images"]
-                    ):
-                        print("postgres:16-alpine")
-                    elif args[:2] == ["image", "inspect"]:
-                        print("sha256:" + "a" * 64)
-                    else:
-                        # Includes a bare `compose config`: its rendering
-                        # varies by Compose release, so the key never reads it.
-                        raise SystemExit(2)
+                    case "$*" in
+                      *"ps -q test-db") echo container-1 ;;
+                      "inspect --format {{.Image}} container-1") echo "sha256:$(printf 'a%.0s' $(seq 64))" ;;
+                      # Includes a bare `compose config`: its rendering
+                      # varies by Compose release, so the key never reads it.
+                      *) exit 2 ;;
+                    esac
                     """
-                )
-            )
-            docker.chmod(0o755)
+                ),
+            }
+            for path, body in fakes.items():
+                path.write_text("#!/bin/sh\n" + body)
+                path.chmod(0o755)
             keys = []
             for runner_release in ("runner-release-a", "runner-release-b"):
                 env = {
@@ -790,24 +983,29 @@ class BackendWorkflowTest(unittest.TestCase):
                     "ImageVersion": runner_release,
                 }
                 result = subprocess.run(
-                    ["bash", str(key_script), "probe"],
-                    cwd=ROOT / "futureagi",
+                    ["bash", str(key_script)],
+                    cwd=work,
                     env=env,
                     check=True,
                     capture_output=True,
                     text=True,
                 )
                 keys.append(result.stdout.strip())
-            self.assertRegex(keys[0], r"^migrated-db-pytest-v2-[0-9a-f]{40}$")
+            self.assertRegex(keys[0], r"^migrated-db-v3-[0-9a-f]{40}-[0-9a-f]{16}$")
             self.assertEqual(keys[0], keys[1])
+            self.assertEqual(keys[0].rpartition("-")[0], db_dump.inputs_key(ROOT))
 
     def test_only_public_qualified_output_is_transferred(self):
         self.assertIn("--create-db", self.producer)
-        self.assertIn('cmp -s "$fresh/preseed" "$fresh/before-reseed"', self.producer)
         self.assertIn('mv ee/cloud "$RUNNER_TEMP/held-ee-checkout"', self.producer)
-        self.assertIn('compare "$public" "$fresh/internal.sql.gz"', self.producer)
+        self.assertIn(
+            'compare "$fresh/replayed.sql.gz" "$fresh/control.sql.gz"', self.producer
+        )
+        self.assertLess(
+            self.producer.index("[[ $PRODUCE == true ]] || exit 0"),
+            self.producer.index('cp "$public" "$stage/dump.sql.gz"'),
+        )
         self.assertNotIn("fresh-db/", self.control)
-        self.assertIn("github.event_name == 'push'", self.control)
         self.assertNotIn("continue-on-error", self.shard + self.control)
         self.assertIn("        migrated-database,", self.workflow)
 

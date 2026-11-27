@@ -192,8 +192,10 @@ export function useRunDetail(
     },
     // The calls table's own polls keep this fresh while it's shown.
     enabled: !!executionId && !callsShown,
+    // Like the calls table, a finished run is read again while calls are scoring.
     refetchInterval: (query) =>
-      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
+      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status) ||
+      query.state.data?.summary?.scoring?.pending > 0
         ? 3000
         : false,
     staleTime: 1000 * 60 * 5,
@@ -248,7 +250,9 @@ export function useRunDetail(
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
       // Must-pass cases this run failed, by name.
-      mustPassFailed: Array.isArray(execution.must_pass_failed) ? execution.must_pass_failed : [],
+      mustPassFailed: Array.isArray(execution.must_pass_failed)
+        ? execution.must_pass_failed
+        : [],
       // How far an interrupted run got and whether it can resume; null when the
       // backend does not say.
       resume: execution.resume

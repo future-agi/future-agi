@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
 import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import isEqual from "lodash/isEqual";
 
 // Real endpoints (so the path must exist in the generated contract); only the
 // transport is stubbed.
@@ -73,7 +74,6 @@ describe("mapDebugAnalysis", () => {
       measuredCalls: 49,
       brokenGoals: 1,
       brokenCalls: 3,
-      oneOffs: 1,
     });
     expect(analysis.goals[0]).toMatchObject({
       goal: "exact_greeting",
@@ -198,6 +198,39 @@ describe("useDebugAnalysis", () => {
     );
     await waitFor(() => expect(result.current.analysis.status).toBe("pending"));
   });
+
+  it.each([
+    ["investigation_nothing_failed", 1],
+    ["investigation_too_few_calls", 1],
+    ["execution_not_completed", 0],
+  ])(
+    "reads the run's counts again after a %s refusal",
+    async (code, invalidations) => {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const invalidate = vi.spyOn(client, "invalidateQueries");
+      const own = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      own.propTypes = { children: PropTypes.node };
+      axios.get.mockResolvedValue({ data: { status: "not_requested" } });
+      // The axios interceptor's rejection: the body's code, and the status.
+      axios.post.mockRejectedValue({ code, statusCode: 409 });
+
+      const { result } = renderHook(() => useDebugAnalysis("ex1"), {
+        wrapper: own,
+      });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await act(async () => result.current.request());
+      await waitFor(() => expect(result.current.requestError).not.toBeNull());
+
+      const refreshed = invalidate.mock.calls.filter(([filters]) =>
+        isEqual(filters?.queryKey, ["simulation-run-results-v3", "ex1"]),
+      );
+      expect(refreshed).toHaveLength(invalidations);
+    },
+  );
 
   it("keeps the new status when a read sent before the request lands after it", async () => {
     const client = new QueryClient({

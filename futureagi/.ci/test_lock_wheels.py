@@ -353,8 +353,6 @@ class WorkflowWiringTest(unittest.TestCase):
             self.assertRegex(self.jobs[name], r"\n    needs: \[[^\]]*\bplan\b")
         plan = self.jobs["plan"]
         upload = plan.index("name: backend-lock-wheels\n")
-        # The opt-in cold trial runs the environment action inside plan itself.
-        self.assertLess(upload, plan.index("      - id: cold\n"))
         self.assertLess(plan.index("lock_wheels.py fetch"), upload)
         self.assertLess(
             plan.index("lock_wheels.py key"), plan.index("lock_wheels.py fetch")
@@ -375,7 +373,7 @@ class WorkflowWiringTest(unittest.TestCase):
             for ref in re.findall(rf"uses: actions/{action}@(\S+)", self.install):
                 self.assertRegex(ref, r"^[0-9a-f]{40}$")
         tail = self.jobs["plan"].split("lock_wheels.py key", 1)[1]
-        plan_lock_steps = tail.split("id: probe", 1)[0]
+        plan_lock_steps = tail.split("id: saved-db", 1)[0]
         for ref in re.findall(r"uses: actions/[a-z/-]+@(\S+)", plan_lock_steps):
             self.assertRegex(ref, r"^[0-9a-f]{40}$")
 
@@ -428,7 +426,7 @@ class ImageWiringTest(unittest.TestCase):
         self.assertNotIn("\n    permissions:", fetch)  # the workflow's read only
         place = shard.index("name: e2e-lock-wheels\n")
         self.assertIn("path: futureagi/docker/lock-wheels\n", shard[place:])
-        self.assertLess(place, shard.index("name: Build backend image from PR code"))
+        self.assertLess(place, shard.index("name: Build the stack images from PR code"))
 
     def test_the_cache_writer_places_the_same_wheel_before_building(self):
         steps = self.cache.split("\n    steps:\n", 1)[1]

@@ -286,7 +286,7 @@ export function runCallsQueryOptions(executionId, opts = {}) {
  * @param {{ page?: number, limit?: number, search?: string, filters?: Object, groupBy?: string, enabled?: boolean }} [opts]
  * @returns {{ tasks: import("./runDetail").RunTask[],
  *   columns: import("./runDetail").TraceColumn[], count: number,
- *   isLoading: boolean }}
+ *   isLoading: boolean, isFirstLoad: boolean }}
  */
 export function useRunCalls(executionId, opts = {}) {
   // `keepPrevious` keeps the last page's facets and columns visible while the next loads.
@@ -392,6 +392,9 @@ export function useRunCalls(executionId, opts = {}) {
     agentType: data?.execution?.agent_type ?? null,
     runActive: ACTIVE_EXECUTION_STATUSES.has(data?.execution?.status),
     isLoading: !!executionId && (query.isPending || query.isPlaceholderData),
+    // No response yet and nothing kept over from an earlier one. Unlike
+    // isLoading, a reload that shows the previous page's data is not this.
+    isFirstLoad: !!executionId && query.isPending,
     error: query.error,
   };
 }

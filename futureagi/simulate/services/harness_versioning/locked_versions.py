@@ -415,6 +415,49 @@ def select_split(
     return SplitSelection(locked_version, list(scenario_keys))
 
 
+@dataclass(frozen=True)
+class LockedVersionSplits:
+    """A locked version's roster: its members' splits, by scenario key."""
+
+    id: UUID
+    label: str
+    splits: Mapping[str, str]
+
+    @property
+    def test_keys(self) -> frozenset[str]:
+        return frozenset(
+            key for key, split in self.splits.items() if split == TaskSplit.TEST
+        )
+
+
+def run_locked_version(run: HostedHarnessJob) -> LockedVersionSplits | None:
+    """The locked version of ``run``'s own pair, with its splits; None when the pair
+    isn't locked. An unlocked one doesn't count. An Epoch from the run holds back its
+    test split: its check runs use the same pair. The launch reads it once and records
+    it, so an unlock mid-Epoch changes nothing."""
+    # Once a run job names its own locked version, that one wins over the pair's.
+    environment_version_id, suite_version_id = (
+        run.environment_version_id,
+        run.suite_version_id,
+    )
+    if environment_version_id is None or suite_version_id is None:
+        return None
+    locked_version = _locked_version(environment_version_id, suite_version_id)
+    if locked_version is None:
+        return None
+    # The lock's roster, as it locked them: a later rule, an edit or a new default
+    # never moves a scenario into or out of its test split.
+    members = locked_version_members(locked_version.id)
+    keys = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=suite_version_id, scenario_id__in=members
+    ).values_list("scenario_id", "scenario_key")
+    return LockedVersionSplits(
+        id=locked_version.id,
+        label=locked_version.label,
+        splits={key: members[scenario_id] for scenario_id, key in keys},
+    )
+
+
 def _plan_lock(job: HostedHarnessJob) -> SplitPlan:
     """What locking the default pair would give, or the reason it can't be locked. The
     lock and its preview both plan here, so a lock never disagrees with its preview."""

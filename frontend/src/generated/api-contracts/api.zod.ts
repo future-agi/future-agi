@@ -39383,6 +39383,14 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
           ),
         zod.null(),
       ]),
+      split: zod.union([
+        zod
+          .enum(["train", "test"])
+          .describe(
+            "Its split in the run's locked version; null off a locked version, or when it can't be scored. A test-split case is never must-pass, and a failing one is held back.",
+          ),
+        zod.null(),
+      ]),
     }),
   ),
   suggested: zod.object({
@@ -39443,7 +39451,7 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     zod
       .array(zod.string().min(1))
       .describe(
-        "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+        "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: on a locked version, the failing ones in its test split; otherwise empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
       ),
     zod.null(),
   ]),
@@ -39462,6 +39470,20 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
         zod.null(),
       ]),
     }),
+    zod.null(),
+  ]),
+  held_back_from: zod
+    .enum(["locked_version", "sample"])
+    .describe(
+      "What chooses the held-back cases: the run's locked version's test split, or a sample of the run's failing cases.",
+    ),
+  locked_version_label: zod.union([
+    zod
+      .string()
+      .min(1)
+      .describe(
+        "The label of the run's locked version; null off a locked version.",
+      ),
     zod.null(),
   ]),
 });
@@ -69713,6 +69735,24 @@ export const SimulateTestExecutionsKpisListResponse = zod.object({
   avg_turn_count: zod.number().optional(),
   avg_csat_score: zod.number().optional(),
   failed_calls: zod.number().optional(),
+  debug_failures_connected_calls: zod
+    .number()
+    .optional()
+    .describe(
+      "Connected calls as Debug failures counts them: per call and live calls only. Null until the run finishes. Unlike connected_calls, it counts a completed chat on a voice run and skips a deleted call.",
+    ),
+  failing_calls: zod
+    .number()
+    .optional()
+    .describe(
+      "Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals.",
+    ),
+  has_debug_failures_analysis: zod
+    .boolean()
+    .optional()
+    .describe(
+      "Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes.",
+    ),
   total_duration: zod.number().optional(),
 });
 

@@ -1284,6 +1284,48 @@ describe("useRunDetail", () => {
   });
 });
 
+describe("useRunDetail while calls are scoring", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it.each([
+    [1, 2],
+    [0, 1],
+  ])(
+    "reads a finished run's header again while %s call is scoring",
+    async (pending, reads) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        axios.get.mockResolvedValue({
+          data: {
+            execution: {
+              id: "ex-scoring",
+              status: "completed",
+              summary: { total: 1, outcomes: {} },
+            },
+            summary: { scoring: { pending } },
+          },
+        });
+        const { unmount } = renderHook(
+          () => useRunDetail("rt1", "ex-scoring"),
+          { wrapper: makeWrapper() },
+        );
+        await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3000);
+        });
+
+        expect(axios.get).toHaveBeenCalledTimes(reads);
+        unmount();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
 describe("call detail evals carry their scoring status", () => {
   const detail = (eval_metrics, evaluations) =>
     mapCallDetail({
