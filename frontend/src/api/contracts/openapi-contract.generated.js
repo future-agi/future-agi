@@ -35131,6 +35131,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/TestExecutionDebugAnalysisError",
+          },
           500: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
@@ -35160,6 +35163,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             },
             404: {
               $ref: "#/definitions/ApiTextErrorResponse",
+            },
+            409: {
+              $ref: "#/definitions/TestExecutionDebugAnalysisError",
             },
             500: {
               $ref: "#/definitions/ApiTextErrorResponse",
@@ -91157,6 +91163,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failed calls",
           type: "integer",
           readOnly: true,
+        },
+        debug_failures_connected_calls: {
+          title: "Debug failures connected calls",
+          description:
+            "Connected calls as Debug failures counts them: per call and live calls only. Null until the run finishes. Unlike connected_calls, it counts a completed chat on a voice run and skips a deleted call.",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        failing_calls: {
+          title: "Failing calls",
+          description:
+            "Calls whose outcome is failed or error, as Debug failures counts them. Null until the run finishes. Unlike failed_calls, it counts a completed call that failed its evals.",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        has_debug_failures_analysis: {
+          title: "Has debug failures analysis",
+          description:
+            "Whether the run has a Debug failures analysis the optimiser-analysis read returns, in any status. Null until the run finishes.",
+          type: "boolean",
+          readOnly: true,
+          "x-nullable": true,
         },
         total_duration: {
           title: "Total duration",

@@ -1582,6 +1582,31 @@ describe("RunDetail", () => {
     );
   });
 
+  it("starts no diagnosis before the run's counts arrive", async () => {
+    useRunDetail.mockReturnValue({
+      identity: null,
+      stats: { total: 0, passed: 0, failed: 0, passRate: 0, scores: {} },
+      isLoading: true,
+    });
+    const hook = debugHook({
+      ...ANALYSIS,
+      status: "not_requested",
+      goals: [],
+      oneOffs: [],
+    });
+    useDebugAnalysis.mockReturnValue(hook);
+    // Click it anyway, as a quick user would, to show the click does nothing.
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    renderDetail();
+
+    const button = screen.getByRole("button", { name: "Debug failures" });
+    expect(button).toBeDisabled();
+    await user.click(button);
+
+    expect(hook.request).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
   it("requests the diagnosis once when the drawer opens on an unanalyzed run", async () => {
     const hook = debugHook({
       ...ANALYSIS,
