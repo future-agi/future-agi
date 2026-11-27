@@ -7,7 +7,16 @@ import {
   useRef,
   useState,
 } from "react";
-import { Box, Stack, Typography, TextField, IconButton, Checkbox, FormControlLabel } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  TextField,
+  IconButton,
+  Checkbox,
+  FormControlLabel,
+  Tooltip,
+} from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { visuallyHidden } from "@mui/utils";
 import Iconify from "src/components/iconify";
@@ -62,13 +71,19 @@ function composerReducer(state, action) {
         ],
       };
     case "policy":
-      return { ...state, policyFiles: action.checked
-        ? [...state.policyFiles, action.file] : state.policyFiles.filter((f) => f !== action.file) };
+      return {
+        ...state,
+        policyFiles: action.checked
+          ? [...state.policyFiles, action.file]
+          : state.policyFiles.filter((f) => f !== action.file),
+      };
     case "unattach":
       return {
         ...state,
         files: state.files.filter((_, i) => i !== action.index),
-        policyFiles: state.policyFiles.filter((f) => f !== state.files[action.index]),
+        policyFiles: state.policyFiles.filter(
+          (f) => f !== state.files[action.index],
+        ),
       };
     case "clear":
       return INITIAL;
@@ -111,7 +126,8 @@ const countMessages = (turns) =>
  * building rather than until the last message returns.
  *
  * `canAttach` adds a paperclip: picked files show as chips above the input
- * and go with the message as `onSend(text, files)`.
+ * and go with the message as `onSend(text, files)`. `attachHold` shows the
+ * paperclip disabled, with the hold as its tooltip.
  *
  * `onCollapse` adds a collapse button to the header. `active` is false while
  * the console is collapsed (mounted but hidden); it skips the auto-scroll then
@@ -134,6 +150,7 @@ export default function BuilderConsole({
   frozenReason,
   answerWithOptions = false,
   canAttach = false,
+  attachHold,
   canChooseFilePurpose = false,
   onCollapse,
   collapseRef,
@@ -301,7 +318,8 @@ export default function BuilderConsole({
       .join(scaffoldText && text ? ". " : "");
     if ((!combined && !files.length) || blocked) return;
     dispatch({ type: "clear" });
-    if (canChooseFilePurpose && files.length) onSend?.(combined, files, state.policyFiles);
+    if (canChooseFilePurpose && files.length)
+      onSend?.(combined, files, state.policyFiles);
     else onSend?.(combined, files);
   };
 
@@ -575,14 +593,32 @@ export default function BuilderConsole({
                   >
                     {CONSOLE_COPY.fileSize(file.size)}
                   </Typography>
-                  {canChooseFilePurpose && file.name.toLowerCase().endsWith(".pdf") && (
-                    <FormControlLabel
-                      label={state.policyFiles.includes(file) ? "Policy" : "Reference"}
-                      control={<Checkbox size="small" checked={state.policyFiles.includes(file)}
-                        inputProps={{ "aria-label": `Use ${file.name} as policy` }}
-                        onChange={(event) => dispatch({ type:"policy", file, checked:event.target.checked })} />}
-                    />
-                  )}
+                  {canChooseFilePurpose &&
+                    file.name.toLowerCase().endsWith(".pdf") && (
+                      <FormControlLabel
+                        label={
+                          state.policyFiles.includes(file)
+                            ? "Policy"
+                            : "Reference"
+                        }
+                        control={
+                          <Checkbox
+                            size="small"
+                            checked={state.policyFiles.includes(file)}
+                            inputProps={{
+                              "aria-label": `Use ${file.name} as policy`,
+                            }}
+                            onChange={(event) =>
+                              dispatch({
+                                type: "policy",
+                                file,
+                                checked: event.target.checked,
+                              })
+                            }
+                          />
+                        }
+                      />
+                    )}
                   <IconButton
                     size="small"
                     aria-label={`Remove ${file.name}`}
@@ -641,7 +677,21 @@ export default function BuilderConsole({
                 is wired so it works in every browser. VoiceInput.jsx is kept. */}
             {/* <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={blocked} /> */}
 
-            {canAttach && (
+            {attachHold && (
+              <Tooltip title={attachHold} arrow>
+                <span>
+                  <IconButton
+                    aria-label={CONSOLE_COPY.attach}
+                    disabled
+                    size="small"
+                    sx={{ color: "text.secondary" }}
+                  >
+                    <Iconify icon="solar:paperclip-linear" width={16} />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            )}
+            {canAttach && !attachHold && (
               <CustomTooltip
                 show={!blocked}
                 size="small"
@@ -748,6 +798,7 @@ BuilderConsole.propTypes = {
   answerWithOptions: PropTypes.bool,
   // Shows the paperclip; `onSend` then gets `(text, files)`.
   canAttach: PropTypes.bool,
+  attachHold: PropTypes.string,
   canChooseFilePurpose: PropTypes.bool,
   onCollapse: PropTypes.func,
   // Attached to the collapse button so focus can return to it on reopen.

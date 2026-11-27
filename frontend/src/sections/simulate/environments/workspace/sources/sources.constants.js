@@ -5,8 +5,12 @@ import { relativeTime } from "src/utils/format-time";
 
 export const missingSnapshotMessage = (generation) =>
   generation?.error === "source_world_snapshot_missing"
-    ? "Rebuild this environment to create its world snapshot. Discard this draft first, then add the source again after the rebuild."
+    ? "This environment was built before uploaded sources were supported, so it has no world snapshot. Build a new environment and add the source there."
     : null;
+
+// The backend's reason this environment can't take sources, or null.
+export const uploadOff = (capabilities) =>
+  capabilities?.upload?.enabled === false ? capabilities.upload.reason : null;
 
 const MB = 1024 * 1024;
 export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;

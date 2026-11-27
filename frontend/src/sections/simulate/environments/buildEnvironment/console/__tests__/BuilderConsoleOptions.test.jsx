@@ -16,3 +16,13 @@ describe("BuilderConsole while a question takes only its options", () => {
     ).toBeNull();
   });
 });
+
+describe("BuilderConsole paperclip", () => {
+  it("shows a held paperclip disabled, with the hold as its tooltip", () => {
+    render(<BuilderConsole turns={[]} onSend={() => {}} attachHold="R" />);
+    expect(
+      screen.getByRole("button", { name: "Attach a dataset, CSV or file" }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("R")).toBeInTheDocument();
+  });
+});

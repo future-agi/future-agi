@@ -411,6 +411,22 @@ describe("SourcesSection", () => {
     );
   });
 
+  it("upload off: Add source is disabled and the backend reason shows under the header", async () => {
+    currentBasis = { ...basis, upload: { enabled: false, reason: "R" } };
+    mount();
+    expect(await screen.findByText("R")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
+  });
+
+  it("upload off: a Knowledge base selection from the KB page sends no review", async () => {
+    currentBasis = { ...basis, upload: { enabled: false, reason: "R" } };
+    mount({
+      environmentSourceSelection: { kb_id: "kb-1", file_ids: ["ready-file"] },
+    });
+    expect(await screen.findByText("R")).toBeVisible();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
   it("opens a saved file and shows only that file's accepted review and citations", async () => {
     sources = [
       {
@@ -673,7 +689,9 @@ describe("SourcesSection", () => {
       name: "Review proposed changes",
     });
     expect(
-      await within(drawer).findByText(/Rebuild this environment/),
+      await within(drawer).findByText(
+        /This environment was built before uploaded sources were supported/,
+      ),
     ).toBeVisible();
     expect(
       within(drawer).queryByRole("button", { name: "Retry generation" }),
@@ -681,7 +699,11 @@ describe("SourcesSection", () => {
     fireEvent.click(
       within(drawer).getByRole("button", { name: "Close", exact: true }),
     );
-    expect(await screen.findByText(/Rebuild this environment/)).toBeVisible();
+    expect(
+      await screen.findByText(
+        /This environment was built before uploaded sources were supported/,
+      ),
+    ).toBeVisible();
     fireEvent.click(
       await screen.findByRole("button", { name: "Review and save" }),
     );
@@ -689,7 +711,9 @@ describe("SourcesSection", () => {
       name: "Review changes",
     });
     expect(
-      await within(changes).findByText(/Rebuild this environment/),
+      await within(changes).findByText(
+        /This environment was built before uploaded sources were supported/,
+      ),
     ).toBeVisible();
   });
 

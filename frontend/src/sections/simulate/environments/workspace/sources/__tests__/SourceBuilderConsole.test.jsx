@@ -29,14 +29,19 @@ vi.mock("src/api/simulate-environments/sourceImports", () => ({
   }),
   useSourceCapabilities: () => ({
     isSuccess: true,
-    data: { environment_version_id: "version", draft: { digest: "basis" } },
+    data: {
+      environment_version_id: "version",
+      draft: { digest: "basis" },
+      upload: mocks.uploadCapability,
+    },
   }),
   sourceSummaryKey: (id) => ["summary", id],
 }));
 vi.mock("../SourceReviewPanel", () => ({ default: () => null }));
 vi.mock("../../../buildEnvironment/console/BuilderConsole", () => ({
-  default: ({ canAttach, onSend, turns }) => (
+  default: ({ attachHold, canAttach, onSend, turns }) => (
     <>
+      {attachHold && <p>Paperclip held: {attachHold}</p>}
       {canAttach && (
         <button
           onClick={() =>
@@ -145,5 +150,22 @@ describe("Builder chat source files", () => {
       idempotency_key: expect.any(String),
     });
     expect(mocks.activate).toHaveBeenCalledWith("review-7");
+  });
+
+  it("upload off: the paperclip is disabled with the reason", () => {
+    mocks.uploadCapability = { enabled: false, reason: "R" };
+    try {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter>
+            <SourceBuilderConsole envId="env" onSend={vi.fn()} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      expect(screen.getByText("Paperclip held: R")).toBeVisible();
+      expect(screen.queryByText("Send files")).toBeNull();
+    } finally {
+      mocks.uploadCapability = undefined;
+    }
   });
 });

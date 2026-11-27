@@ -20,7 +20,7 @@ import Iconify from "src/components/iconify";
 import ShimmerText from "../../components/ShimmerText";
 import useSourceAcceptedToast from "./useSourceAcceptedToast";
 import SourceReviewPanel from "./SourceReviewPanel";
-import { overUploadLimit } from "./sources.constants";
+import { overUploadLimit, uploadOff } from "./sources.constants";
 
 export default function SourceBuilderConsole({
   envId,
@@ -30,6 +30,7 @@ export default function SourceBuilderConsole({
 }) {
   const upload = useUploadDesignDocument();
   const capabilities = useSourceCapabilities(envId);
+  const off = uploadOff(capabilities.data);
   const create = useCreateSourceReview();
   const { reviewId, setReviewId } = useActiveEnvironmentSourceReview(envId);
   const { data: activeReview } = useEnvironmentSourceReview(reviewId);
@@ -99,7 +100,7 @@ export default function SourceBuilderConsole({
 
   const send = (text, files = [], policyFiles = []) => {
     if (!files.length) return onSend(text);
-    if (pending.current || reviewId || !capabilities.data) return;
+    if (pending.current || reviewId || !capabilities.data || off) return;
     pending.current = {
       text,
       files,
@@ -229,7 +230,8 @@ export default function SourceBuilderConsole({
     <BuilderConsole
       {...props}
       canChooseFilePurpose
-      canAttach={Boolean(capabilities.data && !reviewId && !state)}
+      canAttach={Boolean(capabilities.data && !reviewId && !state && !off)}
+      attachHold={off || undefined}
       onSend={send}
       turns={history}
     />

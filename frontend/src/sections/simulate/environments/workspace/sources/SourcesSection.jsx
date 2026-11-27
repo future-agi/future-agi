@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Alert, Box, Button, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  Collapse,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import { useQueryClient } from "@tanstack/react-query";
 import useSourceAcceptedToast from "./useSourceAcceptedToast";
 import Iconify from "src/components/iconify";
@@ -21,6 +29,7 @@ import SectionCard from "../../components/SectionCard";
 import { BUILD_FILES_ACCEPT } from "../../buildDrawer/forms/shared/buildFiles";
 import useBuildSources from "../../buildDrawer/forms/shared/useBuildSources";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import SourceReviewPanel from "./SourceReviewPanel";
 import { ProposalDrawerFrame } from "./ProposalsDrawer";
 import AddSourceMenu from "./AddSourceMenu";
@@ -30,6 +39,7 @@ import {
   missingSnapshotMessage,
   overUploadLimit,
   SOURCES_COPY,
+  uploadOff,
 } from "./sources.constants";
 
 export default function SourcesSection({ env, locked }) {
@@ -51,6 +61,8 @@ export default function SourcesSection({ env, locked }) {
   const create = useCreateSourceReview();
   const summary = useEnvironmentSources(env.id);
   const capabilities = useSourceCapabilities(env.id);
+  const off = uploadOff(capabilities.data);
+  const reduceMotion = usePrefersReducedMotion();
   const { data: activeReview } = useEnvironmentSourceReview(reviewId);
   const acceptedReview =
     activeReview?.state === "accepted" && activeReview.scope.id === env.id
@@ -108,15 +120,18 @@ export default function SourcesSection({ env, locked }) {
       !writable ||
       reviewId ||
       !selection ||
+      !capabilities.data ||
       consumedSelection.current === location.key
     )
       return;
     consumedSelection.current = location.key;
-    sources.addKnowledgeSelection(
-      { kind: "knowledge_base", ...selection },
-      "Selected Knowledge Base",
-    );
-    begin();
+    if (!off) {
+      sources.addKnowledgeSelection(
+        { kind: "knowledge_base", ...selection },
+        "Selected Knowledge Base",
+      );
+      begin();
+    }
     navigate(location.pathname + location.search, { replace: true, state: {} });
   });
 
@@ -182,13 +197,18 @@ export default function SourcesSection({ env, locked }) {
   const draftGeneration = unsaved && generation;
   const resumable = draftGeneration && generationId;
   const pendingReview = reviewId || selecting;
-  const addHold = unsaved
-    ? "Save or discard the current draft before adding another source."
-    : pendingReview
-      ? "Finish the current source review before adding another source."
-      : !capabilities.data
-        ? "Loading the upload limits…"
-        : null;
+  const addHold =
+    off ||
+    (unsaved
+      ? "Save or discard the current draft before adding another source."
+      : pendingReview
+        ? "Finish the current source review before adding another source."
+        : !capabilities.data
+          ? "Loading the upload limits…"
+          : null);
+  // Kept through the line's collapse so it doesn't empty before it closes.
+  const shownHold = useRef(addHold);
+  if (addHold) shownHold.current = addHold;
   const generationHeld =
     draftGeneration &&
     ["failed", "queued", "running", "stale"].includes(draftGeneration.state);
@@ -198,7 +218,7 @@ export default function SourcesSection({ env, locked }) {
       sx={{ mb: 2 }}
       title={SOURCES_COPY.title(sourceRows.length)}
       subtitle={
-        !sourceRows.length
+        !sourceRows.length && !off
           ? "Attach files in builder chat or add them here."
           : undefined
       }
@@ -253,15 +273,20 @@ export default function SourcesSection({ env, locked }) {
               : "Scenario generation is in progress."}
         </Alert>
       )}
-      {writable && (unsaved || pendingReview) && (
+      <Collapse
+        in={Boolean(writable && (unsaved || pendingReview || off))}
+        timeout={reduceMotion ? 0 : "auto"}
+        unmountOnExit
+      >
         <Typography
-          variant="body2"
+          variant="s3"
+          component="p"
           color="text.secondary"
           sx={{ px: 1.5, py: 1 }}
         >
-          {addHold}
+          {addHold || shownHold.current}
         </Typography>
-      )}
+      </Collapse>
       {summary.isLoading && (
         <Typography sx={{ p: 1.5 }}>Loading sources…</Typography>
       )}
