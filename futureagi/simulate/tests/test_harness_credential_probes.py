@@ -1192,3 +1192,66 @@ def test_the_probe_connects_to_the_address_it_checked_whatever_the_name_answers_
     assert result.message == (
         "OpenAI is unreachable at OPENAI_BASE_URL (ConnectionError); check OPENAI_BASE_URL"
     )
+
+
+@pytest.mark.parametrize("address", ["10.0.0.5", "169.254.169.254", "fd00:ec2::254"])
+def test_safe_fetch_called_as_before_still_refuses_private_and_metadata(address):
+    """Every other caller passes neither new option: it refuses what it refused before."""
+    from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
+
+    with (
+        patch("agentcc.services.url_safety.socket.getaddrinfo", _answers(address)),
+        pytest.raises(SsrfBlocked),
+    ):
+        safe_fetch("https://files.example.com/a.txt", method="GET")
+
+
+@pytest.mark.parametrize(
+    ("allowed", "address", "connected"),
+    [
+        (False, "10.0.0.5", False),
+        (True, "10.0.0.5", True),
+        (True, "169.254.169.254", False),
+        (True, "fd00:ec2::254", False),
+    ],
+)
+def test_the_private_opt_in_reaches_a_private_gateway_but_never_metadata(
+    monkeypatch, allowed, address, connected
+):
+    """Only the deployment's opt-in (off by default, as on dev) lets a configured base reach a
+    private address; a metadata address is refused at send even then."""
+    from agentcc.services.url_safety import ALLOW_PRIVATE_PROVIDER_URLS_ENV
+
+    if allowed:
+        monkeypatch.setenv(ALLOW_PRIVATE_PROVIDER_URLS_ENV, "true")
+    else:
+        monkeypatch.delenv(ALLOW_PRIVATE_PROVIDER_URLS_ENV, raising=False)
+    reached = []
+
+    def connect(address, *_args, **_kwargs):
+        reached.append(address[0])
+        raise OSError("stop here")
+
+    with (
+        # The check sees a public address; the send's own lookup sees ``address``.
+        patch(
+            "agentcc.services.url_safety.socket.getaddrinfo",
+            _answers("93.184.215.14", address),
+        ),
+        patch("urllib3.util.connection.create_connection", connect),
+    ):
+        result = probe(
+            "openai",
+            {
+                "OPENAI_API_KEY": "k",
+                "OPENAI_BASE_URL": "https://gateway.example.com/v1",
+            },
+        )
+
+    assert result.ok is False
+    assert reached == ([address] if connected else [])
+    if not connected:
+        assert result.message == (
+            "OpenAI check could not run: OPENAI_BASE_URL does not resolve to an address"
+            " this check may call"
+        )
