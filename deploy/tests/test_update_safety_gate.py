@@ -710,7 +710,7 @@ class InspectedNonClickHousePinsTests(unittest.TestCase):
         'futureagi/tfc/utils/error_codes.py':
             ('97868116b0d0c3faad9c8d9209f2bf51133f9f10a084ebfd1c24572c28e471db', 'CREATE USER', 360),
         'futureagi/tracer/services/instant_eval_answers.py':
-            ('2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c', 'DELETE FROM', 173),
+            ('46a5d3bc789005c84e4ccff2664295a72fe51b2cd2d65f037c751d8902dbf0bf', 'DELETE FROM', 174),
     }
 
     def setUp(self):

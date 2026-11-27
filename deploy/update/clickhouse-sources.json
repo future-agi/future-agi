@@ -449,8 +449,8 @@
     },
     {
       "pattern": "futureagi/tracer/services/instant_eval_answers.py",
-      "reason": "Inspected dev-added blob: forget_answers executes DELETE FROM ... USING via django.db.connection.cursor on the default alias; tfc.settings.settings._pg_config fixes its ENGINE to django.db.backends.postgresql. All cursors and analyze use that PostgreSQL backend, not the separate ClickHouse client. No prior blob or removed operation.",
-      "sha256": "2bc88346e3d762a1f6fb9fdf3d8de38f81e820bb049300c5f4b242faa9caf80c"
+      "reason": "Inspected dev-added blob: forget_answers executes DELETE FROM ... USING via django.db.connection.cursor on the default alias; tfc.settings.settings._pg_config fixes its ENGINE to django.db.backends.postgresql. All cursors and analyze use that PostgreSQL backend, not the separate ClickHouse client. Re-inspected against the prior pinned blob 2bc88346: the only change adds the PostgreSQL predicate `l.deleted = false` to record_answer's INSERT ... SELECT; the DELETE FROM ... USING statement is unchanged (now line 174). No ClickHouse client use and no removed operation.",
+      "sha256": "46a5d3bc789005c84e4ccff2664295a72fe51b2cd2d65f037c751d8902dbf0bf"
     },
     {
       "pattern": "e2e/lib/harness_environment_seed.py",

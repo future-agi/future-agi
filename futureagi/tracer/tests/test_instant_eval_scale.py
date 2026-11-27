@@ -1237,7 +1237,10 @@ def test_lost_worker_copies_answer_after_a_concurrent_first_read(
             copy_states.append(pool.submit(probe_entry).result(timeout=10))
         return execute(sql, params, many, context)
 
-    with ThreadPoolExecutor(max_workers=1) as pool, connection.execute_wrapper(at_write):
+    with (
+        ThreadPoolExecutor(max_workers=1) as pool,
+        connection.execute_wrapper(at_write),
+    ):
         assert not is_instant_task(task.pk)  # Prime the real negative cache.
         if first_read_at == "before_run_lock":
             pool.submit(first_read).result(timeout=10)
