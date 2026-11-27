@@ -431,20 +431,28 @@ class LockedVersionSplits:
 
 
 def run_locked_version(run: HostedHarnessJob) -> LockedVersionSplits | None:
-    """The locked version of ``run``'s own pair, with its splits; None when the pair
-    isn't locked. An unlocked one doesn't count. An Epoch from the run holds back its
-    test split: its check runs use the same pair. The launch reads it once and records
-    it, so an unlock mid-Epoch changes nothing."""
-    # Once a run job names its own locked version, that one wins over the pair's.
-    environment_version_id, suite_version_id = (
-        run.environment_version_id,
-        run.suite_version_id,
-    )
-    if environment_version_id is None or suite_version_id is None:
-        return None
-    locked_version = _locked_version(environment_version_id, suite_version_id)
-    if locked_version is None:
-        return None
+    """The locked version ``run`` ran under, with its splits. A run of a split names its
+    own, which wins even once unlocked or relocked: the Epoch must hold back the split
+    that run used. Any other run takes its pair's locked version; None when the pair
+    isn't locked, and an unlocked one doesn't count. An Epoch from the run holds back
+    its test split: its check runs use the same pair. The launch reads it once and
+    records it, so an unlock mid-Epoch changes nothing."""
+    if run.locked_version_id is not None:
+        locked_version = HarnessLockedVersion.no_workspace_objects.get(
+            id=run.locked_version_id
+        )
+        suite_version_id = locked_version.suite_version_id
+    else:
+        environment_version_id, suite_version_id = (
+            run.environment_version_id,
+            run.suite_version_id,
+        )
+        if environment_version_id is None or suite_version_id is None:
+            return None
+        found = _locked_version(environment_version_id, suite_version_id)
+        if found is None:
+            return None
+        locked_version = found
     # The lock's roster, as it locked them: a later rule, an edit or a new default
     # never moves a scenario into or out of its test split.
     members = locked_version_members(locked_version.id)
