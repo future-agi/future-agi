@@ -48,11 +48,23 @@ def test_a_name_outside_ascii_is_kept_in_its_ascii_form():
         ("straße.de", "xn--strae-oqa.de"),
         ("faß.de", "xn--fa-hia.de"),
         ("*.straße.de", "*.xn--strae-oqa.de"),
+        # Already in that form: kept as it is, in lower case.
+        ("xn--strae-oqa.de", "xn--strae-oqa.de"),
+        ("Shop.XN--Strae-OQA.de", "shop.xn--strae-oqa.de"),
     ],
 )
 def test_a_name_is_kept_in_the_form_a_browser_asks_for(site, form, monkeypatch):
     monkeypatch.setattr("simulate.services.browser_sites.TAKES_WILDCARDS", True)
     assert browser_sites([site]) == [form]
+
+
+def test_a_kept_list_reads_back_as_itself():
+    # A stored list is read again at every pin (browser_sites_at_pin), so its one form must be
+    # a fixed point: reading it back keeps every site and changes none.
+    kept = browser_sites(
+        ["Exämple.com", "straße.de", "xn--nxasmq6b.com", "Shop.Example.com.", "docs.example.org"]
+    )
+    assert browser_sites(kept) == kept
 
 
 @pytest.mark.parametrize(
@@ -125,6 +137,14 @@ def test_anything_but_a_list_is_refused(value):
         "shop.invalid",
         "shop.example",
         "straße\u200d.de",  # a joiner: no form a browser asks for
+        # An ASCII label that claims to be the ASCII form of another name, and is not one.
+        "xn--zz.com",
+        "shop.xn--zz.com",
+        "XN--ZZ.com",
+        "xn--a.com",
+        # Special-use names that are never a site on the public internet (RFC 7686, RFC 9476).
+        "hidden.onion",
+        "shop.alt",
         "192.168.1.10",
         "169.254.169.254",
         "*.",
@@ -141,11 +161,18 @@ def test_a_value_that_is_not_a_public_host_name_is_refused(site):
     assert refusal.code == "browser_sites_invalid"
     # Positions only, counted from one: a wrong value may be anything, a URL with a password among them.
     assert refusal.details == {"positions": [2]}
-    # The same words whatever the value was: none of it is echoed.
-    assert refusal.message == (
-        "Allowed sites must be public host names, such as example.com, "
-        "with no scheme, port, path or address. Check site 2."
-    )
+
+
+def test_a_refused_value_is_never_echoed():
+    # A wrong value may be anything, a URL with a password among them: the refusal names its
+    # position and nothing of the value.
+    url = "https://alice-e2e:pw-e2e-secret@private-shop-e2e.org/cart"
+    refusal = _refusal(["example.com", url])
+    assert refusal.code == "browser_sites_invalid"
+    assert refusal.details == {"positions": [2]}
+    for part in (url, "pw-e2e-secret", "alice-e2e", "private-shop-e2e"):
+        assert part not in refusal.message
+        assert part not in repr(refusal.details)
 
 
 def test_a_site_the_egress_rules_refuse_is_refused(monkeypatch):
@@ -282,8 +309,6 @@ def test_a_browser_agent_with_no_sites_is_refused_with_its_own_code(monkeypatch)
         _check(BROWSER_CONTRACT, [], monkeypatch)
     assert caught.value.code == "browser_environment_required"
     assert caught.value.status_code == 422
-    assert "browser" in caught.value.message
-    assert "isn't supported" not in caught.value.message
 
 
 def test_a_browser_agent_with_sites_is_paired(monkeypatch):

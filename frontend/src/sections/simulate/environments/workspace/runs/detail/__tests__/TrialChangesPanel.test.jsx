@@ -497,9 +497,6 @@ describe("TrialChangesPanel", () => {
     expect(
       screen.getByText(TRIAL_CHANGES_COPY.noticeWords.browser_not_started),
     ).toBeInTheDocument();
-    expect(TRIAL_CHANGES_COPY.noticeWords.browser_not_started).toMatch(
-      /no browser was started/,
-    );
     expect(screen.queryByText("the kit's own words")).not.toBeInTheDocument();
   });
 

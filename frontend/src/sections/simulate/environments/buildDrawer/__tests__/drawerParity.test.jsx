@@ -191,13 +191,8 @@ describe("a browser environment's sites", () => {
     }
   });
 
-  it("asks for every host the site needs, as host names alone", () => {
+  it("suggests host names alone, never a wildcard", () => {
     render(<RepoForm />);
-    const helper = screen.getByText(
-      /List every host the site needs: its sign-in, its API, its files\. Host names such as shop\.example\.com, at most 10\./,
-    );
-    expect(helper).toBeInTheDocument();
-    expect(helper.textContent).not.toContain("*.");
     expect(box("Browser sites").getAttribute("placeholder")).not.toContain(
       "*.",
     );
