@@ -62,14 +62,16 @@ async function stubFinishedRun(page: Page, run: FinishedRun) {
     }),
   );
   // GET /simulate/test-executions/<id>/kpis/ (RunTestKPIsView kpi_data): the counts
-  // the guard reads are `connected_calls` and `failing_calls`. Both runs report 14
+  // the guard reads are `debug_failures_connected_calls` (the rule's own count) and
+  // `failing_calls`; `connected_calls` feeds the Connected card. Both runs report 14
   // completed calls, so the 15-call run opens only because the guard reads connected,
   // not completed. Both runs have a failing call, so only the call count can block.
   await page.route(endsWith(`/simulate/test-executions/${run.executionId}/kpis/`), (route) =>
     route.fulfill({
       json: {
         agent_type: 'voice', total_calls: 20, completed_calls: MIN_CONNECTED_CALLS - 1,
-        calls_attempted: 20, connected_calls: run.connectedCalls, failing_calls: 1,
+        calls_attempted: 20, connected_calls: run.connectedCalls,
+        debug_failures_connected_calls: run.connectedCalls, failing_calls: 1,
         calls_connected_percentage: (run.connectedCalls / 20) * 100, scenario_graphs: {},
       },
     }),

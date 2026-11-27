@@ -33,16 +33,21 @@ const NOTHING_FAILED =
 const refused = (code: string) =>
   Promise.reject({ statusCode: 409, code, detail: "server words" });
 
+// The run page's KPI read, which the button's counts come from.
+const KPIS_KEY = ["test-execution-detail", "KPIS", "e1"];
+
 const renderDrawer = () => {
   // The app's own default: a failed read is retried once.
   const client = new QueryClient({
     defaultOptions: { queries: { retry: 1, retryDelay: 0 } },
   });
-  return render(
+  const invalidate = vi.spyOn(client, "invalidateQueries");
+  render(
     <QueryClientProvider client={client}>
       <SuggestionsPage onClose={() => {}} />
     </QueryClientProvider>,
   );
+  return { invalidate };
 };
 
 describe("Debug failures drawer on a run the rule refuses", () => {
@@ -56,12 +61,14 @@ describe("Debug failures drawer on a run the rule refuses", () => {
       refused("investigation_nothing_failed"),
     );
 
-    renderDrawer();
+    const { invalidate } = renderDrawer();
 
     expect(await screen.findByText(NOTHING_FAILED)).toBeInTheDocument();
     expect(screen.queryByText(/click the refresh button/)).toBeNull();
     expect(screen.queryByRole("button", { name: /refresh/i })).toBeNull();
     expect(server.get).toHaveBeenCalledTimes(1);
+    // The page's counts let the click through, so they were stale: read them again.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: KPIS_KEY });
   });
 
   it("keeps the run's analysis when a Refresh is refused", async () => {
@@ -82,7 +89,7 @@ describe("Debug failures drawer on a run the rule refuses", () => {
       refused("investigation_nothing_failed"),
     );
 
-    renderDrawer();
+    const { invalidate } = renderDrawer();
     fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
 
     expect(await screen.findByText(NOTHING_FAILED)).toBeInTheDocument();
@@ -91,5 +98,6 @@ describe("Debug failures drawer on a run the rule refuses", () => {
       expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull(),
     );
     expect(server.post).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: KPIS_KEY });
   });
 });

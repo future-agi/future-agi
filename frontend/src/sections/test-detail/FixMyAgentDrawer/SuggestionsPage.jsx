@@ -5,9 +5,10 @@ import PropTypes from "prop-types";
 import { ShowComponent } from "../../../components/show";
 import FixMyAgentLoading from "./FixMyAgentLoading";
 import FixMyAgentSections from "./FixMyAgentSections";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
+import { kpisQueryOptions } from "src/hooks/useKpis";
 import { FixMyAgentRefetchStates } from "./common";
 import { DEBUG_FAILURES_REFUSALS } from "../debugFailuresRule";
 
@@ -22,8 +23,17 @@ const refusalOf = (error) => {
 
 const SuggestionsPage = ({ onClose }) => {
   const { executionId } = useParams();
+  const queryClient = useQueryClient();
   // A refused Refresh keeps the analysis the run already has.
   const [refreshRefusal, setRefreshRefusal] = useState(null);
+  // The page's counts let the request through, so they were stale: read them again.
+  const refused = (error) => {
+    const result = refusalOf(error);
+    queryClient.invalidateQueries({
+      queryKey: kpisQueryOptions(executionId).queryKey,
+    });
+    return result;
+  };
 
   const {
     data,
@@ -36,7 +46,7 @@ const SuggestionsPage = ({ onClose }) => {
       axios
         .get(endpoints.testExecutions.getOptimizerAnalysis(executionId))
         .then((res) => res.data?.result)
-        .catch(refusalOf),
+        .catch(refused),
     enabled: !!executionId,
     refetchInterval: ({ state }) => {
       if (FixMyAgentRefetchStates.includes(state?.data?.status)) {
@@ -57,7 +67,7 @@ const SuggestionsPage = ({ onClose }) => {
       axios
         .post(endpoints.testExecutions.refreshOptimizerAnalysis(executionId))
         .then(() => null)
-        .catch(refusalOf),
+        .catch(refused),
     onSuccess: (result) => {
       if (result?.refusal) {
         setRefreshRefusal(result.refusal);
