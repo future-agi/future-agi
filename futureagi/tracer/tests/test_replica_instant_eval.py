@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -476,23 +477,42 @@ def test_retry_forgets_a_failure_committed_just_before_its_update(
     _settle(first, EvalEntryStatus.ERRORED, error=True)
     _credit_cap(monkeypatch, left=10.0)
 
+    # A previous answer stays in the projection when a config change requeues
+    # the entry. Retry must forget it even if this worker fails late.
+    _settle(late, EvalEntryStatus.COMPLETED)
+    EvalLogger.objects.filter(pk=late.pk).update(status=EvalEntryStatus.RUNNING)
+    late = _primary(late)
+    start = Event()
+    settled = Event()
+
+    def after_settle(execute, sql, params, many, context):
+        result = execute(sql, params, many, context)
+        if sql.replace('"', "").startswith("UPDATE tracer_eval_logger SET"):
+            settled.set()
+        return result
+
     def finish_late():
         try:
-            _settle(late, EvalEntryStatus.ERRORED, error=True)
+            assert start.wait(10)
+            with connection.execute_wrapper(after_settle):
+                _settle(late, EvalEntryStatus.ERRORED, error=True)
         finally:
             connections.close_all()
 
     def before_update(execute, sql, params, many, context):
-        # After any preliminary SELECT of ids, but before the statement that
-        # decides which entries actually become pending. Both answers exist.
+        # The entry update commits independently; its answer copy must wait
+        # until Retry releases the run. Do not wait for that copy here.
         if sql.replace('"', "").startswith("UPDATE tracer_eval_logger SET"):
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                pool.submit(finish_late).result(timeout=10)
+            start.set()
+            assert settled.wait(10)
             assert _answers(task) == 2
         return execute(sql, params, many, context)
 
-    with connection.execute_wrapper(before_update):
-        response = _control(auth_client, observe_project, task, "retry_failed")
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        worker = pool.submit(finish_late)
+        with connection.execute_wrapper(before_update):
+            response = _control(auth_client, observe_project, task, "retry_failed")
+        worker.result(timeout=10)
 
     assert response.status_code == status.HTTP_200_OK, response.content
     assert response.json()["result"]["retried"] == 2
