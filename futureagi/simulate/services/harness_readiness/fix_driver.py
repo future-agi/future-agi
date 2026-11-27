@@ -474,6 +474,18 @@ def _turn_started(environment_id: Any, command_id: Any) -> None:
         if run.state not in APPENDABLE or cmd is None:
             return
         if command_id not in _ids(run, cmd):
+            if cmd["interrupted_at"]:
+                # The chat moved on to the person's message: the interrupted fix turn
+                # will not start again, and its sandbox holds its unsaved edits.
+                before = fix_runs.snapshot(run)
+                fix_runs.settle(
+                    run,
+                    cmd,
+                    turn="interrupted",
+                    code="turn_interrupted",
+                    conversation=_lock_conversation(environment_id),
+                )
+                fix_runs.store(run, before)
             return
         if (
             command_id == str(run.current_command_id)
@@ -704,12 +716,18 @@ def _answered_command(
     return (run, cmd) if run is not None and cmd is not None else None
 
 
-def draft_command(command: Message | None) -> tuple[str, dict[str, Any]] | None:
+def draft_command(
+    command: Message | None, sequence: int | None = None
+) -> tuple[str, dict[str, Any]] | None:
     """``None`` drops a fix write whose run ended or command is not in flight, and
-    gives its sandbox up once; ``("", {})`` keeps any other, and an answer sent after
-    its command settled (the person's own write). Under the head lock."""
+    gives its sandbox up once, and a save (event ``sequence``) from a sandbox a fix
+    gave up; ``("", {})`` keeps any other, and an answer sent after its command
+    settled (the person's own write). Under the head lock."""
     if command is None:
         return "", {}
+    if fix_runs.replayed(command, sequence):
+        logger.info("harness_fix_replayed_write", message=str(command.id))
+        return None
     payload = command.payload or {}
     if payload.get("_fix_run_id"):
         run = (
@@ -722,6 +740,7 @@ def draft_command(command: Message | None) -> tuple[str, dict[str, Any]] | None:
     else:
         fix = _answered_command(command, any_time=True)
         if fix is None:
+            _require_fix_landed(command)
             return "", {}
         run, cmd = fix
         settled = _time(cmd.get("settled_at"))
@@ -743,6 +762,33 @@ def draft_command(command: Message | None) -> tuple[str, dict[str, Any]] | None:
         fix_runs.retire(run, cmd)
         fix_runs.store(run, before)
     return None
+
+
+def _require_fix_landed(command: Message) -> None:
+    """The person's turn the chat took after a fix turn that ended but has not landed
+    saves only once it lands: a refused one gives the sandbox up and the turn runs
+    again (``fix_runs.retire``)."""
+    if not fix_groups.enabled():
+        return
+    run = fix_runs.active_run(command.conversation.job_id)
+    cmd = fix_runs.in_flight(run) if run is not None else None
+    if run is None or cmd is None or str(command.id) in _ids(run, cmd):
+        return
+    conversation = command.conversation
+    flight = _flight(conversation, run, cmd)
+    fixs = Message.no_workspace_objects.filter(id__in=flight.ids)
+    if (
+        flight.ended is None
+        or fixs.filter(sequence__gt=command.sequence).exists()
+        or _own_question(conversation, run, cmd) is not None
+    ):
+        return
+    raise HostedHarnessError(
+        "fix_landing",
+        "A fix's change is still being saved; this turn saves after it",
+        status_code=409,
+        retryable=True,
+    )
 
 
 # --- stall recovery and the checkpoint basis ------------------------------------

@@ -2353,10 +2353,13 @@ class _DraftCommand:
 
 
 def _draft_command(
-    command: HostedHarnessConversationMessage | None, environment: HostedHarnessJob
+    command: HostedHarnessConversationMessage | None,
+    environment: HostedHarnessJob,
+    sequence: int | None = None,
 ) -> _DraftCommand | None:
-    """``None`` drops the save: it is a rebuild's, and that rebuild is over, or a
-    fix's whose run ended or whose command settled."""
+    """``None`` drops the save (event ``sequence``): it is a rebuild's, and that
+    rebuild is over, or a fix's whose run ended or whose command settled, or it came
+    from a sandbox a fix gave up."""
     from simulate.services.harness_readiness import fix_driver
     from simulate.services.harness_versioning.drafts import command_author
     from simulate.services.harness_versioning.rebuild import draft_command
@@ -2365,7 +2368,7 @@ def _draft_command(
     rebuild = draft_command(command)
     if rebuild is None:
         return None
-    if rebuild == ("", {}) and fix_driver.draft_command(command) is None:
+    if rebuild == ("", {}) and fix_driver.draft_command(command, sequence) is None:
         return None
     origin, draft_kwargs = rebuild
     return _DraftCommand(
@@ -2536,7 +2539,7 @@ def promote_conversation_checkpoint(
             # An outdated working copy: a newer one holds the drafts, so it is not
             # recomposed.
             outdated = expected is None
-            draft_command = _draft_command(command, environment)
+            draft_command = _draft_command(command, environment, sequence)
             if draft_command is None:
                 return environment
             try:

@@ -1519,7 +1519,7 @@ class TestRetire:
         assert run.commands[0]["outcome"]["code"] == "conversation_checkpoint_missing"
         assert _lease_expired(conversation)
 
-    def test_the_persons_turn_after_the_fix_is_not_cut_short(
+    def test_the_persons_turn_after_an_interrupted_fix_runs_again_in_a_clean_sandbox(
         self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
     ):
         environment, run, message, conversation = _dispatched(
@@ -1534,16 +1534,128 @@ class TestRetire:
         mine = hhc.enqueue_message(
             environment, content="mine", client_request_id="mine"
         )[1]
-        _feed(conversation, django_capture_on_commit_callbacks, _started(mine))
-        _interrupted_long_ago(run)
+        # The old working copy, which still holds the interrupted fix's edits.
+        key, digest = _checkpoint(environment, conversation, mine, storage)
 
-        with _retires() as retired, django_capture_on_commit_callbacks(execute=True):
-            fix_check.check(environment.id)
+        with _retires() as retired:
+            started = _feed(
+                conversation, django_capture_on_commit_callbacks, _started(mine)
+            )
 
+        # Settled at once, with no wait for a restart that cannot come.
         run.refresh_from_db()
         assert run.commands[0]["outcome"]["code"] == "turn_interrupted"
-        assert retired == []
-        assert not _lease_expired(conversation)
+        assert retired == [str(environment.id)]
+        assert _lease_expired(conversation)
+        # The person's turn is not lost: queued again for a new sandbox.
+        mine.refresh_from_db()
+        conversation.refresh_from_db()
+        assert mine.state == "queued"
+        assert conversation.command_acked_through < mine.sequence
+        assert _names(tasks, "ensure_hosted_harness_conversation_runtime")
+
+        # The old sandbox can post nothing more, and a save it made is dropped.
+        with pytest.raises(HostedHarnessError) as refused:
+            _feed_without_lease(conversation, _completed(mine))
+        assert refused.value.code == "conversation_lease_inactive"
+        refs = drafts.draft_refs(environment)
+        with django_capture_on_commit_callbacks(execute=True):
+            hhc.promote_conversation_checkpoint(
+                conversation,
+                object_key=key,
+                digest=digest,
+                sequence=started,
+                expected_revision=mine.payload["_environment_revision"],
+                command=mine,
+            )
+        assert drafts.draft_refs(environment) == refs
+
+        # The new sandbox runs it again and its save is the person's.
+        _feed(conversation, django_capture_on_commit_callbacks, _started(mine))
+        key, digest = _checkpoint(environment, conversation, mine, storage)
+        _promote(conversation, mine, key, digest, django_capture_on_commit_callbacks)
+        assert drafts.draft_refs(environment) != refs
+
+    def test_a_persons_save_after_a_fix_turn_that_ended_waits_for_it_to_land(
+        self, user, workspace, storage, tasks, django_capture_on_commit_callbacks
+    ):
+        environment, run, message, conversation = _dispatched(
+            user, workspace, storage, "fd-race"
+        )
+        # The fix turn ends; its change has not landed yet when the person's starts.
+        fix_turn = _feed(
+            conversation,
+            django_capture_on_commit_callbacks,
+            _started(message),
+            ("checkpoint_committed", {"digest": "sha256:" + "0" * 64, "size": 1}),
+            _completed(message),
+        )
+        mine = hhc.enqueue_message(
+            environment, content="mine", client_request_id="mine"
+        )[1]
+        key, digest = _checkpoint(environment, conversation, mine, storage)
+        started = _feed(
+            conversation, django_capture_on_commit_callbacks, _started(mine)
+        )
+        refs = drafts.draft_refs(environment)
+
+        with pytest.raises(HostedHarnessError) as waiting:
+            _promote(
+                conversation, mine, key, digest, django_capture_on_commit_callbacks
+            )
+        assert (waiting.value.code, waiting.value.retryable) == ("fix_landing", True)
+
+        # The fix's change is refused: its sandbox goes, the person's turn runs again.
+        with (
+            _retires() as retired,
+            django_capture_on_commit_callbacks(execute=True),
+            pytest.raises(HostedHarnessError),
+        ):
+            _publish(conversation, fix_turn)
+        assert retired == [str(environment.id)]
+        mine.refresh_from_db()
+        assert mine.state == "queued"
+
+        # The retried save from the old working copy never lands.
+        with django_capture_on_commit_callbacks(execute=True):
+            hhc.promote_conversation_checkpoint(
+                conversation,
+                object_key=key,
+                digest=digest,
+                sequence=started,
+                expected_revision=mine.payload["_environment_revision"],
+                command=mine,
+            )
+        assert drafts.draft_refs(environment) == refs
+
+
+def _feed_without_lease(conversation, *events):
+    """Post ``events`` as the chat's current sandbox, with no new lease issued."""
+    conversation.refresh_from_db()
+    sequence = conversation.event_acked_through
+    signed = []
+    for kind, payload, *_rest in events:
+        sequence += 1
+        event = {
+            "schema_version": "futureagi.harness-conversation-event.v1",
+            "event_id": f"ce-{conversation.id}-{sequence}",
+            "conversation_id": str(conversation.id),
+            "sequence": sequence,
+            "kind": kind,
+            "message_id": None,
+            "stage": "scenarios",
+            "invocation_id": "turn-1",
+            "function_call_id": None,
+            "emitted_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "payload": payload,
+        }
+        event["digest"] = canonical_digest(event)
+        signed.append(event)
+    hhc.ingest_conversation_events(
+        conversation,
+        acknowledged_through=conversation.command_acked_through,
+        events=signed,
+    )
 
 
 def _with_a2_broken(user, workspace, storage, key):

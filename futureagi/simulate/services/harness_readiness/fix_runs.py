@@ -938,41 +938,70 @@ def _fail_untaken_replies(
 
 # Control messages stop or cancel a turn; they are not a turn of the person's.
 _CONTROL_KINDS = ("interrupt", "cancel_operation")
-
-
-def _holds_chat(cmd: FixCommand) -> bool:
-    """The chat took no later message of the person's: its sandbox still works for
-    the fix."""
-    own = Message.no_workspace_objects.filter(
-        id__in=[cmd["message_id"], *(one.id for one in replies(cmd))]
-    ).order_by("-sequence")
-    last = own.first()
-    if last is None:
-        return False
-    return (
-        not Message.no_workspace_objects.filter(
-            conversation_id=last.conversation_id,
-            role=Message.Role.USER,
-            sequence__gt=last.sequence,
-            state__in=(Message.State.DELIVERED, Message.State.COMPLETED),
-        )
-        .exclude(payload__command_kind__in=_CONTROL_KINDS)
-        .exists()
-    )
+# A message queued again after a fix gave its sandbox up: the last event of that sandbox.
+REPLAYED_AFTER = "_replayed_after_event"
 
 
 def retire(run: ReadinessFixRun, cmd: FixCommand) -> None:
     """Once per command whose change did not publish: stop its sandbox after commit,
-    so the change can't come back from the warm working copy."""
+    so the change can't come back from the warm working copy, not even through a turn
+    of the person's that the chat took after it (see ``_give_chat_back``)."""
     if cmd.get("retired") or not cmd.get("message_id"):
         return
     cmd["retired"] = True
-    # TODO: when the person's own turn already took the chat it is left running, and
-    # it may carry the fix's unpublished edits into the person's save.
-    if _holds_chat(cmd):
-        transaction.on_commit(
-            partial(rebuild._after_close, str(run.job_id), dispatched=True)
+    after = (
+        Message.no_workspace_objects.filter(
+            id__in=[cmd["message_id"], *(one.id for one in replies(cmd))]
         )
+        .order_by("-sequence")
+        .values_list("sequence", flat=True)
+        .first()
+    )
+    transaction.on_commit(partial(_give_chat_back, str(run.job_id), after or 0))
+
+
+def _give_chat_back(environment_id: str, after: int) -> None:
+    """Stop the chat's sandbox; the person's messages it took after sequence ``after``
+    are queued again for a new one, so no turn of theirs is lost and none is saved
+    from the old working copy (``replayed``)."""
+    with transaction.atomic():
+        conversation = (
+            HostedHarnessConversation.no_workspace_objects.select_for_update()
+            .filter(job_id=environment_id)
+            .first()
+        )
+        if conversation is not None:
+            # First, so the old sandbox can neither take nor post anything more.
+            rebuild._expire_chat_lease(conversation)
+            taken = list(
+                Message.no_workspace_objects.filter(
+                    conversation=conversation,
+                    role=Message.Role.USER,
+                    sequence__gt=after,
+                    sequence__lte=conversation.command_acked_through,
+                    state__in=(Message.State.DELIVERED, Message.State.COMPLETED),
+                ).exclude(payload__command_kind__in=_CONTROL_KINDS)
+            )
+            for message in taken:
+                message.payload = {
+                    **(message.payload or {}),
+                    REPLAYED_AFTER: conversation.event_acked_through,
+                }
+                message.state = Message.State.QUEUED
+                message.save(update_fields=["payload", "state", "updated_at"])
+            if taken:
+                conversation.command_acked_through = (
+                    min(message.sequence for message in taken) - 1
+                )
+                conversation.save(update_fields=["command_acked_through", "updated_at"])
+    rebuild._after_close(environment_id, dispatched=True)
+
+
+def replayed(command: Message | None, sequence: int | None) -> bool:
+    """The save at event ``sequence`` came from a sandbox a fix gave up after taking
+    ``command``, which was queued again for a new one."""
+    after = ((command.payload or {}) if command is not None else {}).get(REPLAYED_AFTER)
+    return after is not None and sequence is not None and sequence <= int(after)
 
 
 def _succeeded(cmd: FixCommand | None) -> bool:
