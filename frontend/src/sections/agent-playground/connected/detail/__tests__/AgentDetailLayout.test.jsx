@@ -199,11 +199,23 @@ describe("AgentDetailLayout", () => {
   });
 
   it("names the environment that manages the agent", async () => {
-    serve({ ...HOSTED, managed_by: { id: "env-1", name: "Refund flow" } });
+    serve({
+      ...HOSTED,
+      managed_by: { id: "env-1", name: "Refund flow" },
+      managed_by_environment: true,
+    });
     renderAt(`${base(HOSTED)}/overview`);
-    expect(await screen.findByTestId("agent-managed-by")).toHaveTextContent(
-      "Managed by Refund flow",
-    );
+    const managed = await screen.findByTestId("agent-managed-by");
+    expect(managed).toHaveTextContent("Managed by Refund flow");
+    expect(managed).toHaveAttribute("role", "link");
+  });
+
+  it("says an environment manages the agent when the page can't name it", async () => {
+    serve({ ...HOSTED, managed_by: null, managed_by_environment: true });
+    renderAt(`${base(HOSTED)}/overview`);
+    const managed = await screen.findByTestId("agent-managed-by");
+    expect(managed).toHaveTextContent("Managed by an environment");
+    expect(managed).not.toHaveAttribute("role");
   });
 
   it("offers an upload for an uploaded agent", async () => {

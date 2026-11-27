@@ -472,10 +472,37 @@ def test_an_agent_an_environment_made_has_no_production_here(
     assert refused.json()["code"] == "managed_by_environment"
     production.refresh_from_db()
     assert production.status == "active"
-    assert auth_client.get(f"{AGENTS}{agent.id}/").json()["managed_by"] == {
+    detail = auth_client.get(f"{AGENTS}{agent.id}/").json()
+    assert detail["managed_by"] == {
         "id": str(environment.id),
         "name": environment_name(environment),
     }
+    assert detail["managed_by_environment"] is True
+
+
+def test_an_agent_an_environment_made_reads_as_managed_where_its_tab_lists_none(
+    auth_client, agent, production, organization, user
+):
+    from accounts.models.workspace import Workspace
+
+    environment = _completed(_environment(agent, 1), production)
+    runtime = HarnessAgentVersionRuntime.objects.get(agent_version=production)
+    runtime.agent_payload = {**runtime.agent_payload, "definition_owner": "environment"}
+    runtime.save(update_fields=["agent_payload"])
+    other = Workspace.objects.create(
+        name="Other", organization=organization, is_active=True, created_by=user
+    )
+    type(environment).no_workspace_objects.filter(id=environment.id).update(
+        workspace=other
+    )
+
+    detail = auth_client.get(f"{AGENTS}{agent.id}/").json()
+
+    # Which environment manages it is not shown here, but that one does is: the
+    # page offers no production change the server would refuse.
+    assert detail["environment_count"] == 0
+    assert detail["managed_by"] is None
+    assert detail["managed_by_environment"] is True
 
 
 def test_an_agent_connected_here_is_managed_by_no_environment(
@@ -483,7 +510,9 @@ def test_an_agent_connected_here_is_managed_by_no_environment(
 ):
     _completed(_environment(agent, 1), production)
 
-    assert auth_client.get(f"{AGENTS}{agent.id}/").json()["managed_by"] is None
+    detail = auth_client.get(f"{AGENTS}{agent.id}/").json()
+    assert detail["managed_by"] is None
+    assert detail["managed_by_environment"] is False
 
 
 def test_a_version_made_here_for_an_environments_agent_stays_that_environments(
