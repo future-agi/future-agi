@@ -350,7 +350,7 @@ jobs:
           printf 'FUTURE_AGI_TEST_COSIGN=%s\n' "$verifier" >> "$GITHUB_ENV"
       - name: Schema validator on both supported interpreters
         run: python -m pip install --quiet jsonschema==4.23.0
-      - name: deploy/tests/test_update_*.py, this leg's chunk
+      - name: deploy/tests/test_update_*.py
         id: modules
         # Positive host-ownership/reporting fixtures need trusted ancestry.
         # A private child of /tmp is still below a world-writable ancestor.
@@ -362,7 +362,9 @@ jobs:
           export TMPDIR
           trap 'rm -rf -- "$TMPDIR"' EXIT
           list=$(python deploy/tests/update_unit_chunks.py "$CHUNK/$CHUNKS")
-          mapfile -t modules <<<"$list"
+          # Module names are [a-z0-9_] (test_update_*.py), so word splitting is exact.
+          # shellcheck disable=SC2206
+          modules=($list)
           echo "Chunk $CHUNK/$CHUNKS: ${#modules[@]} modules"
           # discover -s deploy/tests put that directory first on sys.path.
           PYTHONPATH=deploy/tests python -m unittest -v "${modules[@]}"

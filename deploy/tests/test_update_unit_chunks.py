@@ -50,6 +50,8 @@ class UnitChunkPlanTests(unittest.TestCase):
         self.assertIn('update_unit_chunks.py "$CHUNK/$CHUNKS"', unit)
         self.assertIn('python -m unittest -v "${modules[@]}"', unit)
         self.assertNotIn("discover -s deploy/tests -p 'test_update_*.py'", unit)
+        # The daemon-free step runs once per interpreter, on the last chunk.
+        self.assertIn("        if: matrix.chunk == 3\n", unit)
 
 
 if __name__ == "__main__":
