@@ -104,6 +104,7 @@ const CustomTraceRenderer = (params) => {
         spanId={data?.span_id}
         entityType={params.context?.entityType}
         canEditTags={params.context?.canEditTags}
+        projectId={projectId}
         // This grid is AG-Grid server-side, not React Query, so the popover's
         // cache invalidation can't refresh it — pull the saved tags via the
         // grid api instead.

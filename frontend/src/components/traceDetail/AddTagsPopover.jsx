@@ -17,6 +17,7 @@ const AddTagsPopover = ({
   spanId,
   bulkItems,
   currentTags = [],
+  projectId,
   onSuccess,
 }) => {
   const items = Array.isArray(bulkItems) ? bulkItems : [];
@@ -144,6 +145,7 @@ const AddTagsPopover = ({
       <TagInput
         onAdd={handleAdd}
         existingNames={tags.map((t) => t.name)}
+        projectId={projectId}
         disabled={isPending}
       />
 
@@ -170,6 +172,8 @@ AddTagsPopover.propTypes = {
     }),
   ),
   currentTags: PropTypes.array,
+  // Project whose existing tags the input suggests; none without it.
+  projectId: PropTypes.string,
   onSuccess: PropTypes.func,
 };
 

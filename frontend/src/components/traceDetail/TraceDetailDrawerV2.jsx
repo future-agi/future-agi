@@ -1616,6 +1616,7 @@ const TraceDetailDrawerV2 = ({
             onClose={() => setTagsAnchorEl(null)}
             traceId={traceId}
             spanId={selectedSpanId}
+            projectId={projectId}
             currentTags={
               selectedSpanData
                 ? getSpan(selectedSpanData)?.tags || []
