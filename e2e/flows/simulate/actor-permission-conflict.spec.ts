@@ -30,7 +30,7 @@ test('SIM-E2E-020: giving an actor an action only another actor holds is flagged
             'tick Both should have it'],
     backendChecks: ['the check names Dana Brooks as the only holder of approvals.put and writes nothing'],
     browserChecks: ['the form says approvals.put is held only by Dana Brooks before anything is saved',
-                    'Save to draft stays off until Both should have it is ticked'],
+                    'Save to draft saves nothing and keeps the form open until Both should have it is ticked'],
   }),
 }, async ({ page, actor }, testInfo) => {
   // One seed through the backend container (Django start-up), two API calls and one page load.
@@ -59,7 +59,12 @@ test('SIM-E2E-020: giving an actor an action only another actor holds is flagged
     const conflict = page.getByTestId('actor-permission-conflict');
     await expect(conflict).toContainText(`${ACTION} is held only by ${HOLDER.name} today`, { timeout: UI_READY });
     const save = page.getByRole('button', { name: 'Save to draft' });
-    await expect(save).toBeDisabled();
+    // Save is always on; before the confirmation a click keeps the form open and writes nothing.
+    await save.click();
+    await expect(conflict).toBeVisible();
+    await expect(save).toBeVisible();
+    const cast = await actor.api.get<Cast>(`${ENVIRONMENTS}/${seed.environmentId}/actors/`);
+    expect(cast.actors.map((one) => one.name)).not.toContain(NEW_ACTOR);
     await conflict.getByLabel('Both should have it').check();
     await expect(save).toBeEnabled({ timeout: UI_READY });
   });

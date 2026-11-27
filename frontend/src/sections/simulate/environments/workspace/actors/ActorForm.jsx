@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Stack } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useActorCheck } from "src/api/simulate-environments/versions";
@@ -106,12 +106,6 @@ export default function ActorForm({
       : verdict.problems.filter(live)
     : [];
   const overBy = verdict && tried ? verdict.over_by : 0;
-  // The first Save is the final check: it stays open until then, and shows every problem.
-  const waiting =
-    Boolean(verdict) &&
-    !tried &&
-    (verdict.problems.length > 0 || verdict.over_by > 0);
-  const checked = !tried || (problems.length === 0 && overBy === 0);
   // Escape, the close button and a click outside ask before discarding; Cancel never asks.
   const [leaving, setLeaving] = useState(false);
   const leave = () => {
@@ -177,6 +171,45 @@ export default function ActorForm({
         )
         .map((one) => one.action)
     : [];
+
+  // Save is always on. It is the final check: it shows every problem, closes a form with nothing to save, and waits
+  // on the button for a check still running.
+  const [saveAsked, setSaveAsked] = useState(false);
+  const submit = () => {
+    setTried(true);
+    if (existing && !changed) {
+      onClose();
+      return;
+    }
+    const blocked =
+      conflict === "removed" ||
+      !verdict ||
+      verdict.problems.length > 0 ||
+      verdict.over_by > 0 ||
+      (conflicts.length > 0 && !shareConfirmed);
+    if (!blocked)
+      onSave(
+        request,
+        conflicts.map((one) => one.action),
+      );
+  };
+  const attemptSave = () => {
+    if (busy || saveAsked) return;
+    if (check.pending) {
+      setTried(true);
+      setSaveAsked(true);
+      return;
+    }
+    submit();
+  };
+  // A Save clicked mid-check runs once the check answers, with the form as it is then.
+  const latestSubmit = useRef(submit);
+  latestSubmit.current = submit;
+  useEffect(() => {
+    if (!saveAsked || check.pending) return;
+    setSaveAsked(false);
+    latestSubmit.current();
+  }, [saveAsked, check.pending]);
 
   return (
     <SideDrawer
@@ -262,25 +295,10 @@ export default function ActorForm({
             problems={problems.filter((one) => !fieldOf(one))}
             overBy={overBy}
             check={check}
-            checking={tried && check.pending}
             busy={busy}
-            canSave={
-              !busy &&
-              conflict !== "removed" &&
-              (!existing || changed) &&
-              Boolean(verdict) &&
-              checked &&
-              (conflicts.length === 0 || shareConfirmed)
-            }
+            saving={busy || saveAsked}
             onCancel={onClose}
-            onSave={() =>
-              waiting
-                ? setTried(true)
-                : onSave(
-                    request,
-                    conflicts.map((one) => one.action),
-                  )
-            }
+            onSave={attemptSave}
           />
         </Stack>
       )}

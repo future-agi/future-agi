@@ -146,6 +146,12 @@ const addActor = () =>
 const settle = () => act(() => new Promise((done) => setTimeout(done, 500)));
 const saveButton = () => screen.getByRole("button", { name: "Save to draft" });
 const sent = (call = 0) => mutate.mock.calls[call][0];
+// Save is always on; a click while something blocks it sends nothing.
+const refusesSave = () => {
+  const before = mutate.mock.calls.length;
+  fireEvent.click(saveButton());
+  expect(mutate.mock.calls.length).toBe(before);
+};
 
 describe("WorldActorsPanel saving against the real hooks", () => {
   const DRAFT_CHANGED = {
@@ -173,10 +179,20 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     fireEvent.change(screen.getByLabelText(starred("Role (optional)")), {
       target: { value: "regional manager" },
     });
-    // Save waits for the server's check of exactly this edit.
-    await waitFor(() => expect(saveButton()).toBeEnabled(), {
-      timeout: 5000,
-    });
+    // The server's check of exactly this edit has been asked and answered.
+    await waitFor(
+      () =>
+        expect(
+          axios.post.mock.calls.some(
+            ([url, body]) =>
+              url === VALIDATION && body?.changes?.role === "regional manager",
+          ),
+        ).toBe(true),
+      { timeout: 5000 },
+    );
+    await waitFor(() =>
+      expect(within(saveButton()).queryByRole("progressbar")).toBeNull(),
+    );
   };
 
   beforeEach(() => {
@@ -289,11 +305,16 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     expect(
       await screen.findByText("The check was refused", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    // Save stays on, but a click with no answer from the check saves nothing.
+    fireEvent.click(saveButton());
+    expect(save).not.toHaveBeenCalled();
     expect(screen.queryByText("Checking…")).toBeNull();
     refuse = false;
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(saveButton()).toBeEnabled(), { timeout: 5000 });
+    await waitFor(
+      () => expect(screen.queryByText("The check was refused")).toBeNull(),
+      { timeout: 5000 },
+    );
   });
 
   it("asks again when the cast is read again under an open form", async () => {
@@ -449,7 +470,9 @@ describe("WorldActorsPanel saving against the real hooks", () => {
     expect(screen.getByLabelText(starred("Role (optional)"))).toHaveValue(
       "regional manager",
     );
-    expect(saveButton()).toBeDisabled();
+    const saves = save.mock.calls.length;
+    fireEvent.click(saveButton());
+    expect(save.mock.calls.length).toBe(saves);
   });
 });
 
@@ -863,7 +886,7 @@ describe("WorldActorsPanel", () => {
     expect(warning).toHaveTextContent(
       "crm.approve_discount is held only by Priya Raman today",
     );
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
     fireEvent.click(
       within(warning).getByLabelText(starred("Both should have it")),
     );
@@ -906,7 +929,7 @@ describe("WorldActorsPanel", () => {
     fireEvent.click(
       screen.getByRole("option", { name: /crm.request_approval/ }),
     );
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
     expect(
       within(screen.getByTestId("actor-permission-conflict")).getByLabelText(
         "Both should have it",
@@ -933,20 +956,33 @@ describe("WorldActorsPanel", () => {
     expect(sent().shareActions).toEqual([]);
   });
 
-  it("keeps Save off until the server has answered, with no loader while typing", () => {
+  it("keeps Save on while checking; a click during the check waits on the button, then saves", () => {
     answer = undefined;
-    render(<WorldActorsPanel envId="env-1" />);
+    const { rerender } = render(<WorldActorsPanel envId="env-1" />);
     addActor();
     fireEvent.change(screen.getByLabelText(starred("Name")), {
       target: { value: "Lena" },
     });
-    expect(saveButton()).toBeDisabled();
-    expect(screen.queryByText("Checking…")).toBeNull();
-    answer = CLEAN;
-    fireEvent.change(screen.getByLabelText(starred("Name")), {
-      target: { value: "Lena K" },
-    });
     expect(saveButton()).toBeEnabled();
+    expect(screen.queryByText("Checking…")).toBeNull();
+    fireEvent.click(saveButton());
+    expect(mutate).not.toHaveBeenCalled();
+    expect(within(saveButton()).getByRole("progressbar")).toBeInTheDocument();
+    answer = CLEAN;
+    rerender(<WorldActorsPanel envId="env-1" />);
+    expect(sent()).toMatchObject({ op: "create", changes: { name: "Lena" } });
+  });
+
+  it("closes an existing actor's form on Save when nothing really changed, sending nothing", () => {
+    render(<WorldActorsPanel envId="env-1" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
+    const name = screen.getByLabelText(starred("Name"));
+    fireEvent.change(name, { target: { value: "Priya R." } });
+    fireEvent.change(name, { target: { value: "Priya Raman " } });
+    expect(saveButton()).toBeEnabled();
+    fireEvent.click(saveButton());
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Save to draft" })).toBeNull();
   });
 
   it("shows a problem live on a field you changed and filled, and keeps empty required fields quiet until Save", () => {
@@ -1009,7 +1045,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByText("A wait is 0 seconds or more")).toBeInTheDocument();
     expect(screen.queryByTestId("actor-problems")).toBeNull();
     fireEvent.click(saveButton());
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
     // While the next answer is pending the fold stays open under the cursor.
     answer = undefined;
     fireEvent.change(wait, { target: { value: "-6" } });
@@ -1041,7 +1077,7 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText("caller is kept by the environment"),
     ).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
   it("shows the id the server would give until one is typed, and sends none of its own", () => {
@@ -1088,7 +1124,7 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByText(/4,200 characters too long to save/),
     ).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
   it("keeps the working settings folded under Advanced settings, with Pressure and How they behave always on screen", () => {
@@ -1274,17 +1310,6 @@ describe("WorldActorsPanel", () => {
     });
   });
 
-  it("keeps Save off for an existing actor until something really changes", () => {
-    render(<WorldActorsPanel envId="env-1" />);
-    fireEvent.click(screen.getByRole("button", { name: /^Edit / }));
-    expect(saveButton()).toBeDisabled();
-    const name = screen.getByLabelText(starred("Name"));
-    fireEvent.change(name, { target: { value: "Priya R." } });
-    expect(saveButton()).not.toBeDisabled();
-    fireEvent.change(name, { target: { value: "Priya Raman " } });
-    expect(saveButton()).toBeDisabled();
-  });
-
   it("names how an actor comes in as the server says, and going back to it in Comes in is no change", async () => {
     actorsData = cast([
       {
@@ -1309,7 +1334,7 @@ describe("WorldActorsPanel", () => {
     expect(saveButton()).not.toBeDisabled();
     await waitFor(() => expect(screen.queryByRole("listbox")).toBeNull());
     comeIn("At a set moment");
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
   it("keeps a trigger the form cannot make by the server's words, until another is picked", () => {
@@ -1347,7 +1372,7 @@ describe("WorldActorsPanel", () => {
     };
     comeIn("Joins partway", "When the agent calls an action");
     fireEvent.click(saveButton());
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
     expect(
       screen.getByText("Pick the action that brings them in"),
     ).toBeInTheDocument();
@@ -1371,7 +1396,7 @@ describe("WorldActorsPanel", () => {
     expect(
       screen.getByLabelText(starred("Matching (optional)")),
     ).toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
   it("sends a cap as typed, the server saying when it is not a whole number", () => {
@@ -1388,7 +1413,7 @@ describe("WorldActorsPanel", () => {
     };
     fireEvent.change(cap, { target: { value: "2.7" } });
     fireEvent.click(saveButton());
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
     expect(
       screen.getByText("A whole number above 0, or empty"),
     ).toBeInTheDocument();
@@ -1413,7 +1438,7 @@ describe("WorldActorsPanel", () => {
     expect(screen.getByTestId("actor-problems")).toHaveTextContent(
       "max_lines must be above 0",
     );
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
   it("never crashes on a record match of only spaces, and sends it as no match", () => {
@@ -1489,7 +1514,7 @@ describe("WorldActorsPanel", () => {
     );
     await settle();
     expect(taken).toBeVisible();
-    expect(saveButton()).toBeDisabled();
+    refusesSave();
   });
 
   it("shows a loading and a failed view inside the row, with a retry", () => {

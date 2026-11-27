@@ -46,16 +46,29 @@ const newActor = (side, channel = null, data = cast([])) => ({
   channel,
 });
 
-const renderForm = (actor, { data = cast([]), onSave = vi.fn() } = {}) =>
-  render(
+let lastSave;
+let lastClose;
+const renderForm = (
+  actor,
+  { data = cast([]), onSave = vi.fn(), onClose = vi.fn() } = {},
+) => {
+  lastSave = onSave;
+  lastClose = onClose;
+  return render(
     <ActorForm
       envId="env-1"
       actor={actor}
       context={contextOf(data)}
-      onClose={vi.fn()}
+      onClose={onClose}
       onSave={onSave}
     />,
   );
+};
+// Save is always on; a click while something blocks it saves nothing.
+const refusesSave = () => {
+  fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+  expect(lastSave).not.toHaveBeenCalled();
+};
 
 describe("ActorForm", () => {
   it("offers the approver kind", () => {
@@ -194,9 +207,10 @@ describe("ActorForm", () => {
     expect(
       screen.getByLabelText(starred("What brings them in")),
     ).toHaveTextContent("When the agent says a word");
-    expect(
-      screen.getByRole("button", { name: "Save to draft" }),
-    ).toBeDisabled();
+    // Nothing changed: Save closes the form and saves nothing.
+    fireEvent.click(screen.getByRole("button", { name: "Save to draft" }));
+    expect(lastSave).not.toHaveBeenCalled();
+    expect(lastClose).toHaveBeenCalled();
   });
 
   it("labels an actor's own cap by the field the chosen way of joining uses, as the cast says", () => {
@@ -283,9 +297,7 @@ describe("ActorForm", () => {
       screen.getByLabelText(starred("Comes in")),
     ).toHaveAccessibleDescription("Pick the agent turn they come in on.");
     expect(screen.queryByTestId("actor-problems")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Save to draft" }),
-    ).toBeDisabled();
+    refusesSave();
   });
 
   it("stars the required fields: name always, role when the way of joining needs it, and what the picked trigger takes", () => {
@@ -335,9 +347,7 @@ describe("ActorForm", () => {
     expect(screen.getByLabelText(starred("Name"))).toHaveAccessibleDescription(
       "Give them a name.",
     );
-    expect(
-      screen.getByRole("button", { name: "Save to draft" }),
-    ).toBeDisabled();
+    refusesSave();
   });
 
   it("shows a too-long id's problem on the Id field, as the check answers it", () => {
@@ -395,9 +405,7 @@ describe("ActorForm", () => {
     expect(screen.getByTestId("actor-problems")).toHaveTextContent(
       "ops is in a cycle of parent links; break it.",
     );
-    expect(
-      screen.getByRole("button", { name: "Save to draft" }),
-    ).toBeDisabled();
+    refusesSave();
   });
 
   it("starts a new actor from the cast's new_actor, never from defaults of its own", () => {

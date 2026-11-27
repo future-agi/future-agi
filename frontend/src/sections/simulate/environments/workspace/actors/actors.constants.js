@@ -232,7 +232,6 @@ export const ACTORS_COPY = {
       channel: "How they take part",
       noChannel: "Acts in the world only",
       problemsTitle: "Fix these before saving",
-      checking: "Checking…",
       checkFailed: "Couldn't check this change. Try again in a moment.",
       retryCheck: "Try again",
       play: "How they act in the world",
