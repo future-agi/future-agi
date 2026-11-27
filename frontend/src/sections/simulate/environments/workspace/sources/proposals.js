@@ -1,4 +1,4 @@
-import { plural, POLICY_LABEL } from "./sources.constants";
+import { plural } from "./sources.constants";
 
 // Review proposed changes: what the builder read in uploaded files, grouped
 // by what each change touches (the same areas as Review changes).
@@ -242,8 +242,7 @@ export const PROPOSALS_COPY = {
     file: "File",
     usedAs: "Used as",
     // Plain "Background" when the tested-agent switch isn't known (outside a ready review).
-    usedAsValue: ({ role, testedAgent }) => {
-      if (role === "policy") return POLICY_LABEL;
+    usedAsValue: (testedAgent) => {
       if (testedAgent == null) return "Background";
       return testedAgent
         ? "Background, the agent can look things up in it"

@@ -427,7 +427,7 @@ function ReferenceItem({ item, inset, folded, onOpen }) {
   const readValue = COPY.reference.readValue(item);
   const facts = [
     [COPY.reference.file, file],
-    [COPY.reference.usedAs, COPY.reference.usedAsValue(item)],
+    [COPY.reference.usedAs, COPY.reference.usedAsValue(item.testedAgent)],
     [COPY.reference.rules, COPY.reference.rulesValue(item)],
     [COPY.reference.read, readValue],
   ].filter(([, value]) => value);
