@@ -97,7 +97,6 @@ def test_runs_every_step_in_order(local_operator, recorded_steps) -> None:
         "wait Postgres",
         "wait Temporal",
         "migrate",
-        "seed_ready_environments",
         "clickhouse 321",
         "metrics",
         "catalog",
@@ -247,7 +246,11 @@ def test_migrate_and_seed_order_and_prompt_label_hook(
     command.migrate_and_seed(logged.append)
 
     # createcachetable failing is logged and does not stop the bootstrap.
-    assert [name for name, _ in ran] == ["migrate", "seed_system_evals"]
+    assert [name for name, _ in ran] == [
+        "migrate",
+        "seed_system_evals",
+        "seed_ready_environments",
+    ]
     assert ran[0][1] == {"interactive": False, "verbosity": 1}
     assert connected == ["model_hub_seed_default_prompt_labels"]
     assert any("createcachetable failed (continuing)" in line for line in logged)

@@ -63,6 +63,7 @@ FIRST_BOOT = [
     "post_migrate hook",
     "command migrate",
     "command seed_system_evals",
+    "command seed_ready_environments",
     "phase clickhouse",
     "clickhouse native schema",
     "metrics schema",
@@ -536,6 +537,7 @@ class MainTest(StackTest):
                 ("createcachetable", {"database": "default"}),
                 ("migrate", {"interactive": False, "verbosity": 1}),
                 ("seed_system_evals", {}),
+                ("seed_ready_environments", {}),
                 ("register_temporal_schedules", {}),
                 ("collectstatic", {"interactive": False, "verbosity": 0}),
             ],
@@ -548,6 +550,7 @@ class MainTest(StackTest):
                 "createcachetable",
                 "migrate",
                 "seed_system_evals",
+                "seed_ready_environments",
                 "register_temporal_schedules",
             ],
         )
@@ -576,6 +579,7 @@ class MainTest(StackTest):
                 "post_migrate hook",
                 "command migrate",
                 "command seed_system_evals",
+                "command seed_ready_environments",
                 "command collectstatic",
                 "placeholder shutdown",
             )

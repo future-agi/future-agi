@@ -4,8 +4,7 @@ Runs on every container start, before the API and the collector (both wait
 for /data/.bootstrap-ok). In ONE Django process it does what the distributed stack's
 one-shot jobs in docker-compose.distributed.yml do, minus PeerDB:
 
-  postgres-schema-bootstrap    createcachetable, migrate, seed_system_evals,
-                               seed_ready_environments and
+  postgres-schema-bootstrap    createcachetable, migrate, seed_system_evals and
                                register_temporal_schedules (entrypoint.sh with
                                SERVICE_TYPE=bootstrap)
   clickhouse-native-bootstrap  oss_cdc_install --phase native --apply
@@ -689,7 +688,6 @@ def main() -> None:
     django.setup()
     adopting = refuse_foreign_database()
     fingerprint = migrate_and_seed()
-    steps.ready_environments(log)
     set_phase("clickhouse")
     steps.clickhouse_native_schema(log, 600)
     steps.metrics_schema(log)
