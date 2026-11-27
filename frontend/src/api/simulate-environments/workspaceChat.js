@@ -10,7 +10,7 @@
 // The return shape { turns, running, send } is unchanged so BuilderConsole and
 // BuildingStage stay untouched; `frozen`, `frozenReason` and `stop` are additive.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useQueryClient, useMutation } from "@tanstack/react-query";
 
 import {
   sendHarnessConversationMessage,
@@ -21,7 +21,8 @@ import {
   getScenarioSelection,
   clearScenarioSelection,
 } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
-import { harnessJobQuery } from "./environment";
+import { useChatRead, useOpenChatAt } from "./chatHistory";
+import { useHarnessJob } from "./environment";
 import {
   isVersioningDisabled,
   nudgesKey,
@@ -52,9 +53,7 @@ export function useWorkspaceChat(env, { source } = {}) {
   const jobId = jobIdFor(env, source);
   const queryClient = useQueryClient();
 
-  const jobQuery = useQuery(
-    harnessJobQuery(jobId, { enabled: Boolean(jobId) }),
-  );
+  const jobQuery = useHarnessJob(jobId, { enabled: Boolean(jobId) });
   const conversation = jobQuery.data?.conversation ?? null;
 
   // Keep the latest conversation/jobId in refs so `send` stays referentially
@@ -162,6 +161,21 @@ export function useWorkspaceChat(env, { source } = {}) {
       mutate(variables);
     },
     [mutate],
+  );
+
+  const olderEvents = useChatRead("events", jobId, conversation);
+  const olderMessages = useChatRead("messages", jobId, conversation);
+  const earlierAround = useChatRead("earlier", jobId, conversation);
+  const laterAround = useChatRead("later", jobId, conversation);
+  const openAt = useOpenChatAt(jobId, conversation);
+  const historyReads = useMemo(
+    () => ({
+      "older-events": olderEvents,
+      "older-messages": olderMessages,
+      "older-around": earlierAround,
+      gap: laterAround,
+    }),
+    [olderEvents, olderMessages, earlierAround, laterAround],
   );
 
   const interrupt = useCallback(() => {
@@ -285,6 +299,16 @@ export function useWorkspaceChat(env, { source } = {}) {
     // Attach the reply callback to open `ask` steps (the projector stays pure).
     // A resolved question renders its summary from props, so it needs no handler.
     return projected.map((turn) => {
+      if (turn.role === "history") {
+        const { loading, failed, load } = historyReads[turn.id];
+        return {
+          ...turn,
+          loading,
+          failed,
+          onLoad: load,
+          ...(turn.id === "older-messages" && openAt),
+        };
+      }
       if (turn.role === "system" && turn.kind === "nudge") {
         if (!nudges) return turn;
         const nudge = nudges.byId[turn.nudgeId];
@@ -335,6 +359,8 @@ export function useWorkspaceChat(env, { source } = {}) {
     stopNudgeById,
     flagsFor,
     resetNudgeActions,
+    historyReads,
+    openAt,
   ]);
 
   // Retry a failed send by replaying its original variables (same payload, same

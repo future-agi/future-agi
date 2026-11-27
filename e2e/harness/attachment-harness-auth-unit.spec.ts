@@ -28,9 +28,9 @@ test('H13 unit: HTTPS does not relax owned localhost origin restrictions', () =>
     'https://localhost/#fragment', 'ftp://localhost']) {
     expect(() => ownedScopeOrigin(url)).toThrow('localhost HTTP(S) origin');
   }
-  const scopes = new ScopeActors('unit', { appUrl: 'https://localhost:23443', ignoreHTTPSErrors: true });
+  const scopes = new ScopeActors('unit', undefined, undefined, { appUrl: 'https://localhost:23443', ignoreHTTPSErrors: true });
   expect(scopes.options.ignoreHTTPSErrors).toBe(true);
-  expect(() => new ScopeActors('unit', { appUrl: 'https://example.test', ignoreHTTPSErrors: true })).toThrow();
+  expect(() => new ScopeActors('unit', undefined, undefined, { appUrl: 'https://example.test', ignoreHTTPSErrors: true })).toThrow();
 });
 
 test('H13 unit: public IDs reject path fragments, nil and arbitrary strings without echoing them', () => {

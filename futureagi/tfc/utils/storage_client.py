@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import structlog
 import urllib3
 from minio import Minio
+from minio.error import S3Error
 
 from tfc.utils.storage_config import (
     _parse_endpoint as _parse_endpoint,
@@ -250,7 +251,13 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
         # GCS buckets are pre-created via Terraform with IAM — skip
         return
     if not client.bucket_exists(bucket_name):
-        client.make_bucket(bucket_name)
+        try:
+            client.make_bucket(bucket_name)
+        except S3Error as exc:
+            # Another worker created it between the check and here. Only this
+            # code means ours: BucketAlreadyExists is someone else's bucket.
+            if exc.code != "BucketAlreadyOwnedByYou":
+                raise
         policy = {
             "Version": "2012-10-17",
             "Statement": [_anonymous_read_statement(bucket_name)],

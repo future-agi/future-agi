@@ -35,6 +35,15 @@ describe("formatLatency", () => {
     expect(formatLatency(65000)).toBe("1m 5s");
     expect(formatLatency(125000)).toBe("2m 5s");
   });
+
+  it("carries rounded seconds into the minute instead of showing 60s", () => {
+    expect(formatLatency(119600)).toBe("2m");
+    expect(formatLatency(179500)).toBe("3m");
+  });
+
+  it("formats multi-minute voice calls as minutes and seconds", () => {
+    expect(formatLatency(139833)).toBe("2m 20s");
+  });
 });
 
 describe("formatCost", () => {

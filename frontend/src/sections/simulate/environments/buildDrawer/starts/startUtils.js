@@ -23,21 +23,3 @@ export const agentMetaOf = (agent) =>
   ]
     .filter(Boolean)
     .join(" · ");
-
-/**
- * "{agent} environment", numbered after the agent's existing environments so
- * it doesn't repeat one. The environment list isn't read for this, so a
- * renamed environment can still collide.
- */
-export function envNameFor(agent) {
-  const base = `${agent.name.replace(/\s+agent$/i, "")} environment`;
-  const taken = agent.environmentCount || 0;
-  return taken ? `${base} ${taken + 1}` : base;
-}
-
-/** A name as a CLI slug. */
-export const slugOf = (name) =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");

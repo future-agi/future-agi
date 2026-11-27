@@ -9,6 +9,13 @@ from tfc.temporal.schedules.config import ScheduleConfig
 # Tracer schedules (migrated from Celery Beat)
 TRACER_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
+        schedule_id="sweep-feed-escalations",
+        activity_name="sweep_feed_escalations",
+        interval_seconds=300,
+        queue="tasks_s",
+        description="Confirm finding-volume escalation and recover quiet Feed issues",
+    ),
+    ScheduleConfig(
         schedule_id="cleanup-derived-metric-snapshots",
         activity_name="tracer.cleanup_derived_metric_snapshots",
         interval_seconds=900,
