@@ -25,7 +25,9 @@ ENTRY = next(row for row in p.load_high_volume_registry()
              if row['database']=='postgres' and row['table']==TABLE)
 ARGS = dict(namespace='task-reference-source', email='task-reference@example.test', rows=100000,
     organization_id=str(uuid.UUID(int=1)), workspace_id=str(uuid.UUID(int=2)), source_version='v1.58.0')
-LATEST_SOURCE = 'v1.59.0'
+LATEST_SOURCE = 'v1.59.1'
+# Releases with the v1.59 source schema (reviewed field overrides).
+V1_59_SOURCES = ('v1.59.0', 'v1.59.1')
 CONTEXT = dict(user_id=str(uuid.UUID(int=3)), historical_at='2025-01-01T00:00:00+00:00')
 
 
@@ -196,7 +198,7 @@ def schema_env(version=ARGS['source_version']):
         for constraint in model._meta.constraints:
             actual[constraint.name]=dict(unique=True,columns=[model._meta.get_field(f).column for f in constraint.fields])
         if alias=='Membership': actual['pair_unique']=dict(unique=True,columns=['evaltask_id','customevalconfig_id'])
-        if alias=='Project' and version==LATEST_SOURCE:
+        if alias=='Project' and version in V1_59_SOURCES:
             actual['tracer_project_analysis_source_generation_check']=dict(check=True,columns=['analysis_source_generation'])
         constraints[table]=actual
     task_fields=env['Task']._meta.get_field.__self__
@@ -338,7 +340,7 @@ class EvalTaskReferenceTests(unittest.TestCase):
             self.assertIn('status__in=_UNDRAINED',ast.unparse(select))
             cursor_reads=[node for node in ast.walk(select) if isinstance(node,ast.Call)
                 and any(kw.arg=='continuous_cursor__lt' for kw in node.keywords)]
-            self.assertEqual(len(cursor_reads),1 if version==LATEST_SOURCE else 0)
+            self.assertEqual(len(cursor_reads),1 if version in V1_59_SOURCES else 0)
             for read in cursor_reads:
                 keywords={kw.arg:ast.unparse(kw.value) for kw in read.keywords}
                 self.assertEqual(keywords['run_type'],'RunType.CONTINUOUS')
@@ -412,7 +414,7 @@ class EvalTaskReferenceTests(unittest.TestCase):
         self.assertLess(t.PREPARE.index('PostgreSQL required'),t.PREPARE.index('with transaction.atomic():'))
 
     def test_schema_rejects_wrong_source_inventory_and_latest_check_drift(self):
-        for version in ('v1.58.0','v1.59.1'):
+        for version in ('v1.58.0','v1.60.0'):
             env,_,_=schema_env(LATEST_SOURCE)
             env['SOURCE_FIELDS']=payload_env(version)['SOURCE_FIELDS']
             with self.subTest(version=version),self.assertRaisesRegex(AssertionError,'field inventory drift'):
@@ -555,7 +557,7 @@ class EvalTaskReferenceTests(unittest.TestCase):
         driver.seed_eval_task_reference(100000)
         before=len(fake.calls)
         # Reads after bootstrap and restore still use the original source contract.
-        driver.row.release.version='v1.59.1'
+        driver.row.release.version='v1.60.0'
         for phase in ('before backup','after bootstrap','after restore'):
             t.verify_eval_task_reference(driver,prefix=s.DJANGO_PREFIX,producer=p)
         self.assertEqual([program for program,args in fake.calls[before:]],[s.DJANGO_PREFIX+t.VERIFY]*3)

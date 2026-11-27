@@ -43,6 +43,7 @@ SOURCE_REVISIONS = {
     'v1.57.0': '814b6c4e745e754dc2eeb43a4d238d318adc4daa',
     'v1.58.0': '28e729aab169d75a2ca856fb4ed67fd1dda5901a',
     'v1.59.0': '08de8321155538f1a9295982dfd55dd93a1cfc98',
+    'v1.59.1': '1cca6b23710ca1a2b7aeae1fe974556173c4a71c',
 }
 
 # Reviewed source-field contracts: type, nullability, max_length, FK label.
@@ -134,13 +135,13 @@ LEGACY_SOURCE_FIELDS = {'EvalTask': {'created_at': ('DateTimeField', False, None
                     'evaltask': ('ForeignKey', False, None, 'tracer.EvalTask'),
                     'customevalconfig': ('ForeignKey', False, None, 'tracer.CustomEvalConfig')}}
 
-SOURCE_FIELD_OVERRIDES = {
-    'v1.59.0': dict(LEGACY_SOURCE_FIELDS,
-        EvalTask=dict(LEGACY_SOURCE_FIELDS['EvalTask'], sampling_policy=('JSONField', True, None, None)),
-        Project=dict(LEGACY_SOURCE_FIELDS['Project'],
-            analysis_source_generation=('PositiveBigIntegerField', False, None, None),
-            sampling_contact_attribute=('CharField', False, 200, None))),
-}
+_V1_59_FIELDS = dict(LEGACY_SOURCE_FIELDS,
+    EvalTask=dict(LEGACY_SOURCE_FIELDS['EvalTask'], sampling_policy=('JSONField', True, None, None)),
+    Project=dict(LEGACY_SOURCE_FIELDS['Project'],
+        analysis_source_generation=('PositiveBigIntegerField', False, None, None),
+        sampling_contact_attribute=('CharField', False, 200, None)))
+# v1.59.1 is a patch release with the same EvalTask, Project and support models.
+SOURCE_FIELD_OVERRIDES = {'v1.59.0': _V1_59_FIELDS, 'v1.59.1': _V1_59_FIELDS}
 
 # Keep the original exact legacy probe for manual journeys on other releases.
 # An unreviewed schema still fails PREPARE before any fixture writes.
